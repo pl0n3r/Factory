@@ -20,8 +20,20 @@
 
 ## Evidencia auditable
 
-`python3 seguridad/resiliencia.py --workflows .github/workflows` audita un subconjunto deliberadamente conservador de la sintaxis YAML de permisos, eventos y referencias a acciones. **No reemplaza actionlint ni una auditoría semántica de permisos efectiva por evento.** Los falsos negativos por YAML complejo siguen siendo posibles; toda ampliación del contrato debe añadir pruebas.
+`python3 seguridad/resiliencia.py --audit-workflows` audita un subconjunto deliberadamente conservador de la sintaxis YAML de permisos, eventos y referencias a acciones. **No reemplaza actionlint ni una auditoría semántica de permisos efectiva por evento.** Los falsos negativos por YAML complejo siguen siendo posibles; toda ampliación del contrato debe añadir pruebas.
 
 `python3 seguridad/resiliencia.py --manifest /ruta/privada/evidencia.json` exige un JSON con campos raíz exactos `version`, `project`, `identities`, `checks`. Los roles `ci`, `deploy`, `observer` deben apuntar a referencias públicas y diferentes `github-app:<alias>`, no credenciales. Los cuatro checks `repo_backup`, `secrets_escrow`, `token_rotation`, `restore_drill` exigen `verified_at` UTC y `evidence_ref` no sensible.
 
 **Cierre de #10:** requiere comprobar en sistemas reales GitHub Apps separadas y restauración de una copia externa. Un test exitoso de JSON de ejemplo **no** satisface ese requisito.
+
+
+## Entradas del auditor
+
+El CLI no acepta rutas suministradas por agentes para auditar workflows: siempre usa `.github/workflows` del repositorio actual. El manifiesto de recuperación se entrega por `stdin` desde una ubicación externa y segura:
+
+```bash
+python3 seguridad/resiliencia.py --audit-workflows
+python3 seguridad/resiliencia.py --manifest-stdin < /ruta/externa/manifest.json
+```
+
+La ruta externa nunca entra al proceso como argumento y no se registra.

@@ -1,8 +1,10 @@
 """Regresiones del control de seguridad de Factory."""
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import unittest
 
-from resiliencia import ValidationError, audit_workflow, validate_manifest
+
+from seguridad.resiliencia import ValidationError, audit_workflow, validate_manifest
 
 
 NOW = datetime(2026, 9, 24, tzinfo=timezone.utc)
@@ -39,6 +41,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./actions/local
 """)
+
+    def test_current_repository_workflows_are_auditable(self):
+        root = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+        for path in sorted((*root.glob("*.yml"), *root.glob("*.yaml"))):
+            with self.subTest(path=path.name):
+                audit_workflow(path.read_text(encoding="utf-8"))
 
     def test_floating_action_rejected(self):
         with self.assertRaises(ValidationError):
