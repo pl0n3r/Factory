@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
-"""Valida decisiones del dueño y rondas observadas de revisión automática."""
+"""Valida decisiones canónicas y rondas observadas de revisión automática."""
 from __future__ import annotations
-import argparse
+
 import json
 import re
 import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
 if __package__:
     from scripts.safe_io import SafeIOError, read_repo_text
 else:
     from safe_io import SafeIOError, read_repo_text
 
 ID_RE = re.compile(r"^D-[0-9]{3,}$")
+POLICY_FILE = Path("decisiones.yml")
 MAX_POLICY_BYTES = 256 * 1024
 MAX_REVIEWS_BYTES = 2_000_000
 
 class PolicyError(ValueError):
     pass
 
-def load_policy(path: Path, *, root: Path | None = None) -> dict[str, Any]:
+def load_policy(path: Path = POLICY_FILE, *, root: Path | None = None) -> dict[str, Any]:
     try:
         raw = json.loads(read_repo_text(path, root=root, max_bytes=MAX_POLICY_BYTES))
     except (SafeIOError, json.JSONDecodeError) as exc:
@@ -77,15 +79,12 @@ def validate_rounds(rounds: int, limit: int) -> None:
         raise PolicyError(f"Rondas automáticas={rounds} supera límite {limit}.")
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--file", type=Path, required=True)
-    args = parser.parse_args()
     review_payload = sys.stdin.read(MAX_REVIEWS_BYTES + 1)
     if len(review_payload) > MAX_REVIEWS_BYTES:
         print("ERROR: reviews exceden el tamaño permitido.", file=sys.stderr)
         return 1
     try:
-        policy = load_policy(args.file)
+        policy = load_policy()
         rounds = count_review_rounds(review_payload.splitlines())
         validate_rounds(rounds, policy["review_round_limit"])
     except PolicyError as exc:

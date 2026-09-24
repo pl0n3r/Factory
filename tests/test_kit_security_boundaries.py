@@ -12,7 +12,10 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(root["review_round_limit"], 3)
         self.assertGreaterEqual(len(root["decisions"]), 5)
         self.assertTrue(all(item["status"] == "active" for item in root["decisions"]))
-        self.assertEqual({item["id"] for item in root["decisions"]}, {item["id"] for item in template["decisions"]})
+        self.assertEqual(
+            {item["id"] for item in root["decisions"]},
+            {item["id"] for item in template["decisions"]},
+        )
 
     def test_agent_core_requires_decisions_and_memory(self):
         text = (ROOT / "agentes/NUCLEO.md").read_text(encoding="utf-8")
@@ -24,7 +27,8 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/factory-ci.yml").read_text(encoding="utf-8")
         for directory in ("metricas", "seguridad", "lecciones", "producto"):
             self.assertIn(f"-d {directory}", text)
-        self.assertIn("--file decisiones.yml", text)
+        self.assertIn("python3 scripts/politica_kit.py </dev/null", text)
+        self.assertNotIn("--file decisiones.yml", text)
 
     def test_template_health_never_fakes_release_evidence(self):
         text = (ROOT / "template/public/health.php").read_text(encoding="utf-8")
@@ -42,5 +46,10 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/politica.yml").read_text(encoding="utf-8")
         self.assertNotIn("decisions_path:", text)
         self.assertNotIn("inputs.kit_ref", text)
-        self.assertIn("--file decisiones.yml", text)
+        self.assertNotIn("--file", text)
         self.assertIn("ref: v1", text)
+
+    def test_version_source_is_closed_in_reusable_ci(self):
+        text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("config/version.php|config/version.json", text)
+        self.assertIn("version_source no permitido", text)

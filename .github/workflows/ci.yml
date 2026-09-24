@@ -41,7 +41,10 @@ jobs:
           test -d "$WORKDIR" || { echo "::error::working_directory no existe"; exit 1; }
           cd "$WORKDIR"
           if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^https://[^[:space:]]+$ ]]; then echo "::error::domain debe ser HTTPS o vacío"; exit 1; fi
-          if [[ -n "$VERSION_SOURCE" && ! -f "$VERSION_SOURCE" ]]; then echo "::error::No existe version_source: $VERSION_SOURCE"; exit 1; fi
+          if [[ -n "$VERSION_SOURCE" ]]; then
+            case "$VERSION_SOURCE" in config/version.php|config/version.json) ;; *) echo "::error::version_source no permitido"; exit 1 ;; esac
+            [[ -f "$VERSION_SOURCE" && ! -L "$VERSION_SOURCE" ]] || { echo "::error::version_source debe ser archivo regular"; exit 1; }
+          fi
           if [[ "$STACK" =~ ^(symfony|laravel)$ && ! -f composer.lock ]]; then echo "::error::$STACK requiere composer.lock"; exit 1; fi
           if [[ "$NODE_ENABLED" == "true" && ! -f package-lock.json ]]; then echo "::error::node_enabled requiere package-lock.json"; exit 1; fi
   php:

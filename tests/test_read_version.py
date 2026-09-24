@@ -2,35 +2,99 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from scripts.read_version import VersionError, read_version
+
+from scripts.read_version import VersionError, canonical_source, read_version
 
 class T(unittest.TestCase):
-    def test_json_text_and_php_are_data_only(self):
+    def _root(self, tmp: str) -> Path:
+        root = Path(tmp)
+        (root / "config").mkdir()
+        return root
+
+    def test_real_consumer_shapes_without_executing_php(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "v.json").write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
-            (root / "v.txt").write_text("2.3.4\n", encoding="utf-8")
-            (root / "v.php").write_text(
-                "<?php return ['version' => '3.4.5']; file_put_contents('/tmp/should-not-run','x');",
+            root = self._root(tmp)
+            php = root / "config/version.php"
+
+            php.write_text(
+                "<?php return ['version' => '0.1.32'];",
                 encoding="utf-8",
             )
-            self.assertEqual(read_version(Path("v.json"), "json", "version", root=root), "1.2.3")
-            self.assertEqual(read_version(Path("v.txt"), "text", "version", root=root), "2.3.4")
-            self.assertEqual(read_version(Path("v.php"), "php-array", "version", root=root), "3.4.5")
+            self.assertEqual(
+                read_version("config/version.php", "auto", "version", root=root),
+                "0.1.32",
+            )
 
-    def test_invalid_and_traversal(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "v.txt").write_text("nope", encoding="utf-8")
-            with self.assertRaises(VersionError):
-                read_version(Path("v.txt"), "text", "version", root=root)
-            with self.assertRaises(VersionError):
-                read_version(Path("../outside.txt"), "text", "version", root=root)
+            php.write_text(
+                "<?php return ['number' => '0.1.122'];",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                read_version("config/version.php", "auto", "number", root=root),
+                "0.1.122",
+            )
+
+            php.write_text(
+                "<?php const BRVTAL_APP_VERSION = '0.1.51'; "
+                "file_put_contents('/tmp/should-not-run','x');",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                read_version(
+                    "config/version.php",
+                    "auto",
+                    "BRVTAL_APP_VERSION",
+                    root=root,
+                ),
+                "0.1.51",
+            )
+
+            (root / "config/version.json").write_text(
+                json.dumps({"version": "0.1.0"}),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                read_version(
+                    "config/version.json",
+                    "auto",
+                    "version",
+                    root=root,
+                ),
+                "0.1.0",
+            )
+
+    def test_source_is_closed_allowlist(self):
+        self.assertEqual(
+            canonical_source("config/version.php"),
+            Path("config/version.php"),
+        )
+        for source in (
+            "../version.php",
+            "/tmp/version.php",
+            "custom/version.php",
+            "config/../version.php",
+        ):
+            with self.subTest(source=source):
+                with self.assertRaises(VersionError):
+                    canonical_source(source)
 
     def test_symlink_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "real.txt").write_text("1.2.3\n", encoding="utf-8")
-            (root / "link.txt").symlink_to(root / "real.txt")
+            root = self._root(tmp)
+            real = root / "real.php"
+            real.write_text("<?php return ['version'=>'1.2.3'];", encoding="utf-8")
+            (root / "config/version.php").symlink_to(real)
             with self.assertRaises(VersionError):
-                read_version(Path("link.txt"), "text", "version", root=root)
+                read_version("config/version.php", "auto", "version", root=root)
+
+    def test_invalid_key_or_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            (root / "config/version.php").write_text(
+                "<?php return ['version'=>'not-semver'];",
+                encoding="utf-8",
+            )
+            with self.assertRaises(VersionError):
+                read_version("config/version.php", "auto", "version", root=root)
+            with self.assertRaises(VersionError):
+                read_version("config/version.php", "auto", "../version", root=root)

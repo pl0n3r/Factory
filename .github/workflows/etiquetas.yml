@@ -60,7 +60,7 @@ jobs:
       - name: Validar catálogo
         env:
           LANGUAGE: ${{ inputs.language }}
-        run: python3 .factory/scripts/labels_kit.py validate-catalog --catalog ".factory/labels/$LANGUAGE.json"
+        run: python3 .factory/scripts/labels_kit.py validate-catalog --language "$LANGUAGE"
 
       - name: Sincronizar catálogo
         if: inputs.mode == 'sync'
@@ -70,9 +70,8 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          catalog=".factory/labels/$LANGUAGE.json"
           gh api --paginate "repos/$REPOSITORIO/labels?per_page=100" > /tmp/existing.json
-          python3 .factory/scripts/labels_kit.py upsert-plan --catalog "$catalog" < /tmp/existing.json > /tmp/plan.json
+          python3 .factory/scripts/labels_kit.py upsert-plan --language "$LANGUAGE" < /tmp/existing.json > /tmp/plan.json
           jq -c '.[]' /tmp/plan.json | while IFS= read -r item; do
             action="$(jq -r '.action' <<<"$item")"
             name="$(jq -r '.name' <<<"$item")"
@@ -95,7 +94,8 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          gh api "repos/$REPOSITORIO/issues/$ISSUE_NUMBER" --jq '.labels'             | python3 .factory/scripts/labels_kit.py validate-selection --catalog ".factory/labels/$LANGUAGE.json"
+          gh api "repos/$REPOSITORIO/issues/$ISSUE_NUMBER" --jq '.labels' \
+            | python3 .factory/scripts/labels_kit.py validate-selection --language "$LANGUAGE"
 
       - name: Barrer trabajo abierto
         if: inputs.mode == 'sweep'
@@ -105,4 +105,5 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          gh api --paginate "repos/$REPOSITORIO/issues?state=open&per_page=100" --jq '.[] | @json'             | python3 .factory/scripts/labels_kit.py sweep --catalog ".factory/labels/$LANGUAGE.json"
+          gh api --paginate "repos/$REPOSITORIO/issues?state=open&per_page=100" --jq '.[] | @json' \
+            | python3 .factory/scripts/labels_kit.py sweep --language "$LANGUAGE"

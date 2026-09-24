@@ -40,4 +40,4 @@ jobs:
         run: |
           set -euo pipefail
           gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100" --jq '.[] | @json' \
-            | python3 .factory/scripts/politica_kit.py --file decisiones.yml
+            | python3 .factory/scripts/politica_kit.py

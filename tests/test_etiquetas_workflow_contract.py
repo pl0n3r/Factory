@@ -12,10 +12,12 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertIn('case "$LANGUAGE" in es|en)', WF)
         self.assertIn("issues: write", WF)
 
-    def test_uses_published_factory_catalog(self):
+    def test_uses_published_factory_catalog_by_language_not_path(self):
         self.assertIn("repository: pl0n3r/factory", WF)
         self.assertIn("labels_kit.py", WF)
         self.assertIn("ref: v1", WF)
+        self.assertIn("--language", WF)
+        self.assertNotIn("--catalog", WF)
         self.assertNotIn("inputs.kit_ref", WF)
 
     def test_external_actions_are_sha_pinned(self):

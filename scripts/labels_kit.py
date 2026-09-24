@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Valida catálogos y selecciones de etiquetas del kit Factory."""
 from __future__ import annotations
+
 import argparse
 import json
 import re
 import sys
 from pathlib import Path
 from typing import Any
+
 if __package__:
     from scripts.safe_io import SafeIOError, read_repo_text
 else:
@@ -15,10 +17,22 @@ else:
 HEX = re.compile(r"^[0-9A-Fa-f]{6}$")
 KEY = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 DIMENSIONS = ("type_", "priority_", "state_")
+KIT_ROOT = Path(__file__).resolve().parents[1]
+CATALOGS = {
+    "es": Path("labels/es.json"),
+    "en": Path("labels/en.json"),
+}
 MAX_CATALOG_BYTES = 512 * 1024
 
 class LabelError(ValueError):
     pass
+
+def catalog_for_language(language: str) -> list[dict[str, str]]:
+    try:
+        path = CATALOGS[language]
+    except KeyError as exc:
+        raise LabelError("Idioma de catálogo inválido.") from exc
+    return load_catalog(path, root=KIT_ROOT)
 
 def load_catalog(path: Path, *, root: Path | None = None) -> list[dict[str, str]]:
     try:
@@ -136,10 +150,10 @@ def sweep(catalog: list[dict[str, str]], lines: list[str]) -> list[int]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("validate-catalog", "validate-selection", "upsert-plan", "sweep"))
-    parser.add_argument("--catalog", type=Path, required=True)
+    parser.add_argument("--language", choices=sorted(CATALOGS), required=True)
     args = parser.parse_args()
     try:
-        catalog = load_catalog(args.catalog)
+        catalog = catalog_for_language(args.language)
         if args.command == "validate-catalog":
             print(json.dumps({"labels": len(catalog)}, sort_keys=True))
             return 0

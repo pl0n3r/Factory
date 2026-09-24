@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile scripts/*.py
-          python3 scripts/politica_kit.py --file decisiones.yml </dev/null
+          python3 scripts/politica_kit.py </dev/null
           python3 -m unittest discover -s tests -p 'test_*.py'
           if [[ -d metricas ]]; then PYTHONPATH=metricas python3 -m unittest discover -s metricas -p 'test_*.py'; fi
           if [[ -d seguridad ]]; then PYTHONPATH=seguridad python3 -m unittest discover -s seguridad -p 'test_*.py'; fi
