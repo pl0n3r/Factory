@@ -4,7 +4,12 @@ from pathlib import Path
 import unittest
 
 
-from seguridad.resiliencia import (\n    ValidationError,\n    audit_workflow,\n    validate_legacy_manifest,\n    validate_manifest,\n)
+from seguridad.resiliencia import (
+    ValidationError,
+    audit_workflow,
+    validate_legacy_manifest,
+    validate_manifest,
+)
 
 
 NOW = datetime(2026, 9, 24, tzinfo=timezone.utc)
