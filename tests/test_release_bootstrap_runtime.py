@@ -20,7 +20,7 @@ def valid_payload():
         "ref": "refs/heads/main", "default_branch": "main",
         "expected_sha": SHA, "current_sha": SHA,
         "default_branch_sha": SHA, "v1_sha": SHA,
-        "issues": {**{str(n): {"state": "closed"} for n in range(1, 15)}, "54": {"state": "closed"}},
+        "issues": {**{str(n): {"state": "closed"} for n in range(1, 15)}, "54": {"state": "closed"}, "83": {"state": "closed"}},
         "gate": {
             "state": "closed", "author_association": "OWNER", "closed_by": "pl0n3r",
             "body": GATE,
@@ -45,6 +45,7 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
             "wrong-ref": lambda p: p.__setitem__("ref", "refs/heads/otra"),
             "open-core": lambda p: p["issues"]["7"].__setitem__("state", "open"),
             "open-privacy": lambda p: p["issues"]["54"].__setitem__("state", "open"),
+            "open-trust-root": lambda p: p["issues"]["83"].__setitem__("state", "open"),
             "open-gate": lambda p: p["gate"].__setitem__("state", "open"),
             "untrusted-gate": lambda p: p["gate"].__setitem__("author_association", "NONE"),
             "wrong-closer": lambda p: p["gate"].__setitem__("closed_by", "otro"),
