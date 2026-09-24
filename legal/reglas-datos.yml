@@ -3,54 +3,110 @@
   "owner_placeholder": "[COMPLETAR POR EL DUEÑO]",
   "categories": {
     "identification": {
-      "signals": ["name", "full_name", "first_name", "last_name", "document", "document_number", "id_number"],
+      "signals": [
+        "name",
+        "full_name",
+        "first_name",
+        "last_name",
+        "document",
+        "document_number",
+        "id_number"
+      ],
       "sensitive": false,
       "explicit_consent_required": false,
       "maximum_retention": "review_required"
     },
     "contact": {
-      "signals": ["email", "phone", "mobile", "address", "contact_name"],
+      "signals": [
+        "email",
+        "phone",
+        "mobile",
+        "address",
+        "contact_name"
+      ],
       "sensitive": false,
       "explicit_consent_required": false,
       "maximum_retention": "review_required"
     },
     "financial": {
-      "signals": ["bank_account", "card_token", "billing_address", "payment_reference"],
+      "signals": [
+        "bank_account",
+        "card_token",
+        "billing_address",
+        "payment_reference"
+      ],
       "sensitive": false,
       "explicit_consent_required": false,
       "maximum_retention": "review_required"
     },
     "location": {
-      "signals": ["latitude", "longitude", "location", "geo", "ip_address"],
+      "signals": [
+        "latitude",
+        "longitude",
+        "location",
+        "geo",
+        "ip_address"
+      ],
       "sensitive": false,
       "explicit_consent_required": false,
       "maximum_retention": "review_required"
     },
     "authentication": {
-      "signals": ["password_hash", "totp_secret", "recovery_code", "session_token"],
+      "signals": [
+        "password_hash",
+        "totp_secret",
+        "recovery_code",
+        "session_token"
+      ],
       "sensitive": true,
       "explicit_consent_required": true,
       "maximum_retention": "review_required"
     },
     "sensitive": {
-      "signals": ["health", "biometric", "religion", "ethnicity", "political_opinion", "sexual_orientation"],
+      "signals": [
+        "health",
+        "biometric",
+        "religion",
+        "ethnicity",
+        "political_opinion",
+        "sexual_orientation"
+      ],
       "sensitive": true,
       "explicit_consent_required": true,
       "maximum_retention": "review_required"
     },
     "usage": {
-      "signals": ["analytics_id", "device_id", "event_name", "user_agent", "traffic_hash"],
+      "signals": [
+        "analytics_id",
+        "device_id",
+        "event_name",
+        "user_agent",
+        "traffic_hash"
+      ],
       "sensitive": false,
       "explicit_consent_required": false,
       "maximum_retention": "review_required"
     }
   },
   "provider_signals": {
-    "google_analytics": ["google-analytics.com", "googletagmanager.com"],
-    "sentry": ["sentry.io"],
-    "supabase": ["supabase.co"],
-    "dropbox": ["dropboxapi.com", "dropbox.com"],
-    "google_drive": ["googleapis.com", "accounts.google.com"]
+    "google_analytics": [
+      "google-analytics.com",
+      "googletagmanager.com"
+    ],
+    "sentry": [
+      "sentry.io"
+    ],
+    "supabase": [
+      "supabase.co"
+    ],
+    "dropbox": [
+      "dropboxapi.com",
+      "dropbox.com"
+    ],
+    "google_drive": [
+      "googleapis.com",
+      "accounts.google.com"
+    ]
   },
   "required_treatment_fields": [
     "id",
@@ -62,6 +118,17 @@
     "consent",
     "providers"
   ],
-  "material_changes": ["purpose", "sensitive", "new_provider"],
-  "documents": ["politica-tratamiento.md", "registro-tratamientos.md", "retencion.md"]
+  "material_changes": [
+    "purpose",
+    "sensitive",
+    "new_provider"
+  ],
+  "documents": [
+    "politica-tratamiento.md",
+    "aviso-privacidad.md",
+    "terminos-condiciones.md",
+    "registro-tratamientos.md",
+    "canal-derechos.md",
+    "retencion.md"
+  ]
 }

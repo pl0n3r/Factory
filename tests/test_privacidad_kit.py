@@ -138,11 +138,52 @@ class PrivacyKitTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(
             set(first),
-            {"politica-tratamiento.md", "registro-tratamientos.md", "retencion.md"},
+            {
+                "politica-tratamiento.md",
+                "aviso-privacidad.md",
+                "terminos-condiciones.md",
+                "registro-tratamientos.md",
+                "canal-derechos.md",
+                "retencion.md",
+            },
         )
         self.assertIn("account_email", first["politica-tratamiento.md"])
         self.assertIn("admin_totp", first["registro-tratamientos.md"])
         self.assertIn("review_required", first["retencion.md"])
+
+    def test_full_document_set_is_generated(self):
+        rules = load_rules()
+        documents = generate_documents(rules, data_map())
+        self.assertEqual(
+            list(documents),
+            [
+                "politica-tratamiento.md",
+                "aviso-privacidad.md",
+                "terminos-condiciones.md",
+                "registro-tratamientos.md",
+                "canal-derechos.md",
+                "retencion.md",
+            ],
+        )
+        self.assertEqual(set(documents), set(rules["documents"]))
+
+    def test_notice_and_authorization_are_safe_drafts(self):
+        notice = generate_documents(load_rules(), data_map())["aviso-privacidad.md"]
+        self.assertIn("revisión jurídica requerida", notice)
+        self.assertIn("casilla no premarcada", notice)
+        self.assertIn("enlace visible a la política", notice)
+        self.assertIn("no acredita que exista consentimiento", notice)
+        self.assertNotIn("consentimiento otorgado", notice)
+
+    def test_terms_and_rights_channel_keep_review_boundaries(self):
+        documents = generate_documents(load_rules(), data_map())
+        terms = documents["terminos-condiciones.md"]
+        rights = documents["canal-derechos.md"]
+        self.assertIn(PLACEHOLDER_TOKEN, terms)
+        self.assertIn("revisión jurídica requerida", terms)
+        self.assertIn(PLACEHOLDER_TOKEN, rights)
+        self.assertIn("no inventa un plazo legal", rights)
+        self.assertNotIn("30 días", rights)
 
     def test_owner_placeholders_are_preserved(self):
         rules = load_rules()
