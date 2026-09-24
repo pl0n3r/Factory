@@ -26,8 +26,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Validar contrato de entrada
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - name: Validar modo, idioma y número
+        env:
+          MODE: ${{ inputs.mode }}
+          LANGUAGE: ${{ inputs.language }}
+          NUMBER: ${{ inputs.number }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in sync|suggest|validate) ;; *) echo "::error::mode inválido"; exit 1 ;; esac
+          case "$LANGUAGE" in es|en) ;; *) echo "::error::language inválido"; exit 1 ;; esac
+          if [[ "$MODE" != "sync" && "$NUMBER" == "0" ]]; then
+            echo "::error::number es obligatorio para suggest/validate"
+            exit 1
+          fi
+
   validate:
     name: Validar evidencia de roles
+    needs: preflight
     if: inputs.mode == 'validate'
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -85,6 +107,7 @@ jobs:
 
   mutate:
     name: Sincronizar o sugerir roles
+    needs: preflight
     if: inputs.mode == 'sync' || inputs.mode == 'suggest'
     runs-on: ubuntu-latest
     timeout-minutes: 8

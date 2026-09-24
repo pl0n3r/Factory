@@ -9,6 +9,10 @@ WF = (ROOT / ".github/workflows/roles.yml").read_text(encoding="utf-8")
 
 class RolesWorkflowContractTests(unittest.TestCase):
     def test_modes_language_and_ref_are_closed(self):
+        self.assertIn("name: Validar contrato de entrada", WF)
+        self.assertIn('case "$MODE" in sync|suggest|validate)', WF)
+        self.assertIn('case "$LANGUAGE" in es|en)', WF)
+        self.assertIn("needs: preflight", WF)
         self.assertIn("inputs.mode == 'validate'", WF)
         self.assertIn("inputs.mode == 'sync' || inputs.mode == 'suggest'", WF)
         self.assertIn('"es" || "$LANGUAGE" == "en"', WF)
