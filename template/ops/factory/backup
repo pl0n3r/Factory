@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${FACTORY_PREVIEW:-}" == "1" ]] || { echo "adapter template: producción no configurada" >&2; exit 1; }
+[[ "${FACTORY_SYNTHETIC_DATA:-}" == "1" ]] || { echo "adapter template: se requieren datos sintéticos" >&2; exit 1; }
+: "${FACTORY_PREVIEW_ROOT:?FACTORY_PREVIEW_ROOT requerido}"
+mkdir -p "$FACTORY_PREVIEW_ROOT/state"
+printf 'synthetic-state\n' > "$FACTORY_PREVIEW_ROOT/state/current"
+cp "$FACTORY_PREVIEW_ROOT/state/current" "$FACTORY_PREVIEW_ROOT/state/backup"
