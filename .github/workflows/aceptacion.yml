@@ -1,0 +1,77 @@
+name: Aceptación ejecutable reusable
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: Issue asociado; 0 deriva trabajo/issue-N
+        required: false
+        default: 0
+        type: number
+
+permissions:
+  contents: read
+  issues: read
+  checks: read
+
+concurrency:
+  group: acceptance-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: Criterios de aceptación
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validar contexto PR
+        env:
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+          ISSUE_INPUT: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          [[ -n "$EVENT_PR" ]] || { echo "::error::Se requiere pull_request"; exit 1; }
+          issue="$ISSUE_INPUT"
+          if [[ "$issue" == "0" ]]; then
+            [[ "$HEAD_REF" =~ ^trabajo/issue-([1-9][0-9]*)$ ]] || { echo "::error::No se pudo derivar Issue"; exit 1; }
+            issue="${BASH_REMATCH[1]}"
+          fi
+          [[ "$issue" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Issue inválido"; exit 1; }
+          echo "ISSUE_NUMBER=$issue" >> "$GITHUB_ENV"
+
+      - name: Descargar candidato
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Descargar kit publicado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Construir evidencia del SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/issues/$ISSUE_NUMBER" > /tmp/issue.json
+          gh api "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" > /tmp/checks.json
+          jq -n --slurpfile issue /tmp/issue.json --slurpfile checks /tmp/checks.json \
+            '{issue:$issue[0], checks:$checks[0]}' > /tmp/acceptance.json
+
+      - name: Verificar criterios específicos
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/aceptacion_kit.py < /tmp/acceptance.json | tee /tmp/acceptance-result.json
+          {
+            printf '### Criterios de aceptación\n\n```json\n'
+            cat /tmp/acceptance-result.json
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"

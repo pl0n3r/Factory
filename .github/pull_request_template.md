@@ -8,8 +8,8 @@ Closes #N · Reserva: <UUID>
 
 ## Criterios de aceptación
 
-- [ ] <criterio 1>: evidencia <comando/test/URL>
-- [ ] <criterio 2>: evidencia …
+- [ ] El Issue contiene criterios `AC-NN` y marker `factory-acceptance` consistentes.
+- [ ] El job **Criterios de aceptación** verifica la evidencia específica del Issue.
 
 ## Riesgo y reversión
 
