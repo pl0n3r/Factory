@@ -115,6 +115,30 @@ class PrivacyAuditTests(unittest.TestCase):
                 collect_sources(root)
             self.assertNotIn("Jane Doe", str(caught.exception))
 
+    def test_nextjs_route_is_audited_without_leaking_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            route = root / "src" / "app" / "[locale]" / "(panel)" / "admin"
+            route.mkdir(parents=True)
+            source = route / "page.tsx"
+            source.write_text(
+                'const phone = "3001234567";\n',
+                encoding="utf-8",
+            )
+            current = data_map()
+            report = audit_sources(
+                sources=collect_sources(root),
+                current_document=current,
+                previous_document=deepcopy(current),
+            )
+            expected_path = "src/app/[locale]/(panel)/admin/page.tsx"
+            self.assertEqual(
+                report["undocumented_fields"],
+                [{"signal": "phone", "paths": [expected_path]}],
+            )
+            self.assertIn(expected_path, report["audit_issue_body"])
+            self.assertNotIn("3001234567", str(report))
+
     def test_collect_sources_rejects_symlink_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
