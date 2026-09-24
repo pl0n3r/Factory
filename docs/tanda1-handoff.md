@@ -29,7 +29,20 @@ El contrato histórico de #12 pedía, entre otras evidencias, una **referencia v
 
 ## #13 — épico de madurez · ABIERTO
 
-#13 **ya no está bloqueado por #9, #10 ni #12**. Permanece abierto mientras se completa el frente crítico actual de privacidad como código (#54), incluido el set documental generado de #71 y las condiciones restantes definidas por el propio épico #54.
+#13 **ya no está bloqueado por #9, #10 ni #12**. Permanece abierto únicamente mientras se completa el frente crítico actual de privacidad como código (#54).
+
+### #54 — privacidad como código · EN CURSO
+
+Factory ya integró el núcleo técnico y sus extensiones:
+- #57–#60: reglas/generador, gate reusable, auditoría semanal/puerta legal y template;
+- #71/#78: contrato ampliado de **tres a seis documentos** y gate derivado de `legal/reglas-datos.yml`;
+- #74/#75: perfiles profesionales completos obligatorios en todos los repositorios.
+
+Quedan exactamente dos condiciones para cerrar #54:
+1. Condor, GrindFlow y BRVTAL revalidados contra el contrato vigente de **seis documentos**; la evidencia histórica basada en tres documentos no basta.
+2. Primera ejecución/reporte real del auditor semanal con un caller pinneado al contrato vigente.
+
+Condor tiene un dry-run sanitizado equivalente en estado `clean`, pero su caller real todavía no registra ejecuciones y sigue requiriendo actualización de pin; por eso ese dry-run no sustituye el segundo criterio.
 
 No se debe reabrir un gate histórico para suplir trabajo nuevo: el trabajo pendiente debe conservar su Issue y su evidencia propios.
 

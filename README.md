@@ -68,7 +68,7 @@ flowchart LR
 
 ## Estado actual
 
-🚧 **TANDA 1 está técnicamente avanzada y bloqueada por evidencia externa/material.** El kit base (#1), roles y madurez técnica principal (#2–#8, #11) y el arranque (#14) ya están integrados. Permanecen abiertos #9, #10 y #12; por dependencia, el épico #13 también sigue bloqueado. **`v1` y `v1.0.0` todavía no están publicados.**
+🚧 **TANDA 1 sigue abierta por el frente crítico de privacidad como código (#54).** El kit base (#1), roles, madurez técnica (#2–#12), arranque (#14), el set documental de seis piezas (#71) y la regla de perfiles profesionales completos (#74) ya están integrados. **#9, #10 y #12 están cerrados**; #13 permanece abierto únicamente hasta completar #54. **`v1` y `v1.0.0` todavía no están publicados.**
 
 | Etapa | Estado |
 | --- | --- |
@@ -77,10 +77,11 @@ flowchart LR
 | Kit base reusable y template (#1) | ✅ Hecho |
 | Roles, orquestación, aceptación, métricas, producto, costos y memoria (#2–#8) | ✅ Hecho |
 | Entornos previos a producción (#11) | ✅ Hecho |
-| Puerta humana de notificación (#9) | ⛔ Bloqueado · confirmar recepción push móvil real |
-| Resiliencia del dueño (#10) | ⛔ Bloqueado · evidenciar identidades/GitHub Apps separadas con mínimo privilegio |
-| Cumplimiento legal y de datos (#12) | ⛔ Bloqueado · evidencia material + revisión jurídica/humana; inventario npm de BRVTAL cubierto por lock reproducible del run 36001724208 |
-| Épico de madurez (#13) | ⛔ Bloqueado por #9, #10 y #12 |
+| Puerta humana de notificación (#9) | ✅ Cerrado · recepción push móvil real confirmada |
+| Resiliencia del dueño (#10) | ✅ Cerrado · restore externo + modelo de capacidades documentado |
+| Cumplimiento técnico legal/datos (#12) | ✅ Cerrado · evidencia técnica/licencias integrada; revisión jurídica separada en #53 |
+| Privacidad como código (#54) | ⛔ En curso · revalidar los 3 productos contra 6 documentos + obtener primer reporte real del auditor |
+| Épico de madurez (#13) | ⛔ Bloqueado únicamente por #54 |
 | Bootstrap del primer `v1` (#41) | ✅ Preparado · [guía de bootstrap](docs/release-bootstrap.md) |
 | Publicación `v1.0.0` | ⏸️ No autorizada mientras TANDA 1 siga abierta |
 | Adopción en Condor, GrindFlow y BRVTAL | ⏳ TANDA 2 · después del kit `v1` |
@@ -98,13 +99,14 @@ El detalle operativo de lo que falta está en **[docs/tanda1-handoff.md](docs/ta
 | 5 | [#5](https://github.com/pl0n3r/factory/issues/5) · [#7](https://github.com/pl0n3r/factory/issues/7) | ✅ Evaluación · control de costos |
 | 6 | [#6](https://github.com/pl0n3r/factory/issues/6) · [#8](https://github.com/pl0n3r/factory/issues/8) | ✅ Retroalimentación · memoria compartida |
 | 7 | [#11](https://github.com/pl0n3r/factory/issues/11) | ✅ Entornos previos |
-| 8 | [#9](https://github.com/pl0n3r/factory/issues/9) | ⛔ Solo falta confirmación externa de recepción push móvil |
-| 9 | [#10](https://github.com/pl0n3r/factory/issues/10) | ⛔ Solo falta evidencia de identidades/GitHub Apps separadas |
-| 10 | [#12](https://github.com/pl0n3r/factory/issues/12) | ⛔ Falta evidencia material + revisión jurídica/humana |
-| 11 | [#13](https://github.com/pl0n3r/factory/issues/13) | ⛔ Se cierra después de #9, #10 y #12 |
-| 12 | [#41](https://github.com/pl0n3r/factory/issues/41) | ✅ Bootstrap seguro del primer `v1` documentado |
-| 13 | Puerta `release-1.0.0` | ⏸️ Decisión del dueño, solo cuando #1–#14 estén cerrados |
-| 14 | TANDA 2 | ⏳ Adopción del kit publicado en Condor → GrindFlow → BRVTAL |
+| 8 | [#9](https://github.com/pl0n3r/factory/issues/9) | ✅ Puerta humana + recepción móvil real verificadas |
+| 9 | [#10](https://github.com/pl0n3r/factory/issues/10) | ✅ Resiliencia y modelo de capacidades cerrados |
+| 10 | [#12](https://github.com/pl0n3r/factory/issues/12) | ✅ Cumplimiento técnico de datos/licencias cerrado |
+| 11 | [#13](https://github.com/pl0n3r/factory/issues/13) | ⛔ Espera únicamente #54 |
+| 12 | [#54](https://github.com/pl0n3r/factory/issues/54) | ⛔ Privacidad como código: adopciones a 6 documentos + primer reporte real |
+| 13 | [#41](https://github.com/pl0n3r/factory/issues/41) | ✅ Bootstrap seguro del primer `v1` documentado |
+| 14 | Puerta `release-1.0.0` | ⏸️ Decisión del dueño, solo cuando #1–#14 y #54 estén cerrados |
+| 15 | TANDA 2 | ⏳ Adopción del kit publicado en Condor → GrindFlow → BRVTAL |
 
 ---
 
