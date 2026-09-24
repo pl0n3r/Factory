@@ -33,6 +33,37 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertNotIn("kit_ref:", release)
         self.assertIn("factory_bootstrap: true", release)
 
+    def test_preflight_revalidates_v1_ruleset_read_only(self):
+        preflight = BOOTSTRAP.split("\n  preflight:", 1)[1].split("\n  release:", 1)[0]
+        self.assertIn(
+            'repos/$REPOSITORY/rulesets?includes_parents=true&per_page=100',
+            preflight,
+        )
+        self.assertIn(
+            'repos/$REPOSITORY/rulesets/$ruleset_id?includes_parents=true',
+            preflight,
+        )
+        self.assertIn("python3 scripts/verificar_ruleset_v1.py", preflight)
+        self.assertLess(
+            preflight.index("python3 scripts/verificar_ruleset_v1.py"),
+            preflight.index("python3 scripts/release_bootstrap.py"),
+        )
+        self.assertIn("contents: read", preflight)
+        self.assertIn("issues: read", preflight)
+        self.assertNotIn("contents: write", preflight)
+
+    def test_guide_keeps_parent_ruleset_gate_boundary(self):
+        for value in (
+            "#83",
+            "ruleset",
+            "creation",
+            "update",
+            "deletion",
+            "bypass",
+            "solo estructural",
+        ):
+            self.assertIn(value, GUIDE)
+
     def test_bootstrap_guide_matches_executable_path(self):
         for value in (
             "Bootstrap release Factory v1.0.0", "factory-release-approval",
