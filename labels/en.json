@@ -42,6 +42,30 @@
     "description": "Active production or operations failure."
   },
   {
+    "key": "type_security",
+    "name": "type: security",
+    "color": "B60205",
+    "description": "Security, authentication, authorization, or vulnerabilities."
+  },
+  {
+    "key": "type_quality",
+    "name": "type: quality",
+    "color": "5319E7",
+    "description": "Static quality, maintainability, or quality debt."
+  },
+  {
+    "key": "type_technical_debt",
+    "name": "type: technical debt",
+    "color": "FBCA04",
+    "description": "Explicit technical debt requiring follow-up."
+  },
+  {
+    "key": "type_accessibility",
+    "name": "type: accessibility",
+    "color": "0E8A16",
+    "description": "Accessibility, WCAG, or assistive experience."
+  },
+  {
     "key": "priority_critical",
     "name": "priority: critical",
     "color": "B60205",
@@ -54,10 +78,16 @@
     "description": "Requires priority attention."
   },
   {
-    "key": "priority_normal",
-    "name": "priority: normal",
+    "key": "priority_medium",
+    "name": "priority: medium",
+    "color": "FBCA04",
+    "description": "Standard priority for planned work."
+  },
+  {
+    "key": "priority_low",
+    "name": "priority: low",
     "color": "C5DEF5",
-    "description": "Standard priority."
+    "description": "Low-urgency or convenience work."
   },
   {
     "key": "state_available",

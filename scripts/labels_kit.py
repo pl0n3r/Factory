@@ -22,6 +22,22 @@ CATALOGS = {
     "es": Path("labels/es.json"),
     "en": Path("labels/en.json"),
 }
+LEGACY_ALIASES = {
+    "es": {
+        "prioridad: normal": "prioridad: media",
+        "calidad": "tipo: calidad",
+        "seguridad": "tipo: seguridad",
+        "deuda técnica": "tipo: deuda técnica",
+        "accesibilidad": "tipo: accesibilidad",
+    },
+    "en": {
+        "priority: normal": "priority: medium",
+        "quality": "type: quality",
+        "security": "type: security",
+        "technical debt": "type: technical debt",
+        "accessibility": "type: accessibility",
+    },
+}
 MAX_CATALOG_BYTES = 512 * 1024
 
 class LabelError(ValueError):
@@ -33,6 +49,12 @@ def catalog_for_language(language: str) -> list[dict[str, str]]:
     except KeyError as exc:
         raise LabelError("Idioma de catálogo inválido.") from exc
     return load_catalog(path, root=KIT_ROOT)
+
+def aliases_for_language(language: str) -> dict[str, str]:
+    try:
+        return dict(LEGACY_ALIASES[language])
+    except KeyError as exc:
+        raise LabelError("Idioma de aliases inválido.") from exc
 
 def load_catalog(path: Path, *, root: Path | None = None) -> list[dict[str, str]]:
     try:
@@ -101,15 +123,44 @@ def validate_selection(catalog: list[dict[str, str]], names: set[str]) -> None:
                 f"Debe existir exactamente una etiqueta de {labels[prefix]}; encontradas: {sorted(matches)}"
             )
 
-def upsert_plan(catalog: list[dict[str, str]], existing: Any) -> list[dict[str, str]]:
+def upsert_plan(
+    catalog: list[dict[str, str]],
+    existing: Any,
+    *,
+    aliases: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
     if not isinstance(existing, list) or len(existing) > 1000:
         raise LabelError("La respuesta de labels existentes debe ser una lista acotada.")
     current: dict[str, dict[str, Any]] = {}
     for item in existing:
         if isinstance(item, dict) and isinstance(item.get("name"), str):
             current[item["name"]] = item
+
+    wanted_by_name = {item["name"]: item for item in catalog}
     plan: list[dict[str, str]] = []
+    renamed_targets: set[str] = set()
+    for old_name, new_name in (aliases or {}).items():
+        if old_name == new_name or new_name not in wanted_by_name:
+            raise LabelError("Alias de migración inválido.")
+        if old_name not in current:
+            continue
+        if new_name in current or new_name in renamed_targets:
+            raise LabelError(
+                f"No se puede renombrar {old_name!r} a {new_name!r}: "
+                "la etiqueta destino ya existe."
+            )
+        plan.append(
+            {
+                "action": "rename",
+                "old_name": old_name,
+                **wanted_by_name[new_name],
+            }
+        )
+        renamed_targets.add(new_name)
+
     for wanted in catalog:
+        if wanted["name"] in renamed_targets:
+            continue
         have = current.get(wanted["name"])
         if have is None:
             plan.append({"action": "create", **wanted})
@@ -162,7 +213,17 @@ def main() -> int:
             print('{"valid":true}')
             return 0
         if args.command == "upsert-plan":
-            print(json.dumps(upsert_plan(catalog, json.load(sys.stdin)), ensure_ascii=False, sort_keys=True))
+            print(
+                json.dumps(
+                    upsert_plan(
+                        catalog,
+                        json.load(sys.stdin),
+                        aliases=aliases_for_language(args.language),
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
             return 0
         invalid = sweep(catalog, sys.stdin.readlines())
         print(json.dumps({"invalid": invalid}, sort_keys=True))

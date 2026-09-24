@@ -70,19 +70,32 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          gh api --paginate "repos/$REPOSITORIO/labels?per_page=100" > /tmp/existing.json
+          gh api --paginate "repos/$REPOSITORIO/labels?per_page=100" --slurp \
+            | jq 'add // []' > /tmp/existing.json
           python3 .factory/scripts/labels_kit.py upsert-plan --language "$LANGUAGE" < /tmp/existing.json > /tmp/plan.json
           jq -c '.[]' /tmp/plan.json | while IFS= read -r item; do
             action="$(jq -r '.action' <<<"$item")"
             name="$(jq -r '.name' <<<"$item")"
             color="$(jq -r '.color' <<<"$item")"
             description="$(jq -r '.description' <<<"$item")"
-            if [[ "$action" == "create" ]]; then
-              gh api --method POST "repos/$REPOSITORIO/labels" -f name="$name" -f color="$color" -f description="$description" >/dev/null
-            else
-              encoded="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$name")"
-              gh api --method PATCH "repos/$REPOSITORIO/labels/$encoded" -f new_name="$name" -f color="$color" -f description="$description" >/dev/null
-            fi
+            case "$action" in
+              create)
+                gh api --method POST "repos/$REPOSITORIO/labels" -f name="$name" -f color="$color" -f description="$description" >/dev/null
+                ;;
+              update)
+                encoded="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$name")"
+                gh api --method PATCH "repos/$REPOSITORIO/labels/$encoded" -f new_name="$name" -f color="$color" -f description="$description" >/dev/null
+                ;;
+              rename)
+                old_name="$(jq -r '.old_name' <<<"$item")"
+                encoded="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$old_name")"
+                gh api --method PATCH "repos/$REPOSITORIO/labels/$encoded" -f new_name="$name" -f color="$color" -f description="$description" >/dev/null
+                ;;
+              *)
+                echo "::error::acción de sync desconocida: $action"
+                exit 1
+                ;;
+            esac
           done
 
       - name: Validar Issue o PR

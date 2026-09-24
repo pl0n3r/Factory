@@ -42,6 +42,30 @@
     "description": "Fallo activo de producción u operación."
   },
   {
+    "key": "type_security",
+    "name": "tipo: seguridad",
+    "color": "B60205",
+    "description": "Seguridad, autenticación, autorización o vulnerabilidades."
+  },
+  {
+    "key": "type_quality",
+    "name": "tipo: calidad",
+    "color": "5319E7",
+    "description": "Calidad estática, mantenibilidad o deuda de calidad."
+  },
+  {
+    "key": "type_technical_debt",
+    "name": "tipo: deuda técnica",
+    "color": "FBCA04",
+    "description": "Deuda técnica explícita que requiere seguimiento."
+  },
+  {
+    "key": "type_accessibility",
+    "name": "tipo: accesibilidad",
+    "color": "0E8A16",
+    "description": "Accesibilidad, WCAG o experiencia asistiva."
+  },
+  {
     "key": "priority_critical",
     "name": "prioridad: crítica",
     "color": "B60205",
@@ -54,10 +78,16 @@
     "description": "Requiere atención prioritaria."
   },
   {
-    "key": "priority_normal",
-    "name": "prioridad: normal",
+    "key": "priority_medium",
+    "name": "prioridad: media",
+    "color": "FBCA04",
+    "description": "Prioridad estándar para trabajo planificado."
+  },
+  {
+    "key": "priority_low",
+    "name": "prioridad: baja",
     "color": "C5DEF5",
-    "description": "Prioridad estándar."
+    "description": "Trabajo de baja urgencia o conveniencia."
   },
   {
     "key": "state_available",
