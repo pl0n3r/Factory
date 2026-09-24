@@ -50,8 +50,8 @@ class ReadmeTanda1Tests(unittest.TestCase):
             "CI, deploy y observer",
             "referencia vigente a política de privacidad",
             "revisión jurídica humana",
-            "sin lockfile npm",
-            "no existe todavía un inventario npm exacto y reproducible",
+            "snapshot npm reproducible",
+            "cubre el inventario de licencias de #12",
             "no publicado y no autorizado",
             "Default seguro",
         ):
