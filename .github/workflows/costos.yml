@@ -1,0 +1,158 @@
+name: Control de costos
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited, reopened, ready_for_review]
+  workflow_dispatch:
+  schedule:
+    - cron: '41 6 1 * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: costos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validar-candidato:
+    name: Validar candidato de costos
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar candidato
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Ejecutar regresiones
+        run: |
+          set -euo pipefail
+          python3 -m py_compile metricas/costos.py
+          PYTHONPATH=metricas python3 -m unittest discover -s metricas -p 'test_costos.py'
+
+  presupuesto-pr:
+    name: Presupuesto del PR
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Descargar base confiable
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Detectar disponibilidad del control en base confiable
+        id: base
+        run: |
+          set -euo pipefail
+          if [[ -f metricas/costos.py && -f metricas/presupuestos.json ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            mkdir -p artifacts
+            printf '%s\n' '{"schema_version":1,"status":"bootstrap-not-enforced","reasons":["trusted-base-without-cost-control"]}' > artifacts/presupuesto-pr.json
+            {
+              echo "# Presupuesto de tarea / PR"
+              echo
+              echo "- Estado: **bootstrap-not-enforced**"
+              echo "- Razón: la base confiable todavía no contiene el control de costos; no se informa un falso ok."
+            } > artifacts/presupuesto-pr.md
+            cat artifacts/presupuesto-pr.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Validar control de costos
+        if: steps.base.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          python3 -m py_compile metricas/costos.py
+          PYTHONPATH=metricas python3 -m unittest discover -s metricas -p 'test_costos.py'
+
+      - name: Evaluar presupuesto
+        if: steps.base.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python3 metricas/costos.py pr \
+            --event "$GITHUB_EVENT_PATH" \
+            --budgets metricas/presupuestos.json \
+            --json-out artifacts/presupuesto-pr.json \
+            --markdown-out artifacts/presupuesto-pr.md
+          cat artifacts/presupuesto-pr.md >> "$GITHUB_STEP_SUMMARY"
+          status="$(python3 -c 'import json; print(json.load(open("artifacts/presupuesto-pr.json"))["status"])')"
+          if [[ "$status" == "warning" || "$status" == "soft-block" ]]; then
+            echo "::warning::Control de costos: $status. Revisa el Job Summary antes de integrar."
+          fi
+
+      - name: Conservar evidencia
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: presupuesto-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: |
+            artifacts/presupuesto-pr.json
+            artifacts/presupuesto-pr.md
+          retention-days: 30
+          if-no-files-found: error
+
+  tendencia-ci:
+    name: Tendencia de minutos CI por PR
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Medir histórico reciente
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh api "repos/$REPOSITORIO/actions/workflows/ci.yml/runs?event=pull_request&per_page=50" > artifacts/runs.json
+          : > artifacts/ci-history.ndjson
+
+          jq -r '
+            .workflow_runs[]
+            | select(.status == "completed")
+            | select((.pull_requests | length) > 0)
+            | [.id, .pull_requests[0].number, .conclusion, .created_at]
+            | @tsv
+          ' artifacts/runs.json |
+            while IFS="$(printf '\t')" read -r run_id pr_number conclusion created_at; do
+              gh api --paginate "repos/$REPOSITORIO/actions/runs/$run_id/jobs?per_page=100" --slurp > artifacts/jobs.json
+              seconds="$(jq '[.[].jobs[]? | select(.started_at != null and .completed_at != null)
+                | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))] | add // 0' artifacts/jobs.json)"
+              python3 -c 'import json,sys; print(json.dumps({"run_id":int(sys.argv[1]),"pr_number":int(sys.argv[2]),"conclusion":sys.argv[3],"created_at":sys.argv[4],"ci_minutes":round(float(sys.argv[5])/60,2)}))' \
+                "$run_id" "$pr_number" "$conclusion" "$created_at" "$seconds" >> artifacts/ci-history.ndjson
+            done
+
+          jq -s '.' artifacts/ci-history.ndjson > artifacts/ci-history.json
+          python3 metricas/costos.py trend \
+            --input artifacts/ci-history.json \
+            --json-out artifacts/ci-trend.json
+          {
+            echo "## Tendencia de costo CI total por PR"
+            echo
+            echo '~~~json'
+            cat artifacts/ci-trend.json
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Conservar tendencia
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: tendencia-ci-${{ github.run_id }}
+          path: artifacts/ci-trend.json
+          retention-days: 90
+          if-no-files-found: error
