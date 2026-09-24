@@ -36,7 +36,7 @@ class DocumentationInventoryTests(unittest.TestCase):
             "BRVTAL": "138b1babac0ff6797ad9e0f3ccb0fbda0f793452",
         }
         for product, sha in expected.items():
-            self.assertIn(f"- {product}: \`{sha}\`", snapshot)
+            self.assertIn(f"- {product}: `{sha}`", snapshot)
 
     def test_condor_inventory(self):
         """AC-02: los términos de Condor viven dentro de su sección."""
