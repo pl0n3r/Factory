@@ -67,6 +67,38 @@ class PrivacyAuditTests(unittest.TestCase):
         self.assertNotIn("3001234567", rendered)
         self.assertIn(AUDIT_MARKER, report["audit_issue_body"])
 
+    def test_health_endpoint_does_not_create_sensitive_finding(self):
+        """La auditoría no confunde un endpoint /health con datos de salud."""
+        current = data_map()
+        report = audit_sources(
+            sources={"src/HealthController.php": '$route = "/health";\n'},
+            current_document=current,
+            previous_document=deepcopy(current),
+        )
+        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report["undocumented_fields"], [])
+
+    def test_explicit_health_field_is_reported_as_sensitive(self):
+        """La auditoría reporta todas las formas explícitas soportadas de health."""
+        current = data_map()
+        snippets = (
+            '$payload = ["health" => $value];\n',
+            'const profile = { health: value };\n',
+            'const value = record.health;\n',
+        )
+        for snippet in snippets:
+            with self.subTest(snippet=snippet):
+                report = audit_sources(
+                    sources={"src/Profile.php": snippet},
+                    current_document=current,
+                    previous_document=deepcopy(current),
+                )
+                self.assertEqual(report["status"], "review_required")
+                self.assertEqual(
+                    report["undocumented_fields"],
+                    [{"signal": "health", "paths": ["src/Profile.php"]}],
+                )
+
     def test_report_is_deterministic_and_idempotent(self):
         current = data_map()
         kwargs = {

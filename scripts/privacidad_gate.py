@@ -26,7 +26,7 @@ SOURCE_SUFFIXES = (
 IGNORED_PREFIXES = (
     "tests/", "docs/", ".github/", "vendor/", "node_modules/", "legal/"
 )
-AMBIGUOUS_SIGNALS = {"name", "location", "document"}
+AMBIGUOUS_SIGNALS = {"name", "location", "document", "health"}
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -41,13 +41,26 @@ def _code_path(path: str) -> bool:
 
 
 def _signal_present(signal: str, line: str) -> bool:
+    """Detecta señales sensibles conservando contexto para nombres ambiguos."""
     if signal in AMBIGUOUS_SIGNALS:
         quoted = (
             f'"{signal}"' in line
             or f"'{signal}'" in line
             or re.search(rf"\bname\s*=\s*['\"]{re.escape(signal)}['\"]", line)
         )
-        return bool(quoted)
+        if quoted:
+            return True
+        if signal == "health":
+            object_field = re.search(
+                rf"(?:{{|,)\s*{re.escape(signal)}\s*:",
+                line,
+            )
+            dotted_property = re.search(
+                rf"\.\s*{re.escape(signal)}(?![a-z0-9_])",
+                line,
+            )
+            return bool(object_field or dotted_property)
+        return False
     return re.search(
         rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",
         line,
