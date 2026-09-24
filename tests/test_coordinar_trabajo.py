@@ -95,6 +95,7 @@ class FakeGitHub:
         self.assignees: set[str] = set()
         self.fail_comment = False
         self.pull_update_failures_remaining = 0
+        self.check_runs: list[dict] = []
         self.commit_times = {
             "abc123": datetime.now(timezone.utc),
         }
@@ -120,6 +121,25 @@ class FakeGitHub:
                 "user": {"login": BOT},
                 "created_at": now,
                 "updated_at": now,
+            }
+        )
+
+    def create_failed_check(
+        self,
+        name: str,
+        head_sha: str,
+        title: str,
+        summary: str,
+    ) -> None:
+        """Registra un check failure falso sobre un SHA."""
+        self.check_runs.append(
+            {
+                "name": name,
+                "head_sha": head_sha,
+                "status": "completed",
+                "conclusion": "failure",
+                "title": title,
+                "summary": summary,
             }
         )
 
@@ -348,6 +368,13 @@ class WorkflowCoordinacionTests(unittest.TestCase):
         self.assertIn('--actor "$ACTOR"', job_block)
         self.assertIn('--association "$ASOCIACION"', job_block)
         self.assertIn('--body "$CUERPO"', job_block)
+
+        issues_block = self.yaml_block(workflow, "issues:", 2)
+        self.assertIn("edited", issues_block)
+        issue_job = self.yaml_block(workflow, "estado-issue:", 2)
+        self.assertIn("github.event.action == 'edited'", issue_job)
+        issue_permissions = self.yaml_block(issue_job, "permissions:", 4)
+        self.assertIn("checks: write", issue_permissions)
 
 
 
@@ -991,6 +1018,105 @@ class CoordinacionTests(unittest.TestCase):
             session,
         )
         validate_pull(api, 15, True)
+
+    def test_legacy_reservation_is_rejected_for_protected_pr(self) -> None:
+        """Un PR protegido no acepta reservas v1 sin fingerprint."""
+        api = FakeGitHub()
+        add_active_reservation(api, pinned=False)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12", "sha": "head-legacy"},
+            "base": {"ref": "main"},
+        }
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "reserva legacy sin fingerprint",
+        ):
+            validate_pull(api, 15, True)
+
+    def test_issue_edit_contract_drift_invalidates_pr_head_checks(self) -> None:
+        """Editar un AC invalida los checks verdes del mismo HEAD."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12", "sha": "head-drift"},
+            "base": {"ref": "main"},
+        }
+        api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
+            "El gate base pasa.",
+            "El gate cambiado pasa.",
+        )
+
+        update_issue_state(api, 12, "edited")
+
+        self.assertEqual(
+            [check["name"] for check in api.check_runs],
+            ["Criterios de aceptación", "Validar"],
+        )
+        self.assertTrue(
+            all(check["head_sha"] == "head-drift" for check in api.check_runs)
+        )
+        self.assertTrue(
+            all(check["conclusion"] == "failure" for check in api.check_runs)
+        )
+
+    def test_issue_edit_outside_contract_does_not_invalidate_checks(self) -> None:
+        """Editar prosa periférica no genera falsos failures."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12", "sha": "head-context"},
+            "base": {"ref": "main"},
+        }
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY
+            + "\n\nNota periférica sin tocar criterios ni marker.\n"
+        )
+
+        update_issue_state(api, 12, "edited")
+
+        self.assertEqual(api.check_runs, [])
+
+    def test_issue_edit_matching_pinned_contract_is_noop(self) -> None:
+        """Un contrato v2 sin cambios no invalida checks."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12", "sha": "head-stable"},
+            "base": {"ref": "main"},
+        }
+
+        update_issue_state(api, 12, "edited")
+
+        self.assertEqual(api.check_runs, [])
 
     def test_issue_without_executable_acceptance_cannot_be_reserved(self) -> None:
         """El coordinador rechaza trabajo sin contrato AC ejecutable."""
