@@ -1,0 +1,85 @@
+name: Restore externo
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/restore-drill.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-externo-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  empaquetar:
+    name: Empaquetar checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar SHA base exacto
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Construir y verificar backup determinista
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$EXPECTED_SHA"
+
+          out="$RUNNER_TEMP/factory-restore"
+          restored="$RUNNER_TEMP/restored"
+          mkdir -p "$out" "$restored"
+
+          git ls-files -z | LC_ALL=C sort -z > "$out/files.zlist"
+          git ls-files -z | LC_ALL=C sort -z | xargs -0 sha256sum > "$out/manifest.sha256"
+          file_count="$(git ls-files | wc -l | tr -d ' ')"
+          tree_sha="$(git rev-parse 'HEAD^{tree}')"
+
+          tar --null -T "$out/files.zlist" -czf "$out/factory-source.tar.gz"
+          archive_sha="$(sha256sum "$out/factory-source.tar.gz" | awk '{print $1}')"
+
+          SOURCE_SHA="$actual_sha" TREE_SHA="$tree_sha" FILE_COUNT="$file_count" ARCHIVE_SHA="$archive_sha" \
+            python3 - <<'PY' > "$out/metadata.json"
+          import json
+          import os
+          print(json.dumps({
+              "version": 1,
+              "source_sha": os.environ["SOURCE_SHA"],
+              "tree_sha": os.environ["TREE_SHA"],
+              "file_count": int(os.environ["FILE_COUNT"]),
+              "archive_sha256": os.environ["ARCHIVE_SHA"],
+          }, sort_keys=True))
+          PY
+
+          tar -xzf "$out/factory-source.tar.gz" -C "$restored"
+          (
+            cd "$restored"
+            sha256sum -c "$out/manifest.sha256"
+          )
+          restored_count="$(find "$restored" -type f | wc -l | tr -d ' ')"
+          test "$restored_count" = "$file_count"
+          test "$(sha256sum "$out/factory-source.tar.gz" | awk '{print $1}')" = "$archive_sha"
+
+          rm "$out/files.zlist"
+
+      - name: Publicar artefacto temporal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: factory-restore-${{ github.event.pull_request.base.sha }}
+          path: |
+            ${{ runner.temp }}/factory-restore/factory-source.tar.gz
+            ${{ runner.temp }}/factory-restore/manifest.sha256
+            ${{ runner.temp }}/factory-restore/metadata.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
