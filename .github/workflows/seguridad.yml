@@ -39,8 +39,9 @@ jobs:
       - name: Ejecutar regresiones
         run: |
           set -euo pipefail
-          python3 -m py_compile seguridad/puertas_humanas.py
-          PYTHONPATH=seguridad python3 -m unittest discover -s seguridad -p 'test_puertas_humanas.py'
+          python3 -m py_compile seguridad/puertas_humanas.py seguridad/resiliencia.py
+          PYTHONPATH=seguridad python3 -m unittest discover -s seguridad -p 'test_*.py'
+          python3 seguridad/resiliencia.py --audit-workflows
           python3 -m json.tool seguridad/puertas-humanas.json >/dev/null
 
   preparar-cola:

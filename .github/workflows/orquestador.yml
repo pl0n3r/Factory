@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: orquestador-${{ github.event.issue.number || inputs.epic }}
@@ -20,6 +19,9 @@ concurrency:
 
 jobs:
   planificar:
+    permissions:
+      contents: read
+      issues: write
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
