@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 
 from scripts.coordinar_trabajo import (
@@ -813,6 +815,19 @@ class CoordinacionTests(unittest.TestCase):
                 STATUS_RESERVED,
             )
         self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_blocked_issue_reports_reason(self) -> None:
+        """Un /tomar bloqueado explica el no-op sin mutar coordinación."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        output = StringIO()
+        with redirect_stdout(output):
+            result = reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        self.assertIsNone(result)
+        self.assertIn("Issue #12", output.getvalue())
+        self.assertIn(STATUS_BLOCKED, output.getvalue())
         self.assertNotIn("trabajo/issue-12", api.branches)
 
     def test_blocked_issue_cannot_be_reserved(self) -> None:
