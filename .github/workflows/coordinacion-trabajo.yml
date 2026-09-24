@@ -75,6 +75,7 @@ jobs:
     permissions:
       contents: write
       issues: write
+      pull-requests: write
     steps:
       - name: Descargar coordinador canónico
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -119,7 +120,14 @@ jobs:
           ACCION: ${{ github.event.action }}
         run: |
           set -euo pipefail
-          python3 scripts/coordinar_trabajo.py pr-event             --repo "$REPOSITORIO"             --pr "$PR"             --action "$ACCION"
+          if [[ ! -f scripts/coordinar_trabajo.py ]]; then
+            echo "Arranque: main aún no contiene el coordinador; se omite."
+            exit 0
+          fi
+          python3 scripts/coordinar_trabajo.py pr-event \
+            --repo "$REPOSITORIO" \
+            --pr "$PR" \
+            --action "$ACCION"
 
   estado-issue:
     name: Limpiar o reabrir reserva
@@ -155,7 +163,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
+      contents: write
       issues: write
     steps:
       - name: Descargar coordinador canónico
