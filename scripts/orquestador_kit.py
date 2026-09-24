@@ -397,6 +397,7 @@ def render_graph(
         f"<!-- factory-plan-report:{epic} -->",
         f"## Grafo de ejecución · épico #{epic}",
         "",
+        "```mermaid",
         "graph TD",
     ]
     for position, task in enumerate(order, 1):
@@ -407,8 +408,9 @@ def render_graph(
         )
     for task in order:
         for dependency in task.depends_on:
-            lines.append(f"  {dependency} -> {task.key}")
+            lines.append(f"  {dependency} --> {task.key}")
     lines.extend([
+        "```",
         "",
         "| Orden | Issue | Owner | Roles | Paths |",
         "| ---: | --- | --- | --- | --- |",

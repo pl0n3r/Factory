@@ -51,6 +51,13 @@ class FakeGitHub:
     def try_assign(self, issue_number, login):
         self.issues[issue_number]["assignees"] = [{"login": login}]
 
+    def remove_label(self, issue_number, label):
+        self.issues[issue_number]["labels"] = [
+            item
+            for item in self.issues[issue_number].get("labels", [])
+            if item["name"] != label
+        ]
+
     def add_labels(self, issue_number, labels):
         current = {
             item["name"]
@@ -88,6 +95,12 @@ class FakeGitHub:
                 if comment["id"] == comment_id:
                     comment["body"] = payload["body"]
                     return comment
+        if method == "POST" and path.endswith("/assignees"):
+            number = int(path.split("/issues/", 1)[1].split("/", 1)[0])
+            self.issues[number]["assignees"] = [
+                {"login": name} for name in payload["assignees"]
+            ]
+            return self.issues[number]
         if method == "PATCH" and "/issues/" in path:
             number = int(path.rsplit("/", 1)[1])
             self.issues[number].update(payload)
@@ -118,6 +131,12 @@ class OrchestratorSyncTests(unittest.TestCase):
         self.assertEqual(second["issues"], first["issues"])
         self.assertEqual(len(api.issues), 3)
         self.assertEqual(len(api.comments), 1)
+
+    def test_epic_requires_exactly_one_type_and_priority(self):
+        api = FakeGitHub()
+        api.issues[3]["labels"] = [{"name": "tipo: infraestructura"}]
+        with self.assertRaisesRegex(Exception, "tipo y una prioridad"):
+            sync_plan(api, 3)
 
     def test_removed_materialized_task_fails_closed(self):
         api = FakeGitHub()

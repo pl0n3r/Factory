@@ -41,6 +41,25 @@ class OrchestratorKitTests(unittest.TestCase):
             ["A", "B", "C"],
         )
 
+    def test_render_graph_is_mermaid_with_dependencies(self):
+        from scripts.orquestador_kit import render_graph
+
+        tasks = parse_plan(
+            plan([
+                task("A", paths=["a.py"]),
+                task("B", paths=["b.py"], depends_on=["A"]),
+            ])
+        )
+        rendered = render_graph(
+            3,
+            tasks,
+            {"A": 10, "B": 11},
+            {"A": ["qa"], "B": ["contenido"]},
+        )
+        self.assertIn("```mermaid", rendered)
+        self.assertIn("A --> B", rendered)
+        self.assertIn("```", rendered)
+
     def test_cycle_fails_closed(self):
         with self.assertRaisesRegex(PlanError, "ciclo"):
             parse_plan(

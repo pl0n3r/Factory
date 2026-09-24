@@ -10,6 +10,7 @@ from typing import Any
 if __package__:
     from scripts.coordinar_trabajo import (
         GitHub,
+        GitHubError,
         STATUS_AVAILABLE,
         STATUS_RECOVERY,
         STATUS_RESERVED,
@@ -29,6 +30,7 @@ if __package__:
 else:
     from coordinar_trabajo import (
         GitHub,
+        GitHubError,
         STATUS_AVAILABLE,
         STATUS_RECOVERY,
         STATUS_RESERVED,
@@ -84,11 +86,15 @@ def _existing_tasks(
 
 def _inherited_labels(epic: dict[str, Any]) -> list[str]:
     labels = label_names(epic)
-    return sorted(
-        label
-        for label in labels
-        if label.startswith("tipo: ") or label.startswith("prioridad: ")
+    types = sorted(label for label in labels if label.startswith("tipo: "))
+    priorities = sorted(
+        label for label in labels if label.startswith("prioridad: ")
     )
+    if len(types) != 1 or len(priorities) != 1:
+        raise PlanError(
+            "El épico debe tener exactamente un tipo y una prioridad."
+        )
+    return types + priorities
 
 
 def _roles_for(task: PlannedTask, epic: dict[str, Any]) -> list[str]:
@@ -153,6 +159,29 @@ def _active(issue: dict[str, Any]) -> bool:
     )
 
 
+def _verify_owner(issue: dict[str, Any], owner: str) -> None:
+    assigned = {
+        str(item.get("login"))
+        for item in issue.get("assignees", [])
+        if isinstance(item, dict) and item.get("login")
+    }
+    if owner not in assigned:
+        raise PlanError(f"No fue posible asignar la tarea a @{owner}.")
+
+
+def _sync_role_labels(
+    api: GitHub,
+    issue_number: int,
+    role_labels: list[str],
+    current_labels: set[str],
+) -> None:
+    wanted = set(role_labels)
+    for label in current_labels:
+        if label.startswith("rol: ") and label not in wanted:
+            api.remove_label(issue_number, label)
+    api.add_labels(issue_number, role_labels)
+
+
 def _upsert_issue(
     api: GitHub,
     *,
@@ -177,6 +206,7 @@ def _upsert_issue(
         created = api.request("POST", f"/repos/{api.repo}/issues", payload)
         if not isinstance(created, dict):
             raise PlanError(f"No se pudo crear {task.key}.")
+        _verify_owner(created, task.owner)
         return created
 
     old_marker = parse_task_marker(str(existing.get("body") or ""))
@@ -193,9 +223,16 @@ def _upsert_issue(
         f"/repos/{api.repo}/issues/{number}",
         {"title": title, "body": body},
     )
-    api.try_assign(number, task.owner)
-    api.add_labels(number, inherited_labels + role_labels)
-    return api.issue(number)
+    api.request(
+        "POST",
+        f"/repos/{api.repo}/issues/{number}/assignees",
+        {"assignees": [task.owner]},
+    )
+    api.add_labels(number, inherited_labels)
+    _sync_role_labels(api, number, role_labels, label_names(existing))
+    refreshed = api.issue(number)
+    _verify_owner(refreshed, task.owner)
+    return refreshed
 
 
 def _upsert_report(api: GitHub, epic: int, body: str) -> None:
@@ -274,7 +311,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         result = sync_plan(GitHub(args.repo), args.epic)
-    except PlanError as exc:
+    except (PlanError, GitHubError) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, sort_keys=True))
