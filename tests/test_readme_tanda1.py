@@ -1,13 +1,11 @@
-"""Contratos de documentación para el cierre de TANDA 1."""
+"""Contratos de documentación para el cierre de TANDA 1 y mantenimiento v1."""
 
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 HANDOFF = ROOT / "docs" / "tanda1-handoff.md"
-
 
 class ReadmeTanda1Tests(unittest.TestCase):
     """Evita que el estado público de Factory vuelva a quedar obsoleto."""
@@ -17,61 +15,42 @@ class ReadmeTanda1Tests(unittest.TestCase):
         cls.readme = README.read_text(encoding="utf-8")
         cls.handoff = HANDOFF.read_text(encoding="utf-8")
 
-    def test_completed_foundation_is_current(self):
+    def test_tanda1_and_first_release_are_closed(self):
         for value in (
-            "Kit base reusable y template (#1) | ✅ Hecho",
-            "Roles, orquestación, aceptación, métricas, producto, costos y memoria (#2–#8) | ✅ Hecho",
-            "Entornos previos a producción (#11) | ✅ Hecho",
-            "Arranque del repositorio (#14) | ✅ Hecho",
+            "TANDA 1 está cerrada",
+            "Privacidad como código (#54) | ✅ Cerrado",
+            "Publicación `v1.0.0` | ✅ Publicado + self-test en verde",
+            "Adopción en Condor, GrindFlow y BRVTAL | 🚧 TANDA 2 en curso",
         ):
             self.assertIn(value, self.readme)
 
-    def test_closed_historical_gates_are_current(self):
+    def test_stale_pre_release_state_is_absent(self):
         for value in (
-            "Puerta humana de notificación (#9) | ✅ Cerrado",
-            "Resiliencia del dueño (#10) | ✅ Cerrado",
-            "Cumplimiento técnico legal/datos (#12) | ✅ Cerrado",
-            "#9, #10 y #12 están cerrados",
-            "Épico de madurez (#13) | ⛔ Bloqueado únicamente por #54",
+            "TANDA 1 sigue abierta",
+            "`v1` y `v1.0.0` todavía no están publicados",
+            "Privacidad como código (#54) | ⛔ En curso",
+            "Publicación `v1.0.0` | ⏸️",
         ):
-            self.assertIn(value, self.readme)
+            self.assertNotIn(value, self.readme)
 
-    def test_handoff_tracks_current_privacy_contract(self):
+    def test_handoff_is_archived_as_closed(self):
         for value in (
-            "### #54 — privacidad como código · EN CURSO",
-            "tres a seis documentos",
-            "Quedan exactamente dos condiciones para cerrar #54",
-            "Condor, GrindFlow y BRVTAL revalidados contra el contrato vigente de **seis documentos**",
-            "Primera ejecución/reporte real del auditor semanal",
-            "#71/#78",
-            "#74/#75",
-            "dry-run sanitizado equivalente",
+            "Estado: **CERRADA**",
+            "`v1.0.0`: GitHub Release publicada",
+            "## TANDA 2 · EN CURSO",
+            "factory-release",
+            "[release-bootstrap.md](release-bootstrap.md)",
         ):
             self.assertIn(value, self.handoff)
 
-    def test_stale_blocker_regression_is_rejected(self):
-        stale = (
-            "Puerta humana de notificación (#9) | ⛔ Bloqueado",
-            "Resiliencia del dueño (#10) | ⛔ Bloqueado",
-            "Cumplimiento legal y de datos (#12) | ⛔ Bloqueado",
-            "Épico de madurez (#13) | ⛔ Bloqueado por #9, #10 y #12",
-            "Permanecen abiertos #9, #10 y #12",
-        )
-        for value in stale:
-            self.assertNotIn(value, self.readme)
-        self.assertIn(
-            "Privacidad como código (#54) | ⛔ En curso",
-            self.readme,
-        )
-
-    def test_release_bootstrap_and_tanda2_links(self):
-        self.assertIn("[guía de bootstrap](docs/release-bootstrap.md)", self.readme)
-        self.assertIn(
-            "Adopción en Condor, GrindFlow y BRVTAL | ⏳ TANDA 2",
-            self.readme,
-        )
-        self.assertIn("[release-bootstrap.md](release-bootstrap.md)", self.handoff)
-
+    def test_release_maintenance_boundary_is_documented(self):
+        for value in (
+            "puerta `factory-release`",
+            "canal `v1` solo cambia",
+            "release protegido `v1.x`",
+        ):
+            self.assertIn(value, self.readme)
+        self.assertIn("no mover `v1` ni publicar un release nuevo sin la puerta correspondiente", self.handoff)
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed preflight for Factory's first v1.0.0 publication."""
+"""Fail-closed preflight for Factory v1.x publications."""
 from __future__ import annotations
 
 import json
@@ -15,6 +15,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 APPROVAL_NAME = "factory-release-approval"
 APPROVAL_RE = re.compile(r"<!--\s*factory-release-approval\s+(\{.*?\})\s*-->", re.DOTALL)
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+RELEASE_GATE_CATEGORIES = {"release-1.0.0", "factory-release"}
 MAX_INPUT = 1_000_000
 MAX_COMMENT_BODY = 20_000
 
@@ -80,6 +81,9 @@ def validate_payload(payload: Any) -> dict[str, str]:
     current = _sha(payload.get("current_sha"), "current_sha")
     branch_sha = _sha(payload.get("default_branch_sha"), "default_branch_sha")
     v1_sha = _sha(payload.get("v1_sha"), "v1_sha")
+    v1_0_0_exists = payload.get("v1_0_0_exists")
+    if not isinstance(v1_0_0_exists, bool):
+        raise ReleaseBootstrapError("v1_0_0_exists debe ser booleano.")
 
     if repository != REPOSITORY or owner != repository.split("/", 1)[0]:
         raise ReleaseBootstrapError("Bootstrap solo permitido en pl0n3r/factory.")
@@ -100,17 +104,20 @@ def validate_payload(payload: Any) -> dict[str, str]:
 
     gate = payload.get("gate")
     if not isinstance(gate, dict) or gate.get("state") != "closed":
-        raise ReleaseBootstrapError("Puerta release-1.0.0 debe estar cerrada.")
+        raise ReleaseBootstrapError("Puerta de release debe estar cerrada.")
     if gate.get("author_association") not in TRUSTED_ASSOCIATIONS:
         raise ReleaseBootstrapError("Puerta creada por actor no confiable.")
     if gate.get("closed_by") != owner:
         raise ReleaseBootstrapError("Puerta debe ser cerrada por el dueño.")
     body = gate.get("body")
-    if classify_body(body if isinstance(body, str) else "") != {
-        "status": "gate",
-        "category": "release-1.0.0",
-    }:
-        raise ReleaseBootstrapError("Issue indicado no es puerta release-1.0.0 válida.")
+    gate_result = classify_body(body if isinstance(body, str) else "")
+    category = gate_result.get("category") if gate_result.get("status") == "gate" else None
+    if category not in RELEASE_GATE_CATEGORIES:
+        raise ReleaseBootstrapError("Issue indicado no es puerta de release válida.")
+    if v1_0_0_exists and category != "factory-release":
+        raise ReleaseBootstrapError("Mantenimiento v1.x requiere puerta factory-release.")
+    if not v1_0_0_exists and category != "release-1.0.0":
+        raise ReleaseBootstrapError("Primer release requiere puerta release-1.0.0.")
     if _latest_owner_approval(gate.get("comments"), owner) != expected:
         raise ReleaseBootstrapError("La aprobación del dueño corresponde a otro SHA.")
     return {"status": "ready", "sha": expected}

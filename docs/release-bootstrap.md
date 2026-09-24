@@ -1,51 +1,48 @@
-# Bootstrap seguro del primer v1
+# Release protegido de Factory v1.x
 
-Factory distribuye el kit mediante el canal mayor `v1` y releases semánticos como `v1.0.0`. Los workflows con capacidad de escritura ejecutan únicamente el kit ya publicado; no aceptan una referencia dinámica del candidato.
+Factory distribuye el kit mediante el canal mayor `v1` y releases semánticos (`v1.0.0`, `v1.0.1`, …). Los workflows con capacidad de escritura ejecutan únicamente el kit ya publicado y no aceptan una referencia dinámica del candidato.
 
 ## Frontera de seguridad
 
-`.github/workflows/release.yml` hace checkout fijo de:
+`.github/workflows/release.yml` hace checkout fijo de `pl0n3r/factory@v1`. No existe un `inputs.kit_ref` para release; un caller con escritura no puede seleccionar una rama o commit alternativo del kit.
 
-```yaml
-repository: pl0n3r/factory
-ref: v1
-```
+## Ciclo de vida de puertas humanas
 
-No existe un `inputs.kit_ref` para release. Esta restricción evita que un caller con permisos de escritura seleccione una rama o commit alternativo del kit.
+- `release-1.0.0`: únicamente para el primer release, cuando `v1.0.0` todavía no existe.
+- `factory-release`: obligatoria para cualquier mantenimiento posterior de la major `v1`, cuando `v1.0.0` ya existe.
 
-## Puertas obligatorias antes del primer tag
+El preflight detecta la existencia real de `v1.0.0` y falla cerrado si se usa la categoría equivocada.
 
-La preparación técnica de este documento **no autoriza** crear tags ni releases.
+En ambos casos, el Issue debe estar cerrado por el dueño y un comentario suyo debe contener exactamente:
 
-Antes de crear por primera vez `v1` y `v1.0.0` deben cumplirse simultáneamente:
+    <!-- factory-release-approval {"sha":"<SHA exacto aprobado>"} -->
 
-1. Issues **#1–#14 cerrados**, incluido el épico #13, y **#54 cerrado**.
-2. Template validado por el CI reusable del candidato.
-3. Puerta humana explícita de categoría **`release-1.0.0`** resuelta por el dueño.
-4. HEAD exacto de `main` revalidado sin cambios posteriores.
-5. Ningún secreto, PII ni dato real de clientes incorporado a la evidencia del release.
+El marker autoriza únicamente ese SHA.
 
-Si cualquiera falta, el default seguro es **no publicar**.
+## Primer release v1.0.0
 
-## Bootstrap inicial
+El primer release ya se publicó mediante el bootstrap protegido. Se conserva compatibilidad con la puerta `release-1.0.0` para que la historia y las regresiones del bootstrap inicial sigan verificables.
 
-La primera publicación sigue requiriendo una decisión humana explícita, pero el camino técnico ya no se improvisa. El workflow **Bootstrap release Factory v1.0.0** (`.github/workflows/release-bootstrap.yml`) es el único caller manual del primer release.
+Antes del primer release se exigieron #1–#14, #54 y #83 cerrados, CI del template, ruleset activo del canal mayor, SHA exacto de `main` y aprobación humana explícita.
 
-1. Revalidar todos los gates anteriores y fijar el **SHA exacto aprobado** de Factory.
-2. Crear o usar un Issue de puerta humana con categoría `release-1.0.0`. Tras la decisión del dueño, el Issue debe estar cerrado por el dueño y un comentario suyo debe contener:
+## Mantenimiento v1.x
 
-   ```html
-   <!-- factory-release-approval {"sha":"<SHA exacto aprobado>"} -->
-   ```
+Para publicar un patch/minor posterior dentro de la major `v1`:
 
-3. Resolver #83 y proteger el canal mayor; después **Crear manualmente el tag mayor** `v1` apuntando al SHA exacto aprobado. El bootstrap no crea ni mueve `v1`.
-4. Ejecutar **Bootstrap release Factory v1.0.0** desde `main` con inputs `expected_sha=<SHA>` y `gate_issue=<número>`.
-5. El caller ejecuta primero el CI reusable local sobre `template/` con el SHA candidato, luego verifica #1–#14/#54, puerta/aprobación, HEAD de `main`, `v1` y el **ruleset actual**. La revalidación exige un ruleset de tags con `enforcement: active`, inclusión explícita de `refs/tags/v1` y reglas `creation`, `update` y `deletion`.
-6. La comprobación runtime del ruleset es **solo estructural** y read-only: **#83 sigue siendo obligatorio** para aportar la evidencia administrativa de qué actor puede hacer `bypass` y demostrar que un actor no autorizado no puede crear, mover ni borrar `v1`. El bootstrap no infiere `bypass_actors` cuando el token lector no los expone.
-7. Solo si todo coincide, el job con escritura invoca `pl0n3r/factory/.github/workflows/release.yml@v1` y crea/verifica el tag anotado `v1.0.0` + GitHub Release.
-8. Después ejecuta un **self-test** consumidor mediante `pl0n3r/factory/.github/workflows/ci.yml@v1` sobre `template/`. Un fallo mantiene la adopción TANDA 2 bloqueada.
+1. Integrar el cambio en `main` con la versión semántica nueva en `config/version.json`.
+2. Revalidar CI de `main` y fijar el SHA exacto candidato.
+3. Crear una puerta humana `factory-release` para ese SHA. El default seguro es **no publicar**.
+4. Tras la aprobación explícita, el dueño mueve manualmente el tag mayor `v1` al SHA aprobado. El workflow nunca crea ni mueve `v1`.
+5. Ejecutar **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=<SHA aprobado>` y `gate_issue=<Issue de puerta>`.
+6. El preflight ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, SHA/HEAD/`v1`, puerta/aprobación y el ruleset actual.
+7. El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`; #83 conserva la evidencia administrativa de bypass.
+8. Solo si todo coincide, `release.yml@v1` crea/verifica el tag anotado semántico y la GitHub Release.
+9. Después se ejecuta un self-test consumidor mediante `ci.yml@v1` sobre `template/`.
 
-El marker de aprobación autoriza únicamente el SHA indicado; cambiar `main`, mover `v1` o usar otra puerta hace fallar cerrado el preflight.
-Para releases posteriores dentro de la misma major, `v1` se actualiza únicamente mediante el proceso humano/autorizado definido para el canal mayor, nunca por inferencia de un agente.
+Cambiar `main`, mover `v1` a otro SHA, usar una puerta de otra categoría o reutilizar una aprobación para un SHA distinto hace fallar cerrado el preflight.
 
-El merge de esta preparación no crea ningún tag automáticamente. El caller existe, pero solo `workflow_dispatch` del dueño y todos los gates satisfechos pueden ejecutar la publicación.
+## Estado actual
+
+- `v1.0.0`: publicado y validado.
+- `v1`: canal mayor protegido.
+- Los cambios posteriores solo llegan a consumidores de `@v1` después de una puerta `factory-release` y una publicación protegida.

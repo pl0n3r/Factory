@@ -68,45 +68,33 @@ flowchart LR
 
 ## Estado actual
 
-🚧 **TANDA 1 sigue abierta por el frente crítico de privacidad como código (#54).** El kit base (#1), roles, madurez técnica (#2–#12), arranque (#14), el set documental de seis piezas (#71) y la regla de perfiles profesionales completos (#74) ya están integrados. **#9, #10 y #12 están cerrados**; #13 permanece abierto únicamente hasta completar #54. **`v1` y `v1.0.0` todavía no están publicados.**
+✅ **TANDA 1 está cerrada.** Condor, GrindFlow y BRVTAL tienen evidencia de producción verde; Factory publicó `v1.0.0` y el self-test consumidor de `@v1` pasó. La adopción del kit está en **TANDA 2**.
+
+El canal `v1` solo cambia mediante una puerta humana ligada al SHA exacto. Los cambios posteriores de Factory se preparan en `main` y llegan a los consumidores únicamente tras un release protegido `v1.x`.
 
 | Etapa | Estado |
 | --- | --- |
-| Plan y reglas definidos | ✅ Hecho |
-| Arranque del repositorio (#14) | ✅ Hecho |
-| Kit base reusable y template (#1) | ✅ Hecho |
-| Roles, orquestación, aceptación, métricas, producto, costos y memoria (#2–#8) | ✅ Hecho |
-| Entornos previos a producción (#11) | ✅ Hecho |
-| Puerta humana de notificación (#9) | ✅ Cerrado · recepción push móvil real confirmada |
-| Resiliencia del dueño (#10) | ✅ Cerrado · restore externo + modelo de capacidades documentado |
-| Cumplimiento técnico legal/datos (#12) | ✅ Cerrado · evidencia técnica/licencias integrada; revisión jurídica separada en #53 |
-| Privacidad como código (#54) | ⛔ En curso · revalidar los 3 productos contra 6 documentos + obtener primer reporte real del auditor |
-| Épico de madurez (#13) | ⛔ Bloqueado únicamente por #54 |
-| Bootstrap del primer `v1` (#41) | ✅ Preparado · [guía de bootstrap](docs/release-bootstrap.md) |
-| Publicación `v1.0.0` | ⏸️ No autorizada mientras TANDA 1 siga abierta |
-| Adopción en Condor, GrindFlow y BRVTAL | ⏳ TANDA 2 · después del kit `v1` |
+| Plan, kit base, roles, orquestación, aceptación, métricas, costos y memoria (#1–#14) | ✅ Cerrado |
+| Privacidad como código (#54) | ✅ Cerrado |
+| Raíz de confianza del canal v1 (#83) | ✅ Cerrado |
+| Publicación `v1.0.0` | ✅ Publicado + self-test en verde |
+| Catálogo canónico de etiquetas (#100/#105) | ✅ Integrado en `main` |
+| Release de mantenimiento `v1.x` | 🔐 Requiere puerta `factory-release` por SHA |
+| Adopción en Condor, GrindFlow y BRVTAL | 🚧 TANDA 2 en curso |
+| Revisión jurídica (#53) | 🧭 Decisión humana separada |
+| GitHub Pages de la cabina (#35) | 🧭 Default seguro B: no publicar |
 
-El detalle operativo de lo que falta está en **[docs/tanda1-handoff.md](docs/tanda1-handoff.md)**. Los defaults seguros actuales son: no inventar evidencia, no publicar Pages por #35 y no crear `v1`/`v1.0.0` sin la puerta humana correspondiente.
+El cierre histórico está resumido en **[docs/tanda1-handoff.md](docs/tanda1-handoff.md)** y el proceso de publicación en **[docs/release-bootstrap.md](docs/release-bootstrap.md)**.
 
 ### Roadmap cronológico
 
-| Orden | Issue | Estado actual |
+| Orden | Hito | Estado actual |
 | --- | --- | --- |
-| 1 | [#14](https://github.com/pl0n3r/factory/issues/14) | ✅ Arranque integrado |
-| 2 | [#1](https://github.com/pl0n3r/factory/issues/1) | ✅ Kit común base + template integrados |
-| 3 | [#2](https://github.com/pl0n3r/factory/issues/2) | ✅ Roles profesionales |
-| 4 | [#3](https://github.com/pl0n3r/factory/issues/3) · [#4](https://github.com/pl0n3r/factory/issues/4) | ✅ Orquestador · criterios ejecutables |
-| 5 | [#5](https://github.com/pl0n3r/factory/issues/5) · [#7](https://github.com/pl0n3r/factory/issues/7) | ✅ Evaluación · control de costos |
-| 6 | [#6](https://github.com/pl0n3r/factory/issues/6) · [#8](https://github.com/pl0n3r/factory/issues/8) | ✅ Retroalimentación · memoria compartida |
-| 7 | [#11](https://github.com/pl0n3r/factory/issues/11) | ✅ Entornos previos |
-| 8 | [#9](https://github.com/pl0n3r/factory/issues/9) | ✅ Puerta humana + recepción móvil real verificadas |
-| 9 | [#10](https://github.com/pl0n3r/factory/issues/10) | ✅ Resiliencia y modelo de capacidades cerrados |
-| 10 | [#12](https://github.com/pl0n3r/factory/issues/12) | ✅ Cumplimiento técnico de datos/licencias cerrado |
-| 11 | [#13](https://github.com/pl0n3r/factory/issues/13) | ⛔ Espera únicamente #54 |
-| 12 | [#54](https://github.com/pl0n3r/factory/issues/54) | ⛔ Privacidad como código: adopciones a 6 documentos + primer reporte real |
-| 13 | [#41](https://github.com/pl0n3r/factory/issues/41) | ✅ Bootstrap seguro del primer `v1` documentado |
-| 14 | Puerta `release-1.0.0` | ⏸️ Decisión del dueño, solo cuando #1–#14 y #54 estén cerrados |
-| 15 | TANDA 2 | ⏳ Adopción del kit publicado en Condor → GrindFlow → BRVTAL |
+| 1 | #1–#14 + #54 | ✅ TANDA 1 técnica cerrada |
+| 2 | Primer canal `v1` + `v1.0.0` | ✅ Publicado y validado |
+| 3 | #100/#105 catálogo de etiquetas | ✅ Integrado en `main` |
+| 4 | Release protegido posterior | 🔐 `factory-release` + SHA exacto |
+| 5 | Condor#192 · GrindFlow#129 · brvtal#630 | 🚧 TANDA 2 |
 
 ---
 
@@ -146,7 +134,7 @@ El despachador elige en este orden: sitio caído → incidente abierto → decis
 ### Qué más te toca
 
 1. Cuando un agente termine o se detenga, vuelve a lanzarlo con el mismo prompt: él sabe en qué va.
-2. Responder solo las decisiones que te corresponden (**producto, marca, dinero, legal, datos reales de clientes, publicar 1.0.0 o pasar a live**). Te llegan asignadas en GitHub con la etiqueta `decisión: dueño` y aparecen en la cabina.
+2. Responder solo las decisiones que te corresponden (**producto, marca, dinero, legal, datos reales de clientes, mover/publicar el canal `v1` de Factory o pasar a live**). Te llegan asignadas en GitHub con la etiqueta `decisión: dueño` y aparecen en la cabina.
 3. Mirar la **cabina de mando**: https://pl0n3r.github.io/factory/ (estado de todos los proyectos, actualizado cada hora).
 
 ### Cómo funciona por dentro

@@ -1,14 +1,14 @@
-name: Bootstrap release Factory v1.0.0
+name: Release Factory v1.x
 
 on:
   workflow_dispatch:
     inputs:
       expected_sha:
-        description: SHA exacto de main aprobado para v1.0.0
+        description: SHA exacto de main aprobado para release v1.x
         required: true
         type: string
       gate_issue:
-        description: Issue cerrado con la puerta humana release-1.0.0
+        description: Issue cerrado con la puerta humana de release
         required: true
         type: string
 
@@ -34,7 +34,7 @@ jobs:
       kit_ref: ${{ github.sha }}
 
   preflight:
-    name: Validar gates del primer v1.0.0
+    name: Validar gates de release v1.x
     needs: candidate-template
     permissions:
       contents: read
@@ -99,12 +99,17 @@ jobs:
             esac
           fi
 
-          jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_sha "$EXPECTED_SHA"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg v1_sha "$v1_sha"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             '{
+          v1_0_0_exists=false
+          if gh api "repos/$REPOSITORY/git/ref/tags/v1.0.0" >/dev/null 2>&1; then
+            v1_0_0_exists=true
+          fi
+
+          jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_sha "$EXPECTED_SHA"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg v1_sha "$v1_sha"             --argjson v1_0_0_exists "$v1_0_0_exists"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             '{
               repository:$repository, repository_owner:$repository_owner,
               actor:$actor, event_name:$event_name, ref:$ref,
               default_branch:$default_branch, expected_sha:$expected_sha,
               current_sha:$current_sha, default_branch_sha:$default_branch_sha,
-              v1_sha:$v1_sha, issues:$issues[0],
+              v1_sha:$v1_sha, v1_0_0_exists:$v1_0_0_exists, issues:$issues[0],
               gate:{
                 state:$gate[0].state,
                 author_association:$gate[0].author_association,
@@ -123,7 +128,7 @@ jobs:
           echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"
 
   release:
-    name: Publicar v1.0.0 desde v1
+    name: Publicar release semántico desde v1
     needs: preflight
     permissions:
       contents: write
