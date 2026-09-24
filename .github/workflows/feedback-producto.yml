@@ -1,0 +1,86 @@
+name: Feedback de producto
+
+on:
+  pull_request:
+    paths:
+      - 'producto/**'
+      - 'tests/test_feedback_contract.py'
+      - 'docs/retroalimentacion-producto.md'
+      - '.github/workflows/feedback-producto.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 13 * * 1'
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: feedback-producto-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validar-candidato:
+    name: Validar feedback de producto
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Descargar candidato
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Validar motor y catálogo
+        run: |
+          set -euo pipefail
+          python3 -m py_compile producto/feedback.py
+          PYTHONPATH=producto python3 -m unittest discover -s producto -p 'test_feedback.py'
+          python3 -m json.tool producto/metricas.json >/dev/null
+
+  reporte-semanal:
+    name: Reporte semanal de impacto
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Resolver markers de épicos observados
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 producto/feedback.py --allow-empty --list-epics > /tmp/epics.json
+          : > /tmp/markers.jsonl
+          jq -r '.[]' /tmp/epics.json | while IFS= read -r epic; do
+            project="${epic%#*}"
+            issue="${epic##*#}"
+            [[ "$project" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+              echo "::error::project inválido en epic"; exit 1;
+            }
+            [[ "$issue" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::número de Issue inválido en epic"; exit 1;
+            }
+            gh api "repos/$project/issues/$issue"               | jq -c --arg epic "$epic"                 '{key:$epic,value:(.body // "")}' >> /tmp/markers.jsonl
+          done
+          jq -s 'from_entries' /tmp/markers.jsonl > producto/datos/epic-markers.json
+
+      - name: Generar reporte sin credenciales
+        run: |
+          set -euo pipefail
+          python3 producto/feedback.py --allow-empty --min-sample-size 100
+          cat artifacts/reporte-producto.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Conservar evidencia
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: feedback-producto-${{ github.run_id }}
+          path: |
+            artifacts/reporte-producto.json
+            artifacts/reporte-producto.md
+          retention-days: 90
+          if-no-files-found: error

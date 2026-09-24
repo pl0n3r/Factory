@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "metrics": {
+    "usage_rate": {
+      "family": "usage",
+      "unit": "ratio",
+      "direction": "increase"
+    },
+    "error_rate": {
+      "family": "error",
+      "unit": "ratio",
+      "direction": "decrease"
+    },
+    "conversion_rate": {
+      "family": "conversion",
+      "unit": "ratio",
+      "direction": "increase"
+    },
+    "lcp_p75_ms": {
+      "family": "cwv",
+      "unit": "ms",
+      "direction": "decrease"
+    },
+    "inp_p75_ms": {
+      "family": "cwv",
+      "unit": "ms",
+      "direction": "decrease"
+    },
+    "cls_p75": {
+      "family": "cwv",
+      "unit": "score",
+      "direction": "decrease"
+    },
+    "seo_clicks": {
+      "family": "seo",
+      "unit": "count",
+      "direction": "increase"
+    },
+    "seo_impressions": {
+      "family": "seo",
+      "unit": "count",
+      "direction": "increase"
+    },
+    "seo_ctr": {
+      "family": "seo",
+      "unit": "ratio",
+      "direction": "increase"
+    }
+  }
+}
