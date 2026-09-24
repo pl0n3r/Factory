@@ -3,13 +3,40 @@ on:
   pull_request:
   push:
     branches: [main]
+
 permissions:
   contents: read
+
 jobs:
-  validar:
+  ci:
     uses: pl0n3r/factory/.github/workflows/ci.yml@v1
     with:
       stack: php
       version_source: config/version.json
       label_language: es
       phase: construccion
+
+  preview:
+    if: github.event_name == 'pull_request'
+    uses: pl0n3r/factory/.github/workflows/preview.yml@v1
+    with:
+      version_source: config/version.json
+      version_format: json
+      migration_mode: none
+      php_version: '8.3'
+
+  validar:
+    name: Validar
+    if: always()
+    needs: [ci, preview]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Exigir CI y preview
+        env:
+          RESULTADOS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for r in $RESULTADOS; do
+            case "$r" in success|skipped) ;; *) echo "::error::Gate previo con resultado $r"; exit 1 ;; esac
+          done

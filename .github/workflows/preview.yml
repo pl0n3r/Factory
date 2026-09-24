@@ -1,0 +1,98 @@
+name: Preview preproducción reusable
+
+on:
+  workflow_call:
+    inputs:
+      version_source:
+        required: true
+        type: string
+      version_format:
+        required: false
+        default: auto
+        type: string
+      version_key:
+        required: false
+        default: version
+        type: string
+      migration_mode:
+        required: false
+        default: none
+        type: string
+      php_version:
+        required: false
+        default: '8.3'
+        type: string
+      node_enabled:
+        required: false
+        default: false
+        type: boolean
+      node_version:
+        required: false
+        default: '24'
+        type: string
+      kit_ref:
+        required: false
+        default: v1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Preview preproducción
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar candidato exacto
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Descargar kit publicado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ inputs.kit_ref }}
+          path: .factory
+          persist-credentials: false
+
+      - name: Preparar PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ inputs.php_version }}
+          coverage: none
+
+      - name: Preparar Node
+        if: inputs.node_enabled
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - id: version
+        uses: ./.factory/actions/read-version
+        with:
+          source: ${{ inputs.version_source }}
+          format: ${{ inputs.version_format }}
+          key: ${{ inputs.version_key }}
+
+      - name: Ejecutar deploy sintético + smoke + E2E
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          MIGRATION_MODE: ${{ inputs.migration_mode }}
+        run: |
+          set -euo pipefail
+          case "$MIGRATION_MODE" in none|additive) ;; *) echo "::error::migration_mode inválido"; exit 1 ;; esac
+          python3 .factory/scripts/preview_kit.py \
+            --version "$VERSION" \
+            --sha "$CANDIDATE_SHA" \
+            --migration-mode "$MIGRATION_MODE"

@@ -68,27 +68,36 @@ flowchart LR
 
 ## Estado actual
 
-🚧 **En construcción.** El bootstrap está integrado y el kit base reusable de #1 está listo para validación final; la madurez #2–#12 y la publicación `v1.0.0` siguen pendientes.
+🚧 **Kit v1 en cierre de madurez.** El bootstrap, kit base, roles, orquestación, aceptación ejecutable, métricas, costos, feedback de producto y memoria institucional ya están integrados. #9 y #10 conservan bloqueos externos verificables; #11 implementa el camino previo a producción.
 
 | Etapa | Estado |
 | --- | --- |
 | Plan y reglas definidos | ✅ Hecho |
 | Arranque del repositorio (#14) | ✅ Hecho |
-| Kit base reusable (#1) | ✅ Implementado · validación final |
-| Adopción en Condor, GrindFlow y BRVTAL | ⏳ Después del kit v1 |
+| Kit base reusable (#1) | ✅ Integrado |
+| Roles + orquestación + aceptación (#2–#4) | ✅ Integrado |
+| Métricas + costos + feedback (#5–#7) | ✅ Integrado |
+| Memoria institucional (#8) | ✅ Integrado |
+| Puertas humanas (#9) | ⛔ Implementado · falta confirmar push móvil real |
+| Resiliencia (#10) | ⛔ Slice técnico verde · faltan identidades separadas + restore externo |
+| Entornos previos (#11) | 🚧 En implementación |
+| Legal y datos (#12) | ⏳ Siguiente |
+| Publicación v1.0.0 | ⏳ Tras cerrar requisitos pendientes y validar template |
 
 ### Roadmap cronológico
 
-| Orden | Issue | Qué es |
+| Orden | Issue | Estado |
 | --- | --- | --- |
-| 1 | [#14](https://github.com/pl0n3r/factory/issues/14) | Arranque: reglas, CI y coordinación del propio repo |
-| ✅ | [#1](https://github.com/pl0n3r/factory/issues/1) | Kit común base y template — validación final |
-| 3 | [#2](https://github.com/pl0n3r/factory/issues/2) | Roles profesionales por tarea |
-| 4 | [#3](https://github.com/pl0n3r/factory/issues/3) · [#4](https://github.com/pl0n3r/factory/issues/4) | Orquestador · especificaciones con criterios ejecutables |
-| 5 | [#5](https://github.com/pl0n3r/factory/issues/5) · [#7](https://github.com/pl0n3r/factory/issues/7) | Evaluación de agentes · control de costos |
-| 6 | [#8](https://github.com/pl0n3r/factory/issues/8) · [#9](https://github.com/pl0n3r/factory/issues/9) | Memoria compartida · decisiones reservadas al dueño |
-| 7 | [#6](https://github.com/pl0n3r/factory/issues/6) · [#10](https://github.com/pl0n3r/factory/issues/10) · [#11](https://github.com/pl0n3r/factory/issues/11) · [#12](https://github.com/pl0n3r/factory/issues/12) | Datos de producto · resiliencia · entornos previos · legal |
-| — | [#13](https://github.com/pl0n3r/factory/issues/13) | Épico que agrupa la madurez (tiempo, calidad y costo) |
+| ✅ | [#14](https://github.com/pl0n3r/factory/issues/14) | Arranque integrado |
+| ✅ | [#1](https://github.com/pl0n3r/factory/issues/1) | Kit común base integrado |
+| ✅ | [#2](https://github.com/pl0n3r/factory/issues/2) | Roles profesionales integrados |
+| ✅ | [#3](https://github.com/pl0n3r/factory/issues/3) · [#4](https://github.com/pl0n3r/factory/issues/4) | Orquestador · aceptación ejecutable |
+| ✅ | [#5](https://github.com/pl0n3r/factory/issues/5) · [#7](https://github.com/pl0n3r/factory/issues/7) | Evaluación de agentes · costos |
+| ✅ | [#6](https://github.com/pl0n3r/factory/issues/6) · [#8](https://github.com/pl0n3r/factory/issues/8) | Feedback de producto · memoria |
+| ⛔ | [#9](https://github.com/pl0n3r/factory/issues/9) · [#10](https://github.com/pl0n3r/factory/issues/10) | Implementación técnica lista; evidencia externa pendiente |
+| 🚧 | [#11](https://github.com/pl0n3r/factory/issues/11) | Entorno preview previo a producción |
+| ⏳ | [#12](https://github.com/pl0n3r/factory/issues/12) | Cumplimiento legal y datos |
+| — | [#13](https://github.com/pl0n3r/factory/issues/13) | Épico de madurez |
 
 ---
 

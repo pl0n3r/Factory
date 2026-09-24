@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${FACTORY_PREVIEW:-}" == "1" ]] || { echo "adapter template: producción no configurada" >&2; exit 1; }
+[[ "${FACTORY_SYNTHETIC_DATA:-}" == "1" ]] || { echo "adapter template: se requieren datos sintéticos" >&2; exit 1; }
+: "${FACTORY_PREVIEW_ROOT:?FACTORY_PREVIEW_ROOT requerido}"
+cd "$FACTORY_PREVIEW_ROOT/deployed"
+schema=0
+if [[ "${FACTORY_REQUIRE_SCHEMA:-0}" == "1" ]]; then
+  [[ -f "$FACTORY_PREVIEW_ROOT/state/schema" ]] || { echo "schema preview no aplicado" >&2; exit 1; }
+  schema=1
+fi
+payload="$(PRODUCTION_STAGE=construccion RELEASE_SHA="$FACTORY_EXPECTED_SHA" SCHEMA_UP_TO_DATE="$schema" php public/health.php)"
+PAYLOAD="$payload" python3 - <<'PY'
+import json
+import os
+payload = json.loads(os.environ['PAYLOAD'])
+if payload.get('status') != 'ok':
+    raise SystemExit('health status inválido')
+if payload.get('version') != os.environ['FACTORY_EXPECTED_VERSION']:
+    raise SystemExit('health version inválida')
+if payload.get('release_sha') != os.environ['FACTORY_EXPECTED_SHA']:
+    raise SystemExit('health SHA inválido')
+if os.environ.get('FACTORY_REQUIRE_SCHEMA') == '1' and payload.get('schema_up_to_date') is not True:
+    raise SystemExit('health schema inválido')
+PY
