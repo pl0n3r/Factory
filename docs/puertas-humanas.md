@@ -27,3 +27,12 @@ El clasificador no acepta rutas de archivos por CLI. El workflow confiable alime
 ## Sincronización fail-closed
 
 En eventos `opened|edited|reopened`, el workflow verifica primero la asociación del autor del Issue. Si el origen no es confiable, el marker es inválido o deja de existir, el flujo no menciona al dueño y retira `decisión: dueño` si había quedado de un estado anterior. Un error estructural del marker no puede degradarse silenciosamente a trabajo autónomo.
+
+
+## Puertas automáticas de privacidad
+
+El reusable workflow `.github/workflows/auditoria-privacidad.yml` puede crear una puerta de categoría `legal` únicamente cuando el mapa `datos.yml` introduce o cambia una finalidad, incorpora una categoría sensible o agrega un proveedor receptor. La puerta usa el marker `factory-human-gate` y mantiene como default seguro continuar en fase `construccion` con estado `documented_not_legally_approved`.
+
+La auditoría nunca copia valores observados del código a Issues: publica únicamente identificadores controlados de señales/proveedores y rutas del repositorio. El Issue técnico de auditoría es idempotente y se cierra automáticamente cuando deja de haber drift. Una puerta legal, en cambio, **no se cierra automáticamente**: requiere la decisión humana correspondiente.
+
+La automatización usa `GITHUB_TOKEN` efímero del mismo repositorio con `contents: read` e `issues: write`; no usa PATs personales ni tokens de larga duración.
