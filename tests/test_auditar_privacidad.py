@@ -99,6 +99,22 @@ class PrivacyAuditTests(unittest.TestCase):
                     [{"signal": "health", "paths": ["src/Profile.php"]}],
                 )
 
+    def test_php_health_property_is_reported_as_sensitive(self):
+        """La auditoría reporta acceso PHP normal y nullsafe a health."""
+        current = data_map()
+        for snippet in ("$value = $record->health;\n", "$value = $record?->health;\n"):
+            with self.subTest(snippet=snippet):
+                report = audit_sources(
+                    sources={"src/Profile.php": snippet},
+                    current_document=current,
+                    previous_document=deepcopy(current),
+                )
+                self.assertEqual(report["status"], "review_required")
+                self.assertEqual(
+                    report["undocumented_fields"],
+                    [{"signal": "health", "paths": ["src/Profile.php"]}],
+                )
+
     def test_report_is_deterministic_and_idempotent(self):
         current = data_map()
         kwargs = {
