@@ -8,7 +8,11 @@ WORKFLOW = (ROOT / ".github/workflows/cabina.yml").read_text(encoding="utf-8")
 
 class CabinaWorkflowContractTests(unittest.TestCase):
     def test_pages_permissions_are_job_scoped_and_actions_pinned(self):
-        self.assertIn("permissions:\n  contents: read", WORKFLOW)
+        self.assertNotIn("\npermissions:\n  contents: read\n", WORKFLOW)
+        self.assertRegex(
+            WORKFLOW,
+            r"(?s)generar:\s+name: Generar cabina.*?permissions:\s+contents: read",
+        )
         self.assertIn("permissions:\n      pages: write\n      id-token: write", WORKFLOW)
         self.assertIn("schedule:", WORKFLOW)
         self.assertIn("cron: '7 * * * *'", WORKFLOW)

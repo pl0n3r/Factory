@@ -12,9 +12,6 @@ on:
       - scripts/cabina.py
       - .github/workflows/cabina.yml
 
-permissions:
-  contents: read
-
 concurrency:
   group: cabina
   cancel-in-progress: true
@@ -23,15 +20,24 @@ jobs:
   generar:
     name: Generar cabina
     if: ${{ github.event_name != 'schedule' || vars.FACTORY_CABINA_PUBLICA == 'true' }}
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Instalar Sentry SDK
+        run: >-
+          python3 -m pip install --disable-pip-version-check --no-input
+          --only-binary=:all: 'sentry-sdk==2.70.0'
       - name: Recolectar estado y generar HTML
         env:
           GH_TOKEN: ${{ github.token }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_RELEASE: factory@${{ github.sha }}
+          SENTRY_ENVIRONMENT: github-actions
         run: python3 scripts/cabina.py
       - name: Preparar Pages
         if: ${{ vars.FACTORY_CABINA_PUBLICA == 'true' }}
