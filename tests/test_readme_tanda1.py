@@ -14,51 +14,57 @@ class ReadmeTanda1Tests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Carga README y handoff una sola vez."""
         cls.readme = README.read_text(encoding="utf-8")
         cls.handoff = HANDOFF.read_text(encoding="utf-8")
 
     def test_completed_foundation_is_current(self):
-        """AC-01: la base completada y el bloqueo de TANDA 1 son explícitos."""
         for value in (
             "Kit base reusable y template (#1) | ✅ Hecho",
             "Roles, orquestación, aceptación, métricas, producto, costos y memoria (#2–#8) | ✅ Hecho",
             "Entornos previos a producción (#11) | ✅ Hecho",
             "Arranque del repositorio (#14) | ✅ Hecho",
-            "TANDA 1 está técnicamente avanzada y bloqueada por evidencia externa/material",
         ):
             self.assertIn(value, self.readme)
-        self.assertNotIn(
-            "la madurez #2–#12 y la publicación `v1.0.0` siguen pendientes",
-            self.readme,
-        )
 
-    def test_remaining_human_gates_are_explicit(self):
-        """AC-02: #9, #10 y #12 concentran los blockers restantes del épico."""
+    def test_closed_historical_gates_are_current(self):
         for value in (
+            "Puerta humana de notificación (#9) | ✅ Cerrado",
+            "Resiliencia del dueño (#10) | ✅ Cerrado",
+            "Cumplimiento técnico legal/datos (#12) | ✅ Cerrado",
+            "#9, #10 y #12 están cerrados",
+            "Épico de madurez (#13) | ⛔ Bloqueado únicamente por #54",
+        ):
+            self.assertIn(value, self.readme)
+
+    def test_handoff_tracks_current_privacy_contract(self):
+        for value in (
+            "### #54 — privacidad como código · EN CURSO",
+            "tres a seis documentos",
+            "Quedan exactamente dos condiciones para cerrar #54",
+            "Condor, GrindFlow y BRVTAL revalidados contra el contrato vigente de **seis documentos**",
+            "Primera ejecución/reporte real del auditor semanal",
+            "#71/#78",
+            "#74/#75",
+            "dry-run sanitizado equivalente",
+        ):
+            self.assertIn(value, self.handoff)
+
+    def test_stale_blocker_regression_is_rejected(self):
+        stale = (
             "Puerta humana de notificación (#9) | ⛔ Bloqueado",
             "Resiliencia del dueño (#10) | ⛔ Bloqueado",
             "Cumplimiento legal y de datos (#12) | ⛔ Bloqueado",
             "Épico de madurez (#13) | ⛔ Bloqueado por #9, #10 y #12",
-        ):
-            self.assertIn(value, self.readme)
-
-    def test_handoff_fails_closed(self):
-        """AC-03: el handoff nombra la evidencia faltante sin fabricarla."""
-        for value in (
-            "confirmar externamente",
-            "CI, deploy y observer",
-            "referencia vigente a política de privacidad",
-            "revisión jurídica humana",
-            "snapshot npm reproducible",
-            "cubre el inventario de licencias de #12",
-            "no publicado y no autorizado",
-            "Default seguro",
-        ):
-            self.assertIn(value, self.handoff)
+            "Permanecen abiertos #9, #10 y #12",
+        )
+        for value in stale:
+            self.assertNotIn(value, self.readme)
+        self.assertIn(
+            "Privacidad como código (#54) | ⛔ En curso",
+            self.readme,
+        )
 
     def test_release_bootstrap_and_tanda2_links(self):
-        """AC-04: README enlaza bootstrap y mantiene adopción en TANDA 2."""
         self.assertIn("[guía de bootstrap](docs/release-bootstrap.md)", self.readme)
         self.assertIn(
             "Adopción en Condor, GrindFlow y BRVTAL | ⏳ TANDA 2",
