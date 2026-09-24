@@ -28,7 +28,7 @@ MAX_FILES = 5_000
 MAX_FILE_BYTES = 512_000
 MAX_TOTAL_BYTES = 20_000_000
 SHA = re.compile(r"[0-9a-f]{40}\Z")
-SAFE_PATH = re.compile(r"[A-Za-z0-9._/-]{1,240}\Z")
+ALLOWED_PATH_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-[]()@")
 AUDIT_MARKER = "<!-- factory-privacy-audit -->"
 MATERIAL_MARKER = "<!-- factory-privacy-material -->"
 
