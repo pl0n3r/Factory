@@ -1,0 +1,46 @@
+name: Privacidad reusable
+
+on:
+  workflow_call:
+    inputs:
+      kit_ref:
+        required: false
+        default: 'v1'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: privacidad-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  privacidad:
+    name: Privacidad como código
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar candidato
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Descargar Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ inputs.kit_ref }}
+          path: .factory
+          persist-credentials: false
+
+      - name: Validar documentación de datos
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::base SHA inválido"; exit 1; }
+          PYTHONPATH=.factory python3 .factory/scripts/privacidad_gate.py --base-sha "$BASE_SHA"
