@@ -96,6 +96,8 @@ Antes de empezar, decide **qué rol(es)** exige la tarea y declara cada uno en e
 
 Cambios de riesgo (esquema, seguridad, deploy, UX pública) → haz una **segunda pasada con otro rol** antes de entregar.
 
+**En todos los repos (factory, Condor, GrindFlow, BRVTAL):** antes de implementar, carga el **perfil completo** de cada rol desde [`pl0n3r/factory/agentes/roles/`](https://github.com/pl0n3r/factory/tree/main/agentes/roles) (`<rol>.md`) y completa su checklist en el PR; la tabla de arriba es solo el resumen. Etiqueta el Issue y el PR con cada rol asumido: `rol: <rol>` (en BRVTAL, `role: <role>` en inglés); si aún no sabes cuál, `rol: pendiente` / `role: pending`.
+
 ---
 
 ## 5. Formatos obligatorios
