@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import html
+import importlib
 import json
 import os
 import re
@@ -446,5 +447,54 @@ def main() -> int:
     return 0
 
 
+def inicializar_sentry(env: dict[str, str] | None = None) -> object | None:
+    """Inicializa Sentry solo con configuración explícita y minimización de datos."""
+    source = os.environ if env is None else env
+    dsn = str(source.get("SENTRY_DSN") or "").strip()
+    if not dsn:
+        return None
+
+    release = str(source.get("SENTRY_RELEASE") or "").strip()
+    environment = str(source.get("SENTRY_ENVIRONMENT") or "").strip()
+    if not release or not environment:
+        return None
+
+    try:
+        sdk = importlib.import_module("sentry_sdk")
+        sdk.init(
+            dsn=dsn,
+            release=release,
+            environment=environment,
+            send_default_pii=False,
+            include_local_variables=False,
+            include_source_context=False,
+            max_request_body_size="never",
+            max_breadcrumbs=0,
+            traces_sample_rate=0.0,
+            profiles_sample_rate=0.0,
+            enable_logs=False,
+            default_integrations=False,
+            auto_enabling_integrations=False,
+        )
+    except Exception:
+        return None
+    return sdk
+
+
+def ejecutar_con_observabilidad() -> int:
+    """Ejecuta la cabina y reporta errores sin sustituir la excepción original."""
+    sdk = inicializar_sentry()
+    try:
+        return main()
+    except Exception as exc:
+        if sdk is not None:
+            try:
+                sdk.capture_exception(exc)
+                sdk.flush(timeout=2.0)
+            except Exception:
+                pass
+        raise
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(ejecutar_con_observabilidad())
