@@ -122,7 +122,7 @@ jobs:
               | gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE/labels" --input -
             jq -n '{assignees:[env.OWNER]}' \
               | gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE/assignees" --input -
-            printf '@%s 🧭 DECISIÓN NECESARIA · categoría `%s`. Revisa el contexto, opciones, recomendación y default seguro en este Issue.\n' \
+            printf '@%s 🧭 DECISIÓN NECESARIA · categoría %s. Revisa el contexto, opciones, recomendación y default seguro en este Issue.\n' \
               "$OWNER" "$CATEGORY" \
               | jq -Rs '{body:.}' \
               | gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE/comments" --input -
