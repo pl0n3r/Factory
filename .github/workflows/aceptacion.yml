@@ -90,7 +90,7 @@ jobs:
             --slurpfile issue /tmp/issue.json \
             --slurpfile checks /tmp/checks.json \
             --slurpfile pin /tmp/acceptance-pin.json \
-            '{issue:$issue[0], checks:$checks[0], acceptance_sha256:$pin[0]}' \
+            '{issue:$issue[0], checks:$checks[0], acceptance_sha256:$pin[0], require_pin:true}' \
             > /tmp/acceptance.json
 
       - name: Verificar criterios específicos

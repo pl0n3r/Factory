@@ -137,6 +137,43 @@ class AcceptanceContractTests(unittest.TestCase):
         ):
             validate_payload(payload)
 
+    def test_protected_payload_requires_pinned_fingerprint(self):
+        """El flujo protegido rechaza payloads legacy sin pin."""
+        body = issue_body(
+            "- [ ] [AC-01] Debe pasar.",
+            [
+                {
+                    "id": "AC-01",
+                    "kind": "check",
+                    "target": "Tests de scripts",
+                }
+            ],
+        )
+        checks = {
+            "check_runs": [
+                {
+                    "id": 10,
+                    "name": "Tests de scripts",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ]
+        }
+        payload = {
+            "issue": {"body": body},
+            "checks": checks,
+            "require_pin": True,
+        }
+
+        with self.assertRaisesRegex(
+            AcceptanceError,
+            "requiere acceptance_sha256",
+        ):
+            validate_payload(payload)
+
+        payload["acceptance_sha256"] = contract_fingerprint(body)
+        self.assertEqual(validate_payload(payload)["verified"], ["AC-01"])
+
     def test_named_test_runs_exact_case(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
