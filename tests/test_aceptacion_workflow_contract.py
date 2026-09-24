@@ -33,6 +33,7 @@ class AcceptanceWorkflowContractTests(unittest.TestCase):
         self.assertIn("checks: read", reusable)
         for workflow in (ci, reusable):
             self.assertIn("acceptance_sha256", workflow)
+            self.assertIn("require_pin:true", workflow)
             self.assertIn("comments?per_page=100", workflow)
             self.assertIn("latest_reservation", workflow)
         self.assertIn(

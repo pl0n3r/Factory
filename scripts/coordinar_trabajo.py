@@ -176,6 +176,29 @@ class GitHub:
             {"body": body},
         )
 
+    def create_failed_check(
+        self,
+        name: str,
+        head_sha: str,
+        title: str,
+        summary: str,
+    ) -> None:
+        """Publica un check terminal failure sobre un SHA exacto."""
+        self.request(
+            "POST",
+            f"/repos/{self.repo}/check-runs",
+            {
+                "name": name,
+                "head_sha": head_sha,
+                "status": "completed",
+                "conclusion": "failure",
+                "output": {
+                    "title": title[:255],
+                    "summary": summary[:65_535],
+                },
+            },
+        )
+
     def ensure_label(self, name: str, color: str, description: str) -> None:
         """Crea un label si todavía no existe."""
         encoded = quote(name, safe="")
@@ -1503,12 +1526,75 @@ def update_issue_label_state(
         STATUS_BLOCKED if STATUS_BLOCKED in labels else STATUS_AVAILABLE,
     )
 
+def invalidate_contract_drift_checks(
+    api: GitHub,
+    issue_number: int,
+) -> int:
+    """Invalida checks verdes previos si el contrato vivo se aparta de la reserva."""
+    issue = api.issue(issue_number)
+    reservation = active_reservation(api, issue_number)
+    if reservation is None:
+        return 0
+
+    pinned = reservation.get("acceptance_sha256")
+    reason: str | None = None
+    if not isinstance(pinned, str):
+        reason = "La reserva activa es legacy y no contiene acceptance_sha256."
+    else:
+        try:
+            current = contract_fingerprint(str(issue.get("body") or ""))
+        except AcceptanceError as exc:
+            reason = f"El contrato de aceptación es inválido: {exc}"
+        else:
+            if current == pinned:
+                return 0
+            reason = (
+                "El contrato de aceptación cambió después de /tomar; "
+                "la evidencia previa del HEAD quedó stale."
+            )
+
+    branch = str(reservation["branch"])
+    invalidated = 0
+    for pull in open_pull_records_for_branch(api, branch):
+        number = pull.get("number")
+        head = pull.get("head")
+        sha = head.get("sha") if isinstance(head, dict) else None
+        if not isinstance(sha, str) or not sha:
+            if isinstance(number, int):
+                current_pull = api.pull(number)
+                current_head = current_pull.get("head")
+                sha = (
+                    current_head.get("sha")
+                    if isinstance(current_head, dict)
+                    else None
+                )
+        if not isinstance(sha, str) or not sha:
+            continue
+
+        summary = (
+            f"Issue #{issue_number}: {reason} "
+            "Actualiza la reserva/contrato y vuelve a ejecutar CI."
+        )
+        for check_name in ("Criterios de aceptación", "Validar"):
+            api.create_failed_check(
+                check_name,
+                sha,
+                "Contrato de aceptación desactualizado",
+                summary,
+            )
+        invalidated += 1
+    return invalidated
+
+
 def update_issue_state(api: GitHub, issue_number: int, action: str) -> None:
     """Limpia una reserva al cerrar un Issue o restablece su estado al reabrirlo."""
     issue = api.issue(issue_number)
     branch = f"trabajo/issue-{issue_number}"
     current = active_reservation(api, issue_number)
 
+    if action == "edited":
+        invalidate_contract_drift_checks(api, issue_number)
+        return
     if action == "reopened":
         if current and api.branch_sha(branch):
             api.set_status(issue_number, STATUS_RESERVED)
@@ -1582,19 +1668,25 @@ def reservation_validation_errors(
         )
 
     pinned = reservation.get("acceptance_sha256")
-    if isinstance(pinned, str):
-        try:
-            current = contract_fingerprint(str(issue.get("body") or ""))
-        except AcceptanceError:
+    if not isinstance(pinned, str):
+        errors.append(
+            f"Issue #{issue_number} usa una reserva legacy sin fingerprint; "
+            "ejecuta /migrar-contrato <UUID> o libera y vuelve a /tomar."
+        )
+        return errors
+
+    try:
+        current = contract_fingerprint(str(issue.get("body") or ""))
+    except AcceptanceError:
+        errors.append(
+            f"Issue #{issue_number} tiene un contrato de aceptación inválido."
+        )
+    else:
+        if current != pinned:
             errors.append(
-                f"Issue #{issue_number} tiene un contrato de aceptación inválido."
+                f"Issue #{issue_number} cambió su contrato de aceptación "
+                "después de /tomar; libera y vuelve a reservar."
             )
-        else:
-            if current != pinned:
-                errors.append(
-                    f"Issue #{issue_number} cambió su contrato de aceptación "
-                    "después de /tomar; libera y vuelve a reservar."
-                )
     return errors
 
 

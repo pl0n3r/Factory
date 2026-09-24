@@ -325,14 +325,14 @@ def verify_evidence(
 
 def validate_payload(payload: Any, *, root: Path | None = None) -> dict[str, Any]:
     required = {"issue", "checks"}
-    allowed = required | {"acceptance_sha256"}
+    allowed = required | {"acceptance_sha256", "require_pin"}
     if (
         not isinstance(payload, dict)
         or not required.issubset(payload)
         or not set(payload).issubset(allowed)
     ):
         raise AcceptanceError(
-            "Payload debe contener issue/checks y solo acceptance_sha256 opcional."
+            "Payload debe contener issue/checks y solo acceptance_sha256/require_pin opcionales."
         )
     issue = payload["issue"]
     if not isinstance(issue, dict):
@@ -341,7 +341,15 @@ def validate_payload(payload: Any, *, root: Path | None = None) -> dict[str, Any
     if not isinstance(body, str):
         raise AcceptanceError("Issue sin body.")
 
+    require_pin = payload.get("require_pin", False)
+    if not isinstance(require_pin, bool):
+        raise AcceptanceError("require_pin debe ser booleano.")
+
     pinned = payload.get("acceptance_sha256")
+    if require_pin and pinned is None:
+        raise AcceptanceError(
+            "Flujo protegido requiere acceptance_sha256 de una reserva v2."
+        )
     if pinned is not None:
         if (
             not isinstance(pinned, str)
