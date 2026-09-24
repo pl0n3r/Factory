@@ -6,13 +6,13 @@ Este documento no reemplaza los Issues fuente. Resume el estado canónico que de
 
 ## #9 — puertas de decisión humana · CERRADO
 
-La clasificación de puertas, etiqueta `decisión: dueño`, asignación, mención única, limpieza e idempotencia fueron verificadas. La evidencia material pendiente también se obtuvo: el dueño confirmó la recepción efectiva del push móvil generado por una puerta real.
+La clasificación de puertas, etiqueta `decisión: dueño`, asignación, mención única, limpieza e idempotencia fueron verificadas. La evidencia material pendiente también se obtuvo: el dueño confirmó la recepción efectiva del push móvil generado por una puerta real. Ya no falta **confirmar externamente** esa recepción.
 
 **Regla que permanece:** un workflow verde o un comentario en GitHub no sustituyen evidencia humana cuando el criterio exige observar la recepción en el dispositivo.
 
 ## #10 — resiliencia del dueño y de la fábrica · CERRADO
 
-El restore real desde una copia externa a GitHub fue verificado. La decisión vigente del dueño y #72 establecen un modelo por **capacidades**, no tres GitHub Apps obligatorias:
+El restore real desde una copia externa a GitHub fue verificado. La decisión vigente del dueño y #72 establecen un modelo por **capacidades**; no se requieren tres aplicaciones GitHub separadas:
 
 - CI: `github-token:ephemeral` con permisos mínimos por job;
 - observador: `github-token:ephemeral` de alcance mínimo + endpoints `/health` públicos cuando aplica;
