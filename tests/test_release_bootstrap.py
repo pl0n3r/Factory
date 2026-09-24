@@ -1,6 +1,5 @@
 """Regresiones para el bootstrap inicial del tag mayor v1."""
 
-import re
 import unittest
 from pathlib import Path
 
@@ -28,6 +27,13 @@ class ReleaseBootstrapTests(unittest.TestCase):
             self.release,
             r"repository:\s*pl0n3r/factory[\s\S]{0,160}?ref:\s*v1(?:\s|$)",
         )
+        for guard in (
+            '[[ "$REPOSITORY" == "pl0n3r/factory" ]]',
+            '[[ "$KIT_REF" =~ ^[0-9a-f]{40}$ ]]',
+            '[[ "$KIT_REF" == "$TARGET_SHA" ]]',
+            "Solo Factory puede usar kit_ref distinto de v1",
+        ):
+            self.assertIn(guard, self.release)
 
     def test_kit_ref_default_remains_v1(self):
         """AC-02: consumidores normales conservan v1 como default."""
