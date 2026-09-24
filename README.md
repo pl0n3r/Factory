@@ -68,27 +68,43 @@ flowchart LR
 
 ## Estado actual
 
-🚧 **En construcción.** El bootstrap está integrado y el kit base reusable de #1 está listo para validación final; la madurez #2–#12 y la publicación `v1.0.0` siguen pendientes.
+🚧 **TANDA 1 está técnicamente avanzada y bloqueada por evidencia externa/material y una deuda de reproducibilidad de dependencias en BRVTAL.** El kit base (#1), roles y madurez técnica principal (#2–#8, #11) y el arranque (#14) ya están integrados. Permanecen abiertos #9, #10 y #12; por dependencia, el épico #13 también sigue bloqueado. **`v1` y `v1.0.0` todavía no están publicados.**
 
 | Etapa | Estado |
 | --- | --- |
 | Plan y reglas definidos | ✅ Hecho |
 | Arranque del repositorio (#14) | ✅ Hecho |
-| Kit base reusable (#1) | ✅ Implementado · validación final |
-| Adopción en Condor, GrindFlow y BRVTAL | ⏳ Después del kit v1 |
+| Kit base reusable y template (#1) | ✅ Hecho |
+| Roles, orquestación, aceptación, métricas, producto, costos y memoria (#2–#8) | ✅ Hecho |
+| Entornos previos a producción (#11) | ✅ Hecho |
+| Puerta humana de notificación (#9) | ⛔ Bloqueado · confirmar recepción push móvil real |
+| Resiliencia del dueño (#10) | ⛔ Bloqueado · evidenciar identidades/GitHub Apps separadas con mínimo privilegio |
+| Cumplimiento legal y de datos (#12) | ⛔ Bloqueado · evidencia material + revisión jurídica/humana; inventario npm reproducible de BRVTAL pendiente |
+| Épico de madurez (#13) | ⛔ Bloqueado por #9, #10 y #12 |
+| Bootstrap del primer `v1` (#41) | ✅ Preparado · [guía de bootstrap](docs/release-bootstrap.md) |
+| Publicación `v1.0.0` | ⏸️ No autorizada mientras TANDA 1 siga abierta |
+| Adopción en Condor, GrindFlow y BRVTAL | ⏳ TANDA 2 · después del kit `v1` |
+
+El detalle operativo de lo que falta está en **[docs/tanda1-handoff.md](docs/tanda1-handoff.md)**. Los defaults seguros actuales son: no inventar evidencia, no publicar Pages por #35 y no crear `v1`/`v1.0.0` sin la puerta humana correspondiente.
 
 ### Roadmap cronológico
 
-| Orden | Issue | Qué es |
+| Orden | Issue | Estado actual |
 | --- | --- | --- |
-| 1 | [#14](https://github.com/pl0n3r/factory/issues/14) | Arranque: reglas, CI y coordinación del propio repo |
-| ✅ | [#1](https://github.com/pl0n3r/factory/issues/1) | Kit común base y template — validación final |
-| 3 | [#2](https://github.com/pl0n3r/factory/issues/2) | Roles profesionales por tarea |
-| 4 | [#3](https://github.com/pl0n3r/factory/issues/3) · [#4](https://github.com/pl0n3r/factory/issues/4) | Orquestador · especificaciones con criterios ejecutables |
-| 5 | [#5](https://github.com/pl0n3r/factory/issues/5) · [#7](https://github.com/pl0n3r/factory/issues/7) | Evaluación de agentes · control de costos |
-| 6 | [#8](https://github.com/pl0n3r/factory/issues/8) · [#9](https://github.com/pl0n3r/factory/issues/9) | Memoria compartida · decisiones reservadas al dueño |
-| 7 | [#6](https://github.com/pl0n3r/factory/issues/6) · [#10](https://github.com/pl0n3r/factory/issues/10) · [#11](https://github.com/pl0n3r/factory/issues/11) · [#12](https://github.com/pl0n3r/factory/issues/12) | Datos de producto · resiliencia · entornos previos · legal |
-| — | [#13](https://github.com/pl0n3r/factory/issues/13) | Épico que agrupa la madurez (tiempo, calidad y costo) |
+| 1 | [#14](https://github.com/pl0n3r/factory/issues/14) | ✅ Arranque integrado |
+| 2 | [#1](https://github.com/pl0n3r/factory/issues/1) | ✅ Kit común base + template integrados |
+| 3 | [#2](https://github.com/pl0n3r/factory/issues/2) | ✅ Roles profesionales |
+| 4 | [#3](https://github.com/pl0n3r/factory/issues/3) · [#4](https://github.com/pl0n3r/factory/issues/4) | ✅ Orquestador · criterios ejecutables |
+| 5 | [#5](https://github.com/pl0n3r/factory/issues/5) · [#7](https://github.com/pl0n3r/factory/issues/7) | ✅ Evaluación · control de costos |
+| 6 | [#6](https://github.com/pl0n3r/factory/issues/6) · [#8](https://github.com/pl0n3r/factory/issues/8) | ✅ Retroalimentación · memoria compartida |
+| 7 | [#11](https://github.com/pl0n3r/factory/issues/11) | ✅ Entornos previos |
+| 8 | [#9](https://github.com/pl0n3r/factory/issues/9) | ⛔ Solo falta confirmación externa de recepción push móvil |
+| 9 | [#10](https://github.com/pl0n3r/factory/issues/10) | ⛔ Solo falta evidencia de identidades/GitHub Apps separadas |
+| 10 | [#12](https://github.com/pl0n3r/factory/issues/12) | ⛔ Falta evidencia material + revisión jurídica/humana |
+| 11 | [#13](https://github.com/pl0n3r/factory/issues/13) | ⛔ Se cierra después de #9, #10 y #12 |
+| 12 | [#41](https://github.com/pl0n3r/factory/issues/41) | ✅ Bootstrap seguro del primer `v1` documentado |
+| 13 | Puerta `release-1.0.0` | ⏸️ Decisión del dueño, solo cuando #1–#14 estén cerrados |
+| 14 | TANDA 2 | ⏳ Adopción del kit publicado en Condor → GrindFlow → BRVTAL |
 
 ---
 
