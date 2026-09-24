@@ -183,6 +183,49 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertNotIn("GitHub Apps distintas", runbook)
         self.assertNotIn("--manifest /ruta", runbook)
 
+    def test_tanda1_handoff_marks_closed_gates(self):
+        handoff = (
+            Path(__file__).resolve().parents[1] / "docs" / "tanda1-handoff.md"
+        ).read_text(encoding="utf-8")
+        for issue in ("#9", "#10", "#12"):
+            self.assertIn(issue, handoff)
+        self.assertIn("#9 — puertas de decisión humana · CERRADO", handoff)
+        self.assertIn("#10 — resiliencia del dueño y de la fábrica · CERRADO", handoff)
+        self.assertIn("#12 — cumplimiento técnico de datos/licencias · CERRADO", handoff)
+        self.assertNotIn("mantener #9 abierto/bloqueado", handoff)
+        self.assertNotIn("mantener #10 abierto/bloqueado", handoff)
+        self.assertNotIn("mantener #12 abierto/bloqueado", handoff)
+
+    def test_tanda1_handoff_uses_current_capability_model(self):
+        handoff = (
+            Path(__file__).resolve().parents[1] / "docs" / "tanda1-handoff.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("github-token:ephemeral", handoff)
+        self.assertIn("hostinger:git", handoff)
+        self.assertIn("escritura cross-repo", handoff)
+        self.assertIn("GitHub App dedicada", handoff)
+        self.assertNotIn("tres GitHub Apps obligatorias", handoff)
+        self.assertNotIn("tres identidades", handoff)
+
+    def test_tanda1_handoff_preserves_legal_and_pages_boundaries(self):
+        handoff = (
+            Path(__file__).resolve().parents[1] / "docs" / "tanda1-handoff.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("#53 — revisión jurídica humana · SEPARADA", handoff)
+        self.assertIn("no equivale a afirmar aprobación jurídica", handoff)
+        self.assertIn("#35 — exposición pública de la cabina · SEPARADA", handoff)
+        self.assertIn("#35 no bloquea el cierre técnico de TANDA 1", handoff)
+
+    def test_tanda1_handoff_keeps_release_unpublished(self):
+        handoff = (
+            Path(__file__).resolve().parents[1] / "docs" / "tanda1-handoff.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("#13 — épico de madurez · ABIERTO", handoff)
+        self.assertIn("#54", handoff)
+        self.assertIn("#71", handoff)
+        self.assertIn("v1.0.0", handoff)
+        self.assertIn("no publicado y no autorizado", handoff)
+
     def test_valid_evidence(self):
         validate_manifest(sample_manifest(), now=NOW)
 
