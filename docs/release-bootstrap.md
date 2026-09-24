@@ -19,7 +19,7 @@ La preparación técnica de este documento **no autoriza** crear tags ni release
 
 Antes de crear por primera vez `v1` y `v1.0.0` deben cumplirse simultáneamente:
 
-1. Issues **#1–#14 cerrados**, incluido el épico #13.
+1. Issues **#1–#14 cerrados**, incluido el épico #13, y **#54 cerrado**.
 2. Template validado por el CI reusable del candidato.
 3. Puerta humana explícita de categoría **`release-1.0.0`** resuelta por el dueño.
 4. HEAD exacto de `main` revalidado sin cambios posteriores.
@@ -29,16 +29,22 @@ Si cualquiera falta, el default seguro es **no publicar**.
 
 ## Bootstrap inicial
 
-La primera publicación requiere una acción humana explícita porque todavía no existe el canal publicado que consume el propio workflow:
+La primera publicación sigue requiriendo una decisión humana explícita, pero el camino técnico ya no se improvisa. El workflow **Bootstrap release Factory v1.0.0** (`.github/workflows/release-bootstrap.yml`) es el único caller manual del primer release.
 
-1. Revalidar todos los gates anteriores.
-2. Fijar el **SHA exacto aprobado** de Factory.
-3. Crear manualmente el tag mayor **`v1`** apuntando a ese SHA exacto. No usar una rama flotante.
-4. Verificar que `v1` resuelve exactamente al SHA aprobado.
-5. Ejecutar el caller normal de release desde un `push` confiable de la rama principal. El reusable ya puede cargar `actions/read-version` desde `v1` y crear/verificar el tag anotado `v1.0.0` y su GitHub Release.
-6. Verificar que `v1.0.0` apunta al mismo commit.
-7. Ejecutar un self-test consumidor usando `@v1` antes de iniciar TANDA 2.
+1. Revalidar todos los gates anteriores y fijar el **SHA exacto aprobado** de Factory.
+2. Crear o usar un Issue de puerta humana con categoría `release-1.0.0`. Tras la decisión del dueño, el Issue debe estar cerrado por el dueño y un comentario suyo debe contener:
 
+   ```html
+   <!-- factory-release-approval {"sha":"<SHA exacto aprobado>"} -->
+   ```
+
+3. Resolver #83 y proteger el canal mayor; después **Crear manualmente el tag mayor** `v1` apuntando al SHA exacto aprobado. El bootstrap no crea ni mueve `v1`.
+4. Ejecutar **Bootstrap release Factory v1.0.0** desde `main` con inputs `expected_sha=<SHA>` y `gate_issue=<número>`.
+5. El caller ejecuta primero el CI reusable local sobre `template/` con el SHA candidato, luego verifica #1–#14/#54, puerta/aprobación, HEAD de `main` y `v1`.
+6. Solo si todo coincide, el job con escritura invoca `pl0n3r/factory/.github/workflows/release.yml@v1` y crea/verifica el tag anotado `v1.0.0` + GitHub Release.
+7. Después ejecuta un **self-test** consumidor mediante `pl0n3r/factory/.github/workflows/ci.yml@v1` sobre `template/`. Un fallo mantiene la adopción TANDA 2 bloqueada.
+
+El marker de aprobación autoriza únicamente el SHA indicado; cambiar `main`, mover `v1` o usar otra puerta hace fallar cerrado el preflight.
 Para releases posteriores dentro de la misma major, `v1` se actualiza únicamente mediante el proceso humano/autorizado definido para el canal mayor, nunca por inferencia de un agente.
 
-El merge de esta preparación no crea ningún tag automáticamente porque Factory no añade aquí un caller de publicación.
+El merge de esta preparación no crea ningún tag automáticamente. El caller existe, pero solo `workflow_dispatch` del dueño y todos los gates satisfechos pueden ejecutar la publicación.

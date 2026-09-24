@@ -13,6 +13,14 @@ on:
         required: false
         default: 'version'
         type: string
+      factory_bootstrap:
+        required: false
+        default: false
+        type: boolean
+      expected_sha:
+        required: false
+        default: ''
+        type: string
     outputs:
       version:
         description: Versión X.Y.Z
@@ -45,9 +53,26 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          BOOTSTRAP: ${{ inputs.factory_bootstrap }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
-          [[ "$EVENT_NAME" == "push" ]] || { echo "::error::Release solo acepta caller activado por push"; exit 1; }
+          case "$EVENT_NAME" in
+            push)
+              [[ "$BOOTSTRAP" == "false" ]] || { echo "::error::factory_bootstrap no aplica a push"; exit 1; }
+              ;;
+            workflow_dispatch)
+              [[ "$BOOTSTRAP" == "true" ]] || { echo "::error::Dispatch sin factory_bootstrap"; exit 1; }
+              [[ "$REPOSITORY" == "pl0n3r/factory" ]] || { echo "::error::Bootstrap solo permitido en Factory"; exit 1; }
+              [[ "$ACTOR" == "$OWNER" ]] || { echo "::error::Bootstrap requiere al dueño"; exit 1; }
+              [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::expected_sha inválido"; exit 1; }
+              [[ "$EXPECTED_SHA" == "$GITHUB_SHA" ]] || { echo "::error::expected_sha no coincide con github.sha"; exit 1; }
+              ;;
+            *) echo "::error::Release no acepta contexto $EVENT_NAME"; exit 1 ;;
+          esac
           [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::Release solo acepta la rama principal"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
