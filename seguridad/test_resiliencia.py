@@ -68,6 +68,24 @@ jobs:
       - uses: ./actions/local
 """)
 
+    def test_trusted_factory_v1_reusable_workflows_are_allowed(self):
+        for ref in (
+            "pl0n3r/factory/.github/workflows/ci.yml@v1",
+            "pl0n3r/factory/.github/workflows/release.yml@v1",
+        ):
+            with self.subTest(ref=ref):
+                audit_workflow(f"jobs:\n  reusable:\n    uses: {ref}\n")
+
+    def test_other_floating_v1_refs_are_rejected(self):
+        for ref in (
+            "actions/checkout@v1",
+            "otro/repo/.github/workflows/ci.yml@v1",
+            "pl0n3r/factory/.github/workflows/deploy.yml@v1",
+        ):
+            with self.subTest(ref=ref):
+                with self.assertRaises(ValidationError):
+                    audit_workflow(f"jobs:\n  reusable:\n    uses: {ref}\n")
+
     def test_current_repository_workflows_are_auditable(self):
         root = Path(__file__).resolve().parents[1] / ".github" / "workflows"
         for path in sorted((*root.glob("*.yml"), *root.glob("*.yaml"))):
