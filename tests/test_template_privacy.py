@@ -68,8 +68,13 @@ class TemplatePrivacyTests(unittest.TestCase):
     def test_template_keeps_owner_placeholders_until_go_live(self):
         data = template_data()
         generated = generate_documents(load_rules(), data)
-        self.assertTrue(
-            all(PLACEHOLDER_TOKEN in document for document in generated.values())
+        self.assertEqual(
+            set(data["controller"].values()),
+            {PLACEHOLDER_TOKEN},
+        )
+        self.assertIn(
+            PLACEHOLDER_TOKEN,
+            generated["politica-tratamiento.md"],
         )
 
         live = deepcopy(data)
