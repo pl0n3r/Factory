@@ -1,0 +1,53 @@
+name: Cabina de mando
+
+# Regenera cada hora la página de estado de todos los proyectos y la publica en
+# GitHub Pages. Solo lectura: API pública de GitHub + /health de cada sitio.
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/cabina.py
+      - .github/workflows/cabina.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cabina
+  cancel-in-progress: true
+
+jobs:
+  generar:
+    name: Generar cabina
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Recolectar estado y generar HTML
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/cabina.py
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: site
+
+  publicar:
+    name: Publicar en Pages
+    needs: generar
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346
