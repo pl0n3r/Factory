@@ -75,6 +75,19 @@ jobs:
           gh api "repos/$REPOSITORY/issues/$GATE_ISSUE" > /tmp/gate.json
           gh api --paginate "repos/$REPOSITORY/issues/$GATE_ISSUE/comments?per_page=100"             --slurp | jq 'add // []' > /tmp/comments.json
 
+          gh api --paginate "repos/$REPOSITORY/rulesets?includes_parents=true&per_page=100"             --slurp | jq 'add // []' > /tmp/ruleset-index.json
+          printf '[]\n' > /tmp/rulesets.json
+          jq -r '.[].id' /tmp/ruleset-index.json | while IFS= read -r ruleset_id; do
+            [[ "$ruleset_id" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::ruleset id inválido"
+              exit 1
+            }
+            gh api "repos/$REPOSITORY/rulesets/$ruleset_id?includes_parents=true" > /tmp/ruleset.json
+            jq --slurpfile item /tmp/ruleset.json '. + $item'               /tmp/rulesets.json > /tmp/rulesets.next
+            mv /tmp/rulesets.next /tmp/rulesets.json
+          done
+          python3 scripts/verificar_ruleset_v1.py < /tmp/rulesets.json
+
           v1_sha=""
           ref_json="$(gh api "repos/$REPOSITORY/git/ref/tags/v1" 2>/dev/null || true)"
           if [[ -n "$ref_json" ]]; then
