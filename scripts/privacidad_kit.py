@@ -101,7 +101,12 @@ def validate_rules(document: object) -> dict[str, Any]:
     if document["material_changes"] != ["purpose", "sensitive", "new_provider"]:
         raise PrivacyError("reglas: cambios materiales divergentes")
     if document["documents"] != [
-        "politica-tratamiento.md", "registro-tratamientos.md", "retencion.md"
+        "politica-tratamiento.md",
+        "aviso-privacidad.md",
+        "terminos-condiciones.md",
+        "registro-tratamientos.md",
+        "canal-derechos.md",
+        "retencion.md",
     ]:
         raise PrivacyError("reglas: documentos requeridos divergentes")
     return document
@@ -300,7 +305,10 @@ def generate_documents(
     controller = data["controller"]
     selected = templates or {
         "politica-tratamiento.md": _template("politica-tratamiento.md.tpl"),
+        "aviso-privacidad.md": _template("aviso-privacidad.md.tpl"),
+        "terminos-condiciones.md": _template("terminos-condiciones.md.tpl"),
         "registro-tratamientos.md": _template("registro-tratamientos.md.tpl"),
+        "canal-derechos.md": _template("canal-derechos.md.tpl"),
         "retencion.md": _template("retencion.md.tpl"),
     }
     if set(selected) != set(rules["documents"]):
@@ -317,9 +325,21 @@ def generate_documents(
             selected["politica-tratamiento.md"],
             {**common, "TREATMENTS_TABLE": _table_rows(data)},
         ),
+        "aviso-privacidad.md": _render(
+            selected["aviso-privacidad.md"],
+            {**common, "TREATMENTS_TABLE": _table_rows(data)},
+        ),
+        "terminos-condiciones.md": _render(
+            selected["terminos-condiciones.md"],
+            common,
+        ),
         "registro-tratamientos.md": _render(
             selected["registro-tratamientos.md"],
             {**common, "REGISTER_SECTIONS": _register_sections(data)},
+        ),
+        "canal-derechos.md": _render(
+            selected["canal-derechos.md"],
+            common,
         ),
         "retencion.md": _render(
             selected["retencion.md"],

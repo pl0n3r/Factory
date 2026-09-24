@@ -80,6 +80,30 @@ class PrivacyGateTests(unittest.TestCase):
                 documents=generated,
             )
 
+    def test_generated_new_document_drift_fails(self):
+        item = data_map()
+        generated = docs(item)
+        generated["aviso-privacidad.md"] += "drift\n"
+        with self.assertRaisesRegex(PrivacyGateError, "aviso-privacidad.md"):
+            evaluate_change(
+                diff_text="",
+                changed_files=[],
+                current_document=item,
+                documents=generated,
+            )
+
+    def test_gate_requires_every_document_declared_by_rules(self):
+        item = data_map()
+        generated = docs(item)
+        generated.pop("canal-derechos.md")
+        with self.assertRaisesRegex(PrivacyGateError, "incompletos"):
+            evaluate_change(
+                diff_text="",
+                changed_files=[],
+                current_document=item,
+                documents=generated,
+            )
+
     def test_material_change_requires_legal_gate(self):
         previous = data_map()
         current = deepcopy(previous)

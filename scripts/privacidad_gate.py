@@ -20,11 +20,6 @@ from scripts.safe_io import SafeIOError, read_repo_text
 
 DATA_MAP = Path("datos.yml")
 DOCS_ROOT = Path("docs/privacidad")
-DOC_NAMES = (
-    "politica-tratamiento.md",
-    "registro-tratamientos.md",
-    "retencion.md",
-)
 SOURCE_SUFFIXES = (
     ".php", ".py", ".js", ".jsx", ".ts", ".tsx", ".sql", ".twig", ".html"
 )
@@ -165,9 +160,12 @@ def evaluate_change(
         )
 
     expected = generate_documents(rules, current)
-    if set(documents) != set(DOC_NAMES):
+    document_names = tuple(expected)
+    if set(documents) != set(document_names):
         raise PrivacyGateError("documentos de privacidad incompletos o adicionales")
-    drift = sorted(name for name in DOC_NAMES if documents[name] != expected[name])
+    drift = sorted(
+        name for name in document_names if documents[name] != expected[name]
+    )
     if drift:
         raise PrivacyGateError(
             "documentos generados desactualizados: " + ", ".join(drift)
@@ -236,7 +234,7 @@ def evaluate_repository(root: Path, base_sha: str) -> dict[str, Any]:
     previous = None if previous_text is None else _json_text(previous_text, "datos base")
     documents = {
         name: _repo_text(root, DOCS_ROOT / name)
-        for name in DOC_NAMES
+        for name in rules["documents"]
     }
     return evaluate_change(
         diff_text=diff,
