@@ -40,9 +40,10 @@ La primera publicación sigue requiriendo una decisión humana explícita, pero 
 
 3. Resolver #83 y proteger el canal mayor; después **Crear manualmente el tag mayor** `v1` apuntando al SHA exacto aprobado. El bootstrap no crea ni mueve `v1`.
 4. Ejecutar **Bootstrap release Factory v1.0.0** desde `main` con inputs `expected_sha=<SHA>` y `gate_issue=<número>`.
-5. El caller ejecuta primero el CI reusable local sobre `template/` con el SHA candidato, luego verifica #1–#14/#54, puerta/aprobación, HEAD de `main` y `v1`.
-6. Solo si todo coincide, el job con escritura invoca `pl0n3r/factory/.github/workflows/release.yml@v1` y crea/verifica el tag anotado `v1.0.0` + GitHub Release.
-7. Después ejecuta un **self-test** consumidor mediante `pl0n3r/factory/.github/workflows/ci.yml@v1` sobre `template/`. Un fallo mantiene la adopción TANDA 2 bloqueada.
+5. El caller ejecuta primero el CI reusable local sobre `template/` con el SHA candidato, luego verifica #1–#14/#54, puerta/aprobación, HEAD de `main`, `v1` y el **ruleset actual**. La revalidación exige un ruleset de tags con `enforcement: active`, inclusión explícita de `refs/tags/v1` y reglas `creation`, `update` y `deletion`.
+6. La comprobación runtime del ruleset es **solo estructural** y read-only: **#83 sigue siendo obligatorio** para aportar la evidencia administrativa de qué actor puede hacer `bypass` y demostrar que un actor no autorizado no puede crear, mover ni borrar `v1`. El bootstrap no infiere `bypass_actors` cuando el token lector no los expone.
+7. Solo si todo coincide, el job con escritura invoca `pl0n3r/factory/.github/workflows/release.yml@v1` y crea/verifica el tag anotado `v1.0.0` + GitHub Release.
+8. Después ejecuta un **self-test** consumidor mediante `pl0n3r/factory/.github/workflows/ci.yml@v1` sobre `template/`. Un fallo mantiene la adopción TANDA 2 bloqueada.
 
 El marker de aprobación autoriza únicamente el SHA indicado; cambiar `main`, mover `v1` o usar otra puerta hace fallar cerrado el preflight.
 Para releases posteriores dentro de la misma major, `v1` se actualiza únicamente mediante el proceso humano/autorizado definido para el canal mayor, nunca por inferencia de un agente.
