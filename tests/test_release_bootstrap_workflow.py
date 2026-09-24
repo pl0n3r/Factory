@@ -63,6 +63,8 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         result = subprocess.run(
             args, cwd=ROOT, input="{}", capture_output=True, text=True, timeout=30,
         )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, "ERROR: repository inválido.\n")
         self.assertNotIn("ModuleNotFoundError", result.stderr)
         self.assertNotIn("ImportError", result.stderr)
 
