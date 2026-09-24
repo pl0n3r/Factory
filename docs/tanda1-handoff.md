@@ -12,7 +12,7 @@ La clasificación de puertas, etiqueta `decisión: dueño`, asignación, menció
 
 ## #10 — resiliencia del dueño y de la fábrica · CERRADO
 
-El restore real desde una copia externa a GitHub fue verificado. La decisión vigente del dueño y #72 establecen un modelo por **capacidades**; no se requieren tres aplicaciones GitHub separadas:
+El restore real desde una copia externa a GitHub fue verificado. La cobertura vigente distingue las capacidades de **CI, deploy y observer**. La decisión del dueño y #72 establecen un modelo por **capacidades**; no se requieren tres aplicaciones GitHub separadas:
 
 - CI: `github-token:ephemeral` con permisos mínimos por job;
 - observador: `github-token:ephemeral` de alcance mínimo + endpoints `/health` públicos cuando aplica;
@@ -23,9 +23,9 @@ No se admiten PATs personales ni tokens de larga duración. El manifiesto operat
 
 ## #12 — cumplimiento técnico de datos/licencias · CERRADO
 
-Los AC técnicos, el inventario de datos/licencias y la evidencia reproducible de dependencias quedaron integrados. BRVTAL conserva el snapshot npm ligado al SHA auditado y al run `36001724208`, con lock reproducible y validación mediante `inspect_npm()`.
+Los AC técnicos, el inventario de datos/licencias y la evidencia reproducible de dependencias quedaron integrados. BRVTAL conserva el **snapshot npm reproducible** ligado al SHA auditado y al run `36001724208`, con lock reproducible y validación mediante `inspect_npm()`; esa evidencia **cubre el inventario de licencias de #12**.
 
-La evidencia material de cada producto continúa en sus Issues dedicados y la **revisión jurídica humana permanece separada en #53**. Cerrar #12 no equivale a afirmar aprobación jurídica ni cumplimiento legal definitivo.
+El contrato histórico de #12 pedía, entre otras evidencias, una **referencia vigente a política de privacidad** y **revisión jurídica humana**. La evidencia material de cada producto continúa en sus Issues dedicados y la revisión jurídica humana permanece separada en #53. Cerrar #12 no equivale a afirmar aprobación jurídica ni cumplimiento legal definitivo.
 
 ## #13 — épico de madurez · ABIERTO
 
