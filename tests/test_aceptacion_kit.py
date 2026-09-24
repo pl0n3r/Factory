@@ -83,6 +83,32 @@ class AcceptanceContractTests(unittest.TestCase):
             )
             run_named_test(criterion, root)
 
+    def test_named_test_can_import_from_repo_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (root / "helper.py").write_text(
+                "VALUE = 7\n",
+                encoding="utf-8",
+            )
+            (tests_dir / "test_sample.py").write_text(
+                "import unittest\n"
+                "from helper import VALUE\n"
+                "class Demo(unittest.TestCase):\n"
+                "    def test_import(self):\n"
+                "        self.assertEqual(VALUE, 7)\n",
+                encoding="utf-8",
+            )
+            run_named_test(
+                Criterion(
+                    "AC-01",
+                    "test",
+                    "tests/test_sample.py::Demo::test_import",
+                ),
+                root,
+            )
+
     def test_named_test_rejects_missing_or_failing_case(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

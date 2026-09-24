@@ -245,10 +245,22 @@ def _load_test_module(path: Path, root: Path) -> Any:
     if spec is None or spec.loader is None:
         raise AcceptanceError("No se pudo cargar el archivo de test.")
     module = importlib.util.module_from_spec(spec)
+    root_text = str(root.resolve())
+    inserted_root = root_text not in sys.path
+    if inserted_root:
+        sys.path.insert(0, root_text)
+    sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
     except Exception as exc:
+        sys.modules.pop(module_name, None)
         raise AcceptanceError("El módulo de test falló al importarse.") from exc
+    finally:
+        if inserted_root:
+            try:
+                sys.path.remove(root_text)
+            except ValueError:
+                pass
     return module
 
 
