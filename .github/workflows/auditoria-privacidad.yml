@@ -1,0 +1,141 @@
+name: Auditoría de privacidad reusable
+
+on:
+  workflow_call:
+    inputs:
+      kit_ref:
+        required: false
+        default: 'v1'
+        type: string
+      label_language:
+        required: false
+        default: 'es'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auditoria-privacidad-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  auditar:
+    name: Auditoría semanal de privacidad
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Descargar producto
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Descargar Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ inputs.kit_ref }}
+          path: .factory
+          persist-credentials: false
+
+      - name: Resolver referencia histórica
+        id: previous
+        run: |
+          set -euo pipefail
+          previous="$(git rev-list -1 --before='8 days ago' HEAD -- datos.yml || true)"
+          [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::SHA histórico inválido"
+            exit 1
+          }
+          echo "sha=$previous" >> "$GITHUB_OUTPUT"
+
+      - name: Ejecutar auditoría sanitizada
+        env:
+          PREVIOUS_SHA: ${{ steps.previous.outputs.sha }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=.factory python3 .factory/scripts/auditar_privacidad.py             --previous-sha "$PREVIOUS_SHA" > /tmp/privacy-audit.json
+          python3 -m json.tool /tmp/privacy-audit.json >/dev/null
+
+      - name: Sincronizar Issues de auditoría y puerta legal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          LABEL_LANGUAGE: ${{ inputs.label_language }}
+        run: |
+          set -euo pipefail
+          case "$LABEL_LANGUAGE" in
+            es)
+              TYPE_DOC='tipo: documentación'
+              TYPE_PRODUCT='tipo: producto'
+              PRIORITY_HIGH='prioridad: alta'
+              PRIORITY_CRITICAL='prioridad: crítica'
+              STATE_AVAILABLE='estado: disponible'
+              STATE_BLOCKED='estado: bloqueado'
+              ROLE_LEGAL='rol: legal-privacidad'
+              DECISION_OWNER='decisión: dueño'
+              ;;
+            en)
+              TYPE_DOC='type: documentation'
+              TYPE_PRODUCT='type: product'
+              PRIORITY_HIGH='priority: high'
+              PRIORITY_CRITICAL='priority: critical'
+              STATE_AVAILABLE='status: available'
+              STATE_BLOCKED='status: blocked'
+              ROLE_LEGAL='role: legal-privacy'
+              DECISION_OWNER='decision: owner'
+              ;;
+            *) echo "::error::label_language inválido"; exit 1 ;;
+          esac
+
+          ensure_label() {
+            local name="$1" color="$2" description="$3"
+            if ! gh api --paginate "repos/$REPOSITORY/labels?per_page=100" --jq '.[].name' | grep -Fxq "$name"; then
+              gh api --method POST "repos/$REPOSITORY/labels"                 -f name="$name" -f color="$color" -f description="$description" >/dev/null
+            fi
+          }
+          ensure_label "$TYPE_DOC" '0075CA' 'Documentación y conocimiento durable.'
+          ensure_label "$TYPE_PRODUCT" '7057FF' 'Definición funcional o decisión de producto.'
+          ensure_label "$PRIORITY_HIGH" 'D93F0B' 'Trabajo importante.'
+          ensure_label "$PRIORITY_CRITICAL" 'B60205' 'Bloquea una decisión crítica.'
+          ensure_label "$STATE_AVAILABLE" '2DA44E' 'Trabajo disponible.'
+          ensure_label "$STATE_BLOCKED" '000000' 'Trabajo bloqueado por una decisión.'
+          ensure_label "$ROLE_LEGAL" '5319E7' 'Rol legal y privacidad.'
+          ensure_label "$DECISION_OWNER" 'B60205' 'Decisión reservada al dueño.'
+
+          gh api --paginate "repos/$REPOSITORY/issues?state=open&per_page=100"             --jq '.[] | @json' > /tmp/open-privacy-issues.ndjson
+
+          find_marker() {
+            python3 -c 'import json,sys; marker=sys.argv[1]; rows=(json.loads(line) for line in open(sys.argv[2],encoding="utf-8")); print(next((str(item["number"]) for item in rows if not item.get("pull_request") and marker in (item.get("body") or "").splitlines()),""))' "$1" /tmp/open-privacy-issues.ndjson
+          }
+
+          status="$(jq -r '.status' /tmp/privacy-audit.json)"
+          audit_issue="$(find_marker '<!-- factory-privacy-audit -->')"
+          jq -r '.audit_issue_body' /tmp/privacy-audit.json > /tmp/audit-body.md
+          if [[ "$status" == "review_required" ]]; then
+            if [[ -n "$audit_issue" ]]; then
+              gh issue edit "$audit_issue" --repo "$REPOSITORY"                 --body-file /tmp/audit-body.md >/dev/null
+            else
+              gh issue create --repo "$REPOSITORY"                 --title '[AUTO] revisión de privacidad'                 --body-file /tmp/audit-body.md                 --label "$TYPE_DOC" --label "$PRIORITY_HIGH"                 --label "$STATE_AVAILABLE" --label "$ROLE_LEGAL" >/dev/null
+            fi
+          elif [[ -n "$audit_issue" ]]; then
+            gh issue close "$audit_issue" --repo "$REPOSITORY"               --comment '🟢 Auditoría de privacidad sin hallazgos pendientes.' >/dev/null
+          fi
+
+          legal_required="$(jq -r '.legal_gate_required' /tmp/privacy-audit.json)"
+          if [[ "$legal_required" == "true" ]]; then
+            legal_issue="$(find_marker '<!-- factory-privacy-material -->')"
+            jq -r '.legal_gate_body' /tmp/privacy-audit.json > /tmp/legal-body.md
+            if [[ -n "$legal_issue" ]]; then
+              gh issue edit "$legal_issue" --repo "$REPOSITORY"                 --body-file /tmp/legal-body.md                 --add-assignee "$OWNER" --add-label "$DECISION_OWNER" >/dev/null
+            else
+              legal_url="$(gh issue create --repo "$REPOSITORY"                 --title 'decisión: cambio material de privacidad'                 --body-file /tmp/legal-body.md                 --assignee "$OWNER"                 --label "$TYPE_PRODUCT" --label "$PRIORITY_CRITICAL"                 --label "$STATE_BLOCKED" --label "$ROLE_LEGAL"                 --label "$DECISION_OWNER")"
+              legal_issue="${legal_url##*/}"
+              gh issue comment "$legal_issue" --repo "$REPOSITORY"                 --body "@$OWNER 🧭 DECISIÓN NECESARIA · categoría legal. La documentación sigue en documented_not_legally_approved hasta tu decisión." >/dev/null
+            fi
+          fi
