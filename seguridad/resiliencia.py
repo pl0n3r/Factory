@@ -72,7 +72,7 @@ def _global_flow_write(line: str, indentation: int) -> bool:
     plain = _plain_yaml(line)
     if not re.match(r"^permissions\s*:\s*\{", plain):
         return False
-    return re.search(r":\s*write(?:\s*[,}])", plain) is not None
+    return re.search(r":\s*write\s*[,}]", plain) is not None
 
 
 def _top_level_permission_block_has_write(
