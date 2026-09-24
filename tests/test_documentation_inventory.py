@@ -1,3 +1,5 @@
+"""Contrato ejecutable del inventario técnico de datos por producto."""
+
 import unittest
 from pathlib import Path
 
@@ -7,11 +9,24 @@ DOC = ROOT / "docs" / "inventario-tecnico-datos-productos.md"
 
 
 class DocumentationInventoryTests(unittest.TestCase):
+    """Verifica contenido y separación por producto del inventario técnico."""
+
     @classmethod
     def setUpClass(cls):
+        """Carga una sola vez el documento auditado."""
         cls.text = DOC.read_text(encoding="utf-8")
 
+    @classmethod
+    def product_section(cls, heading, next_heading):
+        """Devuelve únicamente el bloque comprendido entre dos headings."""
+        start_marker = f"## {heading}"
+        end_marker = f"## {next_heading}"
+        cls.assertIn(cls, start_marker, cls.text)
+        cls.assertIn(cls, end_marker, cls.text)
+        return cls.text.split(start_marker, 1)[1].split(end_marker, 1)[0]
+
     def test_audited_shas(self):
+        """AC-01: conserva los tres SHA exactos del snapshot auditado."""
         for sha in (
             "02be616b1bb8f33f7da601a0cca33e5c0e4dcc79",
             "8c59ea017b5cb8f90985cf9aae8e32d59f93c65c",
@@ -20,41 +35,48 @@ class DocumentationInventoryTests(unittest.TestCase):
             self.assertIn(sha, self.text)
 
     def test_condor_inventory(self):
+        """AC-02: los términos de Condor viven dentro de su sección."""
+        section = self.product_section("Condor", "GrindFlow")
         for value in (
-            "## Condor",
             "Customer.notes",
             "NotificationDelivery",
             "Auditoría",
             "Observabilidad y diagnóstico",
             "NullTransactionalEmailGateway",
+            "### Preguntas materiales pendientes",
         ):
-            self.assertIn(value, self.text)
+            self.assertIn(value, section)
 
     def test_grindflow_inventory(self):
+        """AC-03: los términos de GrindFlow viven dentro de su sección."""
+        section = self.product_section("GrindFlow", "BRVTAL")
         for value in (
-            "## GrindFlow",
             "Google Drive",
             "Dropbox",
             "Supabase",
             "visitor_hash",
             "24 horas",
             "Media vault",
+            "### Preguntas materiales pendientes",
         ):
-            self.assertIn(value, self.text)
+            self.assertIn(value, section)
 
     def test_brvtal_inventory(self):
+        """AC-04: los términos de BRVTAL viven dentro de su sección."""
+        section = self.product_section("BRVTAL", "Matriz de terceros identificados")
         for value in (
-            "## BRVTAL",
             "TOTP",
             "Contacto público",
             "Google Tag Manager",
             "analytics_storage",
             "30 días",
             "15 minutos",
+            "### Preguntas materiales pendientes",
         ):
-            self.assertIn(value, self.text)
+            self.assertIn(value, section)
 
     def test_material_questions(self):
+        """AC-05: exige preguntas por producto y una lista transversal."""
         self.assertGreaterEqual(
             self.text.count("### Preguntas materiales pendientes"),
             3,
@@ -65,6 +87,7 @@ class DocumentationInventoryTests(unittest.TestCase):
         )
 
     def test_legal_boundary(self):
+        """AC-06: preserva la frontera entre evidencia y aprobación legal."""
         self.assertIn("no es aprobación jurídica", self.text)
         self.assertIn("no cierra #12", self.text)
 
