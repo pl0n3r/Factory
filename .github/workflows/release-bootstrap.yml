@@ -66,7 +66,7 @@ jobs:
 
           default_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
           printf '{}\n' > /tmp/issues.json
-          for number in {1..14} 54; do
+          for number in {1..14} 54 83; do
             state="$(gh api "repos/$REPOSITORY/issues/$number" --jq '.state')"
             jq --arg number "$number" --arg state "$state"               '. + {($number): {"state": $state}}' /tmp/issues.json > /tmp/issues.next
             mv /tmp/issues.next /tmp/issues.json
