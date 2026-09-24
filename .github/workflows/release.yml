@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: pl0n3r/factory
-          ref: v1
+          ref: ${{ inputs.kit_ref }}
           path: .factory
           persist-credentials: false
       - id: version
