@@ -127,7 +127,7 @@ El detalle operativo de lo que falta está en **[docs/tanda1-handoff.md](docs/ta
 Trabajas en el repositorio pl0n3r/Condor. Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md para este repositorio.
 ```
 
-Repositorios válidos: `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal`, `pl0n3r/factory`.
+Repositorios válidos: `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal`, `pl0n3r/factory`, `pl0n3r/ControlBot` (centro de control) y `pl0n3r/AutoFactory` (extensión de los agentes).
 
 **Modo despachador:**
 
