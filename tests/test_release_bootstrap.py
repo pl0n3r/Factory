@@ -11,7 +11,7 @@ GUIDE = ROOT / "docs" / "release-bootstrap.md"
 
 
 class ReleaseBootstrapTests(unittest.TestCase):
-    """Mantiene el primer release desacoplado de un tag v1 inexistente."""
+    """Preserva la frontera de seguridad del primer release."""
 
     @classmethod
     def setUpClass(cls):
@@ -20,27 +20,16 @@ class ReleaseBootstrapTests(unittest.TestCase):
         cls.template_release = TEMPLATE_RELEASE.read_text(encoding="utf-8")
         cls.guide = GUIDE.read_text(encoding="utf-8")
 
-    def test_release_checkout_uses_kit_ref(self):
-        """AC-01: el checkout interno usa la referencia configurable."""
-        self.assertIn("ref: ${{ inputs.kit_ref }}", self.release)
-        self.assertNotRegex(
-            self.release,
-            r"repository:\s*pl0n3r/factory[\s\S]{0,160}?ref:\s*v1(?:\s|$)",
-        )
-        for guard in (
-            '[[ "$REPOSITORY" == "pl0n3r/factory" ]]',
-            '[[ "$KIT_REF" =~ ^[0-9a-f]{40}$ ]]',
-            '[[ "$KIT_REF" == "$TARGET_SHA" ]]',
-            "Solo Factory puede usar kit_ref distinto de v1",
-        ):
-            self.assertIn(guard, self.release)
+    def test_write_release_stays_on_published_v1(self):
+        """AC-01: release ejecuta únicamente el kit publicado v1."""
+        self.assertIn("repository: pl0n3r/factory", self.release)
+        self.assertIn("ref: v1", self.release)
+        self.assertNotIn("inputs.kit_ref", self.release)
 
-    def test_kit_ref_default_remains_v1(self):
-        """AC-02: consumidores normales conservan v1 como default."""
-        self.assertRegex(
-            self.release,
-            r"kit_ref:\s*\n\s*required:\s*false\s*\n\s*default:\s*'v1'",
-        )
+    def test_release_api_has_no_dynamic_kit_ref(self):
+        """AC-02: workflow_call no ofrece una referencia dinámica del kit."""
+        workflow_call = self.release.split("outputs:", 1)[0]
+        self.assertNotIn("kit_ref:", workflow_call)
 
     def test_bootstrap_guide_requires_human_gate(self):
         """AC-03: la guía falla cerrado ante gates humanos pendientes."""
@@ -48,8 +37,9 @@ class ReleaseBootstrapTests(unittest.TestCase):
             "#1–#14 cerrados",
             "release-1.0.0",
             "default seguro es **no publicar**",
+            "SHA exacto aprobado",
+            "Crear manualmente el tag mayor",
             "no crea ningún tag automáticamente",
-            "SHA exacto",
         ):
             self.assertIn(required, self.guide)
 
