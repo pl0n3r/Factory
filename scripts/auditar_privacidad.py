@@ -75,9 +75,16 @@ def collect_sources(root: Path) -> dict[str, str]:
 
         for name in sorted(filenames):
             path = current / name
-            relative_path = path.relative_to(base)
+            try:
+                relative_path = path.relative_to(base)
+            except ValueError as exc:
+                raise PrivacyAuditError("ruta fuera del checkout") from exc
             relative = relative_path.as_posix()
-            if SAFE_PATH.fullmatch(relative) is None:
+            if (
+                not 1 <= len(relative) <= 240
+                or any(part in {"", ".", ".."} for part in relative_path.parts)
+                or any(char not in ALLOWED_PATH_CHARS for char in relative)
+            ):
                 raise PrivacyAuditError("ruta de fuente no canónica")
             if not _source_path(relative):
                 continue
