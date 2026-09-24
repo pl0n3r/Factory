@@ -71,9 +71,55 @@ jobs:
           if git cat-file -e "$BASE_SHA:.github/workflows/coordinacion-trabajo.yml" 2>/dev/null; then argumentos+=(--require-reservation); fi
           python3 scripts/coordinar_trabajo.py validar-pr --repo "$REPOSITORIO" --pr "$PR" "${argumentos[@]}"
 
+  acceptance:
+    name: Criterios de aceptación
+    needs: [workflows, scripts, coordinacion]
+    if: github.event_name == 'pull_request' && always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      checks: read
+    steps:
+      - name: Exigir gates base del mismo run
+        env:
+          RESULTADOS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for r in $RESULTADOS; do
+            [[ "$r" == "success" ]] || { echo "::error::Gate previo con resultado $r"; exit 1; }
+          done
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Construir evidencia del Issue y SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          HEAD_REF: ${{ github.head_ref }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_REF" =~ ^trabajo/issue-([1-9][0-9]*)$ ]] || { echo "::error::Rama sin Issue canónico"; exit 1; }
+          issue="${BASH_REMATCH[1]}"
+          gh api "repos/$REPOSITORIO/issues/$issue" > /tmp/issue.json
+          gh api "repos/$REPOSITORIO/commits/$SHA/check-runs?per_page=100" > /tmp/checks.json
+          jq -n --slurpfile issue /tmp/issue.json --slurpfile checks /tmp/checks.json             '{issue:$issue[0], checks:$checks[0]}' > /tmp/acceptance.json
+
+      - name: Verificar criterios específicos
+        run: |
+          set -euo pipefail
+          python3 scripts/aceptacion_kit.py < /tmp/acceptance.json             | tee /tmp/acceptance-result.json
+          printf '### Criterios de aceptación\n\n```json\n' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/acceptance-result.json >> "$GITHUB_STEP_SUMMARY"
+          printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+
   validar:
     name: Validar
-    needs: [workflows, scripts, coordinacion]
+    needs: [workflows, scripts, coordinacion, acceptance]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

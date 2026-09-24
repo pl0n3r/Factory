@@ -17,12 +17,14 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 if __package__:
+    from scripts.aceptacion_kit import AcceptanceError, parse_contract
     from scripts.orquestador_kit import (
         PlanError,
         parse_task_marker,
         reservation_blockers,
     )
 else:
+    from aceptacion_kit import AcceptanceError, parse_contract
     from orquestador_kit import PlanError, parse_task_marker, reservation_blockers
 
 
@@ -947,6 +949,13 @@ def reserve_work(
         raise CoordinationError("La reserva se ejecuta sobre Issues, no PRs.")
     if issue.get("state") != "open":
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
+
+    try:
+        parse_contract(str(issue.get("body") or ""))
+    except AcceptanceError as exc:
+        raise CoordinationError(
+            f"Issue #{issue_number} no tiene criterios de aceptación ejecutables válidos: {exc}"
+        ) from exc
 
     try:
         task_marker = parse_task_marker(str(issue.get("body") or ""))

@@ -51,6 +51,18 @@ Para épicos que se dividen en trabajo paralelo, declara un marker factory-plan 
 
 Consulta docs/orquestador.md para el contrato completo.
 
+## Criterios de aceptación ejecutables
+
+Antes de `/tomar`, el Issue debe contener Contexto, Alcance, Fuera de alcance, criterios humanos `AC-NN` y un marker `factory-acceptance` consistente.
+
+- Cada `AC-NN` apunta a un test `unittest` exacto o a un check GitHub exacto.
+- No se permiten comandos shell provenientes del Issue.
+- `Criterios de aceptación` debe pasar en el PR; `Validar` depende de ese job.
+- Gates genéricos verdes son necesarios, pero no suficientes para declarar el trabajo hecho.
+- Si cambia el comportamiento esperado, actualiza primero el Issue y su evidencia ejecutable antes de modificar código.
+
+Consulta `docs/aceptacion-ejecutable.md` para el contrato completo.
+
 ## Roles profesionales por tarea
 
 Después de obtener la reserva con `/tomar`, revisa las etiquetas `rol: …` / `role: …` del Issue y carga **todos** los perfiles correspondientes desde `agentes/roles/<rol>.md`.

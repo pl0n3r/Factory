@@ -46,6 +46,28 @@ SESSION_A = "11111111-1111-4111-8111-111111111111"
 SESSION_B = "22222222-2222-4222-8222-222222222222"
 
 
+VALID_ACCEPTANCE_BODY = """### Contexto
+
+Contexto de prueba.
+
+### Alcance
+
+Alcance de prueba.
+
+### Fuera de alcance
+
+Nada.
+
+### Criterios de aceptación
+
+- [ ] [AC-01] El gate base pasa.
+
+### Contrato ejecutable
+
+<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"check","target":"Tests de scripts"}]} -->
+"""
+
+
 class FakeGitHub:
     """Simula únicamente las operaciones de GitHub usadas por el coordinador."""
 
@@ -58,6 +80,7 @@ class FakeGitHub:
             "state": "open",
             "state_reason": None,
             "labels": [{"name": STATUS_AVAILABLE}],
+            "body": VALID_ACCEPTANCE_BODY,
         }
         self.open_issue_data: list[dict] = [self.issue_data]
         self.comments: list[dict] = []
@@ -765,6 +788,17 @@ class CoordinacionTests(unittest.TestCase):
         self.assertIn("Resumen útil", updated)
         self.assertEqual(reservation_from_pr_body(updated), SESSION_B)
         self.assertNotIn(SESSION_A, updated)
+
+    def test_issue_without_executable_acceptance_cannot_be_reserved(self) -> None:
+        """El coordinador rechaza trabajo sin contrato AC ejecutable."""
+        api = FakeGitHub()
+        api.issue_data["body"] = "Issue legacy sin contrato."
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "criterios de aceptación ejecutables",
+        ):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
 
     def test_blocked_issue_cannot_be_reserved(self) -> None:
         """Un Issue bloqueado no entra a la cola de trabajo."""
