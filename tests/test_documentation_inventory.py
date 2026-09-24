@@ -25,13 +25,18 @@ class DocumentationInventoryTests(unittest.TestCase):
         return self.text.split(start_marker, 1)[1].split(end_marker, 1)[0]
 
     def test_audited_shas(self):
-        """AC-01: conserva los tres SHA exactos del snapshot auditado."""
-        for sha in (
-            "02be616b1bb8f33f7da601a0cca33e5c0e4dcc79",
-            "8c59ea017b5cb8f90985cf9aae8e32d59f93c65c",
-            "138b1babac0ff6797ad9e0f3ccb0fbda0f793452",
-        ):
-            self.assertIn(sha, self.text)
+        """AC-01: asocia cada producto con su SHA exacto auditado."""
+        snapshot = self.text.split("## Snapshot auditado", 1)[1].split(
+            "## Cómo leer este mapa",
+            1,
+        )[0]
+        expected = {
+            "Condor": "02be616b1bb8f33f7da601a0cca33e5c0e4dcc79",
+            "GrindFlow": "8c59ea017b5cb8f90985cf9aae8e32d59f93c65c",
+            "BRVTAL": "138b1babac0ff6797ad9e0f3ccb0fbda0f793452",
+        }
+        for product, sha in expected.items():
+            self.assertIn(f"- {product}: \`{sha}\`", snapshot)
 
     def test_condor_inventory(self):
         """AC-02: los términos de Condor viven dentro de su sección."""
