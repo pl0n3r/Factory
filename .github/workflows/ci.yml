@@ -1,91 +1,133 @@
-name: CI factory
-
+name: CI reusable
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, edited]
-  push:
-    branches: [main]
-
+  workflow_call:
+    inputs:
+      stack: {required: true, type: string}
+      domain: {required: false, default: '', type: string}
+      version_source: {required: false, default: '', type: string}
+      label_language: {required: false, default: 'es', type: string}
+      phase: {required: false, default: 'construccion', type: string}
+      php_version: {required: false, default: '8.3', type: string}
+      node_enabled: {required: false, default: false, type: boolean}
+      node_version: {required: false, default: '24', type: string}
+      working_directory: {required: false, default: '.', type: string}
+      kit_ref: {required: false, default: 'v1', type: string}
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  workflows:
-    name: Lint de workflows
+  preflight:
+    name: Preflight reusable
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: actionlint
-        run: |
-          set -euo pipefail
-          version=1.7.7
-          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz" \
-            | tar -xz actionlint
-          ./actionlint -color
-
-  scripts:
-    name: Tests de scripts
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Sintaxis y pruebas
-        run: |
-          set -euo pipefail
-          python3 -m py_compile scripts/*.py
-          python3 -m unittest discover -s tests -p 'test_*.py'
-
-  coordinacion:
-    name: Validar coordinación
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Validar reserva, rama y colisiones
+      - name: Validar contrato
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORIO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          STACK: ${{ inputs.stack }}
+          DOMAIN: ${{ inputs.domain }}
+          VERSION_SOURCE: ${{ inputs.version_source }}
+          LABEL_LANGUAGE: ${{ inputs.label_language }}
+          PHASE: ${{ inputs.phase }}
+          NODE_ENABLED: ${{ inputs.node_enabled }}
+          WORKDIR: ${{ inputs.working_directory }}
         run: |
           set -euo pipefail
-          argumentos=()
-          if git cat-file -e "$BASE_SHA:.github/workflows/coordinacion-trabajo.yml" 2>/dev/null; then
-            argumentos+=(--require-reservation)
-          else
-            echo "Arranque: la base aún no tiene coordinación; se validan rama, Issue y colisiones."
+          case "$STACK" in symfony|laravel|php) ;; *) echo "::error::stack inválido"; exit 1 ;; esac
+          case "$LABEL_LANGUAGE" in es|en) ;; *) echo "::error::label_language inválido"; exit 1 ;; esac
+          case "$PHASE" in construccion|live) ;; *) echo "::error::phase inválida"; exit 1 ;; esac
+          [[ "$WORKDIR" != /* && "$WORKDIR" != *".."* && "$WORKDIR" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::working_directory inválido"; exit 1; }
+          test -d "$WORKDIR" || { echo "::error::working_directory no existe"; exit 1; }
+          cd "$WORKDIR"
+          if [[ -n "$DOMAIN" && ! "$DOMAIN" =~ ^https://[^[:space:]]+$ ]]; then echo "::error::domain debe ser HTTPS o vacío"; exit 1; fi
+          if [[ -n "$VERSION_SOURCE" && ! -f "$VERSION_SOURCE" ]]; then echo "::error::No existe version_source: $VERSION_SOURCE"; exit 1; fi
+          if [[ "$STACK" =~ ^(symfony|laravel)$ && ! -f composer.lock ]]; then echo "::error::$STACK requiere composer.lock"; exit 1; fi
+          if [[ "$NODE_ENABLED" == "true" && ! -f package-lock.json ]]; then echo "::error::node_enabled requiere package-lock.json"; exit 1; fi
+  php:
+    name: PHP base
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ inputs.kit_ref }}
+          path: .factory
+          persist-credentials: false
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ inputs.php_version }}
+          coverage: none
+      - name: Validar Composer
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+          if [[ -f composer.json ]]; then composer validate --strict; fi
+      - name: Instalar Composer bloqueado
+        if: hashFiles(format('{0}/composer.lock', inputs.working_directory)) != ''
+        uses: ./.factory/actions/retry
+        with:
+          working-directory: ${{ inputs.working_directory }}
+          operation: composer-install
+      - name: Sintaxis y pruebas PHP
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          STACK: ${{ inputs.stack }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find . -type f -name '*.php' -not -path './vendor/*' -print0)
+          if (( ${#files[@]} > 0 )); then printf '%s\0' "${files[@]}" | xargs -0 -n1 php -l; fi
+          if [[ -f composer.json ]] && composer run-script --list --no-interaction | grep -Eq '(^|[[:space:]])test([[:space:]]|$)'; then
+            composer test --no-interaction
+          elif [[ "$STACK" == "symfony" && -x vendor/bin/simple-phpunit ]]; then
+            vendor/bin/simple-phpunit
+          elif [[ "$STACK" == "laravel" && -f artisan ]]; then
+            php artisan test
           fi
-          python3 scripts/coordinar_trabajo.py validar-pr \
-            --repo "$REPOSITORIO" --pr "$PR" "${argumentos[@]}"
-
+  node:
+    name: Node opcional
+    if: inputs.node_enabled
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ inputs.kit_ref }}
+          path: .factory
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ inputs.node_version }}
+      - name: Instalar npm bloqueado
+        uses: ./.factory/actions/retry
+        with:
+          working-directory: ${{ inputs.working_directory }}
+          operation: npm-ci
+      - name: Pruebas y build Node
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+          npm test --if-present
+          npm run build --if-present
   validar:
     name: Validar
-    needs: [workflows, scripts, coordinacion]
+    needs: [preflight, php, node]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Consolidar gates
-        env:
+      - env:
           RESULTADOS: ${{ join(needs.*.result, ' ') }}
         run: |
-          for r in $RESULTADOS; do
-            case "$r" in success|skipped) ;; *) echo "::error::Gate con resultado $r"; exit 1 ;; esac
-          done
+          set -euo pipefail
+          for r in $RESULTADOS; do case "$r" in success|skipped) ;; *) echo "::error::Gate reusable con resultado $r"; exit 1 ;; esac; done

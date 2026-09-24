@@ -1,0 +1,22 @@
+name: Probar CI reusable
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/reusable-selftest.yml'
+      - 'actions/retry/**'
+      - 'scripts/ci_retry.py'
+      - 'template/**'
+permissions:
+  contents: read
+jobs:
+  template:
+    uses: ./.github/workflows/ci.yml
+    with:
+      stack: php
+      working_directory: template
+      version_source: config/version.json
+      label_language: es
+      phase: construccion
+      kit_ref: ${{ github.event.pull_request.head.sha }}

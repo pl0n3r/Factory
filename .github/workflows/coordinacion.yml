@@ -1,0 +1,216 @@
+name: Coordinación reusable
+
+on:
+  workflow_call:
+    inputs:
+      operation:
+        description: 'comment, label, pr, issue, validate o sweep'
+        required: true
+        type: string
+      issue_number:
+        required: false
+        default: 0
+        type: number
+      pr_number:
+        required: false
+        default: 0
+        type: number
+      actor:
+        required: false
+        default: ''
+        type: string
+      association:
+        required: false
+        default: ''
+        type: string
+      body:
+        required: false
+        default: ''
+        type: string
+      label:
+        required: false
+        default: ''
+        type: string
+      action:
+        required: false
+        default: ''
+        type: string
+      require_reservation:
+        required: false
+        default: true
+        type: boolean
+      kit_ref:
+        required: false
+        default: 'v1'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coordination-${{ github.repository }}-${{ inputs.issue_number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validar-input:
+    name: Validar operación
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in comment|label|pr|issue|validate|sweep) ;; *) echo "::error::operation inválida"; exit 1 ;; esac
+
+  comentario:
+    name: Procesar comando
+    if: inputs.operation == 'comment'
+    needs: validar-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue_number }}
+          ACTOR: ${{ inputs.actor }}
+          ASSOCIATION: ${{ inputs.association }}
+          BODY: ${{ inputs.body }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/coordinar_trabajo.py comentario --repo "$REPOSITORIO" --issue "$ISSUE" --actor "$ACTOR" --association "$ASSOCIATION" --body "$BODY"
+
+  etiqueta:
+    name: Sincronizar reserva
+    if: inputs.operation == 'label'
+    needs: validar-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue_number }}
+          ACTOR: ${{ inputs.actor }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/coordinar_trabajo.py label-event --repo "$REPOSITORIO" --issue "$ISSUE" --actor "$ACTOR" --label "$LABEL"
+
+  pr:
+    name: Sincronizar PR
+    if: inputs.operation == 'pr'
+    needs: validar-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ inputs.pr_number }}
+          ACTION: ${{ inputs.action }}
+        run: python3 .factory/scripts/coordinar_trabajo.py pr-event --repo "$REPOSITORIO" --pr "$PR" --action "$ACTION"
+
+  issue:
+    name: Sincronizar Issue
+    if: inputs.operation == 'issue'
+    needs: validar-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue_number }}
+          ACTION: ${{ inputs.action }}
+        run: python3 .factory/scripts/coordinar_trabajo.py issue-event --repo "$REPOSITORIO" --issue "$ISSUE" --action "$ACTION"
+
+  validar-pr:
+    name: Validar coordinación
+    if: inputs.operation == 'validate'
+    needs: validar-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ inputs.pr_number }}
+          REQUIRE_RESERVATION: ${{ inputs.require_reservation }}
+        run: |
+          set -euo pipefail
+          args=()
+          [[ "$REQUIRE_RESERVATION" == "true" ]] && args+=(--require-reservation)
+          python3 .factory/scripts/coordinar_trabajo.py validar-pr --repo "$REPOSITORIO" --pr "$PR" "${args[@]}"
+
+  sweep:
+    name: Marcar reservas recuperables
+    if: inputs.operation == 'sweep'
+    needs: validar-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+        run: python3 .factory/scripts/coordinar_trabajo.py marcar-inactivas --repo "$REPOSITORIO"

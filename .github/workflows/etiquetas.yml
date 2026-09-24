@@ -1,0 +1,108 @@
+name: Etiquetas reutilizables
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'sync, validate o sweep'
+        required: true
+        type: string
+      language:
+        description: 'es o en'
+        required: false
+        default: 'es'
+        type: string
+      issue_number:
+        description: 'Issue o PR a validar cuando mode=validate'
+        required: false
+        default: 0
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: labels-${{ github.repository }}-${{ inputs.mode }}-${{ inputs.issue_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  etiquetas:
+    name: Gestionar etiquetas
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Validar inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          LANGUAGE: ${{ inputs.language }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in sync|validate|sweep) ;; *) echo "::error::mode debe ser sync, validate o sweep"; exit 1 ;; esac
+          case "$LANGUAGE" in es|en) ;; *) echo "::error::language debe ser es o en"; exit 1 ;; esac
+          if [[ "$MODE" == "validate" && "$ISSUE_NUMBER" == "0" ]]; then
+            echo "::error::issue_number es obligatorio cuando mode=validate"
+            exit 1
+          fi
+
+      - name: Descargar kit Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Validar catálogo
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: python3 .factory/scripts/labels_kit.py validate-catalog --catalog ".factory/labels/$LANGUAGE.json"
+
+      - name: Sincronizar catálogo
+        if: inputs.mode == 'sync'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          catalog=".factory/labels/$LANGUAGE.json"
+          gh api --paginate "repos/$REPOSITORIO/labels?per_page=100" > /tmp/existing.json
+          python3 .factory/scripts/labels_kit.py upsert-plan --catalog "$catalog" < /tmp/existing.json > /tmp/plan.json
+          jq -c '.[]' /tmp/plan.json | while IFS= read -r item; do
+            action="$(jq -r '.action' <<<"$item")"
+            name="$(jq -r '.name' <<<"$item")"
+            color="$(jq -r '.color' <<<"$item")"
+            description="$(jq -r '.description' <<<"$item")"
+            if [[ "$action" == "create" ]]; then
+              gh api --method POST "repos/$REPOSITORIO/labels" -f name="$name" -f color="$color" -f description="$description" >/dev/null
+            else
+              encoded="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$name")"
+              gh api --method PATCH "repos/$REPOSITORIO/labels/$encoded" -f new_name="$name" -f color="$color" -f description="$description" >/dev/null
+            fi
+          done
+
+      - name: Validar Issue o PR
+        if: inputs.mode == 'validate'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORIO/issues/$ISSUE_NUMBER" --jq '.labels'             | python3 .factory/scripts/labels_kit.py validate-selection --catalog ".factory/labels/$LANGUAGE.json"
+
+      - name: Barrer trabajo abierto
+        if: inputs.mode == 'sweep'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPOSITORIO/issues?state=open&per_page=100" --jq '.[] | @json'             | python3 .factory/scripts/labels_kit.py sweep --catalog ".factory/labels/$LANGUAGE.json"

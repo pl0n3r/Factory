@@ -1,0 +1,15 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validar:
+    uses: pl0n3r/factory/.github/workflows/ci.yml@v1
+    with:
+      stack: php
+      version_source: config/version.json
+      label_language: es
+      phase: construccion

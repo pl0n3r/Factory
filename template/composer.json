@@ -1,0 +1,1 @@
+{"name":"pl0n3r/nuevo-proyecto","description":"Proyecto creado desde Factory.","type":"project","license":"proprietary","require":{"php":">=8.3"},"scripts":{"test":"php tests/smoke.php"}}

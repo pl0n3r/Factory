@@ -1,0 +1,43 @@
+name: Política reusable
+on:
+  workflow_call:
+    inputs:
+      pr_number: {required: true, type: number}
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  politica:
+    name: Validar decisiones y límite de revisión
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validar PR del caller
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          INPUT_PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == "pull_request" && "$EVENT_PR" == "$INPUT_PR" ]] || { echo "::error::Contexto PR inválido"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Validar política canónica con reviews observadas
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100" --jq '.[] | @json' \
+            | python3 .factory/scripts/politica_kit.py --file decisiones.yml

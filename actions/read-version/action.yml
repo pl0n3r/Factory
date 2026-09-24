@@ -1,0 +1,30 @@
+name: Leer versión
+description: Lee y valida una versión SemVer sin ejecutar el archivo fuente.
+inputs:
+  source:
+    required: true
+  format:
+    required: false
+    default: auto
+  key:
+    required: false
+    default: version
+outputs:
+  version:
+    value: ${{ steps.read.outputs.version }}
+  tag:
+    value: ${{ steps.read.outputs.tag }}
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+        FORMAT: ${{ inputs.format }}
+        KEY: ${{ inputs.key }}
+      run: |
+        set -euo pipefail
+        version="$(python3 "$GITHUB_ACTION_PATH/../../scripts/read_version.py" --source "$SOURCE" --format "$FORMAT" --key "$KEY")"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "tag=v$version" >> "$GITHUB_OUTPUT"

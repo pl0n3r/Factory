@@ -1,0 +1,104 @@
+[
+  {
+    "key": "type_bug",
+    "name": "tipo: error",
+    "color": "D73A4A",
+    "description": "Defecto reproducible o regresión."
+  },
+  {
+    "key": "type_enhancement",
+    "name": "tipo: mejora",
+    "color": "A2EEEF",
+    "description": "Mejora de producto, experiencia o ingeniería."
+  },
+  {
+    "key": "type_product",
+    "name": "tipo: producto",
+    "color": "7057FF",
+    "description": "Definición funcional o decisión de producto."
+  },
+  {
+    "key": "type_infrastructure",
+    "name": "tipo: infraestructura",
+    "color": "1D76DB",
+    "description": "CI/CD, hosting, automatización o plataforma."
+  },
+  {
+    "key": "type_documentation",
+    "name": "tipo: documentación",
+    "color": "0075CA",
+    "description": "Documentación y conocimiento durable."
+  },
+  {
+    "key": "type_tests",
+    "name": "tipo: pruebas",
+    "color": "BFDADC",
+    "description": "Cobertura, E2E, integración o contratos."
+  },
+  {
+    "key": "type_incident",
+    "name": "tipo: incidente",
+    "color": "B60205",
+    "description": "Fallo activo de producción u operación."
+  },
+  {
+    "key": "priority_critical",
+    "name": "prioridad: crítica",
+    "color": "B60205",
+    "description": "Bloquea la operación o la fábrica."
+  },
+  {
+    "key": "priority_high",
+    "name": "prioridad: alta",
+    "color": "D93F0B",
+    "description": "Requiere atención prioritaria."
+  },
+  {
+    "key": "priority_normal",
+    "name": "prioridad: normal",
+    "color": "C5DEF5",
+    "description": "Prioridad estándar."
+  },
+  {
+    "key": "state_available",
+    "name": "estado: disponible",
+    "color": "2DA44E",
+    "description": "Trabajo disponible para ser reservado."
+  },
+  {
+    "key": "state_reserved",
+    "name": "estado: reservado",
+    "color": "FBCA04",
+    "description": "Trabajo reservado por una sesión o agente."
+  },
+  {
+    "key": "state_review",
+    "name": "estado: en revisión",
+    "color": "1D76DB",
+    "description": "Trabajo con Pull Request listo para revisión."
+  },
+  {
+    "key": "state_blocked",
+    "name": "estado: bloqueado",
+    "color": "000000",
+    "description": "Trabajo detenido por una dependencia real."
+  },
+  {
+    "key": "state_recovery",
+    "name": "estado: requiere recuperación",
+    "color": "D876E3",
+    "description": "Reserva inactiva que debe recuperarse antes de trabajo nuevo."
+  },
+  {
+    "key": "state_completed",
+    "name": "estado: completado",
+    "color": "0E8A16",
+    "description": "Trabajo completado."
+  },
+  {
+    "key": "state_cancelled",
+    "name": "estado: cancelado",
+    "color": "6E7781",
+    "description": "Trabajo cerrado sin completarse."
+  }
+]
