@@ -4,6 +4,22 @@ Estado: **CERRADA**. Condor, GrindFlow y BRVTAL registraron producción verde y 
 
 Este documento conserva el cierre histórico; los Issues fuente siguen siendo la evidencia canónica.
 
+## #9 — puertas de decisión humana · CERRADO
+
+La clasificación de puertas, asignación y recepción móvil real quedaron verificadas. Las decisiones humanas siguen siendo explícitas y nunca se infieren de un workflow verde.
+
+## #10 — resiliencia del dueño y de la fábrica · CERRADO
+
+El modelo vigente es por capacidades: CI y observación usan `github-token:ephemeral` con mínimo privilegio; deploy usa `hostinger:git`; la escritura cross-repo requiere una **GitHub App dedicada**. No se requieren tres GitHub Apps obligatorias ni tres identidades separadas.
+
+## #12 — cumplimiento técnico de datos/licencias · CERRADO
+
+La evidencia técnica de datos/licencias quedó integrada. Cerrar #12 **no equivale a afirmar aprobación jurídica**; la revisión humana permanece separada en #53.
+
+## #13 — épico de madurez · CERRADO
+
+#13 y #54 quedaron cerrados antes del primer release. El frente de privacidad incluyó #71/#78 y la adopción del contrato ampliado de seis documentos.
+
 ## Cierre técnico
 
 - #1–#14: cerrados conforme al contrato vigente.
@@ -26,8 +42,8 @@ El primer release usa la categoría histórica `release-1.0.0`. Cualquier releas
 
 ## #53 — revisión jurídica humana · SEPARADA
 
-#53 conserva la revisión jurídica de la documentación de datos personales como decisión humana independiente. La evidencia técnica no constituye un dictamen jurídico.
+#53 conserva la revisión jurídica de la documentación de datos personales como decisión humana independiente. El cierre técnico no equivale a afirmar aprobación jurídica.
 
 ## #35 — exposición pública de la cabina · SEPARADA
 
-#35 sigue siendo una decisión de producto. El default B continúa aplicado hasta una decisión explícita del dueño.
+#35 sigue siendo una decisión de producto. El default B continúa aplicado; **#35 no bloquea el cierre técnico de TANDA 1**.
