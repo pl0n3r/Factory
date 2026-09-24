@@ -4,13 +4,37 @@ from pathlib import Path
 import unittest
 
 
-from seguridad.resiliencia import ValidationError, audit_workflow, validate_manifest
+from seguridad.resiliencia import (\n    ValidationError,\n    audit_workflow,\n    validate_legacy_manifest,\n    validate_manifest,\n)
 
 
 NOW = datetime(2026, 9, 24, tzinfo=timezone.utc)
 
 
+def recovery_checks():
+    return {
+        key: {
+            "verified_at": "2026-09-23T10:00:00Z",
+            "evidence_ref": f"audit:{key}-20260923",
+        }
+        for key in ("repo_backup", "secrets_escrow", "token_rotation", "restore_drill")
+    }
+
+
 def sample_manifest():
+    return {
+        "version": 2,
+        "project": "pl0n3r/factory",
+        "execution_mechanisms": {
+            "ci": "github-token:ephemeral",
+            "observer": "github-token:ephemeral",
+            "deploy": "hostinger:git",
+        },
+        "cross_repo_write": {"required_mechanism": "github-app"},
+        "checks": recovery_checks(),
+    }
+
+
+def sample_legacy_manifest():
     return {
         "version": 1,
         "project": "pl0n3r/factory",
@@ -19,10 +43,7 @@ def sample_manifest():
             "deploy": "github-app:factory-deploy",
             "observer": "github-app:factory-observer",
         },
-        "checks": {
-            key: {"verified_at": "2026-09-23T10:00:00Z", "evidence_ref": f"audit:{key}-20260923"}
-            for key in ("repo_backup", "secrets_escrow", "token_rotation", "restore_drill")
-        },
+        "checks": recovery_checks(),
     }
 
 
@@ -110,14 +131,61 @@ jobs:
 
 
 class RecoveryEvidenceTests(unittest.TestCase):
+    def test_v2_uses_owner_approved_capability_model(self):
+        data = sample_manifest()
+        validate_manifest(data, now=NOW)
+
+        data["cross_repo_write"] = {
+            "required_mechanism": "github-token:ephemeral"
+        }
+        with self.assertRaisesRegex(ValidationError, "GitHub App dedicada"):
+            validate_manifest(data, now=NOW)
+
+    def test_v2_rejects_unapproved_mechanism_or_secret_without_leak(self):
+        unapproved = sample_manifest()
+        unapproved["execution_mechanisms"]["ci"] = "pat:never-print-this"
+        with self.assertRaises(ValidationError) as captured:
+            validate_manifest(unapproved, now=NOW)
+        self.assertNotIn("never-print-this", str(captured.exception))
+
+        extra = sample_manifest()
+        extra["execution_mechanisms"]["token"] = "another-secret"
+        with self.assertRaises(ValidationError) as captured:
+            validate_manifest(extra, now=NOW)
+        self.assertNotIn("another-secret", str(captured.exception))
+
+    def test_v1_is_migration_only_and_still_validates_recovery_age(self):
+        legacy = sample_legacy_manifest()
+        with self.assertRaisesRegex(ValidationError, "v1 obsoleto"):
+            validate_manifest(legacy, now=NOW)
+
+        validate_legacy_manifest(legacy, now=NOW)
+        legacy["checks"]["restore_drill"]["verified_at"] = "2025-01-01T00:00:00Z"
+        with self.assertRaisesRegex(ValidationError, "evidencia vencida o futura"):
+            validate_legacy_manifest(legacy, now=NOW)
+
+    def test_runbook_matches_current_capability_model(self):
+        runbook = (
+            Path(__file__).resolve().parents[1] / "docs" / "resiliencia-fabrica.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("github-token:ephemeral", runbook)
+        self.assertIn("hostinger:git", runbook)
+        self.assertIn("escritura cross-repo", runbook)
+        self.assertIn("GitHub App dedicada", runbook)
+        self.assertIn("--manifest-stdin", runbook)
+        self.assertIn("v1", runbook)
+        self.assertIn("migración", runbook)
+        self.assertNotIn("GitHub Apps distintas", runbook)
+        self.assertNotIn("--manifest /ruta", runbook)
+
     def test_valid_evidence(self):
         validate_manifest(sample_manifest(), now=NOW)
 
     def test_distinct_identities(self):
-        data = sample_manifest()
+        data = sample_legacy_manifest()
         data["identities"]["deploy"] = data["identities"]["ci"]
         with self.assertRaises(ValidationError):
-            validate_manifest(data, now=NOW)
+            validate_legacy_manifest(data, now=NOW)
 
     def test_extra_secret_field_rejected(self):
         data = sample_manifest()
