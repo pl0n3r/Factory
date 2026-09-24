@@ -1,0 +1,29 @@
+name: Reintentar operación transitoria
+description: Reintenta una operación externa idempotente de una lista cerrada.
+inputs:
+  operation:
+    description: composer-install, composer-audit, npm-ci o npm-audit.
+    required: true
+  working-directory:
+    required: false
+    default: '.'
+  attempts:
+    required: false
+    default: '3'
+  base-delay:
+    required: false
+    default: '2'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        OPERATION: ${{ inputs.operation }}
+        WORKDIR: ${{ inputs.working-directory }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        BASE_DELAY: ${{ inputs.base-delay }}
+      run: |
+        set -euo pipefail
+        [[ "$WORKDIR" != /* && "$WORKDIR" != *".."* && "$WORKDIR" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::working-directory inválido"; exit 1; }
+        cd "$WORKDIR"
+        python3 "$GITHUB_ACTION_PATH/../../scripts/ci_retry.py" --operation "$OPERATION" --attempts "$ATTEMPTS" --base-delay "$BASE_DELAY"

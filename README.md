@@ -68,21 +68,21 @@ flowchart LR
 
 ## Estado actual
 
-🚧 **En construcción.** Por ahora contiene el plan; el kit todavía no existe.
+🚧 **En construcción.** El bootstrap está integrado y el kit base reusable de #1 está listo para validación final; la madurez #2–#12 y la publicación `v1.0.0` siguen pendientes.
 
 | Etapa | Estado |
 | --- | --- |
 | Plan y reglas definidos | ✅ Hecho |
-| Arranque del repositorio (#14) | ⏳ Pendiente |
-| Kit v1 (#1) | ⏳ Pendiente |
+| Arranque del repositorio (#14) | ✅ Hecho |
+| Kit base reusable (#1) | ✅ Implementado · validación final |
 | Adopción en Condor, GrindFlow y BRVTAL | ⏳ Después del kit v1 |
 
-### Trabajo pendiente (Issues)
+### Roadmap cronológico
 
 | Orden | Issue | Qué es |
 | --- | --- | --- |
 | 1 | [#14](https://github.com/pl0n3r/factory/issues/14) | Arranque: reglas, CI y coordinación del propio repo |
-| 2 | [#1](https://github.com/pl0n3r/factory/issues/1) | Kit común v1 y template |
+| ✅ | [#1](https://github.com/pl0n3r/factory/issues/1) | Kit común base y template — validación final |
 | 3 | [#2](https://github.com/pl0n3r/factory/issues/2) | Roles profesionales por tarea |
 | 4 | [#3](https://github.com/pl0n3r/factory/issues/3) · [#4](https://github.com/pl0n3r/factory/issues/4) | Orquestador · especificaciones con criterios ejecutables |
 | 5 | [#5](https://github.com/pl0n3r/factory/issues/5) · [#7](https://github.com/pl0n3r/factory/issues/7) | Evaluación de agentes · control de costos |

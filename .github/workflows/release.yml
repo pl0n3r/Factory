@@ -1,0 +1,106 @@
+name: Release reusable
+on:
+  workflow_call:
+    inputs:
+      version_source:
+        required: true
+        type: string
+      version_format:
+        required: false
+        default: 'auto'
+        type: string
+      version_key:
+        required: false
+        default: 'version'
+        type: string
+      kit_ref:
+        required: false
+        default: 'v1'
+        type: string
+    outputs:
+      version:
+        description: Versión X.Y.Z
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        description: Tag vX.Y.Z
+        value: ${{ jobs.release.outputs.tag }}
+      release_url:
+        description: URL del GitHub Release
+        value: ${{ jobs.release.outputs.release_url }}
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.repository }}-main
+  cancel-in-progress: false
+jobs:
+  release:
+    name: Asegurar tag y GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      release_url: ${{ steps.release.outputs.url }}
+    steps:
+      - name: Validar contexto confiable
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == "push" ]] || { echo "::error::Release solo acepta caller activado por push"; exit 1; }
+          [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::Release solo acepta la rama principal"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - id: version
+        uses: ./.factory/actions/read-version
+        with:
+          source: ${{ inputs.version_source }}
+          format: ${{ inputs.version_format }}
+          key: ${{ inputs.version_key }}
+      - name: Asegurar tag anotado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TARGET_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            [[ "$(git cat-file -t "refs/tags/$TAG")" == "tag" ]] || { echo "::error::$TAG no es anotado"; exit 1; }
+            existing_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+            [[ "$existing_sha" == "$TARGET_SHA" ]] || { echo "::error::$TAG ya apunta a otro commit"; exit 1; }
+            exit 0
+          fi
+          object="$(gh api --method POST "repos/$REPOSITORY/git/tags" -f tag="$TAG" -f message="Release $TAG — $TARGET_SHA" -f object="$TARGET_SHA" -f type=commit --jq '.sha')"
+          if response="$(gh api --include --silent --method POST "repos/$REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" 2>&1)"; then
+            exit 0
+          fi
+          if ! grep -Eq '^HTTP/[0-9.]+[[:space:]]+(409|422)([[:space:]]|$)' <<<"$response"; then printf '%s\n' "$response" >&2; exit 1; fi
+          ref_type="$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" --jq '.object.type')"
+          ref_object="$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha')"
+          [[ "$ref_type" == "tag" ]] || { echo "::error::Carrera creó tag no anotado"; exit 1; }
+          race_sha="$(gh api "repos/$REPOSITORY/git/tags/$ref_object" --jq '.object.sha')"
+          [[ "$race_sha" == "$TARGET_SHA" ]] || { echo "::error::Carrera creó $TAG para otro SHA"; exit 1; }
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url' 2>/dev/null)"; then
+            gh release create "$TAG" --repo "$REPOSITORY" --verify-tag --title "Release $TAG (V $VERSION)" --generate-notes
+            url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,85 @@
+name: CI factory
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  workflows:
+    name: Lint de workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          version=1.7.7
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz" | tar -xz actionlint
+          ./actionlint -color
+          ./actionlint -color template/.github/workflows/*.yml
+
+  scripts:
+    name: Tests de scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Sintaxis, política y suites
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/*.py
+          python3 scripts/politica_kit.py </dev/null
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          if [[ -d metricas ]]; then PYTHONPATH=metricas python3 -m unittest discover -s metricas -p 'test_*.py'; fi
+          if [[ -d seguridad ]]; then PYTHONPATH=seguridad python3 -m unittest discover -s seguridad -p 'test_*.py'; fi
+          if [[ -d lecciones ]]; then PYTHONPATH=lecciones python3 -m unittest discover -s lecciones -p 'test_*.py'; fi
+          if [[ -d producto ]]; then PYTHONPATH=producto python3 -m unittest discover -s producto -p 'test_*.py'; fi
+
+  coordinacion:
+    name: Validar coordinación
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validar reserva, rama y colisiones
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          argumentos=()
+          if git cat-file -e "$BASE_SHA:.github/workflows/coordinacion-trabajo.yml" 2>/dev/null; then argumentos+=(--require-reservation); fi
+          python3 scripts/coordinar_trabajo.py validar-pr --repo "$REPOSITORIO" --pr "$PR" "${argumentos[@]}"
+
+  validar:
+    name: Validar
+    needs: [workflows, scripts, coordinacion]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTADOS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for r in $RESULTADOS; do case "$r" in success|skipped) ;; *) echo "::error::Gate con resultado $r"; exit 1 ;; esac; done

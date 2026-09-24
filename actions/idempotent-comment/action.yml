@@ -1,0 +1,34 @@
+name: Comentario idempotente
+description: Crea o actualiza un único comentario propio identificado por marker.
+inputs:
+  issue-number: {required: true}
+  marker: {required: true}
+  body: {required: true}
+outputs:
+  comment-id:
+    value: ${{ steps.comment.outputs.comment-id }}
+runs:
+  using: composite
+  steps:
+    - id: comment
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        MARKER: ${{ inputs.marker }}
+        BODY: ${{ inputs.body }}
+      run: |
+        set -euo pipefail
+        repository="$GITHUB_REPOSITORY"
+        [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]] || exit 1
+        [[ "$MARKER" =~ ^[A-Za-z0-9._:-]{1,80}$ ]] || exit 1
+        marker_text="<!-- factory-comment:$MARKER -->"
+        gh api --paginate "repos/$repository/issues/$ISSUE_NUMBER/comments?per_page=100" --jq '.[] | @json' > /tmp/factory-comments.ndjson
+        comment_id="$(python3 -c 'import json,sys; m=sys.argv[1]; ds=(json.loads(x) for x in open(sys.argv[2],encoding="utf-8")); print(next((str(d.get("id","")) for d in ds if (d.get("user") or {}).get("login")=="github-actions[bot]" and isinstance(d.get("body"),str) and m in d["body"].splitlines()),""))' "$marker_text" /tmp/factory-comments.ndjson)"
+        printf '%s\n%s\n' "$marker_text" "$BODY" > /tmp/factory-comment-body.md
+        if [[ -n "$comment_id" ]]; then
+          jq -Rs '{body:.}' /tmp/factory-comment-body.md | gh api --method PATCH "repos/$repository/issues/comments/$comment_id" --input - >/dev/null
+        else
+          comment_id="$(jq -Rs '{body:.}' /tmp/factory-comment-body.md | gh api --method POST "repos/$repository/issues/$ISSUE_NUMBER/comments" --input - --jq '.id')"
+        fi
+        echo "comment-id=$comment_id" >> "$GITHUB_OUTPUT"

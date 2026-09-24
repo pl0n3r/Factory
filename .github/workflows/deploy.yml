@@ -1,0 +1,72 @@
+name: Deploy reusable
+on:
+  workflow_call:
+    inputs:
+      domain: {required: true, type: string}
+      health_path: {required: false, default: '/health', type: string}
+      version_source: {required: true, type: string}
+      version_format: {required: false, default: 'auto', type: string}
+      version_key: {required: false, default: 'version', type: string}
+      phase: {required: false, default: 'construccion', type: string}
+      migration_mode: {required: false, default: 'none', type: string}
+      live_migration_approved: {required: false, default: false, type: boolean}
+    secrets:
+      DEPLOY_TOKEN: {required: false}
+      DATABASE_URL: {required: false}
+      DEPLOY_SSH_KEY: {required: false}
+permissions:
+  contents: read
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    name: Deploy con rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validar contexto de despliegue
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            workflow_dispatch|push)
+              [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::Deploy solo acepta la rama principal"; exit 1; }
+              ;;
+            *) echo "::error::Deploy no acepta contexto $EVENT_NAME"; exit 1 ;;
+          esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - id: version
+        uses: ./.factory/actions/read-version
+        with:
+          source: ${{ inputs.version_source }}
+          format: ${{ inputs.version_format }}
+          key: ${{ inputs.version_key }}
+      - name: Ejecutar pipeline reversible
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DOMAIN: ${{ inputs.domain }}
+          HEALTH_PATH: ${{ inputs.health_path }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PHASE: ${{ inputs.phase }}
+          MIGRATION_MODE: ${{ inputs.migration_mode }}
+          LIVE_MIGRATION_APPROVED: ${{ inputs.live_migration_approved }}
+        run: |
+          set -euo pipefail
+          args=(--origin "$DOMAIN" --health-path "$HEALTH_PATH" --version "$VERSION" --sha "$GITHUB_SHA" --phase "$PHASE" --migration-mode "$MIGRATION_MODE")
+          [[ "$LIVE_MIGRATION_APPROVED" == "true" ]] && args+=(--live-migration-approved)
+          python3 .factory/scripts/deploy_kit.py "${args[@]}"

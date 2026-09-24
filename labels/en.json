@@ -1,0 +1,104 @@
+[
+  {
+    "key": "type_bug",
+    "name": "type: bug",
+    "color": "D73A4A",
+    "description": "Reproducible defect or regression."
+  },
+  {
+    "key": "type_enhancement",
+    "name": "type: enhancement",
+    "color": "A2EEEF",
+    "description": "Product, experience, or engineering improvement."
+  },
+  {
+    "key": "type_product",
+    "name": "type: product",
+    "color": "7057FF",
+    "description": "Functional definition or product decision."
+  },
+  {
+    "key": "type_infrastructure",
+    "name": "type: infrastructure",
+    "color": "1D76DB",
+    "description": "CI/CD, hosting, automation, or platform."
+  },
+  {
+    "key": "type_documentation",
+    "name": "type: documentation",
+    "color": "0075CA",
+    "description": "Durable documentation and knowledge."
+  },
+  {
+    "key": "type_tests",
+    "name": "type: tests",
+    "color": "BFDADC",
+    "description": "Coverage, E2E, integration, or contracts."
+  },
+  {
+    "key": "type_incident",
+    "name": "type: incident",
+    "color": "B60205",
+    "description": "Active production or operations failure."
+  },
+  {
+    "key": "priority_critical",
+    "name": "priority: critical",
+    "color": "B60205",
+    "description": "Blocks operations or the factory."
+  },
+  {
+    "key": "priority_high",
+    "name": "priority: high",
+    "color": "D93F0B",
+    "description": "Requires priority attention."
+  },
+  {
+    "key": "priority_normal",
+    "name": "priority: normal",
+    "color": "C5DEF5",
+    "description": "Standard priority."
+  },
+  {
+    "key": "state_available",
+    "name": "status: available",
+    "color": "2DA44E",
+    "description": "Work available to reserve."
+  },
+  {
+    "key": "state_reserved",
+    "name": "status: reserved",
+    "color": "FBCA04",
+    "description": "Work reserved by a session or agent."
+  },
+  {
+    "key": "state_review",
+    "name": "status: in review",
+    "color": "1D76DB",
+    "description": "Work with a Pull Request ready for review."
+  },
+  {
+    "key": "state_blocked",
+    "name": "status: blocked",
+    "color": "000000",
+    "description": "Work stopped by a real dependency."
+  },
+  {
+    "key": "state_recovery",
+    "name": "status: recovery required",
+    "color": "D876E3",
+    "description": "Inactive reservation that must be recovered before new work."
+  },
+  {
+    "key": "state_completed",
+    "name": "status: completed",
+    "color": "0E8A16",
+    "description": "Completed work."
+  },
+  {
+    "key": "state_cancelled",
+    "name": "status: cancelled",
+    "color": "6E7781",
+    "description": "Work closed without completion."
+  }
+]
