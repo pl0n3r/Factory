@@ -74,7 +74,9 @@ class PrivacyAuditTests(unittest.TestCase):
             "current_document": current,
             "previous_document": deepcopy(current),
         }
-        self.assertEqual(audit_sources(**kwargs), audit_sources(**kwargs))
+        first = audit_sources(**kwargs)
+        second = audit_sources(**kwargs)
+        self.assertEqual(first, second)
 
     def test_material_change_builds_legal_gate(self):
         previous = data_map()
