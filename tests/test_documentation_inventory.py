@@ -16,14 +16,13 @@ class DocumentationInventoryTests(unittest.TestCase):
         """Carga una sola vez el documento auditado."""
         cls.text = DOC.read_text(encoding="utf-8")
 
-    @classmethod
-    def product_section(cls, heading, next_heading):
+    def product_section(self, heading, next_heading):
         """Devuelve únicamente el bloque comprendido entre dos headings."""
         start_marker = f"## {heading}"
         end_marker = f"## {next_heading}"
-        cls.assertIn(cls, start_marker, cls.text)
-        cls.assertIn(cls, end_marker, cls.text)
-        return cls.text.split(start_marker, 1)[1].split(end_marker, 1)[0]
+        self.assertIn(start_marker, self.text)
+        self.assertIn(end_marker, self.text)
+        return self.text.split(start_marker, 1)[1].split(end_marker, 1)[0]
 
     def test_audited_shas(self):
         """AC-01: conserva los tres SHA exactos del snapshot auditado."""
