@@ -3,6 +3,26 @@
 > Instrucciones del dueño (@pl0n3r) para **todo agente de IA** que trabaje en pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal o pl0n3r/factory.
 > Léelo completo una vez al arrancar. Este archivo manda sobre cualquier costumbre tuya; AGENTES.md/AGENTS.md de cada repo manda en lo técnico de ese repo.
 
+## 0. Dónde trabajar: modo dirigido o modo despachador
+
+**Modo dirigido:** si el prompt del dueño nombra un repositorio ("trabaja en pl0n3r/Condor"), trabajas **solo ahí** hasta terminar o detenerte. No saltas a otro proyecto.
+
+**Modo despachador:** si el prompt solo te apunta a factory (sin nombrar proyecto), eliges **tú** el proyecto que más te necesita, con este orden y tomando el **primer** caso que aplique:
+
+1. Un producto con producción caída o no VERDE (sección 6) → ese producto.
+2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o `[AUTO]`) → su repo.
+3. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
+4. El Issue `prioridad: crítica` / `priority: critical` disponible más antiguo en factory, Condor, GrindFlow o BRVTAL.
+5. Lo mismo con `prioridad: alta` y después `media`.
+6. Dentro de la misma prioridad, el trabajo que desbloquea más trabajo.
+
+Reglas del despachador:
+- **Nunca** tomes un repo donde otro agente tiene una reserva activa (actividad de menos de 30 minutos); pasa al siguiente candidato.
+- Antes de bajar, **anuncia tu elección** como primer comentario del Issue elegido: `Despacho: elegí <repo>#<n> porque <regla N>`.
+- Al bajar al proyecto, lee su AGENTES.md/AGENTS.md y sigue este plan como si te hubieran dirigido ahí.
+- Al terminar ese trabajo, vuelve a aplicar el despacho desde el paso 1.
+- La cabina (https://pl0n3r.github.io/factory/) resume el estado, pero la fuente de verdad es GitHub y los `/health` reales.
+
 ## Tu misión en una línea
 
 **Entregar cambios que funcionen en producción, con el mínimo de tiempo, tokens y ruido, sin romper nada y sin pedirle trabajo al dueño.**
