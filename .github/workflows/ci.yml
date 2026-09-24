@@ -1,0 +1,91 @@
+name: CI factory
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflows:
+    name: Lint de workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          version=1.7.7
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz" \
+            | tar -xz actionlint
+          ./actionlint -color
+
+  scripts:
+    name: Tests de scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Sintaxis y pruebas
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/*.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+  coordinacion:
+    name: Validar coordinación
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validar reserva, rama y colisiones
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          argumentos=()
+          if git cat-file -e "$BASE_SHA:.github/workflows/coordinacion-trabajo.yml" 2>/dev/null; then
+            argumentos+=(--require-reservation)
+          else
+            echo "Arranque: la base aún no tiene coordinación; se validan rama, Issue y colisiones."
+          fi
+          python3 scripts/coordinar_trabajo.py validar-pr \
+            --repo "$REPOSITORIO" --pr "$PR" "${argumentos[@]}"
+
+  validar:
+    name: Validar
+    needs: [workflows, scripts, coordinacion]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Consolidar gates
+        env:
+          RESULTADOS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for r in $RESULTADOS; do
+            case "$r" in success|skipped) ;; *) echo "::error::Gate con resultado $r"; exit 1 ;; esac
+          done
