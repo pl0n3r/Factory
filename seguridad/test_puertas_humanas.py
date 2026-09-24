@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 
 from puertas_humanas import (
     GateValidationError,
@@ -41,11 +42,18 @@ class GateTests(unittest.TestCase):
         )
 
     def test_allowed_gate_is_classified(self):
-        self.assertEqual(classify_body(body(gate()))["category"], "legal")
+        self.assertEqual(
+            classify_body(body(gate())),
+            {"status": "gate", "category": "legal"},
+        )
 
-    def test_unknown_category_fails_closed(self):
+    def test_unknown_category_is_invalid_gate(self):
+        self.assertEqual(
+            classify_body(body(gate(category="architecture"))),
+            {"status": "invalid-gate", "category": None},
+        )
         with self.assertRaisesRegex(GateValidationError, "lista cerrada"):
-            classify_body(body(gate(category="architecture")))
+            validate_gate(gate(category="architecture"))
 
     def test_options_and_recommendation_are_validated(self):
         with self.assertRaisesRegex(GateValidationError, "option existente"):
@@ -68,10 +76,22 @@ class GateTests(unittest.TestCase):
         with self.assertRaisesRegex(GateValidationError, "una línea"):
             validate_gate(gate(context="uno\ndos"))
 
-    def test_multiple_markers_fail_closed(self):
+    def test_malformed_marker_is_invalid_not_no_gate(self):
+        self.assertEqual(
+            classify_body('<!-- factory-human-gate {"category":"legal" -->'),
+            {"status": "invalid-gate", "category": None},
+        )
+        self.assertEqual(
+            classify_body("<!-- factory-human-gate ??? -->"),
+            {"status": "invalid-gate", "category": None},
+        )
+
+    def test_multiple_markers_are_invalid_gate(self):
         value = body(gate())
-        with self.assertRaisesRegex(GateValidationError, "máximo un marker"):
-            classify_body(value + "\n" + value)
+        self.assertEqual(
+            classify_body(value + "\n" + value),
+            {"status": "invalid-gate", "category": None},
+        )
 
     def test_event_classifier_reads_issue_only(self):
         payload = json.dumps(
@@ -82,9 +102,25 @@ class GateTests(unittest.TestCase):
         )
         self.assertEqual(classify_event_text(payload)["category"], "money")
 
-    def test_oversized_event_fails_closed_without_echo(self):
-        with self.assertRaisesRegex(GateValidationError, "demasiado grande"):
-            classify_event_text("x" * (MAX_EVENT_CHARS + 1))
+    def test_oversized_event_is_invalid_gate_without_echo(self):
+        self.assertEqual(
+            classify_event_text("x" * (MAX_EVENT_CHARS + 1)),
+            {"status": "invalid-gate", "category": None},
+        )
+
+    def test_workflow_rejects_untrusted_issue_authors_and_cleans_stale_queue(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "seguridad.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("AUTHOR_ASSOCIATION:", workflow)
+        self.assertIn("OWNER|MEMBER|COLLABORATOR", workflow)
+        self.assertIn("steps.actor.outputs.trusted == 'true'", workflow)
+        self.assertIn("steps.gate.outputs.status == 'gate'", workflow)
+        self.assertIn("steps.gate.outputs.status != 'gate'", workflow)
+        self.assertIn("issues/$ISSUE/assignees", workflow)
 
 
 if __name__ == "__main__":

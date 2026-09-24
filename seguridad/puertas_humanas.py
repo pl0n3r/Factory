@@ -8,6 +8,7 @@ import re
 import sys
 from typing import Any
 
+MARKER_NAME = "factory-human-gate"
 MARKER_RE = re.compile(
     r"<!--\s*factory-human-gate\s+(\{.*?\})\s*-->",
     re.DOTALL,
@@ -29,6 +30,10 @@ MAX_ISSUE_BODY_CHARS = 65_536
 
 class GateValidationError(ValueError):
     pass
+
+
+def _result(status: str, category: str | None = None) -> dict[str, Any]:
+    return {"status": status, "category": category}
 
 
 def _line(value: Any, field: str, max_len: int) -> str:
@@ -96,31 +101,29 @@ def validate_gate(raw: Any) -> dict[str, Any]:
 def classify_body(body: str) -> dict[str, Any]:
     if not isinstance(body, str):
         raise GateValidationError("El cuerpo del Issue debe ser texto.")
+
+    marker_intent = MARKER_NAME in body
     if len(body) > MAX_ISSUE_BODY_CHARS:
-        raise GateValidationError("El cuerpo del Issue supera el límite seguro.")
+        return _result("invalid-gate") if marker_intent else _result("no-gate")
 
     matches = MARKER_RE.findall(body)
     if not matches:
-        return {"status": "no-gate", "category": None}
+        return _result("invalid-gate") if marker_intent else _result("no-gate")
     if len(matches) != 1:
-        raise GateValidationError(
-            "Debe existir como máximo un marker factory-human-gate."
-        )
+        return _result("invalid-gate")
 
     try:
         raw = json.loads(matches[0])
-    except json.JSONDecodeError as exc:
-        raise GateValidationError(
-            "Marker factory-human-gate contiene JSON inválido."
-        ) from exc
+        gate = validate_gate(raw)
+    except (json.JSONDecodeError, GateValidationError):
+        return _result("invalid-gate")
 
-    gate = validate_gate(raw)
-    return {"status": "gate", "category": gate["category"]}
+    return _result("gate", gate["category"])
 
 
 def classify_event_text(payload: str) -> dict[str, Any]:
     if not isinstance(payload, str) or len(payload) > MAX_EVENT_CHARS:
-        raise GateValidationError("Evento de GitHub vacío o demasiado grande.")
+        return _result("invalid-gate")
 
     try:
         event = json.loads(payload)

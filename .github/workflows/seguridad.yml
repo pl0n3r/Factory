@@ -35,6 +35,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+
       - name: Ejecutar regresiones
         run: |
           set -euo pipefail
@@ -80,15 +81,27 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Autorizar origen
+        id: actor
+        env:
+          AUTHOR_ASSOCIATION: ${{ github.event.issue.author_association }}
+        run: |
+          set -euo pipefail
+          case "$AUTHOR_ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR) echo "trusted=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "trusted=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - name: Clasificar Issue
         id: gate
+        if: steps.actor.outputs.trusted == 'true'
         run: |
           set -euo pipefail
           python3 seguridad/puertas_humanas.py \
             --format github < "$GITHUB_EVENT_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Enrutar puerta válida
-        if: steps.gate.outputs.status == 'gate'
+        if: steps.actor.outputs.trusted == 'true' && steps.gate.outputs.status == 'gate'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
@@ -107,7 +120,7 @@ jobs:
             fi
             jq -n '{labels:["decisión: dueño"]}' \
               | gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE/labels" --input -
-            jq -n --arg owner "$OWNER" '{assignees:[$owner]}' \
+            jq -n '{assignees:[env.OWNER]}' \
               | gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE/assignees" --input -
             printf '@%s 🧭 DECISIÓN NECESARIA · categoría `%s`. Revisa el contexto, opciones, recomendación y default seguro en este Issue.\n' \
               "$OWNER" "$CATEGORY" \
@@ -115,8 +128,8 @@ jobs:
               | gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE/comments" --input -
           fi
 
-      - name: Retirar de la cola si dejó de ser puerta
-        if: steps.gate.outputs.status == 'no-gate'
+      - name: Retirar de la cola si no es puerta válida y confiable
+        if: always() && (steps.actor.outputs.trusted != 'true' || steps.gate.outputs.status != 'gate')
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
