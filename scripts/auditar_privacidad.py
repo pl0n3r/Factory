@@ -31,6 +31,7 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 ALLOWED_PATH_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-[]()@")
 AUDIT_MARKER = "<!-- factory-privacy-audit -->"
 MATERIAL_MARKER = "<!-- factory-privacy-material -->"
+DATA_MAP_PATH = Path("datos.yml")
 
 
 class PrivacyAuditError(ValueError):
@@ -41,72 +42,99 @@ def _source_path(path: str) -> bool:
     return path.endswith(SOURCE_SUFFIXES) or path.endswith(".blade.php")
 
 
-def collect_sources(root: Path) -> dict[str, str]:
-    """Lee solo fuentes UTF-8 acotadas dentro del checkout sin seguir symlinks."""
+def _audit_root(root: Path) -> Path:
     try:
         base = root.resolve(strict=True)
     except OSError as exc:
         raise PrivacyAuditError("checkout no verificable") from exc
     if not base.is_dir():
         raise PrivacyAuditError("checkout no es un directorio")
+    return base
 
+
+def _walk_error(exc: OSError) -> None:
+    raise PrivacyAuditError("no fue posible recorrer las fuentes") from exc
+
+
+def _filter_directories(current: Path, dirnames: list[str]) -> None:
+    safe_dirs: list[str] = []
+    for name in sorted(dirnames):
+        if name in IGNORED_DIRS:
+            continue
+        if (current / name).is_symlink():
+            raise PrivacyAuditError("directorio simbólico no auditable")
+        safe_dirs.append(name)
+    dirnames[:] = safe_dirs
+
+
+def _canonical_source_path(base: Path, path: Path) -> str | None:
+    try:
+        relative_path = path.relative_to(base)
+    except ValueError as exc:
+        raise PrivacyAuditError("ruta fuera del checkout") from exc
+    relative = relative_path.as_posix()
+    invalid_segment = any(part in {"", ".", ".."} for part in relative_path.parts)
+    invalid_character = any(char not in ALLOWED_PATH_CHARS for char in relative)
+    if not 1 <= len(relative) <= 240 or invalid_segment or invalid_character:
+        raise PrivacyAuditError("ruta de fuente no canónica")
+    if not _source_path(relative):
+        return None
+    if path.is_symlink():
+        raise PrivacyAuditError("fuente simbólica no auditable")
+    return relative
+
+
+def _regular_source_size(path: Path) -> int | None:
+    try:
+        file_stat = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise PrivacyAuditError("fuente no inspeccionable") from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        return None
+    if file_stat.st_size > MAX_FILE_BYTES:
+        raise PrivacyAuditError("fuente excede máximo")
+    return file_stat.st_size
+
+
+def _read_source(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise PrivacyAuditError("fuente no UTF-8") from exc
+
+
+def _check_collection_limits(total: int, count: int) -> None:
+    if total > MAX_TOTAL_BYTES:
+        raise PrivacyAuditError("fuentes exceden tamaño total máximo")
+    if count >= MAX_FILES:
+        raise PrivacyAuditError("repositorio excede cantidad máxima de fuentes")
+
+
+def collect_sources(root: Path) -> dict[str, str]:
+    """Lee solo fuentes UTF-8 acotadas dentro del checkout sin seguir symlinks."""
+    base = _audit_root(root)
     result: dict[str, str] = {}
     total = 0
-
-    def walk_error(exc: OSError) -> None:
-        raise PrivacyAuditError("no fue posible recorrer las fuentes") from exc
 
     for directory, dirnames, filenames in os.walk(
         base,
         topdown=True,
-        onerror=walk_error,
+        onerror=_walk_error,
         followlinks=False,
     ):
         current = Path(directory)
-        safe_dirs: list[str] = []
-        for name in sorted(dirnames):
-            if name in IGNORED_DIRS:
-                continue
-            candidate = current / name
-            if candidate.is_symlink():
-                raise PrivacyAuditError("directorio simbólico no auditable")
-            safe_dirs.append(name)
-        dirnames[:] = safe_dirs
-
+        _filter_directories(current, dirnames)
         for name in sorted(filenames):
             path = current / name
-            try:
-                relative_path = path.relative_to(base)
-            except ValueError as exc:
-                raise PrivacyAuditError("ruta fuera del checkout") from exc
-            relative = relative_path.as_posix()
-            if (
-                not 1 <= len(relative) <= 240
-                or any(part in {"", ".", ".."} for part in relative_path.parts)
-                or any(char not in ALLOWED_PATH_CHARS for char in relative)
-            ):
-                raise PrivacyAuditError("ruta de fuente no canónica")
-            if not _source_path(relative):
+            relative = _canonical_source_path(base, path)
+            if relative is None:
                 continue
-            if path.is_symlink():
-                raise PrivacyAuditError("fuente simbólica no auditable")
-            try:
-                file_stat = path.stat(follow_symlinks=False)
-            except OSError as exc:
-                raise PrivacyAuditError("fuente no inspeccionable") from exc
-            if not stat.S_ISREG(file_stat.st_mode):
+            size = _regular_source_size(path)
+            if size is None:
                 continue
-            if file_stat.st_size > MAX_FILE_BYTES:
-                raise PrivacyAuditError("fuente excede máximo")
-            total += file_stat.st_size
-            if total > MAX_TOTAL_BYTES:
-                raise PrivacyAuditError("fuentes exceden tamaño total máximo")
-            if len(result) >= MAX_FILES:
-                raise PrivacyAuditError("repositorio excede cantidad máxima de fuentes")
-            try:
-                result[relative] = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError) as exc:
-                raise PrivacyAuditError("fuente no UTF-8") from exc
+            total += size
+            _check_collection_limits(total, len(result))
+            result[relative] = _read_source(path)
     return result
 
 def _declared(current: dict[str, Any]) -> tuple[set[str], set[str]]:
@@ -271,15 +299,16 @@ def _git_show(root: Path, sha: str) -> object | None:
     if not SHA.fullmatch(sha):
         raise PrivacyAuditError("previous SHA inválido")
 
-    listing = _run_git(root, ["ls-tree", "--name-only", sha, "--", "datos.yml"])
+    data_map_ref = DATA_MAP_PATH.as_posix()
+    listing = _run_git(root, ["ls-tree", "--name-only", sha, "--", data_map_ref])
     if listing.returncode != 0:
         raise PrivacyAuditError("referencia histórica no verificable")
     if listing.stdout.strip() == "":
         return None
-    if listing.stdout.strip() != "datos.yml":
+    if listing.stdout.strip() != data_map_ref:
         raise PrivacyAuditError("referencia histórica ambigua")
 
-    completed = _run_git(root, ["show", f"{sha}:datos.yml"])
+    completed = _run_git(root, ["show", f"{sha}:{data_map_ref}"])
     if completed.returncode != 0:
         raise PrivacyAuditError("no fue posible leer datos.yml histórico")
     try:
@@ -288,7 +317,7 @@ def _git_show(root: Path, sha: str) -> object | None:
         raise PrivacyAuditError("datos.yml histórico inválido") from exc
 
 def evaluate_repository(root: Path, previous_sha: str = "") -> dict[str, Any]:
-    current = load_data_map(Path("datos.yml"), root=root)
+    current = load_data_map(DATA_MAP_PATH, root=root)
     previous = _git_show(root, previous_sha)
     return audit_sources(
         sources=collect_sources(root),
