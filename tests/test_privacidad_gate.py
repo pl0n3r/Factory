@@ -55,6 +55,44 @@ class PrivacyGateTests(unittest.TestCase):
                 documents=docs(data_map()),
             )
 
+    def test_health_endpoint_is_not_a_sensitive_health_field(self):
+        """Una ruta /health no representa por sí sola un dato personal de salud."""
+        item = data_map()
+        diff = """diff --git a/src/HealthController.php b/src/HealthController.php
++++ b/src/HealthController.php
++    $route = "/health";
+"""
+        report = evaluate_change(
+            diff_text=diff,
+            changed_files=["src/HealthController.php"],
+            current_document=item,
+            documents=docs(item),
+        )
+        self.assertEqual(report["personal_signals"], [])
+
+    def test_explicit_health_field_remains_sensitive(self):
+        """Claves, campos de objeto y propiedades health siguen siendo sensibles."""
+        item = data_map()
+        snippets = (
+            '$payload = ["health" => $request->get("health")];',
+            'const profile = { health: value };',
+            'const value = record.health;',
+        )
+        for snippet in snippets:
+            with self.subTest(snippet=snippet):
+                diff = (
+                    "diff --git a/src/Profile.php b/src/Profile.php\n"
+                    "+++ b/src/Profile.php\n"
+                    f"+{snippet}\n"
+                )
+                with self.assertRaisesRegex(PrivacyGateError, "health"):
+                    evaluate_change(
+                        diff_text=diff,
+                        changed_files=["src/Profile.php"],
+                        current_document=item,
+                        documents=docs(item),
+                    )
+
     def test_new_provider_requires_declaration(self):
         diff = """diff --git a/src/Telemetry.js b/src/Telemetry.js
 +++ b/src/Telemetry.js
