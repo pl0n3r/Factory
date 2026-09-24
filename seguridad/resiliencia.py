@@ -18,6 +18,12 @@ _SHA_REF = re.compile(r"^[^\s@]+@[0-9a-f]{40}$")
 _EVIDENCE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#-]{5,159}$")
 _PROJECT_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GITHUB_APP_REF = re.compile(r"^github-app:[a-z0-9-]{3,64}$")
+_V2_EXECUTION_MECHANISMS = {
+    "ci": "github-token:ephemeral",
+    "observer": "github-token:ephemeral",
+    "deploy": "hostinger:git",
+}
+_V2_CROSS_REPO_WRITE = {"required_mechanism": "github-app"}
 _UTC_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _WRITE_PERMISSION = re.compile(r"^[A-Za-z][A-Za-z0-9-]*\s*:\s*write\s*$")
 _REQUIRED_CHECKS = frozenset(
@@ -142,15 +148,29 @@ def audit_workflow(content: str) -> None:
         _validate_action_ref(line, index)
 
 
-def _validate_manifest_root(document: object) -> dict[str, Any]:
+def _validate_manifest_root(
+    document: object,
+    *,
+    version: int,
+) -> dict[str, Any]:
     if not isinstance(document, dict):
         raise ValidationError("manifiesto debe ser objeto")
-    expected = {"version", "project", "identities", "checks"}
+    expected_by_version = {
+        1: {"version", "project", "identities", "checks"},
+        2: {
+            "version",
+            "project",
+            "execution_mechanisms",
+            "cross_repo_write",
+            "checks",
+        },
+    }
+    expected = expected_by_version[version]
     if set(document) != expected:
         raise ValidationError(
             "campos raíz del manifiesto incompletos o adicionales"
         )
-    if type(document["version"]) is not int or document["version"] != 1:
+    if type(document["version"]) is not int or document["version"] != version:
         raise ValidationError("versión del manifiesto no admitida")
     project = document["project"]
     if not isinstance(project, str) or not _PROJECT_REF.fullmatch(project):
@@ -158,20 +178,40 @@ def _validate_manifest_root(document: object) -> dict[str, Any]:
     return document
 
 
-def _validate_identities(document: dict[str, Any]) -> None:
+def _validate_legacy_identities(document: dict[str, Any]) -> None:
     identities = document["identities"]
     if not isinstance(identities, dict) or set(identities) != _REQUIRED_ROLES:
-        raise ValidationError("identidades ci/deploy/observer obligatorias")
+        raise ValidationError("identidades legacy incompletas")
     values = list(identities.values())
     if any(
         not isinstance(value, str) or not _GITHUB_APP_REF.fullmatch(value)
         for value in values
     ):
-        raise ValidationError(
-            "identidad debe ser referencia de GitHub App, nunca token"
-        )
+        raise ValidationError("identidad legacy inválida")
     if len(set(values)) != len(_REQUIRED_ROLES):
-        raise ValidationError("las identidades de agentes deben ser distintas")
+        raise ValidationError("identidades legacy deben ser distintas")
+
+
+def _validate_execution_mechanisms(document: dict[str, Any]) -> None:
+    mechanisms = document["execution_mechanisms"]
+    if (
+        not isinstance(mechanisms, dict)
+        or set(mechanisms) != set(_V2_EXECUTION_MECHANISMS)
+    ):
+        raise ValidationError("mecanismos de ejecución incompletos o adicionales")
+    if any(
+        mechanisms.get(role) != expected
+        for role, expected in _V2_EXECUTION_MECHANISMS.items()
+    ):
+        raise ValidationError("mecanismo de ejecución no aprobado")
+
+
+def _validate_cross_repo_write(document: dict[str, Any]) -> None:
+    policy = document["cross_repo_write"]
+    if not isinstance(policy, dict) or policy != _V2_CROSS_REPO_WRITE:
+        raise ValidationError(
+            "escritura cross-repo debe exigir GitHub App dedicada"
+        )
 
 
 def _utc_now(now: datetime | None) -> datetime:
@@ -235,9 +275,28 @@ def validate_manifest(
     *,
     now: datetime | None = None,
 ) -> None:
-    """Exige evidencia reciente sin transportar tokens ni otros secretos."""
-    validated = _validate_manifest_root(document)
-    _validate_identities(validated)
+    """Valida exclusivamente el contrato operativo v2 vigente."""
+    if not isinstance(document, dict):
+        raise ValidationError("manifiesto debe ser objeto")
+    version = document.get("version")
+    if version == 1:
+        raise ValidationError("manifiesto v1 obsoleto; migrar a v2")
+    if type(version) is not int or version != 2:
+        raise ValidationError("versión del manifiesto no admitida")
+    validated = _validate_manifest_root(document, version=2)
+    _validate_execution_mechanisms(validated)
+    _validate_cross_repo_write(validated)
+    _validate_checks(validated, _utc_now(now))
+
+
+def validate_legacy_manifest(
+    document: object,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Valida v1 solo para diagnóstico/migración, nunca como gate operativo."""
+    validated = _validate_manifest_root(document, version=1)
+    _validate_legacy_identities(validated)
     _validate_checks(validated, _utc_now(now))
 
 
