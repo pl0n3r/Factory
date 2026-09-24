@@ -3,7 +3,7 @@
 | Control del documento | |
 | --- | --- |
 | **Identificador** | FAC-ARQ-001 |
-| **Versión** | 1.0 |
+| **Versión** | 1.1 |
 | **Fecha** | 2026-09-24 |
 | **Estado** | Vigente. Describe el sistema tal como existe en `pl0n3r/factory@68eef82` y el estado operativo observado ese día |
 | **Propietario** | @pl0n3r (dueño y director de la fábrica) |
@@ -590,11 +590,40 @@ Centro de control web separado de los productos, alojado en Hostinger en su prop
 | R3 | **Hosting compartido** (sin privilegios de `mariadb-dump`, sin procesos permanentes ni staging real) | Incidentes de despliegue (Condor caído del 23 al 24-09) | Backup PDO, cron post-deploy, preview efímero; migrar de plataforma es una mejora propuesta |
 | R4 | **Dueño único** (bus factor 1) | Riesgo de continuidad | Restore externo probado (#10); runbooks; administradores como único bypass |
 | R5 | Telemetría de costos en parte **autodeclarada** | Métricas optimistas | El estado `ok` solo se emite con datos observados |
-| R6 | **Desalineación de catálogos de etiquetas**: el kit usa `prioridad: normal` y los repos usan `prioridad: media` | Validaciones inconsistentes al adoptar el kit | Unificar en la tanda 2 |
+| R6 | **Desalineación de catálogos de etiquetas**: el kit usa `prioridad: normal`; los repos usan `prioridad: media` / `priority: medium`, no existe prioridad baja y hay tipos en uso fuera del catálogo | La validación del kit rechazaría Issues válidos o duplicaría etiquetas al adoptarlo | Plan en §18.1 · factory#100 |
 | R7 | Carga y límites secundarios de GitHub con varios agentes | Lentitud y rechazos | Filtros `if:`, `concurrency`, sin polling (#188, #123, #624) |
-| R8 | CodeQL no analiza PHP | Hallazgos PHP no detectados | PHPStan + Rector en curso |
+| R8 | CodeQL no analiza PHP | Defectos del código PHP de los productos sin análisis estático | Plan en §18.2 · Condor#212, GrindFlow#140, brvtal#653 |
 | R9 | Cumplimiento legal no certificado | Riesgo regulatorio (Ley 1581) | Borradores generados + puerta de revisión jurídica #53 |
 | R10 | Tres stacks distintos | Mayor costo de kit y errores de agentes | Propuesta de *golden stack* para proyectos nuevos |
+
+### 18.1 Plan de remediación R6: catálogo único de etiquetas (factory#100)
+
+**Objetivo:** que el catálogo del kit y las etiquetas reales de los repos sean idénticos **antes** de la tanda 2, sin perder la asociación de ninguna etiqueta con sus Issues y PRs.
+
+| Paso | Acción | Responsable | Evidencia |
+| --- | --- | --- | --- |
+| 1 | Fijar el catálogo canónico: `prioridad: crítica` / `alta` / **`media`** / **`baja`** (en BRVTAL, `priority: critical` / `high` / `medium` / `low`). `media` porque ya está en uso; `normal` se retira | Agente factory (rol infraestructura) | `labels/es.json` y `labels/en.json` actualizados |
+| 2 | Incluir los tipos en uso: `tipo: seguridad` y `tipo: deuda técnica` pasan al catálogo; `calidad` y `seguridad` (sin prefijo) se migran a `tipo: …` o quedan como etiquetas temáticas documentadas fuera de la validación de tipo | Agente factory | Catálogo + `docs` del gate de etiquetas |
+| 3 | Actualizar `scripts/labels_kit.py` y sus tests: exactamente una etiqueta de tipo, prioridad y estado según el catálogo nuevo (D-057), con casos para `media`, `baja` y los tipos añadidos | Agente factory | Tests en verde (AC-01 de #100) |
+| 4 | Migrar los repos **renombrando** (`gh label edit --name`), nunca borrando y recreando, para conservar la asociación con Issues y PRs | Agente de cada repo | Inventario de etiquetas antes y después, sin pérdidas |
+| 5 | Barrido `etiquetas.yml` en modo `sweep` sobre los 6 repos para detectar Issues o PRs fuera del catálogo | Kit (automático) | Issue `[AUTO]` en cero |
+
+**Criterio de cierre:** catálogo único publicado en el kit, tests en verde, los 6 repos con las mismas etiquetas del catálogo en su idioma y barrido sin hallazgos. **Bloquea** el inicio de la tanda 2 en cada producto.
+
+### 18.2 Plan de remediación R8: análisis estático del código PHP (Condor#212, GrindFlow#140, brvtal#653)
+
+**Objetivo:** cubrir con análisis estático el código PHP que CodeQL no analiza, sin bloquear el trabajo por deuda histórica.
+
+| Paso | Acción | Detalle por producto |
+| --- | --- | --- |
+| 1 | Instalar **PHPStan** con extensiones del framework | Condor: `phpstan-symfony` + `phpstan-doctrine` · GrindFlow: ya tiene PHPStan; agregar o verificar **Larastan** · BRVTAL: sin Composer, instalar como herramienta solo de CI (PHAR o `tools/composer.json` de desarrollo), sin dependencias de runtime |
+| 2 | Generar un **baseline** con los errores actuales: el CI solo exige que el código nuevo esté limpio | Nivel inicial conservador; subir de nivel de forma gradual en PRs dedicados |
+| 3 | Agregar **Rector** en modo *dry-run* al CI (falla si hay refactors pendientes): PHP 8.5, calidad de código y código muerto | Condor: `SymfonySetList` · GrindFlow: `rector-laravel` · BRVTAL: conjunto conservador |
+| 4 | Aplicar Rector en un PR aparte, con tests en verde | Un PR por producto |
+| 5 | Sumar ambos jobs al check agregado del CI (`Validar`) con caché, y documentarlos en el `AGENTES.md` del producto: correr PHPStan y Rector localmente antes del push | — |
+| 6 | En la tanda 2, mover PHPStan y Rector al `ci.yml` reusable del kit (inputs `phpstan_level`, `rector_enabled`) para no mantener tres configuraciones | Kit factory |
+
+**Criterio de cierre:** en los tres productos, PHPStan falla ante errores nuevos, Rector dry-run corre en CI y el primer PR de Rector está integrado. CodeQL se mantiene para JavaScript/TypeScript, Python y Actions.
 
 ---
 
