@@ -374,13 +374,17 @@ sequenceDiagram
 flowchart LR
     B[build] --> BK[backup] --> M{migration_mode}
     M -->|none| DP[deploy]
-    M -->|forward| MG[migrate] --> DP
+    M -->|additive| MG[migrate]
+    MG -->|OK| DP
+    MG -->|falla| MX[🔴 abortar deploy<br/>esquema puede quedar parcialmente aplicado<br/>sin restore automático de BD]
     DP --> HC{health: versión + SHA<br/>+ esquema}
+    DP -->|falla| RB[rollback de artefactos<br/>no restaura BD]
     HC -->|OK| V[🟢 validado]
-    HC -->|falla| RB[rollback] --> X[🔴 incidente]
+    HC -->|falla| RB
+    RB --> X[🔴 incidente]
 ```
 
-Pasos ejecutados como adapters fijos `ops/factory/<paso>` dentro del checkout (nunca rutas arbitrarias). `concurrency: deploy-<repo>` sin cancelación, para que nunca corran dos deploys a la vez. En fase `live`, las migraciones requieren `live_migration_approved`.
+Pasos ejecutados como adapters fijos `ops/factory/<paso>` dentro del checkout (nunca rutas arbitrarias). `concurrency: deploy-<repo>` sin cancelación, para que nunca corran dos deploys a la vez. En fase `live`, las migraciones requieren `live_migration_approved`. Si `migrate` falla, `run_pipeline` aborta antes de iniciar el deploy; una migración aditiva puede dejar el esquema parcialmente aplicado y la base de datos no se restaura automáticamente. Si fallan `deploy` o el health final, se intenta el adapter `rollback`, cuyo alcance es revertir artefactos de aplicación, no restaurar la base de datos.
 
 ### 9.4 Deploy actual en Hostinger (transitorio, previo a la adopción del kit)
 
