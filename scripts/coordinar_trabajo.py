@@ -985,6 +985,9 @@ def reserve_work(
 
     labels = label_names(issue)
     if STATUS_BLOCKED in labels:
+        print(
+            f"Trabajo no reservado: Issue #{issue_number} tiene {STATUS_BLOCKED}."
+        )
         return None
 
     branch = f"trabajo/issue-{issue_number}"
