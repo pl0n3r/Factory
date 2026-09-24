@@ -54,6 +54,7 @@ def _valid_key(value: Any) -> str:
     if (
         not isinstance(value, str)
         or not 1 <= len(value) <= 32
+        or not value.isascii()
         or not value[0].isalpha()
         or not value[0].isupper()
         or any(not (char.isupper() or char.isdigit() or char in "_-") for char in value)
@@ -66,6 +67,7 @@ def _valid_owner(value: Any) -> str:
     if (
         not isinstance(value, str)
         or not 1 <= len(value) <= 39
+        or not value.isascii()
         or value.startswith("-")
         or value.endswith("-")
         or "--" in value
@@ -326,6 +328,7 @@ def reservation_blockers(
     current_issue: dict[str, Any],
     open_issues: list[dict[str, Any]],
     actor: str,
+    dependency_states: dict[int, dict[str, Any]] | None = None,
 ) -> list[str]:
     marker = parse_task_marker(str(current_issue.get("body") or ""))
     if marker is None:
@@ -336,17 +339,29 @@ def reservation_blockers(
             f"tarea planificada para @{marker['owner']}, no para @{actor}"
         )
     current_number = current_issue.get("number")
-    open_numbers = {
-        issue.get("number")
-        for issue in open_issues
-        if isinstance(issue.get("number"), int)
-    }
-    pending = sorted(
-        number for number in marker["depends_on"] if number in open_numbers
-    )
+    if dependency_states is None:
+        open_numbers = {
+            issue.get("number")
+            for issue in open_issues
+            if isinstance(issue.get("number"), int)
+        }
+        pending = sorted(
+            number for number in marker["depends_on"] if number in open_numbers
+        )
+    else:
+        pending = sorted(
+            number
+            for number in marker["depends_on"]
+            if (
+                number not in dependency_states
+                or dependency_states[number].get("state") != "closed"
+                or dependency_states[number].get("state_reason") != "completed"
+            )
+        )
     if pending:
         blockers.append(
-            "dependencias abiertas: " + ", ".join(f"#{number}" for number in pending)
+            "dependencias no completadas: "
+            + ", ".join(f"#{number}" for number in pending)
         )
     current_paths = marker["paths"]
     for other in open_issues:

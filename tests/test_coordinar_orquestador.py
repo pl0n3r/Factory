@@ -5,12 +5,13 @@ from scripts.orquestador_kit import PlannedTask, build_task_marker
 
 
 class MinimalGitHub:
-    def __init__(self, current, others):
+    def __init__(self, current, others, dependencies=None):
         self.current = current
         self.others = others
+        self.dependencies = dependencies or {}
 
     def issue(self, number):
-        return self.current
+        return self.dependencies.get(number, self.current)
 
     def open_issues(self):
         return self.others
@@ -67,8 +68,12 @@ class CoordinationOrchestratorTests(unittest.TestCase):
             "body": "",
             "labels": [{"name": "estado: reservado"}],
         }
-        api = MinimalGitHub(current, [current, dependency])
-        with self.assertRaisesRegex(CoordinationError, "dependencias abiertas"):
+        api = MinimalGitHub(
+            current,
+            [current, dependency],
+            dependencies={50: dependency},
+        )
+        with self.assertRaisesRegex(CoordinationError, "dependencias no completadas"):
             reserve_work(api, 51, "pl0n3r", "OWNER")
 
 

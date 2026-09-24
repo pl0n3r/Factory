@@ -78,6 +78,12 @@ class OrchestratorKitTests(unittest.TestCase):
                 with self.assertRaises(PlanError):
                     parse_plan(plan([task("A", paths=[path])]))
 
+    def test_identifiers_are_ascii_only(self):
+        with self.assertRaises(PlanError):
+            parse_plan(plan([task("Á", paths=["a.py"])]))
+        with self.assertRaises(PlanError):
+            parse_plan(plan([task("A", paths=["a.py"], owner="dueño")]))
+
     def test_reservation_blocks_wrong_owner_dependency_and_active_collision(self):
         current_task = PlannedTask(
             key="B",
@@ -127,8 +133,46 @@ class OrchestratorKitTests(unittest.TestCase):
             "otra-persona",
         )
         self.assertTrue(any("planificada" in item for item in blockers))
-        self.assertTrue(any("dependencias abiertas" in item for item in blockers))
+        self.assertTrue(any("dependencias no completadas" in item for item in blockers))
         self.assertTrue(any("colisión" in item for item in blockers))
+
+    def test_cancelled_dependency_does_not_unlock_task(self):
+        task_b = PlannedTask(
+            key="B",
+            title="B",
+            owner="pl0n3r",
+            paths=("docs/b.md",),
+            depends_on=(),
+        )
+        current = {
+            "number": 12,
+            "body": build_task_marker(
+                epic=3,
+                task=task_b,
+                order=2,
+                roles=["contenido"],
+                dependency_issues=[11],
+            ),
+            "labels": [{"name": "estado: disponible"}],
+        }
+        cancelled = {
+            11: {"number": 11, "state": "closed", "state_reason": "not_planned"}
+        }
+        blockers = reservation_blockers(
+            current,
+            [current],
+            "pl0n3r",
+            cancelled,
+        )
+        self.assertTrue(any("dependencias no completadas" in item for item in blockers))
+
+        completed = {
+            11: {"number": 11, "state": "closed", "state_reason": "completed"}
+        }
+        self.assertEqual(
+            reservation_blockers(current, [current], "pl0n3r", completed),
+            [],
+        )
 
 
 if __name__ == "__main__":

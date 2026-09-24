@@ -17,9 +17,13 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 if __package__:
-    from scripts.orquestador_kit import PlanError, reservation_blockers
+    from scripts.orquestador_kit import (
+        PlanError,
+        parse_task_marker,
+        reservation_blockers,
+    )
 else:
-    from orquestador_kit import PlanError, reservation_blockers
+    from orquestador_kit import PlanError, parse_task_marker, reservation_blockers
 
 
 API_URL = os.getenv("GITHUB_API_URL", "https://api.github.com").rstrip("/")
@@ -945,7 +949,21 @@ def reserve_work(
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
 
     try:
-        plan_blockers = reservation_blockers(issue, api.open_issues(), actor)
+        task_marker = parse_task_marker(str(issue.get("body") or ""))
+        dependency_states = (
+            {
+                number: api.issue(number)
+                for number in task_marker["depends_on"]
+            }
+            if task_marker is not None
+            else None
+        )
+        plan_blockers = reservation_blockers(
+            issue,
+            api.open_issues(),
+            actor,
+            dependency_states,
+        )
     except PlanError as exc:
         raise CoordinationError(
             f"Plan de orquestación inválido en Issue #{issue_number}: {exc}"
