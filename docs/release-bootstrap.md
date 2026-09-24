@@ -1,18 +1,23 @@
 # Bootstrap seguro del primer v1
 
-Factory publica el kit reusable mediante tags mayores (`v1`) y releases semánticos (`v1.0.0`). El primer release tiene una condición especial: antes de que exista `v1`, el workflow reusable no puede depender de ese tag para cargar sus propias composite actions.
+Factory distribuye el kit mediante el canal mayor `v1` y releases semánticos como `v1.0.0`. Los workflows con capacidad de escritura ejecutan únicamente el kit ya publicado; no aceptan una referencia dinámica del candidato.
 
-## Regla de bootstrap
+## Frontera de seguridad
 
-El reusable `.github/workflows/release.yml` mantiene `kit_ref: v1` como valor por defecto para repos consumidores. Para la **primera publicación solamente**, el caller autorizado debe pasar en `kit_ref` una referencia inmutable del propio Factory candidato (idealmente el SHA exacto de `main` que se pretende publicar).
+`.github/workflows/release.yml` hace checkout fijo de:
 
-Nunca se usa una rama flotante como `main` para ese bootstrap. El objetivo es que la acción `actions/read-version` provenga exactamente del mismo candidato que se está validando.
+```yaml
+repository: pl0n3r/factory
+ref: v1
+```
 
-## Puertas obligatorias antes de publicar
+No existe un `inputs.kit_ref` para release. Esta restricción evita que un caller con permisos de escritura seleccione una rama o commit alternativo del kit.
+
+## Puertas obligatorias antes del primer tag
 
 La preparación técnica de este documento **no autoriza** crear tags ni releases.
 
-Antes de crear `v1.0.0` y el tag mayor `v1` deben cumplirse simultáneamente:
+Antes de crear por primera vez `v1` y `v1.0.0` deben cumplirse simultáneamente:
 
 1. Issues **#1–#14 cerrados**, incluido el épico #13.
 2. Template validado por el CI reusable del candidato.
@@ -22,13 +27,18 @@ Antes de crear `v1.0.0` y el tag mayor `v1` deben cumplirse simultáneamente:
 
 Si cualquiera falta, el default seguro es **no publicar**.
 
-## Orden de la primera publicación
+## Bootstrap inicial
 
-1. Revalidar los gates anteriores.
-2. Fijar el SHA exacto candidato.
-3. Ejecutar el caller de release desde un evento confiable de `push` en la rama principal, pasando ese SHA como `kit_ref`.
-4. Crear/verificar el tag anotado `v1.0.0` y su GitHub Release mediante el reusable.
-5. Crear o mover `v1` al mismo commit **solo después** de que `v1.0.0` exista y haya sido verificado.
-6. Ejecutar un self-test consumidor usando `@v1` antes de iniciar TANDA 2.
+La primera publicación requiere una acción humana explícita porque todavía no existe el canal publicado que consume el propio workflow:
 
-El merge de la corrección de bootstrap no crea ningún tag automáticamente porque Factory no añade aquí un caller de publicación.
+1. Revalidar todos los gates anteriores.
+2. Fijar el **SHA exacto aprobado** de Factory.
+3. Crear manualmente el tag mayor **`v1`** apuntando a ese SHA exacto. No usar una rama flotante.
+4. Verificar que `v1` resuelve exactamente al SHA aprobado.
+5. Ejecutar el caller normal de release desde un `push` confiable de la rama principal. El reusable ya puede cargar `actions/read-version` desde `v1` y crear/verificar el tag anotado `v1.0.0` y su GitHub Release.
+6. Verificar que `v1.0.0` apunta al mismo commit.
+7. Ejecutar un self-test consumidor usando `@v1` antes de iniciar TANDA 2.
+
+Para releases posteriores dentro de la misma major, `v1` se actualiza únicamente mediante el proceso humano/autorizado definido para el canal mayor, nunca por inferencia de un agente.
+
+El merge de esta preparación no crea ningún tag automáticamente porque Factory no añade aquí un caller de publicación.
