@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "queue_label": "decisión: dueño",
+  "categories": {
+    "product-direction": "Dirección de producto",
+    "brand": "Marca",
+    "money": "Dinero",
+    "legal": "Legal",
+    "real-customer-data": "Datos reales de clientes",
+    "release-1.0.0": "Publicar versión 1.0.0",
+    "go-live": "Pasar a operación live"
+  }
+}
