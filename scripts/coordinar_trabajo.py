@@ -17,14 +17,14 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 if __package__:
-    from scripts.aceptacion_kit import AcceptanceError, parse_contract
+    from scripts.aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
     from scripts.orquestador_kit import (
         PlanError,
         parse_task_marker,
         reservation_blockers,
     )
 else:
-    from aceptacion_kit import AcceptanceError, parse_contract
+    from aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
     from orquestador_kit import PlanError, parse_task_marker, reservation_blockers
 
 
@@ -383,28 +383,30 @@ def reservation_marker(
     branch: str,
     active: bool,
     reason: str,
+    acceptance_sha256: str | None = None,
 ) -> str:
     """Serializa un marcador de reserva verificable por identidad del bot."""
-    payload = json.dumps(
-        {
-            "version": 1,
-            "owner": owner,
-            "reservation_id": reservation_id.lower(),
-            "branch": branch,
-            "active": active,
-            "reason": reason,
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    return f"<!-- condor-reserva {payload} -->"
+    payload: dict[str, Any] = {
+        "version": 2 if acceptance_sha256 is not None else 1,
+        "owner": owner,
+        "reservation_id": reservation_id.lower(),
+        "branch": branch,
+        "active": active,
+        "reason": reason,
+    }
+    if acceptance_sha256 is not None:
+        if re.fullmatch(r"[0-9a-f]{64}", acceptance_sha256) is None:
+            raise CoordinationError("Fingerprint de aceptación inválido.")
+        payload["acceptance_sha256"] = acceptance_sha256
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return f"<!-- condor-reserva {encoded} -->"
 
 
 def valid_reservation_payload(value: Any) -> bool:
     """Valida esquema y tipos de un marcador de reserva."""
     if not isinstance(value, dict):
         return False
-    required = {
+    base = {
         "version",
         "owner",
         "reservation_id",
@@ -412,9 +414,20 @@ def valid_reservation_payload(value: Any) -> bool:
         "active",
         "reason",
     }
-    if set(value) != required:
-        return False
-    if value.get("version") != 1:
+    version = value.get("version")
+    if version == 1:
+        if set(value) != base:
+            return False
+    elif version == 2:
+        if set(value) != base | {"acceptance_sha256"}:
+            return False
+        fingerprint = value.get("acceptance_sha256")
+        if (
+            not isinstance(fingerprint, str)
+            or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+        ):
+            return False
+    else:
         return False
     if not isinstance(value.get("owner"), str) or not value["owner"]:
         return False
@@ -749,6 +762,23 @@ def recover_stale_work(
         )
     )
 
+    previous_fingerprint = (
+        previous.get("acceptance_sha256")
+        if isinstance(previous, dict)
+        else None
+    )
+    if previous is None:
+        raise CoordinationError(
+            "Rama huérfana sin reserva activa: ejecuta "
+            "/adoptar-contrato-huerfana para fijar el contrato antes de recuperar."
+        )
+    if not isinstance(previous_fingerprint, str):
+        raise CoordinationError(
+            f"Reserva legacy v1 en Issue #{issue_number}: ejecuta "
+            f"/migrar-contrato {previous['reservation_id']} antes de recuperar."
+        )
+    acceptance_sha256 = previous_fingerprint
+
     publish_reservation(
         api,
         issue_number,
@@ -762,6 +792,7 @@ def recover_stale_work(
             "para continuar el trabajo existente sin abrir una "
             "implementación paralela."
         ),
+        acceptance_sha256,
     )
 
     winner = active_reservation(api, issue_number)
@@ -802,12 +833,15 @@ def publish_reservation(
     active: bool,
     reason: str,
     message: str,
+    acceptance_sha256: str | None = None,
 ) -> None:
     """Publica un marcador de reserva y su mensaje humano en un solo comentario."""
     api.comment(
         issue_number,
-        f"{reservation_marker(owner, reservation_id, branch, active, reason)}\n"
-        f"{message}",
+        (
+            f"{reservation_marker(owner, reservation_id, branch, active, reason, acceptance_sha256)}\n"
+            f"{message}"
+        ),
     )
 
 
@@ -830,6 +864,7 @@ def reserve_available_work(
     issue_number: int,
     actor: str,
     branch: str,
+    acceptance_sha256: str,
 ) -> str | None:
     """Crea una reserva nueva para un Issue realmente disponible."""
     main_sha = api.branch_sha("main")
@@ -850,6 +885,7 @@ def reserve_available_work(
                 branch,
                 True,
                 "tomar",
+                acceptance_sha256,
             ),
         )
     except Exception:
@@ -950,8 +986,10 @@ def reserve_work(
     if issue.get("state") != "open":
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
 
+    issue_body = str(issue.get("body") or "")
     try:
-        parse_contract(str(issue.get("body") or ""))
+        parse_contract(issue_body)
+        acceptance_sha256 = contract_fingerprint(issue_body)
     except AcceptanceError as exc:
         raise CoordinationError(
             f"Issue #{issue_number} no tiene criterios de aceptación ejecutables válidos: {exc}"
@@ -1018,6 +1056,7 @@ def reserve_work(
         issue_number,
         actor,
         branch,
+        acceptance_sha256,
     )
 
 def transfer_work(
@@ -1040,6 +1079,13 @@ def transfer_work(
 
     new_id = new_reservation_id()
     branch = str(current["branch"])
+    current_fingerprint = current.get("acceptance_sha256")
+    if not isinstance(current_fingerprint, str):
+        raise CoordinationError(
+            f"Reserva legacy v1 en Issue #{issue_number}: ejecuta "
+            f"/migrar-contrato {reservation_id.lower()} antes de transferir."
+        )
+    acceptance_sha256 = current_fingerprint
     open_pulls = open_pull_records_for_branch(api, branch)
     originals: list[tuple[int, str]] = []
     for pull in open_pulls:
@@ -1062,6 +1108,7 @@ def transfer_work(
                 branch,
                 True,
                 "transferir",
+                acceptance_sha256,
             ),
         )
     except Exception:
@@ -1084,6 +1131,141 @@ def transfer_work(
     print(f"Reserva transferida: Issue #{issue_number} -> {new_id}")
     return new_id
 
+
+
+def migrate_legacy_reservation(
+    api: GitHub,
+    issue_number: int,
+    actor: str,
+    association: str,
+    reservation_id: str,
+) -> str | None:
+    """Convierte explícitamente una reserva legacy v1 a v2 sin mover su sesión."""
+    if not authorized(association):
+        raise CoordinationError(
+            f"@{actor} no tiene una asociación autorizada para migrar trabajo."
+        )
+    current = active_reservation(api, issue_number)
+    if not current:
+        return None
+    if (
+        current["owner"] != actor
+        or current["reservation_id"] != reservation_id.lower()
+    ):
+        return None
+
+    existing = current.get("acceptance_sha256")
+    if isinstance(existing, str):
+        print(f"Reserva ya migrada: Issue #{issue_number} -> {reservation_id.lower()}")
+        return reservation_id.lower()
+
+    issue = api.issue(issue_number)
+    fingerprint = contract_fingerprint(str(issue.get("body") or ""))
+    branch = str(current["branch"])
+    api.comment(
+        issue_number,
+        reservation_marker(
+            actor,
+            reservation_id,
+            branch,
+            True,
+            "migrar-contrato",
+            fingerprint,
+        ),
+    )
+    winner = active_reservation(api, issue_number)
+    if (
+        not winner
+        or winner["reservation_id"] != reservation_id.lower()
+        or winner.get("acceptance_sha256") != fingerprint
+    ):
+        return None
+    print(
+        f"Contrato migrado explícitamente: Issue #{issue_number} "
+        f"-> {reservation_id.lower()}"
+    )
+    return reservation_id.lower()
+
+
+def adopt_orphaned_contract(
+    api: GitHub,
+    issue_number: int,
+    actor: str,
+    association: str,
+) -> str | None:
+    """Adopta explícitamente una rama huérfana y fija su contrato actual."""
+    if not authorized(association):
+        raise CoordinationError(
+            f"@{actor} no tiene una asociación autorizada para adoptar trabajo."
+        )
+    if active_reservation(api, issue_number) is not None:
+        raise CoordinationError(
+            f"Issue #{issue_number} ya tiene una reserva activa; no es huérfano."
+        )
+
+    issue = api.issue(issue_number)
+    if issue.get("state") != "open":
+        raise CoordinationError(f"Issue #{issue_number} no está abierto.")
+    branch = f"trabajo/issue-{issue_number}"
+    if api.branch_sha(branch) is None:
+        raise CoordinationError(
+            f"No existe la rama huérfana {branch}; usa /tomar para trabajo nuevo."
+        )
+
+    fingerprint = contract_fingerprint(str(issue.get("body") or ""))
+    reservation_id = new_reservation_id()
+    open_pulls = open_pull_records_for_branch(api, branch)
+    publish_reservation(
+        api,
+        issue_number,
+        actor,
+        reservation_id,
+        branch,
+        True,
+        "adoptar-contrato-huerfana",
+        (
+            f"Rama huérfana adoptada explícitamente con contrato fijado; "
+            f"se conserva {branch} y "
+            + (
+                ", ".join(
+                    f"PR #{pull['number']}"
+                    for pull in open_pulls
+                    if isinstance(pull.get("number"), int)
+                )
+                or "sin PR abierto"
+            )
+            + "."
+        ),
+        fingerprint,
+    )
+    winner = active_reservation(api, issue_number)
+    if (
+        not winner
+        or winner["reservation_id"] != reservation_id
+        or winner.get("acceptance_sha256") != fingerprint
+    ):
+        return None
+
+    api.set_status(
+        issue_number,
+        STATUS_REVIEW if open_pulls else STATUS_RESERVED,
+    )
+    api.try_assign(issue_number, actor)
+    for pull in open_pulls:
+        number = pull.get("number")
+        if not isinstance(number, int):
+            continue
+        body = str(api.pull(number).get("body") or "")
+        api.update_pull_body(
+            number,
+            rewrite_pull_reservation(body, reservation_id),
+        )
+
+    print(
+        f"Rama huérfana adoptada: Issue #{issue_number} "
+        f"-> {branch} (@{actor}, {reservation_id})"
+    )
+    return reservation_id
 
 
 def release_permission(
@@ -1398,6 +1580,21 @@ def reservation_validation_errors(
         errors.append(
             "El PR debe declarar la sesión activa mediante metadata de reserva oculta."
         )
+
+    pinned = reservation.get("acceptance_sha256")
+    if isinstance(pinned, str):
+        try:
+            current = contract_fingerprint(str(issue.get("body") or ""))
+        except AcceptanceError:
+            errors.append(
+                f"Issue #{issue_number} tiene un contrato de aceptación inválido."
+            )
+        else:
+            if current != pinned:
+                errors.append(
+                    f"Issue #{issue_number} cambió su contrato de aceptación "
+                    "después de /tomar; libera y vuelve a reservar."
+                )
     return errors
 
 
@@ -1503,10 +1700,13 @@ def parse_comment_command(body: str) -> tuple[str, str | None]:
         return "tomar", None
     if value == "/liberar-forzado":
         return "liberar-forzado", None
+    if value == "/adoptar-contrato-huerfana":
+        return "adoptar-contrato-huerfana", None
 
     for prefix, command in (
         ("/liberar ", "liberar"),
         ("/transferir ", "transferir"),
+        ("/migrar-contrato ", "migrar-contrato"),
     ):
         if value.startswith(prefix):
             session = value[len(prefix):].strip().lower()
@@ -1548,6 +1748,22 @@ def process_comment(
             actor,
             association,
             reservation_id,
+        )
+    elif command == "migrar-contrato":
+        assert reservation_id is not None
+        migrate_legacy_reservation(
+            api,
+            issue_number,
+            actor,
+            association,
+            reservation_id,
+        )
+    elif command == "adoptar-contrato-huerfana":
+        adopt_orphaned_contract(
+            api,
+            issue_number,
+            actor,
+            association,
         )
 
 

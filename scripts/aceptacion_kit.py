@@ -2,6 +2,7 @@
 """Valida criterios de aceptación ejecutables vinculados a un Issue."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -193,6 +194,29 @@ def parse_contract(body: str) -> list[Criterion]:
     return machine
 
 
+def contract_fingerprint(body: str) -> str:
+    """Fija solo criterios humanos y evidencia máquina, no prosa periférica."""
+    machine = parse_contract(body)
+    human = _human_criteria(body)
+    canonical = {
+        "human": [
+            {"id": criterion_id, "description": human[criterion_id]}
+            for criterion_id in sorted(human)
+        ],
+        "machine": [
+            {"id": item.id, "kind": item.kind, "target": item.target}
+            for item in sorted(machine, key=lambda item: item.id)
+        ],
+    }
+    payload = json.dumps(
+        canonical,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _latest_checks(payload: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(payload, dict):
         raise AcceptanceError("Payload de checks inválido.")
@@ -300,14 +324,35 @@ def verify_evidence(
 
 
 def validate_payload(payload: Any, *, root: Path | None = None) -> dict[str, Any]:
-    if not isinstance(payload, dict) or set(payload) != {"issue", "checks"}:
-        raise AcceptanceError("Payload debe contener issue y checks.")
+    required = {"issue", "checks"}
+    allowed = required | {"acceptance_sha256"}
+    if (
+        not isinstance(payload, dict)
+        or not required.issubset(payload)
+        or not set(payload).issubset(allowed)
+    ):
+        raise AcceptanceError(
+            "Payload debe contener issue/checks y solo acceptance_sha256 opcional."
+        )
     issue = payload["issue"]
     if not isinstance(issue, dict):
         raise AcceptanceError("Issue inválido.")
     body = issue.get("body")
     if not isinstance(body, str):
         raise AcceptanceError("Issue sin body.")
+
+    pinned = payload.get("acceptance_sha256")
+    if pinned is not None:
+        if (
+            not isinstance(pinned, str)
+            or re.fullmatch(r"[0-9a-f]{64}", pinned) is None
+        ):
+            raise AcceptanceError("Fingerprint fijado de aceptación inválido.")
+        if contract_fingerprint(body) != pinned:
+            raise AcceptanceError(
+                "Contrato de aceptación cambió después de la reserva."
+            )
+
     criteria = parse_contract(body)
     verify_evidence(criteria, payload["checks"], root=root)
     return {

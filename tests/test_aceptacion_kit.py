@@ -6,8 +6,10 @@ from pathlib import Path
 from scripts.aceptacion_kit import (
     AcceptanceError,
     Criterion,
+    contract_fingerprint,
     parse_contract,
     run_named_test,
+    validate_payload,
     verify_check,
 )
 
@@ -60,6 +62,80 @@ class AcceptanceContractTests(unittest.TestCase):
                     [row],
                 )
             )
+
+    def test_pinned_contract_rejects_transient_weakening(self):
+        """Una evidencia máquina debilitada cambia la huella fijada."""
+        original = issue_body(
+            "- [ ] [AC-01] Debe pasar.",
+            [
+                {
+                    "id": "AC-01",
+                    "kind": "check",
+                    "target": "Tests de scripts",
+                }
+            ],
+        )
+        weakened = issue_body(
+            "- [ ] [AC-01] Debe pasar.",
+            [
+                {
+                    "id": "AC-01",
+                    "kind": "check",
+                    "target": "Lint de workflows",
+                }
+            ],
+        )
+        peripheral_edit = original.replace(
+            "Contexto verificable.",
+            "Contexto verificable con nota adicional.",
+        )
+
+        self.assertNotEqual(
+            contract_fingerprint(original),
+            contract_fingerprint(weakened),
+        )
+        self.assertEqual(
+            contract_fingerprint(original),
+            contract_fingerprint(peripheral_edit),
+        )
+
+    def test_payload_rejects_contract_drift_against_pinned_fingerprint(self):
+        """El gate ejecuta solo el contrato fijado por la reserva."""
+        original = issue_body(
+            "- [ ] [AC-01] Debe pasar.",
+            [
+                {
+                    "id": "AC-01",
+                    "kind": "check",
+                    "target": "Tests de scripts",
+                }
+            ],
+        )
+        changed = original.replace("Debe pasar.", "Debe pasar debilitado.")
+        checks = {
+            "check_runs": [
+                {
+                    "id": 10,
+                    "name": "Tests de scripts",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ]
+        }
+
+        payload = {
+            "issue": {"body": original},
+            "checks": checks,
+            "acceptance_sha256": contract_fingerprint(original),
+        }
+        self.assertEqual(validate_payload(payload)["verified"], ["AC-01"])
+
+        payload["issue"] = {"body": changed}
+        with self.assertRaisesRegex(
+            AcceptanceError,
+            "cambió después de la reserva",
+        ):
+            validate_payload(payload)
 
     def test_named_test_runs_exact_case(self):
         with tempfile.TemporaryDirectory() as tmp:
