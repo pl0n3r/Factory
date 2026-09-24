@@ -78,40 +78,30 @@ class FeedbackTests(unittest.TestCase):
             validate_record(raw, CATALOG, "fixture")
 
     def test_epic_must_belong_to_project(self):
+        raw = record(epic="pl0n3r/otro#100")
         with self.assertRaisesRegex(FeedbackValidationError, "mismo project"):
-            validate_record(
-                record(epic="pl0n3r/otro#100"),
-                CATALOG,
-                "fixture",
-            )
+            validate_record(raw, CATALOG, "fixture")
 
     def test_metric_units_and_timestamps_fail_closed(self):
+        ratio = record(value=1.2)
+        without_zone = record(period_start="2026-09-01T00:00:00")
         with self.assertRaisesRegex(FeedbackValidationError, "ratio"):
-            validate_record(record(value=1.2), CATALOG, "fixture")
+            validate_record(ratio, CATALOG, "fixture")
         with self.assertRaisesRegex(FeedbackValidationError, "zona horaria"):
-            validate_record(
-                record(period_start="2026-09-01T00:00:00"),
-                CATALOG,
-                "fixture",
-            )
+            validate_record(without_zone, CATALOG, "fixture")
 
     def test_huge_sample_and_nonfinite_value_fail_closed(self):
+        huge_sample = record(sample_size=1_000_000_001)
+        nonfinite = record(value=float("inf"))
         with self.assertRaisesRegex(FeedbackValidationError, "sample_size"):
-            validate_record(
-                record(sample_size=1_000_000_001),
-                CATALOG,
-                "fixture",
-            )
+            validate_record(huge_sample, CATALOG, "fixture")
         with self.assertRaisesRegex(FeedbackValidationError, "finito"):
-            validate_record(record(value=float("inf")), CATALOG, "fixture")
+            validate_record(nonfinite, CATALOG, "fixture")
 
     def test_count_metric_requires_integer_without_float_coercion(self):
+        raw = record(metric="seo_clicks", value=10.5)
         with self.assertRaisesRegex(FeedbackValidationError, "count"):
-            validate_record(
-                record(metric="seo_clicks", value=10.5),
-                CATALOG,
-                "fixture",
-            )
+            validate_record(raw, CATALOG, "fixture")
 
     def test_epic_marker_declares_metric_surface_and_target(self):
         body = (
