@@ -10,7 +10,7 @@ La clasificación de puertas, asignación y recepción móvil real quedaron veri
 
 ## #10 — resiliencia del dueño y de la fábrica · CERRADO
 
-El modelo vigente es por capacidades: CI y observación usan `github-token:ephemeral` con mínimo privilegio; deploy usa `hostinger:git`; la escritura cross-repo requiere una **GitHub App dedicada**. No se requieren tres GitHub Apps obligatorias ni tres identidades separadas.
+El modelo vigente es por capacidades: CI y observación usan `github-token:ephemeral` con mínimo privilegio; deploy usa `hostinger:git`; la escritura cross-repo requiere una **GitHub App dedicada**. El diseño evita multiplicar identidades cuando una capacidad de mínimo privilegio es suficiente.
 
 ## #12 — cumplimiento técnico de datos/licencias · CERRADO
 

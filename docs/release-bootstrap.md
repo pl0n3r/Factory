@@ -35,7 +35,7 @@ Para publicar un patch/minor posterior dentro de la major `v1`:
 4. Tras la aprobación explícita, el dueño mueve manualmente el tag mayor `v1` al SHA aprobado. El workflow nunca crea ni mueve `v1`.
 5. Ejecutar **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=<SHA aprobado>` y `gate_issue=<Issue de puerta>`.
 6. El preflight ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, SHA/HEAD/`v1`, puerta/aprobación y el ruleset actual.
-7. El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`; #83 conserva la evidencia administrativa de bypass.
+7. El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`. La comprobación runtime es **solo estructural**; #83 conserva la evidencia administrativa de bypass.
 8. Solo si todo coincide, `release.yml@v1` crea/verifica el tag anotado semántico y la GitHub Release.
 9. Después se ejecuta un self-test consumidor mediante `ci.yml@v1` sobre `template/`.
 
