@@ -1,11 +1,16 @@
 """Casos mínimos y adversariales de trazabilidad jurídica y licencias."""
 from copy import deepcopy
 from datetime import datetime, timezone
+import io
+import os
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
 import unittest
 
 from cumplimiento import (
     ComplianceError, inspect_composer, inspect_npm, validate_inventory,
-    validate_privacy,
+    validate_privacy, main,
 )
 
 NOW = datetime(2026, 9, 24, tzinfo=timezone.utc)
@@ -144,6 +149,54 @@ class LicenseTests(unittest.TestCase):
     def test_license_expression_does_not_claim_compatibility(self):
         package = inspect_composer({"packages": [{"name": "vendor/a", "version": "1.0", "license": ["MIT OR Apache-2.0"]}], "packages-dev": []})
         self.assertEqual(validate_inventory(package)["license_status"], "identifiers_present_review_required")
+
+
+class CliSafetyTests(unittest.TestCase):
+    def test_cli_rejects_arbitrary_paths(self):
+        with patch(
+            "sys.argv",
+            [
+                "cumplimiento.py",
+                "--privacy",
+                "/tmp/private.json",
+                "--stdlib-only",
+            ],
+        ), patch("sys.stdin", io.StringIO("{}")):
+            with self.assertRaises(SystemExit) as caught:
+                main()
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_cli_reads_privacy_from_stdin_and_canonical_lock(self):
+        privacy = record()
+        lock = {
+            "packages": [
+                {
+                    "name": "vendor/a",
+                    "version": "1.0.0",
+                    "license": ["MIT"],
+                }
+            ],
+            "packages-dev": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "composer.lock").write_text(
+                __import__("json").dumps(lock),
+                encoding="utf-8",
+            )
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch(
+                    "sys.argv",
+                    ["cumplimiento.py", "--composer"],
+                ), patch(
+                    "sys.stdin",
+                    io.StringIO(__import__("json").dumps(privacy)),
+                ):
+                    self.assertEqual(main(), 0)
+            finally:
+                os.chdir(previous)
 
 
 if __name__ == "__main__":

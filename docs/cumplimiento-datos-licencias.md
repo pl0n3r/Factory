@@ -18,15 +18,13 @@ Guardar un JSON para cada tratamiento (no un único documento ficticio para todo
 
 ## Inventario de licencias
 
-`--composer-lock` inspecciona `packages` y `packages-dev`; `--npm-lock` inspecciona `packages` incluidas las transitivas. Falta de licencia, licencia indeterminada, versión faltante y formato no reconocido → error. Licencias múltiples declaradas como array de Composer → revisión manual antes de automatizar. Las expresiones simples `MIT OR Apache-2.0` se conservan como texto; no hay resolución de compatibilidad, recursividad SPDX completa ni búsqueda de licencias faltantes en la red.
+`--composer` inspecciona el `./composer.lock` canónico (`packages` y `packages-dev`); `--npm` inspecciona el `./package-lock.json` canónico, incluidas las transitivas. El CLI no acepta rutas arbitrarias. La evidencia de privacidad entra por `stdin`, por lo que su ubicación privada nunca se pasa como argumento. Falta de licencia, licencia indeterminada, versión faltante y formato no reconocido → error. Licencias múltiples declaradas como array de Composer → revisión manual antes de automatizar. Las expresiones simples `MIT OR Apache-2.0` se conservan como texto; no hay resolución de compatibilidad, recursividad SPDX completa ni búsqueda de licencias faltantes en la red.
 
 Ejemplo de invocación para un producto con ambos gestores:
 
 ```bash
-python3 seguridad/cumplimiento.py \
-  --privacy ruta-privada/revision-producto.json \
-  --composer-lock producto/composer.lock \
-  --npm-lock producto/package-lock.json
+python3 seguridad/cumplimiento.py --composer --npm \
+  < ruta-privada/revision-producto.json
 ```
 
 Sin Composer/npm: `--stdlib-only` indica explícitamente ausencia de esos gestores, **no confirma la ausencia universal de dependencias**. Para Python, Go o bibliotecas descargadas manualmente, incorporar antes un escáner y un contrato específicos.
@@ -36,6 +34,6 @@ La salida exitosa conserva estados `documented_not_legally_approved` e `identifi
 ## Ruta de integración y evidencia pendiente de #12
 
 - Las pruebas propias son `PYTHONPATH=seguridad python3 -m unittest discover -s seguridad -p 'test_cumplimiento.py'`.
-- La integración a `seguridad.yml` debe hacerse tras resolver su conflicto de propiedad con el PR #25, ejecutando tests y gate solo en el repositorio producto que adjunte una revisión real.
+- `seguridad.yml` ya ejecuta `unittest discover -s seguridad -p 'test_*.py'`; al integrar este slice, las regresiones de cumplimiento quedan dentro de `Validar puertas del candidato` sin modificar el workflow.
 - Cada proyecto debe aportar al menos una evidencia documentada y verificada por tratamiento y los archivos lock reales de su stack. Un fixture de tests **no** es prueba de cumplimiento de ningún producto.
 - Cierre de #12 requiere CI y evidencia de la revisión material, no únicamente la estructura o la salida del script.
