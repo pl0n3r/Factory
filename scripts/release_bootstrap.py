@@ -10,7 +10,7 @@ from typing import Any
 from seguridad.puertas_humanas import classify_body
 
 REPOSITORY = "pl0n3r/factory"
-REQUIRED_ISSUES = tuple(str(n) for n in range(1, 15)) + ("54",)
+REQUIRED_ISSUES = tuple(str(n) for n in range(1, 15)) + ("54", "83")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 APPROVAL_NAME = "factory-release-approval"
 APPROVAL_RE = re.compile(r"<!--\s*factory-release-approval\s+(\{.*?\})\s*-->", re.DOTALL)
