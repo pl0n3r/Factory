@@ -59,7 +59,7 @@ DBA no produjo un hallazgo propio: Factory no mantiene una base de datos de apli
 
 **Escenario de fallo:** se llega al SHA aprobado, se crea manualmente `v1`, pero el paso siguiente documentado no existe como operación ejecutable en Factory. Esto empuja a improvisar un release manual o a crear un caller justo en la frontera de publicación, fuera de la evidencia previamente auditada.
 
-**Solución:** #82 define un caller manual/fail-closed con SHA esperado, fuente de versión canónica, verificación de #1–#14, puerta humana, coincidencia de `v1` y self-test posterior.
+**Solución:** #82 define un caller manual/fail-closed con SHA esperado, fuente de versión canónica, verificación de #1–#14, puerta humana, coincidencia de `v1` y self-test posterior. La solución debe además ser compatible con el contrato de eventos del reusable: conservar `push` como camino normal y, si se usa `workflow_dispatch` para el bootstrap, permitirlo explícitamente solo para un caller autorizado de Factory sobre la default branch; los consumidores no deben ganar un despacho manual privilegiado por accidente.
 
 ---
 
@@ -270,7 +270,7 @@ La memoria institucional, decisiones como código, roles y coordinación reducen
 |---|---|---|
 | Core Factory #1–#12 y #14 | DEMOSTRADO | Issues cerrados; suites integradas |
 | CI exacto de main | DEMOSTRADO | `36035673042` success en `4b2be9fc...` |
-| Candidate reusable CI sobre template | DEMOSTRADO | `reusable-selftest.yml` usa `working_directory: template`; runs previos de “Probar CI reusable” verdes |
+| Candidate reusable CI sobre template | IMPLEMENTADO PERO NO DEMOSTRADO | `reusable-selftest.yml` ejecuta `working_directory: template`, pero no hay una ejecución satisfactoria demostrada sobre el SHA auditado exacto `4b2be9fc...` |
 | Acciones GitHub externas pinneadas | DEMOSTRADO | auditor de resiliencia + tests en Factory CI |
 | Deploy/rollback/health exacto | DEMOSTRADO | scripts + regresiones contractuales |
 | Privacidad core de seis documentos | DEMOSTRADO | #71/#78 integrado |
