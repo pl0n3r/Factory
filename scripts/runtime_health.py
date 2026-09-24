@@ -99,13 +99,21 @@ def validate_path(path: str) -> str:
         raise HealthError("Ruta HTTP no puede contener traversal.")
     return parsed.path
 
+def tls_context() -> ssl.SSLContext:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.check_hostname = True
+    context.load_default_certs()
+    return context
+
 def request(origin: str, path: str, timeout: float) -> tuple[int, str, bytes]:
     if timeout <= 0 or timeout > 30:
         raise HealthError("Timeout HTTP fuera de rango.")
     safe_path = validate_path(path)
     host, addresses = resolve_public_addresses(origin)
     address = addresses[0]
-    context = ssl.create_default_context()
+    context = tls_context()
     try:
         with socket.create_connection((address, 443), timeout=timeout) as raw_socket:
             with context.wrap_socket(raw_socket, server_hostname=host) as tls_socket:

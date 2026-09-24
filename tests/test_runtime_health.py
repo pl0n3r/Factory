@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
-from scripts.runtime_health import HealthError, resolve_public_addresses, validate_origin, validate_path
+import ssl
+from scripts.runtime_health import HealthError, resolve_public_addresses, tls_context, validate_origin, validate_path
 
 class T(unittest.TestCase):
     def test_private_literals_and_localhost_fail_closed(self):
@@ -30,6 +31,12 @@ class T(unittest.TestCase):
             with self.subTest(origin=origin):
                 with self.assertRaises(HealthError):
                     validate_origin(origin)
+
+    def test_tls_context_requires_tls_1_2_and_certificate_validation(self):
+        context = tls_context()
+        self.assertGreaterEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
 
     def test_path_rejects_query_fragment_and_traversal(self):
         for path in (
