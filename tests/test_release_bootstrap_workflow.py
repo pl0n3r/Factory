@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -46,11 +49,24 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertIn("python3 scripts/verificar_ruleset_v1.py", preflight)
         self.assertLess(
             preflight.index("python3 scripts/verificar_ruleset_v1.py"),
-            preflight.index("python3 scripts/release_bootstrap.py"),
+            preflight.index("python3 -m scripts.release_bootstrap"),
         )
         self.assertIn("contents: read", preflight)
         self.assertIn("issues: read", preflight)
         self.assertNotIn("contents: write", preflight)
+
+    def test_preflight_command_imports_run_as_in_the_workflow(self):
+        """Regresión #102: el comando exacto del workflow debe resolver sus imports."""
+        match = re.search(r"python3 (-m [\w.]+|scripts/release_bootstrap\.py)", BOOTSTRAP)
+        self.assertIsNotNone(match)
+        args = [sys.executable, *match.group(1).split()]
+        result = subprocess.run(
+            args, cwd=ROOT, input="{}", capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, "ERROR: repository inválido.\n")
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        self.assertNotIn("ImportError", result.stderr)
 
     def test_guide_keeps_parent_ruleset_gate_boundary(self):
         for value in (

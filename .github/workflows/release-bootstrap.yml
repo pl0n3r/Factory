@@ -118,7 +118,7 @@ jobs:
               }
             }' > /tmp/release-bootstrap.json
 
-          python3 scripts/release_bootstrap.py < /tmp/release-bootstrap.json             | tee /tmp/release-bootstrap-result.json
+          python3 -m scripts.release_bootstrap < /tmp/release-bootstrap.json             | tee /tmp/release-bootstrap-result.json
           approved_sha="$(jq -r '.sha' /tmp/release-bootstrap-result.json)"
           echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"
 
