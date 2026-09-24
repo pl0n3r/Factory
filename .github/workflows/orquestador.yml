@@ -1,0 +1,54 @@
+name: Orquestador de fábrica
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      epic:
+        description: Número de Issue épico
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: orquestador-${{ github.event.issue.number || inputs.epic }}
+  cancel-in-progress: false
+
+jobs:
+  planificar:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.issue.pull_request == null &&
+        github.event.comment.body == '/planificar' &&
+        (
+          github.event.comment.author_association == 'OWNER' ||
+          github.event.comment.author_association == 'MEMBER' ||
+          github.event.comment.author_association == 'COLLABORATOR'
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Descargar orquestador canónico
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Materializar plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          EPIC_EVENTO: ${{ github.event.issue.number }}
+          EPIC_MANUAL: ${{ inputs.epic }}
+        run: |
+          set -euo pipefail
+          epic="$EPIC_EVENTO"
+          [[ -n "$epic" ]] || epic="$EPIC_MANUAL"
+          [[ "$epic" =~ ^[1-9][0-9]*$ ]] || { echo "::error::epic inválido"; exit 1; }
+          python3 scripts/orquestar_fabrica.py sync --repo "$REPOSITORIO" --epic "$epic"

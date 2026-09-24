@@ -16,6 +16,11 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+if __package__:
+    from scripts.orquestador_kit import PlanError, reservation_blockers
+else:
+    from orquestador_kit import PlanError, reservation_blockers
+
 
 API_URL = os.getenv("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 TOKEN = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
@@ -938,6 +943,18 @@ def reserve_work(
         raise CoordinationError("La reserva se ejecuta sobre Issues, no PRs.")
     if issue.get("state") != "open":
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
+
+    try:
+        plan_blockers = reservation_blockers(issue, api.open_issues(), actor)
+    except PlanError as exc:
+        raise CoordinationError(
+            f"Plan de orquestación inválido en Issue #{issue_number}: {exc}"
+        ) from exc
+    if plan_blockers:
+        details = "\n".join(f"- {item}" for item in plan_blockers)
+        raise CoordinationError(
+            f"Orquestador bloquea /tomar para Issue #{issue_number}:\n{details}"
+        )
 
     labels = label_names(issue)
     if STATUS_BLOCKED in labels:
