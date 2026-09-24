@@ -40,6 +40,17 @@ A medida que avance el kit (#1) se agregan reusable workflows con `on: workflow_
 
 Español para documentación, Issues y PRs. Las etiquetas del kit se publican en español (`labels/es.json`) y en inglés (`labels/en.json`) con el mismo sistema.
 
+## Orquestación preventiva
+
+Para épicos que se dividen en trabajo paralelo, declara un marker factory-plan y ejecuta /planificar antes de reservar tareas hijas.
+
+- Cada tarea planificada tiene owner, roles derivados, orden, dependencias y paths reclamados.
+- /tomar falla si hay dependencias abiertas o claims solapados con otra tarea activa.
+- Si dos tareas necesitan tocar la misma ruta, el DAG debe serializarlas mediante depends_on.
+- No edites owner/paths/dependencias de una tarea ya reservada o en revisión; replantea el épico antes de iniciar trabajo.
+
+Consulta docs/orquestador.md para el contrato completo.
+
 ## Roles profesionales por tarea
 
 Después de obtener la reserva con `/tomar`, revisa las etiquetas `rol: …` / `role: …` del Issue y carga **todos** los perfiles correspondientes desde `agentes/roles/<rol>.md`.
