@@ -13,10 +13,6 @@ on:
         required: false
         default: 'version'
         type: string
-      kit_ref:
-        required: false
-        default: 'v1'
-        type: string
     outputs:
       version:
         description: Versión X.Y.Z
