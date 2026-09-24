@@ -12,10 +12,12 @@ on:
       require_schema: {required: false, default: false, type: boolean}
 permissions:
   contents: read
-  issues: write
 jobs:
   observar:
     name: Smoke producción
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

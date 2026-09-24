@@ -28,13 +28,15 @@ on:
         description: URL del GitHub Release
         value: ${{ jobs.release.outputs.release_url }}
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: release-${{ github.repository }}-main
   cancel-in-progress: false
 jobs:
   release:
     name: Asegurar tag y GitHub Release
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 8
     outputs:
