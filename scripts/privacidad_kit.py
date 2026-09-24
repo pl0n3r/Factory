@@ -108,7 +108,7 @@ def validate_rules(document: object) -> dict[str, Any]:
 
 
 def _validate_controller(controller: object, phase: str, placeholder: str) -> dict[str, str]:
-    if not isinstance(controller, dict) or tuple(controller.keys()) != OWNER_FIELDS:
+    if not isinstance(controller, dict) or set(controller) != set(OWNER_FIELDS):
         raise PrivacyError("datos: responsable incompleto o adicional")
     result: dict[str, str] = {}
     for field in OWNER_FIELDS:
@@ -124,7 +124,7 @@ def _validate_controller(controller: object, phase: str, placeholder: str) -> di
 
 
 def _validate_treatment(raw: object, rules: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(raw, dict) or tuple(raw.keys()) != TREATMENT_FIELDS:
+    if not isinstance(raw, dict) or set(raw) != set(TREATMENT_FIELDS):
         raise PrivacyError("datos: tratamiento con campos incompletos o adicionales")
     treatment_id = _controlled(raw["id"], "datos.treatment.id")
     category = _controlled(raw["category"], "datos.treatment.category")
@@ -237,6 +237,10 @@ def _table_rows(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _code_list(values: list[str]) -> str:
+    return ", ".join("`" + value + "`" for value in values)
+
+
 def _register_sections(data: dict[str, Any]) -> str:
     if not data["treatments"]:
         return "No hay tratamientos declarados en `datos.yml`."
@@ -246,11 +250,11 @@ def _register_sections(data: dict[str, Any]) -> str:
             f"## {row['id']}",
             "",
             f"- Categoría: `{row['category']}`",
-            f"- Campos de software: {', '.join(f'`{field}`' for field in row['fields'])}",
+            f"- Campos de software: {_code_list(row['fields'])}",
             f"- Finalidad: `{row['purpose']}`",
             f"- Base documentada: `{row['basis']}` (revisión jurídica requerida)",
             f"- Consentimiento: `{row['consent']}`",
-            f"- Proveedores: {', '.join(f'`{provider}`' for provider in row['providers']) or 'ninguno_declarado'}",
+            f"- Proveedores: {_code_list(row['providers']) or 'ninguno_declarado'}",
             f"- Retención: `{row['retention']}`",
             "",
         ])
