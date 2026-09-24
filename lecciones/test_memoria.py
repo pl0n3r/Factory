@@ -78,8 +78,9 @@ class MemoryTests(unittest.TestCase):
         bad["unexpected_field"] = "x"
         with self.assertRaisesRegex(LessonValidationError, "campos no permitidos"):
             validate_lesson(bad, "x")
+        multiline = lesson("factory-two", what="a\nb")
         with self.assertRaisesRegex(LessonValidationError, "una línea"):
-            validate_lesson(lesson("factory-two", what="a\nb"), "x")
+            validate_lesson(multiline, "x")
 
     def test_lesson_symlink_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
