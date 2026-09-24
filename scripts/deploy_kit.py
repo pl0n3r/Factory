@@ -44,7 +44,10 @@ def adapter_path(stage: str, *, root: Path | None = None) -> Path:
 
 def stage_runner(stage: str) -> int:
     path = adapter_path(stage)
-    return subprocess.run([str(path)], check=False).returncode
+    # S2076: adapter_path() maps stage through a closed constant table, rejects
+    # unknown stages, symlinks and paths outside the checkout. No user argument
+    # becomes executable text or a subprocess argument.
+    return subprocess.run([str(path)], check=False).returncode  # NOSONAR(S2076)
 
 def execute(stage: str, runner: Runner) -> None:
     code = runner(stage)

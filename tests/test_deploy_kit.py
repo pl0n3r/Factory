@@ -47,6 +47,11 @@ class T(unittest.TestCase):
                 health=Mock(),
             )
 
+    def test_unknown_stage_cannot_select_an_executable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(DeployError, "Etapa de deploy inválida"):
+                adapter_path("../../bin/sh", root=Path(tmp))
+
     def test_adapter_symlink_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
