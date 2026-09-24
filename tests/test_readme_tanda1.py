@@ -41,6 +41,7 @@ class ReadmeTanda1Tests(unittest.TestCase):
             "### #54 — privacidad como código · EN CURSO",
             "tres a seis documentos",
             "Quedan exactamente dos condiciones para cerrar #54",
+            "Condor, GrindFlow y BRVTAL revalidados contra el contrato vigente de **seis documentos**",
             "Primera ejecución/reporte real del auditor semanal",
             "#71/#78",
             "#74/#75",
