@@ -75,9 +75,61 @@ class PrivacyKitTests(unittest.TestCase):
         self.assertNotIn("Jane Doe", str(caught.exception))
 
         sensitive = data_map()
-        sensitive["treatments"][1]["consent"] = "review_required"
-        with self.assertRaisesRegex(PrivacyError, "consentimiento explícito"):
+        sensitive["treatments"][1]["consent"] = "documented"
+        with self.assertRaisesRegex(PrivacyError, "estado explícito"):
             validate_data_map(sensitive, rules)
+
+    def test_sensitive_consent_can_remain_under_review_during_construction(self):
+        rules = load_rules()
+        item = data_map()
+        item["treatments"][1]["consent"] = "review_required"
+        validated = validate_data_map(item, rules)
+        sensitive = next(
+            row for row in validated["treatments"] if row["id"] == "admin_totp"
+        )
+        self.assertEqual(sensitive["consent"], "review_required")
+
+    def test_live_sensitive_consent_requires_documented_explicit(self):
+        rules = load_rules()
+        item = data_map()
+        item["phase"] = "live"
+        item["controller"] = {
+            "name": "Example Controller",
+            "identifier": "EXAMPLE-ID",
+            "address": "Example Address",
+            "rights_email": "privacy@example.invalid",
+        }
+        item["treatments"][1]["consent"] = "review_required"
+        with self.assertRaisesRegex(
+            PrivacyError,
+            "go-live requiere consentimiento explícito documentado",
+        ):
+            validate_data_map(item, rules)
+
+    def test_live_sensitive_consent_accepts_documented_explicit(self):
+        rules = load_rules()
+        item = data_map()
+        item["phase"] = "live"
+        item["controller"] = {
+            "name": "Example Controller",
+            "identifier": "EXAMPLE-ID",
+            "address": "Example Address",
+            "rights_email": "privacy@example.invalid",
+        }
+        validated = validate_data_map(item, rules)
+        sensitive = next(
+            row for row in validated["treatments"] if row["id"] == "admin_totp"
+        )
+        self.assertEqual(sensitive["consent"], "documented_explicit")
+
+    def test_generated_documents_preserve_review_state(self):
+        rules = load_rules()
+        item = data_map()
+        item["treatments"][1]["consent"] = "review_required"
+        documents = generate_documents(rules, item)
+        self.assertIn("review_required", documents["politica-tratamiento.md"])
+        self.assertIn("review_required", documents["registro-tratamientos.md"])
+        self.assertNotIn("documented_explicit", documents["registro-tratamientos.md"])
 
     def test_documents_are_deterministic(self):
         rules = load_rules()

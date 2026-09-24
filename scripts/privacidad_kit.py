@@ -123,7 +123,7 @@ def _validate_controller(controller: object, phase: str, placeholder: str) -> di
     return result
 
 
-def _validate_treatment(raw: object, rules: dict[str, Any]) -> dict[str, Any]:
+def _validate_treatment(raw: object, rules: dict[str, Any], phase: str) -> dict[str, Any]:
     if not isinstance(raw, dict) or set(raw) != set(TREATMENT_FIELDS):
         raise PrivacyError("datos: tratamiento con campos incompletos o adicionales")
     treatment_id = _controlled(raw["id"], "datos.treatment.id")
@@ -141,8 +141,15 @@ def _validate_treatment(raw: object, rules: dict[str, Any]) -> dict[str, Any]:
         raw["providers"], "datos.treatment.providers", allow_empty=True
     )
     category_rule = rules["categories"][category]
-    if category_rule["explicit_consent_required"] and consent != "documented_explicit":
-        raise PrivacyError("datos: categoría sensible requiere consentimiento explícito documentado")
+    if category_rule["explicit_consent_required"]:
+        if consent == "documented":
+            raise PrivacyError(
+                "datos: categoría sensible requiere estado explícito o revisión pendiente"
+            )
+        if phase == "live" and consent != "documented_explicit":
+            raise PrivacyError(
+                "datos: go-live requiere consentimiento explícito documentado"
+            )
     return {
         "id": treatment_id,
         "category": category,
@@ -173,7 +180,7 @@ def validate_data_map(document: object, rules: dict[str, Any]) -> dict[str, Any]
     rows = document["treatments"]
     if not isinstance(rows, list) or len(rows) > 500:
         raise PrivacyError("datos: treatments inválido")
-    treatments = [_validate_treatment(row, rules) for row in rows]
+    treatments = [_validate_treatment(row, rules, phase) for row in rows]
     ids = [row["id"] for row in treatments]
     if len(set(ids)) != len(ids):
         raise PrivacyError("datos: tratamientos duplicados")
