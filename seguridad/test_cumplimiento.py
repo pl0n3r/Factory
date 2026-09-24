@@ -8,7 +8,7 @@ import tempfile
 from unittest.mock import patch
 import unittest
 
-from cumplimiento import (
+from seguridad.cumplimiento import (
     ComplianceError, inspect_composer, inspect_npm, validate_inventory,
     validate_privacy, main,
 )
