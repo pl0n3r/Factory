@@ -66,6 +66,7 @@ class FakeGitHub:
         self.status_history: list[str | None] = []
         self.assignees: set[str] = set()
         self.fail_comment = False
+        self.pull_update_failures_remaining = 0
         self.commit_times = {
             "abc123": datetime.now(timezone.utc),
         }
@@ -153,6 +154,9 @@ class FakeGitHub:
 
     def update_pull_body(self, number: int, body: str) -> None:
         """Actualiza el cuerpo del PR sin crear otro."""
+        if self.pull_update_failures_remaining > 0:
+            self.pull_update_failures_remaining -= 1
+            raise CoordinationError("fallo simulado al actualizar PR")
         self.pulls[number]["body"] = body
 
     def commit_timestamp(self, sha: str):
@@ -606,20 +610,32 @@ class CoordinacionTests(unittest.TestCase):
             )
         )
 
-    def test_bot_reservation_marker_does_not_refresh_work_lease(self) -> None:
-        """El marcador del bot no cuenta como trabajo humano reciente."""
+    def test_reservation_marker_starts_fresh_work_lease(self) -> None:
+        """Una reserva recién creada no nace stale aunque main sea antiguo."""
         api = FakeGitHub()
         add_active_reservation(api)
         api.commit_times["abc123"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        marker_time = datetime.fromisoformat(api.comments[-1]["updated_at"])
 
         activity = work_activity_timestamp(api, 12, "trabajo/issue-12")
 
-        self.assertEqual(activity, datetime(2020, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual(activity, marker_time)
+        self.assertFalse(
+            work_is_stale(
+                api,
+                12,
+                "trabajo/issue-12",
+                now=marker_time.replace(microsecond=0),
+            )
+        )
 
     def test_sweep_marks_eligible_stale_reservation(self) -> None:
         """El barrido marca una reserva stale y libera su lock efímero."""
         api = FakeGitHub()
         add_active_reservation(api)
+        stale = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = stale
+        api.comments[-1]["updated_at"] = stale
         api.commit_times["abc123"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
 
         marked = mark_stale_reservations(api)
@@ -649,6 +665,9 @@ class CoordinacionTests(unittest.TestCase):
         """El sweep revalida la sesión después de adquirir el lock."""
         api = FakeGitHub()
         add_active_reservation(api, owner="agente-anterior")
+        stale = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = stale
+        api.comments[-1]["updated_at"] = stale
         api.commit_times["abc123"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
         original_create_branch = api.create_branch
 
@@ -785,15 +804,54 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
 
     def test_transfer_invalidates_previous_session(self) -> None:
-        """Transferir genera un ID nuevo y vuelve inválido el anterior."""
+        """Transferir sincroniza Issue y PR con un ID nuevo."""
         api = FakeGitHub()
         add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": f"Closes #12\nReserva: {SESSION_A}\n<!-- condor-reserva-id: {SESSION_A} -->",
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
         new_id = transfer_work(api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertIsNotNone(new_id)
         self.assertNotEqual(new_id, SESSION_A)
         reservation = active_reservation(api, 12)
         assert reservation is not None
         self.assertEqual(reservation["reservation_id"], new_id)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            new_id,
+        )
+        validate_pull(api, 15, True)
+
+    def test_transfer_rolls_back_pr_if_update_fails(self) -> None:
+        """Un fallo al actualizar el PR conserva la sesión anterior."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        original = (
+            f"Closes #12\nReserva: {SESSION_A}\n"
+            f"<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": original,
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+        api.pull_update_failures_remaining = 1
+
+        with self.assertRaises(CoordinationError):
+            transfer_work(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        reservation = active_reservation(api, 12)
+        assert reservation is not None
+        self.assertEqual(reservation["reservation_id"], SESSION_A)
+        self.assertEqual(api.pulls[15]["body"], original)
 
     def test_parse_comment_commands(self) -> None:
         """Interpreta comandos y valida UUID cuando corresponde."""

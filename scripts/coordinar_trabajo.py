@@ -560,6 +560,9 @@ def work_activity_timestamp(
     """Calcula la señal más reciente sin contar el comando /tomar actual."""
     candidates: list[datetime] = []
     comments = api.issue_comments(issue_number)
+    lease_start = latest_reservation_timestamp(comments)
+    if lease_start is not None:
+        candidates.append(lease_start)
     human_activity = human_issue_activity_timestamp(comments)
     if human_activity is not None:
         candidates.append(human_activity)
@@ -989,16 +992,48 @@ def transfer_work(
         return None
 
     new_id = new_reservation_id()
-    api.comment(
-        issue_number,
-        reservation_marker(
-            actor,
-            new_id,
-            current["branch"],
-            True,
-            "transferir",
-        ),
-    )
+    branch = str(current["branch"])
+    open_pulls = open_pull_records_for_branch(api, branch)
+    originals: list[tuple[int, str]] = []
+    for pull in open_pulls:
+        number = pull.get("number")
+        if not isinstance(number, int):
+            continue
+        originals.append((number, str(api.pull(number).get("body") or "")))
+
+    try:
+        for number, body in originals:
+            api.update_pull_body(
+                number,
+                rewrite_pull_reservation(body, new_id),
+            )
+        api.comment(
+            issue_number,
+            reservation_marker(
+                actor,
+                new_id,
+                branch,
+                True,
+                "transferir",
+            ),
+        )
+    except Exception:
+        for number, body in originals:
+            try:
+                api.update_pull_body(number, body)
+            except Exception:
+                pass
+        raise
+
+    winner = active_reservation(api, issue_number)
+    if not winner or winner["reservation_id"] != new_id:
+        for number, body in originals:
+            try:
+                api.update_pull_body(number, body)
+            except Exception:
+                pass
+        return None
+
     print(f"Reserva transferida: Issue #{issue_number} -> {new_id}")
     return new_id
 
