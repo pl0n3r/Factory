@@ -35,7 +35,6 @@ PRODUCTION_CREDENTIALS = frozenset(
 SAFE_ENV_KEYS = frozenset(
     {
         "PATH",
-        "HOME",
         "LANG",
         "LC_ALL",
         "TZ",
@@ -45,9 +44,6 @@ SAFE_ENV_KEYS = frozenset(
         "GITHUB_REPOSITORY",
         "RUNNER_OS",
         "RUNNER_ARCH",
-        "RUNNER_TEMP",
-        "TMPDIR",
-        "COMPOSER_HOME",
     }
 )
 Runner = Callable[[str], int]
@@ -115,8 +111,17 @@ def _safe_environment(
         for key, value in source.items()
         if key in SAFE_ENV_KEYS and isinstance(value, str)
     }
+    private_home = str(Path(preview_root) / "home")
+    private_tmp = str(Path(preview_root) / "tmp")
+    private_composer = str(Path(preview_root) / "composer")
     safe.update(
         {
+            "HOME": private_home,
+            "RUNNER_TEMP": private_tmp,
+            "TMPDIR": private_tmp,
+            "COMPOSER_HOME": private_composer,
+            "XDG_CACHE_HOME": str(Path(preview_root) / "cache"),
+            "XDG_CONFIG_HOME": str(Path(preview_root) / "config"),
             "FACTORY_PREVIEW": "1",
             "FACTORY_SYNTHETIC_DATA": "1",
             "FACTORY_PREVIEW_ROOT": preview_root,
@@ -146,6 +151,8 @@ def preview_environment(
         sha=sha,
         migration_mode=migration_mode,
     )
+    for name in ("home", "tmp", "composer", "cache", "config"):
+        (Path(preview_root) / name).mkdir(parents=True, exist_ok=True)
     os.environ.clear()
     os.environ.update(safe)
     try:

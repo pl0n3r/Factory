@@ -83,6 +83,8 @@ class PreviewKitTests(unittest.TestCase):
                     os.environ.get("FACTORY_SYNTHETIC_DATA"),
                     root.exists(),
                     "ACTIONS_RUNTIME_TOKEN" in os.environ,
+                    Path(os.environ["HOME"]).parent == root,
+                    Path(os.environ["RUNNER_TEMP"]).parent == root,
                 )
             )
             return 0
@@ -104,11 +106,21 @@ class PreviewKitTests(unittest.TestCase):
 
         self.assertEqual(dict(os.environ), before)
         self.assertTrue(observed)
-        for _, preview, synthetic, root_exists, runtime_token in observed:
+        for (
+            _,
+            preview,
+            synthetic,
+            root_exists,
+            runtime_token,
+            home_is_private,
+            temp_is_private,
+        ) in observed:
             self.assertEqual(preview, "1")
             self.assertEqual(synthetic, "1")
             self.assertTrue(root_exists)
             self.assertFalse(runtime_token)
+            self.assertTrue(home_is_private)
+            self.assertTrue(temp_is_private)
 
     def test_post_deploy_failure_fails_preview(self):
         events = []
