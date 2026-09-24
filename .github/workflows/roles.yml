@@ -1,0 +1,183 @@
+name: Roles profesionales reutilizables
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'sync, suggest o validate'
+        required: true
+        type: string
+      number:
+        description: 'Issue o PR para suggest/validate'
+        required: false
+        default: 0
+        type: number
+      language:
+        description: 'es o en'
+        required: false
+        default: 'es'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: roles-${{ github.repository }}-${{ inputs.mode }}-${{ inputs.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validar evidencia de roles
+    if: inputs.mode == 'validate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Validar contexto read-only
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          NUMBER: ${{ inputs.number }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          [[ "$LANGUAGE" == "es" || "$LANGUAGE" == "en" ]] || { echo "::error::language inválido"; exit 1; }
+          [[ "$EVENT_NAME" == "pull_request" && "$EVENT_PR" == "$NUMBER" && "$NUMBER" != "0" ]] || { echo "::error::validate requiere el PR actual"; exit 1; }
+
+      - name: Descargar kit publicado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Validar catálogo
+        run: python3 .factory/scripts/roles_kit.py validate-catalog
+
+      - name: Construir contexto PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ inputs.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/issues/$NUMBER" > /tmp/entity.json
+          gh api --paginate "repos/$REPOSITORY/pulls/$NUMBER/files?per_page=100" --jq '.[].filename' \
+            | jq -R -s 'split("\n") | map(select(length > 0))' > /tmp/files.json
+          jq --slurpfile files /tmp/files.json '{
+            title: (.title // ""),
+            body: (.body // ""),
+            labels: [(.labels // [])[].name],
+            files: $files[0]
+          }' /tmp/entity.json > /tmp/context.json
+
+      - name: Validar PR
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/roles_kit.py validate-pr --language "$LANGUAGE" \
+            < /tmp/context.json >> "$GITHUB_STEP_SUMMARY"
+
+  mutate:
+    name: Sincronizar o sugerir roles
+    if: inputs.mode == 'sync' || inputs.mode == 'suggest'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Validar contexto con escritura
+        env:
+          MODE: ${{ inputs.mode }}
+          LANGUAGE: ${{ inputs.language }}
+          NUMBER: ${{ inputs.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ISSUE: ${{ github.event.issue.number }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          REF_NAME: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$LANGUAGE" == "es" || "$LANGUAGE" == "en" ]] || { echo "::error::language inválido"; exit 1; }
+          if [[ "$MODE" == "sync" ]]; then
+            case "$EVENT_NAME" in push|workflow_dispatch) ;; *) echo "::error::sync requiere push/workflow_dispatch"; exit 1 ;; esac
+            [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::sync solo acepta rama principal"; exit 1; }
+          else
+            case "$EVENT_NAME" in
+              issues) [[ "$EVENT_ISSUE" == "$NUMBER" && "$NUMBER" != "0" ]] ;;
+              pull_request) [[ "$EVENT_PR" == "$NUMBER" && "$NUMBER" != "0" ]] ;;
+              workflow_dispatch) [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" && "$NUMBER" != "0" ]] ;;
+              *) false ;;
+            esac || { echo "::error::suggest requiere la entidad del evento o dispatch en main"; exit 1; }
+          fi
+
+      - name: Descargar kit publicado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Validar catálogo
+        run: python3 .factory/scripts/roles_kit.py validate-catalog
+
+      - name: Sincronizar etiquetas de rol
+        if: inputs.mode == 'sync'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/roles_kit.py labels --language "$LANGUAGE" > /tmp/role-labels.json
+          jq -r '.[]' /tmp/role-labels.json | while IFS= read -r name; do
+            gh label create "$name" --repo "$REPOSITORY" --color 5319E7 \
+              --description "Rol profesional requerido por Factory" --force >/dev/null
+          done
+
+      - name: Construir contexto para sugerencia
+        if: inputs.mode == 'suggest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ inputs.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/issues/$NUMBER" > /tmp/entity.json
+          is_pr="$(jq 'has("pull_request")' /tmp/entity.json)"
+          if [[ "$is_pr" == "true" ]]; then
+            gh api --paginate "repos/$REPOSITORY/pulls/$NUMBER/files?per_page=100" --jq '.[].filename' \
+              | jq -R -s 'split("\n") | map(select(length > 0))' > /tmp/files.json
+          else
+            printf '[]\n' > /tmp/files.json
+          fi
+          jq --slurpfile files /tmp/files.json '{
+            title: (.title // ""),
+            body: (.body // ""),
+            labels: [(.labels // [])[].name],
+            files: $files[0]
+          }' /tmp/entity.json > /tmp/context.json
+
+      - name: Sugerir y asignar roles
+        if: inputs.mode == 'suggest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ inputs.number }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/roles_kit.py suggest --language "$LANGUAGE" \
+            < /tmp/context.json > /tmp/suggestion.json
+          jq -r '.labels[]' /tmp/suggestion.json | while IFS= read -r label; do
+            gh issue edit "$NUMBER" --repo "$REPOSITORY" --add-label "$label" >/dev/null
+          done
+          jq '{roles, risks}' /tmp/suggestion.json >> "$GITHUB_STEP_SUMMARY"

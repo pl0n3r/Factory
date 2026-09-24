@@ -39,3 +39,13 @@ A medida que avance el kit (#1) se agregan reusable workflows con `on: workflow_
 ## Idioma
 
 Español para documentación, Issues y PRs. Las etiquetas del kit se publican en español (`labels/es.json`) y en inglés (`labels/en.json`) con el mismo sistema.
+
+## Roles profesionales por tarea
+
+Después de obtener la reserva con `/tomar`, revisa las etiquetas `rol: …` / `role: …` del Issue y carga **todos** los perfiles correspondientes desde `agentes/roles/<rol>.md`.
+
+- Declara en el PR los roles asumidos y completa el checklist de cada perfil.
+- Si el clasificador exige un rol adicional por los archivos modificados, inclúyelo.
+- Cambios de esquema, seguridad, deploy o UX pública requieren **revisión cruzada** por un rol distinto al implementador.
+- Los perfiles de rol complementan este contrato; no sustituyen `PLAN-AGENTES.md`, `decisiones.yml` ni las lecciones vigentes.
+

@@ -1,0 +1,98 @@
+[
+  {
+    "slug": "ingenieria-software",
+    "label_es": "rol: ingenieria-software",
+    "label_en": "role: software-engineering",
+    "file": "agentes/roles/ingenieria-software.md"
+  },
+  {
+    "slug": "arquitectura",
+    "label_es": "rol: arquitectura",
+    "label_en": "role: architecture",
+    "file": "agentes/roles/arquitectura.md"
+  },
+  {
+    "slug": "dba",
+    "label_es": "rol: dba",
+    "label_en": "role: dba",
+    "file": "agentes/roles/dba.md"
+  },
+  {
+    "slug": "infraestructura",
+    "label_es": "rol: infraestructura",
+    "label_en": "role: infrastructure",
+    "file": "agentes/roles/infraestructura.md"
+  },
+  {
+    "slug": "sre",
+    "label_es": "rol: sre",
+    "label_en": "role: sre",
+    "file": "agentes/roles/sre.md"
+  },
+  {
+    "slug": "seguridad",
+    "label_es": "rol: seguridad",
+    "label_en": "role: security",
+    "file": "agentes/roles/seguridad.md"
+  },
+  {
+    "slug": "qa",
+    "label_es": "rol: qa",
+    "label_en": "role: qa",
+    "file": "agentes/roles/qa.md"
+  },
+  {
+    "slug": "ux",
+    "label_es": "rol: ux",
+    "label_en": "role: ux",
+    "file": "agentes/roles/ux.md"
+  },
+  {
+    "slug": "diseno-visual",
+    "label_es": "rol: diseno-visual",
+    "label_en": "role: visual-design",
+    "file": "agentes/roles/diseno-visual.md"
+  },
+  {
+    "slug": "frontend",
+    "label_es": "rol: frontend",
+    "label_en": "role: frontend",
+    "file": "agentes/roles/frontend.md"
+  },
+  {
+    "slug": "producto",
+    "label_es": "rol: producto",
+    "label_en": "role: product",
+    "file": "agentes/roles/producto.md"
+  },
+  {
+    "slug": "marketing",
+    "label_es": "rol: marketing",
+    "label_en": "role: marketing",
+    "file": "agentes/roles/marketing.md"
+  },
+  {
+    "slug": "seo",
+    "label_es": "rol: seo",
+    "label_en": "role: seo",
+    "file": "agentes/roles/seo.md"
+  },
+  {
+    "slug": "contenido",
+    "label_es": "rol: contenido",
+    "label_en": "role: content",
+    "file": "agentes/roles/contenido.md"
+  },
+  {
+    "slug": "datos-analitica",
+    "label_es": "rol: datos-analitica",
+    "label_en": "role: data-analytics",
+    "file": "agentes/roles/datos-analitica.md"
+  },
+  {
+    "slug": "legal-privacidad",
+    "label_es": "rol: legal-privacidad",
+    "label_en": "role: legal-privacy",
+    "file": "agentes/roles/legal-privacidad.md"
+  }
+]
