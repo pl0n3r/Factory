@@ -1,6 +1,6 @@
 # Plan de agentes de la fábrica
 
-> Instrucciones del dueño (@pl0n3r) para **todo agente de IA** que trabaje en pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal o pl0n3r/factory.
+> Instrucciones del dueño (@pl0n3r) para **todo agente de IA** que trabaje en pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal, pl0n3r/factory, pl0n3r/factory-control o pl0n3r/AutoFactory.
 > Léelo completo una vez al arrancar. Este archivo manda sobre cualquier costumbre tuya; AGENTES.md/AGENTS.md de cada repo manda en lo técnico de ese repo.
 
 ## 0. Dónde trabajar: modo dirigido o modo despachador
@@ -12,7 +12,7 @@
 1. Un producto con producción caída o no VERDE (sección 6) → ese producto.
 2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o `[AUTO]`) → su repo.
 3. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
-4. El Issue `prioridad: crítica` / `priority: critical` disponible más antiguo en factory, Condor, GrindFlow o BRVTAL.
+4. El Issue `prioridad: crítica` / `priority: critical` disponible más antiguo en factory, Condor, GrindFlow, BRVTAL, factory-control o AutoFactory.
 5. Lo mismo con `prioridad: alta` y después `media`.
 6. Dentro de la misma prioridad, el trabajo que desbloquea más trabajo.
 
