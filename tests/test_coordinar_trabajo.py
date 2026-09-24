@@ -800,6 +800,21 @@ class CoordinacionTests(unittest.TestCase):
             reserve_work(api, 12, "pl0n3r", "OWNER")
         self.assertNotIn("trabajo/issue-12", api.branches)
 
+    def test_invalid_silent_reservation_restores_available(self) -> None:
+        """Un label reservado no queda huérfano si el contrato AC es inválido."""
+        api = FakeGitHub()
+        api.issue_data["body"] = "Issue legacy sin contrato."
+        api.issue_data["labels"] = [{"name": STATUS_RESERVED}]
+        with self.assertRaises(CoordinationError):
+            update_issue_label_state(
+                api,
+                12,
+                "pl0n3r",
+                STATUS_RESERVED,
+            )
+        self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
     def test_blocked_issue_cannot_be_reserved(self) -> None:
         """Un Issue bloqueado no entra a la cola de trabajo."""
         api = FakeGitHub()

@@ -1288,14 +1288,26 @@ def update_issue_label_state(
     if actor == TRUSTED_MARKER_LOGIN or label != STATUS_RESERVED:
         return
 
-    reservation_id = reserve_work(api, issue_number, actor, "OWNER")
+    branch = f"trabajo/issue-{issue_number}"
+    try:
+        reservation_id = reserve_work(api, issue_number, actor, "OWNER")
+    except CoordinationError:
+        if (
+            api.branch_sha(branch) is None
+            and active_reservation(api, issue_number) is None
+        ):
+            labels = label_names(api.issue(issue_number))
+            api.set_status(
+                issue_number,
+                STATUS_BLOCKED if STATUS_BLOCKED in labels else STATUS_AVAILABLE,
+            )
+        raise
     if reservation_id is not None:
         return
 
     # El evento labeled ya aplicó estado: reservado antes de ejecutar el
     # coordinador. Si no se obtuvo el lock, corregimos ese estado transitorio
     # sin pisar una reserva concurrente que sí haya creado la rama/marcador.
-    branch = f"trabajo/issue-{issue_number}"
     if api.branch_sha(branch) or active_reservation(api, issue_number):
         api.set_status(issue_number, STATUS_RESERVED)
         return

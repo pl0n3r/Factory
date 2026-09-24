@@ -4,6 +4,32 @@ from scripts.coordinar_trabajo import CoordinationError, reserve_work
 from scripts.orquestador_kit import PlannedTask, build_task_marker
 
 
+VALID_ACCEPTANCE = """### Contexto
+
+Contexto.
+
+### Alcance
+
+Alcance.
+
+### Fuera de alcance
+
+Nada.
+
+### Criterios de aceptación
+
+- [ ] [AC-01] Gate.
+
+### Contrato ejecutable
+
+<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"check","target":"Tests de scripts"}]} -->
+"""
+
+
+def accepted(marker: str) -> str:
+    return VALID_ACCEPTANCE + "\n" + marker
+
+
 class MinimalGitHub:
     def __init__(self, current, others, dependencies=None):
         self.current = current
@@ -29,13 +55,13 @@ class CoordinationOrchestratorTests(unittest.TestCase):
         current = {
             "number": 50,
             "state": "open",
-            "body": build_task_marker(
+            "body": accepted(build_task_marker(
                 epic=3,
                 task=task,
                 order=1,
                 roles=["ingenieria-software"],
                 dependency_issues=[],
-            ),
+            )),
             "labels": [{"name": "estado: disponible"}],
         }
         api = MinimalGitHub(current, [current])
@@ -53,13 +79,13 @@ class CoordinationOrchestratorTests(unittest.TestCase):
         current = {
             "number": 51,
             "state": "open",
-            "body": build_task_marker(
+            "body": accepted(build_task_marker(
                 epic=3,
                 task=task,
                 order=2,
                 roles=["contenido"],
                 dependency_issues=[50],
-            ),
+            )),
             "labels": [{"name": "estado: disponible"}],
         }
         dependency = {

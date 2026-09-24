@@ -70,6 +70,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 .factory/scripts/aceptacion_kit.py < /tmp/acceptance.json | tee /tmp/acceptance-result.json
-          printf '### Criterios de aceptación\n\n```json\n' >> "$GITHUB_STEP_SUMMARY"
-          cat /tmp/acceptance-result.json >> "$GITHUB_STEP_SUMMARY"
-          printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          {
+            printf '### Criterios de aceptación\n\n```json\n'
+            cat /tmp/acceptance-result.json
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
