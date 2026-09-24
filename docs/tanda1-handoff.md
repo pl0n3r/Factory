@@ -40,7 +40,7 @@ Este documento no reemplaza los Issues fuente. Resume el mínimo que falta para 
 
 Las referencias no deben incluir PII, secretos ni texto libre sensible.
 
-**Dependencias/licencias de BRVTAL:** Factory versiona el `package.json` exacto de BRVTAL `138b1bab…` y el `package-lock.json` exacto generado por el run `36001724208` con npm `10.9.8` y `--package-lock-only --ignore-scripts --no-audit --no-fund`. El gate valida hashes canónicos, metadata cerrada y reutiliza `inspect_npm()` sobre el lock, que contiene `@playwright/test → playwright → playwright-core` en `1.63.0` con licencia Apache-2.0. Esto cubre el inventario técnico reproducible de #12 sin afirmar que el lock reproduzca una instalación histórica de producción. La dependencia vendorizada `qrcode.min.js` conserva su licencia MIT separada.
+**Dependencias/licencias de BRVTAL:** Factory versiona el `package.json` exacto de BRVTAL `138b1bab…` y el `package-lock.json` exacto generado por el run `36001724208` con npm `10.9.8` y `--package-lock-only --ignore-scripts --no-audit --no-fund`. El gate valida hashes canónicos, metadata cerrada y reutiliza `inspect_npm()` sobre el lock, que contiene `@playwright/test → playwright → playwright-core` en `1.63.0` con licencia Apache-2.0. Esto cubre el inventario de licencias de #12 con evidencia técnica reproducible, sin afirmar que el lock reproduzca una instalación histórica de producción. La dependencia vendorizada `qrcode.min.js` conserva su licencia MIT separada.
 
 **No vale como sustituto:** fixtures, búsquedas sin resultado, inferencias del código o el propio inventario técnico de Factory.
 
