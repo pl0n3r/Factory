@@ -1,0 +1,84 @@
+name: Métricas de agentes
+
+on:
+  pull_request:
+    paths:
+      - 'metricas/**'
+      - 'docs/evaluacion-agentes.md'
+      - '.github/workflows/metricas.yml'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: Mes UTC a evaluar (YYYY-MM); vacío = mes anterior completo
+        required: false
+        type: string
+  schedule:
+    - cron: '23 6 1 * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metricas-agentes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validar-candidato:
+    name: Validar métricas del candidato
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar candidato
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Ejecutar regresiones
+        run: |
+          set -euo pipefail
+          python3 -m py_compile metricas/evaluar_agentes.py
+          PYTHONPATH=metricas python3 -m unittest discover -s metricas -p 'test_evaluar_agentes.py'
+
+  evaluar:
+    if: github.event_name != 'pull_request'
+    name: Evaluar configuraciones
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Validar motor de métricas
+        run: |
+          set -euo pipefail
+          python3 -m py_compile metricas/evaluar_agentes.py
+          python3 -m unittest discover -s metricas -p 'test_*.py'
+
+      - name: Generar ranking mensual
+        env:
+          REQUESTED_MONTH: ${{ inputs.month }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          month="${REQUESTED_MONTH:-}"
+          if [[ -z "$month" ]]; then
+            month="$(date -u -d '1 month ago' +%Y-%m)"
+          fi
+          python3 metricas/evaluar_agentes.py \
+            --allow-empty \
+            --month "$month"
+          cat artifacts/dashboard.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Conservar evidencia
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: evaluacion-agentes-${{ github.run_id }}
+          path: |
+            artifacts/recomendaciones.json
+            artifacts/dashboard.md
+          retention-days: 90
+          if-no-files-found: error
