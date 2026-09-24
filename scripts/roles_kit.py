@@ -168,12 +168,60 @@ def parse_context(payload: str) -> dict[str, Any]:
     return {"body": body, "title": title, "labels": labels, "files": files}
 
 
-def classify(context: dict[str, Any]) -> tuple[list[str], set[str]]:
+def _path_tokens(path: str) -> set[str]:
+    tokens: set[str] = set()
+    for segment in path.lower().split("/"):
+        if not segment:
+            continue
+        tokens.add(segment)
+        stem = segment.rsplit(".", 1)[0]
+        if stem:
+            tokens.add(stem)
+    return tokens
+
+
+def _classify_file(path: str) -> tuple[set[str], set[str]]:
     roles: set[str] = set()
     risks: set[str] = set()
-    labels = {value.lower() for value in context["labels"]}
-    text = f"{context['title']}\n{context['body']}".lower()
+    lower = path.lower()
+    tokens = _path_tokens(lower)
 
+    if tokens & {"migration", "migrations", "schema", "database", "db"} or lower.endswith(".sql"):
+        roles.update({"dba", "qa"})
+        risks.add("schema")
+    if lower.startswith(".github/workflows/") or tokens & {
+        "deploy", "ops", "infra", "terraform", "docker"
+    }:
+        roles.update({"infraestructura", "sre", "seguridad"})
+        risks.add("deploy")
+    if tokens & {
+        "security", "auth", "oauth", "permission", "permissions",
+        "secret", "secrets",
+    }:
+        roles.update({"seguridad", "qa"})
+        risks.add("security")
+    if (
+        tokens & {"template", "templates", "view", "views", "frontend", "public"}
+        or lower.endswith((".css", ".scss", ".tsx", ".jsx", ".vue", ".svelte"))
+    ):
+        roles.update({"frontend", "ux", "qa"})
+        risks.add("public-ux")
+    if tokens & {"seo", "sitemap", "robots"}:
+        roles.update({"seo", "contenido"})
+    if tokens & {"metricas", "analytics", "data", "report", "reports"}:
+        roles.update({"datos-analitica", "qa"})
+    if tokens & {"marketing", "campaign", "campaigns", "copy"}:
+        roles.update({"marketing", "contenido"})
+    if tokens & {"legal", "privacy", "privacidad"}:
+        roles.add("legal-privacidad")
+    if tokens & {"adr", "architecture", "arquitectura"}:
+        roles.add("arquitectura")
+    if lower.endswith((".py", ".php", ".js", ".ts", ".java", ".go", ".rb")):
+        roles.update({"ingenieria-software", "qa"})
+    return roles, risks
+
+
+def _roles_from_type_labels(labels: set[str]) -> set[str]:
     type_rules = {
         "tipo: producto": {"producto"},
         "type: product": {"producto"},
@@ -188,44 +236,14 @@ def classify(context: dict[str, Any]) -> tuple[list[str], set[str]]:
         "tipo: infraestructura": {"infraestructura", "sre"},
         "type: infrastructure": {"infraestructura", "sre"},
     }
+    roles: set[str] = set()
     for label, mapped in type_rules.items():
         if label in labels:
             roles.update(mapped)
+    return roles
 
-    for filename in context["files"]:
-        path = filename.lower()
-        if re.search(r"(^|/)(migrations?|schema|database|db)(/|\.|$)|\.sql$", path):
-            roles.update({"dba", "qa"})
-            risks.add("schema")
-        if path.startswith(".github/workflows/") or re.search(
-            r"(^|/)(deploy|ops|infra|terraform|docker)(/|\.|$)", path
-        ):
-            roles.update({"infraestructura", "sre", "seguridad"})
-            risks.add("deploy")
-        if re.search(
-            r"(^|/)(security|auth|oauth|permissions?|secrets?)(/|\.|$)", path
-        ):
-            roles.update({"seguridad", "qa"})
-            risks.add("security")
-        if re.search(
-            r"(^|/)(templates?|views?|frontend|public)(/|$)|\.(css|scss|tsx|jsx|vue|svelte)$",
-            path,
-        ):
-            roles.update({"frontend", "ux", "qa"})
-            risks.add("public-ux")
-        if re.search(r"(^|/)(seo|sitemap|robots)(/|\.|$)", path):
-            roles.update({"seo", "contenido"})
-        if re.search(r"(^|/)(metricas|analytics|data|reports?)(/|\.|$)", path):
-            roles.update({"datos-analitica", "qa"})
-        if re.search(r"(^|/)(marketing|campaigns?|copy)(/|\.|$)", path):
-            roles.update({"marketing", "contenido"})
-        if re.search(r"(^|/)(legal|privacy|privacidad)(/|\.|$)", path):
-            roles.add("legal-privacidad")
-        if re.search(r"(^|/)(adr|architecture|arquitectura)(/|\.|$)", path):
-            roles.add("arquitectura")
-        if path.endswith((".py", ".php", ".js", ".ts", ".java", ".go", ".rb")):
-            roles.update({"ingenieria-software", "qa"})
 
+def _roles_from_text(text: str) -> set[str]:
     keyword_rules = (
         (r"\bseo\b|sitemap|robots\.txt|canonical", {"seo", "contenido"}),
         (r"marketing|campaña|campaign|conversi[oó]n|cta", {"marketing", "contenido"}),
@@ -234,35 +252,57 @@ def classify(context: dict[str, Any]) -> tuple[list[str], set[str]]:
         (r"migraci[oó]n|schema|índice|index\b|locking", {"dba"}),
         (r"accesibilidad|wcag|usabilidad|ux\b", {"ux"}),
     )
+    roles: set[str] = set()
     for pattern, mapped in keyword_rules:
         if re.search(pattern, text):
             roles.update(mapped)
+    return roles
+
+
+def classify(context: dict[str, Any]) -> tuple[list[str], set[str]]:
+    labels = {value.lower() for value in context["labels"]}
+    roles = _roles_from_type_labels(labels)
+    risks: set[str] = set()
+
+    for filename in context["files"]:
+        file_roles, file_risks = _classify_file(filename)
+        roles.update(file_roles)
+        risks.update(file_risks)
+
+    text = f"{context['title']}\n{context['body']}".lower()
+    roles.update(_roles_from_text(text))
 
     if not roles:
         roles.update({"ingenieria-software", "qa"})
     return sorted(roles), risks
 
 
+def _declaration_value(body: str, keys: set[str]) -> str | None:
+    normalized_keys = {key.casefold() for key in keys}
+    for line in body.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip().casefold() in normalized_keys:
+            stripped = value.strip()
+            return stripped or None
+    return None
+
+
 def declared_roles(body: str) -> list[str]:
-    match = re.search(r"(?im)^Rol\(es\):\s*(.+)$", body)
-    if not match:
-        match = re.search(r"(?im)^Roles:\s*(.+)$", body)
-    if not match:
+    value = _declaration_value(body, {"Rol(es)", "Roles"})
+    if value is None:
         return []
     return [
-        value.strip().strip(chr(96))
-        for value in re.split(r"[,;+]", match.group(1))
-        if value.strip()
+        item.strip().strip(chr(96))
+        for item in re.split(r"[,;+]", value)
+        if item.strip()
     ]
 
 
 def single_role(body: str, key: str) -> str | None:
-    match = re.search(
-        rf"(?im)^{re.escape(key)}:\s*([a-z0-9-]+)\s*$",
-        body,
-    )
-    return match.group(1) if match else None
-
+    value = _declaration_value(body, {key})
+    if value is None or not re.fullmatch(r"[a-z0-9-]+", value):
+        return None
+    return value
 
 def checked_items(body: str) -> set[str]:
     return {

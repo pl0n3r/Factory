@@ -162,6 +162,36 @@ class RolesKitTests(unittest.TestCase):
                 "es",
             )
 
+    def test_path_classification_uses_segments_not_ambiguous_regex(self):
+        roles, risks = classify(
+            context(
+                files=[
+                    "migrations/2026_add.sql",
+                    "public/app.css",
+                    ".github/workflows/deploy.yml",
+                ]
+            )
+        )
+        self.assertTrue({"dba", "frontend", "ux", "infraestructura", "sre", "seguridad"} <= set(roles))
+        self.assertEqual({"schema", "public-ux", "deploy"}, risks)
+
+    def test_role_declarations_handle_large_body_without_multiline_regex(self):
+        prefix = "x" * 100_000
+        body = prefix + "\nRol(es): qa, sre\nRol primario: qa\n"
+        self.assertEqual(declared_roles(body), ["qa", "sre"])
+
+    def test_declaration_parser_does_not_accept_trailing_content_as_slug(self):
+        body = "Rol(es): qa, sre\nRol primario: qa extra\n"
+        required, _ = classify(context())
+        labels = [self.catalog[role]["label_es"] for role in required]
+        with self.assertRaisesRegex(RoleError, "Rol primario"):
+            validate_pr(
+                context(body=body, labels=labels, files=[]),
+                self.catalog,
+                ROLES_DIR,
+                "es",
+            )
+
     def test_context_is_bounded_and_closed(self):
         payload = json.dumps(
             {
