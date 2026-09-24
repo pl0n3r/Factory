@@ -1,6 +1,6 @@
 # Handoff de TANDA 1
 
-Estado: **bloqueado por evidencia humana/externa y por la reproducibilidad pendiente del inventario npm de BRVTAL; no se debe cerrar ningún gate por inferencia**.
+Estado: **bloqueado por evidencia humana/externa; no se debe cerrar ningún gate por inferencia**.
 
 Este documento no reemplaza los Issues fuente. Resume el mínimo que falta para que el dueño o un revisor humano pueda desbloquear TANDA 1 sin reconstruir el historial.
 
@@ -26,7 +26,7 @@ Este documento no reemplaza los Issues fuente. Resume el mínimo que falta para 
 
 ## #12 — cumplimiento legal y de datos
 
-**Ya verificado:** gate técnico de evidencia/licencias, inventario técnico de datos por producto y mecanismo real de dependencias de BRVTAL.
+**Ya verificado:** gate técnico de evidencia/licencias, inventario técnico de datos por producto, mecanismo real de dependencias de BRVTAL y snapshot npm reproducible ligado al SHA auditado y al run 36001724208.
 
 **Evidencia material faltante por Condor, GrindFlow y BRVTAL:**
 
@@ -40,7 +40,7 @@ Este documento no reemplaza los Issues fuente. Resume el mínimo que falta para 
 
 Las referencias no deben incluir PII, secretos ni texto libre sensible.
 
-**Dependencias/licencias aún pendientes en BRVTAL:** el mecanismo real ya está documentado (`package.json` con `@playwright/test`, sin lockfile npm y `qrcode.min.js` vendorizado con licencia MIT), pero no existe todavía un inventario npm exacto y reproducible. Antes de cerrar #12 debe existir un mecanismo verificable —por ejemplo, lockfile reproducible o scanner específico aprobado—; no se puede marcar honestamente `--stdlib-only`.
+**Dependencias/licencias de BRVTAL:** Factory versiona el `package.json` exacto de BRVTAL `138b1bab…` y el `package-lock.json` exacto generado por el run `36001724208` con npm `10.9.8` y `--package-lock-only --ignore-scripts --no-audit --no-fund`. El gate valida hashes canónicos, metadata cerrada y reutiliza `inspect_npm()` sobre el lock, que contiene `@playwright/test → playwright → playwright-core` en `1.63.0` con licencia Apache-2.0. Esto cubre el inventario de licencias de #12 con evidencia técnica reproducible, sin afirmar que el lock reproduzca una instalación histórica de producción. La dependencia vendorizada `qrcode.min.js` conserva su licencia MIT separada.
 
 **No vale como sustituto:** fixtures, búsquedas sin resultado, inferencias del código o el propio inventario técnico de Factory.
 

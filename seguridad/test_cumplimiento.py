@@ -1,19 +1,24 @@
 """Casos mínimos y adversariales de trazabilidad jurídica y licencias."""
 from copy import deepcopy
 from datetime import datetime, timezone
+import hashlib
 import io
+import json
 import os
+import shutil
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
 import unittest
 
+import seguridad.cumplimiento as cumplimiento
 from seguridad.cumplimiento import (
-    ComplianceError, inspect_composer, inspect_npm, validate_inventory,
-    validate_privacy, main,
+    ComplianceError, inspect_composer, inspect_npm, inspect_npm_snapshot,
+    validate_inventory, validate_privacy, main,
 )
 
 NOW = datetime(2026, 9, 24, tzinfo=timezone.utc)
+SNAPSHOT_ROOT = Path(__file__).resolve().parent / "evidencia" / "brvtal-npm"
 
 
 def record():
@@ -151,6 +156,93 @@ class LicenseTests(unittest.TestCase):
         self.assertEqual(validate_inventory(package)["license_status"], "identifiers_present_review_required")
 
 
+class ExternalNpmSnapshotTests(unittest.TestCase):
+    def test_brvtal_snapshot_is_versioned_and_valid(self):
+        self.assertTrue((SNAPSHOT_ROOT / "package.json").is_file())
+        self.assertTrue((SNAPSHOT_ROOT / "package-lock.json").is_file())
+        manifest = json.loads(
+            (SNAPSHOT_ROOT / "snapshot.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["generation_run"], 36001724208)
+        self.assertEqual(manifest["npm_version"], "10.9.8")
+        self.assertEqual(manifest["sha256"], cumplimiento.NPM_SNAPSHOT_SHA256)
+        packages = inspect_npm_snapshot(
+            "brvtal",
+            expected_project="pl0n3r/brvtal",
+        )
+        self.assertEqual(validate_inventory(packages)["packages_observed"], 3)
+
+    def test_snapshot_uses_canonical_paths_and_expected_sha(self):
+        manifest = json.loads(
+            (SNAPSHOT_ROOT / "snapshot.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            manifest["source_sha"],
+            "138b1babac0ff6797ad9e0f3ccb0fbda0f793452",
+        )
+        self.assertEqual(
+            manifest["source_package_blob"],
+            "a23d3ab36b5988c2edd9a38ff15a19d8fd572b1b",
+        )
+        with self.assertRaises(ComplianceError):
+            inspect_npm_snapshot(
+                "brvtal",
+                expected_project="pl0n3r/Condor",
+            )
+        with self.assertRaises(ComplianceError):
+            inspect_npm_snapshot("../../etc/passwd")
+
+    def test_snapshot_inventory_includes_transitives(self):
+        packages = inspect_npm_snapshot(
+            "brvtal",
+            expected_project="pl0n3r/brvtal",
+        )
+        self.assertEqual(
+            packages,
+            [
+                ("@playwright/test", "1.63.0", "Apache-2.0"),
+                ("playwright", "1.63.0", "Apache-2.0"),
+                ("playwright-core", "1.63.0", "Apache-2.0"),
+            ],
+        )
+
+    def test_snapshot_tampering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_root = Path(tmp) / "brvtal-npm"
+            shutil.copytree(SNAPSHOT_ROOT, fake_root)
+            lock_path = fake_root / "package-lock.json"
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            lock["packages"]["node_modules/playwright"]["license"] = "MIT"
+            lock_path.write_text(
+                json.dumps(lock, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            manifest_path = fake_root / "snapshot.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["sha256"]["package-lock.json"] = hashlib.sha256(
+                lock_path.read_bytes()
+            ).hexdigest()
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            with (
+                patch.object(cumplimiento, "NPM_SNAPSHOT_ROOT", fake_root),
+                patch.object(cumplimiento, "NPM_SNAPSHOT_MANIFEST", manifest_path),
+                patch.object(
+                    cumplimiento,
+                    "NPM_SNAPSHOT_PACKAGE",
+                    fake_root / "package.json",
+                ),
+                patch.object(cumplimiento, "NPM_SNAPSHOT_LOCK", lock_path),
+            ):
+                with self.assertRaises(ComplianceError):
+                    cumplimiento.inspect_npm_snapshot(
+                        "brvtal",
+                        expected_project="pl0n3r/brvtal",
+                    )
+
+
 class CliSafetyTests(unittest.TestCase):
     def test_cli_rejects_arbitrary_paths(self):
         with patch(
@@ -166,8 +258,26 @@ class CliSafetyTests(unittest.TestCase):
                 main()
         self.assertEqual(caught.exception.code, 2)
 
+    def test_cli_accepts_canonical_brvtal_snapshot(self):
+        privacy = record()
+        privacy["project"] = "pl0n3r/brvtal"
+        privacy["reviewed_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        with patch(
+            "sys.argv",
+            ["cumplimiento.py", "--npm-snapshot", "brvtal"],
+        ), patch(
+            "sys.stdin",
+            io.StringIO(json.dumps(privacy)),
+        ):
+            self.assertEqual(main(), 0)
+
     def test_cli_reads_privacy_from_stdin_and_canonical_lock(self):
         privacy = record()
+        privacy["reviewed_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
         lock = {
             "packages": [
                 {

@@ -1,0 +1,16 @@
+{
+  "name": "brvtal",
+  "version": "0.1.51",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:contracts": "bash scripts/php85-compatibility.sh",
+    "test:integration": "php tests/integration/content-persistence.php && bash tests/integration/artist-collective-membership-migration.sh && bash tests/integration/releases-schema.sh && php tests/integration/migrations.php && php tests/integration/memories.php && php tests/integration/memory-relations.php && php tests/integration/media-reference-atomicity.php && php tests/integration/media-dedup.php && php tests/integration/admin-session-revalidation.php && php tests/integration/event-workflow.php && php tests/integration/blog-relations.php && php tests/integration/global-search.php && php tests/integration/bulk-actions.php && php tests/integration/admin-grid-preferences.php && php tests/integration/public-archive.php && php tests/integration/public-rich-schema.php && php tests/event-record-contract.php && php tests/artist-collective-lifecycle-contract.php && php tests/integration/related-content.php && php tests/integration/contextual-transmissions.php && php tests/integration/admin-activity.php && php tests/integration/seo-persistence.php && php tests/integration/seo-workspace.php && php tests/integration/backups.php && php tests/content-ordering-contract.php",
+    "test:e2e": "playwright test && bash tests/e2e/run-content-core-real-stack.sh",
+    "test": "npm run test:contracts && npm run test:integration && npm run test:e2e",
+    "test:coordination": "python3 -m unittest tests/test_work_coordinator.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}

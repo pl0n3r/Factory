@@ -68,7 +68,7 @@ flowchart LR
 
 ## Estado actual
 
-🚧 **TANDA 1 está técnicamente avanzada y bloqueada por evidencia externa/material y una deuda de reproducibilidad de dependencias en BRVTAL.** El kit base (#1), roles y madurez técnica principal (#2–#8, #11) y el arranque (#14) ya están integrados. Permanecen abiertos #9, #10 y #12; por dependencia, el épico #13 también sigue bloqueado. **`v1` y `v1.0.0` todavía no están publicados.**
+🚧 **TANDA 1 está técnicamente avanzada y bloqueada por evidencia externa/material.** El kit base (#1), roles y madurez técnica principal (#2–#8, #11) y el arranque (#14) ya están integrados. Permanecen abiertos #9, #10 y #12; por dependencia, el épico #13 también sigue bloqueado. **`v1` y `v1.0.0` todavía no están publicados.**
 
 | Etapa | Estado |
 | --- | --- |
@@ -79,7 +79,7 @@ flowchart LR
 | Entornos previos a producción (#11) | ✅ Hecho |
 | Puerta humana de notificación (#9) | ⛔ Bloqueado · confirmar recepción push móvil real |
 | Resiliencia del dueño (#10) | ⛔ Bloqueado · evidenciar identidades/GitHub Apps separadas con mínimo privilegio |
-| Cumplimiento legal y de datos (#12) | ⛔ Bloqueado · evidencia material + revisión jurídica/humana; inventario npm reproducible de BRVTAL pendiente |
+| Cumplimiento legal y de datos (#12) | ⛔ Bloqueado · evidencia material + revisión jurídica/humana; inventario npm de BRVTAL cubierto por lock reproducible del run 36001724208 |
 | Épico de madurez (#13) | ⛔ Bloqueado por #9, #10 y #12 |
 | Bootstrap del primer `v1` (#41) | ✅ Preparado · [guía de bootstrap](docs/release-bootstrap.md) |
 | Publicación `v1.0.0` | ⏸️ No autorizada mientras TANDA 1 siga abierta |

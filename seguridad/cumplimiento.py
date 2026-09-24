@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -30,6 +31,23 @@ UTC_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 UNDETERMINED = frozenset({"NOASSERTION", "NONE", "UNKNOWN", "UNLICENSED"})
 COMPOSER_LOCK = Path("composer.lock")
 NPM_LOCK = Path("package-lock.json")
+FACTORY_ROOT = Path(__file__).resolve().parents[1]
+NPM_SNAPSHOT_ROOT = FACTORY_ROOT / "seguridad" / "evidencia" / "brvtal-npm"
+NPM_SNAPSHOT_MANIFEST = NPM_SNAPSHOT_ROOT / "snapshot.json"
+NPM_SNAPSHOT_PACKAGE = NPM_SNAPSHOT_ROOT / "package.json"
+NPM_SNAPSHOT_LOCK = NPM_SNAPSHOT_ROOT / "package-lock.json"
+NPM_SNAPSHOT_PROJECT = "pl0n3r/brvtal"
+NPM_SNAPSHOT_SOURCE_SHA = "138b1babac0ff6797ad9e0f3ccb0fbda0f793452"
+NPM_SNAPSHOT_SOURCE_BLOB = "a23d3ab36b5988c2edd9a38ff15a19d8fd572b1b"
+NPM_SNAPSHOT_RUN = 36001724208
+NPM_SNAPSHOT_NPM_VERSION = "10.9.8"
+NPM_SNAPSHOT_COMMAND = (
+    "npm install --package-lock-only --ignore-scripts --no-audit --no-fund"
+)
+NPM_SNAPSHOT_SHA256 = {
+    "package.json": "5a89041609e59a10328e4a7238898fa2b2986d33320704c2b9d52d3c3256c5a1",
+    "package-lock.json": "0707872e3d96768b17c2a76cc5ac55e675508d94f2382897d15b3103ba7e030c",
+}
 MAX_LOCK_BYTES = 4_000_000
 MAX_PRIVACY_BYTES = 128_000
 
@@ -212,6 +230,110 @@ def inspect_npm(document: object) -> list[tuple[str, str, str]]:
     return result
 
 
+
+def _snapshot_file(path: Path) -> Path:
+    """Resuelve únicamente archivos de evidencia versionados bajo Factory."""
+    if path.is_symlink():
+        raise ComplianceError("snapshot npm simbólico prohibido")
+    try:
+        root = NPM_SNAPSHOT_ROOT.resolve(strict=True)
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise ComplianceError("snapshot npm canónico ausente o inválido") from exc
+    if not resolved.is_file() or resolved.stat().st_size > MAX_LOCK_BYTES:
+        raise ComplianceError("snapshot npm canónico ausente o excesivo")
+    return resolved
+
+
+def _snapshot_bytes(path: Path) -> bytes:
+    try:
+        return _snapshot_file(path).read_bytes()
+    except OSError as exc:
+        raise ComplianceError("snapshot npm no verificable") from exc
+
+
+def _snapshot_json_bytes(data: bytes) -> object:
+    try:
+        return json.loads(data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ComplianceError("snapshot npm JSON inválido") from exc
+
+
+def _snapshot_json(path: Path) -> object:
+    return _snapshot_json_bytes(_snapshot_bytes(path))
+
+
+def inspect_npm_snapshot(
+    slug: str,
+    *,
+    expected_project: str | None = None,
+) -> list[tuple[str, str, str]]:
+    """Valida evidencia npm cerrada del run fijado y reutiliza inspect_npm."""
+    if slug != "brvtal":
+        raise ComplianceError("snapshot npm no admitido")
+
+    manifest = _snapshot_json(NPM_SNAPSHOT_MANIFEST)
+    expected_keys = {
+        "version",
+        "project",
+        "source_sha",
+        "source_package_blob",
+        "generation_run",
+        "npm_version",
+        "generation_command",
+        "sha256",
+    }
+    if not isinstance(manifest, dict) or set(manifest) != expected_keys:
+        raise ComplianceError("metadata de snapshot npm inválida")
+    if type(manifest["version"]) is not int or manifest["version"] != 1:
+        raise ComplianceError("versión de snapshot npm no admitida")
+    if (
+        manifest["project"] != NPM_SNAPSHOT_PROJECT
+        or manifest["source_sha"] != NPM_SNAPSHOT_SOURCE_SHA
+        or manifest["source_package_blob"] != NPM_SNAPSHOT_SOURCE_BLOB
+        or manifest["generation_run"] != NPM_SNAPSHOT_RUN
+        or manifest["npm_version"] != NPM_SNAPSHOT_NPM_VERSION
+        or manifest["generation_command"] != NPM_SNAPSHOT_COMMAND
+        or manifest["sha256"] != NPM_SNAPSHOT_SHA256
+    ):
+        raise ComplianceError("procedencia de snapshot npm no coincide")
+    if expected_project is not None and expected_project != manifest["project"]:
+        raise ComplianceError("snapshot npm no corresponde al producto")
+
+    package_bytes = _snapshot_bytes(NPM_SNAPSHOT_PACKAGE)
+    lock_bytes = _snapshot_bytes(NPM_SNAPSHOT_LOCK)
+    observed = {
+        "package.json": hashlib.sha256(package_bytes).hexdigest(),
+        "package-lock.json": hashlib.sha256(lock_bytes).hexdigest(),
+    }
+    if observed != NPM_SNAPSHOT_SHA256:
+        raise ComplianceError("snapshot npm alterado")
+
+    package = _snapshot_json_bytes(package_bytes)
+    lock = _snapshot_json_bytes(lock_bytes)
+    if (
+        not isinstance(package, dict)
+        or package.get("name") != "brvtal"
+        or package.get("version") != "0.1.51"
+        or package.get("devDependencies") != {"@playwright/test": "^1.55.0"}
+    ):
+        raise ComplianceError("package.json fuente de snapshot inválido")
+    if (
+        not isinstance(lock, dict)
+        or lock.get("name") != package["name"]
+        or lock.get("version") != package["version"]
+        or lock.get("lockfileVersion") != 3
+        or lock.get("requires") is not True
+        or not isinstance(lock.get("packages"), dict)
+        or lock["packages"].get("", {}).get("devDependencies")
+        != package["devDependencies"]
+    ):
+        raise ComplianceError("package-lock.json no corresponde a la fuente")
+
+    return inspect_npm(lock)
+
+
 def validate_inventory(
     packages: list[tuple[str, str, str]],
 ) -> dict[str, object]:
@@ -258,17 +380,27 @@ def _inventory_from_args(
     composer: bool,
     npm: bool,
     stdlib_only: bool,
+    npm_snapshot: str | None,
+    expected_project: str,
 ) -> list[tuple[str, str, str]]:
     use_lockfiles = composer or npm
-    if stdlib_only == use_lockfiles:
+    modes = int(use_lockfiles) + int(stdlib_only) + int(npm_snapshot is not None)
+    if modes != 1:
         raise ComplianceError(
-            "indicar --composer/--npm o --stdlib-only (exclusivos)"
+            "indicar --composer/--npm, --npm-snapshot o --stdlib-only (exclusivos)"
         )
     packages: list[tuple[str, str, str]] = []
     if composer:
         packages.extend(inspect_composer(_read_repo_json(COMPOSER_LOCK)))
     if npm:
         packages.extend(inspect_npm(_read_repo_json(NPM_LOCK)))
+    if npm_snapshot is not None:
+        packages.extend(
+            inspect_npm_snapshot(
+                npm_snapshot,
+                expected_project=expected_project,
+            )
+        )
     return packages
 
 
@@ -284,6 +416,11 @@ def main() -> int:
         action="store_true",
         help="inspecciona ./package-lock.json del checkout",
     )
+    parser.add_argument(
+        "--npm-snapshot",
+        choices=("brvtal",),
+        help="inspecciona evidencia npm canónica versionada en Factory",
+    )
     parser.add_argument("--stdlib-only", action="store_true")
     args = parser.parse_args()
     try:
@@ -292,6 +429,8 @@ def main() -> int:
             composer=args.composer,
             npm=args.npm,
             stdlib_only=args.stdlib_only,
+            npm_snapshot=args.npm_snapshot,
+            expected_project=project,
         )
         inventory = validate_inventory(packages)
         print(json.dumps({

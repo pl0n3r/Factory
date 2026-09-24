@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "project": "pl0n3r/brvtal",
+  "source_sha": "138b1babac0ff6797ad9e0f3ccb0fbda0f793452",
+  "source_package_blob": "a23d3ab36b5988c2edd9a38ff15a19d8fd572b1b",
+  "generation_run": 36001724208,
+  "npm_version": "10.9.8",
+  "generation_command": "npm install --package-lock-only --ignore-scripts --no-audit --no-fund",
+  "sha256": {
+    "package.json": "5a89041609e59a10328e4a7238898fa2b2986d33320704c2b9d52d3c3256c5a1",
+    "package-lock.json": "0707872e3d96768b17c2a76cc5ac55e675508d94f2382897d15b3103ba7e030c"
+  }
+}
