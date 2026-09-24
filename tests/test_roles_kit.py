@@ -182,9 +182,11 @@ class RolesKitTests(unittest.TestCase):
 
     def test_declaration_parser_does_not_accept_trailing_content_as_slug(self):
         required, _ = classify(context())
-        body = (
-            f"Rol(es): {', '.join(required)}\n"
-            "Rol primario: qa extra\n"
+        body = complete_body(required)
+        body = body.replace(
+            f"Rol primario: {required[0]}",
+            "Rol primario: qa extra",
+            1,
         )
         labels = [self.catalog[role]["label_es"] for role in required]
         with self.assertRaisesRegex(RoleError, "Rol primario"):
