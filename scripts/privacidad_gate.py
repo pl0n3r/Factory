@@ -55,11 +55,11 @@ def _signal_present(signal: str, line: str) -> bool:
                 rf"(?:{{|,)\s*{re.escape(signal)}\s*:",
                 line,
             )
-            dotted_property = re.search(
-                rf"\.\s*{re.escape(signal)}(?![a-z0-9_])",
+            property_access = re.search(
+                rf"(?:\.|\?->|->)\s*{re.escape(signal)}(?![a-z0-9_])",
                 line,
             )
-            return bool(object_field or dotted_property)
+            return bool(object_field or property_access)
         return False
     return re.search(
         rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",

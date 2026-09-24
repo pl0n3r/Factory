@@ -93,6 +93,24 @@ class PrivacyGateTests(unittest.TestCase):
                         documents=docs(item),
                     )
 
+    def test_php_health_property_remains_sensitive(self):
+        """Propiedades PHP normales y nullsafe health siguen siendo sensibles."""
+        item = data_map()
+        for snippet in ("$value = $record->health;", "$value = $record?->health;"):
+            with self.subTest(snippet=snippet):
+                diff = (
+                    "diff --git a/src/Profile.php b/src/Profile.php\n"
+                    "+++ b/src/Profile.php\n"
+                    f"+{snippet}\n"
+                )
+                with self.assertRaisesRegex(PrivacyGateError, "health"):
+                    evaluate_change(
+                        diff_text=diff,
+                        changed_files=["src/Profile.php"],
+                        current_document=item,
+                        documents=docs(item),
+                    )
+
     def test_new_provider_requires_declaration(self):
         diff = """diff --git a/src/Telemetry.js b/src/Telemetry.js
 +++ b/src/Telemetry.js
