@@ -1,0 +1,136 @@
+name: Bootstrap release Factory v1.0.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: SHA exacto de main aprobado para v1.0.0
+        required: true
+        type: string
+      gate_issue:
+        description: Issue cerrado con la puerta humana release-1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-release-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  candidate-template:
+    name: CI template del candidato
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      stack: php
+      working_directory: template
+      version_source: config/version.json
+      label_language: es
+      phase: construccion
+      kit_ref: ${{ github.sha }}
+
+  preflight:
+    name: Validar gates del primer v1.0.0
+    needs: candidate-template
+    permissions:
+      contents: read
+      issues: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    outputs:
+      approved_sha: ${{ steps.validate.outputs.approved_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - id: validate
+        name: Verificar SHA, Issues, puerta y v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          CURRENT_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GATE_ISSUE: ${{ inputs.gate_issue }}
+        run: |
+          set -euo pipefail
+          [[ "$GATE_ISSUE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::gate_issue inválido"; exit 1; }
+
+          default_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+          printf '{}\n' > /tmp/issues.json
+          for number in {1..14} 54 83; do
+            state="$(gh api "repos/$REPOSITORY/issues/$number" --jq '.state')"
+            jq --arg number "$number" --arg state "$state"               '. + {($number): {"state": $state}}' /tmp/issues.json > /tmp/issues.next
+            mv /tmp/issues.next /tmp/issues.json
+          done
+
+          gh api "repos/$REPOSITORY/issues/$GATE_ISSUE" > /tmp/gate.json
+          gh api --paginate "repos/$REPOSITORY/issues/$GATE_ISSUE/comments?per_page=100"             --slurp | jq 'add // []' > /tmp/comments.json
+
+          v1_sha=""
+          ref_json="$(gh api "repos/$REPOSITORY/git/ref/tags/v1" 2>/dev/null || true)"
+          if [[ -n "$ref_json" ]]; then
+            ref_type="$(jq -r '.object.type' <<<"$ref_json")"
+            ref_object="$(jq -r '.object.sha' <<<"$ref_json")"
+            case "$ref_type" in
+              commit) v1_sha="$ref_object" ;;
+              tag) v1_sha="$(gh api "repos/$REPOSITORY/git/tags/$ref_object" --jq '.object.sha')" ;;
+            esac
+          fi
+
+          jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_sha "$EXPECTED_SHA"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg v1_sha "$v1_sha"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             '{
+              repository:$repository, repository_owner:$repository_owner,
+              actor:$actor, event_name:$event_name, ref:$ref,
+              default_branch:$default_branch, expected_sha:$expected_sha,
+              current_sha:$current_sha, default_branch_sha:$default_branch_sha,
+              v1_sha:$v1_sha, issues:$issues[0],
+              gate:{
+                state:$gate[0].state,
+                author_association:$gate[0].author_association,
+                closed_by:($gate[0].closed_by.login // ""),
+                body:($gate[0].body // ""),
+                comments:($comments[0] | map({
+                  author_association,
+                  user:{login:(.user.login // "")},
+                  body:(.body // "")
+                }))
+              }
+            }' > /tmp/release-bootstrap.json
+
+          python3 scripts/release_bootstrap.py < /tmp/release-bootstrap.json             | tee /tmp/release-bootstrap-result.json
+          approved_sha="$(jq -r '.sha' /tmp/release-bootstrap-result.json)"
+          echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Publicar v1.0.0 desde v1
+    needs: preflight
+    permissions:
+      contents: write
+    uses: pl0n3r/factory/.github/workflows/release.yml@v1
+    with:
+      version_source: config/version.json
+      version_format: json
+      factory_bootstrap: true
+      expected_sha: ${{ needs.preflight.outputs.approved_sha }}
+
+  selftest-published:
+    name: Self-test del canal v1 publicado
+    needs: release
+    permissions:
+      contents: read
+    uses: pl0n3r/factory/.github/workflows/ci.yml@v1
+    with:
+      stack: php
+      working_directory: template
+      version_source: config/version.json
+      label_language: es
+      phase: construccion
+      kit_ref: v1

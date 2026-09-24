@@ -15,6 +15,10 @@ class ValidationError(ValueError):
 
 
 _SHA_REF = re.compile(r"^[^\s@]+@[0-9a-f]{40}$")
+_TRUSTED_FACTORY_V1_WORKFLOW_REFS = frozenset({
+    "pl0n3r/factory/.github/workflows/ci.yml@v1",
+    "pl0n3r/factory/.github/workflows/release.yml@v1",
+})
 _EVIDENCE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#-]{5,159}$")
 _PROJECT_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GITHUB_APP_REF = re.compile(r"^github-app:[a-z0-9-]{3,64}$")
@@ -123,6 +127,8 @@ def _validate_action_ref(line: str, index: int) -> None:
         return
     ref = match.group(1).strip("'\"")
     if ref.startswith("./"):
+        return
+    if ref in _TRUSTED_FACTORY_V1_WORKFLOW_REFS:
         return
     if not _SHA_REF.fullmatch(ref):
         raise ValidationError(
