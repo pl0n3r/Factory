@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           version=1.7.7
-          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz" | tar -xz actionlint
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz" | tar -xz actionlint
           ./actionlint -color
           ./actionlint -color template/.github/workflows/*.yml
 

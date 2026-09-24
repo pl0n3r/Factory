@@ -1,3 +1,4 @@
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -53,3 +54,32 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("config/version.php|config/version.json", text)
         self.assertIn("version_source no permitido", text)
+
+    def test_factory_ci_forces_https_on_actionlint_redirects(self):
+        text = (ROOT / ".github/workflows/factory-ci.yml").read_text(encoding="utf-8")
+        self.assertIn("--proto '=https'", text)
+        self.assertIn("--proto-redir '=https'", text)
+
+    def test_template_composer_lock_matches_manifest(self):
+        composer = json.loads((ROOT / "template/composer.json").read_text(encoding="utf-8"))
+        lock = json.loads((ROOT / "template/composer.lock").read_text(encoding="utf-8"))
+        relevant = {
+            key: composer[key]
+            for key in (
+                "name", "version", "require", "require-dev", "conflict",
+                "replace", "provide", "minimum-stability", "prefer-stable",
+                "repositories", "extra",
+            )
+            if key in composer
+        }
+        encoded = json.dumps(
+            dict(sorted(relevant.items())),
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).replace("/", "\\/")
+        expected = hashlib.md5(encoded.encode("utf-8")).hexdigest()
+        self.assertEqual(lock["content-hash"], expected)
+        self.assertEqual(lock["packages"], [])
+        self.assertEqual(lock["packages-dev"], [])
+        self.assertEqual(lock["platform"]["php"], composer["require"]["php"])
+

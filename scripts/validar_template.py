@@ -11,7 +11,7 @@ REQUIRED=[
     ".github/workflows/ci.yml",".github/workflows/coordinacion.yml",".github/workflows/etiquetas.yml",
     ".github/workflows/release.yml",".github/workflows/politica.yml",".github/workflows/deploy.yml",
     ".github/workflows/observar.yml",".github/dependabot.yml","config/version.json","decisiones.yml",
-    "AGENTES.md","README.md","public/index.php","public/health.php","tests/smoke.php",
+    "AGENTES.md","README.md","composer.lock","public/index.php","public/health.php","tests/smoke.php",
 ]
 def validate() -> list[str]:
     errors=[]
