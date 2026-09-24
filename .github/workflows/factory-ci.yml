@@ -106,8 +106,33 @@ jobs:
           [[ "$HEAD_REF" =~ ^trabajo/issue-([1-9][0-9]*)$ ]] || { echo "::error::Rama sin Issue canónico"; exit 1; }
           issue="${BASH_REMATCH[1]}"
           gh api "repos/$REPOSITORIO/issues/$issue" > /tmp/issue.json
+          gh api "repos/$REPOSITORIO/issues/$issue/comments?per_page=100" --paginate --slurp > /tmp/comments-pages.json
+          python3 - <<'PY' > /tmp/acceptance-pin.json
+          import json
+          from scripts.coordinar_trabajo import latest_reservation
+
+          pages = json.load(open("/tmp/comments-pages.json", encoding="utf-8"))
+          comments = [
+              comment
+              for page in pages
+              if isinstance(page, list)
+              for comment in page
+          ]
+          reservation = latest_reservation(comments)
+          pin = (
+              reservation.get("acceptance_sha256")
+              if isinstance(reservation, dict)
+              else None
+          )
+          print(json.dumps(pin))
+          PY
           gh api "repos/$REPOSITORIO/commits/$SHA/check-runs?per_page=100" > /tmp/checks.json
-          jq -n --slurpfile issue /tmp/issue.json --slurpfile checks /tmp/checks.json             '{issue:$issue[0], checks:$checks[0]}' > /tmp/acceptance.json
+          jq -n \
+            --slurpfile issue /tmp/issue.json \
+            --slurpfile checks /tmp/checks.json \
+            --slurpfile pin /tmp/acceptance-pin.json \
+            '{issue:$issue[0], checks:$checks[0], acceptance_sha256:$pin[0]}' \
+            > /tmp/acceptance.json
 
       - name: Verificar criterios específicos
         run: |

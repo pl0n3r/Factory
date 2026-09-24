@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 
+from scripts.aceptacion_kit import contract_fingerprint
 from scripts.coordinar_trabajo import (
     CoordinationError,
     GitHub,
@@ -21,12 +22,14 @@ from scripts.coordinar_trabajo import (
     STATUS_RESERVED,
     STATUS_REVIEW,
     active_reservation,
+    adopt_orphaned_contract,
     authorized,
     closing_issues,
     file_overlaps,
     issue_from_branch,
     latest_reservation,
     mark_stale_reservations,
+    migrate_legacy_reservation,
     parse_comment_command,
     release_work,
     reservation_from_pr_body,
@@ -203,11 +206,14 @@ def add_active_reservation(
     api: FakeGitHub,
     owner: str = "pl0n3r",
     reservation_id: str = SESSION_A,
+    *,
+    pinned: bool = True,
 ) -> None:
     """Inserta una reserva confiable activa en el fake."""
     branch = "trabajo/issue-12"
     api.branches[branch] = "abc123"
     api.set_status(12, STATUS_RESERVED)
+    fingerprint = contract_fingerprint(VALID_ACCEPTANCE_BODY) if pinned else None
     api.comments.append(
         {
             "user": {"login": BOT},
@@ -217,6 +223,7 @@ def add_active_reservation(
                 branch,
                 True,
                 "tomar",
+                fingerprint,
             ),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -497,15 +504,20 @@ class CoordinacionTests(unittest.TestCase):
         self.assertNotIn("trabajo/issue-12", api.branches)
         self.assertEqual(api.status_history[-1], STATUS_BLOCKED)
 
-    def test_label_reserved_keeps_concurrent_winner_reserved(self) -> None:
-        """Una rama ganadora evita que el perdedor restaure disponible."""
+    def test_label_reserved_rejects_orphan_branch_without_marker(self) -> None:
+        """Un label no adopta silenciosamente una rama huérfana."""
         api = FakeGitHub()
         api.issue_data["labels"].append({"name": STATUS_RESERVED})
         api.branches["trabajo/issue-12"] = "winner-sha"
 
-        update_issue_label_state(api, 12, "pl0n3r", STATUS_RESERVED)
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "adoptar-contrato-huerfana",
+        ):
+            update_issue_label_state(api, 12, "pl0n3r", STATUS_RESERVED)
 
-        self.assertEqual(api.status_history[-1], STATUS_RESERVED)
+        self.assertEqual(api.branches["trabajo/issue-12"], "winner-sha")
+        self.assertIsNone(active_reservation(api, 12))
 
     def test_label_available_cannot_release_another_session(self) -> None:
         """El label disponible nunca recibe autoridad de sesión implícita."""
@@ -520,8 +532,8 @@ class CoordinacionTests(unittest.TestCase):
         self.assertIsNotNone(reservation)
         self.assertEqual(reservation["reservation_id"], SESSION_A)
 
-    def test_orphan_branch_is_recovered_immediately(self) -> None:
-        """Una rama sin reserva activa se recupera sin esperar el lease."""
+    def test_orphan_branch_is_preserved_until_explicit_adoption(self) -> None:
+        """Una rama sin reserva se conserva pero no se adopta automáticamente."""
         api = FakeGitHub()
         api.branches["trabajo/issue-12"] = "abc123"
         api.pulls[15] = {
@@ -533,19 +545,15 @@ class CoordinacionTests(unittest.TestCase):
             "base": {"ref": "main"},
         }
 
-        session = reserve_work(api, 12, "pl0n3r", "OWNER")
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "adoptar-contrato-huerfana",
+        ):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
 
-        self.assertIsNotNone(session)
         self.assertEqual(api.pulls[15]["state"], "open")
-        self.assertEqual(api.status_history[-1], STATUS_REVIEW)
-        self.assertEqual(
-            reservation_from_pr_body(api.pulls[15]["body"]),
-            session,
-        )
-        reservation = active_reservation(api, 12)
-        self.assertIsNotNone(reservation)
-        assert reservation is not None
-        self.assertEqual(reservation["reason"], "recuperacion-huerfana")
+        self.assertIn("trabajo/issue-12", api.branches)
+        self.assertIsNone(active_reservation(api, 12))
         self.assertNotIn("coordinacion/lock-issue-12", api.branches)
 
     def test_concurrent_orphan_recovery_respects_existing_lock(self) -> None:
@@ -791,6 +799,199 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(reservation_from_pr_body(updated), SESSION_B)
         self.assertNotIn(SESSION_A, updated)
 
+    def test_reservation_pins_acceptance_contract_fingerprint(self) -> None:
+        """Una reserva nueva fija el contrato AC que aceptó /tomar."""
+        api = FakeGitHub()
+
+        session = reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        self.assertIsNotNone(session)
+        reservation = active_reservation(api, 12)
+        self.assertIsNotNone(reservation)
+        assert reservation is not None
+        self.assertEqual(reservation["version"], 2)
+        self.assertEqual(
+            reservation["acceptance_sha256"],
+            contract_fingerprint(VALID_ACCEPTANCE_BODY),
+        )
+
+    def test_pr_validation_rejects_contract_changed_after_reservation(self) -> None:
+        """Un AC editado tras /tomar invalida el PR aunque la sesión coincida."""
+        api = FakeGitHub()
+        session = reserve_work(api, 12, "pl0n3r", "OWNER")
+        assert session is not None
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\n\nReserva: {session}\n"
+                f"<!-- condor-reserva-id: {session} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+        api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
+            "El gate base pasa.",
+            "El gate debilitado pasa.",
+        )
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "cambió su contrato de aceptación",
+        ):
+            validate_pull(api, 15, True)
+
+    def test_non_contract_issue_edits_preserve_fingerprint(self) -> None:
+        """Notas fuera de criterios/marker no invalidan una reserva."""
+        api = FakeGitHub()
+        session = reserve_work(api, 12, "pl0n3r", "OWNER")
+        assert session is not None
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\n\nReserva: {session}\n"
+                f"<!-- condor-reserva-id: {session} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY
+            + "\n\nNota operativa fuera del contrato ejecutable.\n"
+        )
+
+        validate_pull(api, 15, True)
+
+    def test_retake_reservation_accepts_explicit_new_contract(self) -> None:
+        """Liberar y volver a /tomar fija explícitamente el contrato nuevo."""
+        api = FakeGitHub()
+        first = reserve_work(api, 12, "pl0n3r", "OWNER")
+        assert first is not None
+        initial = active_reservation(api, 12)
+        assert initial is not None
+        original_fingerprint = initial["acceptance_sha256"]
+
+        release_work(api, 12, "pl0n3r", "OWNER", first, False)
+        api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
+            "El gate base pasa.",
+            "El gate nuevo pasa.",
+        )
+        second = reserve_work(api, 12, "pl0n3r", "OWNER")
+        assert second is not None
+        current = active_reservation(api, 12)
+        assert current is not None
+
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(
+            original_fingerprint,
+            current["acceptance_sha256"],
+        )
+        self.assertEqual(
+            current["acceptance_sha256"],
+            contract_fingerprint(api.issue_data["body"]),
+        )
+
+    def test_legacy_reservation_cannot_upgrade_silently(self) -> None:
+        """Transferir o recuperar v1 exige migración explícita."""
+        api = FakeGitHub()
+        add_active_reservation(api, pinned=False)
+
+        with self.assertRaisesRegex(CoordinationError, "migrar-contrato"):
+            transfer_work(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        stale = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = stale
+        api.comments[-1]["updated_at"] = stale
+        api.commit_times["abc123"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        with self.assertRaisesRegex(CoordinationError, "migrar-contrato"):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        current = active_reservation(api, 12)
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(current["version"], 1)
+        self.assertNotIn("acceptance_sha256", current)
+
+    def test_migrate_legacy_reservation_is_explicit_and_preserves_session(self) -> None:
+        """La migración v1→v2 conserva rama, PR e ID de sesión."""
+        api = FakeGitHub()
+        add_active_reservation(api, pinned=False)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\n\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+
+        migrated = migrate_legacy_reservation(
+            api,
+            12,
+            "pl0n3r",
+            "OWNER",
+            SESSION_A,
+        )
+
+        self.assertEqual(migrated, SESSION_A)
+        current = active_reservation(api, 12)
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(current["version"], 2)
+        self.assertEqual(current["reservation_id"], SESSION_A)
+        self.assertEqual(
+            current["acceptance_sha256"],
+            contract_fingerprint(VALID_ACCEPTANCE_BODY),
+        )
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            SESSION_A,
+        )
+        validate_pull(api, 15, True)
+
+    def test_orphaned_branch_requires_explicit_contract_adoption(self) -> None:
+        """Una rama huérfana conserva trabajo hasta adopción explícita v2."""
+        api = FakeGitHub()
+        api.branches["trabajo/issue-12"] = "abc123"
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": "Closes #12",
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "adoptar-contrato-huerfana",
+        ):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.pulls[15]["state"], "open")
+
+        session = adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+        self.assertIsNotNone(session)
+        current = active_reservation(api, 12)
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(current["version"], 2)
+        self.assertEqual(
+            current["acceptance_sha256"],
+            contract_fingerprint(VALID_ACCEPTANCE_BODY),
+        )
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            session,
+        )
+        validate_pull(api, 15, True)
+
     def test_issue_without_executable_acceptance_cannot_be_reserved(self) -> None:
         """El coordinador rechaza trabajo sin contrato AC ejecutable."""
         api = FakeGitHub()
@@ -927,6 +1128,14 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(
             parse_comment_command(f"/transferir {SESSION_A}"),
             ("transferir", SESSION_A),
+        )
+        self.assertEqual(
+            parse_comment_command(f"/migrar-contrato {SESSION_A}"),
+            ("migrar-contrato", SESSION_A),
+        )
+        self.assertEqual(
+            parse_comment_command("/adoptar-contrato-huerfana"),
+            ("adoptar-contrato-huerfana", None),
         )
         with self.assertRaises(CoordinationError):
             parse_comment_command("/liberar no-es-uuid")

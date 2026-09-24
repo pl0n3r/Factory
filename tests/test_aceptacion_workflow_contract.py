@@ -31,6 +31,10 @@ class AcceptanceWorkflowContractTests(unittest.TestCase):
         self.assertIn("workflow_call:", reusable)
         self.assertIn("name: Criterios de aceptación", reusable)
         self.assertIn("checks: read", reusable)
+        for workflow in (ci, reusable):
+            self.assertIn("acceptance_sha256", workflow)
+            self.assertIn("comments?per_page=100", workflow)
+            self.assertIn("latest_reservation", workflow)
         self.assertIn(
             "uses: pl0n3r/factory/.github/workflows/aceptacion.yml@v1",
             wrapper,

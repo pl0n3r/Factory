@@ -29,8 +29,10 @@ jobs:
       (
         github.event.comment.body == '/tomar' ||
         github.event.comment.body == '/liberar-forzado' ||
+        github.event.comment.body == '/adoptar-contrato-huerfana' ||
         startsWith(github.event.comment.body, '/liberar ') ||
-        startsWith(github.event.comment.body, '/transferir ')
+        startsWith(github.event.comment.body, '/transferir ') ||
+        startsWith(github.event.comment.body, '/migrar-contrato ')
       )
     runs-on: ubuntu-latest
     timeout-minutes: 5
