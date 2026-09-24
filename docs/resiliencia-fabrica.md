@@ -37,3 +37,5 @@ python3 seguridad/resiliencia.py --manifest-stdin < /ruta/externa/manifest.json
 ```
 
 La ruta externa nunca entra al proceso como argumento y no se registra.
+
+Los workflows con escritura declaran esos permisos en el job mínimo que los necesita; el scope global permanece read-only.
