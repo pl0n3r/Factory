@@ -181,8 +181,11 @@ class RolesKitTests(unittest.TestCase):
         self.assertEqual(declared_roles(body), ["qa", "sre"])
 
     def test_declaration_parser_does_not_accept_trailing_content_as_slug(self):
-        body = "Rol(es): qa, sre\nRol primario: qa extra\n"
         required, _ = classify(context())
+        body = (
+            f"Rol(es): {', '.join(required)}\n"
+            "Rol primario: qa extra\n"
+        )
         labels = [self.catalog[role]["label_es"] for role in required]
         with self.assertRaisesRegex(RoleError, "Rol primario"):
             validate_pr(
