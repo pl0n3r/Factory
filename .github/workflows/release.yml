@@ -13,10 +13,6 @@ on:
         required: false
         default: 'version'
         type: string
-      kit_ref:
-        required: false
-        default: 'v1'
-        type: string
     outputs:
       version:
         description: Versión X.Y.Z
@@ -53,19 +49,6 @@ jobs:
           set -euo pipefail
           [[ "$EVENT_NAME" == "push" ]] || { echo "::error::Release solo acepta caller activado por push"; exit 1; }
           [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::Release solo acepta la rama principal"; exit 1; }
-      - name: Validar referencia del kit
-        env:
-          KIT_REF: ${{ inputs.kit_ref }}
-          REPOSITORY: ${{ github.repository }}
-          TARGET_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "$KIT_REF" == "v1" ]]; then
-            exit 0
-          fi
-          [[ "$REPOSITORY" == "pl0n3r/factory" ]] || { echo "::error::Solo Factory puede usar kit_ref distinto de v1"; exit 1; }
-          [[ "$KIT_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Bootstrap requiere SHA completo inmutable"; exit 1; }
-          [[ "$KIT_REF" == "$TARGET_SHA" ]] || { echo "::error::Bootstrap requiere kit_ref igual al SHA exacto del push"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
@@ -73,7 +56,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: pl0n3r/factory
-          ref: ${{ inputs.kit_ref }}
+          ref: v1
           path: .factory
           persist-credentials: false
       - id: version
