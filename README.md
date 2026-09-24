@@ -112,18 +112,51 @@ El detalle operativo de lo que falta está en **[docs/tanda1-handoff.md](docs/ta
 
 ## ¿Qué hago yo (el dueño)?
 
-**Casi nada.** Esa es la idea.
+**Casi nada.** Esa es la idea. Abres un agente de IA (GPT u otro), le pegas uno de estos prompts y lo dejas trabajar.
 
-1. Abrir un agente en cada repositorio (factory, Condor, GrindFlow, BRVTAL) con **este único prompt**:
+### Los dos modos de lanzar un agente
 
-   ```
-   Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md para el repositorio en el que estás trabajando.
-   ```
+| Modo | Cuándo usarlo | Qué hace el agente |
+| --- | --- | --- |
+| **Dirigido** | Quieres que trabaje en un proyecto concreto | Lee factory y trabaja **solo** en ese proyecto |
+| **Despachador** | Quieres que él decida dónde hace falta | Lee factory, revisa todos los proyectos y **baja al que más lo necesita** |
 
-2. Cuando un agente termine o se detenga, volver a lanzarlo con el mismo prompt: él solo sabe en qué etapa va.
-3. Responder únicamente las decisiones que te corresponden: **producto, dinero, legal, datos reales de clientes o salir a producción (live)**.
+**Modo dirigido** (cambia el repositorio según el proyecto):
 
-El detalle de etapas y reglas para los agentes está en **[PLAN-AGENTES.md](PLAN-AGENTES.md)**.
+```
+Trabajas en el repositorio pl0n3r/Condor. Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md para este repositorio.
+```
+
+Repositorios válidos: `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal`, `pl0n3r/factory`.
+
+**Modo despachador:**
+
+```
+Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md en modo despachador.
+```
+
+El despachador elige en este orden: sitio caído → incidente abierto → decisión tuya ya respondida → prioridad crítica → alta → media. Nunca toma un proyecto donde otro agente está trabajando, anuncia en el Issue por qué eligió ese trabajo y, al terminar, vuelve a elegir. Detalle en la sección 0 de [PLAN-AGENTES.md](PLAN-AGENTES.md).
+
+### Cómo combinarlos
+
+- **Un solo agente:** modo despachador.
+- **Varios agentes a la vez:** uno dirigido a `pl0n3r/factory` para el kit y el resto en modo despachador; se reparten solos sin chocar.
+- **Algo urgente en un proyecto:** un agente dirigido a ese proyecto.
+
+### Qué más te toca
+
+1. Cuando un agente termine o se detenga, vuelve a lanzarlo con el mismo prompt: él sabe en qué va.
+2. Responder solo las decisiones que te corresponden (**producto, marca, dinero, legal, datos reales de clientes, publicar 1.0.0 o pasar a live**). Te llegan asignadas en GitHub con la etiqueta `decisión: dueño` y aparecen en la cabina.
+3. Mirar la **cabina de mando**: https://pl0n3r.github.io/factory/ (estado de todos los proyectos, actualizado cada hora).
+
+### Cómo funciona por dentro
+
+```
+Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
+       → factory/agentes/roles/<rol>.md (qué profesional ser)
+       → AGENTES.md del proyecto (cómo es ese proyecto)
+       → trabajo en el proyecto: /tomar → código → PR → CI
+```
 
 ---
 
