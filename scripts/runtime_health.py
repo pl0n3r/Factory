@@ -114,8 +114,11 @@ def request(origin: str, path: str, timeout: float) -> tuple[int, str, bytes]:
     host, addresses = resolve_public_addresses(origin)
     address = addresses[0]
     context = tls_context()
+    # S5144: resolve_public_addresses() is the sanitizer. It rejects every
+    # non-global result, the connection is pinned to that validated IP, TLS
+    # still verifies the original hostname, and this client never follows redirects.
     try:
-        with socket.create_connection((address, 443), timeout=timeout) as raw_socket:
+        with socket.create_connection((address, 443), timeout=timeout) as raw_socket:  # NOSONAR(S5144)
             with context.wrap_socket(raw_socket, server_hostname=host) as tls_socket:
                 tls_socket.settimeout(timeout)
                 request_bytes = (

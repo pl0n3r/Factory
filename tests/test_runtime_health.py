@@ -21,6 +21,15 @@ class T(unittest.TestCase):
             with self.assertRaises(HealthError):
                 resolve_public_addresses("https://example.test")
 
+    def test_mixed_public_private_dns_fails_closed(self):
+        mixed = [
+            (2, 1, 6, "", ("93.184.216.34", 443)),
+            (2, 1, 6, "", ("10.0.0.2", 443)),
+        ]
+        with patch("scripts.runtime_health.socket.getaddrinfo", return_value=mixed):
+            with self.assertRaises(HealthError):
+                resolve_public_addresses("https://example.test")
+
     def test_origin_rejects_non_443_paths_and_bad_ports(self):
         for origin in (
             "https://example.com:8443",
