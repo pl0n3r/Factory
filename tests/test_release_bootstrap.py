@@ -1,4 +1,4 @@
-"""Regresiones para el bootstrap inicial del tag mayor v1."""
+"""Regresiones para releases protegidos del canal mayor v1."""
 
 import unittest
 from pathlib import Path
@@ -11,7 +11,7 @@ GUIDE = ROOT / "docs" / "release-bootstrap.md"
 
 
 class ReleaseBootstrapTests(unittest.TestCase):
-    """Preserva la frontera de seguridad del primer release."""
+    """Preserva la frontera de seguridad de releases v1.x."""
 
     @classmethod
     def setUpClass(cls):
@@ -34,12 +34,12 @@ class ReleaseBootstrapTests(unittest.TestCase):
     def test_bootstrap_guide_requires_human_gate(self):
         """AC-03: la guía falla cerrado ante gates humanos pendientes."""
         for required in (
-            "#1–#14 cerrados",
             "release-1.0.0",
+            "factory-release",
             "default seguro es **no publicar**",
             "SHA exacto aprobado",
-            "Crear manualmente el tag mayor",
-            "no crea ningún tag automáticamente",
+            "mueve manualmente el tag mayor",
+            "nunca crea ni mueve `v1`",
         ):
             self.assertIn(required, self.guide)
 

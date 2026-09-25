@@ -1,71 +1,49 @@
 # Handoff de TANDA 1
 
-Estado: **#9, #10 y #12 están cerrados; TANDA 1 sigue abierta y `v1.0.0` no está publicado**.
+Estado: **CERRADA**. Condor, GrindFlow y BRVTAL registraron producción verde y Factory publicó/validó `v1.0.0` con self-test del canal `@v1`.
 
-Este documento no reemplaza los Issues fuente. Resume el estado canónico que debe usar un agente para continuar Factory sin reconstruir el historial ni reabrir gates ya resueltos.
+Este documento conserva el cierre histórico; los Issues fuente siguen siendo la evidencia canónica.
 
 ## #9 — puertas de decisión humana · CERRADO
 
-La clasificación de puertas, etiqueta `decisión: dueño`, asignación, mención única, limpieza e idempotencia fueron verificadas. La evidencia material pendiente también se obtuvo: el dueño confirmó la recepción efectiva del push móvil generado por una puerta real. Ya no falta **confirmar externamente** esa recepción.
-
-**Regla que permanece:** un workflow verde o un comentario en GitHub no sustituyen evidencia humana cuando el criterio exige observar la recepción en el dispositivo.
+La clasificación de puertas, asignación y recepción móvil real quedaron verificadas. Las decisiones humanas siguen siendo explícitas y nunca se infieren de un workflow verde.
 
 ## #10 — resiliencia del dueño y de la fábrica · CERRADO
 
-El restore real desde una copia externa a GitHub fue verificado. La cobertura vigente distingue las capacidades de **CI, deploy y observer**. La decisión del dueño y #72 establecen un modelo por **capacidades**; no se requieren tres aplicaciones GitHub separadas:
-
-- CI: `github-token:ephemeral` con permisos mínimos por job;
-- observador: `github-token:ephemeral` de alcance mínimo + endpoints `/health` públicos cuando aplica;
-- deploy: `hostinger:git`, sin credencial GitHub persistente de Factory;
-- escritura cross-repo: requiere una **GitHub App dedicada** y de mínimo privilegio.
-
-No se admiten PATs personales ni tokens de larga duración. El manifiesto operativo actual es v2; v1 queda solo para diagnóstico/migración.
+El modelo vigente es por capacidades: CI y observación usan `github-token:ephemeral` con mínimo privilegio; deploy usa `hostinger:git`; la escritura cross-repo requiere una **GitHub App dedicada**. El diseño evita multiplicar identidades cuando una capacidad de mínimo privilegio es suficiente.
 
 ## #12 — cumplimiento técnico de datos/licencias · CERRADO
 
-Los AC técnicos, el inventario de datos/licencias y la evidencia reproducible de dependencias quedaron integrados. BRVTAL conserva el **snapshot npm reproducible** ligado al SHA auditado y al run `36001724208`, con lock reproducible y validación mediante `inspect_npm()`; esa evidencia **cubre el inventario de licencias de #12**.
+La evidencia técnica de datos/licencias quedó integrada. Cerrar #12 **no equivale a afirmar aprobación jurídica**; la revisión humana permanece separada en #53.
 
-El contrato histórico de #12 pedía, entre otras evidencias, una **referencia vigente a política de privacidad** y **revisión jurídica humana**. La evidencia material de cada producto continúa en sus Issues dedicados y la revisión jurídica humana permanece separada en #53. Cerrar #12 no equivale a afirmar aprobación jurídica ni cumplimiento legal definitivo.
+## #13 — épico de madurez · CERRADO
 
-## #13 — épico de madurez · ABIERTO
+#13 y #54 quedaron cerrados antes del primer release. El frente de privacidad incluyó #71/#78 y la adopción del contrato ampliado de seis documentos.
 
-#13 **ya no está bloqueado por #9, #10 ni #12**. Permanece abierto únicamente mientras se completa el frente crítico actual de privacidad como código (#54).
+## Cierre técnico
 
-### #54 — privacidad como código · EN CURSO
+- #1–#14: cerrados conforme al contrato vigente.
+- #54: privacidad como código cerrada tras revalidación de los tres productos y evidencia real del auditor.
+- #83: raíz de confianza del canal `v1` resuelta.
+- `v1.0.0`: GitHub Release publicada y self-test consumidor en verde.
+- TANDA 1 global: completada.
 
-Factory ya integró el núcleo técnico y sus extensiones:
-- #57–#60: reglas/generador, gate reusable, auditoría semanal/puerta legal y template;
-- #71/#78: contrato ampliado de **tres a seis documentos** y gate derivado de `legal/reglas-datos.yml`;
-- #74/#75: perfiles profesionales completos obligatorios en todos los repositorios.
+## TANDA 2 · EN CURSO
 
-Quedan exactamente dos condiciones para cerrar #54:
-1. Condor, GrindFlow y BRVTAL revalidados contra el contrato vigente de **seis documentos**; la evidencia histórica basada en tres documentos no basta.
-2. Primera ejecución/reporte real del auditor semanal con un caller pinneado al contrato vigente.
+Los productos pueden adoptar el kit publicado en Condor#192, GrindFlow#129 y brvtal#630 siguiendo `PLAN-AGENTES.md`.
 
-Condor tiene un dry-run sanitizado equivalente en estado `clean`, pero su caller real todavía no registra ejecuciones y sigue requiriendo actualización de pin; por eso ese dry-run no sustituye el segundo criterio.
+Factory continúa manteniendo el kit. Un cambio en `main` no modifica por sí solo el canal publicado `@v1`: debe pasar el proceso de mantenimiento descrito en **[release-bootstrap.md](release-bootstrap.md)**.
 
-No se debe reabrir un gate histórico para suplir trabajo nuevo: el trabajo pendiente debe conservar su Issue y su evidencia propios.
+## Releases de mantenimiento
+
+El primer release usa la categoría histórica `release-1.0.0`. Cualquier release posterior de la major `v1` usa una puerta humana `factory-release`, aprobación ligada al SHA exacto, movimiento manual del tag mayor y el workflow **Release Factory v1.x**.
+
+**Default seguro:** no mover `v1` ni publicar un release nuevo sin la puerta correspondiente.
 
 ## #53 — revisión jurídica humana · SEPARADA
 
-#53 conserva la revisión jurídica de la documentación de datos personales como decisión humana independiente. Factory puede generar, verificar y mantener documentación técnica, pero no convierte esa evidencia en un dictamen jurídico automático.
+#53 conserva la revisión jurídica de la documentación de datos personales como decisión humana independiente. El cierre técnico no equivale a afirmar aprobación jurídica.
 
 ## #35 — exposición pública de la cabina · SEPARADA
 
-#35 es una decisión de producto. El default B sigue aplicado: **no publicar GitHub Pages todavía**. Mientras se mantenga ese default privado, #35 no bloquea el cierre técnico de TANDA 1.
-
-## Primer release de Factory
-
-Los tags `v1` y `v1.0.0` siguen **ausentes/no publicados** mientras TANDA 1 permanezca abierta.
-
-Antes del primer release:
-
-1. cerrar #1–#14 conforme al contrato vigente, incluido #13;
-2. completar los frentes críticos que #13 haya incorporado como requisito de cierre;
-3. resolver explícitamente la puerta humana `release-1.0.0`;
-4. revalidar el HEAD exacto de `main`;
-5. seguir **[release-bootstrap.md](release-bootstrap.md)** para crear el primer `v1`;
-6. validar un consumidor real de `@v1`;
-7. recién entonces iniciar TANDA 2.
-
-**Default seguro:** `v1.0.0` permanece **no publicado y no autorizado** mientras #13/TANDA 1 sigan abiertos.
+#35 sigue siendo una decisión de producto. El default B continúa aplicado; **#35 no bloquea el cierre técnico de TANDA 1**.

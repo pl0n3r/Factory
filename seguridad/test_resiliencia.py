@@ -234,15 +234,16 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertIn("#35 — exposición pública de la cabina · SEPARADA", handoff)
         self.assertIn("#35 no bloquea el cierre técnico de TANDA 1", handoff)
 
-    def test_tanda1_handoff_keeps_release_unpublished(self):
+    def test_tanda1_handoff_records_completed_release(self):
         handoff = (
             Path(__file__).resolve().parents[1] / "docs" / "tanda1-handoff.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("#13 — épico de madurez · ABIERTO", handoff)
+        self.assertIn("#13 — épico de madurez · CERRADO", handoff)
         self.assertIn("#54", handoff)
         self.assertIn("#71", handoff)
         self.assertIn("v1.0.0", handoff)
-        self.assertIn("no publicado y no autorizado", handoff)
+        self.assertIn("GitHub Release publicada", handoff)
+        self.assertNotIn("no publicado y no autorizado", handoff)
 
     def test_valid_evidence(self):
         validate_manifest(sample_manifest(), now=NOW)

@@ -20,6 +20,7 @@ CATEGORIES = {
     "legal",
     "real-customer-data",
     "release-1.0.0",
+    "factory-release",
     "go-live",
 }
 REQUIRED = {"category", "context", "options", "recommendation", "safe_default"}

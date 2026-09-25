@@ -47,6 +47,12 @@ class GateTests(unittest.TestCase):
             {"status": "gate", "category": "legal"},
         )
 
+    def test_factory_release_category_is_allowed(self):
+        self.assertEqual(
+            classify_body(body(gate(category="factory-release"))),
+            {"status": "gate", "category": "factory-release"},
+        )
+
     def test_unknown_category_is_invalid_gate(self):
         self.assertEqual(
             classify_body(body(gate(category="architecture"))),
