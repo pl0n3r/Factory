@@ -125,12 +125,18 @@ jobs:
           issue=""
           issue_state=""
           if [[ -n "$existing" ]]; then
-            IFS=
+            IFS=$'\t' read -r issue issue_state <<<"$existing"
+          fi
+
+          if [[ "$RESULT_CODE" == "0" ]]; then
+            if [[ -n "$issue" && "$issue_state" == "open" ]]; then
+              gh issue close "$issue" --repo "$REPOSITORY" --comment "$recovered_message" >/dev/null
+            fi
+            exit 0
+          fi
 
           detail="$(python3 -c 'import json,sys; print(json.load(open("/tmp/factory-observation.json")).get("error",sys.argv[1]))' "$default_detail")"
-          body="$marker"
-\n'"$failure_message"
-\n\n'"$detail_prefix $detail"
+          printf -v body '%s\n%s\n\n%s %s' "$marker" "$failure_message" "$detail_prefix" "$detail"
           jq -n \
             --arg title "$title" \
             --arg body "$body" \
@@ -145,34 +151,5 @@ jobs:
             gh issue comment "$issue" --repo "$REPOSITORY" --body "$body" >/dev/null
           else
             gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/incident-create.json >/dev/null
-          fi
-          exit 1
-\t' read -r issue issue_state <<<"$existing"
-          fi
-
-          if [[ "$RESULT_CODE" == "0" ]]; then
-            if [[ -n "$issue" && "$issue_state" == "open" ]]; then
-              gh issue close "$issue" --repo "$REPOSITORY" --comment "$recovered_message" >/dev/null
-            fi
-            exit 0
-          fi
-
-          detail="$(python3 -c 'import json,sys; print(json.load(open("/tmp/factory-observation.json")).get("error",sys.argv[1]))' "$default_detail")"
-          body="$marker"
-\n'"$failure_message"
-\n\n'"$detail_prefix $detail"
-          jq -n \
-            --arg title "$title" \
-            --arg body "$body" \
-            --arg incident "$incident_label" \
-            --arg priority "$priority_label" \
-            --arg state "$state_label" \
-            '{title:$title,body:$body,labels:[$incident,$priority,$state]}' > /tmp/incident.json
-
-          if [[ -n "$issue" ]]; then
-            gh api --method PATCH "repos/$REPOSITORY/issues/$issue" --input /tmp/incident.json >/dev/null
-            gh issue comment "$issue" --repo "$REPOSITORY" --body "$body" >/dev/null
-          else
-            gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/incident.json >/dev/null
           fi
           exit 1
