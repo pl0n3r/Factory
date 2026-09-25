@@ -20,6 +20,10 @@ class ObserverWorkflowContractTests(unittest.TestCase):
     def test_incident_lifecycle_is_localized_and_singleton(self):
         self.assertIn("<!-- factory-auto-observer -->", WF)
         self.assertIn("issues?state=all&per_page=100", WF)
+        self.assertIn("group: observe-${{ github.repository }}", WF)
+        self.assertIn("cancel-in-progress: false", WF)
+        self.assertIn("incident-create.json", WF)
+        self.assertIn("incident-update.json", WF)
         self.assertIn('state:"open"', WF)
         self.assertIn('"$issue_state" == "open"', WF)
         self.assertIn("[AUTO] fallo de observación", WF)

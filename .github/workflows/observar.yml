@@ -13,6 +13,11 @@ on:
       label_language: {required: false, default: 'es', type: string}
 permissions:
   contents: read
+
+concurrency:
+  group: observe-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   observar:
     name: Smoke producción
@@ -132,13 +137,14 @@ jobs:
             --arg incident "$incident_label" \
             --arg priority "$priority_label" \
             --arg state "$state_label" \
-            '{title:$title,body:$body,labels:[$incident,$priority,$state],state:"open"}' > /tmp/incident.json
+            '{title:$title,body:$body,labels:[$incident,$priority,$state]}' > /tmp/incident-create.json
 
           if [[ -n "$issue" ]]; then
-            gh api --method PATCH "repos/$REPOSITORY/issues/$issue" --input /tmp/incident.json >/dev/null
+            jq '. + {state:"open"}' /tmp/incident-create.json > /tmp/incident-update.json
+            gh api --method PATCH "repos/$REPOSITORY/issues/$issue" --input /tmp/incident-update.json >/dev/null
             gh issue comment "$issue" --repo "$REPOSITORY" --body "$body" >/dev/null
           else
-            gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/incident.json >/dev/null
+            gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/incident-create.json >/dev/null
           fi
           exit 1
 \t' read -r issue issue_state <<<"$existing"
