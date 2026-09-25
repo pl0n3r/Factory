@@ -69,7 +69,7 @@ jobs:
   php:
     name: PHP base
     needs: preflight
-    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -114,7 +114,7 @@ jobs:
           fi
   node:
     name: Node opcional
-    if: inputs.node_enabled && (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group')
+    if: inputs.node_enabled && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
