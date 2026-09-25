@@ -13,6 +13,7 @@ permissions:
   contents: read
   issues: read
   checks: read
+cache-mode: read
 
 concurrency:
   group: acceptance-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
