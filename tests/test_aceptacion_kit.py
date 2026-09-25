@@ -207,7 +207,7 @@ class AcceptanceContractTests(unittest.TestCase):
             )
             (tests_dir / "test_sample.py").write_text(
                 "import unittest\n"
-                "from sibling_helper import VALUE\n"
+                "from helper import VALUE\n"
                 "class Demo(unittest.TestCase):\n"
                 "    def test_import(self):\n"
                 "        self.assertEqual(VALUE, 7)\n",
@@ -233,7 +233,7 @@ class AcceptanceContractTests(unittest.TestCase):
             )
             (security_dir / "test_sample.py").write_text(
                 "import unittest\n"
-                "from helper import VALUE\n"
+                "from sibling_helper import VALUE\n"
                 "class Demo(unittest.TestCase):\n"
                 "    def test_import(self):\n"
                 "        self.assertEqual(VALUE, 11)\n",
