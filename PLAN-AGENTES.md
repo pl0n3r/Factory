@@ -211,6 +211,61 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 
 ---
 
+## 9. Modo nocturno (FACTORY NIGHT SHIFT)
+
+Se activa cuando el prompt del dueño dice **"modo nocturno"** o **"FACTORY NIGHT SHIFT"**. El dueño está ausente varias horas; tu objetivo es **software funcional, verificable y publicado en GitHub**, no informes largos.
+
+### Ciclo
+
+1. **Recupera el estado real** de todos los repos de la fábrica (cabecera de este plan): `main`, PRs abiertos y recientes, CI, reservas, incidentes, decisiones del dueño recién respondidas y `/health` de producción. Nunca trabajes solo con el historial del chat.
+2. **Elige con el despachador de §0**, sin otra lista de prioridades. Respeta la tanda vigente (§6) y las reglas de ControlBot.
+3. **Una tarea a la vez:** `/tomar`, implementar, verificar, PR y comentario de hito, según §2–§5 y con los límites de §3.
+4. **Al terminar, vuelve al paso 1** y toma la siguiente. Sigue mientras la ejecución lo permita y existan tareas seguras. **No preguntes si puedes continuar.**
+5. **Si algo se bloquea**, usa el formato ⛔ BLOQUEADO y pasa a otra tarea independiente. Un bloqueo nunca detiene el ciclo completo.
+6. **Si aparece una decisión reservada del dueño** (producto, marca, dinero, legal, datos reales de clientes, releases o pasar a live), créala como puerta humana (`docs/puertas-humanas.md`, en lenguaje simple) y **sigue** con otro trabajo aplicando su `safe_default`.
+
+### Reglas del modo nocturno
+
+- **No acapares:** una reserva activa por agente; no abras trabajo en varios repos a la vez ni dejes reservas sin commits.
+- **Integrar y publicar solo por los caminos del kit:** CI en verde, política, revisión y releases con la aprobación del dueño. Nunca muevas tags, lances releases ni despliegues por fuera de esos flujos.
+- **Nada destructivo** en producción sin autorización (D-055) y uso de Hostinger según D-059.
+- **No simules progreso:** sin cambios cosméticos, sin tareas inventadas para mantener actividad. Si todo está estable y no hay roadmap pendiente, pasa a pruebas, seguridad, rendimiento y documentación; si tampoco hay, audita factory y propón mejoras como Issues.
+- **No inventes:** ni commits, ni PRs, ni resultados de pruebas, ni estados de producción, ni actividad de otros agentes.
+- **Herramientas prohibidas por el dueño:** no usar Codex y no generar archivos ZIP.
+- **No prometas actividad fuera de la ejecución real:** el chat no sigue corriendo cuando se detiene.
+
+### Memoria entre ejecuciones
+
+El estado vive en GitHub, no en el chat, para que otra ejecución o agente lo retome:
+- **Cada Issue trabajado:** un comentario de hito con lo hecho, la evidencia y el siguiente paso.
+- **Trampas o fallos que costaron tiempo:** una lección en `lecciones/`.
+- **Resumen de la ejecución:** un comentario en el Roadmap del proyecto principal que trabajaste, con el formato del reporte de abajo.
+
+Al iniciar cada ejecución, reconcilia ese estado con GitHub antes de actuar.
+
+### Reporte al final de cada ejecución
+
+Breve y verificable, solo con hitos importantes:
+
+```
+FACTORY NIGHT SHIFT · <fecha>
+ESTADO GENERAL: <1–2 líneas del ecosistema>
+COMPLETADO: <resultados reales>
+REPOSITORIOS ACTUALIZADOS: <repos>
+PRs / COMMITS: <enlaces>
+DECISIONES PARA EL DUEÑO: <puertas humanas creadas, si hay>
+BLOQUEOS: <solo los relevantes>
+SIGUIENTE PRIORIDAD: <qué debe continuar>
+```
+
+No afirmes haber publicado código si no pudiste, ni que producción está estable sin las comprobaciones de VERDE.
+
+### Comando "seguir"
+
+Dentro de la misma conversación, si el dueño escribe **"seguir"**, **"sigue"** o **"continúa"**, repite el ciclo completo desde el paso 1 en modo nocturno, sobre todo el ecosistema, salvo que el dueño limite expresamente un repositorio. En una conversación nueva, el dueño vuelve a dar el prompt corto del README.
+
+---
+
 ## TANDA 1
 
 ### Condor: producción en verde

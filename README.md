@@ -125,6 +125,14 @@ Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md en mod
 
 El despachador elige en este orden: sitio caído → incidente abierto → decisión tuya ya respondida → prioridad crítica → alta → media. Nunca toma un proyecto donde otro agente está trabajando, anuncia en el Issue por qué eligió ese trabajo y, al terminar, vuelve a elegir. Detalle en la sección 0 de [PLAN-AGENTES.md](PLAN-AGENTES.md).
 
+**Modo nocturno** (varias horas sin ti; responde "seguir" para repetir el ciclo):
+
+```
+FACTORY NIGHT SHIFT. Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md en modo nocturno. Cuando escriba "seguir", repite el ciclo.
+```
+
+Trabaja tarea por tarea con el despachador, sin preguntarte, deja tus decisiones en la cola y al final entrega un reporte **FACTORY NIGHT SHIFT** con enlaces verificables. Detalle en la sección 9 de [PLAN-AGENTES.md](PLAN-AGENTES.md).
+
 ### Cómo combinarlos
 
 - **Un solo agente:** modo despachador.
