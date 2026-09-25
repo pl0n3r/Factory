@@ -87,10 +87,9 @@ jobs:
           php-version: ${{ inputs.php_version }}
           coverage: none
       - name: Validar Composer
-        working-directory: ${{ inputs.working_directory }}
-        run: |
-          set -euo pipefail
-          if [[ -f composer.json ]]; then composer validate --strict; fi
+        run: >-
+          python3 .factory/scripts/consumer_ci.py composer-validate
+          --working-directory "${{ inputs.working_directory }}"
       - name: Instalar Composer bloqueado
         if: hashFiles(format('{0}/composer.lock', inputs.working_directory)) != ''
         uses: ./.factory/actions/retry
@@ -98,20 +97,10 @@ jobs:
           working-directory: ${{ inputs.working_directory }}
           operation: composer-install
       - name: Sintaxis y pruebas PHP
-        working-directory: ${{ inputs.working_directory }}
-        env:
-          STACK: ${{ inputs.stack }}
-        run: |
-          set -euo pipefail
-          mapfile -d '' files < <(find . -type f -name '*.php' -not -path './vendor/*' -print0)
-          if (( ${#files[@]} > 0 )); then printf '%s\0' "${files[@]}" | xargs -0 -n1 php -l; fi
-          if [[ -f composer.json ]] && composer run-script --list --no-interaction | grep -Eq '(^|[[:space:]])test([[:space:]]|$)'; then
-            composer test --no-interaction
-          elif [[ "$STACK" == "symfony" && -x vendor/bin/simple-phpunit ]]; then
-            vendor/bin/simple-phpunit
-          elif [[ "$STACK" == "laravel" && -f artisan ]]; then
-            php artisan test
-          fi
+        run: >-
+          python3 .factory/scripts/consumer_ci.py php-contract
+          --working-directory "${{ inputs.working_directory }}"
+          --stack "${{ inputs.stack }}"
   node:
     name: Node opcional
     if: inputs.node_enabled && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
@@ -137,11 +126,9 @@ jobs:
           working-directory: ${{ inputs.working_directory }}
           operation: npm-ci
       - name: Pruebas y build Node
-        working-directory: ${{ inputs.working_directory }}
-        run: |
-          set -euo pipefail
-          npm test --if-present
-          npm run build --if-present
+        run: >-
+          python3 .factory/scripts/consumer_ci.py node-test-build
+          --working-directory "${{ inputs.working_directory }}"
   validar:
     name: Validar
     needs: [event_guard, preflight, php, node]
