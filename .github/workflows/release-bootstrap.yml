@@ -32,6 +32,7 @@ jobs:
       label_language: es
       phase: construccion
       kit_ref: ${{ github.sha }}
+      factory_release_bootstrap: true
 
   preflight:
     name: Validar gates de release v1.x
@@ -158,3 +159,4 @@ jobs:
       label_language: es
       phase: construccion
       kit_ref: v1
+      factory_release_bootstrap: true
