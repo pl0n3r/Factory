@@ -149,23 +149,28 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          gh api --paginate "repos/$REPOSITORIO/issues?state=open&per_page=100" --jq '.[] | @json' > /tmp/open.ndjson
-          python3 .factory/scripts/labels_kit.py sweep-plan --language "$LANGUAGE" < /tmp/open.ndjson > /tmp/sweep-plan.json
-
           marker='<!-- factory-auto-unlabeled -->'
           gh api --paginate "repos/$REPOSITORIO/issues?state=all&per_page=100" --jq '.[] | @json' > /tmp/all.ndjson
           auto_issue="$(jq -sr --arg marker "$marker" 'map(select((.user.login // "") == "github-actions[bot]" and ((.body // "") | startswith($marker)))) | sort_by(.number) | first | .number // empty' /tmp/all.ndjson)"
+
+          gh api --paginate "repos/$REPOSITORIO/issues?state=open&per_page=100" --jq '.[] | @json' > /tmp/open.ndjson
+          if [[ -n "$auto_issue" ]]; then
+            jq -c --argjson auto "$auto_issue" 'select(.number != $auto)' /tmp/open.ndjson > /tmp/sweep.ndjson
+          else
+            cp /tmp/open.ndjson /tmp/sweep.ndjson
+          fi
+          python3 .factory/scripts/labels_kit.py sweep-plan --language "$LANGUAGE" < /tmp/sweep.ndjson > /tmp/sweep-plan.json
           action="$(jq -r '.action' /tmp/sweep-plan.json)"
 
           if [[ "$action" == "upsert" ]]; then
-            jq '{title:.title,body:.body,labels:.labels,state:"open"}' /tmp/sweep-plan.json > /tmp/auto-issue.json
+            jq '{title:.title,body:.body,labels:.labels}' /tmp/sweep-plan.json > /tmp/auto-create.json
             if [[ -n "$auto_issue" ]]; then
-              gh api --method PATCH "repos/$REPOSITORIO/issues/$auto_issue" --input /tmp/auto-issue.json >/dev/null
+              jq '. + {state:"open"}' /tmp/auto-create.json > /tmp/auto-update.json
+              gh api --method PATCH "repos/$REPOSITORIO/issues/$auto_issue" --input /tmp/auto-update.json >/dev/null
             else
-              auto_issue="$(gh api --method POST "repos/$REPOSITORIO/issues" --input /tmp/auto-issue.json --jq '.number')"
+              auto_issue="$(gh api --method POST "repos/$REPOSITORIO/issues" --input /tmp/auto-create.json --jq '.number')"
             fi
-            jq '{labels:.labels}' /tmp/sweep-plan.json > /tmp/auto-labels.json
-            gh api --method POST "repos/$REPOSITORIO/issues/$auto_issue/labels" --input /tmp/auto-labels.json >/dev/null
           elif [[ "$action" == "close" && -n "$auto_issue" ]]; then
-            gh api --method PATCH "repos/$REPOSITORIO/issues/$auto_issue" -f state=closed -f state_reason=completed >/dev/null
+            jq '{body:.body,labels:.labels} + {state:"closed",state_reason:"completed"}' /tmp/sweep-plan.json > /tmp/auto-close.json
+            gh api --method PATCH "repos/$REPOSITORIO/issues/$auto_issue" --input /tmp/auto-close.json >/dev/null
           fi
