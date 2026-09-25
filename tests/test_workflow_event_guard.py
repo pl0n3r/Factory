@@ -42,6 +42,26 @@ class WorkflowEventGuardTests(unittest.TestCase):
         for event in forbidden:
             self.assertNotIn(f"{event})", guard)
 
+    def test_consumer_commands_use_cache_sanitizing_factory_runner(self) -> None:
+        ci = self.text("ci.yml")
+        self.assertIn(".factory/scripts/consumer_ci.py composer-validate", ci)
+        self.assertIn(".factory/scripts/consumer_ci.py php-contract", ci)
+        self.assertIn(".factory/scripts/consumer_ci.py node-test-build", ci)
+        self.assertNotIn("composer validate --strict", ci)
+        self.assertNotIn("npm test --if-present", ci)
+        runner = (ROOT / "scripts" / "consumer_ci.py").read_text(encoding="utf-8")
+        retry = (ROOT / "scripts" / "ci_retry.py").read_text(encoding="utf-8")
+        for key in (
+            "ACTIONS_CACHE_URL",
+            "ACTIONS_RUNTIME_TOKEN",
+            "ACTIONS_RESULTS_URL",
+            "ACTIONS_CACHE_SERVICE_V2",
+        ):
+            self.assertIn(key, runner)
+            self.assertIn(key, retry)
+        self.assertIn("env=sanitized_environment()", runner)
+        self.assertIn("env=environment", retry)
+
     def test_factory_lint_only_ignores_actionlint_cache_mode_parser_gap(self) -> None:
         workflow = self.text("factory-ci.yml")
         self.assertIn(
