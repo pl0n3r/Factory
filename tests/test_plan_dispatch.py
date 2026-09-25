@@ -40,6 +40,22 @@ class PlanDispatchTests(unittest.TestCase):
         positions = [PLAN.index(value) for value in ordered]
         self.assertEqual(positions, sorted(positions))
 
+    def test_controlbot_and_autofactory_are_first_class_projects(self):
+        required = (
+            "ControlBot (privado)",
+            "ControlBot, AutoFactory",
+            "desde su primer despliegue, también a ControlBot",
+            "AutoFactory es una extensión, no un servicio web",
+            "no usa `/health` ni deploy de servidor",
+            "Chrome y Safari",
+            "ControlBot#2",
+            "no bloquean",
+            "AutoFactory#1",
+        )
+        for value in required:
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
     def test_readme_explains_launch_modes(self):
         required = (
             "### Los dos modos de lanzar un agente",
