@@ -33,6 +33,7 @@ class Candidate:
     active_fix: bool = False
     owner_decision_resolved: bool = False
     auto_class: str | None = None
+    auto_evidence_reviewed: bool = False
     title: str = ""
     blocked: bool = False
     fallback_safe: bool = False
@@ -85,6 +86,8 @@ def classify_readiness(candidate: Candidate) -> Readiness:
         reasons.append("claim_overlap")
     if candidate.requires_extra_authority:
         reasons.append("requires_extra_authority")
+    if candidate.title.startswith("[AUTO]") and candidate.auto_class is None and not candidate.auto_evidence_reviewed:
+        reasons.append("unclassified_auto_needs_review")
     if candidate.auto_class == "AUTO_INFO":
         reasons.append("auto_info_not_dispatchable")
     return Readiness(not reasons, tuple(reasons))
@@ -108,11 +111,11 @@ def authority_class(candidate: Candidate) -> str:
 def _tiebreak(candidate: Candidate, *, aging_threshold: int) -> tuple[object, ...]:
     aged = candidate.displaced_cycles >= aging_threshold
     return (
-        0 if aged else 1,
         -candidate.unlock_impact,
         -candidate.transversal_impact,
         -candidate.continuity,
         candidate.effort + candidate.risk,
+        0 if aged else 1,
         -candidate.ready_age,
         candidate.key,
     )
@@ -161,6 +164,9 @@ def dispatch_record(
     aging_threshold: int = 3,
 ) -> dict[str, object]:
     items = list(candidates)
+    keys = [candidate.key for candidate in items]
+    if len(keys) != len(set(keys)):
+        raise ValueError("candidate keys must be unique")
     states = {candidate.key: classify_readiness(candidate) for candidate in items}
     selected = select_next(items, aging_threshold=aging_threshold)
     ready = [candidate for candidate in items if states[candidate.key].ready]
