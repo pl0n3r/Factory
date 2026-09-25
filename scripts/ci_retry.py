@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,14 @@ OPERATIONS: dict[str, tuple[str, ...]] = {
     "npm-ci": ("npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"),
     "npm-audit": ("npm", "audit", "--audit-level=high"),
 }
+CACHE_ENV_KEYS = frozenset(
+    {
+        "ACTIONS_CACHE_URL",
+        "ACTIONS_RUNTIME_TOKEN",
+        "ACTIONS_RESULTS_URL",
+        "ACTIONS_CACHE_SERVICE_V2",
+    }
+)
 TRANSIENT_EXIT_CODES = {75}
 TRANSIENT_PATTERNS = (
     re.compile(r"\btimed?\s*out\b", re.I),
@@ -55,6 +64,9 @@ def run(name: str, attempts: int, base_delay: float) -> int:
     # immutable argv tuples declared in OPERATIONS; caller input can select a
     # key but can never supply an executable, argument, shell fragment or env.
     command = operation_command(name)
+    environment = os.environ.copy()
+    for key in CACHE_ENV_KEYS:
+        environment.pop(key, None)
     for attempt in range(1, attempts + 1):
         result = subprocess.run(  # NOSONAR(S2076)
             command,
@@ -63,6 +75,7 @@ def run(name: str, attempts: int, base_delay: float) -> int:
             stderr=subprocess.STDOUT,
             text=True,
             errors="replace",
+            env=environment,
         )
         output = result.stdout or ""
         if output:

@@ -79,6 +79,7 @@ El canal `v1` solo cambia mediante una puerta humana ligada al SHA exacto. Los c
 | Raíz de confianza del canal v1 (#83) | ✅ Cerrado |
 | Publicación `v1.0.0` | ✅ Publicado + self-test en verde |
 | Catálogo canónico de etiquetas (#100/#105) | ✅ Integrado en `main` |
+| Candidato de mantenimiento `v1.0.5` (#138) | 🚧 Hardening de eventos privilegiados en reusables; pendiente merge + gate protegido |
 | Release de mantenimiento `v1.x` | 🔐 Requiere puerta `factory-release` por SHA |
 | Adopción en Condor, GrindFlow y BRVTAL | 🚧 TANDA 2 en curso |
 | Revisión jurídica (#53) | 🧭 Decisión humana separada |
