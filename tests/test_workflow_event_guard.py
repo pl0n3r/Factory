@@ -46,7 +46,7 @@ class WorkflowEventGuardTests(unittest.TestCase):
         ci = self.text("ci.yml")
         self.assertNotIn(".factory/scripts/consumer_ci.py", ci)
         self.assertIn("composer validate --strict", ci)
-        self.assertIn('scripts = payload.get("scripts")', ci)
+        self.assertIn('scripts=payload.get("scripts")', ci)
         self.assertIn('isinstance(scripts, dict) and "test" in scripts', ci)
         self.assertIn("npm test --if-present", ci)
         self.assertIn("npm run build --if-present", ci)
