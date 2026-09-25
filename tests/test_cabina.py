@@ -37,6 +37,15 @@ class HealthTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_controlbot_is_in_project_inventory(self) -> None:
+        projects = {project.nombre: project for project in cabina.PROYECTOS}
+        self.assertIn("ControlBot", projects)
+        controlbot = projects["ControlBot"]
+        self.assertEqual(controlbot.repo, "pl0n3r/ControlBot")
+        self.assertEqual(controlbot.roadmap, 1)
+        self.assertIsNone(controlbot.sitio)
+        self.assertIsNone(controlbot.health)
+
     def test_github_failure_is_explicitly_unknown(self) -> None:
         with patch.object(cabina, "http_json", return_value=(429, None)):
             with self.assertRaises(cabina.CollectionError):
