@@ -71,6 +71,11 @@ class DispatcherV2Tests(unittest.TestCase):
             priority="medium",
         )
         self.assertEqual(authority_class(unclassified), "high")
+        self.assertFalse(classify_readiness(unclassified).ready)
+        self.assertIn(
+            "unclassified_auto_needs_review",
+            classify_readiness(unclassified).reasons,
+        )
         self.assertEqual(authority_class(structured), "incident")
         self.assertEqual(select_next([unclassified, structured]).key, "real")
 
@@ -104,15 +109,16 @@ class DispatcherV2Tests(unittest.TestCase):
 
     def test_aging_prevents_starvation_within_same_class_only(self):
         aged_high = Candidate(key="aged-high", priority="high", displaced_cycles=3)
-        shiny_high = Candidate(
-            key="shiny-high",
+        equivalent_high = Candidate(key="equivalent-high", priority="high")
+        higher_impact_high = Candidate(
+            key="higher-impact-high",
             priority="high",
-            unlock_impact=100,
-            displaced_cycles=0,
+            unlock_impact=1,
         )
         critical = Candidate(key="critical", priority="critical")
 
-        self.assertEqual(select_next([aged_high, shiny_high]).key, "aged-high")
+        self.assertEqual(select_next([aged_high, equivalent_high]).key, "aged-high")
+        self.assertEqual(select_next([aged_high, higher_impact_high]).key, "higher-impact-high")
         self.assertEqual(select_next([aged_high, critical]).key, "critical")
 
     def test_parallel_ready_set_requires_disjoint_claims(self):
@@ -149,6 +155,14 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(record["excluded"]["excluded"], ["pending_human_gate"])
         self.assertEqual(record["candidates"]["chosen"]["active_pr"], "#99")
         self.assertEqual(record["candidates"]["chosen"]["ready_age"], 120)
+
+
+    def test_dispatch_record_rejects_duplicate_candidate_keys(self):
+        with self.assertRaisesRegex(ValueError, "candidate keys must be unique"):
+            dispatch_record([
+                Candidate(key="same", priority="high"),
+                Candidate(key="same", priority="medium"),
+            ])
 
     def test_regression_scenarios_match_known_factory_cases(self):
         brvtal_681 = Candidate(
