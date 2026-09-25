@@ -4,7 +4,7 @@
 
 ## Qué es este repositorio
 
-El kit común de la fábrica: reusable workflows, composite actions, scripts de gobernanza, catálogos de etiquetas, núcleo común de AGENTES.md y template de proyectos. Lo consumen pl0n3r/Condor, pl0n3r/GrindFlow y pl0n3r/brvtal.
+El kit común de la fábrica: reusable workflows, composite actions, scripts de gobernanza, catálogos de etiquetas, núcleo común de AGENTES.md y template de proyectos. Lo consumen como cola canónica de productos pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal y pl0n3r/FactoryRunner. ControlBot es el control plane y AutoFactory una herramienta local/manual fuera de esa cola.
 
 **Regla del dueño:** factory no genera trabajo para el dueño. Todo se configura vía `gh`/API.
 
@@ -30,7 +30,7 @@ A medida que avance el kit (#1) se agregan reusable workflows con `on: workflow_
 
 ## Reglas técnicas del kit
 
-- **Reusable workflows** configurables por `inputs` (stack, dominio, fuente de versión, idioma de etiquetas, fase `construccion|live`); nada específico de un proyecto dentro del kit.
+- **Reusable workflows** configurables por `inputs` (stack `symfony|laravel|php|node`, dominio, fuente de versión, idioma de etiquetas, fase `construccion|live`); nada específico de un proyecto dentro del kit.
 - Acciones de terceros **fijadas a SHA**; `permissions` mínimos por job; `timeout-minutes` explícito; `concurrency` y filtros `if:` a nivel de job para no cargar GitHub.
 - Scripts en Python 3 de biblioteca estándar, con tests `unittest`; nada de secretos en logs.
 - **Versionado:** tags `vN.M.P`; los proyectos consumen `@vN`. Un cambio incompatible sube la versión mayor.
