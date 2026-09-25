@@ -6,6 +6,11 @@ class T(unittest.TestCase):
   self.assertIn("workflow_call:",C); self.assertNotIn("pull_request:",C); self.assertIn("pull_request:",L); self.assertIn("uses: ./.github/workflows/ci.yml",S)
  def test_installs(self):
   self.assertIn("operation: composer-install",C); self.assertIn("operation: npm-ci",C); self.assertNotIn("php_test_command",C)
+ def test_node_stack_is_first_class(self):
+  self.assertIn("symfony|laravel|php|node",C)
+  self.assertIn("stack node requiere node_enabled=true",C)
+  self.assertIn("inputs.stack != 'node'",C)
+  self.assertIn("operation: npm-ci",C)
  def test_pins(self):
   for text in (C,L):
    for a in re.findall(P,text,re.M):

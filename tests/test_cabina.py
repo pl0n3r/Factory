@@ -37,14 +37,18 @@ class HealthTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.TestCase):
-    def test_controlbot_is_in_project_inventory(self) -> None:
+    def test_canonical_product_inventory_is_exact(self) -> None:
+        self.assertEqual(
+            [project.nombre for project in cabina.PROYECTOS],
+            ["Condor", "GrindFlow", "BRVTAL", "FactoryRunner"],
+        )
         projects = {project.nombre: project for project in cabina.PROYECTOS}
-        self.assertIn("ControlBot", projects)
-        controlbot = projects["ControlBot"]
-        self.assertEqual(controlbot.repo, "pl0n3r/ControlBot")
-        self.assertEqual(controlbot.roadmap, 1)
-        self.assertIsNone(controlbot.sitio)
-        self.assertIsNone(controlbot.health)
+        runner = projects["FactoryRunner"]
+        self.assertEqual(runner.repo, "pl0n3r/FactoryRunner")
+        self.assertEqual(runner.roadmap, 1)
+        self.assertEqual(runner.version_path, "config/version.json")
+        self.assertIsNone(runner.sitio)
+        self.assertIsNone(runner.health)
 
     def test_github_failure_is_explicitly_unknown(self) -> None:
         with patch.object(cabina, "http_json", return_value=(429, None)):
