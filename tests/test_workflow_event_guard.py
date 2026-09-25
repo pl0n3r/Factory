@@ -29,13 +29,26 @@ class WorkflowEventGuardTests(unittest.TestCase):
             text = self.text(name)
             self.assertIn("permissions: {}", text)
             self.assertIn("needs: event_guard", text)
-            self.assertIn("cache-mode: read", text)
+            cache_lines = [
+                line.strip()
+                for line in text.splitlines()
+                if line.strip().startswith("cache-mode:")
+            ]
+            self.assertEqual(cache_lines, ["cache-mode: read"])
 
         forbidden = ("pull_request_target", "workflow_run", "issue_comment")
         ci = self.text("ci.yml")
         guard = ci[ci.index("Rechazar eventos privilegiados"):ci.index("  preflight:")]
         for event in forbidden:
             self.assertNotIn(f"{event})", guard)
+
+    def test_factory_lint_only_ignores_actionlint_cache_mode_parser_gap(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        self.assertIn(
+            """-ignore 'unexpected key "cache-mode" for "workflow" section'""",
+            workflow,
+        )
+        self.assertNotIn("-ignore 'cache-mode'", workflow)
 
     def test_guard_allows_current_non_privileged_events(self) -> None:
         ci = self.text("ci.yml")
