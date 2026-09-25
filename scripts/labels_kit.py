@@ -41,7 +41,7 @@ LEGACY_ALIASES = {
 MAX_CATALOG_BYTES = 512 * 1024
 WARNING_MARKER = "<!-- factory-label-validation -->"
 AUTO_MARKER = "<!-- factory-auto-unlabeled -->"
-CLOSING_REFERENCE = re.compile(r"\\b(?:closes|fixes|resolves)\\s+#([1-9][0-9]*)\\b", re.IGNORECASE)
+CLOSING_REFERENCE = re.compile(r"\b(?:closes|fixes|resolves)\s+#([1-9][0-9]*)\b", re.IGNORECASE)
 
 class LabelError(ValueError):
     pass
