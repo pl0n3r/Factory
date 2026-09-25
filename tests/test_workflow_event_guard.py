@@ -29,6 +29,7 @@ class WorkflowEventGuardTests(unittest.TestCase):
             text = self.text(name)
             self.assertIn("permissions: {}", text)
             self.assertIn("needs: event_guard", text)
+            self.assertIn("cache-mode: read", text)
 
         forbidden = ("pull_request_target", "workflow_run", "issue_comment")
         ci = self.text("ci.yml")
