@@ -7,6 +7,17 @@ ROOT = Path(__file__).resolve().parents[1]
 WF = (ROOT / ".github/workflows/observar.yml").read_text(encoding="utf-8")
 
 
+def _indented_block(text: str, header: str, indent: int) -> str:
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line == " " * indent + header)
+    out = [lines[start]]
+    for line in lines[start + 1:]:
+        if line and len(line) - len(line.lstrip()) <= indent:
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
 class ObserverWorkflowContractTests(unittest.TestCase):
     def test_language_input_is_closed_and_catalog_driven(self):
         self.assertIn("label_language: {required: false, default: 'es', type: string}", WF)
@@ -35,12 +46,17 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertIn('--method PATCH "repos/$REPOSITORY/issues/$issue"', WF)
         self.assertIn('--method POST "repos/$REPOSITORY/issues"', WF)
         self.assertIn("github-actions[bot]", WF)
+        self.assertIn('sort_by((.state != "open"), .number)', WF)
 
     def test_trust_boundary_and_permissions_remain_fail_closed(self):
         self.assertIn("schedule|workflow_dispatch", WF)
         self.assertIn('refs/heads/$DEFAULT_BRANCH', WF)
-        self.assertIn("contents: read", WF)
-        self.assertIn("issues: write", WF)
+        workflow_permissions = _indented_block(WF, "permissions:", 0)
+        job_permissions = _indented_block(WF, "permissions:", 4)
+        self.assertIn("contents: read", workflow_permissions)
+        self.assertNotIn("issues: write", workflow_permissions)
+        self.assertIn("contents: read", job_permissions)
+        self.assertIn("issues: write", job_permissions)
         self.assertNotIn("contents: write", WF)
         self.assertNotIn("secrets: inherit", WF)
         self.assertIn("timeout-minutes: 10", WF)

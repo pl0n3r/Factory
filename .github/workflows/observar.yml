@@ -118,7 +118,7 @@ jobs:
               (.user.login // "") == "github-actions[bot]"
               and ((.body // "") | split("\n") | index($marker))
             ))
-            | sort_by(.number)
+            | sort_by((.state != "open"), .number)
             | first // null
             | if . == null then "" else [.number, .state] | @tsv end
           ' /tmp/all.ndjson)"
