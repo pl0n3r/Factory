@@ -24,9 +24,25 @@ CATEGORIES = {
     "go-live",
 }
 REQUIRED = {"category", "context", "options", "recommendation", "safe_default"}
+OPTIONAL_SIMPLE = {
+    "title_simple",
+    "summary_simple",
+    "why_recommended",
+    "blocks",
+}
+OPTIONAL_OPTION = {
+    "effect",
+    "pros",
+    "cons",
+    "risk",
+    "cost",
+    "reversible",
+}
 OPTION_ID_RE = re.compile(r"^[A-D]$")
+RISK_VALUES = {"low", "medium", "high"}
 MAX_EVENT_CHARS = 200_000
 MAX_ISSUE_BODY_CHARS = 65_536
+MAX_LIST_ITEMS = 5
 
 
 class GateValidationError(ValueError):
@@ -37,25 +53,115 @@ def _result(status: str, category: str | None = None) -> dict[str, Any]:
     return {"status": status, "category": category}
 
 
-def _line(value: Any, field: str, max_len: int) -> str:
+def _line(value: Any, field: str, max_len: int, *, allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
+        raise GateValidationError(f"{field} debe ser texto.")
+    normalized = value.strip()
     if (
-        not isinstance(value, str)
-        or not value.strip()
-        or len(value.strip()) > max_len
+        (not normalized and not allow_empty)
+        or len(normalized) > max_len
         or "\n" in value
         or "\r" in value
     ):
+        suffix = "0" if allow_empty else "1"
         raise GateValidationError(
-            f"{field} debe ser texto de una línea, 1..{max_len} caracteres."
+            f"{field} debe ser texto de una línea, {suffix}..{max_len} caracteres."
         )
-    return value.strip()
+    return normalized
+
+
+def _short_text(value: Any, field: str, max_len: int, max_lines: int) -> str:
+    if not isinstance(value, str):
+        raise GateValidationError(f"{field} debe ser texto.")
+    normalized = value.strip()
+    if not normalized or len(normalized) > max_len or "\r" in value:
+        raise GateValidationError(
+            f"{field} debe contener 1..{max_len} caracteres."
+        )
+    if len(normalized.split("\n")) > max_lines:
+        raise GateValidationError(
+            f"{field} debe contener como máximo {max_lines} líneas."
+        )
+    return normalized
+
+
+def _line_list(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_LIST_ITEMS:
+        raise GateValidationError(
+            f"{field} debe contener entre 1 y {MAX_LIST_ITEMS} elementos."
+        )
+    return [_line(item, field, 180) for item in value]
+
+
+def _validate_simple_root(raw: dict[str, Any], normalized: dict[str, Any]) -> None:
+    if "title_simple" in raw:
+        normalized["title_simple"] = _line(
+            raw["title_simple"], "title_simple", 180
+        )
+    if "summary_simple" in raw:
+        normalized["summary_simple"] = _short_text(
+            raw["summary_simple"], "summary_simple", 600, 3
+        )
+    if "why_recommended" in raw:
+        normalized["why_recommended"] = _line(
+            raw["why_recommended"], "why_recommended", 300
+        )
+    if "blocks" in raw:
+        normalized["blocks"] = _line(raw["blocks"], "blocks", 300)
+
+
+def _validate_option(item: Any, seen: set[str]) -> dict[str, Any]:
+    allowed = {"id", "label"} | OPTIONAL_OPTION
+    if not isinstance(item, dict) or not {"id", "label"}.issubset(item):
+        raise GateValidationError(
+            "Cada option debe contener al menos id y label."
+        )
+    if not set(item).issubset(allowed):
+        raise GateValidationError(
+            "Cada option contiene campos no permitidos."
+        )
+
+    option_id = _line(item["id"], "option.id", 1)
+    label = _line(item["label"], "option.label", 240)
+    if not OPTION_ID_RE.fullmatch(option_id) or option_id in seen:
+        raise GateValidationError("option.id debe ser único y usar A..D.")
+    seen.add(option_id)
+
+    normalized: dict[str, Any] = {"id": option_id, "label": label}
+    if "effect" in item:
+        normalized["effect"] = _line(item["effect"], "option.effect", 300)
+    if "pros" in item:
+        normalized["pros"] = _line_list(item["pros"], "option.pros")
+    if "cons" in item:
+        normalized["cons"] = _line_list(item["cons"], "option.cons")
+    if "risk" in item:
+        risk = _line(item["risk"], "option.risk", 16)
+        if risk not in RISK_VALUES:
+            raise GateValidationError(
+                "option.risk debe ser low, medium o high."
+            )
+        normalized["risk"] = risk
+    if "cost" in item:
+        normalized["cost"] = _line(
+            item["cost"], "option.cost", 120, allow_empty=True
+        )
+    if "reversible" in item:
+        if type(item["reversible"]) is not bool:
+            raise GateValidationError("option.reversible debe ser booleano.")
+        normalized["reversible"] = item["reversible"]
+    return normalized
 
 
 def validate_gate(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict) or set(raw) != REQUIRED:
+    allowed = REQUIRED | OPTIONAL_SIMPLE
+    if (
+        not isinstance(raw, dict)
+        or not REQUIRED.issubset(raw)
+        or not set(raw).issubset(allowed)
+    ):
         raise GateValidationError(
-            "La puerta debe contener exactamente category, context, options, "
-            "recommendation y safe_default."
+            "La puerta requiere category, context, options, recommendation y "
+            "safe_default; solo admite además los campos simples documentados."
         )
 
     category = _line(raw["category"], "category", 80)
@@ -69,19 +175,10 @@ def validate_gate(raw: Any) -> dict[str, Any]:
     if not isinstance(options, list) or not 2 <= len(options) <= 4:
         raise GateValidationError("options debe contener entre 2 y 4 opciones.")
 
-    normalized: list[dict[str, str]] = []
+    normalized_options: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in options:
-        if not isinstance(item, dict) or set(item) != {"id", "label"}:
-            raise GateValidationError(
-                "Cada option debe contener exactamente id y label."
-            )
-        option_id = _line(item["id"], "option.id", 1)
-        label = _line(item["label"], "option.label", 240)
-        if not OPTION_ID_RE.fullmatch(option_id) or option_id in seen:
-            raise GateValidationError("option.id debe ser único y usar A..D.")
-        seen.add(option_id)
-        normalized.append({"id": option_id, "label": label})
+        normalized_options.append(_validate_option(item, seen))
 
     recommendation = _line(raw["recommendation"], "recommendation", 1)
     safe_default = _line(raw["safe_default"], "safe_default", 1)
@@ -90,13 +187,15 @@ def validate_gate(raw: Any) -> dict[str, Any]:
             "recommendation y safe_default deben referir una option existente."
         )
 
-    return {
+    normalized: dict[str, Any] = {
         "category": category,
         "context": context,
-        "options": normalized,
+        "options": normalized_options,
         "recommendation": recommendation,
         "safe_default": safe_default,
     }
+    _validate_simple_root(raw, normalized)
+    return normalized
 
 
 def classify_body(body: str) -> dict[str, Any]:
