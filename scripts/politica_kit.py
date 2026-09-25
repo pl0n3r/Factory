@@ -47,6 +47,15 @@ def load_policy(path: Path = POLICY_FILE, *, root: Path | None = None) -> dict[s
             raise PolicyError("Decisión inválida.")
     return raw
 
+def review_counts_as_round(review: dict[str, Any]) -> bool:
+    """Cuenta solo feedback automático sustantivo, no eventos COMMENTED vacíos."""
+    state = review.get("state")
+    if state in {"APPROVED", "CHANGES_REQUESTED"}:
+        return True
+    body = review.get("body")
+    return isinstance(body, str) and bool(body.strip())
+
+
 def count_review_rounds(lines: list[str]) -> int:
     counts: Counter[str] = Counter()
     seen_review_ids: set[int] = set()
@@ -67,7 +76,12 @@ def count_review_rounds(lines: list[str]) -> int:
                 continue
             seen_review_ids.add(review_id)
         user = review.get("user")
-        if isinstance(user, dict) and user.get("type") == "Bot" and isinstance(user.get("login"), str):
+        if (
+            isinstance(user, dict)
+            and user.get("type") == "Bot"
+            and isinstance(user.get("login"), str)
+            and review_counts_as_round(review)
+        ):
             login = user["login"]
             if not 1 <= len(login) <= 100:
                 raise PolicyError("Identidad de bot inválida.")
