@@ -150,6 +150,9 @@ Opciones: A) … B) …
 Recomiendo: <A/B> porque <razón>
 Si no hay respuesta, sigo con: <opción por defecto segura>
 ```
+
+Toda puerta nueva con marker `factory-human-gate` debe incluir también los campos simples para ControlBot: `title_simple`, `summary_simple`, `why_recommended`, `blocks` y, por opción, `effect`, `pros`, `cons`, `risk`, `cost`, `reversible`. El parser conserva compatibilidad con puertas históricas sin esos campos, pero los agentes no deben crear nuevas puertas en el formato antiguo.
+
 Nunca te quedes esperando: deja la opción por defecto y sigue con otro trabajo.
 
 ### Cuando te bloqueas (tras 2 intentos fallidos)
