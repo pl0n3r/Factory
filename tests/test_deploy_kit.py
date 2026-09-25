@@ -90,6 +90,16 @@ class T(unittest.TestCase):
         with self.assertRaisesRegex(DeployError, "no fija el host"):
             validate_transport_environment("hostinger-ssh", invalid)
 
+        wrong_port_pin = dict(env)
+        wrong_port_pin["HOSTINGER_KNOWN_HOSTS"] = "ssh.example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTONLYHOSTKEY"
+        with self.assertRaisesRegex(DeployError, "no fija el host"):
+            validate_transport_environment("hostinger-ssh", wrong_port_pin)
+
+        default_port = dict(env)
+        default_port["HOSTINGER_SSH_PORT"] = "22"
+        default_port["HOSTINGER_KNOWN_HOSTS"] = "ssh.example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTONLYHOSTKEY"
+        validate_transport_environment("hostinger-ssh", default_port)
+
     def test_transport_is_optional_and_never_logged(self):
         calls = []
         run_pipeline(
@@ -138,4 +148,6 @@ class T(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
         self.assertIn("transport: {required: false, default: 'none', type: string}", workflow)
         self.assertIn("HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}", workflow)
+        self.assertIn('[[ "$DEPLOY_TRANSPORT" != "none" ]] && args+=(--transport "$DEPLOY_TRANSPORT")', workflow)
+        self.assertNotIn('--migration-mode "$MIGRATION_MODE" --transport "$DEPLOY_TRANSPORT"', workflow)
         self.assertNotIn("StrictHostKeyChecking=no", workflow)

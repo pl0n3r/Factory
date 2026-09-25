@@ -79,6 +79,7 @@ jobs:
           LIVE_MIGRATION_APPROVED: ${{ inputs.live_migration_approved }}
         run: |
           set -euo pipefail
-          args=(--origin "$DOMAIN" --health-path "$HEALTH_PATH" --version "$VERSION" --sha "$GITHUB_SHA" --phase "$PHASE" --migration-mode "$MIGRATION_MODE" --transport "$DEPLOY_TRANSPORT")
+          args=(--origin "$DOMAIN" --health-path "$HEALTH_PATH" --version "$VERSION" --sha "$GITHUB_SHA" --phase "$PHASE" --migration-mode "$MIGRATION_MODE")
+          [[ "$DEPLOY_TRANSPORT" != "none" ]] && args+=(--transport "$DEPLOY_TRANSPORT")
           [[ "$LIVE_MIGRATION_APPROVED" == "true" ]] && args+=(--live-migration-approved)
           python3 .factory/scripts/deploy_kit.py "${args[@]}"

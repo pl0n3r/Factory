@@ -63,7 +63,7 @@ def _validate_release_root(value: str) -> str:
 
 
 def _validate_known_hosts(value: str, host: str, port: int) -> None:
-    expected = {host, f"[{host}]:{port}"}
+    expected = {host} if port == 22 else {f"[{host}]:{port}"}
     matched = False
     for raw_line in value.splitlines():
         line = raw_line.strip()
