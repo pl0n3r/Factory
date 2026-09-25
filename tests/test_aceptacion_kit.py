@@ -222,6 +222,32 @@ class AcceptanceContractTests(unittest.TestCase):
                 root,
             )
 
+    def test_named_test_can_import_sibling_module(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            security_dir = root / "seguridad"
+            security_dir.mkdir()
+            (security_dir / "sibling_helper.py").write_text(
+                "VALUE = 11\n",
+                encoding="utf-8",
+            )
+            (security_dir / "test_sample.py").write_text(
+                "import unittest\n"
+                "from sibling_helper import VALUE\n"
+                "class Demo(unittest.TestCase):\n"
+                "    def test_import(self):\n"
+                "        self.assertEqual(VALUE, 11)\n",
+                encoding="utf-8",
+            )
+            run_named_test(
+                Criterion(
+                    "AC-01",
+                    "test",
+                    "seguridad/test_sample.py::Demo::test_import",
+                ),
+                root,
+            )
+
     def test_named_test_rejects_missing_or_failing_case(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

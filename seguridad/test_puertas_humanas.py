@@ -26,6 +26,42 @@ def gate(**changes):
     return value
 
 
+def simple_gate(**changes):
+    value = gate(
+        title_simple="¿Qué retención usamos?",
+        summary_simple=(
+            "Debemos definir cuánto tiempo conservamos este dato.\n"
+            "La opción corta reduce exposición y costo."
+        ),
+        options=[
+            {
+                "id": "A",
+                "label": "Retención corta",
+                "effect": "El dato se elimina antes.",
+                "pros": ["Menor exposición", "Menor costo"],
+                "cons": ["Menos historial"],
+                "risk": "low",
+                "cost": "",
+                "reversible": True,
+            },
+            {
+                "id": "B",
+                "label": "Retención larga",
+                "effect": "El dato se conserva por más tiempo.",
+                "pros": ["Más historial"],
+                "cons": ["Mayor exposición"],
+                "risk": "medium",
+                "cost": "$",
+                "reversible": True,
+            },
+        ],
+        why_recommended="A reduce exposición y mantiene el objetivo operativo.",
+        blocks="Bloquea el paso a live del tratamiento.",
+    )
+    value.update(changes)
+    return value
+
+
 def body(value):
     return (
         "Contexto\n<!-- factory-human-gate "
@@ -53,6 +89,63 @@ class GateTests(unittest.TestCase):
             {"status": "gate", "category": "factory-release"},
         )
 
+    def test_optional_simple_gate_fields(self):
+        legacy = validate_gate(gate())
+        enriched = validate_gate(simple_gate())
+
+        self.assertNotIn("title_simple", legacy)
+        self.assertEqual(enriched["title_simple"], "¿Qué retención usamos?")
+        self.assertEqual(enriched["options"][0]["risk"], "low")
+        self.assertEqual(enriched["options"][0]["cost"], "")
+        self.assertTrue(enriched["options"][0]["reversible"])
+        self.assertEqual(
+            classify_body(body(gate())),
+            {"status": "gate", "category": "legal"},
+        )
+        self.assertEqual(
+            classify_body(body(simple_gate())),
+            {"status": "gate", "category": "legal"},
+        )
+
+    def test_invalid_simple_gate_fields(self):
+        invalid = []
+
+        too_many_pros = simple_gate()
+        too_many_pros["options"][0]["pros"] = [f"p{i}" for i in range(6)]
+        invalid.append(too_many_pros)
+
+        bad_risk = simple_gate()
+        bad_risk["options"][0]["risk"] = "critical"
+        invalid.append(bad_risk)
+
+        bad_reversible = simple_gate()
+        bad_reversible["options"][0]["reversible"] = "yes"
+        invalid.append(bad_reversible)
+
+        bad_summary = simple_gate(summary_simple="uno\ndos\ntres\ncuatro")
+        invalid.append(bad_summary)
+
+        unknown_root = simple_gate()
+        unknown_root["secret_payload"] = "NO_ECHO_THIS"
+        invalid.append(unknown_root)
+
+        unknown_option = simple_gate()
+        unknown_option["options"][0]["secret_payload"] = "NO_ECHO_THIS"
+        invalid.append(unknown_option)
+
+        for value in invalid:
+            with self.subTest(value=value):
+                result = classify_body(body(value))
+                self.assertEqual(
+                    result,
+                    {"status": "invalid-gate", "category": None},
+                )
+                self.assertNotIn("NO_ECHO_THIS", json.dumps(result))
+
+        with self.assertRaises(GateValidationError) as raised:
+            validate_gate(unknown_root)
+        self.assertNotIn("NO_ECHO_THIS", str(raised.exception))
+
     def test_unknown_category_is_invalid_gate(self):
         self.assertEqual(
             classify_body(body(gate(category="architecture"))),
@@ -77,7 +170,7 @@ class GateTests(unittest.TestCase):
     def test_extra_fields_and_multiline_context_are_rejected(self):
         extra = gate()
         extra["unexpected_field"] = "x"
-        with self.assertRaisesRegex(GateValidationError, "exactamente"):
+        with self.assertRaisesRegex(GateValidationError, "campos simples"):
             validate_gate(extra)
         with self.assertRaisesRegex(GateValidationError, "una línea"):
             validate_gate(gate(context="uno\ndos"))
@@ -102,11 +195,16 @@ class GateTests(unittest.TestCase):
     def test_event_classifier_reads_issue_only(self):
         payload = json.dumps(
             {
-                "issue": {"body": body(gate(category="money"))},
+                "issue": {"body": body(simple_gate(category="money"))},
                 "payload": "ignored",
             }
         )
-        self.assertEqual(classify_event_text(payload)["category"], "money")
+        result = classify_event_text(payload)
+        self.assertEqual(
+            result,
+            {"status": "gate", "category": "money"},
+        )
+        self.assertNotIn("summary_simple", result)
 
     def test_oversized_event_is_invalid_gate_without_echo(self):
         self.assertEqual(
