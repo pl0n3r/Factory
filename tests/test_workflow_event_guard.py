@@ -84,6 +84,10 @@ class WorkflowEventGuardTests(unittest.TestCase):
     def test_guard_allows_current_non_privileged_events(self) -> None:
         ci = self.text("ci.yml")
         self.assertIn("pull_request|push|merge_group", ci)
+        self.assertIn("workflow_dispatch)", ci)
+        self.assertIn('REPOSITORY: ${{ github.repository }}', ci)
+        self.assertIn('FACTORY_RELEASE_BOOTSTRAP: ${{ inputs.factory_release_bootstrap }}', ci)
+        self.assertIn('[[ "$REPOSITORY" == "pl0n3r/factory" && "$FACTORY_RELEASE_BOOTSTRAP" == "true" ]]', ci)
         self.assertIn(
             "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
             ci,
@@ -92,6 +96,8 @@ class WorkflowEventGuardTests(unittest.TestCase):
             "if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'\n    runs-on: ubuntu-latest\n    timeout-minutes: 20",
             ci,
         )
+        release = self.text("release-bootstrap.yml")
+        self.assertEqual(release.count("factory_release_bootstrap: true"), 2)
         for name in ("preview.yml", "aceptacion.yml"):
             text = self.text(name)
             self.assertIn('[[ "$EVENT_NAME" == "pull_request" ]]', text)
