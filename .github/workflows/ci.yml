@@ -126,16 +126,7 @@ jobs:
           done < <(find . -type f -name '*.php' -not -path './vendor/*' -print0)
 
           if [[ -f composer.json ]]; then
-            has_test="$(
-              python3 - <<'PY'
-import json
-
-with open("composer.json", encoding="utf-8") as handle:
-    payload = json.load(handle)
-scripts = payload.get("scripts")
-print("true" if isinstance(scripts, dict) and "test" in scripts else "false")
-PY
-            )"
+            has_test="$(python3 -c 'import json; payload=json.load(open("composer.json", encoding="utf-8")); scripts=payload.get("scripts"); print("true" if isinstance(scripts, dict) and "test" in scripts else "false")')"
             if [[ "$has_test" == "true" ]]; then
               "${safe_env[@]}" composer test --no-interaction
               exit 0
