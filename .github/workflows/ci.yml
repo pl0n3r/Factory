@@ -12,6 +12,7 @@ on:
       node_version: {required: false, default: '24', type: string}
       working_directory: {required: false, default: '.', type: string}
       kit_ref: {required: false, default: 'v1', type: string}
+      factory_release_bootstrap: {required: false, default: false, type: boolean}
 permissions:
   contents: read
 cache-mode: read
@@ -25,17 +26,25 @@ jobs:
       - name: Rechazar eventos privilegiados
         env:
           EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          FACTORY_RELEASE_BOOTSTRAP: ${{ inputs.factory_release_bootstrap }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
             pull_request|push|merge_group) ;;
+            workflow_dispatch)
+              [[ "$REPOSITORY" == "pl0n3r/factory" && "$FACTORY_RELEASE_BOOTSTRAP" == "true" ]] || {
+                echo "::error::workflow_dispatch solo se admite para el release bootstrap interno de Factory"
+                exit 1
+              }
+              ;;
             *) echo "::error::CI reusable no acepta evento privilegiado/no permitido: $EVENT_NAME"; exit 1 ;;
           esac
 
   preflight:
     name: Preflight reusable
     needs: event_guard
-    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'workflow_dispatch' && github.repository == 'pl0n3r/factory' && inputs.factory_release_bootstrap)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
