@@ -292,11 +292,19 @@ def sweep_issue_plan(
         _catalog_name(catalog, "state_available"),
     ]
     if numbers:
-        heading = "Ítems abiertos sin clasificación completa:" if language == "es" else "Open items without complete classification:"
+        heading = (
+            "Ítems abiertos sin clasificación completa:"
+            if language == "es"
+            else "Open items without complete classification:"
+        )
         body = AUTO_MARKER + "\n" + heading + "\n\n" + "\n".join(f"- #{number}" for number in numbers)
         action = "upsert"
     else:
-        message = "✅ No quedan ítems abiertos sin clasificar." if language == "es" else "✅ No open items remain unclassified."
+        message = (
+            "✅ No quedan ítems abiertos sin clasificar."
+            if language == "es"
+            else "✅ No open items remain unclassified."
+        )
         body = AUTO_MARKER + "\n" + message
         action = "close"
     return {
@@ -334,7 +342,18 @@ def sweep(catalog: list[dict[str, str]], lines: list[str]) -> list[int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("validate-catalog", "validate-selection", "upsert-plan", "closing-reference", "plan-validation", "sweep", "sweep-plan"))
+    parser.add_argument(
+        "command",
+        choices=(
+            "validate-catalog",
+            "validate-selection",
+            "upsert-plan",
+            "closing-reference",
+            "plan-validation",
+            "sweep",
+            "sweep-plan",
+        ),
+    )
     parser.add_argument("--language", choices=sorted(CATALOGS), required=True)
     args = parser.parse_args()
     try:
