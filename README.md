@@ -155,6 +155,8 @@ Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
 | [Condor](https://github.com/pl0n3r/Condor) | Plataforma multi-empresa: catálogo, inventario, pedidos y tienda pública | [condorapp.com.co](https://www.condorapp.com.co) |
 | [GrindFlow](https://github.com/pl0n3r/GrindFlow) | SaaS de gestión corporativa | [grindflow.com.co](https://www.grindflow.com.co) |
 | [BRVTAL](https://github.com/pl0n3r/brvtal) | Sitio público y panel editorial DISCADMIN | [brvtal.com.co](https://www.brvtal.com.co) |
+| [ControlBot](https://github.com/pl0n3r/ControlBot) (privado) | Centro de control de la fábrica: dashboard, agentes, chat, despacho, decisiones y nuevos proyectos | En construcción (Hostinger, subdominio privado) |
+| [AutoFactory](https://github.com/pl0n3r/AutoFactory) (privado) | Extensión que mantiene trabajando los agentes de ChatGPT web | Chrome y Safari |
 
 ---
 
