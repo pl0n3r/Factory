@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import Any
 
@@ -60,9 +61,32 @@ def _all_issues(api: GitHub) -> list[dict[str, Any]]:
     ]
 
 
+def _invalid_marker_epic(body: str) -> int | None:
+    """Best-effort epic identity used only to isolate closed historical corruption."""
+    prefix = "<!-- factory-plan-task "
+    suffix = " -->"
+    if body.count(prefix) != 1:
+        return None
+    start = body.index(prefix) + len(prefix)
+    end = body.find(suffix, start)
+    if end < 0:
+        return None
+    try:
+        raw = json.loads(body[start:end].strip())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("epic")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
 def _existing_tasks(
     issues: list[dict[str, Any]],
     epic: int,
+    warnings: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for issue in issues:
@@ -70,11 +94,20 @@ def _existing_tasks(
         try:
             marker = parse_task_marker(body)
         except PlanError as exc:
-            if "factory-plan-task" in body:
-                raise PlanError(
-                    f"Issue #{issue.get('number')} tiene marker de tarea inválido."
-                ) from exc
-            continue
+            if "factory-plan-task" not in body:
+                continue
+            issue_number = issue.get("number")
+            historical_epic = _invalid_marker_epic(body)
+            if issue.get("state") == "closed" and historical_epic not in (None, epic):
+                if warnings is not None:
+                    warnings.append(
+                        f"Issue #{issue_number}: marker histórico inválido aislado "
+                        f"(épico #{historical_epic})."
+                    )
+                continue
+            raise PlanError(
+                f"Issue #{issue_number} tiene marker de tarea inválido."
+            ) from exc
         if marker is None or marker["epic"] != epic:
             continue
         key = marker["task_key"]
@@ -263,7 +296,8 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     tasks = parse_plan(str(epic.get("body") or ""))
     ordered = topological_order(tasks)
     all_issues = _all_issues(api)
-    existing = _existing_tasks(all_issues, epic_number)
+    historical_warnings: list[str] = []
+    existing = _existing_tasks(all_issues, epic_number, historical_warnings)
     planned_keys = {task.key for task in tasks}
     orphaned = sorted(set(existing) - planned_keys)
     if orphaned:
@@ -294,12 +328,18 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
         issue_numbers[task.key] = number
 
     report = render_graph(epic_number, tasks, issue_numbers, task_roles)
+    if historical_warnings:
+        report += (
+            "\n\n## Warnings históricos aislados\n\n"
+            + "\n".join(f"- {warning}" for warning in historical_warnings)
+        )
     _upsert_report(api, epic_number, report)
     return {
         "epic": epic_number,
         "tasks": len(tasks),
         "issues": issue_numbers,
         "order": [task.key for task in ordered],
+        "warnings": historical_warnings,
     }
 
 
