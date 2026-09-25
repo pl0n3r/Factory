@@ -1,6 +1,6 @@
 # Plan de agentes de la fábrica
 
-> Instrucciones del dueño (@pl0n3r) para **todo agente de IA** que trabaje en pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal, pl0n3r/factory, pl0n3r/ControlBot o pl0n3r/AutoFactory.
+> Instrucciones del dueño (@pl0n3r) para **todo agente de IA** que trabaje en pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal, pl0n3r/factory, pl0n3r/ControlBot, pl0n3r/AutoFactory o pl0n3r/FactoryRunner.
 > Léelo completo una vez al arrancar. Este archivo manda sobre cualquier costumbre tuya; AGENTES.md/AGENTS.md de cada repo manda en lo técnico de ese repo.
 
 ## 0. Dónde trabajar: modo dirigido o modo despachador
@@ -9,10 +9,12 @@
 
 **Modo despachador:** si el prompt solo te apunta a factory (sin nombrar proyecto), eliges **tú** el proyecto que más te necesita, con este orden y tomando el **primer** caso que aplique:
 
+**Cola canónica de productos:** Condor, GrindFlow, BRVTAL y FactoryRunner. **ControlBot y AutoFactory quedan fuera del despacho automático de producto**: ControlBot es el control plane y AutoFactory una herramienta local/manual; ambos solo se trabajan en modo dirigido o cuando bloquean explícitamente a uno de los cuatro productos. Factory mantiene el kit cuando ese mantenimiento bloquea la cola.
+
 1. Un producto con producción caída o no VERDE (sección 6) → ese producto.
 2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o `[AUTO]`) → su repo.
 3. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
-4. El Issue `prioridad: crítica` / `priority: critical` disponible más antiguo en factory, Condor, GrindFlow, BRVTAL, ControlBot o AutoFactory.
+4. El Issue `prioridad: crítica` / `priority: critical` disponible más antiguo en Condor, GrindFlow, BRVTAL o FactoryRunner; si no hay candidato y un Issue de Factory bloquea a esos productos, toma Factory.
 5. Lo mismo con `prioridad: alta` y después `media`.
 6. Dentro de la misma prioridad, el trabajo que desbloquea más trabajo.
 
@@ -22,7 +24,7 @@ Reglas del despachador:
 - Al bajar al proyecto, lee su AGENTES.md/AGENTS.md y sigue este plan como si te hubieran dirigido ahí.
 - Al terminar ese trabajo, vuelve a aplicar el despacho desde el paso 1.
 - **ControlBot (privado)** resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
-- Mientras el MVP de ControlBot (ControlBot#3, #4 y dashboard) no exista, sus Issues críticos van justo después de los incidentes porque reducen trabajo manual del dueño.
+- ControlBot y AutoFactory no compiten por prioridad dentro de la cola canónica; se atienden por modo dirigido o por dependencia explícita de un producto.
 
 ## Tu misión en una línea
 
@@ -117,7 +119,7 @@ Antes de empezar, decide **qué rol(es)** exige la tarea y declara cada uno en e
 
 Cambios de riesgo (esquema, seguridad, deploy, UX pública) → haz una **segunda pasada con otro rol** antes de entregar.
 
-**En todos los repos (factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory):** antes de implementar, carga el **perfil completo** de cada rol desde [`pl0n3r/factory/agentes/roles/`](https://github.com/pl0n3r/factory/tree/main/agentes/roles) (`<rol>.md`) y completa su checklist en el PR; la tabla de arriba es solo el resumen. Etiqueta el Issue y el PR con cada rol asumido: `rol: <rol>` (en BRVTAL, `role: <role>` en inglés); si aún no sabes cuál, `rol: pendiente` / `role: pending`.
+**En todos los repos (factory, Condor, GrindFlow, BRVTAL, FactoryRunner, ControlBot, AutoFactory):** antes de implementar, carga el **perfil completo** de cada rol desde [`pl0n3r/factory/agentes/roles/`](https://github.com/pl0n3r/factory/tree/main/agentes/roles) (`<rol>.md`) y completa su checklist en el PR; la tabla de arriba es solo el resumen. Etiqueta el Issue y el PR con cada rol asumido: `rol: <rol>` (en BRVTAL, `role: <role>` en inglés); si aún no sabes cuál, `rol: pendiente` / `role: pending`.
 
 ---
 
@@ -172,7 +174,7 @@ Toma la **primera** tanda cuya condición de "terminada" no se cumple:
 | Tanda | Terminada cuando |
 | --- | --- |
 | **1** | pl0n3r/Condor#1, pl0n3r/GrindFlow#2 y pl0n3r/brvtal#533 tienen el comentario "🟢 PRODUCCIÓN EN VERDE"/"🟢 PRODUCTION GREEN" con evidencia **y** pl0n3r/factory tiene el tag `v1.0.0` |
-| **2** | Los épicos pl0n3r/Condor#192, pl0n3r/GrindFlow#129 y pl0n3r/brvtal#630 están cerrados como completados |
+| **2** | Los épicos pl0n3r/Condor#192, pl0n3r/GrindFlow#129, pl0n3r/brvtal#630 y pl0n3r/FactoryRunner#1 están cerrados como completados |
 | **3** | Continua: desarrollo normal |
 
 - Si tu repo ya cumplió su parte y otro no, **no avances**: comenta en tu épico que esperas y detente.
@@ -181,7 +183,7 @@ Toma la **primera** tanda cuya condición de "terminada" no se cumple:
 
 ### Definición de VERDE
 
-Aplica a Condor, GrindFlow y BRVTAL y, **desde su primer despliegue, también a ControlBot**:
+Aplica a Condor, GrindFlow y BRVTAL. **FactoryRunner** usa el mismo principio: antes de su primer runtime desplegado exige CI exact-main Node, tests/build reproducibles, release versionada y cero incidentes; desde su primer despliegue añade `/health` equivalente, smoke y SHA exacto.
 
 1. `/health` (o equivalente) responde 200 con la versión y el SHA exactos de main y, si aplica, `schema_up_to_date: true`.
 2. Home, login del admin y el panel principal del admin responden sin 5xx.
@@ -189,7 +191,7 @@ Aplica a Condor, GrindFlow y BRVTAL y, **desde su primer despliegue, también a 
 4. No queda ningún Issue abierto de incidente (`tipo: incidente`/`type: incident`) ni ningún `[AUTO]` de fallo de producción.
 5. El último CI de main pasa.
 
-**AutoFactory es una extensión, no un servicio web.** Su equivalente de entrega VERDE no usa `/health` ni deploy de servidor: CI del SHA exacto en verde; paquete/artefacto versionado reproducible para Chrome y Safari cuando aplique; smoke de instalación/carga sobre los navegadores soportados; cero incidentes/`[AUTO]` abiertos de la extensión; y una versión anterior instalable como reversión.
+**ControlBot y AutoFactory no forman parte del gate automático de productos.** Conservan sus contratos de salud/entrega cuando se trabajen en modo dirigido, sin bloquear la cola Condor/GrindFlow/BRVTAL/FactoryRunner.
 
 ---
 
@@ -197,9 +199,9 @@ Aplica a Condor, GrindFlow y BRVTAL y, **desde su primer despliegue, también a 
 
 - Migraciones aditivas automáticas con backup en post-deploy (Condor D-054).
 - Escrituras autónomas en producción durante la fase de desarrollo (Condor #185, GrindFlow #126, brvtal #628), con backup previo. **SQL destructivo o borrado irreversible siguen requiriendo autorización.**
-- Sistema común de releases del kit en todos los proyectos, incluidos ControlBot y AutoFactory (en BRVTAL reemplaza a `update-release-metadata.yml`).
+- Sistema común de releases del kit en los cuatro productos canónicos: Condor, GrindFlow, BRVTAL y FactoryRunner (en BRVTAL reemplaza a `update-release-metadata.yml`). ControlBot y AutoFactory conservan sus contratos cuando se trabajen en modo dirigido.
 - Etiquetas obligatorias (tipo + prioridad + estado) en todo Issue y PR (BRVTAL en inglés).
-- **ControlBot es el centro de control privado de la fábrica** (pl0n3r/ControlBot): dashboard, decisiones del dueño y orquestación viven allí; nunca se publican en GitHub Pages ni en una URL pública. AutoFactory es la extensión que integra agentes de ChatGPT web con ControlBot (AutoFactory#1).
+- **ControlBot es el centro de control privado de la fábrica** (pl0n3r/ControlBot): dashboard, decisiones y orquestación viven allí. **FactoryRunner** es el execution plane autónomo de la cola canónica. **AutoFactory** queda como herramienta local/manual independiente y no se modifica por la cola automática.
 - Roles profesionales por tarea (factory#2).
 - Factory no genera trabajo para el dueño.
 - **Uso de Hostinger (D-059), para todos los agentes conectados al MCP remoto de Hostinger, incluidos Claude y GPT:** mirar y diagnosticar es libre; cambiar DNS, bases de datos, cron o despliegues exige backup previo y dejarlo registrado en el Issue; borrar sitios, bases de datos o archivos requiere autorización explícita del dueño; **comprar, renovar o cambiar planes y pagos nunca lo hace un agente** (es una decisión de dinero del dueño).
@@ -248,30 +250,30 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 
 ---
 
-## TANDA 2: adoptar el kit (Condor, GrindFlow, BRVTAL, ControlBot y AutoFactory)
+## TANDA 2: adoptar el kit (Condor, GrindFlow, BRVTAL y FactoryRunner)
 
-Guía: el comentario de adopción en tu épico (Condor#192, GrindFlow#129, brvtal#630 y **ControlBot#2**).
+Guía: el comentario de adopción en tu épico (Condor#192, GrindFlow#129, brvtal#630 y **FactoryRunner#1**).
 
-**ControlBot y AutoFactory** adoptan el kit en esta tanda, pero **no bloquean** el paso de Condor, GrindFlow y BRVTAL a la tanda 3. En ControlBot, #2 va antes que cualquier funcionalidad. AutoFactory adopta solo capacidades compatibles con una extensión: CI JavaScript, coordinación, etiquetas, releases, política, métricas y monitoreo de artefactos; sin inventar un servidor.
+**FactoryRunner** adopta Factory v1 desde su primer PR funcional: Node.js 24/TypeScript, CI `stack: node`, coordinación, etiquetas, aceptación, roles, política, privacidad y release. ControlBot y AutoFactory quedan fuera de esta cola automática; sus adopciones previas se conservan y se trabajan solo en modo dirigido.
 
 1. Reemplaza CI, coordinación, etiquetas, release, observador/smoke y deploy locales por reusable workflows del kit (`uses: pl0n3r/factory/...@v1`) cuando la superficie exista. Elimina copias locales divergentes.
 2. Crea `decisiones.yml` con la lista de la sección 7.
 3. Adopta el núcleo común de AGENTES.md del kit y conserva solo la capa propia del proyecto.
-4. En productos web y ControlBot, activa deploy con rollback, merge queue/auto-merge, métricas y monitoreo. **En AutoFactory, el equivalente es empaquetado/release versionado y reversible de la extensión; no hay deploy de servidor.**
-5. Cierra como resueltos por el kit: Condor #188 y #190; GrindFlow #123, #124 y #125; brvtal #624, #625 y #627.
-6. Valida con un PR de prueba que pase el CI del kit y se integre. Para productos web/ControlBot debe terminar en producción validada o rollback automático. **Para AutoFactory debe producir el artefacto exacto de la extensión, pasar smoke de instalación/carga en Chrome y Safari cuando aplique, y conservar una versión anterior instalable como rollback.**
+4. En Condor, GrindFlow y BRVTAL activa deploy con rollback, merge queue/auto-merge, métricas y monitoreo. En FactoryRunner activa CI Node, coordinación, release, métricas y health del runner; no inventes deploy de browser/runtime hasta que exista un target ejecutable.
+5. Cierra como resueltos por el kit: Condor #188 y #190; GrindFlow #123, #124 y #125; brvtal #624, #625 y #627; FactoryRunner #1 cuando su bootstrap y CI exacto estén integrados.
+6. Valida con un PR de prueba que pase el CI del kit y se integre. Condor, GrindFlow y BRVTAL deben terminar en producción validada o rollback automático. FactoryRunner debe terminar con CI Node exact-main, tests/build reproducibles, release versionada y cero incidentes; cuando tenga runtime desplegado, añade health/smoke exactos.
 
-Condor, GrindFlow, BRVTAL y ControlBot solo terminan su adopción con sus 5 puntos de VERDE. AutoFactory termina con el equivalente de extensión definido en §6. Publica la evidencia en el Roadmap/Issue canónico y detente.
+Los cuatro productos solo terminan su adopción con evidencia publicada en su Roadmap/Issue canónico.
 
 ---
 
 ## TANDA 3: desarrollo normal
 
-Retoma desde tu Roadmap (Condor#1, GrindFlow#2, brvtal#533 y ControlBot#1), donde estaba antes de la auditoría, más los Issues críticos y altos:
+Retoma desde tu Roadmap (Condor#1, GrindFlow#2, brvtal#533 y FactoryRunner#1), donde estaba antes de la auditoría, más los Issues críticos y altos:
 - Condor: #183/#184 (pedidos, e-commerce y stock) y #191 (recuperación de cuenta y cambio de contraseña).
 - GrindFlow: #127 (recuperación de cuenta y cambio de contraseña).
 - BRVTAL: #629 (account recovery and password change) y #623 si sigue abierto.
-- **ControlBot:** después de #2, MVP en este orden: #3 (aprobaciones con un clic), #4 (centro de decisiones), dashboard y dirección visual #18; luego #5–#17 según prioridad.
-- **AutoFactory:** #1 (puente con ControlBot: identidad de cuenta, latido, órdenes y límites).
+- **FactoryRunner:** continúa su roadmap #1: runner identity/heartbeat → órdenes/eventos → adapters programáticos → browser execution compatible con el target de hosting.
+- **ControlBot / AutoFactory:** solo modo dirigido o dependencia explícita; no compiten en la cola automática de producto.
 
 Elige siempre el siguiente trabajo así: **incidente de producción > prioridad crítica > alta > media**, y dentro de la misma prioridad, el que desbloquea más trabajo.

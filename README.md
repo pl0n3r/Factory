@@ -1,6 +1,6 @@
 # 🏭 Factory: la fábrica de software de pl0n3r
 
-**Factory es el "manual y la caja de herramientas" que comparten todos los proyectos.** En vez de que cada proyecto (Condor, GrindFlow, BRVTAL…) tenga sus propias reglas, su propio CI y sus propios scripts copiados y cada vez más distintos, todo eso vive **una sola vez aquí** y los proyectos lo usan.
+**Factory es el "manual y la caja de herramientas" que comparten todos los proyectos.** En vez de que cada proyecto (Condor, GrindFlow, BRVTAL, FactoryRunner…) tenga sus propias reglas, su propio CI y sus propios scripts copiados y cada vez más distintos, todo eso vive **una sola vez aquí** y los proyectos lo usan.
 
 > **En una frase:** aquí se define *cómo* se construye el software; en cada proyecto solo se define *qué* se construye.
 
@@ -28,6 +28,7 @@ flowchart LR
     F["🏭 factory<br/>reglas + CI + scripts"] --> C["Condor"]
     F --> G["GrindFlow"]
     F --> B["BRVTAL"]
+    F --> R["FactoryRunner"]
     F --> N["Proyecto nuevo<br/>(desde el template)"]
 ```
 
@@ -81,7 +82,7 @@ El canal `v1` solo cambia mediante una puerta humana ligada al SHA exacto. Los c
 | Catálogo canónico de etiquetas (#100/#105) | ✅ Integrado en `main` |
 | Candidato de mantenimiento `v1.0.5` (#138) | 🚧 Hardening de eventos privilegiados en reusables; pendiente merge + gate protegido |
 | Release de mantenimiento `v1.x` | 🔐 Requiere puerta `factory-release` por SHA |
-| Adopción en Condor, GrindFlow y BRVTAL | 🚧 TANDA 2 en curso |
+| Adopción en Condor, GrindFlow, BRVTAL y FactoryRunner | 🚧 TANDA 2 en curso |
 | Revisión jurídica (#53) | 🧭 Decisión humana separada |
 | GitHub Pages de la cabina (#35) | 🧭 Default seguro B: no publicar |
 
@@ -95,7 +96,7 @@ El cierre histórico está resumido en **[docs/tanda1-handoff.md](docs/tanda1-ha
 | 2 | Primer canal `v1` + `v1.0.0` | ✅ Publicado y validado |
 | 3 | #100/#105 catálogo de etiquetas | ✅ Integrado en `main` |
 | 4 | Release protegido posterior | 🔐 `factory-release` + SHA exacto |
-| 5 | Condor#192 · GrindFlow#129 · brvtal#630 | 🚧 TANDA 2 |
+| 5 | Condor#192 · GrindFlow#129 · brvtal#630 · FactoryRunner#1 | 🚧 TANDA 2 |
 
 ---
 
@@ -116,7 +117,7 @@ El cierre histórico está resumido en **[docs/tanda1-handoff.md](docs/tanda1-ha
 Trabajas en el repositorio pl0n3r/Condor. Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md para este repositorio.
 ```
 
-Repositorios válidos: `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal`, `pl0n3r/factory`, `pl0n3r/ControlBot` (centro de control) y `pl0n3r/AutoFactory` (extensión de los agentes).
+**Cola automática de productos:** `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal` y `pl0n3r/FactoryRunner`. En modo dirigido también se puede trabajar en `pl0n3r/factory`, `pl0n3r/ControlBot` (control plane) y `pl0n3r/AutoFactory` (herramienta local/manual).
 
 **Modo despachador:**
 
@@ -156,8 +157,12 @@ Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
 | [Condor](https://github.com/pl0n3r/Condor) | Plataforma multi-empresa: catálogo, inventario, pedidos y tienda pública | [condorapp.com.co](https://www.condorapp.com.co) |
 | [GrindFlow](https://github.com/pl0n3r/GrindFlow) | SaaS de gestión corporativa | [grindflow.com.co](https://www.grindflow.com.co) |
 | [BRVTAL](https://github.com/pl0n3r/brvtal) | Sitio público y panel editorial DISCADMIN | [brvtal.com.co](https://www.brvtal.com.co) |
-| [ControlBot](https://github.com/pl0n3r/ControlBot) (privado) | Centro de control de la fábrica: dashboard, agentes, chat, despacho, decisiones y nuevos proyectos | En construcción (Hostinger, subdominio privado) |
-| [AutoFactory](https://github.com/pl0n3r/AutoFactory) (privado) | Extensión que mantiene trabajando los agentes de ChatGPT web | Chrome y Safari |
+| [FactoryRunner](https://github.com/pl0n3r/FactoryRunner) | Execution plane autónomo: agentes, órdenes, adapters y browser execution | En construcción · `control.condorapp.com.co` como target primario |
+
+### Infraestructura de control (fuera de la cola automática de producto)
+
+- **ControlBot:** centro de mando/control plane privado.
+- **AutoFactory:** herramienta local/manual independiente; no se modifica desde la cola automática.
 
 ---
 

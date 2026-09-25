@@ -30,7 +30,7 @@ La evidencia técnica de datos/licencias quedó integrada. Cerrar #12 **no equiv
 
 ## TANDA 2 · EN CURSO
 
-Los productos pueden adoptar el kit publicado en Condor#192, GrindFlow#129 y brvtal#630 siguiendo `PLAN-AGENTES.md`.
+La cola canónica actual adopta el kit publicado en Condor#192, GrindFlow#129, brvtal#630 y FactoryRunner#1 siguiendo `PLAN-AGENTES.md`. El cierre de TANDA 1 anterior permanece histórico y no se reescribe.
 
 Factory continúa manteniendo el kit. Un cambio en `main` no modifica por sí solo el canal publicado `@v1`: debe pasar el proceso de mantenimiento descrito en **[release-bootstrap.md](release-bootstrap.md)**.
 

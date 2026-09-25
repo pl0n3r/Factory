@@ -68,10 +68,9 @@ PROYECTOS = [
     Proyecto("BRVTAL", "pl0n3r/brvtal", "Sitio público y panel editorial DISCADMIN",
              "https://www.brvtal.com.co", "/api/health.php", VERSION_PATH,
              r"BRVTAL_APP_VERSION\s*=\s*'([^']+)'", 533, en=True),
-    Proyecto("factory", "pl0n3r/factory", "Reglas, kit común y plan de agentes de la fábrica",
-             None, None, "", "", 13),
-    Proyecto("ControlBot", "pl0n3r/ControlBot", "Centro de control privado de la fábrica",
-             None, None, "", "", 1),
+    Proyecto("FactoryRunner", "pl0n3r/FactoryRunner", "Execution plane autónomo de agentes y navegadores",
+             None, None, "config/version.json",
+             r'"version"\s*:\s*"([^"]+)"', 1),
 ]
 for _p in PROYECTOS:
     _p.etiquetas = etiquetas(_p.en)

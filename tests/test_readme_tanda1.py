@@ -20,9 +20,19 @@ class ReadmeTanda1Tests(unittest.TestCase):
             "TANDA 1 está cerrada",
             "Privacidad como código (#54) | ✅ Cerrado",
             "Publicación `v1.0.0` | ✅ Publicado + self-test en verde",
-            "Adopción en Condor, GrindFlow y BRVTAL | 🚧 TANDA 2 en curso",
+            "Adopción en Condor, GrindFlow, BRVTAL y FactoryRunner | 🚧 TANDA 2 en curso",
         ):
             self.assertIn(value, self.readme)
+
+    def test_tanda2_includes_factoryrunner(self):
+        self.assertIn(
+            "Condor#192 · GrindFlow#129 · brvtal#630 · FactoryRunner#1",
+            self.readme,
+        )
+        self.assertIn(
+            "Condor#192, GrindFlow#129, brvtal#630 y FactoryRunner#1",
+            self.handoff,
+        )
 
     def test_stale_pre_release_state_is_absent(self):
         for value in (
