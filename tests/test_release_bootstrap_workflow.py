@@ -80,6 +80,13 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(value, GUIDE)
 
+    def test_v1_0_0_probe_only_treats_404_as_absent(self):
+        preflight = BOOTSTRAP.split("\n  preflight:", 1)[1].split("\n  release:", 1)[0]
+        self.assertIn("gh api --include --silent", preflight)
+        self.assertIn("404([[:space:]]|$)", preflight)
+        self.assertIn("No se pudo determinar si existe v1.0.0", preflight)
+        self.assertIn("exit 1", preflight)
+
     def test_release_workflow_and_guide_match_v1_lifecycle(self):
         for value in (
             "name: Release Factory v1.x",

@@ -100,8 +100,14 @@ jobs:
           fi
 
           v1_0_0_exists=false
-          if gh api "repos/$REPOSITORY/git/ref/tags/v1.0.0" >/dev/null 2>&1; then
+          if response="$(gh api --include --silent "repos/$REPOSITORY/git/ref/tags/v1.0.0" 2>&1)"; then
             v1_0_0_exists=true
+          elif grep -Eq '^HTTP/[0-9.]+[[:space:]]+404([[:space:]]|$)' <<<"$response"; then
+            v1_0_0_exists=false
+          else
+            printf '%s\n' "$response" >&2
+            echo "::error::No se pudo determinar si existe v1.0.0" >&2
+            exit 1
           fi
 
           jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_sha "$EXPECTED_SHA"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg v1_sha "$v1_sha"             --argjson v1_0_0_exists "$v1_0_0_exists"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             '{
