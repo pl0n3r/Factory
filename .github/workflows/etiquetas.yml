@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: labels-${{ github.repository }}-${{ inputs.mode }}-${{ inputs.issue_number || github.run_id }}
+  group: labels-${{ github.repository }}-${{ inputs.mode }}-${{ inputs.issue_number }}
   cancel-in-progress: false
 
 jobs:
@@ -116,7 +116,7 @@ jobs:
             gh api "repos/$REPOSITORIO/issues/$closing" > /tmp/linked.json
           fi
           jq -n --slurpfile item /tmp/item.json --slurpfile linked /tmp/linked.json \
-            '{labels:$item[0].labels,is_pull_request:($item[0].pull_request != null),body:($item[0].body // ""),linked_labels:(if $linked[0] == null or $linked[0].pull_request != null then null else $linked[0].labels end)}' \
+            '{labels:$item[0].labels,is_pull_request:($item[0].pull_request != null),body:($item[0].body // ""),linked_issue:$linked[0]}' \
             | python3 .factory/scripts/labels_kit.py plan-validation --language "$LANGUAGE" > /tmp/plan.json
 
           jq -r '.add[]' /tmp/plan.json > /tmp/add-labels.txt

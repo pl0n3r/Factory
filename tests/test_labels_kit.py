@@ -8,6 +8,7 @@ from scripts.labels_kit import (
     LabelError,
     aliases_for_language,
     catalog_for_language,
+    linked_issue_names,
     sweep_issue_plan,
     validation_plan,
     warning_plan,
@@ -136,7 +137,15 @@ class LabelsKitTests(unittest.TestCase):
 
     def test_validation_plan_defaults_state_and_inherits_unique_closing_issue(self):
         catalog = catalog_for_language("en")
-        linked = {"type: infrastructure", "priority: high", "status: available"}
+        linked_issue = {
+            "state": "closed",
+            "labels": [
+                {"name": "type: infrastructure"},
+                {"name": "priority: high"},
+                {"name": "status: available"},
+            ],
+        }
+        linked = linked_issue_names(linked_issue)
         plan = validation_plan(
             catalog,
             set(),
@@ -150,6 +159,9 @@ class LabelsKitTests(unittest.TestCase):
             set(plan["add"]),
             {"type: infrastructure", "priority: high", "status: in review"},
         )
+
+        self.assertIsNone(linked_issue_names({**linked_issue, "state": "open"}))
+        self.assertIsNone(linked_issue_names({**linked_issue, "pull_request": {}}))
 
         ambiguous = validation_plan(
             catalog,

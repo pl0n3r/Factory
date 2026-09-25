@@ -191,6 +191,15 @@ def closing_issue_reference(body: str) -> int | None:
     references = {int(value) for value in CLOSING_REFERENCE.findall(body)}
     return next(iter(references)) if len(references) == 1 else None
 
+def linked_issue_names(raw: Any) -> set[str] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise LabelError("Issue enlazado inválido.")
+    if raw.get("state") != "closed" or raw.get("pull_request") is not None:
+        return None
+    return selected_names(raw.get("labels", []))
+
 def validation_plan(
     catalog: list[dict[str, str]],
     names: set[str],
@@ -355,12 +364,11 @@ def main() -> int:
             return 0
         if args.command == "plan-validation":
             document = json.load(sys.stdin)
-            if not isinstance(document, dict) or set(document) != {"labels", "is_pull_request", "body", "linked_labels"}:
+            if not isinstance(document, dict) or set(document) != {"labels", "is_pull_request", "body", "linked_issue"}:
                 raise LabelError("Documento de validación inválido.")
             if type(document["is_pull_request"]) is not bool or not isinstance(document["body"], str):
                 raise LabelError("Documento de validación fuera del contrato.")
-            linked_raw = document["linked_labels"]
-            linked = None if linked_raw is None else selected_names(linked_raw)
+            linked = linked_issue_names(document["linked_issue"])
             plan = validation_plan(
                 catalog,
                 selected_names(document["labels"]),
