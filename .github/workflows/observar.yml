@@ -107,11 +107,45 @@ jobs:
               ;;
           esac
 
-          gh api --paginate "repos/$REPOSITORY/issues?state=open&per_page=100" --jq '.[] | @json' > /tmp/open.ndjson
-          issue="$(python3 -c 'import json,sys; m=sys.argv[1]; ds=(json.loads(x) for x in open(sys.argv[2],encoding="utf-8")); print(next((str(d.get("number","")) for d in ds if (d.get("user") or {}).get("login")=="github-actions[bot]" and isinstance(d.get("body"),str) and m in d["body"].splitlines()),""))' "$marker" /tmp/open.ndjson)"
+          gh api --paginate "repos/$REPOSITORY/issues?state=all&per_page=100" --jq '.[] | @json' > /tmp/all.ndjson
+          existing="$(jq -sr --arg marker "$marker" '
+            map(select(
+              (.user.login // "") == "github-actions[bot]"
+              and ((.body // "") | split("\n") | index($marker))
+            ))
+            | sort_by(.number)
+            | first // null
+            | if . == null then "" else [.number, .state] | @tsv end
+          ' /tmp/all.ndjson)"
+          issue=""
+          issue_state=""
+          if [[ -n "$existing" ]]; then
+            IFS=
+
+          detail="$(python3 -c 'import json,sys; print(json.load(open("/tmp/factory-observation.json")).get("error",sys.argv[1]))' "$default_detail")"
+          body="$marker"
+\n'"$failure_message"
+\n\n'"$detail_prefix $detail"
+          jq -n \
+            --arg title "$title" \
+            --arg body "$body" \
+            --arg incident "$incident_label" \
+            --arg priority "$priority_label" \
+            --arg state "$state_label" \
+            '{title:$title,body:$body,labels:[$incident,$priority,$state],state:"open"}' > /tmp/incident.json
+
+          if [[ -n "$issue" ]]; then
+            gh api --method PATCH "repos/$REPOSITORY/issues/$issue" --input /tmp/incident.json >/dev/null
+            gh issue comment "$issue" --repo "$REPOSITORY" --body "$body" >/dev/null
+          else
+            gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/incident.json >/dev/null
+          fi
+          exit 1
+\t' read -r issue issue_state <<<"$existing"
+          fi
 
           if [[ "$RESULT_CODE" == "0" ]]; then
-            if [[ -n "$issue" ]]; then
+            if [[ -n "$issue" && "$issue_state" == "open" ]]; then
               gh issue close "$issue" --repo "$REPOSITORY" --comment "$recovered_message" >/dev/null
             fi
             exit 0
