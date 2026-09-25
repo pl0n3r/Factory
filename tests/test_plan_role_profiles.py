@@ -17,7 +17,7 @@ class PlanRoleProfileTests(unittest.TestCase):
 
     def test_full_role_profiles_are_required(self):
         required = (
-            "En todos los repos (factory, Condor, GrindFlow, BRVTAL)",
+            "En todos los repos (factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory)",
             "perfil completo",
             "agentes/roles/",
             "completa su checklist en el PR",
