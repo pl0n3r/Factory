@@ -10,10 +10,16 @@ on:
       phase: {required: false, default: 'construccion', type: string}
       migration_mode: {required: false, default: 'none', type: string}
       live_migration_approved: {required: false, default: false, type: boolean}
+      transport: {required: false, default: 'none', type: string}
+      hostinger_ssh_host: {required: false, default: '', type: string}
+      hostinger_ssh_user: {required: false, default: '', type: string}
+      hostinger_ssh_port: {required: false, default: '', type: string}
+      hostinger_release_root: {required: false, default: '', type: string}
     secrets:
       DEPLOY_TOKEN: {required: false}
       DATABASE_URL: {required: false}
       DEPLOY_SSH_KEY: {required: false}
+      HOSTINGER_KNOWN_HOSTS: {required: false}
 permissions:
   contents: read
 concurrency:
@@ -59,6 +65,12 @@ jobs:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOSTINGER_KNOWN_HOSTS: ${{ secrets.HOSTINGER_KNOWN_HOSTS }}
+          DEPLOY_TRANSPORT: ${{ inputs.transport }}
+          HOSTINGER_SSH_HOST: ${{ inputs.hostinger_ssh_host }}
+          HOSTINGER_SSH_USER: ${{ inputs.hostinger_ssh_user }}
+          HOSTINGER_SSH_PORT: ${{ inputs.hostinger_ssh_port }}
+          HOSTINGER_RELEASE_ROOT: ${{ inputs.hostinger_release_root }}
           DOMAIN: ${{ inputs.domain }}
           HEALTH_PATH: ${{ inputs.health_path }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -67,6 +79,6 @@ jobs:
           LIVE_MIGRATION_APPROVED: ${{ inputs.live_migration_approved }}
         run: |
           set -euo pipefail
-          args=(--origin "$DOMAIN" --health-path "$HEALTH_PATH" --version "$VERSION" --sha "$GITHUB_SHA" --phase "$PHASE" --migration-mode "$MIGRATION_MODE")
+          args=(--origin "$DOMAIN" --health-path "$HEALTH_PATH" --version "$VERSION" --sha "$GITHUB_SHA" --phase "$PHASE" --migration-mode "$MIGRATION_MODE" --transport "$DEPLOY_TRANSPORT")
           [[ "$LIVE_MIGRATION_APPROVED" == "true" ]] && args+=(--live-migration-approved)
           python3 .factory/scripts/deploy_kit.py "${args[@]}"
