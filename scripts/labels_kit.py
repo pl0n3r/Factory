@@ -147,10 +147,14 @@ def upsert_plan(
             raise LabelError("Alias de migración inválido.")
         if old_name not in current:
             continue
-        if new_name in current or new_name in renamed_targets:
+        if new_name in current:
+            # Si alias y destino canónico ya coexisten, conservar el canónico.
+            # El bucle normal de catálogo actualizará su metadata si hay drift.
+            continue
+        if new_name in renamed_targets:
             raise LabelError(
                 f"No se puede renombrar {old_name!r} a {new_name!r}: "
-                "la etiqueta destino ya existe."
+                "otro alias del plan ya reclama la etiqueta destino."
             )
         plan.append(
             {
