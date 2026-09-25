@@ -53,11 +53,30 @@ class WorkflowEventGuardTests(unittest.TestCase):
     def test_guard_allows_current_non_privileged_events(self) -> None:
         ci = self.text("ci.yml")
         self.assertIn("pull_request|push|merge_group", ci)
+        self.assertIn(
+            "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+            ci,
+        )
+        self.assertNotIn(
+            "if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'\n    runs-on: ubuntu-latest\n    timeout-minutes: 20",
+            ci,
+        )
         for name in ("preview.yml", "aceptacion.yml"):
             text = self.text(name)
             self.assertIn('[[ "$EVENT_NAME" == "pull_request" ]]', text)
         deploy = self.text("deploy.yml")
         self.assertIn("workflow_dispatch|push)", deploy)
+
+    def test_write_capable_push_does_not_run_consumer_php_or_node(self) -> None:
+        ci = self.text("ci.yml")
+        php = ci[ci.index("  php:"):ci.index("  node:")]
+        node = ci[ci.index("  node:"):ci.index("  validar:")]
+        self.assertIn("pull_request", php)
+        self.assertIn("merge_group", php)
+        self.assertNotIn("github.event_name == 'push'", php)
+        self.assertIn("pull_request", node)
+        self.assertIn("merge_group", node)
+        self.assertNotIn("github.event_name == 'push'", node)
 
     def test_docs_define_event_contract(self) -> None:
         agents = (ROOT / "AGENTES.md").read_text(encoding="utf-8")
