@@ -86,7 +86,7 @@ class LabelsKitTests(unittest.TestCase):
         self.assertEqual(plan[0]["action"], "update")
         self.assertEqual(plan[0]["name"], self.catalog[0]["name"])
 
-    def test_upsert_plan_renames_legacy_labels_without_recreating_them(self):
+    def test_alias_renames_when_canonical_is_absent(self):
         aliases = aliases_for_language("es")
         existing = [
             {"name": "prioridad: normal", "color": "C5DEF5", "description": "legacy"},
@@ -104,17 +104,54 @@ class LabelsKitTests(unittest.TestCase):
             )
         )
 
-    def test_upsert_plan_fails_closed_if_legacy_and_target_coexist(self):
+    def test_alias_and_canonical_can_coexist_idempotently(self):
         existing = [
-            {"name": "prioridad: normal", "color": "C5DEF5", "description": "legacy"},
-            {"name": "prioridad: media", "color": "FBCA04", "description": "canonical"},
+            {
+                "name": item["name"],
+                "color": item["color"],
+                "description": item["description"],
+            }
+            for item in self.catalog
         ]
-        with self.assertRaises(LabelError):
-            upsert_plan(
-                self.catalog,
-                existing,
-                aliases=aliases_for_language("es"),
-            )
+        existing.append(
+            {"name": "prioridad: normal", "color": "C5DEF5", "description": "legacy"}
+        )
+
+        plan = upsert_plan(
+            self.catalog,
+            existing,
+            aliases=aliases_for_language("es"),
+        )
+
+        self.assertEqual(plan, [])
+
+    def test_alias_and_canonical_updates_canonical_metadata(self):
+        existing = [
+            {
+                "name": item["name"],
+                "color": item["color"],
+                "description": item["description"],
+            }
+            for item in self.catalog
+        ]
+        canonical = next(
+            item for item in existing if item["name"] == "prioridad: media"
+        )
+        canonical["color"] = "FFFFFF"
+        canonical["description"] = "drift"
+        existing.append(
+            {"name": "prioridad: normal", "color": "C5DEF5", "description": "legacy"}
+        )
+
+        plan = upsert_plan(
+            self.catalog,
+            existing,
+            aliases=aliases_for_language("es"),
+        )
+
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0]["action"], "update")
+        self.assertEqual(plan[0]["name"], "prioridad: media")
 
     def test_english_aliases_cover_real_repo_legacy_names(self):
         aliases = aliases_for_language("en")
