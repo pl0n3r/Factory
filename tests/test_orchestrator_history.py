@@ -57,6 +57,23 @@ class OrchestratorHistoryTests(unittest.TestCase):
         ):
             _existing_tasks(issues, 143, [])
 
+    def test_closed_marker_with_duplicate_epic_still_fails_closed(self):
+        body = (
+            '<!-- factory-plan-task '
+            '{"version":1,"epic":99,"epic":143,"legacy_key":"OLD"}'
+            ' -->'
+        )
+
+        with self.assertRaisesRegex(
+            PlanError,
+            r"Issue #66 tiene marker de tarea inválido",
+        ):
+            _existing_tasks(
+                [{"number": 66, "state": "closed", "body": body}],
+                143,
+                [],
+            )
+
     def test_invalid_marker_on_active_task_still_fails_closed(self):
         issues = [
             {

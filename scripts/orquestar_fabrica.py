@@ -70,9 +70,23 @@ def _invalid_marker_epic(body: str) -> int | None:
     end = body.find(suffix, start)
     if end < 0:
         return None
+    def reject_ambiguous_epic(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        epic_seen = False
+        for key, value in pairs:
+            if key == "epic":
+                if epic_seen:
+                    raise ValueError("epic duplicado")
+                epic_seen = True
+            result[key] = value
+        return result
+
     try:
-        raw = json.loads(body[start:end].strip())
-    except json.JSONDecodeError:
+        raw = json.loads(
+            body[start:end].strip(),
+            object_pairs_hook=reject_ambiguous_epic,
+        )
+    except (json.JSONDecodeError, ValueError):
         return None
     if not isinstance(raw, dict):
         return None
