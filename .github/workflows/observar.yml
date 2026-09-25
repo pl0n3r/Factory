@@ -10,6 +10,7 @@ on:
       version_key: {required: false, default: 'version', type: string}
       expected_sha: {required: false, default: '', type: string}
       require_schema: {required: false, default: false, type: boolean}
+      label_language: {required: false, default: 'es', type: string}
 permissions:
   contents: read
 jobs:
@@ -26,9 +27,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          LABEL_LANGUAGE: ${{ inputs.label_language }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in schedule|workflow_dispatch) ;; *) echo "::error::Observación solo acepta schedule/workflow_dispatch"; exit 1 ;; esac
+          case "$LABEL_LANGUAGE" in es|en) ;; *) echo "::error::label_language inválido"; exit 1 ;; esac
           [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::Observación solo acepta la rama principal"; exit 1; }
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -70,16 +73,66 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RESULT_CODE: ${{ steps.smoke.outputs.code }}
+          LABEL_LANGUAGE: ${{ inputs.label_language }}
         run: |
           set -euo pipefail
           marker='<!-- factory-auto-observer -->'
+          catalog=".factory/labels/$LABEL_LANGUAGE.json"
+
+          label_by_key() {
+            jq -er --arg key "$1" '
+              [.[] | select(.key == $key) | .name]
+              | if length == 1 then .[0] else error("label key inválida") end
+            ' "$catalog"
+          }
+
+          incident_label="$(label_by_key type_incident)"
+          priority_label="$(label_by_key priority_critical)"
+          state_label="$(label_by_key state_available)"
+
+          case "$LABEL_LANGUAGE" in
+            es)
+              title="[AUTO] fallo de observación"
+              failure_message="Observación automática falló sin mutar producción."
+              detail_prefix="Detalle sanitizado:"
+              recovered_message="🟢 Observación recuperada."
+              default_detail="Fallo de observación"
+              ;;
+            en)
+              title="[AUTO] observation failure"
+              failure_message="Automatic observation failed without mutating production."
+              detail_prefix="Sanitized detail:"
+              recovered_message="🟢 Observation recovered."
+              default_detail="Observation failed"
+              ;;
+          esac
+
           gh api --paginate "repos/$REPOSITORY/issues?state=open&per_page=100" --jq '.[] | @json' > /tmp/open.ndjson
           issue="$(python3 -c 'import json,sys; m=sys.argv[1]; ds=(json.loads(x) for x in open(sys.argv[2],encoding="utf-8")); print(next((str(d.get("number","")) for d in ds if (d.get("user") or {}).get("login")=="github-actions[bot]" and isinstance(d.get("body"),str) and m in d["body"].splitlines()),""))' "$marker" /tmp/open.ndjson)"
+
           if [[ "$RESULT_CODE" == "0" ]]; then
-            if [[ -n "$issue" ]]; then gh issue close "$issue" --repo "$REPOSITORY" --comment "🟢 Observación recuperada." >/dev/null; fi
+            if [[ -n "$issue" ]]; then
+              gh issue close "$issue" --repo "$REPOSITORY" --comment "$recovered_message" >/dev/null
+            fi
             exit 0
           fi
-          detail="$(python3 -c 'import json; print(json.load(open("/tmp/factory-observation.json")).get("error","Fallo de observación"))')"
-          body="$marker"$'\n'"Observación automática falló sin mutar producción."$'\n\n'"Detalle sanitizado: $detail"
-          if [[ -n "$issue" ]]; then gh issue comment "$issue" --repo "$REPOSITORY" --body "$body" >/dev/null; else gh issue create --repo "$REPOSITORY" --title "[AUTO] fallo de observación" --label "tipo: incidente" --label "prioridad: crítica" --label "estado: disponible" --body "$body" >/dev/null; fi
+
+          detail="$(python3 -c 'import json,sys; print(json.load(open("/tmp/factory-observation.json")).get("error",sys.argv[1]))' "$default_detail")"
+          body="$marker"
+\n'"$failure_message"
+\n\n'"$detail_prefix $detail"
+          jq -n \
+            --arg title "$title" \
+            --arg body "$body" \
+            --arg incident "$incident_label" \
+            --arg priority "$priority_label" \
+            --arg state "$state_label" \
+            '{title:$title,body:$body,labels:[$incident,$priority,$state]}' > /tmp/incident.json
+
+          if [[ -n "$issue" ]]; then
+            gh api --method PATCH "repos/$REPOSITORY/issues/$issue" --input /tmp/incident.json >/dev/null
+            gh issue comment "$issue" --repo "$REPOSITORY" --body "$body" >/dev/null
+          else
+            gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/incident.json >/dev/null
+          fi
           exit 1
