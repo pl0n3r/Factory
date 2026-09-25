@@ -87,9 +87,19 @@ jobs:
           php-version: ${{ inputs.php_version }}
           coverage: none
       - name: Validar Composer
-        run: >-
-          python3 .factory/scripts/consumer_ci.py composer-validate
-          --working-directory "${{ inputs.working_directory }}"
+        env:
+          WORKDIR: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+          cd "$WORKDIR"
+          if [[ -f composer.json ]]; then
+            env \
+              -u ACTIONS_CACHE_URL \
+              -u ACTIONS_RUNTIME_TOKEN \
+              -u ACTIONS_RESULTS_URL \
+              -u ACTIONS_CACHE_SERVICE_V2 \
+              composer validate --strict
+          fi
       - name: Instalar Composer bloqueado
         if: hashFiles(format('{0}/composer.lock', inputs.working_directory)) != ''
         uses: ./.factory/actions/retry
@@ -97,10 +107,46 @@ jobs:
           working-directory: ${{ inputs.working_directory }}
           operation: composer-install
       - name: Sintaxis y pruebas PHP
-        run: >-
-          python3 .factory/scripts/consumer_ci.py php-contract
-          --working-directory "${{ inputs.working_directory }}"
-          --stack "${{ inputs.stack }}"
+        env:
+          WORKDIR: ${{ inputs.working_directory }}
+          STACK: ${{ inputs.stack }}
+        run: |
+          set -euo pipefail
+          cd "$WORKDIR"
+          safe_env=(
+            env
+            -u ACTIONS_CACHE_URL
+            -u ACTIONS_RUNTIME_TOKEN
+            -u ACTIONS_RESULTS_URL
+            -u ACTIONS_CACHE_SERVICE_V2
+          )
+
+          while IFS= read -r -d '' file; do
+            "${safe_env[@]}" php -l "$file"
+          done < <(find . -type f -name '*.php' -not -path './vendor/*' -print0)
+
+          if [[ -f composer.json ]]; then
+            has_test="$(
+              python3 - <<'PY'
+import json
+
+with open("composer.json", encoding="utf-8") as handle:
+    payload = json.load(handle)
+scripts = payload.get("scripts")
+print("true" if isinstance(scripts, dict) and "test" in scripts else "false")
+PY
+            )"
+            if [[ "$has_test" == "true" ]]; then
+              "${safe_env[@]}" composer test --no-interaction
+              exit 0
+            fi
+          fi
+
+          if [[ "$STACK" == "symfony" && -f vendor/bin/simple-phpunit ]]; then
+            "${safe_env[@]}" vendor/bin/simple-phpunit
+          elif [[ "$STACK" == "laravel" && -f artisan ]]; then
+            "${safe_env[@]}" php artisan test
+          fi
   node:
     name: Node opcional
     if: inputs.node_enabled && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
@@ -126,9 +172,20 @@ jobs:
           working-directory: ${{ inputs.working_directory }}
           operation: npm-ci
       - name: Pruebas y build Node
-        run: >-
-          python3 .factory/scripts/consumer_ci.py node-test-build
-          --working-directory "${{ inputs.working_directory }}"
+        env:
+          WORKDIR: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+          cd "$WORKDIR"
+          safe_env=(
+            env
+            -u ACTIONS_CACHE_URL
+            -u ACTIONS_RUNTIME_TOKEN
+            -u ACTIONS_RESULTS_URL
+            -u ACTIONS_CACHE_SERVICE_V2
+          )
+          "${safe_env[@]}" npm test --if-present
+          "${safe_env[@]}" npm run build --if-present
   validar:
     name: Validar
     needs: [event_guard, preflight, php, node]

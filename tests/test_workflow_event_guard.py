@@ -42,14 +42,14 @@ class WorkflowEventGuardTests(unittest.TestCase):
         for event in forbidden:
             self.assertNotIn(f"{event})", guard)
 
-    def test_consumer_commands_use_cache_sanitizing_factory_runner(self) -> None:
+    def test_consumer_commands_strip_cache_credentials_without_candidate_runner_dependency(self) -> None:
         ci = self.text("ci.yml")
-        self.assertIn(".factory/scripts/consumer_ci.py composer-validate", ci)
-        self.assertIn(".factory/scripts/consumer_ci.py php-contract", ci)
-        self.assertIn(".factory/scripts/consumer_ci.py node-test-build", ci)
-        self.assertNotIn("composer validate --strict", ci)
-        self.assertNotIn("npm test --if-present", ci)
-        runner = (ROOT / "scripts" / "consumer_ci.py").read_text(encoding="utf-8")
+        self.assertNotIn(".factory/scripts/consumer_ci.py", ci)
+        self.assertIn("composer validate --strict", ci)
+        self.assertIn('scripts = payload.get("scripts")', ci)
+        self.assertIn('isinstance(scripts, dict) and "test" in scripts', ci)
+        self.assertIn("npm test --if-present", ci)
+        self.assertIn("npm run build --if-present", ci)
         retry = (ROOT / "scripts" / "ci_retry.py").read_text(encoding="utf-8")
         for key in (
             "ACTIONS_CACHE_URL",
@@ -57,10 +57,21 @@ class WorkflowEventGuardTests(unittest.TestCase):
             "ACTIONS_RESULTS_URL",
             "ACTIONS_CACHE_SERVICE_V2",
         ):
-            self.assertIn(key, runner)
+            self.assertGreaterEqual(ci.count(f"-u {key}"), 3)
             self.assertIn(key, retry)
-        self.assertIn("env=sanitized_environment()", runner)
         self.assertIn("env=environment", retry)
+
+    def test_privacy_reusables_are_read_only_cache_consumers(self) -> None:
+        for name in ("privacidad.yml", "auditoria-privacidad.yml"):
+            with self.subTest(workflow=name):
+                text = self.text(name)
+                cache_lines = [
+                    line.strip()
+                    for line in text.splitlines()
+                    if line.strip().startswith("cache-mode:")
+                ]
+                self.assertEqual(cache_lines, ["cache-mode: read"])
+                self.assertIn("actions/checkout@", text)
 
     def test_factory_lint_only_ignores_actionlint_cache_mode_parser_gap(self) -> None:
         workflow = self.text("factory-ci.yml")
