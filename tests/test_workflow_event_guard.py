@@ -89,7 +89,11 @@ class WorkflowEventGuardTests(unittest.TestCase):
         self.assertIn('FACTORY_RELEASE_BOOTSTRAP: ${{ inputs.factory_release_bootstrap }}', ci)
         self.assertIn('[[ "$REPOSITORY" == "pl0n3r/factory" && "$FACTORY_RELEASE_BOOTSTRAP" == "true" ]]', ci)
         self.assertIn(
-            "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+            "if: inputs.stack != 'node' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')",
+            ci,
+        )
+        self.assertIn(
+            "if: inputs.node_enabled && (github.event_name == 'pull_request' || github.event_name == 'merge_group')",
             ci,
         )
         self.assertNotIn(
