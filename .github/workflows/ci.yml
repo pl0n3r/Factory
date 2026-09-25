@@ -15,8 +15,26 @@ on:
 permissions:
   contents: read
 jobs:
+  event_guard:
+    name: Guardar contexto del caller
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Rechazar eventos privilegiados
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request|push|merge_group) ;;
+            *) echo "::error::CI reusable no acepta evento privilegiado/no permitido: $EVENT_NAME"; exit 1 ;;
+          esac
+
   preflight:
     name: Preflight reusable
+    needs: event_guard
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -50,6 +68,7 @@ jobs:
   php:
     name: PHP base
     needs: preflight
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -94,7 +113,7 @@ jobs:
           fi
   node:
     name: Node opcional
-    if: inputs.node_enabled
+    if: inputs.node_enabled && (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'merge_group')
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -124,7 +143,7 @@ jobs:
           npm run build --if-present
   validar:
     name: Validar
-    needs: [preflight, php, node]
+    needs: [event_guard, preflight, php, node]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

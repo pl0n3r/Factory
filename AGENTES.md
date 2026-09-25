@@ -72,3 +72,8 @@ Después de obtener la reserva con `/tomar`, revisa las etiquetas `rol: …` / `
 - Cambios de esquema, seguridad, deploy o UX pública requieren **revisión cruzada** por un rol distinto al implementador.
 - Los perfiles de rol complementan este contrato; no sustituyen `PLAN-AGENTES.md`, `decisiones.yml` ni las lecciones vigentes.
 
+
+
+## Contrato de eventos de reusable workflows
+
+Los reusables que hacen checkout o ejecutan código del repositorio consumidor deben fallar cerrado antes del checkout cuando el caller proviene de un evento privilegiado o no permitido. El CI base solo admite `pull_request`, `push` y `merge_group`; preview y aceptación solo admiten `pull_request`. No se permite ejecutar código del consumidor desde `pull_request_target`, `workflow_run`, `issue_comment`, `check_run`, `issues`, `schedule` ni `repository_dispatch`. Los workflows operativos que necesiten otros eventos deben validar explícitamente evento y rama principal antes del primer checkout.

@@ -432,6 +432,10 @@ Los productos se publican con la **integración Git de Hostinger** y un **cron c
 
 ## 11. Seguridad
 
+### 11.0 Contrato de eventos confiables para reusables
+
+Todo reusable que haga checkout o ejecute código del proyecto consumidor debe validar el evento **antes del primer checkout**. Para CI, los únicos eventos de código no privilegiado permitidos son `pull_request`, `push` y `merge_group`; preview y aceptación se limitan a `pull_request`. Eventos con contexto privilegiado o del repositorio base, incluidos `pull_request_target`, `workflow_run`, `issue_comment`, `check_run`, `issues`, `schedule` y `repository_dispatch`, se rechazan de forma explícita antes de cargar código del consumidor. Deploy/release/observación conservan sus allowlists operativas propias y validan evento + rama principal antes del checkout.
+
 ### 11.1 Modelo de amenazas (resumen)
 
 | Amenaza | Control |
