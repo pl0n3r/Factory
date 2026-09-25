@@ -8,6 +8,9 @@ from scripts.labels_kit import (
     LabelError,
     aliases_for_language,
     catalog_for_language,
+    sweep_issue_plan,
+    validation_plan,
+    warning_plan,
     load_catalog,
     selected_names,
     sweep,
@@ -130,6 +133,63 @@ class LabelsKitTests(unittest.TestCase):
         }
         invalid = {"number": 2, "labels": [{"name": "tipo: mejora"}]}
         self.assertEqual(sweep(self.catalog, [json.dumps(valid), json.dumps(invalid)]), [2])
+
+    def test_validation_plan_defaults_state_and_inherits_unique_closing_issue(self):
+        catalog = catalog_for_language("en")
+        linked = {"type: infrastructure", "priority: high", "status: available"}
+        plan = validation_plan(
+            catalog,
+            set(),
+            is_pull_request=True,
+            body="Closes #42",
+            linked_names=linked,
+        )
+        self.assertTrue(plan["valid"])
+        self.assertEqual(plan["closing_issue"], 42)
+        self.assertEqual(
+            set(plan["add"]),
+            {"type: infrastructure", "priority: high", "status: in review"},
+        )
+
+        ambiguous = validation_plan(
+            catalog,
+            set(),
+            is_pull_request=True,
+            body="Closes #42\nFixes #43",
+            linked_names=linked,
+        )
+        self.assertIsNone(ambiguous["closing_issue"])
+        self.assertEqual(set(ambiguous["add"]), {"status: in review"})
+        self.assertEqual(ambiguous["missing"], ["type", "priority"])
+
+        issue = validation_plan(catalog, set(), is_pull_request=False)
+        self.assertIn("status: available", issue["add"])
+        self.assertEqual(issue["missing"], ["type", "priority"])
+
+    def test_warning_plan_is_idempotent_and_clears_when_valid(self):
+        invalid = {"valid": False, "missing": ["priority"], "multiple": []}
+        first = warning_plan(invalid, "en")
+        second = warning_plan(invalid, "en")
+        self.assertEqual(first, second)
+        self.assertEqual(first["action"], "warn")
+        self.assertTrue(first["body"].startswith("<!-- factory-label-validation -->"))
+        self.assertIn("Incomplete classification", first["body"])
+
+        cleared = warning_plan({"valid": True, "missing": [], "multiple": []}, "en")
+        self.assertEqual(cleared["action"], "clear")
+        self.assertNotIn("Incomplete", cleared["body"])
+
+    def test_sweep_issue_plan_is_singleton_and_closes_at_zero(self):
+        catalog = catalog_for_language("en")
+        plan = sweep_issue_plan(catalog, [7, 3, 7], "en")
+        self.assertEqual(plan["action"], "upsert")
+        self.assertEqual(plan["title"], "[AUTO] Unlabeled items")
+        self.assertEqual(
+            set(plan["labels"]),
+            {"type: infrastructure", "priority: medium", "status: available"},
+        )
+        self.assertLess(plan["body"].index("#3"), plan["body"].index("#7"))
+        self.assertEqual(sweep_issue_plan(catalog, [], "en")["action"], "close")
 
     def test_low_level_loader_still_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:

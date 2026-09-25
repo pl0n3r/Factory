@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   etiquetas:
-    name: Gestionar etiquetas
+    name: Labels
     runs-on: ubuntu-latest
     timeout-minutes: 8
     permissions:
@@ -107,9 +107,40 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          gh api "repos/$REPOSITORIO/issues/$ISSUE_NUMBER" --jq '.labels' \
-            | python3 .factory/scripts/labels_kit.py validate-selection --language "$LANGUAGE"
+          gh api "repos/$REPOSITORIO/issues/$ISSUE_NUMBER" > /tmp/item.json
+          body="$(jq -r '.body // ""' /tmp/item.json)"
+          closing_json="$(printf '%s' "$body" | python3 .factory/scripts/labels_kit.py closing-reference --language "$LANGUAGE")"
+          closing="$(jq -r '.number // empty' <<<"$closing_json")"
+          printf 'null\n' > /tmp/linked.json
+          if [[ -n "$closing" ]]; then
+            gh api "repos/$REPOSITORIO/issues/$closing" > /tmp/linked.json
+          fi
+          jq -n --slurpfile item /tmp/item.json --slurpfile linked /tmp/linked.json \
+            '{labels:$item[0].labels,is_pull_request:($item[0].pull_request != null),body:($item[0].body // ""),linked_labels:(if $linked[0] == null then null else $linked[0].labels end)}' \
+            | python3 .factory/scripts/labels_kit.py plan-validation --language "$LANGUAGE" > /tmp/plan.json
 
+          jq -r '.add[]' /tmp/plan.json > /tmp/add-labels.txt
+          if [[ -s /tmp/add-labels.txt ]]; then
+            jq -Rn '[inputs] | {labels:.}' < /tmp/add-labels.txt > /tmp/add-labels.json
+            gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/labels" --input /tmp/add-labels.json >/dev/null
+          fi
+
+          marker='<!-- factory-label-validation -->'
+          comment_id="$(gh api --paginate "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/comments?per_page=100" --slurp \
+            | jq -r --arg marker "$marker" 'add // [] | map(select((.user.login // "") == "github-actions[bot]" and ((.body // "") | startswith($marker)))) | first | .id // empty')"
+          jq -r '.warning.body' /tmp/plan.json > /tmp/warning.md
+          jq -n --rawfile body /tmp/warning.md '{body:$body}' > /tmp/comment.json
+          warning_action="$(jq -r '.warning.action' /tmp/plan.json)"
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPOSITORIO/issues/comments/$comment_id" --input /tmp/comment.json >/dev/null
+          elif [[ "$warning_action" == "warn" ]]; then
+            gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/comments" --input /tmp/comment.json >/dev/null
+          fi
+
+          jq -e '.valid == true' /tmp/plan.json >/dev/null || {
+            echo "::error::Labels incompletas o duplicadas después de las reparaciones seguras"
+            exit 1
+          }
       - name: Barrer trabajo abierto
         if: inputs.mode == 'sweep'
         env:
@@ -118,5 +149,23 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          gh api --paginate "repos/$REPOSITORIO/issues?state=open&per_page=100" --jq '.[] | @json' \
-            | python3 .factory/scripts/labels_kit.py sweep --language "$LANGUAGE"
+          gh api --paginate "repos/$REPOSITORIO/issues?state=open&per_page=100" --jq '.[] | @json' > /tmp/open.ndjson
+          python3 .factory/scripts/labels_kit.py sweep-plan --language "$LANGUAGE" < /tmp/open.ndjson > /tmp/sweep-plan.json
+
+          marker='<!-- factory-auto-unlabeled -->'
+          gh api --paginate "repos/$REPOSITORIO/issues?state=all&per_page=100" --jq '.[] | @json' > /tmp/all.ndjson
+          auto_issue="$(jq -sr --arg marker "$marker" 'map(select((.user.login // "") == "github-actions[bot]" and ((.body // "") | startswith($marker)))) | sort_by(.number) | first | .number // empty' /tmp/all.ndjson)"
+          action="$(jq -r '.action' /tmp/sweep-plan.json)"
+
+          if [[ "$action" == "upsert" ]]; then
+            jq '{title:.title,body:.body,labels:.labels}' /tmp/sweep-plan.json > /tmp/auto-issue.json
+            if [[ -n "$auto_issue" ]]; then
+              gh api --method PATCH "repos/$REPOSITORIO/issues/$auto_issue" -f state=open --input /tmp/auto-issue.json >/dev/null
+            else
+              auto_issue="$(gh api --method POST "repos/$REPOSITORIO/issues" --input /tmp/auto-issue.json --jq '.number')"
+            fi
+            jq '{labels:.labels}' /tmp/sweep-plan.json > /tmp/auto-labels.json
+            gh api --method POST "repos/$REPOSITORIO/issues/$auto_issue/labels" --input /tmp/auto-labels.json >/dev/null
+          elif [[ "$action" == "close" && -n "$auto_issue" ]]; then
+            gh api --method PATCH "repos/$REPOSITORIO/issues/$auto_issue" -f state=closed -f state_reason=completed >/dev/null
+          fi

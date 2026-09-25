@@ -39,6 +39,9 @@ LEGACY_ALIASES = {
     },
 }
 MAX_CATALOG_BYTES = 512 * 1024
+WARNING_MARKER = "<!-- factory-label-validation -->"
+AUTO_MARKER = "<!-- factory-auto-unlabeled -->"
+CLOSING_REFERENCE = re.compile(r"\\b(?:closes|fixes|resolves)\\s+#([1-9][0-9]*)\\b", re.IGNORECASE)
 
 class LabelError(ValueError):
     pass
@@ -172,6 +175,128 @@ def upsert_plan(
             plan.append({"action": "update", **wanted})
     return plan
 
+def _catalog_name(catalog: list[dict[str, str]], key: str) -> str:
+    matches = [item["name"] for item in catalog if item["key"] == key]
+    if len(matches) != 1:
+        raise LabelError(f"Catálogo no contiene exactamente una etiqueta {key}.")
+    return matches[0]
+
+def _dimension_matches(catalog: list[dict[str, str]], names: set[str], prefix: str) -> set[str]:
+    allowed = {item["name"] for item in catalog if item["key"].startswith(prefix)}
+    return names & allowed
+
+def closing_issue_reference(body: str) -> int | None:
+    if not isinstance(body, str) or len(body) > 100_000:
+        raise LabelError("Body fuera del contrato para referencia de cierre.")
+    references = {int(value) for value in CLOSING_REFERENCE.findall(body)}
+    return next(iter(references)) if len(references) == 1 else None
+
+def validation_plan(
+    catalog: list[dict[str, str]],
+    names: set[str],
+    *,
+    is_pull_request: bool,
+    body: str = "",
+    linked_names: set[str] | None = None,
+) -> dict[str, Any]:
+    if type(is_pull_request) is not bool:
+        raise LabelError("is_pull_request debe ser booleano.")
+    additions: list[str] = []
+    planned = set(names)
+
+    if not _dimension_matches(catalog, planned, "state_"):
+        default_key = "state_review" if is_pull_request else "state_available"
+        default_name = _catalog_name(catalog, default_key)
+        additions.append(default_name)
+        planned.add(default_name)
+
+    closing = closing_issue_reference(body) if is_pull_request else None
+    if closing is not None and linked_names is not None:
+        for prefix in ("type_", "priority_"):
+            if _dimension_matches(catalog, planned, prefix):
+                continue
+            inherited = _dimension_matches(catalog, linked_names, prefix)
+            if len(inherited) == 1:
+                value = next(iter(inherited))
+                additions.append(value)
+                planned.add(value)
+
+    dimension_codes = {"type_": "type", "priority_": "priority", "state_": "state"}
+    missing: list[str] = []
+    multiple: list[str] = []
+    for prefix in DIMENSIONS:
+        matches = _dimension_matches(catalog, planned, prefix)
+        if not matches:
+            missing.append(dimension_codes[prefix])
+        elif len(matches) > 1:
+            multiple.append(dimension_codes[prefix])
+
+    return {
+        "add": sorted(set(additions)),
+        "closing_issue": closing,
+        "missing": missing,
+        "multiple": multiple,
+        "valid": not missing and not multiple,
+    }
+
+def warning_plan(plan: dict[str, Any], language: str) -> dict[str, str]:
+    if language not in CATALOGS:
+        raise LabelError("Idioma de warning inválido.")
+    valid = plan.get("valid") is True
+    if valid:
+        message = "✅ Clasificación completa." if language == "es" else "✅ Classification complete."
+        return {"action": "clear", "body": WARNING_MARKER + "\n" + message}
+    missing = plan.get("missing", [])
+    multiple = plan.get("multiple", [])
+    if not isinstance(missing, list) or not isinstance(multiple, list):
+        raise LabelError("Plan de warning inválido.")
+    controlled = {"type", "priority", "state"}
+    if any(item not in controlled for item in [*missing, *multiple]):
+        raise LabelError("Dimensión de warning inválida.")
+    if language == "es":
+        details = []
+        if missing:
+            details.append("faltan: " + ", ".join(missing))
+        if multiple:
+            details.append("duplicadas: " + ", ".join(multiple))
+        message = "⚠️ Clasificación incompleta (" + "; ".join(details) + ")."
+    else:
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if multiple:
+            details.append("multiple: " + ", ".join(multiple))
+        message = "⚠️ Incomplete classification (" + "; ".join(details) + ")."
+    return {"action": "warn", "body": WARNING_MARKER + "\n" + message}
+
+def sweep_issue_plan(
+    catalog: list[dict[str, str]], invalid: list[int], language: str
+) -> dict[str, Any]:
+    if language not in CATALOGS:
+        raise LabelError("Idioma de sweep inválido.")
+    if len(invalid) > 10_000 or any(type(number) is not int or number < 1 for number in invalid):
+        raise LabelError("Lista de Issues inválidos fuera del contrato.")
+    numbers = sorted(set(invalid))
+    labels = [
+        _catalog_name(catalog, "type_infrastructure"),
+        _catalog_name(catalog, "priority_medium"),
+        _catalog_name(catalog, "state_available"),
+    ]
+    if numbers:
+        heading = "Ítems abiertos sin clasificación completa:" if language == "es" else "Open items without complete classification:"
+        body = AUTO_MARKER + "\n" + heading + "\n\n" + "\n".join(f"- #{number}" for number in numbers)
+        action = "upsert"
+    else:
+        message = "✅ No quedan ítems abiertos sin clasificar." if language == "es" else "✅ No open items remain unclassified."
+        body = AUTO_MARKER + "\n" + message
+        action = "close"
+    return {
+        "action": action,
+        "body": body,
+        "labels": labels,
+        "title": "[AUTO] Unlabeled items",
+    }
+
 def sweep(catalog: list[dict[str, str]], lines: list[str]) -> list[int]:
     if len(lines) > 10_000:
         raise LabelError("Sweep excede el máximo de Issues permitido.")
@@ -200,7 +325,7 @@ def sweep(catalog: list[dict[str, str]], lines: list[str]) -> list[int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("validate-catalog", "validate-selection", "upsert-plan", "sweep"))
+    parser.add_argument("command", choices=("validate-catalog", "validate-selection", "upsert-plan", "closing-reference", "plan-validation", "sweep", "sweep-plan"))
     parser.add_argument("--language", choices=sorted(CATALOGS), required=True)
     args = parser.parse_args()
     try:
@@ -225,7 +350,32 @@ def main() -> int:
                 )
             )
             return 0
-        invalid = sweep(catalog, sys.stdin.readlines())
+        if args.command == "closing-reference":
+            print(json.dumps({"number": closing_issue_reference(sys.stdin.read())}, sort_keys=True))
+            return 0
+        if args.command == "plan-validation":
+            document = json.load(sys.stdin)
+            if not isinstance(document, dict) or set(document) != {"labels", "is_pull_request", "body", "linked_labels"}:
+                raise LabelError("Documento de validación inválido.")
+            if type(document["is_pull_request"]) is not bool or not isinstance(document["body"], str):
+                raise LabelError("Documento de validación fuera del contrato.")
+            linked_raw = document["linked_labels"]
+            linked = None if linked_raw is None else selected_names(linked_raw)
+            plan = validation_plan(
+                catalog,
+                selected_names(document["labels"]),
+                is_pull_request=document["is_pull_request"],
+                body=document["body"],
+                linked_names=linked,
+            )
+            plan["warning"] = warning_plan(plan, args.language)
+            print(json.dumps(plan, ensure_ascii=False, sort_keys=True))
+            return 0
+        lines = sys.stdin.readlines()
+        invalid = sweep(catalog, lines)
+        if args.command == "sweep-plan":
+            print(json.dumps(sweep_issue_plan(catalog, invalid, args.language), ensure_ascii=False, sort_keys=True))
+            return 0
         print(json.dumps({"invalid": invalid}, sort_keys=True))
         return 1 if invalid else 0
     except (LabelError, json.JSONDecodeError) as exc:

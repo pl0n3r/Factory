@@ -20,6 +20,17 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("--catalog", WF)
         self.assertNotIn("inputs.kit_ref", WF)
 
+    def test_validate_and_sweep_lifecycle_remains_metadata_only(self):
+        self.assertIn("name: Labels", WF)
+        self.assertIn("plan-validation", WF)
+        self.assertIn("sweep-plan", WF)
+        self.assertIn("<!-- factory-label-validation -->", WF)
+        self.assertIn("<!-- factory-auto-unlabeled -->", WF)
+        self.assertIn("pull-requests: read", WF)
+        self.assertNotIn("contents: write", WF)
+        self.assertNotIn("secrets: inherit", WF)
+        self.assertIn("repository: pl0n3r/factory", WF)
+
     def test_external_actions_are_sha_pinned(self):
         actions = re.findall(r"^\s*uses:\s*([^\s]+)", WF, flags=re.MULTILINE)
         self.assertTrue(actions)
