@@ -10,6 +10,7 @@ from scripts.labels_kit import (
     catalog_for_language,
     linked_issue_names,
     sweep_issue_plan,
+    validation_document_plan,
     validation_plan,
     warning_plan,
     load_catalog,
@@ -178,6 +179,17 @@ class LabelsKitTests(unittest.TestCase):
         self.assertIn("status: available", issue["add"])
         self.assertEqual(issue["missing"], ["type", "priority"])
 
+        with self.assertRaises(LabelError):
+            validation_plan(catalog, set(), is_pull_request=1)
+
+        document = {
+            "labels": [],
+            "is_pull_request": True,
+            "body": "Closes #42",
+            "linked_issue": linked_issue,
+        }
+        self.assertTrue(validation_document_plan(catalog, document, "en")["valid"])
+
     def test_warning_plan_is_idempotent_and_clears_when_valid(self):
         invalid = {"valid": False, "missing": ["priority"], "multiple": []}
         first = warning_plan(invalid, "en")
@@ -202,6 +214,9 @@ class LabelsKitTests(unittest.TestCase):
         )
         self.assertLess(plan["body"].index("#3"), plan["body"].index("#7"))
         self.assertEqual(sweep_issue_plan(catalog, [], "en")["action"], "close")
+
+        with self.assertRaises(LabelError):
+            sweep_issue_plan(catalog, [True], "en")
 
     def test_low_level_loader_still_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:

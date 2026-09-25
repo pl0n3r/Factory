@@ -208,7 +208,7 @@ def validation_plan(
     body: str = "",
     linked_names: set[str] | None = None,
 ) -> dict[str, Any]:
-    if type(is_pull_request) is not bool:
+    if not isinstance(is_pull_request, bool):
         raise LabelError("is_pull_request debe ser booleano.")
     additions: list[str] = []
     planned = set(names)
@@ -283,7 +283,10 @@ def sweep_issue_plan(
 ) -> dict[str, Any]:
     if language not in CATALOGS:
         raise LabelError("Idioma de sweep inválido.")
-    if len(invalid) > 10_000 or any(type(number) is not int or number < 1 for number in invalid):
+    if len(invalid) > 10_000 or any(
+        isinstance(number, bool) or not isinstance(number, int) or number < 1
+        for number in invalid
+    ):
         raise LabelError("Lista de Issues inválidos fuera del contrato.")
     numbers = sorted(set(invalid))
     labels = [
@@ -340,6 +343,30 @@ def sweep(catalog: list[dict[str, str]], lines: list[str]) -> list[int]:
             invalid.append(issue["number"])
     return invalid
 
+def validation_document_plan(
+    catalog: list[dict[str, str]],
+    document: Any,
+    language: str,
+) -> dict[str, Any]:
+    if not isinstance(document, dict) or set(document) != {
+        "labels",
+        "is_pull_request",
+        "body",
+        "linked_issue",
+    }:
+        raise LabelError("Documento de validación inválido.")
+    if not isinstance(document["is_pull_request"], bool) or not isinstance(document["body"], str):
+        raise LabelError("Documento de validación fuera del contrato.")
+    plan = validation_plan(
+        catalog,
+        selected_names(document["labels"]),
+        is_pull_request=document["is_pull_request"],
+        body=document["body"],
+        linked_names=linked_issue_names(document["linked_issue"]),
+    )
+    plan["warning"] = warning_plan(plan, language)
+    return plan
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -382,20 +409,7 @@ def main() -> int:
             print(json.dumps({"number": closing_issue_reference(sys.stdin.read())}, sort_keys=True))
             return 0
         if args.command == "plan-validation":
-            document = json.load(sys.stdin)
-            if not isinstance(document, dict) or set(document) != {"labels", "is_pull_request", "body", "linked_issue"}:
-                raise LabelError("Documento de validación inválido.")
-            if type(document["is_pull_request"]) is not bool or not isinstance(document["body"], str):
-                raise LabelError("Documento de validación fuera del contrato.")
-            linked = linked_issue_names(document["linked_issue"])
-            plan = validation_plan(
-                catalog,
-                selected_names(document["labels"]),
-                is_pull_request=document["is_pull_request"],
-                body=document["body"],
-                linked_names=linked,
-            )
-            plan["warning"] = warning_plan(plan, args.language)
+            plan = validation_document_plan(catalog, json.load(sys.stdin), args.language)
             print(json.dumps(plan, ensure_ascii=False, sort_keys=True))
             return 0
         lines = sys.stdin.readlines()
