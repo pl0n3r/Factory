@@ -43,6 +43,7 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
 
     def test_valid_maintenance_release_candidate(self):
         payload = valid_payload(gate_body=GATE_MAINTENANCE, v1_0_0_exists=True)
+        payload["repository"] = "pl0n3r/Factory"
         self.assertEqual(validate_payload(payload), {"status": "ready", "sha": SHA})
 
     def test_release_gate_lifecycle_is_fail_closed(self):
