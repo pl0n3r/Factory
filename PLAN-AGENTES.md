@@ -19,7 +19,7 @@
 6. Dentro de la misma prioridad, el trabajo que desbloquea más trabajo.
 
 Reglas del despachador:
-- **Nunca** tomes un repo donde otro agente tiene una reserva activa (actividad de menos de 30 minutos); pasa al siguiente candidato.
+- Una reserva activa conserva exclusividad para trabajo no planificado. Solo pueden coexistir líneas cuando el candidato y cada línea activa relevante están materializados por el orquestador, sus dependencias están completadas y los claims de paths son disjuntos. Si Factory no puede demostrarlo, falla cerrado y pasa al siguiente candidato. Tras perder una carrera de reserva, vuelve a evaluar el despacho sobre el estado actual.
 - Antes de bajar, **anuncia tu elección** como primer comentario del Issue elegido: `Despacho: elegí <repo>#<n> porque <regla N>`.
 - Al bajar al proyecto, lee su AGENTES.md/AGENTS.md y sigue este plan como si te hubieran dirigido ahí.
 - Al terminar ese trabajo, vuelve a aplicar el despacho desde el paso 1.
@@ -97,7 +97,7 @@ Ante fallo o carrera, se conserva la sesión anterior o se falla cerrado con che
 | Intentos del mismo enfoque que falla | **≤ 2**; al tercero **cambia de enfoque** o escala con evidencia |
 | Revisar CI/checks | **una vez** al terminar; **nunca polling** en bucle |
 | Comentarios en GitHub | uno por hito; nada de comentarios de progreso intermedio |
-| Agentes por repo | **uno** (factory admite un segundo, ver tanda 1) |
+| Agentes por repo | **uno por defecto**; para tareas planificadas, tantos como nodos listos con dependencias satisfechas y claims disjuntos demuestre el DAG |
 
 Trucos para gastar menos:
 - **Lee solo lo necesario:** busca con `grep`/búsqueda de código y abre los fragmentos relevantes, no archivos completos de miles de líneas.
@@ -252,7 +252,7 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 - Acciones fijadas a SHA, mínimo privilegio, `concurrency` y filtros `if:`.
 - Mantén el README al día: la tabla "Estado actual" refleja lo que ya existe.
 - Publica `v1.0.0` cuando #1 a #14 estén cerrados y el template pase su propio CI.
-- **Segundo agente opcional:** si ya hay otro agente en factory, tú solo tomas #5–#12, con archivos exclusivos `metricas/`, `seguridad/`, `docs/`, `lecciones/` y `.github/workflows/{metricas,costos,seguridad}.yml`. No tocas archivos del otro agente (abre un Issue si necesitas algo) y haces rebase sobre main antes de cada push.
+- **Paralelismo en factory:** no hay un cupo fijo de “segundo agente”. El trabajo no planificado conserva una sola línea activa; las tareas materializadas por el orquestador pueden coexistir únicamente con dependencias satisfechas y claims de paths disjuntos, y cada agente debe reevaluar el DAG si pierde una carrera de reserva.
 - Al terminar: comenta la guía de adopción del kit v1.0.0 en Condor#192, GrindFlow#129 y brvtal#630, y detente.
 
 ---

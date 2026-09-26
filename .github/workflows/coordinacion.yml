@@ -53,7 +53,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: coordination-${{ github.repository }}-${{ inputs.issue_number || inputs.pr_number || github.run_id }}
+  group: factory-coordination-${{ github.repository_id }}
   cancel-in-progress: false
 
 jobs:

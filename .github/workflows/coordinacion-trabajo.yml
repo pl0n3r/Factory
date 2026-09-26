@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: coordinacion-${{ github.event.issue.number || github.event.pull_request.head.ref || github.run_id }}
+  group: factory-coordination-${{ github.repository_id }}
   cancel-in-progress: false
 
 jobs:

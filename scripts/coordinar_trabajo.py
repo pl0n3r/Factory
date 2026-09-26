@@ -20,12 +20,19 @@ if __package__:
     from scripts.aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
     from scripts.orquestador_kit import (
         PlanError,
+        parallel_compatibility_evidence,
         parse_task_marker,
         reservation_blockers,
+        task_marker_fingerprint,
     )
 else:
     from aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
-    from orquestador_kit import PlanError, parse_task_marker, reservation_blockers
+    from orquestador_kit import (
+        PlanError,
+        parallel_compatibility_evidence,
+        parse_task_marker,
+        reservation_blockers,
+    )
 
 
 API_URL = os.getenv("GITHUB_API_URL", "https://api.github.com").rstrip("/")
@@ -436,10 +443,12 @@ def reservation_marker(
     active: bool,
     reason: str,
     acceptance_sha256: str | None = None,
+    task_marker: dict[str, Any] | None = None,
+    task_snapshot: dict[str, Any] | None = None,
 ) -> str:
-    """Serializa un marcador de reserva verificable por identidad del bot."""
+    """Serializa un marcador de reserva con aceptación y claims fijados."""
     payload: dict[str, Any] = {
-        "version": 2 if acceptance_sha256 is not None else 1,
+        "version": 1,
         "owner": owner,
         "reservation_id": reservation_id.lower(),
         "branch": branch,
@@ -449,9 +458,73 @@ def reservation_marker(
     if acceptance_sha256 is not None:
         if re.fullmatch(r"[0-9a-f]{64}", acceptance_sha256) is None:
             raise CoordinationError("Fingerprint de aceptación inválido.")
+        payload["version"] = 2
         payload["acceptance_sha256"] = acceptance_sha256
+
+    snapshot = task_snapshot
+    if task_marker is not None:
+        fingerprint = task_marker_fingerprint(task_marker)
+        if fingerprint is None:
+            raise CoordinationError("Marker planificado inválido.")
+        snapshot = {
+            "task_marker_sha256": fingerprint,
+            "task_paths": list(task_marker["paths"]),
+            "task_depends_on": list(task_marker["depends_on"]),
+        }
+    if snapshot is not None:
+        if acceptance_sha256 is None:
+            raise CoordinationError("Claims fijados requieren acceptance_sha256.")
+        fingerprint = snapshot.get("task_marker_sha256")
+        paths = snapshot.get("task_paths")
+        dependencies = snapshot.get("task_depends_on")
+        if (
+            not isinstance(fingerprint, str)
+            or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+            or not isinstance(paths, list)
+            or not paths
+            or not all(isinstance(path, str) and path for path in paths)
+            or not isinstance(dependencies, list)
+            or not all(
+                isinstance(number, int)
+                and not isinstance(number, bool)
+                and number > 0
+                for number in dependencies
+            )
+        ):
+            raise CoordinationError("Snapshot de task inválido.")
+        payload["version"] = 3
+        payload["task_marker_sha256"] = fingerprint
+        payload["task_paths"] = list(paths)
+        payload["task_depends_on"] = list(dependencies)
+
     encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     return f"<!-- {PROFILE.marker} {encoded} -->"
+
+
+def reservation_task_snapshot(
+    reservation: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Extrae claims fijados de una reserva V3."""
+    if not reservation or reservation.get("version") != 3:
+        return None
+    return {
+        "task_marker_sha256": reservation["task_marker_sha256"],
+        "task_paths": list(reservation["task_paths"]),
+        "task_depends_on": list(reservation["task_depends_on"]),
+    }
+
+
+def reservation_task_marker(
+    reservation: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Proyecta un snapshot V3 al mínimo requerido por el orquestador."""
+    snapshot = reservation_task_snapshot(reservation)
+    if snapshot is None:
+        return None
+    return {
+        "paths": snapshot["task_paths"],
+        "depends_on": snapshot["task_depends_on"],
+    }
 
 
 def valid_reservation_payload(value: Any) -> bool:
@@ -473,14 +546,42 @@ def valid_reservation_payload(value: Any) -> bool:
     elif version == 2:
         if set(value) != base | {"acceptance_sha256"}:
             return False
+    elif version == 3:
+        if set(value) != base | {
+            "acceptance_sha256",
+            "task_marker_sha256",
+            "task_paths",
+            "task_depends_on",
+        }:
+            return False
+        marker_fingerprint = value.get("task_marker_sha256")
+        paths = value.get("task_paths")
+        dependencies = value.get("task_depends_on")
+        if (
+            not isinstance(marker_fingerprint, str)
+            or re.fullmatch(r"[0-9a-f]{64}", marker_fingerprint) is None
+            or not isinstance(paths, list)
+            or not paths
+            or not all(isinstance(path, str) and path for path in paths)
+            or not isinstance(dependencies, list)
+            or not all(
+                isinstance(number, int)
+                and not isinstance(number, bool)
+                and number > 0
+                for number in dependencies
+            )
+        ):
+            return False
+    else:
+        return False
+
+    if version in (2, 3):
         fingerprint = value.get("acceptance_sha256")
         if (
             not isinstance(fingerprint, str)
             or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
         ):
             return False
-    else:
-        return False
     if not isinstance(value.get("owner"), str) or not value["owner"]:
         return False
     reservation_id = value.get("reservation_id")
@@ -494,7 +595,6 @@ def valid_reservation_payload(value: Any) -> bool:
     if not isinstance(value.get("active"), bool):
         return False
     return isinstance(value.get("reason"), str) and bool(value["reason"])
-
 
 def reservation_from_text(text: str) -> dict[str, Any] | None:
     """Extrae el último marcador de reserva válido de un texto."""
@@ -828,6 +928,12 @@ def recover_stale_work(
     acceptance_sha256 = reservation_fingerprint_for_profile(
         api, issue_number, previous, "recuperar"
     )
+    task_snapshot = reservation_task_snapshot(previous)
+    task_marker = (
+        None
+        if task_snapshot is not None
+        else parse_task_marker(str(api.issue(issue_number).get("body") or ""))
+    )
 
     publish_reservation(
         api,
@@ -843,6 +949,8 @@ def recover_stale_work(
             "implementación paralela."
         ),
         acceptance_sha256,
+        task_marker,
+        task_snapshot,
     )
 
     winner = active_reservation(api, issue_number)
@@ -884,12 +992,14 @@ def publish_reservation(
     reason: str,
     message: str,
     acceptance_sha256: str | None = None,
+    task_marker: dict[str, Any] | None = None,
+    task_snapshot: dict[str, Any] | None = None,
 ) -> None:
     """Publica un marcador de reserva y su mensaje humano en un solo comentario."""
     api.comment(
         issue_number,
         (
-            f"{reservation_marker(owner, reservation_id, branch, active, reason, acceptance_sha256)}\n"
+            f"{reservation_marker(owner, reservation_id, branch, active, reason, acceptance_sha256, task_marker, task_snapshot)}\n"
             f"{message}"
         ),
     )
@@ -915,6 +1025,8 @@ def reserve_available_work(
     actor: str,
     branch: str,
     acceptance_sha256: str,
+    parallel_evidence: list[str] | None = None,
+    task_marker: dict[str, Any] | None = None,
 ) -> str | None:
     """Crea una reserva nueva para un Issue realmente disponible."""
     main_sha = api.branch_sha("main")
@@ -924,20 +1036,26 @@ def reserve_available_work(
         return None
 
     reservation_id = new_reservation_id()
+    reservation_comment = reservation_marker(
+        actor,
+        reservation_id,
+        branch,
+        True,
+        "tomar",
+        acceptance_sha256,
+        task_marker,
+    )
+    if parallel_evidence:
+        reservation_comment += (
+            "\n\nCompatibilidad paralela verificada "
+            "(dependencias completadas + claims disjuntos):\n"
+            + "\n".join(f"- {item}" for item in parallel_evidence)
+        )
+
     try:
         api.set_status(issue_number, STATUS_RESERVED)
         api.try_assign(issue_number, actor)
-        api.comment(
-            issue_number,
-            reservation_marker(
-                actor,
-                reservation_id,
-                branch,
-                True,
-                "tomar",
-                acceptance_sha256,
-            ),
-        )
+        api.comment(issue_number, reservation_comment)
     except Exception:
         api.delete_branch(branch)
         api.try_unassign(issue_number, actor)
@@ -1055,11 +1173,44 @@ def reserve_work(
             if task_marker is not None
             else None
         )
+        open_issues = api.open_issues()
+        active_task_snapshots: dict[int, dict[str, Any]] | None = None
+        active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None
+        if hasattr(api, "issue_comments"):
+            active_task_snapshots = {}
+            active_dependency_states = {}
+            active_statuses = {
+                STATUS_RESERVED,
+                STATUS_REVIEW,
+                STATUS_RECOVERY,
+                "status: reserved",
+                "status: in review",
+                "status: recovery required",
+            }
+            for other in open_issues:
+                other_number = other.get("number")
+                if (
+                    not isinstance(other_number, int)
+                    or other_number == issue_number
+                    or not (label_names(other) & active_statuses)
+                ):
+                    continue
+                other_reservation = active_reservation(api, other_number)
+                other_marker = reservation_task_marker(other_reservation)
+                if other_marker is not None:
+                    active_task_snapshots[other_number] = other_marker
+                    active_dependency_states[other_number] = {
+                        number: api.issue(number)
+                        for number in other_marker["depends_on"]
+                    }
+
         plan_blockers = reservation_blockers(
             issue,
-            api.open_issues(),
+            open_issues,
             actor,
             dependency_states,
+            active_task_snapshots,
+            active_dependency_states,
         )
     except PlanError as exc:
         raise CoordinationError(
@@ -1070,6 +1221,12 @@ def reserve_work(
         raise CoordinationError(
             f"Orquestador bloquea /tomar para Issue #{issue_number}:\n{details}"
         )
+
+    parallel_evidence = parallel_compatibility_evidence(
+        issue,
+        open_issues,
+        active_task_snapshots,
+    )
 
     labels = label_names(issue)
     if STATUS_BLOCKED in labels:
@@ -1107,6 +1264,8 @@ def reserve_work(
         actor,
         branch,
         acceptance_sha256,
+        parallel_evidence,
+        task_marker,
     )
 
 def reservation_fingerprint_for_profile(
@@ -1180,6 +1339,7 @@ def transfer_work(
                 True,
                 "transferir",
                 acceptance_sha256,
+                task_snapshot=reservation_task_snapshot(current),
             ),
         )
     except Exception:
@@ -1229,7 +1389,10 @@ def renew_pinned_acceptance(
     if not isinstance(old_pin, str):
         raise CoordinationError("La reserva legacy requiere /migrar-contrato.")
     new_pin = contract_fingerprint(str(issue.get("body") or ""))
-    if new_pin == old_pin:
+    new_task_marker = parse_task_marker(str(issue.get("body") or ""))
+    new_task_pin = task_marker_fingerprint(new_task_marker)
+    old_task_pin = current.get("task_marker_sha256")
+    if new_pin == old_pin and new_task_pin == old_task_pin:
         raise CoordinationError("No hay cambio contractual que renovar.")
 
     branch = branch_for_issue(issue_number)
@@ -1275,7 +1438,13 @@ def renew_pinned_acceptance(
         api.comment(
             issue_number,
             reservation_marker(
-                actor, new_id, branch, True, "renovar-contrato", new_pin
+                actor,
+                new_id,
+                branch,
+                True,
+                "renovar-contrato",
+                new_pin,
+                new_task_marker,
             ),
         )
     except Exception:
@@ -1303,7 +1472,7 @@ def renew_pinned_acceptance(
                 pass
         raise CoordinationError("Otra sesión ganó la renovación; HEAD invalidado.")
     print(
-        f"Contrato v2 renovado: Issue #{issue_number}, "
+        f"Contrato renovado: Issue #{issue_number}, "
         f"sesión {new_id}, fingerprint {old_pin[:12]} -> {new_pin[:12]}; "
         f"PR #{number} conservado y checks del HEAD invalidados."
     )
@@ -1348,6 +1517,7 @@ def migrate_legacy_reservation(
             True,
             "migrar-contrato",
             fingerprint,
+            parse_task_marker(str(issue.get("body") or "")),
         ),
     )
     winner = active_reservation(api, issue_number)
@@ -1414,6 +1584,7 @@ def adopt_orphaned_contract(
             + "."
         ),
         fingerprint,
+        parse_task_marker(str(issue.get("body") or "")),
     )
     winner = active_reservation(api, issue_number)
     if (
@@ -1700,12 +1871,29 @@ def invalidate_contract_drift_checks(
         except AcceptanceError as exc:
             reason = f"El contrato de aceptación es inválido: {exc}"
         else:
-            if current == pinned:
-                return 0
-            reason = (
-                "El contrato de aceptación cambió después de /tomar; "
-                "la evidencia previa del HEAD quedó stale."
+            if current != pinned:
+                reason = (
+                    "El contrato de aceptación cambió después de /tomar; "
+                    "la evidencia previa del HEAD quedó stale."
+                )
+
+    task_pin = reservation.get("task_marker_sha256")
+    if reason is None and isinstance(task_pin, str):
+        try:
+            current_task_pin = task_marker_fingerprint(
+                parse_task_marker(str(issue.get("body") or ""))
             )
+        except PlanError as exc:
+            reason = f"El contrato factory-plan-task es inválido: {exc}"
+        else:
+            if current_task_pin != task_pin:
+                reason = (
+                    "Los claims/dependencias factory-plan-task cambiaron después "
+                    "de /tomar; la reserva requiere renovación explícita."
+                )
+
+    if reason is None:
+        return 0
 
     branch = str(reservation["branch"])
     invalidated = 0
@@ -1747,7 +1935,18 @@ def update_issue_state(api: GitHub, issue_number: int, action: str) -> None:
     current = active_reservation(api, issue_number)
 
     if action == "edited":
-        invalidate_contract_drift_checks(api, issue_number)
+        invalidated = invalidate_contract_drift_checks(api, issue_number)
+        if invalidated and current and isinstance(
+            current.get("task_marker_sha256"), str
+        ):
+            try:
+                current_task_pin = task_marker_fingerprint(
+                    parse_task_marker(str(issue.get("body") or ""))
+                )
+            except PlanError:
+                current_task_pin = None
+            if current_task_pin != current.get("task_marker_sha256"):
+                api.set_status(issue_number, STATUS_RECOVERY)
         return
     if action == "reopened":
         if current and api.branch_sha(branch):
@@ -1841,6 +2040,23 @@ def reservation_validation_errors(
                 f"Issue #{issue_number} cambió su contrato de aceptación "
                 "después de /tomar; libera y vuelve a reservar."
             )
+
+    task_pin = reservation.get("task_marker_sha256")
+    if isinstance(task_pin, str):
+        try:
+            current_task_pin = task_marker_fingerprint(
+                parse_task_marker(str(issue.get("body") or ""))
+            )
+        except PlanError:
+            errors.append(
+                f"Issue #{issue_number} tiene factory-plan-task inválido."
+            )
+        else:
+            if current_task_pin != task_pin:
+                errors.append(
+                    f"Issue #{issue_number} cambió claims/dependencias "
+                    "después de /tomar; ejecuta /renovar-contrato <UUID>."
+                )
     return errors
 
 
