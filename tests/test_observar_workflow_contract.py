@@ -49,7 +49,7 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertIn('sort_by((.state != "open"), .number)', WF)
 
     def test_push_is_allowed_only_with_main_branch_guard(self):
-        event_match = re.search(r'case "\\$EVENT_NAME" in ([^)]+)\\)', WF)
+        event_match = re.search(r'case "\$EVENT_NAME" in ([^)]+)\)', WF)
         self.assertIsNotNone(event_match)
         allowed_events = event_match.group(1).split("|")
         self.assertEqual(allowed_events, ["push", "schedule", "workflow_dispatch"])
@@ -60,7 +60,7 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertLess(WF.index(branch_guard), first_checkout)
 
     def test_untrusted_events_remain_fail_closed_before_checkout(self):
-        event_match = re.search(r'case "\\$EVENT_NAME" in ([^)]+)\\)', WF)
+        event_match = re.search(r'case "\$EVENT_NAME" in ([^)]+)\)', WF)
         self.assertIsNotNone(event_match)
         allowed_events = set(event_match.group(1).split("|"))
         self.assertEqual(
