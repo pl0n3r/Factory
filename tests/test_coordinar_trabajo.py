@@ -35,6 +35,7 @@ from scripts.coordinar_trabajo import (
     parse_comment_command,
     release_work,
     renew_pinned_acceptance,
+    renewal_reservation_id,
     reservation_from_pr_body,
     reservation_marker,
     reserve_work,
@@ -1633,6 +1634,137 @@ class CoordinacionTests(unittest.TestCase):
             reservation_from_pr_body(api.pulls[15]["body"]),
             first,
         )
+
+    def test_renew_retry_reconciles_old_issue_new_pr_without_new_uuid(self) -> None:
+        """AC-01: old Issue/new PR converge al successor determinista."""
+        api = self._renew_fixture()
+        live_acceptance = contract_fingerprint(api.issue_data["body"])
+        expected = renewal_reservation_id(
+            12, SESSION_A, live_acceptance, None, "head-renew"
+        )
+        api.pulls[15]["body"] = (
+            f"Closes #12\nReserva: {expected}\n"
+            f"<!-- condor-reserva-id: {expected} -->"
+        )
+
+        result = renew_pinned_acceptance(
+            api, 12, "pl0n3r", "OWNER", SESSION_A
+        )
+
+        self.assertEqual(result, expected)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], expected)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            expected,
+        )
+        self.assertEqual(len(api.check_runs), 1)
+
+    def test_renew_retry_reconciles_new_issue_old_pr_without_new_uuid(self) -> None:
+        """AC-02: new Issue/old PR repara el PR sin crear otra sesión."""
+        api = self._renew_fixture()
+        first = renew_pinned_acceptance(
+            api, 12, "pl0n3r", "OWNER", SESSION_A
+        )
+        checks_before = list(api.check_runs)
+        api.pulls[15]["body"] = (
+            f"Closes #12\nReserva: {SESSION_A}\n"
+            f"<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+
+        retry = renew_pinned_acceptance(
+            api, 12, "pl0n3r", "OWNER", SESSION_A
+        )
+
+        self.assertEqual(retry, first)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], first)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            first,
+        )
+        self.assertEqual(api.check_runs, checks_before)
+
+    def test_renew_retry_rejects_stale_successor_after_contract_or_head_drift(self) -> None:
+        """AC-03: acceptance, task o HEAD drift invalidan el successor histórico."""
+        task = (
+            '<!-- factory-plan-task '
+            '{"version":1,"epic":999,"task_key":"A","order":1,'
+            '"owner":"pl0n3r","roles":["qa"],"depends_on":[],'
+            '"paths":["scripts/"]} -->'
+        )
+
+        api = self._renew_fixture()
+        api.issue_data["body"] += "\n" + task
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        api.issue_data["body"] = api.issue_data["body"].replace(
+            "La nueva evidencia pasa.", "La evidencia volvió a cambiar."
+        )
+        with self.assertRaisesRegex(CoordinationError, "successor histórico"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        api = self._renew_fixture()
+        api.issue_data["body"] += "\n" + task
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        api.issue_data["body"] = api.issue_data["body"].replace(
+            '"paths":["scripts/"]', '"paths":["docs/"]'
+        )
+        with self.assertRaisesRegex(CoordinationError, "successor histórico"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        api = self._renew_fixture()
+        api.issue_data["body"] += "\n" + task
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        api.pulls[15]["head"]["sha"] = "head-after-drift"
+        with self.assertRaisesRegex(CoordinationError, "successor histórico"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+    def test_renew_retry_preserves_third_party_winner(self) -> None:
+        """AC-04: tercera sesión gana y el retry no la sobrescribe."""
+        api = self._renew_fixture()
+        first = renew_pinned_acceptance(
+            api, 12, "pl0n3r", "OWNER", SESSION_A
+        )
+        third = "33333333-3333-4333-8333-333333333333"
+        api.comment(
+            12,
+            reservation_marker(
+                "pl0n3r",
+                third,
+                "trabajo/issue-12",
+                True,
+                "transferir",
+                contract_fingerprint(api.issue_data["body"]),
+            ),
+        )
+        api.pulls[15]["body"] = (
+            f"Closes #12\nReserva: {third}\n"
+            f"<!-- condor-reserva-id: {third} -->"
+        )
+        checks_before = list(api.check_runs)
+
+        with self.assertRaisesRegex(CoordinationError, "no vigente"):
+            renew_pinned_acceptance(
+                api, 12, "pl0n3r", "OWNER", SESSION_A
+            )
+
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], third)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            third,
+        )
+        self.assertNotEqual(first, third)
+        self.assertEqual(api.check_runs, checks_before)
+        self.assertEqual(api.check_runs[-1]["name"], "Validar")
+        self.assertEqual(api.check_runs[-1]["conclusion"], "failure")
+
+    def test_renew_acceptance_documents_idempotent_v2_protocol(self) -> None:
+        """AC-05: PLAN fija successor estable, reconciliación y un solo Validar."""
+        docs = (Path(__file__).resolve().parents[1] / "PLAN-AGENTES.md").read_text()
+        self.assertIn("successor UUID determinista", docs)
+        self.assertIn("old/old", docs)
+        self.assertIn("old/new", docs)
+        self.assertIn("new/old", docs)
+        self.assertIn("new/new", docs)
+        self.assertIn("un único `Validar`", docs)
 
     def test_renew_acceptance_documents_explicit_v2_protocol(self) -> None:
         self.assertEqual(

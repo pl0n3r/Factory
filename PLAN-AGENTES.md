@@ -88,6 +88,8 @@ Si los criterios de aceptación de un Issue con reserva v2 necesitan evolucionar
 
 Ante fallo o carrera, se conserva la sesión anterior o se falla cerrado con checks invalidados; no se destruyen rama ni PR. `/liberar` + `/tomar` sigue disponible para abandonar el trabajo, pero cierra PR y rama. Nunca usar `/renovar-contrato` para ocultar una revisión fallida ni para eludir una decisión humana.
 
+El retry de renovación v2 usa un **successor UUID determinista** derivado de Issue, UUID anterior, fingerprint de aceptación, fingerprint de task y HEAD exacto. La reconciliación es idempotente para los cuatro estados parciales `old/old`, `old/new`, `new/old` y `new/new`: nunca crea una tercera identidad por repetir el mismo comando. Antes de aceptar un successor histórico, el coordinador recomputa acceptance/task/HEAD actuales; cualquier drift o una tercera sesión ganadora falla cerrado y se preserva. La invalidación canónica se expresa con **un único `Validar`** en failure sobre el HEAD anterior; los retries no fabrican checks adicionales para aparentar progreso.
+
 ## 3. Reglas de eficiencia (tiempo, tokens, costo)
 
 | Regla | Límite |
