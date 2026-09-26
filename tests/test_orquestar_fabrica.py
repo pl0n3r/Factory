@@ -110,7 +110,7 @@ class FakeGitHub:
         raise AssertionError((method, path, payload))
 
 
-class OrchestratorSyncTests(unittest.TestCase):
+class OrquestarFabricaTests(unittest.TestCase):
     def test_sync_materializes_dag_and_is_idempotent(self):
         api = FakeGitHub()
         first = sync_plan(api, 3)
@@ -145,7 +145,7 @@ class OrchestratorSyncTests(unittest.TestCase):
             "### Contrato ejecutable\n\n"
             '<!-- factory-acceptance {"version":1,"criteria":['
             '{"id":"AC-01","kind":"test","target":'
-            '"tests/test_orquestar_fabrica.py::OrchestratorSyncTests::'
+            '"tests/test_orquestar_fabrica.py::OrquestarFabricaTests::'
             'test_resync_preserves_enriched_acceptance_contract"}]} -->'
         )
 
