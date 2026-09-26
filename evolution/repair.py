@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 
+from evolution.provenance import TrustedDecisionSource
 from seguridad.puertas_humanas import GateValidationError, validate_gate
 
 
@@ -159,9 +160,14 @@ def _authority(
     destructive: bool,
     *,
     scope_fingerprint: str,
+    decision_source: TrustedDecisionSource | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     if not destructive:
-        if value is not None or decision_evidence is not None:
+        if (
+            value is not None
+            or decision_evidence is not None
+            or decision_source is not None
+        ):
             raise RepairError(
                 "human_authority/decision_evidence solo aplican a reparación destructiva"
             )
@@ -171,6 +177,7 @@ def _authority(
                 "approved": True,
                 "decision_ref": None,
                 "evidence_fingerprint": None,
+                "source_id": None,
             },
             None,
         )
@@ -180,6 +187,7 @@ def _authority(
         "approved": False,
         "decision_ref": None,
         "evidence_fingerprint": None,
+        "source_id": None,
     }
     if value is None:
         return blocked, None
@@ -192,11 +200,17 @@ def _authority(
         "human_authority.decision_ref",
         200,
     )
-    if decision_evidence is None:
+
+    # Un payload firmado por sí mismo nunca constituye autoridad. La decisión
+    # debe resolverse por handle desde una capacidad confiable y durable.
+    if not isinstance(decision_source, TrustedDecisionSource):
+        return blocked, None
+    resolved = decision_source.resolve_decision(requested_ref)
+    if resolved is None:
         return blocked, None
     try:
         evidence, decision_ref = _validate_decision_evidence(
-            decision_evidence,
+            resolved,
             scope_fingerprint=scope_fingerprint,
         )
     except RepairError:
@@ -209,10 +223,10 @@ def _authority(
             "approved": True,
             "decision_ref": decision_ref,
             "evidence_fingerprint": evidence["fingerprint"],
+            "source_id": decision_source.source_id,
         },
         evidence,
     )
-
 
 def compile_repair_plan(
     *,
@@ -223,6 +237,7 @@ def compile_repair_plan(
     destructive: bool = False,
     human_authority: Any = None,
     decision_evidence: Any = None,
+    decision_source: TrustedDecisionSource | None = None,
 ) -> dict[str, Any]:
     """Compile a non-executing repair plan with source-bound human authority."""
     scope = _scope_payload(
@@ -238,6 +253,7 @@ def compile_repair_plan(
         decision_evidence,
         destructive,
         scope_fingerprint=scope_fingerprint,
+        decision_source=decision_source,
     )
     plan = {
         "version": REPAIR_VERSION,
@@ -255,7 +271,11 @@ def compile_repair_plan(
     return plan
 
 
-def validate_repair_plan(plan: Any) -> dict[str, Any]:
+def validate_repair_plan(
+    plan: Any,
+    *,
+    decision_source: TrustedDecisionSource | None = None,
+) -> dict[str, Any]:
     """Revalidate scope and durable human evidence without weakening authority."""
     expected = {
         "version",
@@ -306,6 +326,7 @@ def validate_repair_plan(plan: Any) -> dict[str, Any]:
         plan["authority_evidence"],
         plan["destructive"],
         scope_fingerprint=scope_fingerprint,
+        decision_source=decision_source,
     )
     if authority != expected_authority:
         raise RepairError("estado de autoridad inconsistente")
