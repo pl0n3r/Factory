@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://factory.local/schemas/project-dna-v1.json",
+  "title": "Factory Project DNA v1",
+  "type": "object",
+  "required": [
+    "version",
+    "stack",
+    "frameworks",
+    "data",
+    "ci",
+    "hosting",
+    "integrations",
+    "capabilities",
+    "signals",
+    "extensions",
+    "fingerprint"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "stack": {"$ref": "#/$defs/knownOrList"},
+    "frameworks": {"$ref": "#/$defs/knownOrList"},
+    "data": {"$ref": "#/$defs/knownOrList"},
+    "ci": {"$ref": "#/$defs/knownOrList"},
+    "hosting": {"$ref": "#/$defs/knownOrList"},
+    "integrations": {"$ref": "#/$defs/knownOrList"},
+    "capabilities": {"$ref": "#/$defs/knownOrList"},
+    "signals": {
+      "type": "object",
+      "required": ["paths", "manifests"],
+      "properties": {
+        "paths": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "manifests": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Namespace para capacidades futuras sin romper los campos base.",
+      "additionalProperties": true
+    },
+    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "knownOrList": {
+      "oneOf": [
+        {"const": "unknown"},
+        {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}
