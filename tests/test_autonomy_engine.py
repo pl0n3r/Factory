@@ -157,7 +157,7 @@ class AutonomyEngineTests(unittest.TestCase):
             self.assertEqual(engine.current.authority_fingerprint, AUTHORITY_FINGERPRINT)
             self.assertEqual(engine.authority["external_permissions_added"], [])
 
-        with self.assertRaisesRegex(AutonomyError, "risk high"):
+        with self.assertRaisesRegex(AutonomyError, "riesgo high"):
             limited = AutonomyEngine(
                 "security-change",
                 reason="observe",
