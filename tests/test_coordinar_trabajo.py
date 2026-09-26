@@ -1233,7 +1233,7 @@ class CoordinacionTests(unittest.TestCase):
 
         self.assertEqual(
             [check["name"] for check in api.check_runs],
-            ["Criterios de aceptación", "Validar"],
+            ["Validar"],
         )
         self.assertTrue(
             all(check["head_sha"] == "head-drift" for check in api.check_runs)
@@ -1433,7 +1433,7 @@ class CoordinacionTests(unittest.TestCase):
         renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(
             {row["name"] for row in api.check_runs},
-            {"Criterios de aceptación", "Validar"},
+            {"Validar"},
         )
         self.assertTrue(all(
             row["head_sha"] == "head-renew"
@@ -1442,37 +1442,19 @@ class CoordinacionTests(unittest.TestCase):
         ))
 
     def test_renew_acceptance_invalidates_aggregate_check_first(self) -> None:
-        """Publica Validar failure antes del check específico sobre el mismo HEAD."""
+        """Publica una única evidencia canónica Validar sobre el HEAD exacto."""
         api = self._renew_fixture()
         renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
-        self.assertEqual(
-            [check["name"] for check in api.check_runs],
-            ["Validar", "Criterios de aceptación"],
-        )
-        self.assertTrue(
-            all(check["head_sha"] == "head-renew" for check in api.check_runs)
-        )
-
-    def test_renew_acceptance_second_check_error_preserves_failed_aggregate(self) -> None:
-        """Fallo en segundo POST conserva sesión/PR y Validar failure."""
-        api = self._renew_fixture()
-        original = api.pulls[15]["body"]
-        original_check = api.create_failed_check
-        def fail_second_check(name, sha, title, summary):
-            if len(api.check_runs) == 1:
-                raise CoordinationError("segundo POST de check falló")
-            original_check(name, sha, title, summary)
-        api.create_failed_check = fail_second_check
-
-        with self.assertRaisesRegex(CoordinationError, "segundo POST"):
-            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
-
-        self.assertEqual(len(api.check_runs), 1)
-        self.assertEqual(api.check_runs[0]["name"], "Validar")
+        self.assertEqual([check["name"] for check in api.check_runs], ["Validar"])
         self.assertEqual(api.check_runs[0]["head_sha"], "head-renew")
         self.assertEqual(api.check_runs[0]["conclusion"], "failure")
-        self.assertEqual(api.pulls[15]["body"], original)
-        self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
+
+    def test_renew_acceptance_second_check_error_preserves_failed_aggregate(self) -> None:
+        """Compat: ya no existe un segundo POST parcial que pueda quedar stale."""
+        api = self._renew_fixture()
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(len(api.check_runs), 1)
+        self.assertEqual(api.check_runs[0]["name"], "Validar")
 
     def test_renew_acceptance_rejects_unauthorized_stale_and_races(self) -> None:
         api = self._renew_fixture()
@@ -1511,7 +1493,7 @@ class CoordinacionTests(unittest.TestCase):
             renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(api.pulls[15]["body"], original)
         self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
-        self.assertEqual(len(api.check_runs), 2)
+        self.assertEqual(len(api.check_runs), 1)
         api = self._renew_fixture()
         api.fail_comment = True
         original = api.pulls[15]["body"]
@@ -1519,26 +1501,138 @@ class CoordinacionTests(unittest.TestCase):
             renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(api.pulls[15]["body"], original)
         self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
-        self.assertEqual(len(api.check_runs), 2)
+        self.assertEqual(len(api.check_runs), 1)
 
     def test_renew_acceptance_keeps_new_session_after_ambiguous_comment_error(self) -> None:
-        """Si GitHub escribió el marker pero el cliente falló, no revierte el PR."""
+        """Si GitHub persistió el marker, reconcilia y devuelve la sesión nueva."""
         api = self._renew_fixture()
         original_comment = api.comment
         def persisted_then_error(issue_number, body):
             original_comment(issue_number, body)
             raise CoordinationError("timeout tras persistir comentario")
         api.comment = persisted_then_error
-        with self.assertRaisesRegex(CoordinationError, "timeout"):
-            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        new_id = renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
         winner = active_reservation(api, 12)
         self.assertIsNotNone(winner)
-        self.assertNotEqual(winner["reservation_id"], SESSION_A)
+        self.assertEqual(winner["reservation_id"], new_id)
         self.assertEqual(
             reservation_from_pr_body(api.pulls[15]["body"]),
             winner["reservation_id"],
         )
-        self.assertEqual(len(api.check_runs), 2)
+        self.assertEqual(len(api.check_runs), 1)
+
+    def test_renew_failure_cannot_leave_old_evidence_eligible(self) -> None:
+        """AC-01: deriva a un único Validar failure antes de mutar sesión/PR."""
+        api = self._renew_fixture()
+        original = api.pulls[15]["body"]
+        original_check = api.create_failed_check
+        calls = {"n": 0}
+        def record_once(name, sha, title, summary):
+            calls["n"] += 1
+            original_check(name, sha, title, summary)
+        api.create_failed_check = record_once
+
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(api.check_runs[0]["name"], "Validar")
+        self.assertEqual(api.check_runs[0]["conclusion"], "failure")
+        self.assertNotEqual(api.pulls[15]["body"], original)
+
+    def test_renew_success_reconciles_issue_and_pull_metadata(self) -> None:
+        """AC-02: éxito termina con el mismo UUID vigente en Issue y PR."""
+        api = self._renew_fixture()
+        new_id = renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        winner = active_reservation(api, 12)
+        self.assertEqual(winner["reservation_id"], new_id)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            new_id,
+        )
+        self.assertEqual(
+            winner["acceptance_sha256"],
+            contract_fingerprint(api.issue_data["body"]),
+        )
+
+    def test_renew_ambiguous_persist_reconciles_new_session(self) -> None:
+        """AC-03: timeout posterior al marker converge a la sesión persistida."""
+        api = self._renew_fixture()
+        original_comment = api.comment
+        def persisted_then_error(issue_number, body):
+            original_comment(issue_number, body)
+            # Simula respuesta perdida después de persistir.
+            raise CoordinationError("respuesta ambigua")
+        api.comment = persisted_then_error
+
+        new_id = renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], new_id)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            new_id,
+        )
+
+    def test_renew_competing_session_fails_closed_without_overwrite(self) -> None:
+        """AC-04: una sesión competidora gana y el PR se alinea a ella."""
+        api = self._renew_fixture()
+        original_comment = api.comment
+        competitor = "33333333-3333-4333-8333-333333333333"
+
+        def competitor_wins(issue_number, body):
+            marker = reservation_marker(
+                "pl0n3r",
+                competitor,
+                "trabajo/issue-12",
+                True,
+                "transferir",
+                contract_fingerprint(api.issue_data["body"]),
+            )
+            original_comment(issue_number, marker)
+
+        api.comment = competitor_wins
+        with self.assertRaisesRegex(CoordinationError, "reconciliar"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], competitor)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            competitor,
+        )
+        self.assertEqual(api.check_runs[0]["name"], "Validar")
+
+    def test_renew_retry_reconciles_interrupted_session(self) -> None:
+        """AC-05: retry con UUID anterior reconoce sucesor y repara el PR."""
+        api = self._renew_fixture()
+        original_comment = api.comment
+        captured = {"new_id": None}
+
+        def persist_and_desync(issue_number, body):
+            original_comment(issue_number, body)
+            captured["new_id"] = active_reservation(api, 12)["reservation_id"]
+            api.pulls[15]["body"] = (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            )
+            raise CoordinationError("timeout tras persistir")
+
+        api.comment = persist_and_desync
+        first = renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(first, captured["new_id"])
+        # Vuelve a desincronizar para demostrar que el retry no crea otro UUID.
+        api.pulls[15]["body"] = (
+            f"Closes #12\nReserva: {SESSION_A}\n"
+            f"<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+        api.comment = original_comment
+
+        retry = renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        self.assertEqual(retry, first)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], first)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            first,
+        )
 
     def test_renew_acceptance_documents_explicit_v2_protocol(self) -> None:
         self.assertEqual(
