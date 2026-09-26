@@ -106,9 +106,15 @@ def _validate_fitness(value: Any) -> str:
     if value["protected_regressions"]:
         raise AutonomyError("fitness degrada dimensión protegida")
     confidence = value["confidence"]
+    if not isinstance(confidence, dict):
+        raise AutonomyError("fitness incompleto o con incertidumbre")
+    comparable = confidence.get("comparable")
+    total = confidence.get("total")
     if (
-        not isinstance(confidence, dict)
-        or confidence.get("ratio") != 1.0
+        type(comparable) is not int
+        or type(total) is not int
+        or total <= 0
+        or comparable != total
         or value["missing_dimensions"]
     ):
         raise AutonomyError("fitness incompleto o con incertidumbre")

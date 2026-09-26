@@ -95,10 +95,12 @@ class AutonomyEngineTests(unittest.TestCase):
             observed.append(engine.current.level)
 
         self.assertEqual(tuple(observed), AUTONOMY_LEVELS)
+        terminal_fitness = fitness()
+        terminal_risk = risk("low")
         with self.assertRaisesRegex(AutonomyError, "ya está en autonomous"):
             engine.promote(
-                fitness=fitness(),
-                risk=risk("low"),
+                fitness=terminal_fitness,
+                risk=terminal_risk,
                 reason="cannot skip terminal",
                 evidence=["terminal"],
             )
@@ -157,22 +159,24 @@ class AutonomyEngineTests(unittest.TestCase):
             self.assertEqual(engine.current.authority_fingerprint, AUTHORITY_FINGERPRINT)
             self.assertEqual(engine.authority["external_permissions_added"], [])
 
-        with self.assertRaisesRegex(AutonomyError, "riesgo high"):
-            limited = AutonomyEngine(
-                "security-change",
-                reason="observe",
-                evidence=["baseline"],
-            )
-            for _ in range(3):
-                limited.promote(
-                    fitness=fitness(),
-                    risk=risk("medium"),
-                    reason="earned",
-                    evidence=["evidence"],
-                )
+        limited = AutonomyEngine(
+            "security-change",
+            reason="observe",
+            evidence=["baseline"],
+        )
+        for _ in range(3):
             limited.promote(
                 fitness=fitness(),
-                risk=risk("high"),
+                risk=risk("medium"),
+                reason="earned",
+                evidence=["evidence"],
+            )
+        high_fitness = fitness()
+        high_risk = risk("high")
+        with self.assertRaisesRegex(AutonomyError, "riesgo high"):
+            limited.promote(
+                fitness=high_fitness,
+                risk=high_risk,
                 reason="attempt autonomous",
                 evidence=["evidence"],
             )
