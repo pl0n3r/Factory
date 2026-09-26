@@ -1,6 +1,10 @@
 import hashlib
 import json
+import os
 import unittest
+from unittest.mock import patch
+
+import evolution.provenance as provenance_module
 
 from evolution.constitution import validate_candidate
 from evolution.immune import (
@@ -15,8 +19,8 @@ from evolution.provenance import (
     ProvenanceError,
     TrustedDecisionSource,
     TrustedIncidentRegistry,
-    _authenticated_decision_reader,
-    _authenticated_incident_reader,
+    authenticated_decision_reader_from_environment,
+    authenticated_incident_reader_from_environment,
 )
 from evolution.repair import RepairError, compile_repair_plan, validate_repair_plan
 
@@ -101,15 +105,21 @@ def decision_evidence(scope_fingerprint, *, issue_ref="pl0n3r/factory#900"):
 
 
 def trusted_decision_source(plan):
+    """Build the production reader through authenticated environment configuration."""
     evidence = decision_evidence(plan["scope_fingerprint"])
     ref = "owner-decision:pl0n3r/factory#900:A"
     records = {ref: evidence}
-    source = _authenticated_decision_reader(
-        "controlbot:test-decisions",
-        records.get,
-    )
+    env = {
+        "FACTORY_DECISION_SOURCE_ID": "controlbot:test-decisions",
+        "FACTORY_DECISION_SOURCE_URL": "https://controlbot.example/decisions",
+        "FACTORY_PROVENANCE_TOKEN": "test-token",
+    }
+    with patch.dict(os.environ, env, clear=False), patch(
+        "evolution.provenance._fetch_json",
+        return_value=records,
+    ):
+        source = authenticated_decision_reader_from_environment()
     return source, ref, evidence
-
 
 def verified_incident(incident_id, *, signature="stale generated rule"):
     incident = ImmuneIncident(
@@ -144,6 +154,7 @@ def verified_incident(incident_id, *, signature="stale generated rule"):
 
 
 def trusted_incident_registry(*, signature="stale generated rule"):
+    """Build the production incident reader from authenticated environment config."""
     ids = ["incident-001", "incident-002"]
     records = {
         incident_id: verified_incident(
@@ -152,12 +163,17 @@ def trusted_incident_registry(*, signature="stale generated rule"):
         ).snapshot()
         for incident_id in ids
     }
-    registry = _authenticated_incident_reader(
-        "controlbot:test-incidents",
-        records.get,
-    )
+    env = {
+        "FACTORY_INCIDENT_SOURCE_ID": "controlbot:test-incidents",
+        "FACTORY_INCIDENT_SOURCE_URL": "https://controlbot.example/incidents",
+        "FACTORY_PROVENANCE_TOKEN": "test-token",
+    }
+    with patch.dict(os.environ, env, clear=False), patch(
+        "evolution.provenance._fetch_json",
+        return_value=records,
+    ):
+        registry = authenticated_incident_reader_from_environment()
     return registry, ids
-
 
 def immunity_candidate():
     registry, ids = trusted_incident_registry()
@@ -440,11 +456,85 @@ class ImmuneRepairTests(unittest.TestCase):
         self.assertIsInstance(registry, AuthenticatedIncidentReader)
         self.assertFalse(hasattr(source, "record_decision"))
         self.assertFalse(hasattr(registry, "record_incident"))
-        with self.assertRaises(ProvenanceError):
-            AuthenticatedDecisionReader(
-                "caller:forged",
-                lambda _key: None,
-                _seal=object(),
+        with self.assertRaises(TypeError):
+            authenticated_decision_reader_from_environment(lambda _key: None)
+        with self.assertRaises(TypeError):
+            authenticated_incident_reader_from_environment(lambda _key: None)
+        with self.assertRaises(TypeError):
+            AuthenticatedDecisionReader("caller:forged", {})
+
+    def test_caller_cannot_wrap_local_records_as_authenticated_reader(self):
+        """A caller-local dict/callback cannot cross the production trust boundary."""
+        blocked = repair_plan(destructive=True)
+        evidence = decision_evidence(blocked["scope_fingerprint"])
+        ref = "owner-decision:pl0n3r/factory#900:A"
+        local_records = {ref: evidence}
+        with self.assertRaises(TypeError):
+            authenticated_decision_reader_from_environment(local_records.get)
+        with self.assertRaises(TypeError):
+            AuthenticatedDecisionReader("caller:forged", local_records)
+
+    def test_module_internals_cannot_wrap_local_records_as_authenticated_reader(self):
+        """Caller-visible module attributes cannot provide a local-record trust seal."""
+        self.assertFalse(hasattr(provenance_module, "_RUNTIME_SEAL"))
+        with self.assertRaises(TypeError):
+            AuthenticatedDecisionReader("caller:forged", {})
+        with self.assertRaises(TypeError):
+            AuthenticatedIncidentReader("caller:forged", {})
+
+    def test_provenance_fetch_rejects_redirects_and_keeps_bearer_unredirected(self):
+        """Bearer credentials never become redirect-copyable headers."""
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        class Opener:
+            def open(self, request, timeout=0):
+                captured["request"] = request
+                captured["timeout"] = timeout
+                return Response()
+
+        opener = Opener()
+        with patch.object(
+            provenance_module.urllib.request,
+            "build_opener",
+            return_value=opener,
+        ) as build_opener:
+            self.assertEqual(
+                provenance_module._fetch_json(
+                    "https://trusted.example/provenance",
+                    "test-secret",
+                ),
+                {},
+            )
+
+        request = captured["request"]
+        self.assertNotIn("Authorization", request.headers)
+        self.assertEqual(
+            request.unredirected_hdrs.get("Authorization"),
+            "Bearer test-secret",
+        )
+        redirect_handler = build_opener.call_args.args[0]
+        self.assertIsInstance(
+            redirect_handler,
+            provenance_module._RejectRedirects,
+        )
+        with self.assertRaisesRegex(ProvenanceError, "redirect"):
+            redirect_handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {"Location": "https://evil.example/"},
+                "https://evil.example/",
             )
 
     def test_authenticated_decision_adapter_authorizes_exact_scope(self):
