@@ -32,6 +32,18 @@ Ejemplo enriquecido:
 <!-- factory-human-gate {"category":"money","context":"Cambiar el proveedor incrementa el gasto mensual.","title_simple":"¿Cambiamos de proveedor?","summary_simple":"El proveedor nuevo cuesta más, pero reduce trabajo manual.","options":[{"id":"A","label":"Mantener proveedor actual","effect":"Seguimos con el costo y flujo actuales.","pros":["Sin migración"],"cons":["Más trabajo manual"],"risk":"low","cost":"","reversible":true},{"id":"B","label":"Migrar al proveedor nuevo","effect":"Se migra la operación al proveedor nuevo.","pros":["Menos trabajo manual"],"cons":["Aumenta el costo mensual"],"risk":"medium","cost":"+$ mensual","reversible":true}],"recommendation":"A","safe_default":"A","why_recommended":"A evita gasto nuevo mientras se valida el beneficio.","blocks":"Bloquea la automatización del flujo asociado."} -->
 ```
 
+### Tipos exactos y ejemplo de release Factory
+
+Los campos simples admiten **tipos cerrados**. `title_simple`, `why_recommended` y `blocks` son cadenas de una sola línea; `summary_simple` es texto de hasta tres líneas. Por opción, `effect` y `cost` son cadenas, `reversible` es booleano JSON (`true`/`false`), `risk` acepta únicamente `low`, `medium` o `high`. Solo `pros` y `cons` admiten listas de 1 a 5 cadenas cortas. `blocks` nunca es una lista ni `risk` admite una explicación libre.
+
+Ejemplo completo de puerta `factory-release` válido para el parser:
+
+```html
+<!-- factory-human-gate {"category":"factory-release","context":"La versión propuesta superó las pruebas y requiere decisión de publicación.","title_simple":"¿Publicamos Factory?","summary_simple":"El candidato está validado y la publicación requiere aprobación.","options":[{"id":"A","label":"Publicar","effect":"Se inicia el release aprobado.","pros":["Entrega disponible"],"cons":["Requiere supervisión posterior"],"risk":"medium","cost":"","reversible":true},{"id":"B","label":"Mantener candidato","effect":"No se publica por ahora.","pros":["Más tiempo de revisión"],"cons":["Entrega aplazada"],"risk":"low","cost":"","reversible":true}],"recommendation":"B","safe_default":"B","why_recommended":"Evita un release sin aprobación explícita.","blocks":"Bloquea la publicación de la versión candidata."} -->
+```
+
+Si el parser clasifica una puerta confiable como `invalid-gate`, el workflow publica una explicación **idempotente** con el campo y la regla incumplida, sin copiar valores ni JSON del marker, y aplica `estado: bloqueado`. La corrección posterior del marker válido restaura `estado: disponible` cuando el bloqueo fue gestionado por este flujo; la cola `decisión: dueño` continúa siendo exclusiva de puertas válidas.
+
 ### Regla para puertas nuevas
 
 La compatibilidad existe para no romper Issues históricos. **Toda puerta nueva escrita por un agente debe incluir los campos simples completos**: `title_simple`, `summary_simple`, `why_recommended`, `blocks` y, en cada opción, `effect`, `pros`, `cons`, `risk`, `cost`, `reversible`.

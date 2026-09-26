@@ -49,8 +49,15 @@ class GateValidationError(ValueError):
     pass
 
 
-def _result(status: str, category: str | None = None) -> dict[str, Any]:
-    return {"status": status, "category": category}
+def _result(
+    status: str,
+    category: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    result = {"status": status, "category": category}
+    if reason is not None:
+        result["reason"] = reason
+    return result
 
 
 def _line(value: Any, field: str, max_len: int, *, allow_empty: bool = False) -> str:
@@ -198,32 +205,48 @@ def validate_gate(raw: Any) -> dict[str, Any]:
     return normalized
 
 
-def classify_body(body: str) -> dict[str, Any]:
+def classify_body(body: str, *, include_reason: bool = False) -> dict[str, Any]:
     if not isinstance(body, str):
         raise GateValidationError("El cuerpo del Issue debe ser texto.")
 
+    def invalid(reason: str) -> dict[str, Any]:
+        # Los motivos se construyen exclusivamente desde errores de esquema,
+        # nunca desde campos ni valores proporcionados en el marker.
+        return _result(
+            "invalid-gate",
+            reason=reason if include_reason else None,
+        )
+
     marker_intent = MARKER_NAME in body
     if len(body) > MAX_ISSUE_BODY_CHARS:
-        return _result("invalid-gate") if marker_intent else _result("no-gate")
+        return invalid("El cuerpo supera el límite permitido.") if marker_intent else _result("no-gate")
 
     matches = MARKER_RE.findall(body)
     if not matches:
-        return _result("invalid-gate") if marker_intent else _result("no-gate")
+        return invalid("Marker de puerta incompleto o malformado.") if marker_intent else _result("no-gate")
     if len(matches) != 1:
-        return _result("invalid-gate")
+        return invalid("Debe existir exactamente un marker de puerta.")
 
     try:
         raw = json.loads(matches[0])
+    except json.JSONDecodeError:
+        return invalid("El JSON del marker es inválido.")
+    try:
         gate = validate_gate(raw)
-    except (json.JSONDecodeError, GateValidationError):
-        return _result("invalid-gate")
+    except GateValidationError as exc:
+        return invalid(str(exc))
 
     return _result("gate", gate["category"])
 
 
-def classify_event_text(payload: str) -> dict[str, Any]:
+def classify_event_text(
+    payload: str, *, include_reason: bool = False
+) -> dict[str, Any]:
     if not isinstance(payload, str) or len(payload) > MAX_EVENT_CHARS:
-        return _result("invalid-gate")
+        return _result(
+            "invalid-gate",
+            reason="Evento de GitHub fuera de límites." if include_reason else None,
+        )
 
     try:
         event = json.loads(payload)
@@ -237,8 +260,10 @@ def classify_event_text(payload: str) -> dict[str, Any]:
         raise GateValidationError("El evento no contiene un Issue.")
 
     body = issue.get("body")
-    return classify_body(body if isinstance(body, str) else "")
-
+    return classify_body(
+        body if isinstance(body, str) else "",
+        include_reason=include_reason,
+    )
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -247,7 +272,7 @@ def main() -> int:
 
     payload = sys.stdin.read(MAX_EVENT_CHARS + 1)
     try:
-        result = classify_event_text(payload)
+        result = classify_event_text(payload, include_reason=args.format == "github")
     except GateValidationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -255,6 +280,7 @@ def main() -> int:
     if args.format == "github":
         print(f"status={result['status']}")
         print(f"category={result['category'] or ''}")
+        print(f"reason={result.get('reason', '')}")
     else:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
