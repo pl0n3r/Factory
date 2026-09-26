@@ -45,7 +45,7 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertIn("nunca supera 100", doc)
         self.assertIn("HTTPS con validación de certificado", doc)
         self.assertIn("HMAC aporta autenticidad e integridad", doc)
-        self.assertIn("preservando claves repetidas", doc)
+        self.assertIn("conservar duplicados idénticos", doc)
         self.assertIn("RFC 3986", doc)
         self.assertIn("clave de idempotencia", doc)
         self.assertIn("Idempotency-Key", doc)
