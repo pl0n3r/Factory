@@ -1172,8 +1172,17 @@ def reserve_work(
         return None
 
     branch = branch_for_issue(issue_number)
-    current = active_reservation(api, issue_number)
-    if current or api.branch_sha(branch):
+    current = (
+        active_reservation(api, issue_number)
+        if hasattr(api, "issue_comments")
+        else None
+    )
+    branch_sha = (
+        api.branch_sha(branch)
+        if hasattr(api, "branch_sha")
+        else None
+    )
+    if current or branch_sha:
         return recover_existing_work_if_stale(
             api,
             issue_number,

@@ -799,14 +799,12 @@ class CoordinacionTests(unittest.TestCase):
             }
         )
 
-        with self.assertRaisesRegex(
-            CoordinationError,
-            "Orquestador bloquea /tomar",
-        ):
-            reserve_work(api, 12, "pl0n3r", "OWNER")
+        session = reserve_work(api, 12, "pl0n3r", "OWNER")
 
+        self.assertIsNone(session)
         self.assertNotIn("trabajo/issue-12", api.branches)
         self.assertEqual(api.status_history, [])
+        self.assertIsNone(active_reservation(api, 12))
 
     def test_concurrent_stale_recovery_cannot_enter_existing_lock(self) -> None:
         """Un segundo recuperador no entra mientras exista el lock efímero."""
