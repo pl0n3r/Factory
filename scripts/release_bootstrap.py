@@ -85,7 +85,7 @@ def validate_payload(payload: Any) -> dict[str, str]:
     if not isinstance(v1_0_0_exists, bool):
         raise ReleaseBootstrapError("v1_0_0_exists debe ser booleano.")
 
-    if repository != REPOSITORY or owner != repository.split("/", 1)[0]:
+    if repository.casefold() != REPOSITORY.casefold() or owner != REPOSITORY.split("/", 1)[0]:
         raise ReleaseBootstrapError("Bootstrap solo permitido en pl0n3r/factory.")
     if actor != owner:
         raise ReleaseBootstrapError("Bootstrap requiere al propietario del repositorio.")
