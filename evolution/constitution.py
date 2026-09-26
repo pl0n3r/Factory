@@ -24,18 +24,10 @@ EXPECTED_AUTHORITY_SOURCES = (
     "PLAN-AGENTES.md",
     "AGENTES.md",
     "decisiones.yml",
+    "seguridad/puertas-humanas.json",
     "docs/puertas-humanas.md",
 )
-EXPECTED_HUMAN_GATES = (
-    "product_direction",
-    "brand",
-    "money",
-    "legal",
-    "real_customer_data",
-    "factory_release",
-    "factory_maintenance",
-    "go_live",
-)
+HUMAN_GATE_REGISTRY = "seguridad/puertas-humanas.json"
 PROTECTED_INVARIANTS = (
     "security",
     "privacy",
@@ -104,7 +96,7 @@ def validate_constitution(document: Any) -> dict[str, Any]:
 
     authority = _exact_keys(
         root["stable_authority"],
-        {"sources", "autonomous_mutation", "human_gate_categories"},
+        {"sources", "autonomous_mutation", "human_gate_registry"},
         "stable_authority",
     )
     _unique_strings(
@@ -112,11 +104,8 @@ def validate_constitution(document: Any) -> dict[str, Any]:
         EXPECTED_AUTHORITY_SOURCES,
         "stable_authority.sources",
     )
-    _unique_strings(
-        authority["human_gate_categories"],
-        EXPECTED_HUMAN_GATES,
-        "stable_authority.human_gate_categories",
-    )
+    if authority["human_gate_registry"] != HUMAN_GATE_REGISTRY:
+        raise ConstitutionError("stable_authority: registro de puertas inválido")
     if authority["autonomous_mutation"] != "forbidden":
         raise ConstitutionError("stable_authority: mutación autónoma prohibida")
 
@@ -213,7 +202,9 @@ def validate_candidate(
     constitution: dict[str, Any] | None = None,
 ) -> str:
     """Valida un candidato y devuelve su huella SHA-256 determinista."""
-    contract = validate_constitution(constitution or load_constitution())
+    contract = validate_constitution(
+        constitution if constitution is not None else load_constitution()
+    )
     required = set(REQUIRED_CANDIDATE_FIELDS)
     candidate_root = _exact_keys(candidate, required, "candidate")
 
@@ -259,7 +250,10 @@ def validate_candidate(
     )
     if rollback["reversible"] is not True:
         raise ConstitutionError("candidate.rollback debe ser reversible")
-    if rollback["strategy"] not in {"revert", "restore_baseline"}:
+    if (
+        not isinstance(rollback["strategy"], str)
+        or rollback["strategy"] not in {"revert", "restore_baseline"}
+    ):
         raise ConstitutionError("candidate.rollback.strategy inválida")
 
     try:
