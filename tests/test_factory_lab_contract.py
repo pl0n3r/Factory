@@ -99,12 +99,14 @@ class FactoryLabContractTests(unittest.TestCase):
 
         invalid_candidate = constitution_candidate()
         invalid_candidate["changes"][0]["path"] = "constitution.principles"
+        invalid_stable_metrics = metrics(0.90)
+        invalid_candidate_metrics = metrics(0.95)
         with self.assertRaisesRegex(FactoryLabError, "viola Constitution"):
             evaluate_shadow(
                 stable_sha="7" * 40,
                 candidate_sha="8" * 40,
-                stable_metrics=metrics(0.90),
-                candidate_metrics=metrics(0.95),
+                stable_metrics=invalid_stable_metrics,
+                candidate_metrics=invalid_candidate_metrics,
                 constitution_candidate=invalid_candidate,
             )
 
