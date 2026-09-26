@@ -21,6 +21,9 @@ require_true(($spec['version'] ?? null) === 1, 'unsupported contract version');
 require_true(($spec['enabled_by_default'] ?? true) === false, 'contract must default off');
 require_true(($spec['authentication']['mode'] ?? '') === 'hmac-sha256', 'HMAC required');
 require_true(($spec['authentication']['fail_closed_without_key'] ?? false) === true, 'missing key must fail closed');
+require_true(($spec['authentication']['route_registration']['requires_configured_key'] ?? false) === true, 'routes require configured key');
+require_true(($spec['authentication']['route_registration']['requires_allowlist'] ?? false) === true, 'routes require configured allowlist');
+require_true(($spec['authentication']['route_registration']['disabled_behavior'] ?? '') === 'routes_absent_404', 'disabled ops routes must be absent');
 require_true(($spec['authentication']['allowlist_required'] ?? false) === true, 'allowlist required');
 require_true(($spec['transport']['scheme'] ?? '') === 'https', 'HTTPS required');
 require_true(($spec['transport']['certificate_validation_required'] ?? false) === true, 'certificate validation required');
@@ -36,6 +39,8 @@ require_true(($query['literal_plus_encoding'] ?? '') === '%2B', 'literal plus mu
 require_true(($query['percent_hex_case'] ?? '') === 'uppercase', 'percent escapes must be uppercase');
 require_true(($query['sort'] ?? []) === ['encoded_name', 'encoded_value'], 'query sort order must be deterministic');
 require_true(($spec['mutations']['idempotency_key_required'] ?? false) === true, 'mutation idempotency required');
+require_true(($spec['mutations']['idempotency_key_location'] ?? '') === 'header', 'idempotency key must live in a header');
+require_true(($spec['mutations']['idempotency_key_header'] ?? '') === 'Idempotency-Key', 'idempotency header name must be portable');
 require_true(($spec['mutations']['invalidate_active_authority_on_suspend_or_privilege_reduction'] ?? false) === true, 'suspension and privilege reduction must invalidate active authority');
 require_true(($spec['rate_limit']['required'] ?? false) === true, 'rate limit required');
 require_true(($spec['search']['empty_query_allowed'] ?? true) === false, 'empty staff search forbidden');

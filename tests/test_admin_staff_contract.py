@@ -47,6 +47,10 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertIn("preservando claves repetidas", doc)
         self.assertIn("RFC 3986", doc)
         self.assertIn("clave de idempotencia", doc)
+        self.assertIn("Idempotency-Key", doc)
+        self.assertIn("exactamente un `=` crudo", doc)
+        self.assertIn("no registra ninguna ruta `/ops`", doc)
+        self.assertIn("responde `404`", doc)
         self.assertNotIn("DELETE /ops/staff/{id}", doc)
 
     def test_template_stub_requires_security_controls(self):
@@ -59,6 +63,10 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertEqual(spec["authentication"]["key_source"], "environment")
         self.assertTrue(spec["authentication"]["constant_time_compare"])
         self.assertTrue(spec["authentication"]["fail_closed_without_key"])
+        routes = spec["authentication"]["route_registration"]
+        self.assertTrue(routes["requires_configured_key"])
+        self.assertTrue(routes["requires_allowlist"])
+        self.assertEqual(routes["disabled_behavior"], "routes_absent_404")
         self.assertTrue(spec["authentication"]["allowlist_required"])
         self.assertEqual(spec["transport"]["scheme"], "https")
         self.assertTrue(spec["transport"]["certificate_validation_required"])
@@ -79,8 +87,18 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertEqual(query["percent_hex_case"], "uppercase")
         self.assertEqual(query["sort"], ["encoded_name", "encoded_value"])
         self.assertEqual(query["pair_format"], "name=value")
+        self.assertEqual(query["raw_pair_separator"], "&")
+        self.assertEqual(query["raw_name_value_separator"], "=")
+        self.assertTrue(query["exactly_one_raw_equals_per_pair"])
+        self.assertTrue(query["reject_missing_equals"])
+        self.assertTrue(query["reject_empty_names"])
+        self.assertEqual(query["literal_equals_encoding"], "%3D")
+        self.assertTrue(query["reject_malformed_percent_escapes"])
+        self.assertEqual(query["percent_decode_passes"], 1)
         self.assertTrue(query["omit_question_mark_when_empty"])
         self.assertTrue(spec["mutations"]["idempotency_key_required"])
+        self.assertEqual(spec["mutations"]["idempotency_key_location"], "header")
+        self.assertEqual(spec["mutations"]["idempotency_key_header"], "Idempotency-Key")
         self.assertTrue(spec["mutations"]["replay_nonce_is_not_idempotency"])
         self.assertTrue(
             spec["mutations"]["invalidate_active_authority_on_suspend_or_privilege_reduction"]
