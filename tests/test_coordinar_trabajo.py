@@ -397,6 +397,41 @@ class WorkflowCoordinacionTests(unittest.TestCase):
         self.assertIn("github.event.action == 'edited'", issue_job)
         issue_permissions = self.yaml_block(issue_job, "permissions:", 4)
         self.assertIn("checks: write", issue_permissions)
+    def test_label_event_does_not_expand_authority_or_permissions(self) -> None:
+        """El label-event reconcilia estado con permisos mínimos."""
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/coordinacion-trabajo.yml").read_text(
+            encoding="utf-8"
+        )
+        job = self.yaml_block(workflow, "reserva-silenciosa:", 2)
+        permissions = self.yaml_block(job, "permissions:", 4)
+        self.assertIn("contents: read", permissions)
+        self.assertIn("issues: write", permissions)
+        self.assertIn("pull-requests: read", permissions)
+        self.assertNotIn("contents: write", permissions)
+        self.assertNotIn("pull-requests: write", permissions)
+
+        reusable = (root / ".github/workflows/coordinacion.yml").read_text(
+            encoding="utf-8"
+        )
+        label_job = self.yaml_block(reusable, "etiqueta:", 2)
+        reusable_permissions = self.yaml_block(label_job, "permissions:", 4)
+        self.assertIn("contents: read", reusable_permissions)
+        self.assertIn("issues: write", reusable_permissions)
+        self.assertIn("pull-requests: read", reusable_permissions)
+        self.assertNotIn("contents: write", reusable_permissions)
+        self.assertNotIn("pull-requests: write", reusable_permissions)
+
+        coordinator = (root / "scripts/coordinar_trabajo.py").read_text(
+            encoding="utf-8"
+        )
+        start = coordinator.index("def update_issue_label_state(")
+        end = coordinator.index("\ndef invalidate_contract_drift_checks(", start)
+        label_handler = coordinator[start:end]
+        self.assertNotIn("reserve_work(", label_handler)
+        self.assertNotIn('"OWNER"', label_handler)
+
+
 
 
 
@@ -1151,20 +1186,100 @@ class CoordinacionTests(unittest.TestCase):
             reserve_work(api, 12, "pl0n3r", "OWNER")
         self.assertNotIn("trabajo/issue-12", api.branches)
 
-    def test_invalid_silent_reservation_restores_available(self) -> None:
-        """Un label reservado no queda huérfano si el contrato AC es inválido."""
+    def test_manual_reserved_label_without_authority_restores_available(self) -> None:
+        """Un label manual no crea rama, marker ni assignee."""
         api = FakeGitHub()
-        api.issue_data["body"] = "Issue legacy sin contrato."
         api.issue_data["labels"] = [{"name": STATUS_RESERVED}]
-        with self.assertRaises(CoordinationError):
-            update_issue_label_state(
-                api,
-                12,
-                "pl0n3r",
-                STATUS_RESERVED,
-            )
+
+        update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+
         self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
         self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertIsNone(active_reservation(api, 12))
+        self.assertEqual(api.assignees, set())
+
+    def test_manual_reserved_label_keeps_blocked_issue_blocked(self) -> None:
+        """Un Issue bloqueado conserva su estado sin fabricar autoridad."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [
+            {"name": STATUS_BLOCKED},
+            {"name": STATUS_RESERVED},
+        ]
+
+        update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+
+        self.assertEqual(api.status_history[-1], STATUS_BLOCKED)
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertIsNone(active_reservation(api, 12))
+        self.assertEqual(api.assignees, set())
+
+    def test_manual_reserved_label_preserves_closed_terminal_state(self) -> None:
+        """Cerrar sigue dominando sobre un label reservado manual."""
+        for state_reason, expected in (
+            (None, STATUS_COMPLETED),
+            ("not_planned", STATUS_CANCELLED),
+        ):
+            with self.subTest(state_reason=state_reason):
+                api = FakeGitHub()
+                api.issue_data["state"] = "closed"
+                api.issue_data["state_reason"] = state_reason
+                api.issue_data["labels"] = [{"name": STATUS_RESERVED}]
+
+                update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+
+                self.assertEqual(api.status_history[-1], expected)
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertIsNone(active_reservation(api, 12))
+
+    def test_reserved_label_reconciles_existing_trusted_reservation_without_rotation(self) -> None:
+        """Una autoridad existente solo sincroniza su estado visible."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        original = active_reservation(api, 12)
+        assert original is not None
+
+        update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+
+        current = active_reservation(api, 12)
+        assert current is not None
+        self.assertEqual(current["reservation_id"], original["reservation_id"])
+        self.assertEqual(current["owner"], original["owner"])
+        self.assertEqual(api.status_history[-1], STATUS_RESERVED)
+        self.assertEqual(api.assignees, set())
+
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": f"Closes #12\nReserva: {SESSION_A}",
+            "head": {"ref": "trabajo/issue-12", "sha": "head-review"},
+            "base": {"ref": "main"},
+        }
+        update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+        self.assertEqual(api.status_history[-1], STATUS_REVIEW)
+        self.assertEqual(
+            active_reservation(api, 12)["reservation_id"],
+            original["reservation_id"],
+        )
+
+    def test_label_event_never_creates_reservation_authority(self) -> None:
+        """Solo /tomar autorizado crea la reserva normal."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_RESERVED}]
+        update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+        self.assertIsNone(active_reservation(api, 12))
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+        authorized_api = FakeGitHub()
+        reservation_id = reserve_work(
+            authorized_api,
+            12,
+            "pl0n3r",
+            "OWNER",
+        )
+        self.assertIsNotNone(reservation_id)
+        self.assertIn("trabajo/issue-12", authorized_api.branches)
+        self.assertIsNotNone(active_reservation(authorized_api, 12))
 
     def test_blocked_issue_reports_reason(self) -> None:
         """Un /tomar bloqueado explica el no-op sin mutar coordinación."""
