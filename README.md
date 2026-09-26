@@ -174,3 +174,29 @@ Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
 - **Migración:** cambio en la estructura de la base de datos que acompaña al código nuevo.
 - **Template:** plantilla para crear un proyecto nuevo con todo incluido.
 - **Épico:** un Issue grande que agrupa varios Issues más pequeños.
+
+
+---
+
+## Living Software
+
+**Living Software está integrado al protocolo en su arquitectura y ciclo operativo; el hardening de fronteras de evidencia continúa.**
+
+El objetivo es que Factory pueda observar, recordar, aprender, proponer, experimentar, medir, podar y reparar sin convertir aprendizaje en autoridad. El contrato canónico está documentado en [docs/factory-living-software.md](docs/factory-living-software.md) y las reglas operativas viven en [PLAN-AGENTES.md](PLAN-AGENTES.md#9-living-software-ciclo-operativo-canónico).
+
+El ciclo de alto nivel es:
+
+`observe → learn → experiment → adopt_or_reject → measure → prune`
+
+Ese resumen no reemplaza el lifecycle completo de Constitution. Toda adopción conserva rollback, trazabilidad, invariantes protegidos y límites de autoridad humana.
+
+### Estado de confianza actual
+
+- **#209 Autonomy authority + canonical evidence:** ✅ cerrado.
+- **#211 Factory Lab promotion provenance:** 🚧 pendiente.
+- **#213 Growth/Pruning source evidence:** 🚧 pendiente.
+- **#215 Repair human authority + immunity provenance:** 🚧 pendiente.
+
+Por eso, cerrar #157 significa **integración estructural del protocolo**, no autonomía completa, promoción verificada end-to-end ni self-healing production-ready. #143 debe permanecer abierto mientras queden hardenings Living Software pendientes.
+
+Las puertas humanas vigentes no cambian: dinero, legal, datos reales/personales, borrado irreversible, publicación/live y demás decisiones reservadas siguen fuera de la autoridad autónoma.

@@ -284,3 +284,52 @@ Retoma desde tu Roadmap (Condor#1, GrindFlow#2, brvtal#533 y FactoryRunner#1), d
 - **ControlBot / AutoFactory:** solo modo dirigido o dependencia explícita; no compiten en la cola automática de producto.
 
 Elige siempre el siguiente trabajo así: **incidente de producción > prioridad crítica > alta > media**, y dentro de la misma prioridad, el que desbloquea más trabajo.
+
+
+---
+
+## 9. Living Software: ciclo operativo canónico
+
+Factory integra **Living Software a nivel de arquitectura y protocolo**. Esta integración no amplía autoridad, no sustituye puertas humanas y no autoriza promoción autónoma nueva por sí sola.
+
+### Ciclo continuo
+
+El ciclo operativo de alto nivel es:
+
+`observe → remember → learn → propose → shadow → experiment → validate → adopt_or_reject → measure → prune → rollback`
+
+`adopt_or_reject` es la vista operativa del estado máquina `promote_or_reject` definido por Constitution/Evolution Engine. Adoptar significa aceptar una evolución **dentro de la autoridad ya existente**; nunca significa conceder permisos nuevos.
+
+Handoffs canónicos:
+
+1. **Project DNA** descubre señales verificables del software.
+2. **Context Compiler** limita el contexto de misión.
+3. **Definition-of-Done Compiler** deriva evidencia exigible.
+4. **Risk Compiler** deriva riesgo, blast radius y controles.
+5. **Fitness Engine** compara candidate vs baseline sin score mágico.
+6. **Evolution Engine** conserva lifecycle e historia append-only.
+7. **Autonomy Engine** solo reduce supervisión para authority class `operational` con Fitness/Risk recomputados desde inputs fuente.
+8. **Factory Lab** evalúa en shadow contra `stable`; no ejecuta promociones.
+9. **Experience Guardrails**, **Growth/Pruning** e **Immune/Repair** convierten experiencia en candidatos reversibles, sin reescribir historia ni Constitución.
+10. La promoción, cuando corresponda, usa evidencia canónica y las puertas humanas ya vigentes.
+
+### Autoridad humana y fail-closed
+
+Living Software **no cambia** las decisiones del dueño de la sección 7. Dinero, legal, datos reales/personales, borrado irreversible, publicación/live y cualquier otra puerta humana vigente continúan requiriendo su mecanismo canónico.
+
+Ante discrepancia entre documentación, evidencia canónica, Constitution, una decisión vigente o un hardening abierto, **gana la restricción más segura y se falla cerrado**. Un fingerprint declarado por el consumidor no reemplaza la recomputación desde inputs fuente cuando exista un validador canónico.
+
+### Estado de hardening de fronteras de evidencia
+
+La integración es estructural; algunas fronteras siguen en hardening y **no deben tratarse como gates finales confiables hasta cerrar sus Issues**:
+
+- **#209** — Autonomy authority + evidencia canónica: ✅ cerrado; authority scope estructurado y Fitness/Risk se recomputan desde inputs fuente.
+- **#211** — Factory Lab promotion provenance: 🚧 pendiente.
+- **#213** — Growth/Pruning source evidence: 🚧 pendiente.
+- **#215** — Repair human authority + immunity provenance: 🚧 pendiente.
+
+Mientras cualquiera de #211/#213/#215 siga abierto:
+- #157 no habilita promoción autónoma adicional;
+- no se declara Living Software completo ni production-ready;
+- #143 permanece abierto;
+- todo consumidor de esas fronteras debe conservar comportamiento fail-closed.
