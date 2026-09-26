@@ -5,6 +5,7 @@ from pathlib import Path
 
 from intelligence.project_dna import (
     ProjectDnaError,
+    _fingerprint_payload,
     discover_project_dna,
     validate_project_dna,
 )
@@ -19,6 +20,7 @@ class ProjectDnaTests(unittest.TestCase):
             paths=[
                 "package.json",
                 "composer.json",
+                "pyproject.toml",
                 ".github/workflows/ci.yml",
                 "database/migration_001.sql",
                 "src/sentry_integration.php",
@@ -30,12 +32,18 @@ class ProjectDnaTests(unittest.TestCase):
                 "composer.json": {
                     "require": {"symfony/framework-bundle": "^7"}
                 },
+                "pyproject.toml": {
+                    "project": {"dependencies": ["Django>=5.0"]}
+                },
             },
             capabilities=["web", "api"],
         )
 
-        self.assertEqual(dna["stack"], ["node", "php"])
-        self.assertEqual(dna["frameworks"], ["fastify", "react", "symfony"])
+        self.assertEqual(dna["stack"], ["node", "php", "python"])
+        self.assertEqual(
+            dna["frameworks"],
+            ["django", "fastify", "react", "symfony"],
+        )
         self.assertEqual(dna["data"], ["sql"])
         self.assertEqual(dna["ci"], ["github-actions"])
         self.assertEqual(dna["integrations"], ["github", "sentry"])
@@ -55,11 +63,23 @@ class ProjectDnaTests(unittest.TestCase):
     def test_fingerprint_is_deterministic_and_versioned(self):
         first = discover_project_dna(
             paths=["composer.json", ".github/workflows/ci.yml"],
-            manifests={"composer.json": {"require": {"symfony/framework-bundle": "^7"}}},
+            manifests={
+                "composer.json": {
+                    "require": {"symfony/framework-bundle": "^7"}
+                }
+            },
         )
         second = discover_project_dna(
-            paths=[".github/workflows/ci.yml", "composer.json", "composer.json"],
-            manifests={"composer.json": {"require": {"symfony/framework-bundle": "^7"}}},
+            paths=[
+                ".github/workflows/ci.yml",
+                "composer.json",
+                "composer.json",
+            ],
+            manifests={
+                "composer.json": {
+                    "require": {"symfony/framework-bundle": "^7"}
+                }
+            },
         )
 
         self.assertEqual(first["version"], 1)
@@ -84,13 +104,19 @@ class ProjectDnaTests(unittest.TestCase):
             "version": 2,
             "signal": "explicit",
         }
-
-        from intelligence.project_dna import _fingerprint_payload
-
         extended["fingerprint"] = _fingerprint_payload(extended)
+
         self.assertEqual(validate_project_dna(extended), extended)
-        self.assertTrue(schema["properties"]["extensions"]["additionalProperties"])
+        self.assertTrue(
+            schema["properties"]["extensions"]["additionalProperties"]
+        )
         self.assertFalse(schema["additionalProperties"])
+
+        extra_top_level = copy.deepcopy(extended)
+        extra_top_level["future"] = {"invented": False}
+        extra_top_level["fingerprint"] = _fingerprint_payload(extra_top_level)
+        with self.assertRaisesRegex(ProjectDnaError, "campos base"):
+            validate_project_dna(extra_top_level)
 
 
 if __name__ == "__main__":

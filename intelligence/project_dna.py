@@ -3,11 +3,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 
 DNA_VERSION = 1
 UNKNOWN = "unknown"
+FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
+BASE_FIELDS = {
+    "version",
+    "stack",
+    "frameworks",
+    "data",
+    "ci",
+    "hosting",
+    "integrations",
+    "capabilities",
+    "signals",
+    "extensions",
+    "fingerprint",
+}
 
 KNOWN_STACK_SIGNALS = {
     "composer.json": "php",
@@ -17,7 +32,6 @@ KNOWN_STACK_SIGNALS = {
     "go.mod": "go",
     "Cargo.toml": "rust",
 }
-KNOWN_CI_PREFIXES = (".github/workflows/", ".gitlab-ci.yml", "Jenkinsfile")
 KNOWN_DATA_SIGNALS = {
     "database/": "sql",
     "migrations/": "sql",
@@ -40,6 +54,7 @@ FRAMEWORK_PACKAGE_HINTS = {
     "django": "django",
     "flask": "flask",
 }
+_PYTHON_PACKAGE = re.compile(r"^[A-Za-z0-9_.-]+")
 
 
 class ProjectDnaError(ValueError):
@@ -78,11 +93,19 @@ def _normalize_manifests(manifests: Any) -> dict[str, Any]:
 
 
 def _detect_stack(paths: tuple[str, ...]) -> list[str] | str:
-    detected = sorted({
-        stack for signal, stack in KNOWN_STACK_SIGNALS.items()
-        if signal in paths
-    })
+    detected = sorted(
+        {
+            stack
+            for signal, stack in KNOWN_STACK_SIGNALS.items()
+            if signal in paths
+        }
+    )
     return detected if detected else UNKNOWN
+
+
+def _python_dependency_name(raw: str) -> str | None:
+    match = _PYTHON_PACKAGE.match(raw.strip())
+    return match.group(0).lower() if match else None
 
 
 def _package_names(manifests: dict[str, Any]) -> set[str]:
@@ -106,16 +129,21 @@ def _package_names(manifests: dict[str, Any]) -> set[str]:
         if isinstance(deps, list):
             for dep in deps:
                 if isinstance(dep, str):
-                    packages.add(dep.split(";", 1)[0].split("[", 1)[0].split(" ", 1)[0].lower())
+                    name = _python_dependency_name(dep)
+                    if name:
+                        packages.add(name)
     return packages
 
 
 def _detect_frameworks(manifests: dict[str, Any]) -> list[str] | str:
     packages = _package_names(manifests)
-    detected = sorted({
-        framework for package, framework in FRAMEWORK_PACKAGE_HINTS.items()
-        if package in packages
-    })
+    detected = sorted(
+        {
+            framework
+            for package, framework in FRAMEWORK_PACKAGE_HINTS.items()
+            if package in packages
+        }
+    )
     return detected if detected else UNKNOWN
 
 
@@ -132,18 +160,24 @@ def _detect_ci(paths: tuple[str, ...]) -> list[str] | str:
 
 
 def _detect_data(paths: tuple[str, ...]) -> list[str] | str:
-    detected = sorted({
-        kind for signal, kind in KNOWN_DATA_SIGNALS.items()
-        if signal in paths or any(path.startswith(signal) for path in paths)
-    })
+    detected = sorted(
+        {
+            kind
+            for signal, kind in KNOWN_DATA_SIGNALS.items()
+            if signal in paths or any(path.startswith(signal) for path in paths)
+        }
+    )
     return detected if detected else UNKNOWN
 
 
 def _detect_hosting(paths: tuple[str, ...]) -> list[str] | str:
-    detected = sorted({
-        provider for signal, provider in KNOWN_HOSTING_SIGNALS.items()
-        if signal in paths
-    })
+    detected = sorted(
+        {
+            provider
+            for signal, provider in KNOWN_HOSTING_SIGNALS.items()
+            if signal in paths
+        }
+    )
     return detected if detected else UNKNOWN
 
 
@@ -186,7 +220,9 @@ def discover_project_dna(
     elif isinstance(capabilities, (list, tuple, set)) and all(
         isinstance(item, str) and item.strip() for item in capabilities
     ):
-        normalized_capabilities = sorted(set(item.strip() for item in capabilities))
+        normalized_capabilities = sorted(
+            set(item.strip() for item in capabilities)
+        )
     else:
         raise ProjectDnaError("capabilities inválidas")
 
@@ -209,21 +245,56 @@ def discover_project_dna(
     return dna
 
 
+def _validate_known_or_list(value: Any, field: str) -> None:
+    if value == UNKNOWN:
+        return
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item for item in value)
+        or value != sorted(set(value))
+    ):
+        raise ProjectDnaError(f"{field} inválido")
+
+
 def validate_project_dna(document: Any) -> dict[str, Any]:
     """Valida campos base v1 permitiendo futuras extensiones aisladas."""
     if not isinstance(document, dict):
         raise ProjectDnaError("Project DNA debe ser objeto")
-    required = {
-        "version", "stack", "frameworks", "data", "ci", "hosting",
-        "integrations", "capabilities", "signals", "extensions", "fingerprint",
-    }
-    if not required.issubset(document):
-        raise ProjectDnaError("faltan campos base")
-    if document["version"] != DNA_VERSION:
+    if set(document) != BASE_FIELDS:
+        raise ProjectDnaError("campos base incompletos o adicionales")
+    if type(document["version"]) is not int or document["version"] != DNA_VERSION:
         raise ProjectDnaError("versión no admitida")
+
+    for field in (
+        "stack",
+        "frameworks",
+        "data",
+        "ci",
+        "hosting",
+        "integrations",
+        "capabilities",
+    ):
+        _validate_known_or_list(document[field], field)
+
+    signals = document["signals"]
+    if (
+        not isinstance(signals, dict)
+        or set(signals) != {"paths", "manifests"}
+        or not isinstance(signals["paths"], list)
+        or not isinstance(signals["manifests"], list)
+        or signals["paths"] != sorted(set(signals["paths"]))
+        or signals["manifests"] != sorted(set(signals["manifests"]))
+        or not all(isinstance(item, str) and item for item in signals["paths"])
+        or not all(isinstance(item, str) and item for item in signals["manifests"])
+    ):
+        raise ProjectDnaError("signals inválidas")
     if not isinstance(document["extensions"], dict):
         raise ProjectDnaError("extensions debe ser objeto")
-    if not isinstance(document["fingerprint"], str) or len(document["fingerprint"]) != 64:
+    if (
+        not isinstance(document["fingerprint"], str)
+        or FINGERPRINT_RE.fullmatch(document["fingerprint"]) is None
+    ):
         raise ProjectDnaError("fingerprint inválido")
     if _fingerprint_payload(document) != document["fingerprint"]:
         raise ProjectDnaError("fingerprint no coincide")
