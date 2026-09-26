@@ -1,6 +1,14 @@
 import json
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
+from unittest.mock import patch
+from types import SimpleNamespace
+
+from sincronizar_puerta import (
+    BOT, BLOCKED, AVAILABLE, MARKER, OWNED,
+    gh_api, sync_invalid, sync_valid,
+)
 
 from puertas_humanas import (
     GateValidationError,
@@ -68,6 +76,58 @@ def body(value):
         + json.dumps(value, separators=(",", ":"))
         + " -->"
     )
+
+
+class FakeIssueAPI:
+    """GitHub falso que aplica POST/DELETE de etiquetas sin reemplazar las demás."""
+
+    def __init__(self, labels=None, comments=None):
+        self.labels = set(labels or {"prioridad: alta", "rol: qa", "estado: disponible"})
+        self.comments = list(comments or [])
+        self.events = []
+        self.calls = []
+        self.next_id = 1000
+
+    def __call__(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
+        if method == "GET" and path.endswith("/comments?per_page=100"):
+            return list(self.comments)
+        if method == "GET" and path.endswith("/events?per_page=100"):
+            return list(self.events)
+        if method == "GET" and path.endswith("/issues/140"):
+            return {"labels": [{"name": name} for name in sorted(self.labels)]}
+        if method == "POST" and path.endswith("/comments"):
+            self.next_id += 1
+            self.comments.append({
+                "id": self.next_id,
+                "body": payload["body"],
+                "user": {"login": BOT},
+            })
+            return self.comments[-1]
+        if method == "PATCH" and "/issues/comments/" in path:
+            identifier = int(path.rsplit("/", 1)[-1])
+            comment = next(item for item in self.comments if item["id"] == identifier)
+            comment["body"] = payload["body"]
+            return comment
+        if method == "POST" and path.endswith("/labels"):
+            for label in payload["labels"]:
+                self.labels.add(label)
+                self.events.append({
+                    "event": "labeled",
+                    "label": {"name": label},
+                    "actor": {"login": BOT},
+                })
+            return list(self.labels)
+        if method == "DELETE" and "/labels/" in path:
+            label = unquote(path.rsplit("/", 1)[-1])
+            self.labels.remove(label)
+            self.events.append({
+                "event": "unlabeled",
+                "label": {"name": label},
+                "actor": {"login": BOT},
+            })
+            return None
+        raise AssertionError(f"Unexpected GitHub API call: {method} {path}")
 
 
 class GateTests(unittest.TestCase):
@@ -145,6 +205,97 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(GateValidationError) as raised:
             validate_gate(unknown_root)
         self.assertNotIn("NO_ECHO_THIS", str(raised.exception))
+
+    def test_invalid_gate_reports_safe_error(self):
+        bad_risk = simple_gate()
+        bad_risk["options"][0]["risk"] = "private"
+        risk = classify_body(body(bad_risk), include_reason=True)
+        self.assertEqual(risk["status"], "invalid-gate")
+        self.assertIn("option.risk", risk["reason"])
+        self.assertIn("low, medium o high", risk["reason"])
+        self.assertNotIn("private", json.dumps(risk))
+
+        bad_blocks = simple_gate(blocks=["no es texto", "PRIVATE_MARKER_SECRET"])
+        blocks = classify_body(body(bad_blocks), include_reason=True)
+        self.assertEqual(blocks["status"], "invalid-gate")
+        self.assertIn("blocks debe ser texto", blocks["reason"])
+        self.assertNotIn("PRIVATE_MARKER_SECRET", json.dumps(blocks))
+
+        malformed = classify_body(
+            '<!-- factory-human-gate {"PRIVATE_MARKER_SECRET":',
+            include_reason=True,
+        )
+        self.assertEqual(malformed["status"], "invalid-gate")
+        self.assertEqual(malformed["reason"], "Marker de puerta incompleto o malformado.")
+        self.assertNotIn("PRIVATE_MARKER_SECRET", json.dumps(malformed))
+
+        api = FakeIssueAPI()
+        for _ in range(105):
+            api.next_id += 1
+            api.comments.append({
+                "id": api.next_id, "body": "otro comentario",
+                "user": {"login": "otro"},
+            })
+        sync_invalid(api, "pl0n3r/Factory", 140, blocks["reason"])
+        self.assertIn(BLOCKED, api.labels)
+        self.assertIn("prioridad: alta", api.labels)
+        self.assertIn("rol: qa", api.labels)
+        bot_messages = [
+            comment for comment in api.comments
+            if comment["user"]["login"] == BOT
+        ]
+        self.assertEqual(len(bot_messages), 1)
+        self.assertIn(OWNED, bot_messages[0]["body"])
+        self.assertIn("blocks debe ser texto", bot_messages[0]["body"])
+        self.assertNotIn("PRIVATE_MARKER_SECRET", bot_messages[0]["body"])
+        sync_invalid(api, "pl0n3r/Factory", 140, blocks["reason"])
+        self.assertEqual(len(api.comments), 106)
+        self.assertEqual(
+            len([call for call in api.calls if call[0] == "POST"
+                 and call[1].endswith("/labels")]), 1,
+        )
+
+        # Una etiqueta de otro escritor entre lectura y restauración sobrevive.
+        api.labels.add("equipo: externo")
+        sync_valid(api, "pl0n3r/Factory", 140)
+        self.assertIn(AVAILABLE, api.labels)
+        self.assertNotIn(BLOCKED, api.labels)
+        self.assertIn("equipo: externo", api.labels)
+
+        # Ni un aviso propio antiguo permite restaurar un bloqueo manual nuevo.
+        api.labels.remove(AVAILABLE)
+        api.labels.add(BLOCKED)
+        api.events.append({
+            "event": "labeled",
+            "label": {"name": BLOCKED},
+            "actor": {"login": "maintainer"},
+        })
+        sync_valid(api, "pl0n3r/Factory", 140)
+        self.assertIn(BLOCKED, api.labels)
+        self.assertNotIn(AVAILABLE, api.labels)
+
+        # Bloqueo preexistente: nunca adquiere propiedad del workflow.
+        manual = FakeIssueAPI({"estado: bloqueado", "prioridad: alta"})
+        sync_invalid(manual, "pl0n3r/Factory", 140, risk["reason"])
+        self.assertNotIn(OWNED, manual.comments[0]["body"])
+        sync_valid(manual, "pl0n3r/Factory", 140)
+        self.assertIn(BLOCKED, manual.labels)
+        self.assertFalse(any(
+            call[0] == "DELETE" and "/labels/" in call[1]
+            for call in manual.calls
+        ))
+
+    def test_invalid_gate_pagination_slurps_every_comment_page(self):
+        def fake_run(command, **kwargs):
+            self.assertIn("--paginate", command)
+            self.assertIn("--slurp", command)
+            return SimpleNamespace(stdout='[[{"id":1}],[{"id":2}]]')
+
+        with patch("sincronizar_puerta.subprocess.run", side_effect=fake_run):
+            comments = gh_api(
+                "GET", "repos/pl0n3r/Factory/issues/140/comments?per_page=100"
+            )
+        self.assertEqual([item["id"] for item in comments], [1, 2])
 
     def test_unknown_category_is_invalid_gate(self):
         self.assertEqual(

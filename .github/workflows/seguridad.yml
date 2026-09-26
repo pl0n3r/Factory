@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: seguridad-${{ github.event.issue.number || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validar-candidato:
@@ -100,6 +100,23 @@ jobs:
           set -euo pipefail
           python3 seguridad/puertas_humanas.py \
             --format github < "$GITHUB_EVENT_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Avisar puerta inválida y bloquear Issue
+        if: steps.actor.outputs.trusted == 'true' && steps.gate.outputs.status == 'invalid-gate'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          REASON: ${{ steps.gate.outputs.reason }}
+        run: python3 seguridad/sincronizar_puerta.py invalid
+
+      - name: Restaurar solo bloqueo propio al corregir marker
+        if: steps.actor.outputs.trusted == 'true' && steps.gate.outputs.status == 'gate'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: python3 seguridad/sincronizar_puerta.py valid
 
       - name: Enrutar puerta válida
         if: steps.actor.outputs.trusted == 'true' && steps.gate.outputs.status == 'gate'
