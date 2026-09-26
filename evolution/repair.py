@@ -13,7 +13,7 @@ REPAIR_VERSION = 1
 DECISION_EVIDENCE_VERSION = 1
 MAX_STEPS = 16
 _TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
-_ISSUE_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
+_ISSUE_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9]\d*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
