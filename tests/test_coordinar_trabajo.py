@@ -32,6 +32,7 @@ from scripts.coordinar_trabajo import (
     migrate_legacy_reservation,
     parse_comment_command,
     release_work,
+    renew_pinned_acceptance,
     reservation_from_pr_body,
     reservation_marker,
     reserve_work,
@@ -347,6 +348,22 @@ class WorkflowCoordinacionTests(unittest.TestCase):
             "startsWith(github.event.comment.body, '/transferir ')",
             job_block,
         )
+
+        self.assertIn(
+            "startsWith(github.event.comment.body, '/renovar-contrato ')",
+            job_block,
+        )
+        comment_permissions = self.yaml_block(job_block, "permissions:", 4)
+        self.assertIn("checks: write", comment_permissions)
+        reusable = (
+            Path(__file__).resolve().parents[1]
+            / ".github" / "workflows" / "coordinacion.yml"
+        ).read_text(encoding="utf-8")
+        reusable_comment = self.yaml_block(reusable, "comentario:", 2)
+        reusable_permissions = self.yaml_block(
+            reusable_comment, "permissions:", 4
+        )
+        self.assertIn("checks: write", reusable_permissions)
 
         env_block = self.yaml_block(job_block, "env:", 8)
         self.assertIn(
@@ -1243,6 +1260,126 @@ class CoordinacionTests(unittest.TestCase):
         assert reservation is not None
         self.assertEqual(reservation["reservation_id"], SESSION_A)
         self.assertEqual(api.pulls[15]["body"], original)
+
+    def _renew_fixture(self) -> FakeGitHub:
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15, "state": "open", "draft": False,
+            "body": (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12", "sha": "head-renew"},
+            "base": {"ref": "main"},
+        }
+        api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
+            "El gate base pasa.", "La nueva evidencia pasa."
+        )
+        return api
+
+    def test_renew_pinned_acceptance_preserves_branch_and_pull(self) -> None:
+        api = self._renew_fixture()
+        new_id = renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertNotEqual(new_id, SESSION_A)
+        self.assertEqual(api.branches["trabajo/issue-12"], "abc123")
+        self.assertEqual(api.pulls[15]["state"], "open")
+        self.assertEqual(reservation_from_pr_body(api.pulls[15]["body"]), new_id)
+        active = active_reservation(api, 12)
+        self.assertEqual(active["reservation_id"], new_id)
+        self.assertEqual(
+            active["acceptance_sha256"],
+            contract_fingerprint(api.issue_data["body"]),
+        )
+
+    def test_renew_acceptance_invalidates_old_head_evidence(self) -> None:
+        api = self._renew_fixture()
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(
+            {row["name"] for row in api.check_runs},
+            {"Criterios de aceptación", "Validar"},
+        )
+        self.assertTrue(all(
+            row["head_sha"] == "head-renew"
+            and row["conclusion"] == "failure"
+            for row in api.check_runs
+        ))
+
+    def test_renew_acceptance_rejects_unauthorized_stale_and_races(self) -> None:
+        api = self._renew_fixture()
+        for actor, session in (("intruso", SESSION_A), ("pl0n3r", SESSION_B)):
+            with self.assertRaises(CoordinationError):
+                renew_pinned_acceptance(api, 12, actor, "OWNER", session)
+        with self.assertRaises(CoordinationError):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "NONE", SESSION_A)
+        self.assertEqual(api.check_runs, [])
+        stable = api.issue_data["body"]
+        api.issue_data["body"] = VALID_ACCEPTANCE_BODY
+        with self.assertRaisesRegex(CoordinationError, "No hay cambio"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        api.issue_data["body"] = "contrato inválido"
+        with self.assertRaises(Exception):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        api.issue_data["body"] = stable
+        api.pulls[16] = dict(api.pulls[15], number=16)
+        with self.assertRaisesRegex(CoordinationError, "exactamente un PR"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        del api.pulls[16]
+        old_create = api.create_failed_check
+        def conflicting_check(*args):
+            old_create(*args)
+            api.issue_data["body"] = VALID_ACCEPTANCE_BODY
+        api.create_failed_check = conflicting_check
+        with self.assertRaisesRegex(CoordinationError, "cambió"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
+
+    def test_renew_acceptance_rolls_back_partial_failure(self) -> None:
+        api = self._renew_fixture()
+        original = api.pulls[15]["body"]
+        api.pull_update_failures_remaining = 1
+        with self.assertRaises(CoordinationError):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(api.pulls[15]["body"], original)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
+        self.assertEqual(len(api.check_runs), 2)
+        api = self._renew_fixture()
+        api.fail_comment = True
+        original = api.pulls[15]["body"]
+        with self.assertRaises(CoordinationError):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(api.pulls[15]["body"], original)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
+        self.assertEqual(len(api.check_runs), 2)
+
+    def test_renew_acceptance_keeps_new_session_after_ambiguous_comment_error(self) -> None:
+        """Si GitHub escribió el marker pero el cliente falló, no revierte el PR."""
+        api = self._renew_fixture()
+        original_comment = api.comment
+        def persisted_then_error(issue_number, body):
+            original_comment(issue_number, body)
+            raise CoordinationError("timeout tras persistir comentario")
+        api.comment = persisted_then_error
+        with self.assertRaisesRegex(CoordinationError, "timeout"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        winner = active_reservation(api, 12)
+        self.assertIsNotNone(winner)
+        self.assertNotEqual(winner["reservation_id"], SESSION_A)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            winner["reservation_id"],
+        )
+        self.assertEqual(len(api.check_runs), 2)
+
+    def test_renew_acceptance_documents_explicit_v2_protocol(self) -> None:
+        self.assertEqual(
+            parse_comment_command(f"/renovar-contrato {SESSION_A}"),
+            ("renovar-contrato", SESSION_A),
+        )
+        docs = (Path(__file__).resolve().parents[1] / "PLAN-AGENTES.md").read_text()
+        self.assertIn("/renovar-contrato", docs)
+        self.assertIn("/migrar-contrato", docs)
+        self.assertIn("contrato anterior", docs.lower())
 
     def test_parse_comment_commands(self) -> None:
         """Interpreta comandos y valida UUID cuando corresponde."""

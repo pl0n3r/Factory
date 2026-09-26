@@ -82,6 +82,12 @@ ENTENDER → PLANIFICAR → EJECUTAR EN PASOS PEQUEÑOS → VERIFICAR → ENTREG
 
 ---
 
+### Renovación explícita de un contrato v2 durante un PR
+
+Si los criterios de aceptación de un Issue con reserva v2 necesitan evolucionar, no edites silenciosamente el fingerprint ni uses `/migrar-contrato` (reservado a v1 legacy). El dueño de la sesión actual debe modificar los criterios humanos y el marker máquina juntos, validar que forman un contrato ejecutable y comentar `/renovar-contrato <UUID_ACTUAL>` en el Issue. El coordinador compara el contrato anterior con el nuevo, verifica owner, UUID, rama canónica, HEAD y único PR, publica checks fallidos sobre el HEAD exacto del **contrato anterior**, registra nueva sesión/fingerprint y sincroniza metadata del mismo PR. Hasta obtener evidencia nueva sobre el contrato renovado, los checks previos no autorizan merge.
+
+Ante fallo o carrera, se conserva la sesión anterior o se falla cerrado con checks invalidados; no se destruyen rama ni PR. `/liberar` + `/tomar` sigue disponible para abandonar el trabajo, pero cierra PR y rama. Nunca usar `/renovar-contrato` para ocultar una revisión fallida ni para eludir una decisión humana.
+
 ## 3. Reglas de eficiencia (tiempo, tokens, costo)
 
 | Regla | Límite |
