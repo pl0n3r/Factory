@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from scripts.orquestador_kit import parse_task_marker
+from scripts.orquestador_kit import PlanError, parse_task_marker
 from scripts.orquestar_fabrica import sync_plan
 
 
@@ -201,28 +201,91 @@ class OrquestarFabricaTests(unittest.TestCase):
         self.assertEqual(once, twice)
 
     def test_ambiguous_enrichment_fails_closed(self):
-        api = FakeGitHub()
-        first = sync_plan(api, 3)
-        issue = api.issues[first["issues"]["A"]]
-        issue["body"] = issue["body"].replace(
-            "Owner: @pl0n3r",
-            "Owner: @intruso",
-        )
-        before = issue["body"]
-        patches_before = len([
-            call for call in api.requests
-            if call[0] == "PATCH" and "/issues/" in call[1]
-        ])
+        with self.subTest("canonical block edited"):
+            api = FakeGitHub()
+            first = sync_plan(api, 3)
+            issue = api.issues[first["issues"]["A"]]
+            issue["body"] = issue["body"].replace(
+                "Owner: @pl0n3r",
+                "Owner: @intruso",
+            )
+            before = issue["body"]
+            api.requests.clear()
 
-        with self.assertRaisesRegex(Exception, "Body enriquecido ambiguo"):
-            sync_plan(api, 3)
+            with self.assertRaisesRegex(PlanError, "Body enriquecido ambiguo"):
+                sync_plan(api, 3)
 
-        patches_after = len([
-            call for call in api.requests
-            if call[0] == "PATCH" and "/issues/" in call[1]
-        ])
-        self.assertEqual(patches_after, patches_before)
-        self.assertEqual(api.issues[issue["number"]]["body"], before)
+            self.assertFalse(any(
+                call[0] == "PATCH" and "/issues/" in call[1]
+                for call in api.requests
+            ))
+            self.assertEqual(api.issues[issue["number"]]["body"], before)
+
+        with self.subTest("malformed second task marker"):
+            api = FakeGitHub()
+            first = sync_plan(api, 3)
+            issue = api.issues[first["issues"]["A"]]
+            issue["body"] += "\n\n<!-- factory-plan-task-->"
+            before = issue["body"]
+            api.requests.clear()
+
+            with self.assertRaisesRegex(
+                PlanError,
+                "factory-plan-task adicional o malformado",
+            ):
+                sync_plan(api, 3)
+
+            self.assertFalse(any(
+                call[0] == "PATCH" and "/issues/" in call[1]
+                for call in api.requests
+            ))
+            self.assertEqual(api.issues[issue["number"]]["body"], before)
+
+        with self.subTest("malformed acceptance type"):
+            api = FakeGitHub()
+            first = sync_plan(api, 3)
+            issue = api.issues[first["issues"]["A"]]
+            issue["body"] += self._acceptance_enrichment().replace(
+                '"kind":"test"',
+                '"kind":[]',
+            )
+            before = issue["body"]
+            api.requests.clear()
+
+            with self.assertRaisesRegex(
+                PlanError,
+                "Contrato de aceptación enriquecido inválido",
+            ):
+                sync_plan(api, 3)
+
+            self.assertFalse(any(
+                call[0] == "PATCH" and "/issues/" in call[1]
+                for call in api.requests
+            ))
+            self.assertEqual(api.issues[issue["number"]]["body"], before)
+
+        with self.subTest("later task ambiguity is atomic"):
+            api = FakeGitHub()
+            first = sync_plan(api, 3)
+            issue_a = api.issues[first["issues"]["A"]]
+            issue_b = api.issues[first["issues"]["B"]]
+            before_a = issue_a["body"]
+            before_b = issue_b["body"].replace(
+                "Owner: @pl0n3r",
+                "Owner: @intruso",
+            )
+            issue_b["body"] = before_b
+            api.requests.clear()
+
+            with self.assertRaisesRegex(PlanError, "Body enriquecido ambiguo"):
+                sync_plan(api, 3)
+
+            self.assertFalse(any(
+                call[0] == "PATCH" and "/issues/" in call[1]
+                for call in api.requests
+            ))
+            self.assertEqual(issue_a["body"], before_a)
+            self.assertEqual(issue_b["body"], before_b)
 
     def test_epic_requires_exactly_one_type_and_priority(self):
         api = FakeGitHub()
