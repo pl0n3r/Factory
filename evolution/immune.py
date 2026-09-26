@@ -9,7 +9,11 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from evolution.constitution import validate_candidate
-from evolution.provenance import TrustedDecisionSource, TrustedIncidentRegistry
+from evolution.provenance import (
+    AuthenticatedDecisionReader,
+    AuthenticatedIncidentReader,
+    is_authenticated_incident_reader,
+)
 from evolution.repair import validate_repair_plan
 
 
@@ -132,8 +136,8 @@ class ImmuneIncident:
         repair_plan: Any = None,
         verification_passed: Any = None,
         immunity_candidate: Any = None,
-        decision_source: TrustedDecisionSource | None = None,
-        incident_registry: TrustedIncidentRegistry | None = None,
+        decision_source: AuthenticatedDecisionReader | None = None,
+        incident_registry: AuthenticatedIncidentReader | None = None,
     ) -> IncidentRecord:
         """Advance exactly one recovery stage and preserve all prior evidence."""
         current_index = RECOVERY_LIFECYCLE.index(self.current.stage)
@@ -339,10 +343,10 @@ def _validate_incident_snapshot(
 def _trusted_incident_evidence(
     incident_ids: Any,
     *,
-    incident_registry: TrustedIncidentRegistry | None,
+    incident_registry: AuthenticatedIncidentReader | None,
     failure_signature: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, Any]]:
-    if not isinstance(incident_registry, TrustedIncidentRegistry):
+    if not is_authenticated_incident_reader(incident_registry):
         raise ImmuneError("inmunidad exige registro confiable de incidentes")
     if (
         not isinstance(incident_ids, (list, tuple))
@@ -394,7 +398,7 @@ def compile_immunity_candidate(
     failure_signature: Any,
     expected_prevention: Any,
     incident_ids: Any = None,
-    incident_registry: TrustedIncidentRegistry | None = None,
+    incident_registry: AuthenticatedIncidentReader | None = None,
     origins: Any = None,
     incident_snapshots: Any = None,
 ) -> dict[str, Any]:
@@ -452,7 +456,7 @@ def compile_immunity_candidate(
 def _validate_immunity_candidate(
     value: Any,
     *,
-    incident_registry: TrustedIncidentRegistry | None,
+    incident_registry: AuthenticatedIncidentReader | None,
 ) -> str:
     if not isinstance(value, dict):
         raise ImmuneError("immunity_candidate inválido")
