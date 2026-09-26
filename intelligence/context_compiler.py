@@ -69,6 +69,16 @@ def _redact_text(value: str) -> str:
     return redacted
 
 
+def _contains_sensitive_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return _redact_text(value) != value
+    if isinstance(value, dict):
+        return any(_contains_sensitive_value(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_sensitive_value(item) for item in value)
+    return False
+
+
 def _safe_text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ContextCompilerError(f"{field} inválido")
@@ -115,6 +125,8 @@ def compile_mission_context(
 ) -> dict[str, Any]:
     """Compila Project DNA + tarea + contexto relevante sin ampliar autoridad."""
     dna = validate_project_dna(project_dna)
+    if _contains_sensitive_key(dna) or _contains_sensitive_value(dna):
+        raise ContextCompilerError("project_dna contiene valores sensibles")
     normalized_task = _task_contract(task)
     if not isinstance(context_items, (list, tuple)):
         raise ContextCompilerError("context_items debe ser lista")

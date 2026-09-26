@@ -136,6 +136,20 @@ class ContextCompilerTests(unittest.TestCase):
                 context_items=[],
             )
 
+        sensitive_dna = dna()
+        sensitive_dna["extensions"]["owner_email"] = "alice@example.com"
+        from intelligence.project_dna import _fingerprint_payload
+        sensitive_dna["fingerprint"] = _fingerprint_payload(sensitive_dna)
+        with self.assertRaisesRegex(
+            ContextCompilerError,
+            "project_dna contiene valores sensibles",
+        ):
+            compile_mission_context(
+                project_dna=sensitive_dna,
+                task=task(),
+                context_items=[],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
