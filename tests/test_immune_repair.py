@@ -19,10 +19,14 @@ def repair_plan(
     authority=None,
     decision_evidence=None,
     decision_source=None,
+    actions=None,
 ):
+    action_steps = (
+        ["replace stale generated rule"] if actions is None else actions
+    )
     return compile_repair_plan(
         diagnosis="Root cause isolated to a stale generated rule.",
-        actions=["replace stale generated rule"],
+        actions=action_steps,
         verification=["run regression suite", "compare health against baseline"],
         rollback={
             "strategy": "restore_baseline",
