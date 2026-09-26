@@ -33,6 +33,7 @@ class FakeGitHub:
         self.next_issue = 10
         self.comments = []
         self.labels = set()
+        self.requests = []
 
     def issue(self, number):
         return self.issues[number]
@@ -76,6 +77,7 @@ class FakeGitHub:
         })
 
     def request(self, method, path, payload=None):
+        self.requests.append((method, path, payload))
         if method == "POST" and path.endswith("/issues"):
             number = self.next_issue
             self.next_issue += 1
@@ -131,6 +133,96 @@ class OrchestratorSyncTests(unittest.TestCase):
         self.assertEqual(second["issues"], first["issues"])
         self.assertEqual(len(api.issues), 3)
         self.assertEqual(len(api.comments), 1)
+
+    @staticmethod
+    def _acceptance_enrichment():
+        return (
+            "\n\n### Contexto\n\nContexto enriquecido.\n\n"
+            "### Alcance\n\nAlcance enriquecido.\n\n"
+            "### Fuera de alcance\n\nFuera de alcance enriquecido.\n\n"
+            "### Criterios de aceptación\n\n"
+            "- [ ] [AC-01] Conservar contrato.\n\n"
+            "### Contrato ejecutable\n\n"
+            '<!-- factory-acceptance {"version":1,"criteria":['
+            '{"id":"AC-01","kind":"test","target":'
+            '"tests/test_orquestar_fabrica.py::OrchestratorSyncTests::'
+            'test_resync_preserves_enriched_acceptance_contract"}]} -->'
+        )
+
+    def test_resync_preserves_enriched_acceptance_contract(self):
+        api = FakeGitHub()
+        first = sync_plan(api, 3)
+        issue = api.issues[first["issues"]["A"]]
+        enrichment = self._acceptance_enrichment()
+        issue["body"] += enrichment
+        before = issue["body"]
+
+        sync_plan(api, 3)
+
+        after = api.issues[issue["number"]]["body"]
+        self.assertTrue(after.endswith(enrichment))
+        self.assertIn("### Contexto", after)
+        self.assertIn("### Alcance", after)
+        self.assertIn("### Fuera de alcance", after)
+        self.assertEqual(after.count("<!-- factory-acceptance "), 1)
+        self.assertEqual(before, after)
+
+    def test_resync_updates_plan_marker_without_duplicating_acceptance(self):
+        api = FakeGitHub()
+        first = sync_plan(api, 3)
+        issue = api.issues[first["issues"]["B"]]
+        enrichment = self._acceptance_enrichment()
+        issue["body"] += enrichment
+
+        api.issues[3]["body"] = api.issues[3]["body"].replace(
+            '"paths":["docs/b.md"]',
+            '"paths":["docs/b.md","docs/b-extra.md"]',
+        )
+        sync_plan(api, 3)
+
+        after = api.issues[issue["number"]]["body"]
+        parsed = parse_task_marker(after)
+        self.assertEqual(parsed["paths"], ["docs/b.md", "docs/b-extra.md"])
+        self.assertEqual(after.count("<!-- factory-plan-task "), 1)
+        self.assertEqual(after.count("<!-- factory-acceptance "), 1)
+        self.assertTrue(after.endswith(enrichment))
+
+    def test_resync_is_body_idempotent(self):
+        api = FakeGitHub()
+        first = sync_plan(api, 3)
+        issue = api.issues[first["issues"]["A"]]
+        issue["body"] += self._acceptance_enrichment()
+
+        sync_plan(api, 3)
+        once = api.issues[issue["number"]]["body"]
+        sync_plan(api, 3)
+        twice = api.issues[issue["number"]]["body"]
+
+        self.assertEqual(once, twice)
+
+    def test_ambiguous_enrichment_fails_closed(self):
+        api = FakeGitHub()
+        first = sync_plan(api, 3)
+        issue = api.issues[first["issues"]["A"]]
+        issue["body"] = issue["body"].replace(
+            "Owner: @pl0n3r",
+            "Owner: @intruso",
+        )
+        before = issue["body"]
+        patches_before = len([
+            call for call in api.requests
+            if call[0] == "PATCH" and "/issues/" in call[1]
+        ])
+
+        with self.assertRaisesRegex(Exception, "Body enriquecido ambiguo"):
+            sync_plan(api, 3)
+
+        patches_after = len([
+            call for call in api.requests
+            if call[0] == "PATCH" and "/issues/" in call[1]
+        ])
+        self.assertEqual(patches_after, patches_before)
+        self.assertEqual(api.issues[issue["number"]]["body"], before)
 
     def test_epic_requires_exactly_one_type_and_priority(self):
         api = FakeGitHub()
