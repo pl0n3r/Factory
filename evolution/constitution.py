@@ -26,6 +26,7 @@ EXPECTED_AUTHORITY_SOURCES = (
     "decisiones.yml",
     "seguridad/puertas-humanas.json",
     "docs/puertas-humanas.md",
+    "docs/resiliencia-fabrica.md",
 )
 HUMAN_GATE_REGISTRY = "seguridad/puertas-humanas.json"
 PROTECTED_INVARIANTS = (
@@ -124,10 +125,10 @@ def validate_constitution(document: Any) -> dict[str, Any]:
             rule["policy"] != "must_not_weaken"
             or rule["autonomous_mutation"] != "forbidden"
             or not isinstance(rule["source"], str)
-            or not rule["source"]
+            or rule["source"] not in authority["sources"]
         ):
             raise ConstitutionError(
-                f"protected_invariants.{invariant}: regla no protegida"
+                f"protected_invariants.{invariant}: regla o fuente no protegida"
             )
 
     evolvable = _exact_keys(
