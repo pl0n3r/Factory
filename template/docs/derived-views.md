@@ -1,6 +1,6 @@
 # Vistas derivadas
 
-Factory define un contrato para que documentación, dashboards y status puedan derivarse sin convertirse en fuentes de verdad.
+Factory define un contrato para que documentación, dashboards y status puedan derivarse sin convertirse en fuentes de verdad; una vista derivada no debe ser una fuente de verdad.
 
 Para adoptar el patrón:
 

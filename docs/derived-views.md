@@ -6,7 +6,7 @@ Una vista derivada **nunca es una fuente de verdad**. La semántica pertenece a 
 
 Cada vista mantenida por Factory se registra en `config/derived_views.json` con:
 
-- `id`: identificador estable.
+- `view_id`: identificador estable.
 - `source`: fuente canónica y sus referencias.
 - `view`: superficie derivada.
 - `mode`: `generated` si existe un generador seguro, o `regression` cuando la fuente todavía no puede consumirse de forma segura.

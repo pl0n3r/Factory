@@ -2,7 +2,7 @@
   "version": 1,
   "views": [
     {
-      "id": "factory.readme.tandas",
+      "view_id": "factory.readme.tandas",
       "source": "PLAN-AGENTES.md + estado canónico de los épicos TANDA 2 (#192, #129, #630, #1)",
       "view": "README.md#estado-de-las-tandas",
       "mode": "regression",
