@@ -1,4 +1,7 @@
 from pathlib import Path
+import copy
+import hashlib
+import json
 import re
 import unittest
 
@@ -19,6 +22,19 @@ def metrics(reliability):
         "authority": {"value": 1.0, "direction": "higher"},
         "reliability": {"value": reliability, "direction": "higher"},
     }
+
+
+def root_hash(value):
+    payload = dict(value)
+    payload.pop("fingerprint", None)
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def constitution_candidate():
@@ -81,7 +97,12 @@ class FactoryLabContractTests(unittest.TestCase):
             candidate_metrics=metrics(0.95),
             constitution_candidate=constitution_candidate(),
         )
-        contract = promotion_contract(shadow)
+        contract = promotion_contract(
+            shadow_result=shadow,
+            stable_metrics=metrics(0.90),
+            candidate_metrics=metrics(0.95),
+            constitution_candidate=constitution_candidate(),
+        )
         self.assertTrue(contract["requires_human_or_authorized_promotion"])
         self.assertEqual(contract["execution"], "not-performed")
         self.assertRegex(contract["constitution_fingerprint"], r"^[0-9a-f]{64}$")
@@ -94,8 +115,16 @@ class FactoryLabContractTests(unittest.TestCase):
             candidate_metrics=metrics(0.90),
             constitution_candidate=constitution_candidate(),
         )
+        not_improved_stable = metrics(0.95)
+        not_improved_candidate = metrics(0.90)
+        not_improved_constitution = constitution_candidate()
         with self.assertRaisesRegex(FactoryLabError, "evidencia insuficiente"):
-            promotion_contract(not_improved)
+            promotion_contract(
+                shadow_result=not_improved,
+                stable_metrics=not_improved_stable,
+                candidate_metrics=not_improved_candidate,
+                constitution_candidate=not_improved_constitution,
+            )
 
         invalid_candidate = constitution_candidate()
         invalid_candidate["changes"][0]["path"] = "constitution.principles"
@@ -109,6 +138,134 @@ class FactoryLabContractTests(unittest.TestCase):
                 candidate_metrics=invalid_candidate_metrics,
                 constitution_candidate=invalid_candidate,
             )
+
+    def test_forged_shadow_result_cannot_emit_promotion_contract(self):
+        forged = {
+            "version": 1,
+            "mode": "shadow",
+            "mutation_allowed": False,
+            "external_writes": [],
+            "baseline": {
+                "name": "stable",
+                "sha": "9" * 40,
+                "metrics_fingerprint": "a" * 64,
+            },
+            "candidate": {
+                "sha": "8" * 40,
+                "metrics_fingerprint": "b" * 64,
+                "constitution_fingerprint": "c" * 64,
+            },
+            "fitness": {
+                "version": 1,
+                "dimensions": {},
+                "protected_dimensions": [],
+                "protected_regressions": [],
+                "missing_dimensions": [],
+                "confidence": {"comparable": 1, "total": 1, "ratio": 1.0},
+                "claim": "improved",
+                "can_claim_improvement": True,
+                "fingerprint": "d" * 64,
+            },
+            "promotion": {
+                "ready": True,
+                "requires": [
+                    "constitution:valid",
+                    "fitness:improved",
+                    "fitness:no-protected-regressions",
+                    "fitness:no-missing-dimensions",
+                ],
+                "execution": "not-performed",
+            },
+        }
+        forged["fingerprint"] = root_hash(forged)
+        stable = metrics(0.90)
+        candidate = metrics(0.95)
+        constitution = constitution_candidate()
+
+        with self.assertRaisesRegex(FactoryLabError, "Constitution no coincide"):
+            promotion_contract(
+                shadow_result=forged,
+                stable_metrics=stable,
+                candidate_metrics=candidate,
+                constitution_candidate=constitution,
+            )
+
+    def test_recomputed_root_hash_does_not_replace_canonical_evidence(self):
+        stable = metrics(0.90)
+        candidate = metrics(0.95)
+        constitution = constitution_candidate()
+        shadow = evaluate_shadow(
+            stable_sha="a" * 40,
+            candidate_sha="b" * 40,
+            stable_metrics=stable,
+            candidate_metrics=candidate,
+            constitution_candidate=constitution,
+        )
+        tampered = copy.deepcopy(shadow)
+        tampered["fitness"]["claim"] = "equal"
+        tampered["fitness"]["can_claim_improvement"] = False
+        tampered["promotion"]["ready"] = True
+        tampered["fitness"]["fingerprint"] = "e" * 64
+        tampered["fingerprint"] = root_hash(tampered)
+
+        with self.assertRaisesRegex(FactoryLabError, "Fitness no coincide"):
+            promotion_contract(
+                shadow_result=tampered,
+                stable_metrics=stable,
+                candidate_metrics=candidate,
+                constitution_candidate=constitution,
+            )
+
+    def test_canonical_shadow_evidence_remains_promotable(self):
+        stable = metrics(0.90)
+        candidate = metrics(0.95)
+        constitution = constitution_candidate()
+        shadow = evaluate_shadow(
+            stable_sha="c" * 40,
+            candidate_sha="d" * 40,
+            stable_metrics=stable,
+            candidate_metrics=candidate,
+            constitution_candidate=constitution,
+        )
+
+        contract = promotion_contract(
+            shadow_result=shadow,
+            stable_metrics=stable,
+            candidate_metrics=candidate,
+            constitution_candidate=constitution,
+        )
+        self.assertTrue(contract["requires_human_or_authorized_promotion"])
+        self.assertEqual(contract["execution"], "not-performed")
+        self.assertEqual(contract["shadow_fingerprint"], shadow["fingerprint"])
+
+    def test_hardening_preserves_shadow_minimum_privilege(self):
+        stable = metrics(0.90)
+        candidate = metrics(0.95)
+        constitution = constitution_candidate()
+        shadow = evaluate_shadow(
+            stable_sha="e" * 40,
+            candidate_sha="f" * 40,
+            stable_metrics=stable,
+            candidate_metrics=candidate,
+            constitution_candidate=constitution,
+        )
+        contract = promotion_contract(
+            shadow_result=shadow,
+            stable_metrics=stable,
+            candidate_metrics=candidate,
+            constitution_candidate=constitution,
+        )
+
+        self.assertFalse(shadow["mutation_allowed"])
+        self.assertEqual(shadow["external_writes"], [])
+        self.assertEqual(shadow["promotion"]["execution"], "not-performed")
+        self.assertEqual(contract["execution"], "not-performed")
+
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertNotIn("contents: write", text)
+        self.assertNotIn("secrets.", text)
+        self.assertNotIn("GH_TOKEN", text)
 
     def test_workflow_uses_minimum_permissions_and_sha_pinned_actions(self):
         text = WORKFLOW.read_text(encoding="utf-8")
