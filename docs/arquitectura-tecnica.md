@@ -30,7 +30,7 @@
 13. [Observabilidad y operación](#13-observabilidad-y-operación)
 14. [Métricas y mejora continua](#14-métricas-y-mejora-continua)
 15. [Productos de la fábrica](#15-productos-de-la-fábrica)
-16. [Herramientas de la fábrica: AutoFactory y ControlBot](#16-herramientas-de-la-fábrica-autofactory-y-controlbot)
+16. [Herramientas de la fábrica: ControlBot, FactoryRunner y AutoFactory](#16-herramientas-de-la-fábrica-controlbot-factoryrunner-y-autofactory)
 17. [Estado actual y hoja de ruta](#17-estado-actual-y-hoja-de-ruta)
 18. [Riesgos, limitaciones y deuda técnica](#18-riesgos-limitaciones-y-deuda-técnica)
 19. [Manual operativo del dueño](#19-manual-operativo-del-dueño)
@@ -46,8 +46,9 @@ Los componentes centrales son:
 
 - **Productos:** Condor (Symfony), GrindFlow (Laravel) y BRVTAL (PHP plano), desplegados en Hostinger shared hosting.
 - **factory:** repositorio público que actúa como **plataforma interna**: el contrato operativo de los agentes (`PLAN-AGENTES.md`), el núcleo común de reglas, 16 perfiles profesionales, y un **kit de reusable workflows de GitHub Actions** con scripts Python de biblioteca estándar que gobiernan CI, coordinación, aceptación, roles, etiquetas, política, privacidad, release, deploy con rollback, preview y observación.
-- **AutoFactory:** extensión MV3 (Chrome y Safari) que mantiene trabajando las pestañas de **ChatGPT web**, el motor de ejecución principal, con varias cuentas, una por perfil de navegador.
-- **ControlBot:** centro de control web en especificación (dashboard, agentes, chat, despacho, decisiones, alta de proyectos y de cuentas).
+- **ControlBot:** control plane y workspace operativo: decide trabajo, prioridad, scheduler, reservas, políticas, estado durable y UX del dueño.
+- **FactoryRunner:** execution plane independiente: recibe órdenes tipadas de ControlBot, publica capabilities y ejecuta mediante adapters, sin decidir qué trabajar.
+- **AutoFactory:** herramienta local/manual del dueño. Se preserva independiente y no es dependencia ni fallback de FactoryRunner.
 - **GitHub:** árbitro del trabajo (Issues, PRs, reservas, etiquetas, rulesets, Actions, seguridad nativa). **Sentry** para errores de producción.
 
 El diseño persigue cuatro propiedades: **autonomía** (el dueño solo decide 7 categorías cerradas), **seguridad fail-closed** (ante duda, no se actúa), **trazabilidad** (todo cambio pasa por Issue → PR → gates → evidencia) y **reutilización** (una regla o gate se escribe una vez en factory y aplica a todos los proyectos).
@@ -58,7 +59,7 @@ El diseño persigue cuatro propiedades: **autonomía** (el dueño solo decide 7 
 
 ### 2.1 Alcance
 
-Cubre la arquitectura, los contratos y la operación de: factory, los tres productos, AutoFactory y ControlBot. No cubre el código de negocio interno de cada producto; eso vive en el `AGENTES.md`/`ESPECIFICACIONES.md` de cada repositorio.
+Cubre la arquitectura, los contratos y la operación de: factory, los productos canónicos, ControlBot, FactoryRunner y AutoFactory. No cubre el código de negocio interno de cada producto; eso vive en el `AGENTES.md`/`ESPECIFICACIONES.md` de cada repositorio.
 
 ### 2.2 Principios de diseño
 
@@ -95,13 +96,12 @@ Cubre la arquitectura, los contratos y la operación de: factory, los tres produ
 ```mermaid
 flowchart TB
     Dueno["Dueño (@pl0n3r)<br/>dirección y puertas humanas"]
-    subgraph Ejecucion["Ejecución de agentes"]
-        GPT["ChatGPT web<br/>N cuentas × perfiles de navegador"]
-        AF["AutoFactory<br/>extensión MV3"]
-    end
-    CB["ControlBot<br/>(especificado)"]
+    CB["ControlBot<br/>control plane + estado durable"]
+    FR["FactoryRunner<br/>execution plane"]
+    Remote["Adapters remotos<br/>browser · API · CLI"]
+    AF["AutoFactory<br/>local/manual e independiente"]
     subgraph GH["GitHub"]
-        Repos["Repos: factory · Condor · GrindFlow<br/>brvtal · AutoFactory · ControlBot"]
+        Repos["Repos: factory · Condor · GrindFlow · brvtal<br/>ControlBot · FactoryRunner · AutoFactory"]
         Actions["GitHub Actions<br/>kit factory@v1"]
         Sec["Seguridad nativa<br/>CodeQL · secret scanning · Dependabot"]
     end
@@ -109,11 +109,12 @@ flowchart TB
     Sentry["Sentry<br/>errores de producción"]
     Usuarios["Usuarios finales"]
 
-    Dueno -->|prompts, decisiones| GPT
-    Dueno --> CB
-    AF -->|mantiene activas| GPT
-    CB -.->|órdenes y latido HTTPS| AF
-    GPT -->|Issues, PRs, commits| Repos
+    Dueno -->|decisiones e intervención| CB
+    CB -->|órdenes tipadas sin secretos| FR
+    FR -->|adapters salientes| Remote
+    FR -->|eventos + heartbeat| CB
+    AF -.->|uso local/manual separado| Dueno
+    CB -->|Issues, PRs, decisiones| Repos
     Repos --> Actions
     Repos --> Sec
     Actions -->|gates, release, observar| Repos
@@ -127,8 +128,10 @@ flowchart TB
 
 | Actor | Rol | Interfaces |
 | --- | --- | --- |
-| Dueño | Director y única autoridad de las puertas humanas | GitHub, ChatGPT web, cabina privada, ControlBot (futuro) |
-| Agentes (ChatGPT web) | Implementación, pruebas, integración y operación | GitHub vía conectores y web; repos locales de trabajo |
+| Dueño | Director y única autoridad de las puertas humanas | GitHub y ControlBot |
+| ControlBot | Control plane: decide y conserva estado durable | UI/API, MariaDB, scheduler, políticas |
+| FactoryRunner | Execution plane: ejecuta órdenes tipadas y publica capabilities/heartbeat | HTTPS saliente, adapters remotos, Git/GitHub |
+| Agentes | Implementación, pruebas, integración y operación | GitHub, APIs, browser/CLI adapters según capability |
 | GitHub Actions | Ejecución de gates, coordinación, release, observación | `GITHUB_TOKEN` efímero por corrida |
 | Hostinger | Hosting de producción de los tres productos | Integración Git + cron de `post-deploy` |
 | Sentry | Captura de excepciones reales de producción | DSN por proyecto (solo envío) |
@@ -143,8 +146,9 @@ flowchart TB
 | `pl0n3r/Condor` | Público | Producto: plataforma multi-empresa (catálogo, inventario, pedidos, tienda) | PHP 8.5, Symfony 7.4 LTS, Doctrine, MariaDB, React + TS + Vite, Twig SSR |
 | `pl0n3r/GrindFlow` | Público | Producto: SaaS de gestión corporativa | PHP 8.5, Laravel 13, MariaDB, workers Python, módulo `symfony/` |
 | `pl0n3r/brvtal` | Público | Producto: sitio público + panel editorial DISCADMIN | PHP 8.5 plano (sin Composer), JS vanilla, MariaDB |
-| `pl0n3r/AutoFactory` | Privado | Extensión que mantiene activas las pestañas de ChatGPT | JavaScript MV3, Swift (contenedor Safari) |
-| `pl0n3r/ControlBot` | Privado | Centro de control web (especificación en #1) | Previsto: PHP 8.5 + MariaDB en Hostinger |
+| `pl0n3r/ControlBot` | Privado | Control plane, workspace operativo y estado durable | PHP 8.5 + MariaDB en Hostinger |
+| `pl0n3r/FactoryRunner` | Público | Execution plane independiente; adapters, heartbeat y ejecución reconstructible | Node.js 24 + TypeScript; capabilities por adapter |
+| `pl0n3r/AutoFactory` | Privado | Herramienta local/manual del dueño, independiente de FactoryRunner | JavaScript MV3, Swift (contenedor Safari) |
 
 ### 4.1 Estructura de `factory`
 
@@ -543,7 +547,7 @@ Los tres corren en Hostinger shared hosting: sin procesos permanentes ni WebSock
 
 ---
 
-## 16. Herramientas de la fábrica: AutoFactory y ControlBot
+## 16. Herramientas de la fábrica: ControlBot, FactoryRunner y AutoFactory
 
 ### 16.1 AutoFactory (extensión, v1.6.1)
 
@@ -555,11 +559,15 @@ Extensión MV3 compartida por Chrome y Safari (contenedor Xcode). Opera ChatGPT 
 - modo Chat/Work, exigencia de razonamiento Alto y memoria adaptativa de tiempos;
 - log de diagnóstico de 300 eventos o 7 días, **sin texto de las conversaciones**.
 
-Pendiente (AutoFactory#1): identidad de cuenta y perfil, emparejamiento, latido, órdenes remotas, respuesta opt-in y detección de límite de uso y de "requiere login", por HTTPS hacia ControlBot.
+AutoFactory no se convierte en puente obligatorio de ControlBot ni en fallback de FactoryRunner. Su evolución local puede continuar, pero el sistema autónomo no depende de que el equipo personal del dueño esté encendido.
 
-### 16.2 ControlBot (especificado, ControlBot#1)
+### 16.2 ControlBot (control plane, ControlBot#1)
 
-Centro de control web separado de los productos, alojado en Hostinger en su propio subdominio, con app, base de datos y deploy propios. Secciones: dashboard, agentes (cuenta → perfil → pestaña, con latido), chat, despacho por capacidad de cuenta, decisiones con un clic, nuevo proyecto desde el template, cuentas y perfiles (asistente con código de 6 dígitos y login siempre manual del dueño) y bitácora. Stack previsto: PHP 8.5 + MariaDB; puente HTTPS (latido por POST cada 60 s y long-polling de órdenes); acceso solo del dueño (passkey o contraseña + TOTP).
+Centro de mando separado de los productos, alojado en `control.condorapp.com.co`, con UI/API, MariaDB y deploy propios. Conserva WorkItems, prioridad, dependencias, scheduler, reservas, retry, presupuesto, puertas humanas y auditoría. Despacha órdenes tipadas a FactoryRunner y recibe heartbeat/eventos; no ejecuta procesos pesados ni controla directamente Chrome/CLI.
+
+### 16.3 FactoryRunner (execution plane, factory#167 / FactoryRunner#2)
+
+FactoryRunner ejecuta órdenes tipadas de ControlBot sin decidir prioridades ni ampliar autoridad. El target primario es Hostinger Shared/Web Hosting, por lo que el core no presupone root, Docker, Chromium local, puertos propios ni daemons. Capabilities de sistema operativo o browser se resuelven mediante adapters/backends remotos salientes; macOS solo puede actuar como fallback evidenciado y usa el mismo protocolo. El contrato detallado vive en [FactoryRunner: execution plane canónico](factoryrunner-execution-plane.md).
 
 ---
 
@@ -585,7 +593,7 @@ Centro de control web separado de los productos, alojado en Hostinger en su prop
 
 - **Tanda 2:** los productos reemplazan su CI, coordinación, etiquetas, release, observación y deploy locales por `uses: pl0n3r/factory/...@v1`, adoptan `decisiones.yml` y el núcleo común, y activan deploy con rollback, merge queue, métricas y monitoreo.
 - **Tanda 3:** desarrollo normal.
-- **En paralelo:** ControlBot y el puente de AutoFactory, PHPStan + Rector, documentos Ley 1581 generados y recuperación de cuenta del admin en los tres productos.
+- **En paralelo:** ControlBot + FactoryRunner según el contrato de #167, PHPStan + Rector, documentos Ley 1581 generados y recuperación de cuenta del admin en los productos.
 
 ---
 
@@ -593,8 +601,8 @@ Centro de control web separado de los productos, alojado en Hostinger en su prop
 
 | # | Riesgo o limitación | Impacto | Mitigación / estado |
 | --- | --- | --- | --- |
-| R1 | Automatización de **ChatGPT web con múltiples cuentas** puede contravenir términos de OpenAI | Suspensión de cuentas; parada de la fábrica | ControlBot diseñado para admitir agentes por API; escalar con prudencia |
-| R2 | Dependencia del **DOM de ChatGPT** en AutoFactory | Roturas silenciosas ante cambios de UI | Selectores con fallback, circuito de protección, diagnóstico |
+| R1 | Automatización de **ChatGPT web con múltiples cuentas** puede contravenir términos del proveedor | Afecta adapters/browser y herramientas locales | FactoryRunner publica capabilities y admite adapters API; escalar con prudencia |
+| R2 | Dependencia del **DOM de ChatGPT** en AutoFactory | Roturas de la herramienta local/manual | AutoFactory no es dependencia del execution plane; mantener sus fallbacks locales |
 | R3 | **Hosting compartido** (sin privilegios de `mariadb-dump`, sin procesos permanentes ni staging real) | Incidentes de despliegue (Condor caído del 23 al 24-09) | Backup PDO, cron post-deploy, preview efímero; migrar de plataforma es una mejora propuesta |
 | R4 | **Dueño único** (bus factor 1) | Riesgo de continuidad | Restore externo probado (#10); runbooks; administradores como único bypass |
 | R5 | Telemetría de costos en parte **autodeclarada** | Métricas optimistas | El estado `ok` solo se emite con datos observados |
@@ -644,7 +652,7 @@ Centro de control web separado de los productos, alojado en Hostinger en su prop
 | Ver el estado | Cabina privada (artifact de claude.ai), actualizada a pedido |
 | Decidir | Issues con `decisión: dueño` asignados al dueño (solo 7 categorías) |
 | Publicar la v1.0.0 del kit | Aprobar la puerta `release-1.0.0` con el SHA; crear el tag `v1` en ese SHA |
-| Detener un agente | Cerrar su pestaña o pausar AutoFactory; ControlBot añadirá "pausar todos" |
+| Detener una ejecución | ControlBot pausa/cancela la Execution; AutoFactory se gestiona aparte como herramienta local |
 | Cambiar una regla global | Editar `PLAN-AGENTES.md` o `decisiones.yml` en factory mediante PR |
 
 ---
@@ -652,8 +660,8 @@ Centro de control web separado de los productos, alojado en Hostinger en su prop
 ## 20. Referencias
 
 - Plan de agentes: [`PLAN-AGENTES.md`](../PLAN-AGENTES.md) · Núcleo: [`agentes/NUCLEO.md`](../agentes/NUCLEO.md) · Decisiones: [`decisiones.yml`](../decisiones.yml)
-- Contratos por subsistema: [aceptación](aceptacion-ejecutable.md) · [orquestador](orquestador.md) · [puertas humanas](puertas-humanas.md) · [roles](roles-profesionales.md) · [release bootstrap](release-bootstrap.md) · [preview](preview-preproduccion.md) · [resiliencia](resiliencia-fabrica.md) · [costos](costos-presupuestos.md) · [evaluación de agentes](evaluacion-agentes.md) · [feedback de producto](retroalimentacion-producto.md) · [memoria](memoria-institucional.md) · [cumplimiento](cumplimiento-datos-licencias.md) · [inventario de datos](inventario-tecnico-datos-productos.md) · [auditoría pre-v1](auditoria-pre-v1.md) · [handoff tanda 1](tanda1-handoff.md)
-- Épicos: factory#13 (madurez), factory#54 (privacidad como código), Condor#192 · GrindFlow#129 · brvtal#630 (adopción del kit), ControlBot#1, AutoFactory#1
+- Contratos por subsistema: [FactoryRunner execution plane](factoryrunner-execution-plane.md) · [aceptación](aceptacion-ejecutable.md) · [orquestador](orquestador.md) · [puertas humanas](puertas-humanas.md) · [roles](roles-profesionales.md) · [release bootstrap](release-bootstrap.md) · [preview](preview-preproduccion.md) · [resiliencia](resiliencia-fabrica.md) · [costos](costos-presupuestos.md) · [evaluación de agentes](evaluacion-agentes.md) · [feedback de producto](retroalimentacion-producto.md) · [memoria](memoria-institucional.md) · [cumplimiento](cumplimiento-datos-licencias.md) · [inventario de datos](inventario-tecnico-datos-productos.md) · [auditoría pre-v1](auditoria-pre-v1.md) · [handoff tanda 1](tanda1-handoff.md)
+- Épicos: factory#13 (madurez), factory#54 (privacidad como código), factory#167 (FactoryRunner execution plane), FactoryRunner#1/#2, Condor#192 · GrindFlow#129 · brvtal#630, ControlBot#1, AutoFactory#1
 
 ---
 
