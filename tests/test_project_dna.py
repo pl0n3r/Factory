@@ -1,0 +1,97 @@
+import copy
+import json
+import unittest
+from pathlib import Path
+
+from intelligence.project_dna import (
+    ProjectDnaError,
+    discover_project_dna,
+    validate_project_dna,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ProjectDnaTests(unittest.TestCase):
+    def test_discovers_stack_and_surfaces_from_repository_signals(self):
+        dna = discover_project_dna(
+            paths=[
+                "package.json",
+                "composer.json",
+                ".github/workflows/ci.yml",
+                "database/migration_001.sql",
+                "src/sentry_integration.php",
+            ],
+            manifests={
+                "package.json": {
+                    "dependencies": {"fastify": "^5", "react": "^19"}
+                },
+                "composer.json": {
+                    "require": {"symfony/framework-bundle": "^7"}
+                },
+            },
+            capabilities=["web", "api"],
+        )
+
+        self.assertEqual(dna["stack"], ["node", "php"])
+        self.assertEqual(dna["frameworks"], ["fastify", "react", "symfony"])
+        self.assertEqual(dna["data"], ["sql"])
+        self.assertEqual(dna["ci"], ["github-actions"])
+        self.assertEqual(dna["integrations"], ["github", "sentry"])
+        self.assertEqual(dna["capabilities"], ["api", "web"])
+
+    def test_unknown_capabilities_are_explicit_not_invented(self):
+        dna = discover_project_dna(paths=["README.md"])
+
+        self.assertEqual(dna["stack"], "unknown")
+        self.assertEqual(dna["frameworks"], "unknown")
+        self.assertEqual(dna["data"], "unknown")
+        self.assertEqual(dna["ci"], "unknown")
+        self.assertEqual(dna["hosting"], "unknown")
+        self.assertEqual(dna["integrations"], "unknown")
+        self.assertEqual(dna["capabilities"], "unknown")
+
+    def test_fingerprint_is_deterministic_and_versioned(self):
+        first = discover_project_dna(
+            paths=["composer.json", ".github/workflows/ci.yml"],
+            manifests={"composer.json": {"require": {"symfony/framework-bundle": "^7"}}},
+        )
+        second = discover_project_dna(
+            paths=[".github/workflows/ci.yml", "composer.json", "composer.json"],
+            manifests={"composer.json": {"require": {"symfony/framework-bundle": "^7"}}},
+        )
+
+        self.assertEqual(first["version"], 1)
+        self.assertEqual(first["fingerprint"], second["fingerprint"])
+        self.assertRegex(first["fingerprint"], r"^[0-9a-f]{64}$")
+        self.assertEqual(validate_project_dna(first), first)
+
+        tampered = copy.deepcopy(first)
+        tampered["stack"] = ["python"]
+        with self.assertRaisesRegex(ProjectDnaError, "fingerprint no coincide"):
+            validate_project_dna(tampered)
+
+    def test_schema_is_extensible_without_breaking_base_fields(self):
+        schema = json.loads(
+            (ROOT / "intelligence" / "project_dna.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        dna = discover_project_dna(paths=["package.json"])
+        extended = copy.deepcopy(dna)
+        extended["extensions"]["future.runtime_profile"] = {
+            "version": 2,
+            "signal": "explicit",
+        }
+
+        from intelligence.project_dna import _fingerprint_payload
+
+        extended["fingerprint"] = _fingerprint_payload(extended)
+        self.assertEqual(validate_project_dna(extended), extended)
+        self.assertTrue(schema["properties"]["extensions"]["additionalProperties"])
+        self.assertFalse(schema["additionalProperties"])
+
+
+if __name__ == "__main__":
+    unittest.main()
