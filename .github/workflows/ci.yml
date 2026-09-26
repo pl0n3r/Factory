@@ -113,6 +113,11 @@ jobs:
           fi
       - name: Instalar Composer bloqueado
         if: hashFiles(format('{0}/composer.lock', inputs.working_directory)) != ''
+        env:
+          ACTIONS_CACHE_URL: ''
+          ACTIONS_RUNTIME_TOKEN: ''
+          ACTIONS_RESULTS_URL: ''
+          ACTIONS_CACHE_SERVICE_V2: ''
         uses: ./.factory/actions/retry
         with:
           working-directory: ${{ inputs.working_directory }}
@@ -169,6 +174,11 @@ jobs:
         with:
           node-version: ${{ inputs.node_version }}
       - name: Instalar npm bloqueado
+        env:
+          ACTIONS_CACHE_URL: ''
+          ACTIONS_RUNTIME_TOKEN: ''
+          ACTIONS_RESULTS_URL: ''
+          ACTIONS_CACHE_SERVICE_V2: ''
         uses: ./.factory/actions/retry
         with:
           working-directory: ${{ inputs.working_directory }}
