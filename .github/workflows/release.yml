@@ -65,6 +65,7 @@ jobs:
               [[ "$BOOTSTRAP" == "false" ]] || { echo "::error::factory_bootstrap no aplica a push"; exit 1; }
               ;;
             workflow_dispatch)
+              REPOSITORY="${REPOSITORY,,}"
               [[ "$BOOTSTRAP" == "true" ]] || { echo "::error::Dispatch sin factory_bootstrap"; exit 1; }
               [[ "$REPOSITORY" == "pl0n3r/factory" ]] || { echo "::error::Bootstrap solo permitido en Factory"; exit 1; }
               [[ "$ACTOR" == "$OWNER" ]] || { echo "::error::Bootstrap requiere al dueño"; exit 1; }
