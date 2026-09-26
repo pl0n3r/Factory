@@ -86,10 +86,10 @@ def _candidate_for_group(
     guardrail_id = f"guardrail_{pattern_fingerprint[:16]}"
     sources = sorted({item["source"] for item in ordered})
     lesson_ids = sorted(item["id"] for item in ordered)
-    prevention = sorted(
+    prevention = min(
         {item["prevention"].strip() for item in ordered},
         key=lambda text: (text.casefold(), text),
-    )[0]
+    )
 
     origins = [
         {
