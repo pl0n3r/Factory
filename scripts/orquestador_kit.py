@@ -2,6 +2,7 @@
 """Contrato puro del orquestador central de Factory."""
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -15,6 +16,9 @@ ACTIVE_STATUSES = {
     "estado: reservado",
     "estado: en revisión",
     "estado: requiere recuperación",
+    "status: reserved",
+    "status: in review",
+    "status: recovery required",
 }
 
 
@@ -314,6 +318,19 @@ def parse_task_marker(body: str) -> dict[str, Any] | None:
     return raw
 
 
+def task_marker_fingerprint(marker: dict[str, Any] | None) -> str | None:
+    """Fija la identidad semántica de un factory-plan-task canónico."""
+    if marker is None:
+        return None
+    canonical = json.dumps(
+        marker,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def issue_label_names(issue: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     for label in issue.get("labels", []):
@@ -324,21 +341,84 @@ def issue_label_names(issue: dict[str, Any]) -> set[str]:
     return names
 
 
+def _active_other_issues(
+    current_issue: dict[str, Any],
+    open_issues: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Devuelve las otras líneas activas que compiten por el mismo repositorio."""
+    current_number = current_issue.get("number")
+    return [
+        issue
+        for issue in open_issues
+        if issue.get("number") != current_number
+        and bool(issue_label_names(issue) & ACTIVE_STATUSES)
+    ]
+
+
+def parallel_compatibility_evidence(
+    current_issue: dict[str, Any],
+    open_issues: list[dict[str, Any]],
+    active_task_snapshots: dict[int, dict[str, Any]] | None = None,
+) -> list[str]:
+    """Explica qué líneas activas son compatibles por claims fijados."""
+    marker = parse_task_marker(str(current_issue.get("body") or ""))
+    if marker is None:
+        return []
+
+    evidence: list[str] = []
+    for other in _active_other_issues(current_issue, open_issues):
+        other_number = other.get("number")
+        if not isinstance(other_number, int):
+            continue
+        other_marker = (
+            active_task_snapshots.get(other_number)
+            if active_task_snapshots is not None
+            else parse_task_marker(str(other.get("body") or ""))
+        )
+        if other_marker is None:
+            continue
+        overlap = {
+            (left, right)
+            for left in marker["paths"]
+            for right in other_marker["paths"]
+            if claims_overlap(left, right)
+        }
+        if overlap:
+            continue
+        current_paths = ", ".join(marker["paths"])
+        other_paths = ", ".join(other_marker["paths"])
+        evidence.append(
+            f"#{other_number}: claims disjuntos "
+            f"(candidato=[{current_paths}]; activo=[{other_paths}])"
+        )
+    return evidence
+
+
 def reservation_blockers(
     current_issue: dict[str, Any],
     open_issues: list[dict[str, Any]],
     actor: str,
     dependency_states: dict[int, dict[str, Any]] | None = None,
+    active_task_snapshots: dict[int, dict[str, Any]] | None = None,
+    active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None,
 ) -> list[str]:
     marker = parse_task_marker(str(current_issue.get("body") or ""))
+    active_others = _active_other_issues(current_issue, open_issues)
+
     if marker is None:
-        return []
+        return [
+            (
+                f"trabajo no planificado no puede compartir repositorio "
+                f"con tarea activa #{other.get('number')}"
+            )
+            for other in active_others
+        ]
+
     blockers: list[str] = []
     if marker["owner"] != actor:
         blockers.append(
             f"tarea planificada para @{marker['owner']}, no para @{actor}"
         )
-    current_number = current_issue.get("number")
     if dependency_states is None:
         open_numbers = {
             issue.get("number")
@@ -363,16 +443,46 @@ def reservation_blockers(
             "dependencias no completadas: "
             + ", ".join(f"#{number}" for number in pending)
         )
+
     current_paths = marker["paths"]
-    for other in open_issues:
+    for other in active_others:
         other_number = other.get("number")
-        if other_number == current_number:
+        if not isinstance(other_number, int):
             continue
-        if not (issue_label_names(other) & ACTIVE_STATUSES):
-            continue
-        other_marker = parse_task_marker(str(other.get("body") or ""))
+        other_marker = (
+            active_task_snapshots.get(other_number)
+            if active_task_snapshots is not None
+            else parse_task_marker(str(other.get("body") or ""))
+        )
         if other_marker is None:
+            detail = (
+                "no tiene claims fijados"
+                if active_task_snapshots is not None
+                else "no está planificada"
+            )
+            blockers.append(
+                f"tarea activa #{other_number} {detail}; "
+                "no se puede demostrar independencia"
+            )
             continue
+
+        if active_dependency_states is not None:
+            states = active_dependency_states.get(other_number, {})
+            pending_active = sorted(
+                number
+                for number in other_marker["depends_on"]
+                if (
+                    number not in states
+                    or states[number].get("state") != "closed"
+                    or states[number].get("state_reason") != "completed"
+                )
+            )
+            if pending_active:
+                blockers.append(
+                    f"tarea activa #{other_number} tiene dependencias no completadas: "
+                    + ", ".join(f"#{number}" for number in pending_active)
+                )
+
         overlap = sorted({
             f"{left} ↔ {right}"
             for left in current_paths

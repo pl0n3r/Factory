@@ -22,7 +22,8 @@ class PlanContractTests(unittest.TestCase):
             "prioridad: crítica",
             "prioridad: alta",
             "media",
-            "Nunca** tomes un repo donde otro agente tiene una reserva activa",
+            "Solo pueden coexistir líneas cuando el candidato y cada línea activa relevante",
+            "claims de paths son disjuntos",
             "Despacho: elegí <repo>#<n> porque <regla N>",
         )
         for value in required:
