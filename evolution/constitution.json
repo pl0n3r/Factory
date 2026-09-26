@@ -5,19 +5,11 @@
       "PLAN-AGENTES.md",
       "AGENTES.md",
       "decisiones.yml",
+      "seguridad/puertas-humanas.json",
       "docs/puertas-humanas.md"
     ],
     "autonomous_mutation": "forbidden",
-    "human_gate_categories": [
-      "product_direction",
-      "brand",
-      "money",
-      "legal",
-      "real_customer_data",
-      "factory_release",
-      "factory_maintenance",
-      "go_live"
-    ]
+    "human_gate_registry": "seguridad/puertas-humanas.json"
   },
   "protected_invariants": {
     "security": {
