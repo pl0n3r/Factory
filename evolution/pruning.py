@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
 
 from evolution.constitution import PROTECTED_INVARIANTS, validate_candidate
@@ -58,6 +59,8 @@ def _metric_int(value: Any, field: str) -> int:
 def _value_score(value: Any) -> float | int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise PruningError("value_score debe ser número 0..1")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise PruningError("value_score debe ser número finito 0..1")
     if value < 0 or value > 1:
         raise PruningError("value_score debe ser número 0..1")
     return value

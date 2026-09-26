@@ -88,6 +88,21 @@ class GrowthPruningTests(unittest.TestCase):
             pruning["candidate_fingerprint"],
         )
 
+    def test_non_finite_value_score_fails_closed(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(PruningError, "finito"):
+                    evaluate_pruning(
+                        capability="legacy formatter",
+                        usage_count=0,
+                        age_days=180,
+                        value_score=value,
+                        evidence=[
+                            "pl0n3r/factory#130",
+                            "pl0n3r/factory#131",
+                        ],
+                    )
+
     def test_protected_capabilities_cannot_be_pruned(self):
         for capability in ("security", "privacy", "constitution", "human gates"):
             with self.subTest(capability=capability):
