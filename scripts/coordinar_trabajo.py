@@ -32,6 +32,7 @@ else:
         parallel_compatibility_evidence,
         parse_task_marker,
         reservation_blockers,
+        task_marker_fingerprint,
     )
 
 
