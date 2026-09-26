@@ -63,6 +63,21 @@ class AcceptanceContractTests(unittest.TestCase):
                 )
             )
 
+    def test_contract_rejects_non_string_kind_without_typeerror(self):
+        body = issue_body(
+            "- [ ] [AC-01] Debe pasar.",
+            [
+                {
+                    "id": "AC-01",
+                    "kind": [],
+                    "target": "Tests de scripts",
+                }
+            ],
+        )
+
+        with self.assertRaisesRegex(AcceptanceError, "kind/target inválidos"):
+            parse_contract(body)
+
     def test_pinned_contract_rejects_transient_weakening(self):
         """Una evidencia máquina debilitada cambia la huella fijada."""
         original = issue_body(

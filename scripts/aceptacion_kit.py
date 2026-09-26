@@ -140,7 +140,11 @@ def _machine_criteria(body: str) -> list[Criterion]:
             or criterion_id in seen
         ):
             raise AcceptanceError("ID máquina inválido o duplicado.")
-        if kind not in {"test", "check"} or not isinstance(target, str):
+        if (
+            not isinstance(kind, str)
+            or kind not in {"test", "check"}
+            or not isinstance(target, str)
+        ):
             raise AcceptanceError("kind/target inválidos.")
         if kind == "test":
             match = TEST_TARGET.fullmatch(target)
