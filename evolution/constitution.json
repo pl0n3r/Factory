@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "stable_authority": {
+    "sources": [
+      "PLAN-AGENTES.md",
+      "AGENTES.md",
+      "decisiones.yml",
+      "seguridad/puertas-humanas.json",
+      "docs/puertas-humanas.md",
+      "docs/resiliencia-fabrica.md"
+    ],
+    "autonomous_mutation": "forbidden",
+    "human_gate_registry": "seguridad/puertas-humanas.json"
+  },
+  "protected_invariants": {
+    "security": {
+      "policy": "must_not_weaken",
+      "autonomous_mutation": "forbidden",
+      "source": "PLAN-AGENTES.md"
+    },
+    "privacy": {
+      "policy": "must_not_weaken",
+      "autonomous_mutation": "forbidden",
+      "source": "PLAN-AGENTES.md"
+    },
+    "traceability": {
+      "policy": "must_not_weaken",
+      "autonomous_mutation": "forbidden",
+      "source": "AGENTES.md"
+    },
+    "reversibility": {
+      "policy": "must_not_weaken",
+      "autonomous_mutation": "forbidden",
+      "source": "docs/resiliencia-fabrica.md"
+    },
+    "authority": {
+      "policy": "must_not_weaken",
+      "autonomous_mutation": "forbidden",
+      "source": "docs/puertas-humanas.md"
+    }
+  },
+  "evolvable_state": {
+    "namespaces": [
+      "observations",
+      "hypotheses",
+      "experiments",
+      "heuristics",
+      "thresholds",
+      "metrics",
+      "autonomy_scores"
+    ]
+  },
+  "candidate_policy": {
+    "version": 1,
+    "allowed_prefixes": [
+      "evolution_state.observations",
+      "evolution_state.hypotheses",
+      "evolution_state.experiments",
+      "evolution_state.heuristics",
+      "evolution_state.thresholds",
+      "evolution_state.metrics",
+      "evolution_state.autonomy_scores"
+    ],
+    "required_fields": [
+      "version",
+      "changes",
+      "evidence",
+      "rollback"
+    ],
+    "operations": [
+      "add",
+      "replace",
+      "remove"
+    ],
+    "max_changes": 32
+  },
+  "lifecycle": [
+    "observe",
+    "remember",
+    "learn",
+    "propose",
+    "shadow",
+    "experiment",
+    "validate",
+    "promote_or_reject",
+    "measure",
+    "prune",
+    "rollback"
+  ]
+}
