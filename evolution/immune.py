@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from evolution.constitution import validate_candidate
+from evolution.provenance import TrustedDecisionSource, TrustedIncidentRegistry
 from evolution.repair import validate_repair_plan
 
 
@@ -131,6 +132,8 @@ class ImmuneIncident:
         repair_plan: Any = None,
         verification_passed: Any = None,
         immunity_candidate: Any = None,
+        decision_source: TrustedDecisionSource | None = None,
+        incident_registry: TrustedIncidentRegistry | None = None,
     ) -> IncidentRecord:
         """Advance exactly one recovery stage and preserve all prior evidence."""
         current_index = RECOVERY_LIFECYCLE.index(self.current.stage)
@@ -147,10 +150,13 @@ class ImmuneIncident:
         if stage == "repair":
             if repair_plan is None:
                 raise ImmuneError("repair exige plan verificable y reversible")
-            validated = validate_repair_plan(repair_plan)
+            validated = validate_repair_plan(
+                repair_plan,
+                decision_source=decision_source,
+            )
             repair_fingerprint = validated["fingerprint"]
-        elif repair_plan is not None:
-            raise ImmuneError("repair_plan solo se admite en etapa repair")
+        elif repair_plan is not None or decision_source is not None:
+            raise ImmuneError("repair_plan/decision_source solo se admiten en etapa repair")
 
         if stage == "verify":
             if type(verification_passed) is not bool:
@@ -162,9 +168,14 @@ class ImmuneIncident:
         if stage == "immunize":
             if self.current.stage != "verify" or self.current.verification_passed is not True:
                 raise ImmuneError("immunize exige verificación aprobada")
-            immunity_fingerprint = _validate_immunity_candidate(immunity_candidate)
-        elif immunity_candidate is not None:
-            raise ImmuneError("immunity_candidate solo se admite en immunize")
+            immunity_fingerprint = _validate_immunity_candidate(
+                immunity_candidate,
+                incident_registry=incident_registry,
+            )
+        elif immunity_candidate is not None or incident_registry is not None:
+            raise ImmuneError(
+                "immunity_candidate/incident_registry solo se admiten en immunize"
+            )
 
         record = IncidentRecord(
             sequence=len(self._history),
@@ -325,47 +336,81 @@ def _validate_incident_snapshot(
     return normalized
 
 
-def _canonical_incident_evidence(
-    value: Any,
+def _trusted_incident_evidence(
+    incident_ids: Any,
     *,
+    incident_registry: TrustedIncidentRegistry | None,
     failure_signature: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    if not isinstance(value, (list, tuple)) or not 2 <= len(value) <= MAX_EVIDENCE:
-        raise ImmuneError("fallo repetido exige al menos dos snapshots")
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, Any]]:
+    if not isinstance(incident_registry, TrustedIncidentRegistry):
+        raise ImmuneError("inmunidad exige registro confiable de incidentes")
+    if (
+        not isinstance(incident_ids, (list, tuple))
+        or not 2 <= len(incident_ids) <= MAX_EVIDENCE
+    ):
+        raise ImmuneError("fallo repetido exige al menos dos incident IDs")
+
     signature = _canonical(failure_signature, "failure_signature")
-    snapshots = [
-        _validate_incident_snapshot(item, expected_signature=signature)
-        for item in value
-    ]
-    ids = [item["incident_id"] for item in snapshots]
+    ids = [_text(item, "incident_id", 120) for item in incident_ids]
     if len(set(ids)) != len(ids):
-        raise ImmuneError("incident snapshots deben ser incidentes distintos")
-    snapshots = sorted(snapshots, key=lambda item: item["incident_id"])
-    origins = [
-        {
-            "incident_id": item["incident_id"],
-            "source": f"incident-snapshot:{item['fingerprint']}",
-        }
-        for item in snapshots
-    ]
-    return snapshots, sorted(origins, key=lambda item: (item["source"], item["incident_id"]))
+        raise ImmuneError("incident IDs deben ser distintos")
+    ids = sorted(ids)
+
+    snapshots: list[dict[str, Any]] = []
+    for incident_id in ids:
+        raw = incident_registry.resolve_incident(incident_id)
+        if raw is None:
+            raise ImmuneError("incident ID no existe en registro confiable")
+        snapshot = _validate_incident_snapshot(
+            raw,
+            expected_signature=signature,
+        )
+        if snapshot["incident_id"] != incident_id:
+            raise ImmuneError("incident handle no coincide con snapshot registrado")
+        snapshots.append(snapshot)
+
+    origins = sorted(
+        [
+            {
+                "incident_id": item["incident_id"],
+                "source": (
+                    f"{incident_registry.source_id}:"
+                    f"{item['incident_id']}:{item['fingerprint']}"
+                ),
+            }
+            for item in snapshots
+        ],
+        key=lambda item: (item["source"], item["incident_id"]),
+    )
+    provenance = {
+        "source_id": incident_registry.source_id,
+        "incident_ids": ids,
+    }
+    return snapshots, origins, provenance
 
 
 def compile_immunity_candidate(
     *,
     failure_signature: Any,
-    origins: Any,
-    incident_snapshots: Any,
     expected_prevention: Any,
+    incident_ids: Any = None,
+    incident_registry: TrustedIncidentRegistry | None = None,
+    origins: Any = None,
+    incident_snapshots: Any = None,
 ) -> dict[str, Any]:
-    """Emit guardrail only after recomputing repeated failure from incident history."""
+    """Emit guardrail only from incidents resolved through trusted provenance."""
+    if incident_snapshots is not None:
+        raise ImmuneError(
+            "incident_snapshots autocertificados no constituyen provenance"
+        )
     signature = _canonical(failure_signature, "failure_signature")
-    snapshots, canonical_origins = _canonical_incident_evidence(
-        incident_snapshots,
+    snapshots, canonical_origins, provenance = _trusted_incident_evidence(
+        incident_ids,
+        incident_registry=incident_registry,
         failure_signature=signature,
     )
-    if _validate_origins(origins) != canonical_origins:
-        raise ImmuneError("origins no coinciden con incidentes canónicos")
+    if origins is not None and _validate_origins(origins) != canonical_origins:
+        raise ImmuneError("origins no coinciden con registro confiable")
     prevention = _text(expected_prevention, "expected_prevention", 500)
     sources = sorted({item["source"] for item in canonical_origins})
     immunity_id = f"immunity_{hashlib.sha256(signature.encode()).hexdigest()[:16]}"
@@ -376,6 +421,7 @@ def compile_immunity_candidate(
         "status": "candidate",
         "occurrences": len(canonical_origins),
         "origins": canonical_origins,
+        "provenance": provenance,
         "expected_prevention": prevention,
     }
     candidate = {
@@ -398,11 +444,16 @@ def compile_immunity_candidate(
         "candidate_fingerprint": candidate_fingerprint,
         "origins": canonical_origins,
         "incidents": snapshots,
+        "provenance": provenance,
         "expected_prevention": prevention,
     }
 
 
-def _validate_immunity_candidate(value: Any) -> str:
+def _validate_immunity_candidate(
+    value: Any,
+    *,
+    incident_registry: TrustedIncidentRegistry | None,
+) -> str:
     if not isinstance(value, dict):
         raise ImmuneError("immunity_candidate inválido")
     required = {
@@ -412,12 +463,24 @@ def _validate_immunity_candidate(value: Any) -> str:
         "candidate_fingerprint",
         "origins",
         "incidents",
+        "provenance",
         "expected_prevention",
     }
     if set(value) != required:
         raise ImmuneError("immunity_candidate incompleto")
     if type(value["version"]) is not int or value["version"] != IMMUNE_VERSION:
         raise ImmuneError("immunity_candidate version inválida")
+    if not isinstance(incident_registry, TrustedIncidentRegistry):
+        raise ImmuneError("immunity candidate exige registro confiable")
+
+    provenance = value["provenance"]
+    if (
+        not isinstance(provenance, dict)
+        or set(provenance) != {"source_id", "incident_ids"}
+        or provenance.get("source_id") != incident_registry.source_id
+    ):
+        raise ImmuneError("immunity provenance no coincide con registro confiable")
+
     candidate = value["candidate"]
     fingerprint = validate_candidate(candidate)
     if fingerprint != value["candidate_fingerprint"]:
@@ -432,16 +495,21 @@ def _validate_immunity_candidate(value: Any) -> str:
         raise ImmuneError("immunity candidate shape inválida")
     payload = candidate["changes"][0]["value"]
     signature = _canonical(payload.get("failure_signature"), "failure_signature")
-    snapshots, origins = _canonical_incident_evidence(
-        value["incidents"],
+    snapshots, origins, canonical_provenance = _trusted_incident_evidence(
+        provenance.get("incident_ids"),
+        incident_registry=incident_registry,
         failure_signature=signature,
     )
+    if provenance != canonical_provenance:
+        raise ImmuneError("immunity provenance no está canonizada")
     if value["incidents"] != snapshots:
-        raise ImmuneError("incidents no están canonizados")
+        raise ImmuneError("incidents no coinciden con registro confiable")
     if _validate_origins(value["origins"]) != origins:
-        raise ImmuneError("origins no coinciden con incidents")
+        raise ImmuneError("origins no coinciden con registro confiable")
     if payload.get("origins") != origins or payload.get("occurrences") != len(origins):
         raise ImmuneError("candidate no refleja evidencia de incidentes")
+    if payload.get("provenance") != canonical_provenance:
+        raise ImmuneError("candidate no refleja provenance confiable")
     if payload.get("immunity_id") != value["immunity_id"]:
         raise ImmuneError("immunity_id inconsistente")
     if payload.get("expected_prevention") != value["expected_prevention"]:
