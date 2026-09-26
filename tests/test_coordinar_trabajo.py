@@ -612,6 +612,23 @@ class CoordinacionTests(unittest.TestCase):
                 self.assertNotIn("trabajo/issue-12", api.branches)
                 self.assertIsNone(active_reservation(api, 12))
 
+    def test_manual_reserved_label_preserves_recovery_required(self) -> None:
+        """Un label manual no puede limpiar una recuperación pendiente."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.issue_data["labels"] = [
+            {"name": STATUS_RECOVERY},
+            {"name": STATUS_RESERVED},
+        ]
+
+        update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+
+        self.assertEqual(api.status_history[-1], STATUS_RECOVERY)
+        self.assertEqual(
+            active_reservation(api, 12)["reservation_id"],
+            SESSION_A,
+        )
+
     def test_reserved_label_reconciles_existing_trusted_reservation_without_rotation(self) -> None:
         """Una autoridad existente solo sincroniza su estado visible."""
         api = FakeGitHub()
@@ -633,7 +650,11 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"Closes #12\n<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12", "sha": "head-review"},
+            "head": {
+                "ref": "trabajo/issue-12",
+                "sha": "head-review",
+                "repo": {"full_name": api.repo},
+            },
             "base": {"ref": "main"},
         }
         update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
@@ -642,6 +663,30 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(
             active_reservation(api, 12)["reservation_id"],
             original["reservation_id"],
+        )
+
+    def test_reserved_label_ignores_same_ref_from_fork(self) -> None:
+        """Un PR de fork con el mismo ref no promueve el Issue a review."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "head": {
+                "ref": "trabajo/issue-12",
+                "sha": "fork-head",
+                "repo": {"full_name": "intruso/fork"},
+            },
+            "base": {"ref": "main"},
+        }
+
+        update_issue_label_state(api, 12, "intruso", STATUS_RESERVED)
+
+        self.assertEqual(api.status_history[-1], STATUS_RESERVED)
+        self.assertEqual(
+            active_reservation(api, 12)["reservation_id"],
+            SESSION_A,
         )
 
     def test_label_event_never_creates_reservation_authority(self) -> None:
