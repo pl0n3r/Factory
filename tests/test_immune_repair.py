@@ -7,7 +7,7 @@ from evolution.immune import (
     ImmuneIncident,
     compile_immunity_candidate,
 )
-from evolution.repair import compile_repair_plan, validate_repair_plan
+from evolution.repair import RepairError, compile_repair_plan, validate_repair_plan
 
 
 def repair_plan(*, destructive=False, authority=None):
@@ -105,7 +105,7 @@ class ImmuneRepairTests(unittest.TestCase):
         self.assertEqual(plan["execution"], "not-performed")
         self.assertEqual(validate_repair_plan(plan), plan)
 
-        with self.assertRaisesRegex(Exception, "verification"):
+        with self.assertRaisesRegex(RepairError, "verification"):
             compile_repair_plan(
                 diagnosis="root cause",
                 actions=["safe correction"],
@@ -115,13 +115,31 @@ class ImmuneRepairTests(unittest.TestCase):
                     "steps": ["undo correction"],
                 },
             )
-        with self.assertRaisesRegex(Exception, "rollback"):
+        with self.assertRaisesRegex(RepairError, "rollback"):
             compile_repair_plan(
                 diagnosis="root cause",
                 actions=["safe correction"],
                 verification=["run tests"],
                 rollback={"strategy": "revert", "steps": []},
             )
+
+        tampered = dict(plan)
+        tampered["rollback"] = "not-a-rollback"
+        unsigned = dict(tampered)
+        unsigned.pop("fingerprint")
+        import hashlib
+        import json
+        tampered["fingerprint"] = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        with self.assertRaisesRegex(RepairError, "rollback"):
+            validate_repair_plan(tampered)
 
     def test_destructive_repair_requires_human_authority(self):
         blocked = repair_plan(destructive=True)

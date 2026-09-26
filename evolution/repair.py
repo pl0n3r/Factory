@@ -142,17 +142,37 @@ def validate_repair_plan(plan: Any) -> dict[str, Any]:
     unsigned.pop("fingerprint")
     if not isinstance(fingerprint, str) or fingerprint != _stable_hash(unsigned):
         raise RepairError("repair plan fingerprint no coincide")
+    if type(plan["version"]) is not int or plan["version"] != REPAIR_VERSION:
+        raise RepairError("repair plan version inválida")
+    _text(plan["diagnosis"], "diagnosis")
+    _steps(plan["actions"], "actions")
+    _steps(plan["verification"], "verification")
+    _rollback(plan["rollback"])
+    if type(plan["destructive"]) is not bool:
+        raise RepairError("destructive debe ser boolean")
+
+    authority = plan["authority"]
+    authority_input = None
+    if plan["destructive"]:
+        if not isinstance(authority, dict):
+            raise RepairError("reparación destructiva exige autoridad humana")
+        if authority.get("approved") is True:
+            authority_input = {
+                "approved": True,
+                "decision_ref": authority.get("decision_ref"),
+            }
+    expected_authority = _authority(authority_input, plan["destructive"])
+    if authority != expected_authority:
+        raise RepairError("estado de autoridad inconsistente")
+
     if plan["automatic_execution_allowed"] is not False:
         raise RepairError("ejecución automática prohibida")
     if plan["execution"] != "not-performed":
         raise RepairError("Repair Engine no ejecuta acciones")
-    if not plan["verification"] or not plan["rollback"]["steps"]:
-        raise RepairError("repair plan exige verificación y rollback")
-    if plan["destructive"]:
-        authority = plan["authority"]
-        if authority.get("required") != "human":
-            raise RepairError("reparación destructiva exige autoridad humana")
-        ready = authority.get("approved") is True
-        if plan["authorized_execution_ready"] is not ready:
-            raise RepairError("estado de autoridad destructiva inconsistente")
+    expected_ready = (
+        not plan["destructive"]
+        or expected_authority["approved"] is True
+    )
+    if plan["authorized_execution_ready"] is not expected_ready:
+        raise RepairError("estado de autoridad destructiva inconsistente")
     return plan
