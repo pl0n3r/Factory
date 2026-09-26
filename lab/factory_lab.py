@@ -6,7 +6,11 @@ import json
 from typing import Any
 
 from evolution.constitution import ConstitutionError, validate_candidate
-from evolution.fitness import FitnessError, compare_fitness
+from evolution.fitness import (
+    FitnessError,
+    compare_fitness,
+    validate_fitness_evidence,
+)
 
 
 LAB_VERSION = 1
@@ -123,8 +127,8 @@ def evaluate_shadow(
     return result
 
 
-def promotion_contract(shadow_result: Any) -> dict[str, Any]:
-    """Convert a valid shadow result into a non-executing promotion contract."""
+def _validate_shadow_result_shape(shadow_result: Any) -> str:
+    """Valida forma/read-only y devuelve el fingerprint raíz declarado."""
     if not isinstance(shadow_result, dict):
         raise FactoryLabError("shadow_result inválido")
     required = {
@@ -150,20 +154,72 @@ def promotion_contract(shadow_result: Any) -> dict[str, Any]:
         raise FactoryLabError("shadow mode no puede mutar")
     if shadow_result["external_writes"] != []:
         raise FactoryLabError("shadow mode no puede escribir externamente")
+    if not isinstance(shadow_result["baseline"], dict):
+        raise FactoryLabError("baseline inválido")
     if shadow_result["baseline"].get("name") != STABLE_BASELINE:
         raise FactoryLabError("promoción exige baseline stable")
+    if not isinstance(shadow_result["candidate"], dict):
+        raise FactoryLabError("candidate inválido")
+    if not isinstance(shadow_result["promotion"], dict):
+        raise FactoryLabError("promotion inválida")
     if shadow_result["promotion"].get("ready") is not True:
         raise FactoryLabError("evidencia insuficiente para promoción")
+    return fingerprint
+
+
+def promotion_contract(
+    *,
+    shadow_result: Any,
+    stable_sha: Any,
+    candidate_sha: Any,
+    stable_metrics: Any,
+    candidate_metrics: Any,
+    constitution_candidate: Any,
+) -> dict[str, Any]:
+    """Revalida evidencia fuente antes de emitir un contrato no ejecutor."""
+    fingerprint = _validate_shadow_result_shape(shadow_result)
+    baseline = _validated_metrics(stable_metrics, "stable_metrics")
+    candidate_vector = _validated_metrics(candidate_metrics, "candidate_metrics")
+
+    try:
+        constitution_fingerprint = validate_candidate(constitution_candidate)
+    except ConstitutionError as exc:
+        raise FactoryLabError("candidato viola Constitution") from exc
+    declared_constitution = shadow_result["candidate"].get(
+        "constitution_fingerprint"
+    )
+    if declared_constitution != constitution_fingerprint:
+        raise FactoryLabError("shadow_result Constitution no coincide con evidencia fuente")
+
+    try:
+        canonical_fitness = validate_fitness_evidence(
+            baseline=baseline,
+            candidate=candidate_vector,
+            protected_dimensions=None,
+            result=shadow_result["fitness"],
+        )
+    except FitnessError as exc:
+        raise FactoryLabError("shadow_result Fitness no coincide con evidencia fuente") from exc
+
+    stable = _validated_sha(stable_sha, "stable_sha")
+    candidate = _validated_sha(candidate_sha, "candidate_sha")
+    expected_shadow = evaluate_shadow(
+        stable_sha=stable,
+        candidate_sha=candidate,
+        stable_metrics=baseline,
+        candidate_metrics=candidate_vector,
+        constitution_candidate=constitution_candidate,
+    )
+    if shadow_result != expected_shadow:
+        raise FactoryLabError("shadow_result no coincide con evaluación canónica")
 
     contract = {
         "version": LAB_VERSION,
         "shadow_fingerprint": fingerprint,
-        "stable_sha": shadow_result["baseline"]["sha"],
-        "candidate_sha": shadow_result["candidate"]["sha"],
-        "constitution_fingerprint": shadow_result["candidate"][
-            "constitution_fingerprint"
-        ],
-        "fitness_fingerprint": shadow_result["fitness"]["fingerprint"],
+        "stable_sha": stable,
+        "candidate_sha": candidate,
+        "constitution_fingerprint": constitution_fingerprint,
+        "fitness_fingerprint": canonical_fitness["fingerprint"],
         "requires_human_or_authorized_promotion": True,
         "execution": "not-performed",
     }
