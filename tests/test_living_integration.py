@@ -51,7 +51,7 @@ class LivingIntegrationTests(unittest.TestCase):
             self.assertNotIn(claim.casefold(), lowered)
 
     def test_all_living_hardenings_are_documented_closed(self):
-        hardenings = ("#209", "#211", "#213", "#215", "#221", "#223")
+        hardenings = ("#209", "#211", "#213", "#215", "#221", "#223", "#227")
         for issue in hardenings:
             self.assertIn(issue, PLAN)
             self.assertIn(issue, README)
@@ -64,6 +64,7 @@ class LivingIntegrationTests(unittest.TestCase):
             "**#215** — Repair human authority + immunity provenance: ✅ cerrado",
             "**#221** — retry de renovación v2: ✅ cerrado",
             "**#223** — provenance confiable de Repair/Immune: ✅ cerrado",
+            "**#227** — provenance productivo read-only no fabricable por el caller: ✅ cerrado",
         ):
             self.assertIn(fragment, PLAN)
 

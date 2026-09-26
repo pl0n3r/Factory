@@ -347,7 +347,7 @@ def _trusted_incident_evidence(
     failure_signature: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, Any]]:
     if not is_authenticated_incident_reader(incident_registry):
-        raise ImmuneError("inmunidad exige registro confiable de incidentes")
+        raise ImmuneError("inmunidad exige registry autenticado read-only")
     if (
         not isinstance(incident_ids, (list, tuple))
         or not 2 <= len(incident_ids) <= MAX_EVIDENCE
@@ -474,8 +474,8 @@ def _validate_immunity_candidate(
         raise ImmuneError("immunity_candidate incompleto")
     if type(value["version"]) is not int or value["version"] != IMMUNE_VERSION:
         raise ImmuneError("immunity_candidate version inválida")
-    if not isinstance(incident_registry, TrustedIncidentRegistry):
-        raise ImmuneError("immunity candidate exige registro confiable")
+    if not is_authenticated_incident_reader(incident_registry):
+        raise ImmuneError("immunity candidate exige registry autenticado read-only")
 
     provenance = value["provenance"]
     if (
