@@ -349,6 +349,22 @@ class WorkflowCoordinacionTests(unittest.TestCase):
             job_block,
         )
 
+        self.assertIn(
+            "startsWith(github.event.comment.body, '/renovar-contrato ')",
+            job_block,
+        )
+        comment_permissions = self.yaml_block(job_block, "permissions:", 4)
+        self.assertIn("checks: write", comment_permissions)
+        reusable = (
+            Path(__file__).resolve().parents[1]
+            / ".github" / "workflows" / "coordinacion.yml"
+        ).read_text(encoding="utf-8")
+        reusable_comment = self.yaml_block(reusable, "comentario:", 2)
+        reusable_permissions = self.yaml_block(
+            reusable_comment, "permissions:", 4
+        )
+        self.assertIn("checks: write", reusable_permissions)
+
         env_block = self.yaml_block(job_block, "env:", 8)
         self.assertIn(
             "ACTOR: ${{ github.event.comment.user.login }}",
