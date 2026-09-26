@@ -440,7 +440,7 @@ def renewal_reservation_id(
         r"[0-9a-f]{64}", task_marker_sha256
     ) is None:
         raise CoordinationError("Fingerprint de task inválido para renovación.")
-    if re.fullmatch(r"[0-9a-f]{40}", head_sha) is None:
+    if not isinstance(head_sha, str) or not head_sha:
         raise CoordinationError("HEAD inválido para renovación.")
     material = "|".join(
         (
