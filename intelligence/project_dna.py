@@ -270,6 +270,17 @@ def _validate_known_or_list(value: Any, field: str) -> None:
         raise ProjectDnaError(f"{field} inválido")
 
 
+def _validate_json_object_keys(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ProjectDnaError("extensions contiene claves no string")
+            _validate_json_object_keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_json_object_keys(item)
+
+
 def validate_project_dna(document: Any) -> dict[str, Any]:
     """Valida campos base v1 permitiendo futuras extensiones aisladas."""
     if not isinstance(document, dict):
@@ -304,6 +315,7 @@ def validate_project_dna(document: Any) -> dict[str, Any]:
         raise ProjectDnaError("signals inválidas")
     if not isinstance(document["extensions"], dict):
         raise ProjectDnaError("extensions debe ser objeto")
+    _validate_json_object_keys(document["extensions"])
     try:
         json.dumps(
             document["extensions"],

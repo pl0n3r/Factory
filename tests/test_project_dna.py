@@ -134,6 +134,12 @@ class ProjectDnaTests(unittest.TestCase):
         with self.assertRaisesRegex(ProjectDnaError, "valores no JSON"):
             validate_project_dna(non_finite_extension)
 
+        non_string_key = copy.deepcopy(extended)
+        non_string_key["extensions"]["nested"] = {"ok": {1: "bad"}}
+        non_string_key["fingerprint"] = "0" * 64
+        with self.assertRaisesRegex(ProjectDnaError, "claves no string"):
+            validate_project_dna(non_string_key)
+
     def test_integration_detection_requires_explicit_signal(self):
         inferred = discover_project_dna(
             paths=[
