@@ -1,0 +1,101 @@
+"""Contrato Factory D-060 para administración de staff."""
+import json
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+TEMPLATE = ROOT / "template"
+SPEC_PATH = TEMPLATE / "ops" / "admin-staff-api.json"
+DOC_PATH = ROOT / "docs" / "admin-staff-api.md"
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class AdminStaffContractTests(unittest.TestCase):
+    def test_d060_is_consistent_in_root_template_and_plan(self):
+        root = load_json(ROOT / "decisiones.yml")
+        template = load_json(TEMPLATE / "decisiones.yml")
+        for data in (root, template):
+            rows = [row for row in data["decisions"] if row["id"] == "D-060"]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], "active")
+            self.assertIn("staff", rows[0]["text"])
+            self.assertIn("clientes finales", rows[0]["text"])
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("D-060 — administración de staff", plan)
+        self.assertIn("ControlBot nunca define ni recibe contraseñas/tokens", plan)
+
+    def test_documented_api_is_staff_only_and_fail_closed(self):
+        doc = DOC_PATH.read_text(encoding="utf-8")
+        for route in (
+            "/ops/staff", "/ops/staff/{id}/suspend",
+            "/ops/staff/{id}/reactivate", "/ops/staff/{id}/role",
+            "/ops/staff/{id}/password-reset", "/ops/summary",
+        ):
+            self.assertIn(route, doc)
+        self.assertIn("clientes finales", doc)
+        self.assertIn("ControlBot nunca define, recibe ni devuelve contraseñas", doc)
+        self.assertIn("permanece deshabilitada", doc)
+        self.assertIn("2–120 caracteres", doc)
+        self.assertIn("nunca supera 100", doc)
+        self.assertNotIn("DELETE /ops/staff/{id}", doc)
+
+    def test_template_stub_requires_security_controls(self):
+        spec = load_json(SPEC_PATH)
+        self.assertFalse(spec["enabled_by_default"])
+        self.assertFalse(spec["scope"]["physical_delete"])
+        self.assertFalse(spec["scope"]["bulk_export"])
+        self.assertEqual(spec["authentication"]["mode"], "hmac-sha256")
+        self.assertEqual(spec["authentication"]["key_scope"], "per_product")
+        self.assertEqual(spec["authentication"]["key_source"], "environment")
+        self.assertTrue(spec["authentication"]["constant_time_compare"])
+        self.assertTrue(spec["authentication"]["fail_closed_without_key"])
+        self.assertTrue(spec["authentication"]["allowlist_required"])
+        self.assertLessEqual(spec["authentication"]["max_clock_skew_seconds"], 300)
+        self.assertGreaterEqual(spec["authentication"]["nonce_min_bits"], 128)
+        self.assertGreaterEqual(
+            spec["authentication"]["nonce_ttl_seconds"],
+            spec["authentication"]["max_clock_skew_seconds"],
+        )
+        self.assertEqual(spec["authentication"]["replay_policy"], "reject_reuse_per_key")
+        self.assertTrue(spec["rate_limit"]["required"])
+        self.assertTrue(spec["audit"]["required"])
+        self.assertLessEqual(spec["pagination"]["max_limit"], 100)
+        self.assertTrue(spec["pagination"]["cursor_required_after_first_page"])
+        self.assertFalse(spec["pagination"]["unlimited"])
+        self.assertFalse(spec["search"]["empty_query_allowed"])
+        self.assertGreaterEqual(spec["search"]["min_query_length"], 2)
+        self.assertLessEqual(spec["search"]["max_query_length"], 120)
+        self.assertTrue(spec["authentication"]["rotation_supported"])
+        self.assertTrue(spec["authentication"]["revocation_immediate"])
+        self.assertNotIn("DELETE", {row["method"] for row in spec["operations"]})
+        composer = load_json(TEMPLATE / "composer.json")
+        self.assertIn("admin_staff_contract.php", composer["scripts"]["test"])
+
+    def test_template_privacy_declares_minimum_staff_treatment(self):
+        spec = load_json(SPEC_PATH)
+        privacy = spec["privacy"]
+        self.assertEqual(
+            privacy["activation"],
+            "copy_required_treatments_to_datos_yml_before_enabling",
+        )
+        self.assertTrue(privacy["legal_review_before_live"])
+        self.assertEqual(
+            {row["id"] for row in privacy["required_treatments"]},
+            {"staff_identity", "staff_contact", "staff_access_metadata"},
+        )
+        for row in privacy["required_treatments"]:
+            self.assertEqual(row["basis"], "review_required")
+            self.assertEqual(row["consent"], "review_required")
+            self.assertEqual(row["providers"], [])
+        data = load_json(TEMPLATE / "datos.yml")
+        self.assertEqual(data["phase"], "construccion")
+        self.assertTrue(
+            all(value == "[COMPLETAR POR EL DUEÑO]" for value in data["controller"].values())
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
