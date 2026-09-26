@@ -134,3 +134,57 @@ Esta primera hoja del DAG se considera útil cuando:
 Constitution v1 no implementa Evolution Engine, Fitness Engine, Risk Compiler, Lab, autonomía adaptativa ni promoción a producción. Tampoco modifica decisiones del dueño, crea nuevas categorías de puertas humanas ni publica releases.
 
 Los nodos posteriores #145–#157 deben consumir esta Constitución y extender capacidades alrededor de ella; no deben copiarla ni crear una política paralela.
+
+
+## Integración canónica al protocolo
+
+Living Software ya tiene una arquitectura conectada al protocolo Factory. Esta sección define el **handoff entre componentes**, no una nueva fuente de autoridad.
+
+Flujo canónico:
+
+1. **Project DNA** → huella verificable del software y unknowns explícitos.
+2. **Context Compiler** → briefing mínimo, trazable y privado.
+3. **Definition-of-Done Compiler** → evidencia dinámica y verificable.
+4. **Risk Compiler** → dimensiones de riesgo, blast radius y controles monotónicos.
+5. **Fitness Engine** → comparación multidimensional candidate vs baseline.
+6. **Evolution Engine** → lifecycle append-only.
+7. **Autonomy Engine** → escalera de supervisión solo para authority class `operational`.
+8. **Factory Lab** → shadow candidate vs `stable`, sin mutación.
+9. **Experience Guardrails** → patrones repetidos convertidos en candidatos.
+10. **Growth/Pruning** → capacidad faltante o entropía convertidas en candidatos con linaje.
+11. **Immune/Repair** → incidentes convertidos en reparación reversible e inmunización candidata.
+
+El ciclo operativo resumido es:
+
+`observe → learn → experiment → adopt_or_reject → measure → prune`
+
+y se expande al lifecycle constitucional:
+
+`observe → remember → learn → propose → shadow → experiment → validate → promote_or_reject → measure → prune → rollback`.
+
+`adopt_or_reject` es lenguaje operativo; el estado máquina sigue llamándose `promote_or_reject`.
+
+### Evidencia y autoridad
+
+La evidencia derivada no se autocertifica cuando existe un productor canónico. Autonomy, por ejemplo, revalida Fitness y Risk desde inputs fuente antes de ganar nivel. Una evolución solo puede operar dentro de la autoridad estable ya existente.
+
+Living Software no concede dinero, autoridad legal, acceso a datos personales, borrado irreversible ni permiso de publicar/pasar a live. Esas fronteras siguen gobernadas por PLAN-AGENTES, decisiones.yml y el registro canónico de puertas humanas.
+
+## Limitaciones activas / hardening pendiente
+
+La arquitectura/protocolo está integrada, pero **no se declara capacidad plenamente confiable en todas las fronteras de evidencia** mientras queden estos hardenings:
+
+- **#209 — Autonomy authority + canonical evidence:** cerrado. Autonomy separa capability/authority class y revalida Fitness/Risk desde inputs fuente.
+- **#211 — Factory Lab promotion provenance:** pendiente; el contrato de promoción debe revalidar su evidencia fuente antes de ser un gate confiable.
+- **#213 — Growth/Pruning source evidence:** pendiente; growth/pruning debe recomputar evidencia fuente antes de compilar candidatos confiables.
+- **#215 — Repair human authority + immunity provenance:** pendiente; repair/immunity debe validar autoridad destructiva y procedencia antes de ser gate confiable.
+
+Reglas mientras #211/#213/#215 sigan abiertos:
+
+1. cualquier conflicto con estos hardenings falla cerrado;
+2. #157 no habilita promoción autónoma adicional;
+3. no se afirma autonomía completa, promoción end-to-end verificada ni self-healing production-ready;
+4. #143 permanece abierto;
+5. los componentes pueden usarse para evaluación/arquitectura dentro de sus contratos actuales, pero no como sustituto de una puerta humana ni de evidencia canónica pendiente.
+
+Cuando esos hardenings cierren, esta sección debe actualizarse con evidencia del contrato real antes de cambiar el estado de #143.
