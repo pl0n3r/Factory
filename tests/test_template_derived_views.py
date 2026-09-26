@@ -22,7 +22,7 @@ class TemplateDerivedViewsTests(unittest.TestCase):
 
     def test_template_does_not_promote_views_to_authority(self):
         text = TEMPLATE_DOC.read_text(encoding="utf-8")
-        self.assertIn("no sea una fuente de verdad", text)
+        self.assertIn("no debe ser una fuente de verdad", text)
 
 
 if __name__ == "__main__":
