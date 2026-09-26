@@ -1422,15 +1422,14 @@ def renewal_successor(
 
 def _reconcile_renewal_pull(
     api: GitHub,
+    issue_number: int,
     number: int,
     original_body: str,
     requested_id: str,
     new_id: str,
 ) -> dict[str, Any] | None:
     """Alinea metadata del PR con la reserva ganadora sin pisar terceros."""
-    winner = active_reservation(api, issue_from_branch(
-        str(api.pull(number).get("head", {}).get("ref") or "")
-    ) or 0)
+    winner = active_reservation(api, issue_number)
     if winner is None:
         return None
 
@@ -1570,7 +1569,7 @@ def renew_pinned_acceptance(
         winner = active_reservation(api, issue_number)
         if winner and winner.get("reservation_id") == new_id:
             _reconcile_renewal_pull(
-                api, number, original, requested_id, new_id
+                api, issue_number, number, original, requested_id, new_id
             )
             print(
                 f"Contrato renovado tras error ambiguo: Issue #{issue_number} -> "
@@ -1579,13 +1578,13 @@ def renew_pinned_acceptance(
             return new_id
         if winner and winner.get("reservation_id") == requested_id:
             _reconcile_renewal_pull(
-                api, number, original, requested_id, new_id
+                api, issue_number, number, original, requested_id, new_id
             )
         # Un tercero ganador se preserva sin sobrescritura.
         raise exc
 
     winner = _reconcile_renewal_pull(
-        api, number, original, requested_id, new_id
+        api, issue_number, number, original, requested_id, new_id
     )
     if (
         not winner
