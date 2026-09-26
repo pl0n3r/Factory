@@ -86,6 +86,37 @@ El canal `v1` solo cambia mediante una puerta humana ligada al SHA exacto. Los c
 | Revisión jurídica (#53) | 🧭 Decisión humana separada |
 | GitHub Pages de la cabina (#35) | 🧭 Default seguro B: no publicar |
 
+### Estado de las tandas
+
+#### TANDA 2 · adopción del kit
+
+TANDA 2 termina **solo cuando los cuatro épicos canónicos estén cerrados como completados**. El estado actual es:
+
+| Proyecto | Épico | Estado |
+| --- | --- | --- |
+| Condor | #192 | ✅ Completado |
+| GrindFlow | #129 | 🚧 Pendiente / bloqueado |
+| BRVTAL | #630 | 🚧 Pendiente / bloqueado |
+| FactoryRunner | #1 | 🚧 Pendiente / bloqueado |
+
+**Condición global:** mientras cualquiera de esos cuatro épicos siga abierto, TANDA 3 no comienza globalmente.
+
+#### TANDA 3 · desarrollo normal
+
+TANDA 3 comienza cuando los cuatro épicos de TANDA 2 estén completados. Su prioridad operativa es:
+
+**incidente de producción → crítica → alta → media**
+
+Frentes iniciales definidos por `PLAN-AGENTES.md`:
+
+- **Condor:** pedidos, e-commerce, stock y recuperación de cuenta.
+- **GrindFlow:** recuperación de cuenta y continuación del roadmap.
+- **BRVTAL:** recuperación de cuenta y pendientes de producto.
+- **FactoryRunner:** identity/heartbeat → órdenes/eventos → adapters programáticos → browser execution.
+- **ControlBot y AutoFactory:** solo en modo dirigido o cuando una dependencia explícita de un producto los requiera.
+
+Esta sección es un resumen operativo; [`PLAN-AGENTES.md`](PLAN-AGENTES.md) sigue siendo la fuente de verdad.
+
 El cierre histórico está resumido en **[docs/tanda1-handoff.md](docs/tanda1-handoff.md)** y el proceso de publicación en **[docs/release-bootstrap.md](docs/release-bootstrap.md)**.
 
 ### Roadmap cronológico
@@ -97,6 +128,7 @@ El cierre histórico está resumido en **[docs/tanda1-handoff.md](docs/tanda1-ha
 | 3 | #100/#105 catálogo de etiquetas | ✅ Integrado en `main` |
 | 4 | Release protegido posterior | 🔐 `factory-release` + SHA exacto |
 | 5 | Condor#192 · GrindFlow#129 · brvtal#630 · FactoryRunner#1 | 🚧 TANDA 2 |
+| 6 | TANDA 3 · desarrollo normal | 🔒 Bloqueada hasta completar los cuatro épicos de TANDA 2 |
 
 ---
 
