@@ -61,6 +61,22 @@ class WorkflowEventGuardTests(unittest.TestCase):
             self.assertIn(key, retry)
         self.assertIn("env=environment", retry)
 
+    def test_consumer_code_jobs_disable_cache_access(self) -> None:
+        ci = self.text("ci.yml")
+        cache_env = (
+            "ACTIONS_CACHE_URL: ''",
+            "ACTIONS_RUNTIME_TOKEN: ''",
+            "ACTIONS_RESULTS_URL: ''",
+            "ACTIONS_CACHE_SERVICE_V2: ''",
+        )
+        for step_name in ("Instalar Composer bloqueado", "Instalar npm bloqueado"):
+            start = ci.index(f"- name: {step_name}")
+            end = ci.find("\n      - name:", start + 1)
+            block = ci[start:] if end == -1 else ci[start:end]
+            self.assertIn("uses: ./.factory/actions/retry", block)
+            for entry in cache_env:
+                self.assertIn(entry, block)
+
     def test_privacy_reusables_are_read_only_cache_consumers(self) -> None:
         for name in ("privacidad.yml", "auditoria-privacidad.yml"):
             with self.subTest(workflow=name):
