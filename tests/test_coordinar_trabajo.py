@@ -1764,7 +1764,7 @@ class CoordinacionTests(unittest.TestCase):
         self.assertIn("old/new", docs)
         self.assertIn("new/old", docs)
         self.assertIn("new/new", docs)
-        self.assertIn("un único \`Validar\`", docs)
+        self.assertIn("un único `Validar`", docs)
 
     def test_renew_acceptance_documents_explicit_v2_protocol(self) -> None:
         self.assertEqual(
