@@ -122,6 +122,8 @@ class AutonomyEngineTests(unittest.TestCase):
         self.assertEqual(engine.current.level, "observe")
 
     def test_forbidden_authority_capabilities_cannot_gain_autonomy(self):
+        canonical_fitness = fitness_evidence()
+        canonical_risk = risk_evidence("low")
         for authority_class in (
             "money",
             "legal",
@@ -135,8 +137,8 @@ class AutonomyEngineTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(AutonomyError, "authority class prohibida"):
                 engine.promote(
-                    fitness=fitness_evidence(),
-                    risk=risk_evidence("low"),
+                    fitness=canonical_fitness,
+                    risk=canonical_risk,
                     reason="forbidden",
                     evidence=["evidence"],
                 )
@@ -150,10 +152,11 @@ class AutonomyEngineTests(unittest.TestCase):
         forged["result"]["can_claim_improvement"] = False
         forged["result"]["fingerprint"] = "a" * 64
         engine = AutonomyEngine("analysis", reason="observe", evidence=["baseline"])
+        canonical_risk = risk_evidence("low")
         with self.assertRaisesRegex(AutonomyError, "fitness evidence no es canónica"):
             engine.promote(
                 fitness=forged,
-                risk=risk_evidence("low"),
+                risk=canonical_risk,
                 reason="forged",
                 evidence=["evidence"],
             )
@@ -166,9 +169,10 @@ class AutonomyEngineTests(unittest.TestCase):
         forged["result"]["fingerprint"] = "b" * 64
         forged["task"]["change_type"] = "security"
         engine = AutonomyEngine("analysis", reason="observe", evidence=["baseline"])
+        canonical_fitness = fitness_evidence()
         with self.assertRaisesRegex(AutonomyError, "risk evidence no es canónica"):
             engine.promote(
-                fitness=fitness_evidence(),
+                fitness=canonical_fitness,
                 risk=forged,
                 reason="forged",
                 evidence=["evidence"],
