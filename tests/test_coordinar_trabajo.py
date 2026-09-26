@@ -1493,7 +1493,7 @@ class CoordinacionTests(unittest.TestCase):
             renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(api.pulls[15]["body"], original)
         self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
-        self.assertEqual(len(api.check_runs), 2)
+        self.assertEqual(len(api.check_runs), 1)
         api = self._renew_fixture()
         api.fail_comment = True
         original = api.pulls[15]["body"]
@@ -1501,7 +1501,7 @@ class CoordinacionTests(unittest.TestCase):
             renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(api.pulls[15]["body"], original)
         self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
-        self.assertEqual(len(api.check_runs), 2)
+        self.assertEqual(len(api.check_runs), 1)
 
     def test_renew_acceptance_keeps_new_session_after_ambiguous_comment_error(self) -> None:
         """Si GitHub persistió el marker, reconcilia y devuelve la sesión nueva."""
