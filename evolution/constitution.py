@@ -36,6 +36,13 @@ PROTECTED_INVARIANTS = (
     "reversibility",
     "authority",
 )
+EXPECTED_INVARIANT_SOURCES = {
+    "security": "PLAN-AGENTES.md",
+    "privacy": "PLAN-AGENTES.md",
+    "traceability": "AGENTES.md",
+    "reversibility": "docs/resiliencia-fabrica.md",
+    "authority": "docs/puertas-humanas.md",
+}
 EVOLVABLE_NAMESPACES = (
     "observations",
     "hypotheses",
@@ -125,6 +132,7 @@ def validate_constitution(document: Any) -> dict[str, Any]:
             rule["policy"] != "must_not_weaken"
             or rule["autonomous_mutation"] != "forbidden"
             or not isinstance(rule["source"], str)
+            or rule["source"] != EXPECTED_INVARIANT_SOURCES[invariant]
             or rule["source"] not in authority["sources"]
         ):
             raise ConstitutionError(
