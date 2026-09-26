@@ -1156,6 +1156,108 @@ def transfer_work(
 
 
 
+
+def renew_pinned_acceptance(
+    api: GitHub,
+    issue_number: int,
+    actor: str,
+    association: str,
+    reservation_id: str,
+) -> str | None:
+    """Renueva explícitamente v2 sin destruir rama/PR ni reutilizar checks stale."""
+    if not authorized(association):
+        raise CoordinationError("Actor no autorizado para renovar aceptación.")
+    issue = api.issue(issue_number)
+    if issue.get("state") != "open":
+        raise CoordinationError("Solo se renuevan Issues abiertos.")
+    current = active_reservation(api, issue_number)
+    if (
+        not current
+        or current["owner"] != actor
+        or current["reservation_id"] != reservation_id.lower()
+    ):
+        raise CoordinationError("Sesión de reserva v2 no vigente o ajena.")
+    old_pin = current.get("acceptance_sha256")
+    if not isinstance(old_pin, str):
+        raise CoordinationError("La reserva legacy requiere /migrar-contrato.")
+    new_pin = contract_fingerprint(str(issue.get("body") or ""))
+    if new_pin == old_pin:
+        raise CoordinationError("No hay cambio contractual que renovar.")
+
+    branch = f"trabajo/issue-{issue_number}"
+    if current["branch"] != branch or not api.branch_sha(branch):
+        raise CoordinationError("La rama canónica de la reserva no está disponible.")
+    pulls = open_pull_records_for_branch(api, branch)
+    if len(pulls) != 1 or not isinstance(pulls[0].get("number"), int):
+        raise CoordinationError("Se requiere exactamente un PR abierto de la rama.")
+    number = pulls[0]["number"]
+    pull = api.pull(number)
+    head = pull.get("head")
+    sha = head.get("sha") if isinstance(head, dict) else None
+    if not isinstance(sha, str) or not sha or head.get("ref") != branch:
+        raise CoordinationError("No fue posible fijar el HEAD exacto del PR.")
+    original = str(pull.get("body") or "")
+    if reservation_from_pr_body(original) != reservation_id.lower():
+        raise CoordinationError("La metadata del PR no coincide con la sesión activa.")
+    new_id = new_reservation_id()
+
+    # Invalidar ANTES de publicar otra reserva: cualquier fallo conserva
+    # la sesión anterior y no puede dejar el HEAD anterior verde.
+    summary = (
+        f"Issue #{issue_number}: contrato renovado explícitamente; "
+        "los checks previos no prueban los nuevos criterios. Ejecuta CI nuevo."
+    )
+    for name in ("Criterios de aceptación", "Validar"):
+        api.create_failed_check(
+            name, sha, "Renovación explícita del contrato", summary
+        )
+
+    # Releer después de los checks contra carreras y ediciones adicionales.
+    latest = active_reservation(api, issue_number)
+    if (
+        not latest or latest["reservation_id"] != reservation_id.lower()
+        or contract_fingerprint(str(api.issue(issue_number).get("body") or ""))
+        != new_pin
+        or api.pull(number).get("head", {}).get("sha") != sha
+    ):
+        raise CoordinationError("La sesión, el contrato o el HEAD cambió durante la renovación.")
+
+    try:
+        api.update_pull_body(number, rewrite_pull_reservation(original, new_id))
+        api.comment(
+            issue_number,
+            reservation_marker(
+                actor, new_id, branch, True, "renovar-contrato", new_pin
+            ),
+        )
+    except Exception:
+        # El marker, si falló antes de persistirse, conserva la sesión antigua.
+        # Si el fallo es ambiguo se deja el HEAD invalidado, nunca verde stale.
+        try:
+            api.update_pull_body(number, original)
+        except Exception:
+            pass
+        raise
+
+    winner = active_reservation(api, issue_number)
+    if (
+        not winner
+        or winner["reservation_id"] != new_id
+        or winner.get("acceptance_sha256") != new_pin
+    ):
+        try:
+            api.update_pull_body(number, original)
+        except Exception:
+            pass
+        raise CoordinationError("Otra sesión ganó la renovación; HEAD invalidado.")
+    print(
+        f"Contrato v2 renovado: Issue #{issue_number}, "
+        f"sesión {new_id}, fingerprint {old_pin[:12]} -> {new_pin[:12]}; "
+        f"PR #{number} conservado y checks del HEAD invalidados."
+    )
+    return new_id
+
+
 def migrate_legacy_reservation(
     api: GitHub,
     issue_number: int,
@@ -1799,6 +1901,7 @@ def parse_comment_command(body: str) -> tuple[str, str | None]:
         ("/liberar ", "liberar"),
         ("/transferir ", "transferir"),
         ("/migrar-contrato ", "migrar-contrato"),
+        ("/renovar-contrato ", "renovar-contrato"),
     ):
         if value.startswith(prefix):
             session = value[len(prefix):].strip().lower()
@@ -1849,6 +1952,11 @@ def process_comment(
             actor,
             association,
             reservation_id,
+        )
+    elif command == "renovar-contrato":
+        assert reservation_id is not None
+        renew_pinned_acceptance(
+            api, issue_number, actor, association, reservation_id
         )
     elif command == "adoptar-contrato-huerfana":
         adopt_orphaned_contract(
