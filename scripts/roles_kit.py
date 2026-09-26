@@ -24,6 +24,11 @@ REQUIRED_ROLES = {
 }
 REQUIRED_HEADINGS = (
     "## Mentalidad y responsabilidades",
+    "## Experiencia simulada y especialidades",
+    "## Investigación inicial",
+    "## Heurísticas y trade-offs",
+    "## Señales de excelencia",
+    "## Red flags y colaboración",
     "## Nunca haría",
     "## Checklist",
     "## Evidencia exigida",
@@ -35,6 +40,11 @@ MAX_FILES = 1_000
 MAX_LABELS = 100
 MAX_CATALOG_BYTES = 128_000
 MAX_ROLE_BYTES = 64_000
+
+EXTENSION_SIGNALS = {
+    "mobile-engineering": r"\bandroid\b|\bios\b|\bmobile\b|\bswift\b|\bkotlin\b|\.kt\b",
+    "ml-engineering": r"\bmachine learning\b|\bmlops\b|\bpytorch\b|\btensorflow\b",
+}
 
 
 class RoleError(ValueError):
@@ -64,8 +74,8 @@ def load_catalog(
         )
     except (SafeIOError, json.JSONDecodeError) as exc:
         raise RoleError("Catálogo de roles ilegible o inválido.") from exc
-    if not isinstance(raw, list) or len(raw) != len(REQUIRED_ROLES):
-        raise RoleError("El catálogo debe contener exactamente 16 roles.")
+    if not isinstance(raw, list) or len(raw) < len(REQUIRED_ROLES):
+        raise RoleError("El catálogo debe contener al menos los 16 roles base.")
 
     roles_rel = _repo_relative(roles_dir)
     result: dict[str, dict[str, str]] = {}
@@ -112,8 +122,8 @@ def load_catalog(
         labels_es.add(item["label_es"])
         labels_en.add(item["label_en"])
 
-    if set(result) != REQUIRED_ROLES:
-        raise RoleError("El catálogo debe contener exactamente los 16 roles requeridos.")
+    if not REQUIRED_ROLES <= set(result):
+        raise RoleError("El catálogo debe conservar todos los roles base requeridos.")
     return result
 
 
@@ -243,7 +253,26 @@ def _roles_from_type_labels(labels: set[str]) -> set[str]:
     return roles
 
 
+def _positive_role_text(text: str) -> str:
+    """Evita que negaciones explícitas activen capacidades no aplicables."""
+    patterns = (
+        r"\bsin\s+(?:nuevas?\s+)?migraciones?(?:\s+de\s+schema)?\b",
+        r"\bno\s+(?:hay|incluye|requiere|usa)\s+(?:nuevas?\s+)?migraciones?(?:\s+de\s+schema)?\b",
+        r"\bsin\s+(?:cambios?\s+de\s+)?schema\b",
+        r"\bno\s+(?:hay|incluye|requiere|usa)\s+(?:cambios?\s+de\s+)?schema\b",
+        r"\bsin\s+machine learning\b",
+        r"\bno\s+(?:hay|incluye|requiere|usa)\s+machine learning\b",
+        r"\bsin\s+(?:android|ios|mobile|kotlin|swift)\b",
+        r"\bno\s+(?:hay|incluye|requiere|usa)\s+(?:android|ios|mobile|kotlin|swift)\b",
+    )
+    value = text
+    for pattern in patterns:
+        value = re.sub(pattern, "", value)
+    return value
+
+
 def _roles_from_text(text: str) -> set[str]:
+    text = _positive_role_text(text)
     keyword_rules = (
         (r"\bseo\b|sitemap|robots\.txt|canonical", {"seo", "contenido"}),
         (r"marketing|campaña|campaign|conversi[oó]n|cta", {"marketing", "contenido"}),
@@ -259,7 +288,36 @@ def _roles_from_text(text: str) -> set[str]:
     return roles
 
 
-def classify(context: dict[str, Any]) -> tuple[list[str], set[str]]:
+def _roles_from_catalog_extensions(
+    context: dict[str, Any],
+    catalog: dict[str, dict[str, str]],
+) -> set[str]:
+    """Selecciona extensiones de catálogo por señales de capability verificables."""
+    text = _positive_role_text(
+        " ".join([context["title"], context["body"], *context["files"]]).lower()
+    )
+    roles: set[str] = set()
+    for slug in sorted(set(catalog) - REQUIRED_ROLES):
+        pattern = EXTENSION_SIGNALS.get(slug)
+        if pattern and re.search(pattern, text):
+            roles.add(slug)
+            continue
+        meaningful = [
+            token for token in slug.split("-")
+            if token not in {"engineering", "engineer", "role"}
+        ]
+        if meaningful and all(
+            re.search(rf"\b{re.escape(token)}\b", text)
+            for token in meaningful
+        ):
+            roles.add(slug)
+    return roles
+
+
+def classify(
+    context: dict[str, Any],
+    catalog: dict[str, dict[str, str]] | None = None,
+) -> tuple[list[str], set[str]]:
     labels = {value.lower() for value in context["labels"]}
     roles = _roles_from_type_labels(labels)
     risks: set[str] = set()
@@ -271,10 +329,117 @@ def classify(context: dict[str, Any]) -> tuple[list[str], set[str]]:
 
     text = f"{context['title']}\n{context['body']}".lower()
     roles.update(_roles_from_text(text))
+    if catalog is not None:
+        roles.update(_roles_from_catalog_extensions(context, catalog))
 
     if not roles:
         roles.update({"ingenieria-software", "qa"})
     return sorted(roles), risks
+
+
+
+def _stack_signals(context: dict[str, Any]) -> list[str]:
+    haystack = " ".join([context["title"], context["body"], *context["files"]]).lower()
+    rules = (
+        ("php", r"\bphp\b"), ("symfony", r"\bsymfony\b"),
+        ("laravel", r"\blaravel\b"), ("typescript", r"\btypescript\b|\.tsx?\b"),
+        ("node", r"\bnode(?:\.js)?\b|package\.json"), ("mariadb", r"\bmariadb\b"),
+        ("mysql", r"\bmysql\b"), ("github-actions", r"\.github/workflows|github actions"),
+        ("hostinger", r"\bhostinger\b"),
+    )
+    return [name for name, pattern in rules if re.search(pattern, haystack)]
+
+
+def compile_team(context: dict[str, Any], catalog: dict[str, dict[str, str]]) -> dict[str, Any]:
+    """Compone un equipo contextual y deja trazabilidad de las señales usadas."""
+    roles, risks = classify(context, catalog)
+    known = [role for role in roles if role in catalog]
+    preference = ("producto", "arquitectura", "ingenieria-software", "infraestructura", "sre", "seguridad", "dba", "frontend", "qa")
+    primary = next((role for role in preference if role in known), known[0])
+    support = [role for role in known if role != primary]
+    allowed_review = cross_review_allowed(risks)
+    review = next((role for role in support if role in allowed_review), None)
+    if risks and review is None:
+        reviewer_preference = (
+            "arquitectura", "seguridad", "sre", "qa", "diseno-visual"
+        )
+        review = next(
+            (
+                role for role in reviewer_preference
+                if role in allowed_review and role in catalog and role != primary
+            ),
+            None,
+        )
+        if review is not None and review not in known:
+            known.append(review)
+            support.append(review)
+    stacks = _stack_signals(context)
+    contextual_profiles: list[str] = []
+    if "ingenieria-software" in known and stacks:
+        contextual_profiles.append(f"Staff {'/'.join(stacks[:2])} Engineer")
+    if "dba" in known and any(x in stacks for x in ("mariadb", "mysql")):
+        contextual_profiles.append("MariaDB/MySQL Performance DBA")
+    if "sre" in known and "hostinger" in stacks:
+        contextual_profiles.append("Hostinger SRE")
+    if "seguridad" in known:
+        contextual_profiles.append("Application Security Reviewer")
+    return {"primary": primary, "support": support, "review": review, "roles": known, "risks": sorted(risks), "stacks": stacks, "contextual_profiles": contextual_profiles, "trace": {"files": list(context["files"]), "labels": list(context["labels"]), "signals": stacks}}
+
+
+CANDIDATE_REQUIRED_FIELDS = {"slug", "title", "seniority", "domains", "stacks", "heuristics", "checklist", "evidence", "trigger"}
+
+
+def validate_role_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(candidate, dict) or set(candidate) != CANDIDATE_REQUIRED_FIELDS:
+        raise RoleError("Candidato de rol con esquema inválido.")
+    slug = candidate["slug"]
+    if not isinstance(slug, str) or not re.fullmatch(r"[a-z0-9-]{2,40}", slug):
+        raise RoleError("Slug de candidato inválido.")
+    for field in ("title", "seniority", "trigger"):
+        if not isinstance(candidate[field], str) or not candidate[field].strip():
+            raise RoleError(f"Campo {field} de candidato vacío.")
+    for field in ("domains", "stacks", "heuristics", "checklist", "evidence"):
+        value = candidate[field]
+        if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
+            raise RoleError(f"Campo {field} de candidato inválido.")
+    return candidate
+
+
+def propose_role_candidate(context: dict[str, Any], catalog: dict[str, dict[str, str]]) -> dict[str, Any] | None:
+    """Propone una capacidad faltante solo ante señales técnicas positivas."""
+    text = _positive_role_text(
+        " ".join([context["title"], context["body"], *context["files"]]).lower()
+    )
+    metadata = {
+        "mobile-engineering": ("Staff Mobile Engineer", ["mobile applications"], ["Kotlin/Android", "Swift/iOS"]),
+        "ml-engineering": ("Staff ML Engineer", ["machine learning systems"], ["Python", "MLOps"]),
+    }
+    for slug, pattern in EXTENSION_SIGNALS.items():
+        title, domains, stacks = metadata[slug]
+        if slug not in catalog and re.search(pattern, text):
+            return validate_role_candidate({
+                "slug": slug, "title": title, "seniority": "Staff-level simulated expertise",
+                "domains": domains, "stacks": stacks,
+                "heuristics": ["Preferir contratos observables y reversibles.", "Separar constraints de plataforma de lógica de producto."],
+                "checklist": ["Riesgos específicos de plataforma cubiertos.", "Pruebas en target representativo.", "Rollback y compatibilidad definidos."],
+                "evidence": ["Pruebas reproducibles del target.", "Trade-offs y límites documentados."],
+                "trigger": f"Señal objetiva: {pattern}",
+            })
+    return None
+
+
+def register_role_candidate(
+    registry: dict[str, dict[str, Any]],
+    candidate: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Registra un candidato validado separado del catálogo de roles utilizables."""
+    value = validate_role_candidate(candidate)
+    slug = value["slug"]
+    if slug in registry:
+        raise RoleError("El candidato ya existe en el registro.")
+    result = dict(registry)
+    result[slug] = dict(value)
+    return result
 
 
 def _declaration_value(body: str, keys: set[str]) -> str | None:
@@ -332,7 +497,7 @@ def validate_pr(
     language: str,
 ) -> dict[str, Any]:
     body = context["body"]
-    suggested, risks = classify(context)
+    suggested, risks = classify(context, catalog)
     declared = declared_roles(body)
     if not declared:
         raise RoleError("El PR debe declarar Rol(es): ...")
@@ -419,7 +584,7 @@ def main() -> int:
         context = parse_context(payload)
 
         if args.command == "suggest":
-            roles, risks = classify(context)
+            roles, risks = classify(context, catalog)
             field = "label_es" if args.language == "es" else "label_en"
             print(
                 json.dumps(
@@ -427,6 +592,8 @@ def main() -> int:
                         "roles": roles,
                         "labels": [catalog[role][field] for role in roles],
                         "risks": sorted(risks),
+                        "team": compile_team(context, catalog),
+                        "role_candidate": propose_role_candidate(context, catalog),
                     },
                     ensure_ascii=False,
                     sort_keys=True,

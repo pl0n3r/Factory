@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import json
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -54,9 +56,9 @@ class RolesKitTests(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = load_catalog(CATALOG, ROLES_DIR)
 
-    def test_catalog_has_exactly_sixteen_complete_roles(self):
-        self.assertEqual(set(self.catalog), REQUIRED_ROLES)
-        self.assertEqual(len(self.catalog), 16)
+    def test_catalog_has_all_required_complete_roles(self):
+        self.assertTrue(REQUIRED_ROLES <= set(self.catalog))
+        self.assertGreaterEqual(len(self.catalog), len(REQUIRED_ROLES))
 
     def test_schema_change_requires_dba_and_cross_review(self):
         roles, risks = classify(context(files=["migrations/2026_add_index.sql"]))
@@ -174,6 +176,64 @@ class RolesKitTests(unittest.TestCase):
         )
         self.assertTrue({"dba", "frontend", "ux", "infraestructura", "sre", "seguridad"} <= set(roles))
         self.assertEqual({"schema", "public-ux", "deploy"}, risks)
+
+    def test_negated_role_keywords_do_not_force_roles(self):
+        roles, _ = classify(
+            context(
+                title="Cambio de documentación",
+                body="Sin migraciones y sin cambios de schema.",
+                labels=["tipo: documentación"],
+            )
+        )
+        self.assertNotIn("dba", roles)
+        self.assertEqual(roles, ["contenido"])
+
+        roles, _ = classify(
+            context(
+                title="Cambio de documentación",
+                body="Sin migraciones de schema.",
+                labels=["tipo: documentación"],
+            )
+        )
+        self.assertNotIn("dba", roles)
+        self.assertEqual(roles, ["contenido"])
+
+    def test_catalog_accepts_additional_valid_role(self):
+        original = json.loads(CATALOG.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            base = Path(tmp)
+            roles_dir = base / "roles"
+            roles_dir.mkdir()
+            for source in ROLES_DIR.glob("*.md"):
+                shutil.copyfile(source, roles_dir / source.name)
+            extra = roles_dir / "mobile-engineering.md"
+            template = (ROLES_DIR / "ingenieria-software.md").read_text(encoding="utf-8")
+            extra.write_text(
+                template.replace("# Ingeniería de software", "# Mobile Engineering")
+                .replace("Slug: `ingenieria-software`", "Slug: `mobile-engineering`")
+                .replace("rol: ingenieria-software", "rol: mobile-engineering")
+                .replace("role: software-engineering", "role: mobile-engineering"),
+                encoding="utf-8",
+            )
+            rel_roles = roles_dir.relative_to(ROOT)
+            catalog = []
+            for item in original:
+                copy = dict(item)
+                copy["file"] = str(rel_roles / f"{copy['slug']}.md")
+                catalog.append(copy)
+            catalog.append(
+                {
+                    "slug": "mobile-engineering",
+                    "label_es": "rol: mobile-engineering",
+                    "label_en": "role: mobile-engineering",
+                    "file": str(rel_roles / "mobile-engineering.md"),
+                }
+            )
+            catalog_path = base / "catalogo.json"
+            catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+            loaded = load_catalog(catalog_path, roles_dir)
+            self.assertIn("mobile-engineering", loaded)
+            self.assertTrue(REQUIRED_ROLES <= set(loaded))
 
     def test_role_declarations_handle_large_body_without_multiline_regex(self):
         prefix = "x" * 100_000
