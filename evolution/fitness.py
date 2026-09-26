@@ -191,3 +191,21 @@ def compare_fitness(
     }
     result["fingerprint"] = _stable_hash(result)
     return result
+
+
+def validate_fitness_evidence(
+    *,
+    baseline: Any,
+    candidate: Any,
+    protected_dimensions: Any = None,
+    result: Any,
+) -> dict[str, Any]:
+    """Recomputa Fitness desde inputs fuente y exige igualdad exacta."""
+    expected = compare_fitness(
+        baseline=baseline,
+        candidate=candidate,
+        protected_dimensions=protected_dimensions,
+    )
+    if not isinstance(result, dict) or result != expected:
+        raise FitnessError("resultado Fitness no coincide con evidencia fuente")
+    return expected
