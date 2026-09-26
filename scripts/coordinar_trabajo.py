@@ -1447,7 +1447,18 @@ def _reconcile_renewal_pull(
             api.update_pull_body(number, original_body)
         return winner
 
-    # Una tercera sesión ganó. No tocar su metadata.
+    # Una tercera sesión ganó. Si este intento dejó el PR con el UUID perdedor,
+    # alinéalo al winner sin modificar el marker/contrato de la sesión ganadora.
+    head = api.pull(number).get("head")
+    if (
+        isinstance(head, dict)
+        and head.get("ref") == winner.get("branch")
+        and current_pr_id in {requested_id.lower(), new_id}
+    ):
+        api.update_pull_body(
+            number,
+            rewrite_pull_reservation(current_body, winner_id),
+        )
     return winner
 
 
