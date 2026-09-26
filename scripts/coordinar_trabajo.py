@@ -1504,8 +1504,7 @@ def renew_pinned_acceptance(
                 rewrite_pull_reservation(body, str(successor["reservation_id"])),
             )
         print(
-            f"Renovación ya vigente: Issue #{issue_number} -> "
-            f"{successor['reservation_id']} (reconciliada)."
+            f"Renovación ya vigente: Issue #{issue_number} reconciliado."
         )
         return str(successor["reservation_id"])
 
@@ -1583,8 +1582,7 @@ def renew_pinned_acceptance(
                 api, issue_number, number, original, requested_id, new_id
             )
             print(
-                f"Contrato renovado tras error ambiguo: Issue #{issue_number} -> "
-                f"{new_id}."
+                f"Contrato renovado tras error ambiguo: Issue #{issue_number} reconciliado."
             )
             return new_id
         if winner and winner.get("reservation_id") == requested_id:
@@ -1609,8 +1607,7 @@ def renew_pinned_acceptance(
         )
 
     print(
-        f"Contrato renovado: Issue #{issue_number}, sesión {new_id}, "
-        f"fingerprint {old_pin[:12]} -> {new_pin[:12]}; "
+        f"Contrato renovado: Issue #{issue_number}; "
         f"PR #{number} reconciliado y Validar invalidado."
     )
     return new_id
