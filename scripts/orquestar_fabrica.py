@@ -238,7 +238,7 @@ def _preserved_enrichment(body: str) -> str:
     marker_end += len(" -->")
 
     canonical = _task_body_from_marker(marker)
-    if body[:marker_end] != canonical:
+    if not body.startswith(canonical):
         raise PlanError(
             "Body enriquecido ambiguo: el bloque canónico de planificación fue editado."
         )
