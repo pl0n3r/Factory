@@ -1,0 +1,38 @@
+name: Evolution Lab shadow
+
+on:
+  pull_request:
+    paths:
+      - 'lab/**'
+      - 'evolution/**'
+      - 'intelligence/**'
+      - 'tests/test_factory_lab_contract.py'
+      - 'docs/factory-lab.md'
+      - '.github/workflows/evolution-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evolution-lab-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shadow-contract:
+    name: Validar Factory Lab sin mutación
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar candidato exacto
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Validar contrato de laboratorio
+        run: |
+          set -euo pipefail
+          python3 -m py_compile lab/*.py
+          python3 -m unittest tests.test_factory_lab_contract -v
