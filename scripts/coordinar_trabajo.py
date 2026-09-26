@@ -1164,6 +1164,36 @@ def reserve_work(
             f"Issue #{issue_number} no tiene criterios de aceptación ejecutables válidos: {exc}"
         ) from exc
 
+    labels = label_names(issue)
+    if STATUS_BLOCKED in labels:
+        print(
+            f"Trabajo no reservado: Issue #{issue_number} tiene {STATUS_BLOCKED}."
+        )
+        return None
+
+    branch = branch_for_issue(issue_number)
+    current = active_reservation(api, issue_number)
+    if current or api.branch_sha(branch):
+        return recover_existing_work_if_stale(
+            api,
+            issue_number,
+            actor,
+            branch,
+            current,
+        )
+
+    if STATUS_AVAILABLE not in labels:
+        return None
+
+    pending_recovery = recovery_issue_numbers(api)
+    if pending_recovery:
+        rendered = ", ".join(f"#{number}" for number in pending_recovery)
+        print(
+            "Trabajo nuevo pospuesto: primero debe recuperarse "
+            f"{rendered}."
+        )
+        return None
+
     try:
         task_marker = parse_task_marker(str(issue.get("body") or ""))
         dependency_states = (
@@ -1228,36 +1258,6 @@ def reserve_work(
         open_issues,
         active_task_snapshots,
     )
-
-    labels = label_names(issue)
-    if STATUS_BLOCKED in labels:
-        print(
-            f"Trabajo no reservado: Issue #{issue_number} tiene {STATUS_BLOCKED}."
-        )
-        return None
-
-    branch = branch_for_issue(issue_number)
-    current = active_reservation(api, issue_number)
-    if current or api.branch_sha(branch):
-        return recover_existing_work_if_stale(
-            api,
-            issue_number,
-            actor,
-            branch,
-            current,
-        )
-
-    if STATUS_AVAILABLE not in labels:
-        return None
-
-    pending_recovery = recovery_issue_numbers(api)
-    if pending_recovery:
-        rendered = ", ".join(f"#{number}" for number in pending_recovery)
-        print(
-            "Trabajo nuevo pospuesto: primero debe recuperarse "
-            f"{rendered}."
-        )
-        return None
 
     return reserve_available_work(
         api,
