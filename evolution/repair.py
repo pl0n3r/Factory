@@ -6,7 +6,10 @@ import json
 import re
 from typing import Any
 
-from evolution.provenance import TrustedDecisionSource
+from evolution.provenance import (
+    AuthenticatedDecisionReader,
+    is_authenticated_decision_reader,
+)
 from seguridad.puertas_humanas import GateValidationError, validate_gate
 
 
@@ -160,7 +163,7 @@ def _authority(
     destructive: bool,
     *,
     scope_fingerprint: str,
-    decision_source: TrustedDecisionSource | None = None,
+    decision_source: AuthenticatedDecisionReader | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     if not destructive:
         if (
@@ -203,7 +206,7 @@ def _authority(
 
     # Un payload firmado por sí mismo nunca constituye autoridad. La decisión
     # debe resolverse por handle desde una capacidad confiable y durable.
-    if not isinstance(decision_source, TrustedDecisionSource):
+    if not is_authenticated_decision_reader(decision_source):
         return blocked, None
     resolved = decision_source.resolve_decision(requested_ref)
     if resolved is None:
@@ -237,7 +240,7 @@ def compile_repair_plan(
     destructive: bool = False,
     human_authority: Any = None,
     decision_evidence: Any = None,
-    decision_source: TrustedDecisionSource | None = None,
+    decision_source: AuthenticatedDecisionReader | None = None,
 ) -> dict[str, Any]:
     """Compile a non-executing repair plan with source-bound human authority."""
     scope = _scope_payload(
@@ -274,7 +277,7 @@ def compile_repair_plan(
 def validate_repair_plan(
     plan: Any,
     *,
-    decision_source: TrustedDecisionSource | None = None,
+    decision_source: AuthenticatedDecisionReader | None = None,
 ) -> dict[str, Any]:
     """Revalidate scope and durable human evidence without weakening authority."""
     expected = {
