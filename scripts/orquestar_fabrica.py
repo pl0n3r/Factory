@@ -27,6 +27,7 @@ if __package__:
         topological_order,
     )
     from scripts.roles_kit import classify
+    from scripts.aceptacion_kit import AcceptanceError, parse_contract
 else:
     from coordinar_trabajo import (
         GitHub,
@@ -47,6 +48,7 @@ else:
         topological_order,
     )
     from roles_kit import classify
+    from aceptacion_kit import AcceptanceError, parse_contract
 
 ROLE_COLOR = "5319E7"
 REPORT_PREFIX = "<!-- factory-plan-report:"
@@ -197,6 +199,67 @@ def _task_body(
         )
     )
 
+def _task_body_from_marker(marker: dict[str, Any]) -> str:
+    """Reconstruye el bloque canónico a partir de un marker ya validado."""
+    dependencies = (
+        ", ".join(f"#{number}" for number in marker["depends_on"])
+        if marker["depends_on"]
+        else "ninguna"
+    )
+    paths = "\n".join(f"- {path}" for path in marker["paths"])
+    encoded = json.dumps(marker, separators=(",", ":"), sort_keys=True)
+    return (
+        f"Parte planificada automáticamente del épico #{marker['epic']}.\n\n"
+        f"Owner: @{marker['owner']}\n"
+        f"Orden: {marker['order']}\n"
+        f"Roles: {', '.join(marker['roles'])}\n"
+        f"Dependencias: {dependencies}\n\n"
+        "## Rutas reclamadas\n\n"
+        f"{paths}\n\n"
+        f"<!-- factory-plan-task {encoded} -->"
+    )
+
+
+def _preserved_enrichment(body: str) -> str:
+    """Separa enrichment válido del bloque canónico sin perder contenido."""
+    prefix = "<!-- factory-plan-task "
+    if body.count(prefix) != 1:
+        raise PlanError(
+            "Tarea materializada debe contener exactamente un factory-plan-task."
+        )
+    marker = parse_task_marker(body)
+    if marker is None:
+        raise PlanError("Tarea materializada sin factory-plan-task válido.")
+
+    marker_start = body.index(prefix)
+    marker_end = body.find(" -->", marker_start)
+    if marker_end < 0:
+        raise PlanError("factory-plan-task truncado.")
+    marker_end += len(" -->")
+
+    canonical = _task_body_from_marker(marker)
+    if body[:marker_end] != canonical:
+        raise PlanError(
+            "Body enriquecido ambiguo: el bloque canónico de planificación fue editado."
+        )
+
+    enrichment = body[marker_end:]
+    acceptance_mentions = enrichment.count("factory-acceptance")
+    acceptance_markers = enrichment.count("<!-- factory-acceptance ")
+    if acceptance_mentions:
+        if acceptance_markers != 1:
+            raise PlanError(
+                "Body enriquecido ambiguo: factory-acceptance inválido o duplicado."
+            )
+        try:
+            parse_contract(enrichment)
+        except AcceptanceError as exc:
+            raise PlanError(
+                f"Contrato de aceptación enriquecido inválido: {exc}"
+            ) from exc
+    return enrichment
+
+
 
 def _active(issue: dict[str, Any]) -> bool:
     return bool(
@@ -255,12 +318,15 @@ def _upsert_issue(
         _verify_owner(created, task.owner)
         return created
 
-    old_marker = parse_task_marker(str(existing.get("body") or ""))
+    existing_body = str(existing.get("body") or "")
+    old_marker = parse_task_marker(existing_body)
     new_marker = parse_task_marker(body)
     if _active(existing) and old_marker != new_marker:
         raise PlanError(
             f"Issue #{existing.get('number')} está activo; su plan no puede mutar."
         )
+    enrichment = _preserved_enrichment(existing_body)
+    body = body + enrichment
     number = existing.get("number")
     if not isinstance(number, int):
         raise PlanError("Issue materializado sin número válido.")
