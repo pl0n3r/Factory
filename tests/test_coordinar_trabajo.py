@@ -799,9 +799,12 @@ class CoordinacionTests(unittest.TestCase):
             }
         )
 
-        session = reserve_work(api, 12, "pl0n3r", "OWNER")
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "Orquestador bloquea /tomar",
+        ):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
 
-        self.assertIsNone(session)
         self.assertNotIn("trabajo/issue-12", api.branches)
         self.assertEqual(api.status_history, [])
 
