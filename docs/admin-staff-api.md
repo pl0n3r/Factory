@@ -22,6 +22,8 @@ La búsqueda exige `q` de 2–120 caracteres, usa cursor; `limit` por defecto es
 
 Cada producto usa una clave revocable distinta, almacenada fuera del repositorio. Si no hay clave o allowlist configuradas, la superficie `/ops` permanece deshabilitada.
 
+La superficie `/ops/*` **solo puede exponerse por HTTPS con validación de certificado activa**. Un adapter no puede publicar estas rutas por HTTP claro ni desactivar la verificación TLS. HMAC aporta autenticidad e integridad de la petición, pero **no cifra** el tráfico ni protege por sí solo las respuestas de staff.
+
 Cada petición incluye:
 
 - `X-Factory-Key-Id`
@@ -40,11 +42,26 @@ NONCE
 SHA256(BODY)
 ```
 
+`PATH_WITH_SORTED_QUERY` se construye de forma determinista:
+
+1. usar únicamente el path absoluto del request-target (`/ops/...`), sin esquema, host ni fragmento;
+2. si no hay query, firmar solo el path, sin `?` final;
+3. parsear la query como una **lista de pares**, preservando claves repetidas y valores vacíos; no convertirla a un mapa;
+4. rechazar `+` crudo en nombre o valor; los espacios se representan como `%20` y el signo `+` literal como `%2B`;
+5. percent-decodificar cada nombre/valor como UTF-8 válido y volver a codificarlo según RFC 3986, dejando sin escapar solo `A-Z a-z 0-9 - . _ ~` y usando hex mayúscula en escapes `%HH`;
+6. ordenar los pares por nombre codificado y luego por valor codificado, comparación byte a byte ascendente;
+7. serializar cada par como `nombre=valor` (incluido `=` cuando el valor es vacío), conservar duplicados idénticos y unir con `&`;
+8. si la query resultante no está vacía, firmar `PATH?QUERY_CANONICA`.
+
+Ejemplos canónicos: `/ops/staff?q=Ana%20Mar%C3%ADa&role=admin`; entradas `tag=b&tag=a` se firman como `tag=a&tag=b`; un `+` literal debe llegar como `%2B`.
+
 La comparación de firma es constante. El producto conserva por clave el nonce (o su hash) al menos 600 s y rechaza su reutilización. La allowlist de origen es un control adicional; nunca se reemplaza por `*` para “hacer funcionar” la integración. Rate limiting debe cubrir como mínimo `key_id` y origen.
 
 ## Autorización y auditoría
 
 El producto conserva la decisión final: valida roles permitidos y puede rechazar cualquier acción. Toda acción registra `action`, identificador de clave, staff objetivo, resultado, timestamp y request id. Nunca registra secretos, firma, body crudo, password ni token.
+
+Las mutaciones sensibles (`invite`, `suspend`, `reactivate`, `role`, `password-reset`) deben aceptar una clave de idempotencia acotada por producto/acción y rechazar o devolver el resultado previo ante reintentos equivalentes; el nonce anti-replay no sustituye esta garantía. Suspender una cuenta o reducir privilegios debe invalidar las sesiones/credenciales activas con la semántica propia del producto antes de declarar éxito.
 
 Errores mínimos:
 

@@ -10,10 +10,12 @@ DOC_PATH = ROOT / "docs" / "admin-staff-api.md"
 
 
 def load_json(path: Path):
+    """Carga un artefacto JSON versionado del contrato Factory."""
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 class AdminStaffContractTests(unittest.TestCase):
+    """Verifica que D-060 sea portable, fail-closed y criptográficamente determinista."""
     def test_d060_is_consistent_in_root_template_and_plan(self):
         root = load_json(ROOT / "decisiones.yml")
         template = load_json(TEMPLATE / "decisiones.yml")
@@ -40,6 +42,11 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertIn("permanece deshabilitada", doc)
         self.assertIn("2–120 caracteres", doc)
         self.assertIn("nunca supera 100", doc)
+        self.assertIn("HTTPS con validación de certificado", doc)
+        self.assertIn("HMAC aporta autenticidad e integridad", doc)
+        self.assertIn("preservando claves repetidas", doc)
+        self.assertIn("RFC 3986", doc)
+        self.assertIn("clave de idempotencia", doc)
         self.assertNotIn("DELETE /ops/staff/{id}", doc)
 
     def test_template_stub_requires_security_controls(self):
@@ -53,6 +60,31 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertTrue(spec["authentication"]["constant_time_compare"])
         self.assertTrue(spec["authentication"]["fail_closed_without_key"])
         self.assertTrue(spec["authentication"]["allowlist_required"])
+        self.assertEqual(spec["transport"]["scheme"], "https")
+        self.assertTrue(spec["transport"]["certificate_validation_required"])
+        self.assertTrue(spec["transport"]["cleartext_http_forbidden"])
+        self.assertFalse(spec["transport"]["hmac_provides_confidentiality"])
+        self.assertEqual(
+            spec["authentication"]["canonical_request"],
+            "KEY_ID\nMETHOD\nPATH_WITH_SORTED_QUERY\nTIMESTAMP\nNONCE\nSHA256(BODY)",
+        )
+        query = spec["authentication"]["query_canonicalization"]
+        self.assertEqual(query["representation"], "ordered_pairs")
+        self.assertTrue(query["preserve_duplicate_keys"])
+        self.assertTrue(query["preserve_empty_values"])
+        self.assertTrue(query["raw_plus_forbidden"])
+        self.assertEqual(query["space_encoding"], "%20")
+        self.assertEqual(query["literal_plus_encoding"], "%2B")
+        self.assertEqual(query["reencode"], "RFC3986")
+        self.assertEqual(query["percent_hex_case"], "uppercase")
+        self.assertEqual(query["sort"], ["encoded_name", "encoded_value"])
+        self.assertEqual(query["pair_format"], "name=value")
+        self.assertTrue(query["omit_question_mark_when_empty"])
+        self.assertTrue(spec["mutations"]["idempotency_key_required"])
+        self.assertTrue(spec["mutations"]["replay_nonce_is_not_idempotency"])
+        self.assertTrue(
+            spec["mutations"]["invalidate_active_authority_on_suspend_or_privilege_reduction"]
+        )
         self.assertLessEqual(spec["authentication"]["max_clock_skew_seconds"], 300)
         self.assertGreaterEqual(spec["authentication"]["nonce_min_bits"], 128)
         self.assertGreaterEqual(
