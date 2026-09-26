@@ -1207,7 +1207,7 @@ def renew_pinned_acceptance(
         f"Issue #{issue_number}: contrato renovado explícitamente; "
         "los checks previos no prueban los nuevos criterios. Ejecuta CI nuevo."
     )
-    for name in ("Criterios de aceptación", "Validar"):
+    for name in ("Validar", "Criterios de aceptación"):
         api.create_failed_check(
             name, sha, "Renovación explícita del contrato", summary
         )
