@@ -1842,6 +1842,9 @@ def update_issue_label_state(
         return
 
     labels = label_names(issue)
+    if STATUS_RECOVERY in labels:
+        api.set_status(issue_number, STATUS_RECOVERY)
+        return
     if STATUS_BLOCKED in labels:
         api.set_status(issue_number, STATUS_BLOCKED)
         return
@@ -1856,7 +1859,11 @@ def update_issue_label_state(
         and branch_sha is not None
     ):
         ready_pull = any(
-            pull.get("state", "open") == "open" and not pull.get("draft", False)
+            pull.get("state", "open") == "open"
+            and not pull.get("draft", False)
+            and isinstance(pull.get("head"), dict)
+            and isinstance(pull["head"].get("repo"), dict)
+            and pull["head"]["repo"].get("full_name") == api.repo
             for pull in open_pull_records_for_branch(api, branch)
         )
         api.set_status(
