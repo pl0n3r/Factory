@@ -1352,6 +1352,25 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
         self.assertEqual(len(api.check_runs), 2)
 
+    def test_renew_acceptance_keeps_new_session_after_ambiguous_comment_error(self) -> None:
+        """Si GitHub escribió el marker pero el cliente falló, no revierte el PR."""
+        api = self._renew_fixture()
+        original_comment = api.comment
+        def persisted_then_error(issue_number, body):
+            original_comment(issue_number, body)
+            raise CoordinationError("timeout tras persistir comentario")
+        api.comment = persisted_then_error
+        with self.assertRaisesRegex(CoordinationError, "timeout"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        winner = active_reservation(api, 12)
+        self.assertIsNotNone(winner)
+        self.assertNotEqual(winner["reservation_id"], SESSION_A)
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]),
+            winner["reservation_id"],
+        )
+        self.assertEqual(len(api.check_runs), 2)
+
     def test_renew_acceptance_documents_explicit_v2_protocol(self) -> None:
         self.assertEqual(
             parse_comment_command(f"/renovar-contrato {SESSION_A}"),
