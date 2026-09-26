@@ -33,6 +33,7 @@ jobs:
           case "$EVENT_NAME" in
             pull_request|push|merge_group) ;;
             workflow_dispatch)
+              REPOSITORY="${REPOSITORY,,}"
               [[ "$REPOSITORY" == "pl0n3r/factory" && "$FACTORY_RELEASE_BOOTSTRAP" == "true" ]] || {
                 echo "::error::workflow_dispatch solo se admite para el release bootstrap interno de Factory"
                 exit 1
