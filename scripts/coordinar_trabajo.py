@@ -45,39 +45,68 @@ except ValueError:
 
 ALLOWED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
-STATUS_AVAILABLE = "estado: disponible"
-STATUS_RESERVED = "estado: reservado"
-STATUS_RECOVERY = "estado: requiere recuperación"
-STATUS_REVIEW = "estado: en revisión"
-STATUS_COMPLETED = "estado: completado"
-STATUS_CANCELLED = "estado: cancelado"
-STATUS_BLOCKED = "estado: bloqueado"
+@dataclass(frozen=True)
+class CoordinationProfile:
+    name: str
+    available: str
+    reserved: str
+    recovery: str
+    review: str
+    completed: str
+    cancelled: str
+    blocked: str
+    branch_prefix: str
+    visible_reservation: str
+    marker: str
+    hidden_marker: str
+    take: str
+    force_release: str
+    release: str
+    transfer: str
+    recover: str
 
-STATUS_LABELS: dict[str, tuple[str, str]] = {
-    STATUS_AVAILABLE: ("2DA44E", "Trabajo disponible para ser reservado."),
-    STATUS_RESERVED: ("FBCA04", "Trabajo reservado por una sesión o agente."),
-    STATUS_RECOVERY: ("D93F0B", "Reserva inactiva: debe recuperarse antes de tomar trabajo nuevo."),
-    STATUS_REVIEW: ("1D76DB", "Trabajo con Pull Request listo para revisión."),
-    STATUS_COMPLETED: ("0E8A16", "Trabajo completado."),
-    STATUS_CANCELLED: ("6E7781", "Trabajo cerrado sin completarse."),
-    STATUS_BLOCKED: ("000000", "Trabajo detenido por una dependencia real."),
+PROFILES = {
+    "es": CoordinationProfile("es","estado: disponible","estado: reservado","estado: requiere recuperación","estado: en revisión","estado: completado","estado: cancelado","estado: bloqueado","trabajo/issue-","Reserva","condor-reserva","condor-reserva-id","/tomar","/liberar-forzado","/liberar ","/transferir ",""),
+    "en": CoordinationProfile("en","status: available","status: reserved","status: recovery required","status: in review","status: completed","status: cancelled","status: blocked","work/issue-","Reservation","brvtal-work-reservation","brvtal-reservation-id","/take","/force-release","/release ","/transfer ","/recover "),
 }
 
-BRANCH_RE = re.compile(r"^trabajo/issue-(\d+)$")
-CLOSING_RE = re.compile(r"(?im)\b(?:closes|fixes|resolves)\s+#(\d+)\b")
-RESERVATION_LINE_RE = re.compile(
-    r"(?im)^Reserva:\s*([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-    r"[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*$"
-)
-RESERVATION_HIDDEN_RE = re.compile(
-    r"<!--\s*condor-reserva-id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-    r"[89ab][0-9a-f]{3}-[0-9a-f]{12})\s*-->"
-)
-RESERVATION_RE = re.compile(r"<!-- condor-reserva (\{[^}]*\}) -->")
 SESSION_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
     r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
+CLOSING_RE = re.compile(r"(?im)\b(?:closes|fixes|resolves)\s+#(\d+)\b")
+
+def configure_profile(name: str) -> CoordinationProfile:
+    """Activa uno de los perfiles cerrados y recompone sus contratos derivados."""
+    if name not in PROFILES:
+        raise RuntimeError(f"Perfil de coordinación no permitido: {name}")
+    p = PROFILES[name]
+    global PROFILE, STATUS_AVAILABLE, STATUS_RESERVED, STATUS_RECOVERY
+    global STATUS_REVIEW, STATUS_COMPLETED, STATUS_CANCELLED, STATUS_BLOCKED
+    global STATUS_LABELS, BRANCH_RE, RESERVATION_LINE_RE, RESERVATION_HIDDEN_RE, RESERVATION_RE
+    PROFILE = p
+    STATUS_AVAILABLE, STATUS_RESERVED, STATUS_RECOVERY = p.available, p.reserved, p.recovery
+    STATUS_REVIEW, STATUS_COMPLETED, STATUS_CANCELLED, STATUS_BLOCKED = p.review, p.completed, p.cancelled, p.blocked
+    STATUS_LABELS = {
+        STATUS_AVAILABLE: ("2DA44E", "Available work."),
+        STATUS_RESERVED: ("FBCA04", "Reserved work."),
+        STATUS_RECOVERY: ("D93F0B", "Recovery required."),
+        STATUS_REVIEW: ("1D76DB", "Work in review."),
+        STATUS_COMPLETED: ("0E8A16", "Completed work."),
+        STATUS_CANCELLED: ("6E7781", "Cancelled work."),
+        STATUS_BLOCKED: ("000000", "Blocked work."),
+    }
+    BRANCH_RE = re.compile(rf"^{re.escape(p.branch_prefix)}(\d+)$")
+    RESERVATION_LINE_RE = re.compile(rf"(?im)^{re.escape(p.visible_reservation)}:\s*({SESSION_RE.pattern[1:-1]})\s*$")
+    RESERVATION_HIDDEN_RE = re.compile(rf"<!--\s*{re.escape(p.hidden_marker)}:\s*({SESSION_RE.pattern[1:-1]})\s*-->")
+    RESERVATION_RE = re.compile(rf"<!-- {re.escape(p.marker)} (\{{[^}}]*\}}) -->")
+    return p
+
+def branch_for_issue(issue_number: int) -> str:
+    """Construye la rama canónica del Issue para el perfil activo."""
+    return f"{PROFILE.branch_prefix}{issue_number}"
+
+configure_profile("es")
 
 
 class CoordinationError(RuntimeError):
@@ -422,7 +451,7 @@ def reservation_marker(
             raise CoordinationError("Fingerprint de aceptación inválido.")
         payload["acceptance_sha256"] = acceptance_sha256
     encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    return f"<!-- condor-reserva {encoded} -->"
+    return f"<!-- {PROFILE.marker} {encoded} -->"
 
 
 def valid_reservation_payload(value: Any) -> bool:
@@ -528,10 +557,11 @@ def human_issue_activity_timestamp(
             continue
         body = str(comment.get("body") or "").strip()
         if (
-            body == "/tomar"
-            or body == "/liberar-forzado"
-            or body.startswith("/liberar ")
-            or body.startswith("/transferir ")
+            body == PROFILE.take
+            or body == PROFILE.force_release
+            or (PROFILE.release and body.startswith(PROFILE.release))
+            or (PROFILE.transfer and body.startswith(PROFILE.transfer))
+            or (PROFILE.recover and body.startswith(PROFILE.recover))
         ):
             continue
         timestamp = parse_github_time(
@@ -640,7 +670,7 @@ def stale_recovery_candidate(
     if not isinstance(number, int) or STATUS_BLOCKED in label_names(issue):
         return None
 
-    branch = f"trabajo/issue-{number}"
+    branch = branch_for_issue(number)
     initial_reservation = active_reservation(api, number)
     branch_sha = api.branch_sha(branch)
     if not (initial_reservation or branch_sha):
@@ -732,8 +762,8 @@ def work_is_stale(
 def rewrite_pull_reservation(body: str, reservation_id: str) -> str:
     """Actualiza la reserva del PR existente sin perder su descripción."""
     value = body or ""
-    visible = f"Reserva: {reservation_id}"
-    hidden = f"<!-- condor-reserva-id: {reservation_id} -->"
+    visible = f"{PROFILE.visible_reservation}: {reservation_id}"
+    hidden = f"<!-- {PROFILE.hidden_marker}: {reservation_id} -->"
 
     if RESERVATION_LINE_RE.search(value):
         value = RESERVATION_LINE_RE.sub(visible, value)
@@ -795,12 +825,9 @@ def recover_stale_work(
             "Rama huérfana sin reserva activa: ejecuta "
             "/adoptar-contrato-huerfana para fijar el contrato antes de recuperar."
         )
-    if not isinstance(previous_fingerprint, str):
-        raise CoordinationError(
-            f"Reserva legacy v1 en Issue #{issue_number}: ejecuta "
-            f"/migrar-contrato {previous['reservation_id']} antes de recuperar."
-        )
-    acceptance_sha256 = previous_fingerprint
+    acceptance_sha256 = reservation_fingerprint_for_profile(
+        api, issue_number, previous, "recuperar"
+    )
 
     publish_reservation(
         api,
@@ -1051,7 +1078,7 @@ def reserve_work(
         )
         return None
 
-    branch = f"trabajo/issue-{issue_number}"
+    branch = branch_for_issue(issue_number)
     current = active_reservation(api, issue_number)
     if current or api.branch_sha(branch):
         return recover_existing_work_if_stale(
@@ -1082,6 +1109,31 @@ def reserve_work(
         acceptance_sha256,
     )
 
+def reservation_fingerprint_for_profile(
+    api: GitHub,
+    issue_number: int,
+    reservation: dict[str, Any],
+    operation: str,
+) -> str:
+    """Devuelve fingerprint v2; EN puede adoptar un marker BRVTAL v1 con contrato válido."""
+    pinned = reservation.get("acceptance_sha256")
+    if isinstance(pinned, str):
+        return pinned
+    if PROFILE.name != "en":
+        raise CoordinationError(
+            f"Reserva legacy v1 en Issue #{issue_number}: ejecuta "
+            f"/migrar-contrato {reservation['reservation_id']} antes de {operation}."
+        )
+    issue = api.issue(issue_number)
+    try:
+        parse_contract(str(issue.get("body") or ""))
+        return contract_fingerprint(str(issue.get("body") or ""))
+    except AcceptanceError as exc:
+        raise CoordinationError(
+            f"Reserva BRVTAL legacy en Issue #{issue_number} sin contrato válido."
+        ) from exc
+
+
 def transfer_work(
     api: GitHub,
     issue_number: int,
@@ -1102,13 +1154,9 @@ def transfer_work(
 
     new_id = new_reservation_id()
     branch = str(current["branch"])
-    current_fingerprint = current.get("acceptance_sha256")
-    if not isinstance(current_fingerprint, str):
-        raise CoordinationError(
-            f"Reserva legacy v1 en Issue #{issue_number}: ejecuta "
-            f"/migrar-contrato {reservation_id.lower()} antes de transferir."
-        )
-    acceptance_sha256 = current_fingerprint
+    acceptance_sha256 = reservation_fingerprint_for_profile(
+        api, issue_number, current, "transferir"
+    )
     open_pulls = open_pull_records_for_branch(api, branch)
     originals: list[tuple[int, str]] = []
     for pull in open_pulls:
@@ -1184,7 +1232,7 @@ def renew_pinned_acceptance(
     if new_pin == old_pin:
         raise CoordinationError("No hay cambio contractual que renovar.")
 
-    branch = f"trabajo/issue-{issue_number}"
+    branch = branch_for_issue(issue_number)
     if current["branch"] != branch or not api.branch_sha(branch):
         raise CoordinationError("La rama canónica de la reserva no está disponible.")
     pulls = open_pull_records_for_branch(api, branch)
@@ -1335,7 +1383,7 @@ def adopt_orphaned_contract(
     issue = api.issue(issue_number)
     if issue.get("state") != "open":
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
-    branch = f"trabajo/issue-{issue_number}"
+    branch = branch_for_issue(issue_number)
     if api.branch_sha(branch) is None:
         raise CoordinationError(
             f"No existe la rama huérfana {branch}; usa /tomar para trabajo nuevo."
@@ -1480,7 +1528,7 @@ def release_work(
     branch = (
         str(current["branch"])
         if current
-        else f"trabajo/issue-{issue_number}"
+        else branch_for_issue(issue_number)
     )
     if not close_pulls_before_release(
         api,
@@ -1602,7 +1650,7 @@ def update_issue_label_state(
     if actor == TRUSTED_MARKER_LOGIN or label != STATUS_RESERVED:
         return
 
-    branch = f"trabajo/issue-{issue_number}"
+    branch = branch_for_issue(issue_number)
     try:
         reservation_id = reserve_work(api, issue_number, actor, "OWNER")
     except CoordinationError:
@@ -1695,7 +1743,7 @@ def invalidate_contract_drift_checks(
 def update_issue_state(api: GitHub, issue_number: int, action: str) -> None:
     """Limpia una reserva al cerrar un Issue o restablece su estado al reabrirlo."""
     issue = api.issue(issue_number)
-    branch = f"trabajo/issue-{issue_number}"
+    branch = branch_for_issue(issue_number)
     current = active_reservation(api, issue_number)
 
     if action == "edited":
@@ -1892,31 +1940,38 @@ def validate_pull(
     )
 
 def parse_comment_command(body: str) -> tuple[str, str | None]:
-    """Interpreta únicamente los comandos públicos soportados por el workflow."""
+    """Interpreta únicamente los comandos públicos del perfil activo."""
     value = body.strip()
-    if value == "/tomar":
+    if value == PROFILE.take:
         return "tomar", None
-    if value == "/liberar-forzado":
+    if value == PROFILE.force_release:
         return "liberar-forzado", None
-    if value == "/adoptar-contrato-huerfana":
+    if PROFILE.name == "es" and value == "/adoptar-contrato-huerfana":
         return "adoptar-contrato-huerfana", None
-
-    for prefix, command in (
-        ("/liberar ", "liberar"),
-        ("/transferir ", "transferir"),
-        ("/migrar-contrato ", "migrar-contrato"),
-        ("/renovar-contrato ", "renovar-contrato"),
-    ):
+    pairs = [(PROFILE.release, "liberar"), (PROFILE.transfer, "transferir")]
+    if PROFILE.recover:
+        pairs.append((PROFILE.recover, "recuperar"))
+    if PROFILE.name == "es":
+        pairs += [("/migrar-contrato ", "migrar-contrato"), ("/renovar-contrato ", "renovar-contrato")]
+    for prefix, command in pairs:
         if value.startswith(prefix):
             session = value[len(prefix):].strip().lower()
             if not SESSION_RE.fullmatch(session):
-                raise CoordinationError(
-                    f"El comando {command} requiere un UUID de reserva válido."
-                )
+                raise CoordinationError(f"El comando {command} requiere un UUID de reserva válido.")
             return command, session
     raise CoordinationError("Comando de coordinación no reconocido.")
 
-
+def recover_work(api: GitHub, issue_number: int, actor: str, association: str, reservation_id: str) -> str | None:
+    """Recupera explícitamente una reserva EN stale con UUID coincidente."""
+    if not authorized(association):
+        raise CoordinationError(f"@{actor} no tiene una asociación autorizada para recuperar trabajo.")
+    current = active_reservation(api, issue_number)
+    if current is None or current["reservation_id"] != reservation_id.lower():
+        return None
+    branch = str(current["branch"])
+    if not work_is_stale(api, issue_number, branch):
+        return None
+    return recover_existing_work_if_stale(api, issue_number, actor, branch, current)
 def process_comment(
     api: GitHub,
     issue_number: int,
@@ -1939,6 +1994,9 @@ def process_comment(
         )
     elif command == "liberar-forzado":
         release_work(api, issue_number, actor, association, None, True)
+    elif command == "recuperar":
+        assert reservation_id is not None
+        recover_work(api, issue_number, actor, association, reservation_id)
     elif command == "transferir":
         assert reservation_id is not None
         transfer_work(
@@ -2015,6 +2073,7 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
+        configure_profile(os.getenv("FACTORY_COORDINATION_PROFILE", "es"))
         api = GitHub(args.repo)
         if args.command == "comentario":
             process_comment(

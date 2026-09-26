@@ -39,6 +39,11 @@ on:
         required: false
         default: true
         type: boolean
+      profile:
+        description: 'Perfil de coordinación: es o en'
+        required: false
+        default: 'es'
+        type: string
       kit_ref:
         required: false
         default: 'v1'
@@ -59,9 +64,11 @@ jobs:
     steps:
       - env:
           OPERATION: ${{ inputs.operation }}
+          PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
           case "$OPERATION" in comment|label|pr|issue|validate|sweep) ;; *) echo "::error::operation inválida"; exit 1 ;; esac
+          case "$PROFILE" in es|en) ;; *) echo "::error::profile inválido"; exit 1 ;; esac
 
   comentario:
     name: Procesar comando
@@ -77,13 +84,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: pl0n3r/factory
-          ref: v1
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .factory
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
+          FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
           ISSUE: ${{ inputs.issue_number }}
           ACTOR: ${{ inputs.actor }}
           ASSOCIATION: ${{ inputs.association }}
@@ -105,13 +113,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: pl0n3r/factory
-          ref: v1
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .factory
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
+          FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
           ISSUE: ${{ inputs.issue_number }}
           ACTOR: ${{ inputs.actor }}
           LABEL: ${{ inputs.label }}
@@ -132,13 +141,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: pl0n3r/factory
-          ref: v1
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .factory
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
+          FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
           PR: ${{ inputs.pr_number }}
           ACTION: ${{ inputs.action }}
         run: python3 .factory/scripts/coordinar_trabajo.py pr-event --repo "$REPOSITORIO" --pr "$PR" --action "$ACTION"
@@ -156,13 +166,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: pl0n3r/factory
-          ref: v1
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .factory
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
+          FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
           ISSUE: ${{ inputs.issue_number }}
           ACTION: ${{ inputs.action }}
         run: python3 .factory/scripts/coordinar_trabajo.py issue-event --repo "$REPOSITORIO" --issue "$ISSUE" --action "$ACTION"
@@ -180,13 +191,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: pl0n3r/factory
-          ref: v1
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .factory
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
+          FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
           PR: ${{ inputs.pr_number }}
           REQUIRE_RESERVATION: ${{ inputs.require_reservation }}
         run: |
@@ -207,11 +219,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: pl0n3r/factory
-          ref: v1
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .factory
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
+          FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
         run: python3 .factory/scripts/coordinar_trabajo.py marcar-inactivas --repo "$REPOSITORIO"
