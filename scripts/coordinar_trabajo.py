@@ -1231,10 +1231,12 @@ def renew_pinned_acceptance(
             ),
         )
     except Exception:
-        # El marker, si falló antes de persistirse, conserva la sesión antigua.
-        # Si el fallo es ambiguo se deja el HEAD invalidado, nunca verde stale.
+        # GitHub puede haber guardado el comentario aunque el cliente recibiera
+        # error. Nunca restaurar el PR si el marker nuevo ya ganó la carrera.
         try:
-            api.update_pull_body(number, original)
+            observed = active_reservation(api, issue_number)
+            if observed and observed["reservation_id"] == reservation_id.lower():
+                api.update_pull_body(number, original)
         except Exception:
             pass
         raise
@@ -1245,10 +1247,12 @@ def renew_pinned_acceptance(
         or winner["reservation_id"] != new_id
         or winner.get("acceptance_sha256") != new_pin
     ):
-        try:
-            api.update_pull_body(number, original)
-        except Exception:
-            pass
+        # Si otra reserva ganó, no sobrescribir su metadata ni el contrato.
+        if winner and winner["reservation_id"] == reservation_id.lower():
+            try:
+                api.update_pull_body(number, original)
+            except Exception:
+                pass
         raise CoordinationError("Otra sesión ganó la renovación; HEAD invalidado.")
     print(
         f"Contrato v2 renovado: Issue #{issue_number}, "
