@@ -1,6 +1,10 @@
 import hashlib
 import json
+import os
 import unittest
+from unittest.mock import patch
+
+import evolution.provenance as provenance_module
 
 from evolution.constitution import validate_candidate
 from evolution.immune import (
@@ -9,7 +13,15 @@ from evolution.immune import (
     ImmuneIncident,
     compile_immunity_candidate,
 )
-from evolution.provenance import TrustedDecisionSource, TrustedIncidentRegistry
+from evolution.provenance import (
+    AuthenticatedDecisionReader,
+    AuthenticatedIncidentReader,
+    ProvenanceError,
+    TrustedDecisionSource,
+    TrustedIncidentRegistry,
+    authenticated_decision_reader_from_environment,
+    authenticated_incident_reader_from_environment,
+)
 from evolution.repair import RepairError, compile_repair_plan, validate_repair_plan
 
 
@@ -93,12 +105,21 @@ def decision_evidence(scope_fingerprint, *, issue_ref="pl0n3r/factory#900"):
 
 
 def trusted_decision_source(plan):
+    """Build the production reader through authenticated environment configuration."""
     evidence = decision_evidence(plan["scope_fingerprint"])
     ref = "owner-decision:pl0n3r/factory#900:A"
-    source = TrustedDecisionSource("controlbot:test-decisions")
-    source.record_decision(ref, evidence)
+    records = {ref: evidence}
+    env = {
+        "FACTORY_DECISION_SOURCE_ID": "controlbot:test-decisions",
+        "FACTORY_DECISION_SOURCE_URL": "https://controlbot.example/decisions",
+        "FACTORY_PROVENANCE_TOKEN": "test-token",
+    }
+    with patch.dict(os.environ, env, clear=False), patch(
+        "evolution.provenance._fetch_json",
+        return_value=records,
+    ):
+        source = authenticated_decision_reader_from_environment()
     return source, ref, evidence
-
 
 def verified_incident(incident_id, *, signature="stale generated rule"):
     incident = ImmuneIncident(
@@ -133,15 +154,26 @@ def verified_incident(incident_id, *, signature="stale generated rule"):
 
 
 def trusted_incident_registry(*, signature="stale generated rule"):
-    registry = TrustedIncidentRegistry("controlbot:test-incidents")
+    """Build the production incident reader from authenticated environment config."""
     ids = ["incident-001", "incident-002"]
-    for incident_id in ids:
-        registry.record_incident(
+    records = {
+        incident_id: verified_incident(
             incident_id,
-            verified_incident(incident_id, signature=signature).snapshot(),
-        )
+            signature=signature,
+        ).snapshot()
+        for incident_id in ids
+    }
+    env = {
+        "FACTORY_INCIDENT_SOURCE_ID": "controlbot:test-incidents",
+        "FACTORY_INCIDENT_SOURCE_URL": "https://controlbot.example/incidents",
+        "FACTORY_PROVENANCE_TOKEN": "test-token",
+    }
+    with patch.dict(os.environ, env, clear=False), patch(
+        "evolution.provenance._fetch_json",
+        return_value=records,
+    ):
+        registry = authenticated_incident_reader_from_environment()
     return registry, ids
-
 
 def immunity_candidate():
     registry, ids = trusted_incident_registry()
@@ -381,6 +413,171 @@ class ImmuneRepairTests(unittest.TestCase):
         )
         self.assertTrue(all(item["visible"] for item in candidate["incidents"]))
         self.assertTrue(candidate["candidate"]["rollback"]["reversible"])
+
+    def test_caller_constructed_decision_store_is_not_trusted(self):
+        """AC-01: una store mutable local no puede autorizar reparación."""
+        blocked = repair_plan(destructive=True)
+        evidence = decision_evidence(blocked["scope_fingerprint"])
+        ref = "owner-decision:pl0n3r/factory#900:A"
+        store = TrustedDecisionSource("caller:forged")
+        store.record_decision(ref, evidence)
+        plan = repair_plan(
+            destructive=True,
+            authority={"approved": True, "decision_ref": ref},
+            decision_source=store,
+        )
+        self.assertFalse(plan["authority"]["approved"])
+        self.assertFalse(plan["authorized_execution_ready"])
+
+    def test_caller_constructed_incident_registry_is_not_trusted(self):
+        """AC-02: snapshots perfectos en registry local no producen Immunity."""
+        store = TrustedIncidentRegistry("caller:forged")
+        ids = ["incident-001", "incident-002"]
+        for incident_id in ids:
+            store.record_incident(
+                incident_id,
+                verified_incident(incident_id).snapshot(),
+            )
+        with self.assertRaisesRegex(ImmuneError, "autenticado"):
+            compile_immunity_candidate(
+                failure_signature="stale generated rule",
+                incident_ids=ids,
+                incident_registry=store,
+                expected_prevention="Reject stale generated rules before promotion.",
+            )
+
+    def test_production_provenance_capability_is_read_only(self):
+        """AC-03: readers productivos no exponen mutación."""
+        source, _ref, _evidence = trusted_decision_source(
+            repair_plan(destructive=True)
+        )
+        registry, _ids = trusted_incident_registry()
+        self.assertIsInstance(source, AuthenticatedDecisionReader)
+        self.assertIsInstance(registry, AuthenticatedIncidentReader)
+        self.assertFalse(hasattr(source, "record_decision"))
+        self.assertFalse(hasattr(registry, "record_incident"))
+        with self.assertRaises(TypeError):
+            authenticated_decision_reader_from_environment(lambda _key: None)
+        with self.assertRaises(TypeError):
+            authenticated_incident_reader_from_environment(lambda _key: None)
+        with self.assertRaises(TypeError):
+            AuthenticatedDecisionReader("caller:forged", {})
+
+    def test_caller_cannot_wrap_local_records_as_authenticated_reader(self):
+        """A caller-local dict/callback cannot cross the production trust boundary."""
+        blocked = repair_plan(destructive=True)
+        evidence = decision_evidence(blocked["scope_fingerprint"])
+        ref = "owner-decision:pl0n3r/factory#900:A"
+        local_records = {ref: evidence}
+        with self.assertRaises(TypeError):
+            authenticated_decision_reader_from_environment(local_records.get)
+        with self.assertRaises(TypeError):
+            AuthenticatedDecisionReader("caller:forged", local_records)
+
+    def test_module_internals_cannot_wrap_local_records_as_authenticated_reader(self):
+        """Caller-visible module attributes cannot provide a local-record trust seal."""
+        self.assertFalse(hasattr(provenance_module, "_RUNTIME_SEAL"))
+        with self.assertRaises(TypeError):
+            AuthenticatedDecisionReader("caller:forged", {})
+        with self.assertRaises(TypeError):
+            AuthenticatedIncidentReader("caller:forged", {})
+
+    def test_provenance_fetch_rejects_redirects_and_keeps_bearer_unredirected(self):
+        """Bearer credentials never become redirect-copyable headers."""
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        class Opener:
+            def open(self, request, timeout=0):
+                captured["request"] = request
+                captured["timeout"] = timeout
+                return Response()
+
+        opener = Opener()
+        with patch.object(
+            provenance_module.urllib.request,
+            "build_opener",
+            return_value=opener,
+        ) as build_opener:
+            self.assertEqual(
+                provenance_module._fetch_json(
+                    "https://trusted.example/provenance",
+                    "test-secret",
+                ),
+                {},
+            )
+
+        request = captured["request"]
+        self.assertNotIn("Authorization", request.headers)
+        self.assertEqual(
+            request.unredirected_hdrs.get("Authorization"),
+            "Bearer test-secret",
+        )
+        redirect_handler = build_opener.call_args.args[0]
+        self.assertIsInstance(
+            redirect_handler,
+            provenance_module._RejectRedirects,
+        )
+        with self.assertRaisesRegex(ProvenanceError, "redirect"):
+            redirect_handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {"Location": "https://evil.example/"},
+                "https://evil.example/",
+            )
+
+    def test_authenticated_decision_adapter_authorizes_exact_scope(self):
+        """AC-04: reader sellado autoriza únicamente el scope exacto."""
+        blocked = repair_plan(destructive=True)
+        source, ref, _evidence = trusted_decision_source(blocked)
+        approved = repair_plan(
+            destructive=True,
+            authority={"approved": True, "decision_ref": ref},
+            decision_source=source,
+        )
+        self.assertTrue(approved["authorized_execution_ready"])
+        other = repair_plan(
+            destructive=True,
+            authority={"approved": True, "decision_ref": ref},
+            decision_source=source,
+            actions=["different destructive action"],
+        )
+        self.assertFalse(other["authorized_execution_ready"])
+
+    def test_authenticated_incident_adapter_proves_repetition_without_execution(self):
+        """AC-05: registry autenticado prueba repetición sin ejecutar nada."""
+        registry, ids = trusted_incident_registry()
+        candidate = compile_immunity_candidate(
+            failure_signature="stale generated rule",
+            incident_ids=ids,
+            incident_registry=registry,
+            expected_prevention="Reject stale generated rules before promotion.",
+        )
+        self.assertEqual(candidate["provenance"]["incident_ids"], ids)
+        self.assertTrue(candidate["candidate"]["rollback"]["reversible"])
+        self.assertTrue(
+            all(item["history_preserved"] for item in candidate["incidents"])
+        )
+        blocked = repair_plan(destructive=True)
+        source, ref, _evidence = trusted_decision_source(blocked)
+        approved = repair_plan(
+            destructive=True,
+            authority={"approved": True, "decision_ref": ref},
+            decision_source=source,
+        )
+        self.assertFalse(approved["automatic_execution_allowed"])
+        self.assertEqual(approved["execution"], "not-performed")
 
     def test_self_signed_decision_evidence_is_not_authority(self):
         """AC-01: un dict autocertificado nunca reemplaza una fuente confiable."""

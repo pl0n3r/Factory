@@ -180,7 +180,7 @@ Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
 
 ## Living Software
 
-**Living Software está integrado y endurecido a nivel de arquitectura/protocolo; ese estado no amplía autoridad externa ni habilita producción autónoma irrestricta.**
+**Living Software está integrado y endurecido a nivel de arquitectura/protocolo; #227 cierra el hardening final de provenance.** Ese estado no amplía autoridad externa ni habilita producción autónoma irrestricta.
 
 El objetivo es que Factory pueda observar, recordar, aprender, proponer, experimentar, medir, podar y reparar sin convertir aprendizaje en autoridad. El contrato canónico está documentado en [docs/factory-living-software.md](docs/factory-living-software.md) y las reglas operativas viven en [PLAN-AGENTES.md](PLAN-AGENTES.md#9-living-software-ciclo-operativo-canónico).
 
@@ -197,8 +197,9 @@ Ese resumen no reemplaza el lifecycle completo de Constitution. Toda adopción c
 - **#213 Growth/Pruning source evidence:** ✅ cerrado.
 - **#215 Repair human authority + immunity provenance:** ✅ cerrado.
 - **#221 deterministic renewal retry:** ✅ cerrado.
-- **#223 trusted Repair/Immune provenance:** ✅ cerrado.
+- **#223 trusted Repair/Immune provenance:** ✅ cerrado en integridad/append-only.
+- **#227 non-self-certifiable provenance:** ✅ cerrado; stores caller-built no constituyen trust productivo y Repair/Immune solo aceptan readers autenticados/read-only.
 
-Cerrar **#143** significa **arquitectura/protocolo Living Software integrado y endurecido**. No garantiza autonomía completa, no convierte Promotion/Repair en ejecución automática y **no concede autoridad de producción autónoma irrestricta**.
+Con #227 cerrado y sus AC verdes, cerrar **#143** significa **arquitectura/protocolo Living Software integrado y endurecido**. No garantiza autonomía completa, no convierte Promotion/Repair en ejecución automática y **no concede autoridad de producción autónoma irrestricta**.
 
 Las puertas humanas vigentes no cambian: dinero, legal, datos reales/personales, borrado irreversible, publicación/live y demás decisiones reservadas siguen fuera de la autoridad autónoma.

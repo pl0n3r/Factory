@@ -323,15 +323,16 @@ Ante discrepancia entre documentación, evidencia canónica, Constitution, una d
 
 ### Estado de hardening de fronteras de evidencia
 
-La arquitectura/protocolo Living Software y sus fronteras de evidencia previstas para #143 están integradas y endurecidas:
+La arquitectura/protocolo Living Software está integrada y endurecida; #227 cierra la última frontera de provenance caller-proof prevista para #143:
 
 - **#209** — Autonomy authority + evidencia canónica: ✅ cerrado; authority scope estructurado y Fitness/Risk se recomputan desde inputs fuente.
 - **#211** — Factory Lab promotion provenance: ✅ cerrado; la promoción revalida provenance y evidencia fuente antes de producir una decisión confiable.
 - **#213** — Growth/Pruning source evidence: ✅ cerrado; growth/pruning recompone candidatos desde evidencia fuente verificable.
 - **#215** — Repair human authority + immunity provenance: ✅ cerrado; Repair/Immune validan estructura, scope e integridad sin ampliar ejecución.
 - **#221** — retry de renovación v2: ✅ cerrado; successor determinista y revalidación de contrato/task/HEAD evitan sesiones stale.
-- **#223** — provenance confiable de Repair/Immune: ✅ cerrado; decisiones e incidentes se resuelven desde fuentes/handles confiables y append-only, no desde payloads autocertificados.
+- **#223** — provenance confiable de Repair/Immune: ✅ cerrado en integridad/append-only, pero #227 corrige la procedencia autocertificable de stores caller-built.
+- **#227** — provenance productivo read-only no fabricable por el caller: ✅ cerrado; Repair/Immune solo aceptan readers autenticados/read-only emitidos por el composition root.
 
-El cierre de **#143** significa que la **arquitectura/protocolo Living Software está integrada y endurecida** dentro de la autoridad ya existente. **No significa producción autónoma irrestricta**, no convierte Repair o Promotion en ejecución automática y no elimina ninguna puerta humana.
+Con #227 cerrado y sus AC verdes, **#143 puede cerrarse** declarando únicamente que la arquitectura/protocolo Living Software quedó integrada y endurecida dentro de la autoridad ya existente. **No significa producción autónoma irrestricta**, no convierte Repair o Promotion en ejecución automática y no elimina ninguna puerta humana.
 
 Dinero, legal, datos reales/personales, borrado irreversible, publicación/live y cualquier otra decisión reservada siguen requiriendo sus puertas humanas canónicas. Ante evidencia inválida, fuente no confiable o conflicto de autoridad, Living Software continúa fallando cerrado.
