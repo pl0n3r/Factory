@@ -47,7 +47,7 @@ def _evidence(value: Any) -> list[str]:
         or not all(isinstance(item, str) and item.strip() for item in value)
     ):
         raise PruningError("evidence debe contener 1..32 referencias no vacías")
-    return sorted(set(item.strip() for item in value))
+    return sorted({item.strip() for item in value})
 
 
 def _metric_int(value: Any, field: str) -> int:
