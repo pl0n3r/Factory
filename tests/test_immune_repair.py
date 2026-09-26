@@ -1,3 +1,5 @@
+import hashlib
+import json
 import unittest
 
 from evolution.constitution import validate_candidate
@@ -10,7 +12,7 @@ from evolution.immune import (
 from evolution.repair import RepairError, compile_repair_plan, validate_repair_plan
 
 
-def repair_plan(*, destructive=False, authority=None):
+def repair_plan(*, destructive=False, authority=None, decision_evidence=None):
     return compile_repair_plan(
         diagnosis="Root cause isolated to a stale generated rule.",
         actions=["replace stale generated rule"],
@@ -21,22 +23,119 @@ def repair_plan(*, destructive=False, authority=None):
         },
         destructive=destructive,
         human_authority=authority,
+        decision_evidence=decision_evidence,
     )
 
 
-def immunity_candidate():
-    return compile_immunity_candidate(
-        failure_signature="stale generated rule",
-        origins=[
+def decision_evidence(scope_fingerprint, *, issue_ref="pl0n3r/factory#900"):
+    gate = {
+        "category": "product-direction",
+        "context": "A destructive repair requires explicit owner authorization.",
+        "options": [
             {
-                "incident_id": "incident-001",
-                "source": "pl0n3r/factory#130",
+                "id": "A",
+                "label": "Authorize exact destructive repair",
+                "effect": f"authorize-destructive-repair:{scope_fingerprint}",
+                "pros": ["Allows the reviewed repair scope"],
+                "cons": ["Destructive action remains externally executed"],
+                "risk": "high",
+                "cost": "",
+                "reversible": True,
             },
             {
-                "incident_id": "incident-002",
-                "source": "pl0n3r/factory#131",
+                "id": "B",
+                "label": "Keep repair blocked",
+                "effect": "keep-destructive-repair-blocked",
+                "pros": ["Preserves current state"],
+                "cons": ["Repair cannot proceed"],
+                "risk": "low",
+                "cost": "",
+                "reversible": True,
             },
         ],
+        "recommendation": "B",
+        "safe_default": "B",
+        "title_simple": "Authorize destructive repair?",
+        "summary_simple": "The repair scope is explicit and remains non-executing.",
+        "why_recommended": "Blocking is the safe default without owner approval.",
+        "blocks": "Blocks destructive repair readiness.",
+    }
+    raw = {
+        "version": 1,
+        "issue_ref": issue_ref,
+        "author_association": "OWNER",
+        "gate": gate,
+        "selected_option": "A",
+        "status": "resolved",
+    }
+    raw["fingerprint"] = hashlib.sha256(
+        json.dumps(
+            raw,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return raw
+
+
+def verified_incident(incident_id, *, signature="stale generated rule"):
+    incident = ImmuneIncident(
+        incident_id,
+        signature=signature,
+        reason="health regression detected",
+        evidence=[f"detect:{incident_id}"],
+    )
+    incident.advance(
+        "contain",
+        reason="freeze candidate promotion",
+        evidence=[f"contain:{incident_id}"],
+    )
+    incident.advance(
+        "diagnose",
+        reason="root cause identified",
+        evidence=[f"diagnose:{incident_id}"],
+    )
+    incident.advance(
+        "repair",
+        reason="prepare reversible correction",
+        evidence=[f"repair:{incident_id}"],
+        repair_plan=repair_plan(),
+    )
+    incident.advance(
+        "verify",
+        reason="correction verified",
+        evidence=[f"verify:{incident_id}"],
+        verification_passed=True,
+    )
+    return incident
+
+
+def canonical_incident_inputs():
+    snapshots = [
+        verified_incident("incident-001").snapshot(),
+        verified_incident("incident-002").snapshot(),
+    ]
+    origins = sorted(
+        [
+            {
+                "incident_id": item["incident_id"],
+                "source": f"incident-snapshot:{item['fingerprint']}",
+            }
+            for item in snapshots
+        ],
+        key=lambda item: (item["source"], item["incident_id"]),
+    )
+    return snapshots, origins
+
+
+def immunity_candidate():
+    snapshots, origins = canonical_incident_inputs()
+    return compile_immunity_candidate(
+        failure_signature="stale generated rule",
+        origins=origins,
+        incident_snapshots=snapshots,
         expected_prevention="Reject stale generated rules before promotion.",
     )
 
@@ -127,8 +226,6 @@ class ImmuneRepairTests(unittest.TestCase):
         tampered["rollback"] = "not-a-rollback"
         unsigned = dict(tampered)
         unsigned.pop("fingerprint")
-        import hashlib
-        import json
         tampered["fingerprint"] = hashlib.sha256(
             json.dumps(
                 unsigned,
@@ -148,21 +245,10 @@ class ImmuneRepairTests(unittest.TestCase):
         self.assertFalse(blocked["authorized_execution_ready"])
         self.assertFalse(blocked["automatic_execution_allowed"])
 
-        approved = repair_plan(
-            destructive=True,
-            authority={
-                "approved": True,
-                "decision_ref": "owner-decision:factory#156:A",
-            },
-        )
-        self.assertTrue(approved["authority"]["approved"])
-        self.assertTrue(approved["authorized_execution_ready"])
-        self.assertFalse(approved["automatic_execution_allowed"])
-        self.assertEqual(approved["execution"], "not-performed")
-
     def test_repeated_failure_can_emit_immunity_candidate(self):
         candidate = immunity_candidate()
         self.assertEqual(len(candidate["origins"]), 2)
+        self.assertEqual(len(candidate["incidents"]), 2)
         self.assertEqual(
             candidate["expected_prevention"],
             "Reject stale generated rules before promotion.",
@@ -175,6 +261,115 @@ class ImmuneRepairTests(unittest.TestCase):
             candidate["candidate"]["changes"][0]["value"]["status"],
             "candidate",
         )
+
+    def test_forged_human_authority_cannot_enable_destructive_repair(self):
+        forged = repair_plan(
+            destructive=True,
+            authority={
+                "approved": True,
+                "decision_ref": "owner-decision:factory#156:A",
+            },
+        )
+        self.assertFalse(forged["authority"]["approved"])
+        self.assertFalse(forged["authorized_execution_ready"])
+        self.assertIsNone(forged["authority_evidence"])
+        self.assertFalse(forged["automatic_execution_allowed"])
+
+    def test_canonical_human_decision_can_mark_destructive_plan_ready(self):
+        blocked = repair_plan(destructive=True)
+        evidence = decision_evidence(blocked["scope_fingerprint"])
+        approved = repair_plan(
+            destructive=True,
+            authority={
+                "approved": True,
+                "decision_ref": "owner-decision:pl0n3r/factory#900:A",
+            },
+            decision_evidence=evidence,
+        )
+        self.assertTrue(approved["authority"]["approved"])
+        self.assertTrue(approved["authorized_execution_ready"])
+        self.assertFalse(approved["automatic_execution_allowed"])
+        self.assertEqual(approved["execution"], "not-performed")
+        self.assertEqual(validate_repair_plan(approved), approved)
+
+    def test_forged_incident_origins_cannot_emit_immunity_candidate(self):
+        snapshots, origins = canonical_incident_inputs()
+        forged = [dict(item) for item in origins]
+        forged[0]["source"] = "pl0n3r/factory#fake"
+        with self.assertRaisesRegex(ImmuneError, "incidentes canónicos"):
+            compile_immunity_candidate(
+                failure_signature="stale generated rule",
+                origins=forged,
+                incident_snapshots=snapshots,
+                expected_prevention="Reject stale generated rules before promotion.",
+            )
+
+    def test_repeated_failure_is_recomputed_from_canonical_incidents(self):
+        snapshots, origins = canonical_incident_inputs()
+        candidate = compile_immunity_candidate(
+            failure_signature="stale generated rule",
+            origins=origins,
+            incident_snapshots=snapshots,
+            expected_prevention="Reject stale generated rules before promotion.",
+        )
+        self.assertEqual(candidate["origins"], origins)
+        self.assertEqual(
+            [item["incident_id"] for item in candidate["incidents"]],
+            ["incident-001", "incident-002"],
+        )
+        self.assertTrue(
+            all(
+                item["history"][RECOVERY_LIFECYCLE.index("verify")][
+                    "verification_passed"
+                ]
+                is True
+                for item in candidate["incidents"]
+            )
+        )
+
+        wrong_signature = [
+            verified_incident("incident-004", signature="other failure").snapshot(),
+            verified_incident("incident-005", signature="other failure").snapshot(),
+        ]
+        with self.assertRaisesRegex(ImmuneError, "failure_signature"):
+            compile_immunity_candidate(
+                failure_signature="stale generated rule",
+                origins=[
+                    {
+                        "incident_id": item["incident_id"],
+                        "source": f"incident-snapshot:{item['fingerprint']}",
+                    }
+                    for item in wrong_signature
+                ],
+                incident_snapshots=wrong_signature,
+                expected_prevention="Reject stale generated rules before promotion.",
+            )
+
+    def test_hardening_preserves_non_execution_and_history(self):
+        blocked = repair_plan(destructive=True)
+        evidence = decision_evidence(blocked["scope_fingerprint"])
+        approved = repair_plan(
+            destructive=True,
+            authority={
+                "approved": True,
+                "decision_ref": "owner-decision:pl0n3r/factory#900:A",
+            },
+            decision_evidence=evidence,
+        )
+        self.assertFalse(approved["automatic_execution_allowed"])
+        self.assertEqual(approved["execution"], "not-performed")
+        self.assertEqual(validate_repair_plan(approved), approved)
+
+        candidate = immunity_candidate()
+        self.assertEqual(
+            validate_candidate(candidate["candidate"]),
+            candidate["candidate_fingerprint"],
+        )
+        self.assertTrue(
+            all(item["history_preserved"] for item in candidate["incidents"])
+        )
+        self.assertTrue(all(item["visible"] for item in candidate["incidents"]))
+        self.assertTrue(candidate["candidate"]["rollback"]["reversible"])
 
 
 if __name__ == "__main__":

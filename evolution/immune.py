@@ -23,6 +23,7 @@ RECOVERY_LIFECYCLE = (
 )
 MAX_EVIDENCE = 32
 _TOKEN = re.compile(r"[a-z0-9]+")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ImmuneError(ValueError):
@@ -81,6 +82,14 @@ def _canonical(value: Any, field: str) -> str:
     if not tokens:
         raise ImmuneError(f"{field} no contiene patrón útil")
     return "-".join(tokens)
+
+
+def _sha256_or_none(value: Any, field: str, *, required: bool = False) -> str | None:
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+        raise ImmuneError(f"{field} inválido")
+    return value
 
 
 class ImmuneIncident:
@@ -193,7 +202,7 @@ def _validate_origins(value: Any) -> list[dict[str, str]]:
         if not isinstance(raw, dict) or set(raw) != {"incident_id", "source"}:
             raise ImmuneError("origin inválido")
         incident_id = _text(raw["incident_id"], "origin.incident_id", 120)
-        source = _text(raw["source"], "origin.source", 160)
+        source = _text(raw["source"], "origin.source", 220)
         if incident_id in ids:
             raise ImmuneError("incident_id repetido")
         ids.add(incident_id)
@@ -204,25 +213,169 @@ def _validate_origins(value: Any) -> list[dict[str, str]]:
     return sorted(origins, key=lambda item: (item["source"], item["incident_id"]))
 
 
+def _validate_history_record(raw: Any, index: int) -> dict[str, Any]:
+    required = {
+        "sequence",
+        "stage",
+        "reason",
+        "evidence",
+        "repair_fingerprint",
+        "verification_passed",
+        "immunity_fingerprint",
+    }
+    if not isinstance(raw, dict) or set(raw) != required:
+        raise ImmuneError("incident history inválido")
+    if raw["sequence"] != index:
+        raise ImmuneError("incident history sequence inválida")
+    if index >= len(RECOVERY_LIFECYCLE) or raw["stage"] != RECOVERY_LIFECYCLE[index]:
+        raise ImmuneError("incident history lifecycle inválido")
+    record = {
+        "sequence": index,
+        "stage": raw["stage"],
+        "reason": _text(raw["reason"], "incident.reason"),
+        "evidence": _evidence(raw["evidence"]),
+        "repair_fingerprint": None,
+        "verification_passed": None,
+        "immunity_fingerprint": None,
+    }
+    if raw["stage"] == "repair":
+        record["repair_fingerprint"] = _sha256_or_none(
+            raw["repair_fingerprint"],
+            "incident.repair_fingerprint",
+            required=True,
+        )
+    elif raw["repair_fingerprint"] is not None:
+        raise ImmuneError("repair_fingerprint fuera de etapa repair")
+    if raw["stage"] == "verify":
+        if type(raw["verification_passed"]) is not bool:
+            raise ImmuneError("verify history exige booleano")
+        record["verification_passed"] = raw["verification_passed"]
+    elif raw["verification_passed"] is not None:
+        raise ImmuneError("verification_passed fuera de etapa verify")
+    if raw["stage"] == "immunize":
+        record["immunity_fingerprint"] = _sha256_or_none(
+            raw["immunity_fingerprint"],
+            "incident.immunity_fingerprint",
+            required=True,
+        )
+    elif raw["immunity_fingerprint"] is not None:
+        raise ImmuneError("immunity_fingerprint fuera de etapa immunize")
+    return record
+
+
+def _validate_incident_snapshot(
+    value: Any,
+    *,
+    expected_signature: str,
+) -> dict[str, Any]:
+    required = {
+        "version",
+        "incident_id",
+        "signature",
+        "stage",
+        "visible",
+        "history_preserved",
+        "history",
+        "fingerprint",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ImmuneError("incident snapshot inválido")
+    if type(value["version"]) is not int or value["version"] != IMMUNE_VERSION:
+        raise ImmuneError("incident snapshot version inválida")
+    incident_id = _text(value["incident_id"], "incident_id", 120)
+    signature = _canonical(value["signature"], "signature")
+    if signature != expected_signature:
+        raise ImmuneError("incidentes no comparten failure_signature")
+    if value["visible"] is not True or value["history_preserved"] is not True:
+        raise ImmuneError("incident snapshot debe preservar historia visible")
+    history = value["history"]
+    if (
+        not isinstance(history, list)
+        or len(history) < RECOVERY_LIFECYCLE.index("verify") + 1
+        or len(history) > len(RECOVERY_LIFECYCLE)
+    ):
+        raise ImmuneError("incident snapshot no alcanzó verify")
+    normalized_history = [
+        _validate_history_record(record, index)
+        for index, record in enumerate(history)
+    ]
+    if value["stage"] != normalized_history[-1]["stage"]:
+        raise ImmuneError("incident snapshot stage no coincide con history")
+    verify = normalized_history[RECOVERY_LIFECYCLE.index("verify")]
+    if verify["verification_passed"] is not True:
+        raise ImmuneError("incident snapshot no tiene verificación durable aprobada")
+
+    normalized = {
+        "version": IMMUNE_VERSION,
+        "incident_id": incident_id,
+        "signature": signature,
+        "stage": value["stage"],
+        "visible": True,
+        "history_preserved": True,
+        "history": normalized_history,
+    }
+    fingerprint = value["fingerprint"]
+    if (
+        not isinstance(fingerprint, str)
+        or _SHA256.fullmatch(fingerprint) is None
+        or fingerprint != _stable_hash(normalized)
+    ):
+        raise ImmuneError("incident snapshot fingerprint no coincide")
+    normalized["fingerprint"] = fingerprint
+    return normalized
+
+
+def _canonical_incident_evidence(
+    value: Any,
+    *,
+    failure_signature: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    if not isinstance(value, (list, tuple)) or not 2 <= len(value) <= MAX_EVIDENCE:
+        raise ImmuneError("fallo repetido exige al menos dos snapshots")
+    signature = _canonical(failure_signature, "failure_signature")
+    snapshots = [
+        _validate_incident_snapshot(item, expected_signature=signature)
+        for item in value
+    ]
+    ids = [item["incident_id"] for item in snapshots]
+    if len(set(ids)) != len(ids):
+        raise ImmuneError("incident snapshots deben ser incidentes distintos")
+    snapshots = sorted(snapshots, key=lambda item: item["incident_id"])
+    origins = [
+        {
+            "incident_id": item["incident_id"],
+            "source": f"incident-snapshot:{item['fingerprint']}",
+        }
+        for item in snapshots
+    ]
+    return snapshots, sorted(origins, key=lambda item: (item["source"], item["incident_id"]))
+
+
 def compile_immunity_candidate(
     *,
     failure_signature: Any,
     origins: Any,
+    incident_snapshots: Any,
     expected_prevention: Any,
 ) -> dict[str, Any]:
-    """Emit a Constitution-valid guardrail candidate from repeated failures."""
+    """Emit guardrail only after recomputing repeated failure from incident history."""
     signature = _canonical(failure_signature, "failure_signature")
-    validated_origins = _validate_origins(origins)
+    snapshots, canonical_origins = _canonical_incident_evidence(
+        incident_snapshots,
+        failure_signature=signature,
+    )
+    if _validate_origins(origins) != canonical_origins:
+        raise ImmuneError("origins no coinciden con incidentes canónicos")
     prevention = _text(expected_prevention, "expected_prevention", 500)
-    sources = sorted({item["source"] for item in validated_origins})
+    sources = sorted({item["source"] for item in canonical_origins})
     immunity_id = f"immunity_{hashlib.sha256(signature.encode()).hexdigest()[:16]}"
     value = {
         "version": IMMUNE_VERSION,
         "immunity_id": immunity_id,
         "failure_signature": signature,
         "status": "candidate",
-        "occurrences": len(validated_origins),
-        "origins": validated_origins,
+        "occurrences": len(canonical_origins),
+        "origins": canonical_origins,
         "expected_prevention": prevention,
     }
     candidate = {
@@ -243,7 +396,8 @@ def compile_immunity_candidate(
         "immunity_id": immunity_id,
         "candidate": candidate,
         "candidate_fingerprint": candidate_fingerprint,
-        "origins": validated_origins,
+        "origins": canonical_origins,
+        "incidents": snapshots,
         "expected_prevention": prevention,
     }
 
@@ -257,11 +411,39 @@ def _validate_immunity_candidate(value: Any) -> str:
         "candidate",
         "candidate_fingerprint",
         "origins",
+        "incidents",
         "expected_prevention",
     }
     if set(value) != required:
         raise ImmuneError("immunity_candidate incompleto")
-    fingerprint = validate_candidate(value["candidate"])
+    if type(value["version"]) is not int or value["version"] != IMMUNE_VERSION:
+        raise ImmuneError("immunity_candidate version inválida")
+    candidate = value["candidate"]
+    fingerprint = validate_candidate(candidate)
     if fingerprint != value["candidate_fingerprint"]:
         raise ImmuneError("immunity candidate fingerprint no coincide")
+    if (
+        not isinstance(candidate, dict)
+        or not isinstance(candidate.get("changes"), list)
+        or len(candidate["changes"]) != 1
+        or not isinstance(candidate["changes"][0], dict)
+        or not isinstance(candidate["changes"][0].get("value"), dict)
+    ):
+        raise ImmuneError("immunity candidate shape inválida")
+    payload = candidate["changes"][0]["value"]
+    signature = _canonical(payload.get("failure_signature"), "failure_signature")
+    snapshots, origins = _canonical_incident_evidence(
+        value["incidents"],
+        failure_signature=signature,
+    )
+    if value["incidents"] != snapshots:
+        raise ImmuneError("incidents no están canonizados")
+    if _validate_origins(value["origins"]) != origins:
+        raise ImmuneError("origins no coinciden con incidents")
+    if payload.get("origins") != origins or payload.get("occurrences") != len(origins):
+        raise ImmuneError("candidate no refleja evidencia de incidentes")
+    if payload.get("immunity_id") != value["immunity_id"]:
+        raise ImmuneError("immunity_id inconsistente")
+    if payload.get("expected_prevention") != value["expected_prevention"]:
+        raise ImmuneError("expected_prevention inconsistente")
     return fingerprint
