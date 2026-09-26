@@ -6,7 +6,8 @@
       "AGENTES.md",
       "decisiones.yml",
       "seguridad/puertas-humanas.json",
-      "docs/puertas-humanas.md"
+      "docs/puertas-humanas.md",
+      "docs/resiliencia-fabrica.md"
     ],
     "autonomous_mutation": "forbidden",
     "human_gate_registry": "seguridad/puertas-humanas.json"
