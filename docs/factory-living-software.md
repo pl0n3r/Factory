@@ -170,9 +170,9 @@ La evidencia derivada no se autocertifica cuando existe un productor canónico. 
 
 Living Software no concede dinero, autoridad legal, acceso a datos personales, borrado irreversible ni permiso de publicar/pasar a live. Esas fronteras siguen gobernadas por PLAN-AGENTES, decisiones.yml y el registro canónico de puertas humanas.
 
-## Hardening de fronteras de evidencia: cierre pendiente de #227
+## Hardening de fronteras de evidencia completado
 
-El DAG de #143 está integrado, pero su cierre estructural queda bloqueado hasta completar #227:
+El DAG de #143 y su hardening final de provenance están integrados y cerrados en el alcance estructural previsto:
 
 - **#209 — Autonomy authority + canonical evidence:** cerrado. Autonomy separa capability/authority class y revalida Fitness/Risk desde inputs fuente.
 - **#211 — Factory Lab promotion provenance:** cerrado. Factory Lab revalida provenance antes de considerar una decisión de promoción.
@@ -180,11 +180,11 @@ El DAG de #143 está integrado, pero su cierre estructural queda bloqueado hasta
 - **#215 — Repair human authority + immunity provenance:** cerrado. Repair/Immune validan scope, integridad e historia.
 - **#221 — deterministic renewal retry:** cerrado. La renovación v2 deriva un successor estable y revalida acceptance/task/HEAD.
 - **#223 — trusted Repair/Immune provenance:** cerrado en integridad/append-only; #227 endurece la procedencia para que stores caller-built no puedan autocertificarse.
-- **#227 — read-only authenticated provenance:** abierto hasta que Repair/Immune acepten únicamente readers autenticados del composition root y rechacen stores mutables locales.
+- **#227 — read-only authenticated provenance:** cerrado. Repair/Immune aceptan únicamente readers autenticados/read-only del composition root y rechazan stores mutables locales como autoridad.
 
 ### Qué significa cerrar #143
 
-Mientras #227 siga abierto, #143 debe permanecer bloqueado. Tras cerrar #227, cerrar #143 declara **arquitectura/protocolo Living Software integrado y endurecido**. Es un cierre estructural del contrato y sus fronteras de evidencia, **no una concesión de producción autónoma irrestricta**.
+Con #227 cerrado y sus AC verdes, cerrar #143 declara **arquitectura/protocolo Living Software integrado y endurecido**. Es un cierre estructural del contrato y sus fronteras de evidencia, **no una concesión de producción autónoma irrestricta**.
 
 En particular:
 

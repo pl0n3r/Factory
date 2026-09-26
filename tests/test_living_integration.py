@@ -75,6 +75,37 @@ class LivingIntegrationTests(unittest.TestCase):
         self.assertNotIn("#213 — Growth/Pruning source evidence:** pendiente", LIVING)
         self.assertNotIn("#215 — Repair human authority + immunity provenance:** pendiente", LIVING)
 
+    def test_final_provenance_hardening_is_documented_closed(self):
+        combined = "\n".join((PLAN, README, LIVING))
+        self.assertIn(
+            "**#227** — provenance productivo read-only no fabricable por el caller: ✅ cerrado",
+            PLAN,
+        )
+        self.assertIn(
+            "**#227 non-self-certifiable provenance:** ✅ cerrado",
+            README,
+        )
+        self.assertIn(
+            "**#227 — read-only authenticated provenance:** cerrado.",
+            LIVING,
+        )
+        self.assertIn(
+            "arquitectura/protocolo Living Software está integrada y endurecida",
+            PLAN,
+        )
+        self.assertIn(
+            "arquitectura/protocolo Living Software integrado y endurecido",
+            README,
+        )
+        self.assertIn(
+            "arquitectura/protocolo Living Software integrado y endurecido",
+            LIVING,
+        )
+        self.assertIn("no amplía autoridad externa", README)
+        self.assertIn("producción autónoma irrestricta", combined)
+        self.assertIn("automatic_execution_allowed=false", LIVING)
+        self.assertIn("execution=not-performed", LIVING)
+
     def test_completed_hardening_does_not_expand_external_authority(self):
         combined = "\n".join((PLAN, README, LIVING))
         for boundary in (
