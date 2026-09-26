@@ -1,0 +1,7 @@
+paths:
+  .github/workflows/coordinacion-trabajo.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/coordinacion.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
