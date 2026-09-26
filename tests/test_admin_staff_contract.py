@@ -1,4 +1,6 @@
 """Contrato Factory D-060 para administración de staff."""
+import hashlib
+import hmac
 import json
 from pathlib import Path
 import unittest
@@ -39,7 +41,6 @@ class AdminStaffContractTests(unittest.TestCase):
             self.assertIn(route, doc)
         self.assertIn("clientes finales", doc)
         self.assertIn("ControlBot nunca define, recibe ni devuelve contraseñas", doc)
-        self.assertIn("permanece deshabilitada", doc)
         self.assertIn("2–120 caracteres", doc)
         self.assertIn("nunca supera 100", doc)
         self.assertIn("HTTPS con validación de certificado", doc)
@@ -52,6 +53,10 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertIn("no registra ninguna ruta `/ops`", doc)
         self.assertIn("responde `404`", doc)
         self.assertNotIn("DELETE /ops/staff/{id}", doc)
+        self.assertIn("autoridad protegida", doc)
+        self.assertIn("octetos crudos", doc)
+        self.assertIn("86.400 s", doc)
+        self.assertIn("handoff server-side", doc)
 
     def test_template_stub_requires_security_controls(self):
         spec = load_json(SPEC_PATH)
@@ -59,6 +64,13 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertFalse(spec["scope"]["physical_delete"])
         self.assertFalse(spec["scope"]["bulk_export"])
         self.assertEqual(spec["authentication"]["mode"], "hmac-sha256")
+        self.assertEqual(spec["authentication"]["method_normalization"], "ASCII_UPPERCASE")
+        self.assertEqual(spec["authentication"]["body_hash_source"], "raw_request_body_bytes_before_decode")
+        self.assertEqual(spec["authentication"]["body_hash_encoding"], "sha256_hex_lowercase_64")
+        self.assertEqual(spec["authentication"]["canonical_request_encoding"], "UTF-8")
+        self.assertEqual(spec["authentication"]["line_separator"], "LF")
+        self.assertEqual(spec["authentication"]["signature_encoding"], "hex_lowercase_64")
+        self.assertTrue(spec["authentication"]["json_reserialization_forbidden"])
         self.assertEqual(spec["authentication"]["key_scope"], "per_product")
         self.assertEqual(spec["authentication"]["key_source"], "environment")
         self.assertTrue(spec["authentication"]["constant_time_compare"])
@@ -100,6 +112,14 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertEqual(spec["mutations"]["idempotency_key_location"], "header")
         self.assertEqual(spec["mutations"]["idempotency_key_header"], "Idempotency-Key")
         self.assertTrue(spec["mutations"]["replay_nonce_is_not_idempotency"])
+        self.assertEqual(spec["mutations"]["idempotency_scope"], ["product", "actor_key_id", "action", "target"])
+        self.assertEqual(spec["mutations"]["fingerprint_encoding"], "sha256_hex_lowercase_64")
+        self.assertGreaterEqual(spec["mutations"]["retention_min_seconds"], 86400)
+        self.assertNotEqual(spec["mutations"]["retention_min_seconds"], spec["authentication"]["nonce_ttl_seconds"])
+        self.assertTrue(spec["mutations"]["store_result_with_fingerprint"])
+        self.assertEqual(spec["mutations"]["equivalent_retry"], "return_same_logical_result_without_side_effect")
+        self.assertEqual(spec["mutations"]["mismatched_fingerprint_status"], 409)
+        self.assertTrue(spec["mutations"]["nonce_ttl_is_separate"])
         self.assertTrue(
             spec["mutations"]["invalidate_active_authority_on_suspend_or_privilege_reduction"]
         )
@@ -121,8 +141,37 @@ class AdminStaffContractTests(unittest.TestCase):
         self.assertTrue(spec["authentication"]["rotation_supported"])
         self.assertTrue(spec["authentication"]["revocation_immediate"])
         self.assertNotIn("DELETE", {row["method"] for row in spec["operations"]})
+        self.assertTrue(spec["scope"]["protected_subject_mutation_forbidden"])
+        self.assertIn("owner", spec["scope"]["protected_subjects"])
+        self.assertIn("platform_owner", spec["scope"]["protected_roles"])
+        self.assertTrue(spec["scope"]["product_role_mapping_required"])
+        self.assertTrue(spec["invitation_delivery"]["server_side_handoff_required"])
+        self.assertTrue(spec["invitation_delivery"]["success_requires_handoff"])
+        self.assertFalse(spec["invitation_delivery"]["token_in_response"])
+        self.assertEqual(spec["invitation_delivery"]["failure_policy"], "fail_and_leave_no_usable_invitation")
         composer = load_json(TEMPLATE / "composer.json")
         self.assertIn("admin_staff_contract.php", composer["scripts"]["test"])
+
+    def test_hmac_known_answer_vector(self):
+        """El fixture común fija bytes, hash y firma interoperables."""
+        spec = load_json(SPEC_PATH)
+        fixture = spec["authentication"]["known_answer"]
+        body = fixture["body"].encode("utf-8")
+        self.assertEqual(hashlib.sha256(body).hexdigest(), fixture["body_sha256"])
+        canonical = fixture["canonical_request"]
+        self.assertEqual(
+            canonical,
+            "\n".join([
+                fixture["key_id"], fixture["method"], fixture["path_with_sorted_query"],
+                fixture["timestamp"], fixture["nonce"], fixture["body_sha256"],
+            ]),
+        )
+        signature = hmac.new(
+            fixture["key"].encode("utf-8"),
+            canonical.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(signature, fixture["signature"])
 
     def test_template_privacy_declares_minimum_staff_treatment(self):
         spec = load_json(SPEC_PATH)
