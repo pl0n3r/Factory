@@ -11,6 +11,9 @@ class T(unittest.TestCase):
   self.assertIn("stack node requiere node_enabled=true",C)
   self.assertIn("inputs.stack != 'node'",C)
   self.assertIn("operation: npm-ci",C)
+ def test_factory_release_bootstrap_normalizes_repository_casing(self):
+  self.assertIn('REPOSITORY="${REPOSITORY,,}"',C)
+  self.assertIn('[[ "$REPOSITORY" == "pl0n3r/factory"',C)
  def test_pins(self):
   for text in (C,L):
    for a in re.findall(P,text,re.M):

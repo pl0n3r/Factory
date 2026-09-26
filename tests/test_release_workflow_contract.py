@@ -6,3 +6,6 @@ class T(unittest.TestCase):
   self.assertIn("version:\n        description:",W); self.assertNotIn("version: {value:",W)
  def test_existing_tag_must_match_sha(self):
   self.assertIn('existing_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"',W); self.assertIn('"$existing_sha" == "$TARGET_SHA"',W); self.assertIn("409|422",W)
+ def test_factory_bootstrap_normalizes_repository_casing(self):
+  self.assertIn('REPOSITORY="${REPOSITORY,,}"',W)
+  self.assertIn('[[ "$REPOSITORY" == "pl0n3r/factory" ]]',W)
