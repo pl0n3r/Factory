@@ -294,3 +294,16 @@ def compile_risk(*, project_dna: Any, task: Any) -> dict[str, Any]:
     }
     result["fingerprint"] = _stable_hash(result)
     return result
+
+
+def validate_risk_evidence(
+    *,
+    project_dna: Any,
+    task: Any,
+    result: Any,
+) -> dict[str, Any]:
+    """Recomputa Risk desde inputs fuente y exige igualdad exacta."""
+    expected = compile_risk(project_dna=project_dna, task=task)
+    if not isinstance(result, dict) or result != expected:
+        raise RiskCompilerError("resultado Risk no coincide con evidencia fuente")
+    return expected

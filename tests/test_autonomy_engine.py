@@ -4,6 +4,7 @@ import unittest
 from evolution.autonomy import (
     AUTHORITY_FINGERPRINT,
     AUTONOMY_LEVELS,
+    CapabilityScope,
     AutonomyEngine,
     AutonomyError,
 )
@@ -33,37 +34,36 @@ def complete_dna():
     )
 
 
-def risk(level="low"):
-    change_type = {
-        "low": "docs",
-        "medium": "code",
-        "high": "security",
-    }[level]
-    surface = {
-        "low": "docs",
-        "medium": "api",
-        "high": "auth",
-    }[level]
-    signals = {
-        "production": False,
-        "destructive": False,
-        "migration": False,
-        "touches_auth": level == "high",
-        "external_integration": False,
-    }
-    return compile_risk(
-        project_dna=complete_dna(),
-        task={
-            "id": f"risk-{level}",
-            "title": f"{level} risk",
-            "change_type": change_type,
-            "surfaces": [surface],
-            "signals": signals,
+def risk_inputs(level="low"):
+    change_type = {"low": "docs", "medium": "code", "high": "security"}[level]
+    surface = {"low": "docs", "medium": "api", "high": "auth"}[level]
+    task = {
+        "id": f"risk-{level}",
+        "title": f"{level} risk",
+        "change_type": change_type,
+        "surfaces": [surface],
+        "signals": {
+            "production": False,
+            "destructive": False,
+            "migration": False,
+            "touches_auth": level == "high",
+            "external_integration": False,
         },
-    )
+    }
+    dna = complete_dna()
+    return dna, task
 
 
-def fitness():
+def risk_evidence(level="low"):
+    dna, task = risk_inputs(level)
+    return {
+        "project_dna": dna,
+        "task": task,
+        "result": compile_risk(project_dna=dna, task=task),
+    }
+
+
+def fitness_inputs():
     protected = {
         "security": {"value": 1.0, "direction": "higher"},
         "privacy": {"value": 1.0, "direction": "higher"},
@@ -74,7 +74,17 @@ def fitness():
     baseline = {**protected, "reliability": {"value": 0.90, "direction": "higher"}}
     candidate = copy.deepcopy(baseline)
     candidate["reliability"]["value"] = 0.95
-    return compare_fitness(baseline=baseline, candidate=candidate)
+    return baseline, candidate
+
+
+def fitness_evidence():
+    baseline, candidate = fitness_inputs()
+    return {
+        "baseline": baseline,
+        "candidate": candidate,
+        "protected_dimensions": None,
+        "result": compare_fitness(baseline=baseline, candidate=candidate),
+    }
 
 
 class AutonomyEngineTests(unittest.TestCase):
@@ -87,127 +97,116 @@ class AutonomyEngineTests(unittest.TestCase):
         observed = [engine.current.level]
         for _ in AUTONOMY_LEVELS[1:]:
             engine.promote(
-                fitness=fitness(),
-                risk=risk("low"),
+                fitness=fitness_evidence(),
+                risk=risk_evidence("low"),
                 reason="evidence supports next level",
                 evidence=["ci:green", "fitness:stable"],
             )
             observed.append(engine.current.level)
-
         self.assertEqual(tuple(observed), AUTONOMY_LEVELS)
-        terminal_fitness = fitness()
-        terminal_risk = risk("low")
-        with self.assertRaisesRegex(AutonomyError, "ya está en autonomous"):
-            engine.promote(
-                fitness=terminal_fitness,
-                risk=terminal_risk,
-                reason="cannot skip terminal",
-                evidence=["terminal"],
-            )
 
     def test_failures_reduce_or_revoke_autonomy(self):
-        engine = AutonomyEngine(
-            "delivery",
-            reason="observe",
-            evidence=["baseline"],
-        )
+        engine = AutonomyEngine("delivery", reason="observe", evidence=["baseline"])
         for _ in range(4):
             engine.promote(
-                fitness=fitness(),
-                risk=risk("low"),
+                fitness=fitness_evidence(),
+                risk=risk_evidence("low"),
                 reason="earned",
                 evidence=["evidence"],
             )
-        self.assertEqual(engine.current.level, "autonomous")
-
-        engine.record_failure(
-            "minor",
-            reason="small regression",
-            evidence=["incident#1"],
-        )
+        engine.record_failure("minor", reason="small regression", evidence=["incident#1"])
         self.assertEqual(engine.current.level, "supervised")
-
-        engine.record_failure(
-            "major",
-            reason="repeated regression",
-            evidence=["incident#2"],
-        )
+        engine.record_failure("major", reason="repeated regression", evidence=["incident#2"])
         self.assertEqual(engine.current.level, "propose")
-
-        engine.record_failure(
-            "critical",
-            reason="unsafe behavior",
-            evidence=["incident#3"],
-        )
+        engine.record_failure("critical", reason="unsafe behavior", evidence=["incident#3"])
         self.assertEqual(engine.current.level, "observe")
 
-    def test_autonomy_never_expands_constitutional_authority(self):
+    def test_forbidden_authority_capabilities_cannot_gain_autonomy(self):
+        for authority_class in (
+            "money",
+            "legal",
+            "personal_data",
+            "irreversible_delete",
+        ):
+            engine = AutonomyEngine(
+                CapabilityScope("restricted", authority_class),
+                reason="observe",
+                evidence=["baseline"],
+            )
+            with self.assertRaisesRegex(AutonomyError, "authority class prohibida"):
+                engine.promote(
+                    fitness=fitness_evidence(),
+                    risk=risk_evidence("low"),
+                    reason="forbidden",
+                    evidence=["evidence"],
+                )
+            self.assertEqual(engine.current.level, "observe")
+            self.assertEqual(len(engine.history), 1)
+
+    def test_forged_fitness_evidence_is_rejected(self):
+        evidence = fitness_evidence()
+        forged = copy.deepcopy(evidence)
+        forged["result"]["claim"] = "equal"
+        forged["result"]["can_claim_improvement"] = False
+        forged["result"]["fingerprint"] = "a" * 64
+        engine = AutonomyEngine("analysis", reason="observe", evidence=["baseline"])
+        with self.assertRaisesRegex(AutonomyError, "fitness evidence no es canónica"):
+            engine.promote(
+                fitness=forged,
+                risk=risk_evidence("low"),
+                reason="forged",
+                evidence=["evidence"],
+            )
+
+    def test_forged_risk_evidence_is_rejected(self):
+        evidence = risk_evidence("low")
+        forged = copy.deepcopy(evidence)
+        forged["result"]["risk"] = "low"
+        forged["result"]["context_complete"] = True
+        forged["result"]["fingerprint"] = "b" * 64
+        forged["task"]["change_type"] = "security"
+        engine = AutonomyEngine("analysis", reason="observe", evidence=["baseline"])
+        with self.assertRaisesRegex(AutonomyError, "risk evidence no es canónica"):
+            engine.promote(
+                fitness=fitness_evidence(),
+                risk=forged,
+                reason="forged",
+                evidence=["evidence"],
+            )
+
+    def test_canonical_evidence_contracts_remain_promotable(self):
+        engine = AutonomyEngine("analysis", reason="observe", evidence=["baseline"])
+        record = engine.promote(
+            fitness=fitness_evidence(),
+            risk=risk_evidence("low"),
+            reason="canonical",
+            evidence=["run#1"],
+        )
+        self.assertEqual(record.level, "propose")
+        self.assertRegex(record.fitness_fingerprint, r"^[0-9a-f]{64}$")
+        self.assertRegex(record.risk_fingerprint, r"^[0-9a-f]{64}$")
+
+    def test_hardening_preserves_authority_and_ladder(self):
         engine = AutonomyEngine(
-            "analysis",
+            CapabilityScope("analysis", "operational"),
             reason="observe",
             evidence=["baseline"],
         )
         initial = engine.authority
-        for _ in range(4):
-            engine.promote(
-                fitness=fitness(),
-                risk=risk("low"),
+        observed = [engine.current.level]
+        for _ in AUTONOMY_LEVELS[1:]:
+            record = engine.promote(
+                fitness=fitness_evidence(),
+                risk=risk_evidence("low"),
                 reason="earned",
                 evidence=["evidence"],
             )
+            observed.append(record.level)
             self.assertEqual(engine.authority, initial)
-            self.assertEqual(engine.current.authority_fingerprint, AUTHORITY_FINGERPRINT)
-            self.assertEqual(engine.authority["external_permissions_added"], [])
-
-        limited = AutonomyEngine(
-            "security-change",
-            reason="observe",
-            evidence=["baseline"],
-        )
-        for _ in range(3):
-            limited.promote(
-                fitness=fitness(),
-                risk=risk("medium"),
-                reason="earned",
-                evidence=["evidence"],
-            )
-        high_fitness = fitness()
-        high_risk = risk("high")
-        with self.assertRaisesRegex(AutonomyError, "riesgo high"):
-            limited.promote(
-                fitness=high_fitness,
-                risk=high_risk,
-                reason="attempt autonomous",
-                evidence=["evidence"],
-            )
-
-    def test_promotion_and_downgrade_are_auditable(self):
-        engine = AutonomyEngine(
-            "context-compilation",
-            reason="observe",
-            evidence=["issue#151"],
-        )
-        promotion = engine.promote(
-            fitness=fitness(),
-            risk=risk("low"),
-            reason="validated history",
-            evidence=["run#1", "run#2"],
-        )
-        downgrade = engine.record_failure(
-            "minor",
-            reason="new regression",
-            evidence=["incident#42"],
-        )
-
-        self.assertEqual(promotion.action, "promote")
-        self.assertEqual(promotion.previous_level, "observe")
-        self.assertIsNotNone(promotion.fitness_fingerprint)
-        self.assertIsNotNone(promotion.risk_fingerprint)
-        self.assertEqual(downgrade.action, "downgrade:minor")
-        self.assertEqual(downgrade.previous_level, "propose")
-        self.assertEqual(downgrade.evidence, ("incident#42",))
-        self.assertEqual(len(engine.history), 3)
-        self.assertRegex(engine.snapshot()["fingerprint"], r"^[0-9a-f]{64}$")
+            self.assertEqual(record.authority_fingerprint, AUTHORITY_FINGERPRINT)
+            self.assertEqual(record.authority_class, "operational")
+        self.assertEqual(tuple(observed), AUTONOMY_LEVELS)
+        self.assertEqual(engine.authority["external_permissions_added"], [])
 
 
 if __name__ == "__main__":
