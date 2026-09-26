@@ -1646,39 +1646,44 @@ def update_issue_label_state(
     actor: str,
     label: str,
 ) -> None:
-    """Reserva mediante label y restaura un estado canónico si pierde la carrera."""
+    """Reconcilia un label visible sin convertirlo en autoridad de reserva."""
     if actor == TRUSTED_MARKER_LOGIN or label != STATUS_RESERVED:
         return
 
+    issue = api.issue(issue_number)
+    if issue.get("state") != "open":
+        terminal = (
+            STATUS_CANCELLED
+            if issue.get("state_reason") == "not_planned"
+            else STATUS_COMPLETED
+        )
+        api.set_status(issue_number, terminal)
+        return
+
+    labels = label_names(issue)
+    if STATUS_BLOCKED in labels:
+        api.set_status(issue_number, STATUS_BLOCKED)
+        return
+
     branch = branch_for_issue(issue_number)
-    try:
-        reservation_id = reserve_work(api, issue_number, actor, "OWNER")
-    except CoordinationError:
-        if (
-            api.branch_sha(branch) is None
-            and active_reservation(api, issue_number) is None
-        ):
-            labels = label_names(api.issue(issue_number))
-            api.set_status(
-                issue_number,
-                STATUS_BLOCKED if STATUS_BLOCKED in labels else STATUS_AVAILABLE,
-            )
-        raise
-    if reservation_id is not None:
+    reservation = active_reservation(api, issue_number)
+    branch_exists = api.branch_sha(branch) is not None
+
+    if reservation is not None and branch_exists:
+        ready_pull = any(
+            not bool(pull.get("draft", False))
+            for pull in open_pull_records_for_branch(api, branch)
+        )
+        api.set_status(
+            issue_number,
+            STATUS_REVIEW if ready_pull else STATUS_RESERVED,
+        )
         return
 
-    # El evento labeled ya aplicó estado: reservado antes de ejecutar el
-    # coordinador. Si no se obtuvo el lock, corregimos ese estado transitorio
-    # sin pisar una reserva concurrente que sí haya creado la rama/marcador.
-    if api.branch_sha(branch) or active_reservation(api, issue_number):
-        api.set_status(issue_number, STATUS_RESERVED)
-        return
+    # Sin marker trusted + rama canónica no existe autoridad. El label manual
+    # es solo una vista transitoria y debe volver al estado disponible.
+    api.set_status(issue_number, STATUS_AVAILABLE)
 
-    labels = label_names(api.issue(issue_number))
-    api.set_status(
-        issue_number,
-        STATUS_BLOCKED if STATUS_BLOCKED in labels else STATUS_AVAILABLE,
-    )
 
 def invalidate_contract_drift_checks(
     api: GitHub,
