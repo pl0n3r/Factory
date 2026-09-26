@@ -77,11 +77,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          python3 metricas/costos.py pr \
-            --event - \
-            --budgets metricas/presupuestos.json \
-            --json-out artifacts/presupuesto-pr.json \
-            --markdown-out artifacts/presupuesto-pr.md < "$GITHUB_EVENT_PATH"
+          if grep -q '^STDIN_SENTINEL = "-"' metricas/costos.py; then
+            python3 metricas/costos.py pr \
+              --event - \
+              --budgets metricas/presupuestos.json \
+              --json-out artifacts/presupuesto-pr.json \
+              --markdown-out artifacts/presupuesto-pr.md < "$GITHUB_EVENT_PATH"
+          else
+            python3 metricas/costos.py pr \
+              --event "$GITHUB_EVENT_PATH" \
+              --budgets metricas/presupuestos.json \
+              --json-out artifacts/presupuesto-pr.json \
+              --markdown-out artifacts/presupuesto-pr.md
+          fi
           cat artifacts/presupuesto-pr.md >> "$GITHUB_STEP_SUMMARY"
           status="$(python3 -c 'import json; print(json.load(open("artifacts/presupuesto-pr.json"))["status"])')"
           if [[ "$status" == "warning" || "$status" == "soft-block" ]]; then
