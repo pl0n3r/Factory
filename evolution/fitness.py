@@ -70,8 +70,9 @@ def _normalize_vector(value: Any, name: str) -> dict[str, dict[str, Any]]:
 
 
 def _normalize_protected(value: Any) -> tuple[str, ...]:
+    constitutional = set(PROTECTED_INVARIANTS)
     if value is None:
-        return tuple(PROTECTED_INVARIANTS)
+        return tuple(sorted(constitutional))
     if (
         not isinstance(value, (list, tuple, set))
         or not value
@@ -81,7 +82,12 @@ def _normalize_protected(value: Any) -> tuple[str, ...]:
         )
     ):
         raise FitnessError("protected_dimensions inválidas")
-    return tuple(sorted(set(value)))
+    requested = set(value)
+    if not constitutional.issubset(requested):
+        raise FitnessError(
+            "protected_dimensions no puede debilitar invariantes constitucionales"
+        )
+    return tuple(sorted(requested))
 
 
 def _dimension_status(
@@ -109,7 +115,7 @@ def compare_fitness(
     base = _normalize_vector(baseline, "baseline")
     cand = _normalize_vector(candidate, "candidate")
     protected = set(_normalize_protected(protected_dimensions))
-    dimensions = sorted(set(base) | set(cand))
+    dimensions = sorted(set(base) | set(cand) | protected)
 
     comparisons: dict[str, dict[str, Any]] = {}
     comparable = 0
@@ -126,12 +132,15 @@ def compare_fitness(
             for metric in (base_metric, cand_metric)
             if metric is not None
         }
-        if len(directions) != 1:
+        if len(directions) > 1:
             raise FitnessError(f"{dimension}: direction no coincide")
-        direction = next(iter(directions))
+        direction = next(iter(directions)) if directions else None
         base_value = base_metric["value"] if base_metric is not None else None
         cand_value = cand_metric["value"] if cand_metric is not None else None
-        status, delta = _dimension_status(base_value, cand_value, direction)
+        if direction is None:
+            status, delta = "unknown", None
+        else:
+            status, delta = _dimension_status(base_value, cand_value, direction)
         is_protected = dimension in protected
 
         comparisons[dimension] = {

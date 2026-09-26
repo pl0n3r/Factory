@@ -67,3 +67,14 @@ huella.
 
 El motor no recolecta métricas externas, no decide promoción, no ejecuta cambios
 y no concede autoridad. Solo compara evidencia entregada explícitamente.
+
+
+## Invariantes protegidos
+
+Las dimensiones constitucionales `security`, `privacy`, `traceability`,
+`reversibility` y `authority` son siempre protegidas. Un caller puede añadir
+dimensiones protegidas, pero no retirar las constitucionales.
+
+Si una dimensión protegida no aparece ni en baseline ni en candidate, Fitness no
+inventa valor ni dirección: la registra como `unknown`, la incluye en
+`missing_dimensions`, reduce la confianza y evita declarar mejora.

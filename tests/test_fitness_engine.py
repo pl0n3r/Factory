@@ -13,11 +13,19 @@ class FitnessEngineTests(unittest.TestCase):
         result = compare_fitness(
             baseline={
                 "security": metric(0.90),
+                "privacy": metric(1.0),
+                "traceability": metric(1.0),
+                "reversibility": metric(1.0),
+                "authority": metric(1.0),
                 "performance": metric(100),
                 "cost": metric(10, "lower"),
             },
             candidate={
                 "security": metric(0.95),
+                "privacy": metric(1.0),
+                "traceability": metric(1.0),
+                "reversibility": metric(1.0),
+                "authority": metric(1.0),
                 "performance": metric(100),
                 "cost": metric(8, "lower"),
             },
@@ -25,7 +33,15 @@ class FitnessEngineTests(unittest.TestCase):
         self.assertNotIn("score", result)
         self.assertEqual(
             set(result["dimensions"]),
-            {"security", "performance", "cost"},
+            {
+                "security",
+                "privacy",
+                "traceability",
+                "reversibility",
+                "authority",
+                "performance",
+                "cost",
+            },
         )
         self.assertEqual(result["dimensions"]["security"]["status"], "improved")
         self.assertEqual(result["dimensions"]["performance"]["status"], "equal")
@@ -54,22 +70,48 @@ class FitnessEngineTests(unittest.TestCase):
         result = compare_fitness(
             baseline={
                 "security": metric(0.90),
+                "privacy": metric(1.0),
+                "traceability": metric(1.0),
+                "reversibility": metric(1.0),
+                "authority": metric(1.0),
                 "cost": metric(10, "lower"),
             },
             candidate={
                 "security": metric(0.95),
+                "privacy": metric(1.0),
+                "traceability": metric(1.0),
+                "reversibility": metric(1.0),
+                "authority": metric(1.0),
             },
         )
         self.assertEqual(result["missing_dimensions"], ["cost"])
         self.assertEqual(
             result["confidence"],
-            {"comparable": 1, "total": 2, "ratio": 0.5},
+            {"comparable": 5, "total": 6, "ratio": 0.833333},
         )
         self.assertEqual(result["dimensions"]["cost"]["baseline"], 10)
         self.assertIsNone(result["dimensions"]["cost"]["candidate"])
         self.assertIsNone(result["dimensions"]["cost"]["delta"])
         self.assertEqual(result["claim"], "inconclusive")
         self.assertFalse(result["can_claim_improvement"])
+
+    def test_missing_protected_dimensions_are_unknown_and_cannot_be_waived(self):
+        result = compare_fitness(
+            baseline={"cost": metric(10, "lower")},
+            candidate={"cost": metric(8, "lower")},
+        )
+        self.assertEqual(result["claim"], "inconclusive")
+        self.assertFalse(result["can_claim_improvement"])
+        self.assertIn("security", result["missing_dimensions"])
+        self.assertIsNone(result["dimensions"]["security"]["direction"])
+        self.assertEqual(result["dimensions"]["security"]["status"], "unknown")
+
+        with self.assertRaisesRegex(FitnessError, "no puede debilitar"):
+            compare_fitness(
+                baseline={"security": metric(0.95)},
+                candidate={"security": metric(0.90)},
+                protected_dimensions=["privacy"],
+            )
 
     def test_baseline_comparison_is_deterministic(self):
         baseline = {
