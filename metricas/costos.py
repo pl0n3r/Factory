@@ -11,7 +11,13 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
-from typing import Any
+from typing import Any, TextIO
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.safe_io import SafeIOError, read_repo_text, write_repo_text
 
 MARKER_RE = re.compile(r"<!--\s*factory-cost\s+(\{[^<]*\})\s*-->")
 CLOSING_RE = re.compile(r"(?im)\b(?:closes|fixes|resolves)\s+#([1-9][0-9]*)\b")
@@ -23,15 +29,25 @@ CI_CONCLUSIONS = {
     "neutral", "skipped", "stale", "startup_failure",
 }
 
+STDIN_SENTINEL = "-"
+PR_BUDGETS = Path("metricas/presupuestos.json")
+PR_JSON_OUT = Path("artifacts/presupuesto-pr.json")
+PR_MARKDOWN_OUT = Path("artifacts/presupuesto-pr.md")
+TREND_JSON_OUT = Path("artifacts/ci-trend.json")
+
 
 class CostError(ValueError):
     pass
 
 
-def load_budgets(path: Path) -> dict[str, Any]:
+def load_budgets(
+    path: Path,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = json.loads(read_repo_text(path, root=root or ROOT))
+    except (SafeIOError, json.JSONDecodeError) as exc:
         raise CostError("Presupuestos ilegibles o JSON inválido.") from exc
     if not isinstance(data, dict):
         raise CostError("Presupuestos deben tener raíz de objeto JSON.")
@@ -240,39 +256,94 @@ def render_pr(result: dict[str, Any]) -> str:
         lines += ["", "Señales: " + ", ".join(result["reasons"]) + "."]
     return "\n".join(lines) + "\n"
 
-def main() -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    root: Path | None = None,
+    input_stream: TextIO | None = None,
+) -> int:
+    """Ejecuta el CLI con paths cerrados y JSON de entrada por stdin."""
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    pr_parser = sub.add_parser("pr")
-    pr_parser.add_argument("--event", type=Path, required=True)
-    pr_parser.add_argument("--budgets", type=Path, required=True)
-    pr_parser.add_argument("--json-out", type=Path, required=True)
-    pr_parser.add_argument("--markdown-out", type=Path, required=True)
-    trend_parser = sub.add_parser("trend")
-    trend_parser.add_argument("--input", type=Path, required=True)
-    trend_parser.add_argument("--json-out", type=Path, required=True)
-    args = parser.parse_args()
 
+    pr_parser = sub.add_parser("pr")
+    pr_parser.add_argument(
+        "--event",
+        choices=[STDIN_SENTINEL],
+        default=STDIN_SENTINEL,
+    )
+    pr_parser.add_argument(
+        "--budgets",
+        choices=[PR_BUDGETS.as_posix()],
+        default=PR_BUDGETS.as_posix(),
+    )
+    pr_parser.add_argument(
+        "--json-out",
+        choices=[PR_JSON_OUT.as_posix()],
+        default=PR_JSON_OUT.as_posix(),
+    )
+    pr_parser.add_argument(
+        "--markdown-out",
+        choices=[PR_MARKDOWN_OUT.as_posix()],
+        default=PR_MARKDOWN_OUT.as_posix(),
+    )
+
+    trend_parser = sub.add_parser("trend")
+    trend_parser.add_argument(
+        "--input",
+        choices=[STDIN_SENTINEL],
+        default=STDIN_SENTINEL,
+    )
+    trend_parser.add_argument(
+        "--json-out",
+        choices=[TREND_JSON_OUT.as_posix()],
+        default=TREND_JSON_OUT.as_posix(),
+    )
+    args = parser.parse_args(argv)
+
+    base = (root or ROOT).resolve()
+    stream = input_stream or sys.stdin
     try:
         if args.command == "pr":
-            event = json.loads(args.event.read_text(encoding="utf-8"))
-            result = evaluate_pr(event, load_budgets(args.budgets))
+            event_data = json.load(stream)
+            if not isinstance(event_data, dict):
+                raise CostError("Evento de Pull Request debe ser un objeto JSON.")
+            result = evaluate_pr(
+                event_data,
+                load_budgets(PR_BUDGETS, root=base),
+            )
             markdown = render_pr(result)
+            json_output = PR_JSON_OUT
+            markdown_output: Path | None = PR_MARKDOWN_OUT
         else:
-            rows = json.loads(args.input.read_text(encoding="utf-8"))
+            rows = json.load(stream)
             if not isinstance(rows, list):
                 raise CostError("Histórico CI debe ser una lista JSON.")
             result = ci_trend(rows)
-            markdown = "# Tendencia de costo CI\n\n" + json.dumps(result, ensure_ascii=False) + "\n"
-    except (OSError, json.JSONDecodeError, CostError) as exc:
+            markdown = (
+                "# Tendencia de costo CI\n\n"
+                + json.dumps(result, ensure_ascii=False)
+                + "\n"
+            )
+            json_output = TREND_JSON_OUT
+            markdown_output = None
+
+        write_repo_text(
+            json_output,
+            json.dumps(
+                result,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            root=base,
+        )
+        if markdown_output is not None:
+            write_repo_text(markdown_output, markdown, root=base)
+    except (SafeIOError, json.JSONDecodeError, CostError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-
-    args.json_out.parent.mkdir(parents=True, exist_ok=True)
-    args.json_out.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    if hasattr(args, "markdown_out"):
-        args.markdown_out.parent.mkdir(parents=True, exist_ok=True)
-        args.markdown_out.write_text(markdown, encoding="utf-8")
     return 0
 
 
