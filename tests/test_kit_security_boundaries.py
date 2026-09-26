@@ -101,3 +101,49 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         self.assertEqual(lock["packages-dev"], [])
         self.assertEqual(lock["platform"]["php"], composer["require"]["php"])
 
+class SecurityBoundaryTests(unittest.TestCase):
+    """Regresiones de seguridad añadidas por incidentes exact-main."""
+
+    def test_workflow_read_permissions_are_job_scoped(self):
+        """Mantiene permisos read en el job mínimo y ninguno heredado globalmente."""
+        acceptance = (
+            ROOT / ".github/workflows/aceptacion.yml"
+        ).read_text(encoding="utf-8")
+        costs = (
+            ROOT / ".github/workflows/costos.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("permissions: {}", acceptance)
+        self.assertNotIn(
+            "permissions:\n  contents: read\n  issues: read\n  checks: read",
+            acceptance,
+        )
+        acceptance_job = acceptance.split("  acceptance:", 1)[1]
+        self.assertIn(
+            "    permissions:\n"
+            "      contents: read\n"
+            "      issues: read\n"
+            "      checks: read",
+            acceptance_job,
+        )
+
+        self.assertIn("permissions: {}", costs)
+        self.assertNotIn(
+            "permissions:\n  contents: read\n  actions: read",
+            costs,
+        )
+        pr_job = costs.split("  presupuesto-pr:", 1)[1].split(
+            "  tendencia-ci:", 1
+        )[0]
+        self.assertIn(
+            "    permissions:\n      contents: read",
+            pr_job,
+        )
+        trend_job = costs.split("  tendencia-ci:", 1)[1]
+        self.assertIn(
+            "    permissions:\n"
+            "      contents: read\n"
+            "      actions: read",
+            trend_job,
+        )
+

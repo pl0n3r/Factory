@@ -9,10 +9,7 @@ on:
         default: 0
         type: number
 
-permissions:
-  contents: read
-  issues: read
-  checks: read
+permissions: {}
 cache-mode: read
 
 concurrency:
@@ -39,6 +36,10 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      checks: read
     steps:
       - name: Validar contexto PR
         env:

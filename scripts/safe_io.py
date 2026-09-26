@@ -41,3 +41,56 @@ def read_repo_text(path: Path, *, root: Path | None = None, max_bytes: int = DEF
         return resolved.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise SafeIOError("El archivo no es UTF-8 legible.") from exc
+
+def resolve_repo_output(path: Path, *, root: Path | None = None) -> Path:
+    """Resuelve una salida relativa sin permitir escapes ni symlinks."""
+    base = (root or Path.cwd()).resolve()
+    candidate_input = Path(path)
+    if (
+        candidate_input.is_absolute()
+        or ".." in candidate_input.parts
+        or candidate_input in {Path(""), Path(".")}
+    ):
+        raise SafeIOError("La salida debe ser relativa y permanecer en el checkout.")
+
+    current = base
+    for part in candidate_input.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise SafeIOError("No se permiten enlaces simbólicos en la salida.")
+        if current.exists() and not current.is_dir():
+            raise SafeIOError("La salida atraviesa una ruta que no es directorio.")
+
+    target = current / candidate_input.name
+    if target.is_symlink():
+        raise SafeIOError("No se permiten enlaces simbólicos como salida.")
+    if target.exists() and not target.is_file():
+        raise SafeIOError("La salida existente debe ser un archivo regular.")
+    try:
+        current.resolve(strict=False).relative_to(base)
+    except (OSError, ValueError) as exc:
+        raise SafeIOError("La salida no pertenece al checkout permitido.") from exc
+    return target
+
+
+def write_repo_text(
+    path: Path,
+    content: str,
+    *,
+    root: Path | None = None,
+) -> Path:
+    """Escribe UTF-8 dentro del checkout tras validar padres y destino."""
+    if not isinstance(content, str):
+        raise SafeIOError("El contenido de salida debe ser texto.")
+    target = resolve_repo_output(path, root=root)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise SafeIOError("No se pudo preparar el directorio de salida.") from exc
+    target = resolve_repo_output(path, root=root)
+    try:
+        target.write_text(content, encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SafeIOError("No se pudo escribir la salida UTF-8.") from exc
+    return target
+

@@ -1,9 +1,10 @@
 import json
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 
-from costos import CostError, ci_trend, evaluate_pr, load_budgets
+from costos import CostError, ci_trend, evaluate_pr, load_budgets, main
 
 
 BUDGETS = {
@@ -69,33 +70,33 @@ class CostTests(unittest.TestCase):
     def test_budget_root_must_be_object(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(CostError, "raíz de objeto JSON"):
-                load_budgets(write_budget(tmp, []))
+                (write_budget(tmp, []), load_budgets(Path("budgets.json"), root=Path(tmp)))[1]
 
     def test_boolean_budget_and_multiplier_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             changed = json.loads(json.dumps(BUDGETS))
             changed["sizes"]["small"]["tokens"] = True
             with self.assertRaisesRegex(CostError, "Presupuesto inválido"):
-                load_budgets(write_budget(tmp, changed))
+                (write_budget(tmp, changed), load_budgets(Path("budgets.json"), root=Path(tmp)))[1]
         with tempfile.TemporaryDirectory() as tmp:
             changed = json.loads(json.dumps(BUDGETS))
             changed["task_type_multipliers"]["default"] = True
             with self.assertRaisesRegex(CostError, "Multiplicador inválido"):
-                load_budgets(write_budget(tmp, changed))
+                (write_budget(tmp, changed), load_budgets(Path("budgets.json"), root=Path(tmp)))[1]
 
     def test_multiplier_cannot_round_effective_budget_to_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             changed = json.loads(json.dumps(BUDGETS))
             changed["task_type_multipliers"]["tiny"] = 0.001
             with self.assertRaisesRegex(CostError, "presupuesto efectivo menor que 1"):
-                load_budgets(write_budget(tmp, changed))
+                (write_budget(tmp, changed), load_budgets(Path("budgets.json"), root=Path(tmp)))[1]
 
     def test_global_limits_cannot_be_relaxed(self):
         with tempfile.TemporaryDirectory() as tmp:
             changed = json.loads(json.dumps(BUDGETS))
             changed["global_limits"]["commits"] = 11
             with self.assertRaisesRegex(CostError, "exactamente 10 commits"):
-                load_budgets(write_budget(tmp, changed))
+                (write_budget(tmp, changed), load_budgets(Path("budgets.json"), root=Path(tmp)))[1]
 
     def test_ci_trend_groups_all_completed_runs_by_pr(self):
         rows = [
@@ -126,6 +127,100 @@ class CostTests(unittest.TestCase):
                "created_at": "2026-01-01T00:00:00Z", "ci_minutes": 10}
         with self.assertRaisesRegex(CostError, "run_id duplicado"):
             ci_trend([row, dict(row)])
+
+
+    def test_cli_paths_are_confined_to_trusted_root(self):
+        """Rechaza traversal y escapes por symlink en toda la superficie CLI."""
+        invalid = [
+            ("--event", "../event.json"),
+            ("--budgets", "../presupuestos.json"),
+            ("--json-out", "/tmp/escape.json"),
+            ("--markdown-out", "artifacts/../escape.md"),
+        ]
+        for flag, value in invalid:
+            with self.subTest(flag=flag):
+                with self.assertRaises(SystemExit):
+                    main(["pr", flag, value], input_stream=StringIO("{}"))
+
+        with self.assertRaises(SystemExit):
+            main(
+                ["trend", "--input", "../history.json"],
+                input_stream=StringIO("[]"),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            (root / "metricas").mkdir()
+            (root / "metricas/presupuestos.json").write_text(
+                json.dumps(BUDGETS),
+                encoding="utf-8",
+            )
+            (root / "artifacts").symlink_to(
+                Path(outside),
+                target_is_directory=True,
+            )
+            rc = main(
+                ["pr"],
+                root=root,
+                input_stream=StringIO(json.dumps(event(marker()))),
+            )
+            self.assertEqual(rc, 2)
+            self.assertFalse((Path(outside) / "presupuesto-pr.json").exists())
+
+    def test_cli_valid_paths_preserve_cost_outputs(self):
+        """Mantiene los artefactos esperados para PR y tendencia con rutas cerradas."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "metricas").mkdir()
+            (root / "metricas/presupuestos.json").write_text(
+                json.dumps(BUDGETS),
+                encoding="utf-8",
+            )
+
+            rc = main(
+                [
+                    "pr",
+                    "--event", "-",
+                    "--budgets", "metricas/presupuestos.json",
+                    "--json-out", "artifacts/presupuesto-pr.json",
+                    "--markdown-out", "artifacts/presupuesto-pr.md",
+                ],
+                root=root,
+                input_stream=StringIO(json.dumps(event(marker()))),
+            )
+            self.assertEqual(rc, 0)
+            result = json.loads(
+                (root / "artifacts/presupuesto-pr.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(result["status"], "warning")
+            self.assertTrue(
+                (root / "artifacts/presupuesto-pr.md").is_file()
+            )
+
+            rows = [
+                {
+                    "pr_number": number,
+                    "run_id": 100 + number,
+                    "conclusion": "success",
+                    "created_at": f"2026-01-0{number}T00:00:00Z",
+                    "ci_minutes": number,
+                }
+                for number in range(1, 5)
+            ]
+            rc = main(
+                ["trend", "--input", "-", "--json-out", "artifacts/ci-trend.json"],
+                root=root,
+                input_stream=StringIO(json.dumps(rows)),
+            )
+            self.assertEqual(rc, 0)
+            trend = json.loads(
+                (root / "artifacts/ci-trend.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(trend["metric"], "ci_minutes_per_pr")
 
 
 if __name__ == "__main__":

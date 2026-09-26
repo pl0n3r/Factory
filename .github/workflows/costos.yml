@@ -7,9 +7,7 @@ on:
   schedule:
     - cron: '41 6 1 * *'
 
-permissions:
-  contents: read
-  actions: read
+permissions: {}
 
 concurrency:
   group: costos-${{ github.event.pull_request.number || github.ref }}
@@ -39,6 +37,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - name: Descargar base confiable
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -77,11 +77,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          python3 metricas/costos.py pr \
-            --event "$GITHUB_EVENT_PATH" \
-            --budgets metricas/presupuestos.json \
-            --json-out artifacts/presupuesto-pr.json \
-            --markdown-out artifacts/presupuesto-pr.md
+          if grep -q '^STDIN_SENTINEL = "-"' metricas/costos.py; then
+            python3 metricas/costos.py pr \
+              --event - \
+              --budgets metricas/presupuestos.json \
+              --json-out artifacts/presupuesto-pr.json \
+              --markdown-out artifacts/presupuesto-pr.md < "$GITHUB_EVENT_PATH"
+          else
+            python3 metricas/costos.py pr \
+              --event "$GITHUB_EVENT_PATH" \
+              --budgets metricas/presupuestos.json \
+              --json-out artifacts/presupuesto-pr.json \
+              --markdown-out artifacts/presupuesto-pr.md
+          fi
           cat artifacts/presupuesto-pr.md >> "$GITHUB_STEP_SUMMARY"
           status="$(python3 -c 'import json; print(json.load(open("artifacts/presupuesto-pr.json"))["status"])')"
           if [[ "$status" == "warning" || "$status" == "soft-block" ]]; then
@@ -139,8 +147,8 @@ jobs:
 
           jq -s '.' artifacts/ci-history.ndjson > artifacts/ci-history.json
           python3 metricas/costos.py trend \
-            --input artifacts/ci-history.json \
-            --json-out artifacts/ci-trend.json
+            --input - \
+            --json-out artifacts/ci-trend.json < artifacts/ci-history.json
           {
             echo "## Tendencia de costo CI total por PR"
             echo
