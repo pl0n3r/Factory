@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 
+import scripts.coordinar_trabajo as coordinator
+
 from scripts.aceptacion_kit import contract_fingerprint
 from scripts.coordinar_trabajo import (
     CoordinationError,
@@ -150,7 +152,10 @@ class FakeGitHub:
         current = [
             item
             for item in self.issue_data["labels"]
-            if not str(item["name"]).startswith("estado: ")
+            if not (
+                str(item["name"]).startswith("estado: ")
+                or str(item["name"]).startswith("status: ")
+            )
         ]
         if status:
             current.append({"name": status})
@@ -1575,6 +1580,162 @@ class CoordinacionTests(unittest.TestCase):
         with self.assertRaises(CoordinationError):
             validate_pull(api, 15, True)
 
+
+    def tearDown(self) -> None:
+        """Restaura el perfil ES para aislar cada prueba."""
+        coordinator.configure_profile("es")
+
+    def test_default_profile_preserves_spanish_contract(self) -> None:
+        """Conserva el contrato observable del perfil ES existente."""
+        coordinator.configure_profile("es")
+        self.assertEqual(coordinator.branch_for_issue(12), "trabajo/issue-12")
+        self.assertEqual(coordinator.parse_comment_command("/tomar"), ("tomar", None))
+        self.assertEqual(
+            coordinator.parse_comment_command(f"/liberar {SESSION_A}"),
+            ("liberar", SESSION_A),
+        )
+        marker = coordinator.reservation_marker(
+            "pl0n3r", SESSION_A, "trabajo/issue-12", True, "tomar",
+            "a" * 64,
+        )
+        self.assertIn("<!-- condor-reserva ", marker)
+        self.assertEqual(coordinator.STATUS_AVAILABLE, "estado: disponible")
+
+    def test_english_profile_supports_brvtal_coordination_contract(self) -> None:
+        """Cubre reservas, comandos y estados del perfil EN de BRVTAL."""
+        coordinator.configure_profile("en")
+        api = FakeGitHub()
+        api.repo = "pl0n3r/brvtal"
+        api.issue_data["labels"] = [{"name": coordinator.STATUS_AVAILABLE}]
+        session = coordinator.reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertIsNotNone(session)
+        self.assertIn("work/issue-12", api.branches)
+        self.assertEqual(coordinator.STATUS_RESERVED, "status: reserved")
+        self.assertEqual(coordinator.parse_comment_command("/take"), ("tomar", None))
+        self.assertEqual(
+            coordinator.parse_comment_command(f"/release {session}"),
+            ("liberar", session),
+        )
+        self.assertEqual(
+            coordinator.parse_comment_command(f"/transfer {session}"),
+            ("transferir", session),
+        )
+        self.assertEqual(
+            coordinator.parse_comment_command(f"/recover {session}"),
+            ("recuperar", session),
+        )
+        coordinator.release_work(api, 12, "pl0n3r", "OWNER", session, False)
+        self.assertNotIn("work/issue-12", api.branches)
+        self.assertIn(
+            coordinator.STATUS_AVAILABLE,
+            {row["name"] for row in api.issue_data["labels"]},
+        )
+
+    def test_english_profile_reads_brvtal_legacy_reservations(self) -> None:
+        """Acepta metadata histórica BRVTAL sin crear una segunda autoridad."""
+        coordinator.configure_profile("en")
+        body = (
+            '<!-- brvtal-work-reservation '
+            '{"active":true,"branch":"work/issue-12","owner":"pl0n3r",'
+            f'"reason":"take","reservation_id":"{SESSION_A}","version":1}} -->'
+        )
+        comments = [{"body": body, "user": {"login": BOT}}]
+        reservation = coordinator.latest_reservation(comments)
+        self.assertIsNotNone(reservation)
+        self.assertEqual(reservation["branch"], "work/issue-12")
+        self.assertEqual(
+            coordinator.reservation_from_pr_body(
+                f"Closes #12\n<!-- brvtal-reservation-id: {SESSION_A} -->"
+            ),
+            SESSION_A,
+        )
+
+    def test_profiles_fail_closed_on_authority_and_collision_errors(self) -> None:
+        """Exige autoridad y ausencia de colisiones en ambos perfiles."""
+        for profile in ("es", "en"):
+            coordinator.configure_profile(profile)
+            api = FakeGitHub()
+            api.issue_data["labels"] = [{"name": coordinator.STATUS_AVAILABLE}]
+            with self.assertRaises(CoordinationError):
+                coordinator.reserve_work(api, 12, "intruso", "NONE")
+            wrong_branch = (
+                "work/issue-12" if profile == "es" else "trabajo/issue-12"
+            )
+            payload = {
+                "version": 1,
+                "owner": "pl0n3r",
+                "reservation_id": SESSION_A,
+                "branch": wrong_branch,
+                "active": True,
+                "reason": "take",
+            }
+            self.assertFalse(coordinator.valid_reservation_payload(payload))
+            api.pulls[15] = {
+                "number": 15, "state": "open",
+                "head": {"ref": coordinator.branch_for_issue(12)},
+                "base": {"ref": "main"},
+            }
+            api.pulls[20] = {
+                "number": 20, "state": "open",
+                "head": {"ref": coordinator.branch_for_issue(20)},
+                "base": {"ref": "main"},
+            }
+            api.pull_files_map[15] = {"same.txt"}
+            api.pull_files_map[20] = {"same.txt"}
+            self.assertTrue(coordinator.collision_validation_errors(api, 15))
+
+
+    def test_english_coordination_commands_do_not_refresh_stale_lease(self) -> None:
+        """Los comandos EN de coordinación no cuentan como actividad de trabajo."""
+        coordinator.configure_profile("en")
+        timestamp = "2026-01-01T00:31:00+00:00"
+        commands = [
+            "/take",
+            "/force-release",
+            f"/release {SESSION_A}",
+            f"/transfer {SESSION_A}",
+            f"/recover {SESSION_A}",
+        ]
+
+        for body in commands:
+            comments = [
+                {
+                    "user": {"login": "pl0n3r"},
+                    "body": body,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                }
+            ]
+            with self.subTest(body=body):
+                self.assertIsNone(
+                    coordinator.human_issue_activity_timestamp(comments)
+                )
+
+    def test_reusable_profile_runtime_and_template_are_publish_safe(self) -> None:
+        """El ref probado ejecuta el perfil nuevo sin romper callers @v1 existentes."""
+        root = Path(__file__).resolve().parents[1]
+        reusable = (root / ".github/workflows/coordinacion.yml").read_text()
+        template = (
+            root / "template/.github/workflows/coordinacion.yml"
+        ).read_text()
+
+        self.assertIn("kit_ref:", reusable)
+        self.assertEqual(
+            reusable.count("ref: ${{ job.workflow_sha }}"),
+            6,
+        )
+        self.assertEqual(
+            reusable.count("repository: ${{ job.workflow_repository }}"),
+            6,
+        )
+        self.assertNotIn("inputs.kit_ref", reusable)
+        self.assertNotIn("profile: es", template)
+        self.assertEqual(
+            template.count(
+                "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
+            ),
+            6,
+        )
 
 if __name__ == "__main__":
     unittest.main()

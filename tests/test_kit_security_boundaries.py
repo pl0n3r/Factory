@@ -38,7 +38,17 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         self.assertIn("'release_sha' => $releaseSha !== '' ? $releaseSha : null", text)
 
     def test_write_capable_workflows_execute_published_kit(self):
-        for name in ("coordinacion.yml", "etiquetas.yml", "release.yml", "deploy.yml", "observar.yml"):
+        coordination = (
+            ROOT / ".github/workflows/coordinacion.yml"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("inputs.kit_ref", coordination)
+        self.assertIn(
+            "repository: ${{ job.workflow_repository }}",
+            coordination,
+        )
+        self.assertIn("ref: ${{ job.workflow_sha }}", coordination)
+
+        for name in ("etiquetas.yml", "release.yml", "deploy.yml", "observar.yml"):
             text = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
             self.assertNotIn("inputs.kit_ref", text, name)
             self.assertIn("ref: v1", text, name)
@@ -59,6 +69,14 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/factory-ci.yml").read_text(encoding="utf-8")
         self.assertIn("--proto '=https'", text)
         self.assertIn("--proto-redir '=https'", text)
+
+    def test_actionlint_ignore_is_narrow_for_reusable_workflow_identity(self):
+        text = (ROOT / ".github/workflows/factory-ci.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            '-ignore \'property "workflow_(repository|sha)" is not defined in object type\'',
+            text,
+        )
+        self.assertEqual(text.count("-ignore "), 2)
 
     def test_template_composer_lock_matches_manifest(self):
         composer = json.loads((ROOT / "template/composer.json").read_text(encoding="utf-8"))
