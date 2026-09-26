@@ -27,7 +27,11 @@ class ProjectDnaTests(unittest.TestCase):
             ],
             manifests={
                 "package.json": {
-                    "dependencies": {"fastify": "^5", "react": "^19"}
+                    "dependencies": {
+                        "fastify": "^5",
+                        "react": "^19",
+                        "@sentry/node": "^9",
+                    }
                 },
                 "composer.json": {
                     "require": {"symfony/framework-bundle": "^7"}
@@ -46,7 +50,7 @@ class ProjectDnaTests(unittest.TestCase):
         )
         self.assertEqual(dna["data"], ["sql"])
         self.assertEqual(dna["ci"], ["github-actions"])
-        self.assertEqual(dna["integrations"], ["github", "sentry"])
+        self.assertEqual(dna["integrations"], ["sentry"])
         self.assertEqual(dna["capabilities"], ["api", "web"])
 
     def test_unknown_capabilities_are_explicit_not_invented(self):
@@ -117,6 +121,41 @@ class ProjectDnaTests(unittest.TestCase):
         extra_top_level["fingerprint"] = _fingerprint_payload(extra_top_level)
         with self.assertRaisesRegex(ProjectDnaError, "campos base"):
             validate_project_dna(extra_top_level)
+
+        invalid_extension = copy.deepcopy(extended)
+        invalid_extension["extensions"]["bad"] = {"not-json"}
+        invalid_extension["fingerprint"] = "0" * 64
+        with self.assertRaisesRegex(ProjectDnaError, "valores no JSON"):
+            validate_project_dna(invalid_extension)
+
+        non_finite_extension = copy.deepcopy(extended)
+        non_finite_extension["extensions"]["bad"] = float("nan")
+        non_finite_extension["fingerprint"] = "0" * 64
+        with self.assertRaisesRegex(ProjectDnaError, "valores no JSON"):
+            validate_project_dna(non_finite_extension)
+
+    def test_integration_detection_requires_explicit_signal(self):
+        inferred = discover_project_dna(
+            paths=[
+                ".github/workflows/ci.yml",
+                "src/sentry_integration.php",
+                "docs/stripe-notes.md",
+            ]
+        )
+        self.assertEqual(inferred["integrations"], "unknown")
+
+        explicit = discover_project_dna(
+            paths=["package.json", ".sentryclirc"],
+            manifests={
+                "package.json": {
+                    "dependencies": {
+                        "@sentry/node": "^9",
+                        "stripe": "^18",
+                    }
+                }
+            },
+        )
+        self.assertEqual(explicit["integrations"], ["sentry", "stripe"])
 
 
 if __name__ == "__main__":

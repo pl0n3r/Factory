@@ -54,6 +54,13 @@ FRAMEWORK_PACKAGE_HINTS = {
     "django": "django",
     "flask": "flask",
 }
+INTEGRATION_PACKAGE_HINTS = {
+    "@sentry/node": "sentry",
+    "sentry/sentry": "sentry",
+    "sentry-sdk": "sentry",
+    "stripe": "stripe",
+    "stripe/stripe-php": "stripe",
+}
 _PYTHON_PACKAGE = re.compile(r"^[A-Za-z0-9_.-]+")
 
 
@@ -181,15 +188,18 @@ def _detect_hosting(paths: tuple[str, ...]) -> list[str] | str:
     return detected if detected else UNKNOWN
 
 
-def _detect_integrations(paths: tuple[str, ...]) -> list[str] | str:
-    integrations: set[str] = set()
-    lowered = [path.lower() for path in paths]
-    if any("sentry" in path for path in lowered):
+def _detect_integrations(
+    paths: tuple[str, ...],
+    manifests: dict[str, Any],
+) -> list[str] | str:
+    packages = _package_names(manifests)
+    integrations = {
+        name
+        for package, name in INTEGRATION_PACKAGE_HINTS.items()
+        if package in packages
+    }
+    if ".sentryclirc" in paths:
         integrations.add("sentry")
-    if any("stripe" in path for path in lowered):
-        integrations.add("stripe")
-    if any("github" in path for path in lowered):
-        integrations.add("github")
     return sorted(integrations) if integrations else UNKNOWN
 
 
@@ -233,7 +243,10 @@ def discover_project_dna(
         "data": _detect_data(normalized_paths),
         "ci": _detect_ci(normalized_paths),
         "hosting": _detect_hosting(normalized_paths),
-        "integrations": _detect_integrations(normalized_paths),
+        "integrations": _detect_integrations(
+            normalized_paths,
+            normalized_manifests,
+        ),
         "capabilities": normalized_capabilities,
         "signals": {
             "paths": list(normalized_paths),
@@ -291,6 +304,16 @@ def validate_project_dna(document: Any) -> dict[str, Any]:
         raise ProjectDnaError("signals inválidas")
     if not isinstance(document["extensions"], dict):
         raise ProjectDnaError("extensions debe ser objeto")
+    try:
+        json.dumps(
+            document["extensions"],
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ProjectDnaError("extensions contiene valores no JSON") from exc
     if (
         not isinstance(document["fingerprint"], str)
         or FINGERPRINT_RE.fullmatch(document["fingerprint"]) is None
