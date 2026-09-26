@@ -65,7 +65,7 @@ class FactoryRunnerArchitectureTests(unittest.TestCase):
         for token in (
             "FactoryRunner es reconstructible",
             "Cada `order_id` es idempotente",
-            "cada dispatch o requeue crea un `attempt_id` nuevo",
+            "dispatch o requeue crea un `attempt_id` nuevo",
             "`generation` monotónica",
             "ControlBot rechaza eventos de un attempt stale",
             "`fencing_token`",
