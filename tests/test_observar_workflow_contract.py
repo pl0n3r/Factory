@@ -48,8 +48,45 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertIn("github-actions[bot]", WF)
         self.assertIn('sort_by((.state != "open"), .number)', WF)
 
+    def test_push_is_allowed_only_with_main_branch_guard(self):
+        event_match = re.search(r'case "\\$EVENT_NAME" in ([^)]+)\\)', WF)
+        self.assertIsNotNone(event_match)
+        allowed_events = event_match.group(1).split("|")
+        self.assertEqual(allowed_events, ["push", "schedule", "workflow_dispatch"])
+
+        branch_guard = '[[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]]'
+        first_checkout = WF.index("uses: actions/checkout@")
+        self.assertLess(WF.index(event_match.group(0)), first_checkout)
+        self.assertLess(WF.index(branch_guard), first_checkout)
+
+    def test_untrusted_events_remain_fail_closed_before_checkout(self):
+        event_match = re.search(r'case "\\$EVENT_NAME" in ([^)]+)\\)', WF)
+        self.assertIsNotNone(event_match)
+        allowed_events = set(event_match.group(1).split("|"))
+        self.assertEqual(
+            allowed_events,
+            {"push", "schedule", "workflow_dispatch"},
+        )
+        for event in (
+            "pull_request",
+            "pull_request_target",
+            "workflow_run",
+            "issue_comment",
+            "check_run",
+            "issues",
+            "repository_dispatch",
+        ):
+            self.assertNotIn(event, allowed_events)
+
+        first_checkout = WF.index("uses: actions/checkout@")
+        self.assertLess(WF.index(event_match.group(0)), first_checkout)
+        self.assertLess(
+            WF.index('[[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]]'),
+            first_checkout,
+        )
+
     def test_trust_boundary_and_permissions_remain_fail_closed(self):
-        self.assertIn("schedule|workflow_dispatch", WF)
+        self.assertIn("push|schedule|workflow_dispatch", WF)
         self.assertIn('refs/heads/$DEFAULT_BRANCH', WF)
         workflow_permissions = _indented_block(WF, "permissions:", 0)
         job_permissions = _indented_block(WF, "permissions:", 4)
