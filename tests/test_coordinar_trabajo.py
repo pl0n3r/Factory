@@ -1251,7 +1251,7 @@ class CoordinacionTests(unittest.TestCase):
         api.pulls[15] = {
             "number": 15, "state": "open", "draft": False,
             "body": (
-                f"Closes #12\\nReserva: {SESSION_A}\\n"
+                f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
             "head": {"ref": "trabajo/issue-12", "sha": "head-renew"},
