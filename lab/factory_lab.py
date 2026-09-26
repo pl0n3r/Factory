@@ -170,6 +170,8 @@ def _validate_shadow_result_shape(shadow_result: Any) -> str:
 def promotion_contract(
     *,
     shadow_result: Any,
+    stable_sha: Any,
+    candidate_sha: Any,
     stable_metrics: Any,
     candidate_metrics: Any,
     constitution_candidate: Any,
@@ -199,17 +201,11 @@ def promotion_contract(
     except FitnessError as exc:
         raise FactoryLabError("shadow_result Fitness no coincide con evidencia fuente") from exc
 
-    stable_sha = _validated_sha(
-        shadow_result["baseline"].get("sha"),
-        "shadow_result.baseline.sha",
-    )
-    candidate_sha = _validated_sha(
-        shadow_result["candidate"].get("sha"),
-        "shadow_result.candidate.sha",
-    )
+    stable = _validated_sha(stable_sha, "stable_sha")
+    candidate = _validated_sha(candidate_sha, "candidate_sha")
     expected_shadow = evaluate_shadow(
-        stable_sha=stable_sha,
-        candidate_sha=candidate_sha,
+        stable_sha=stable,
+        candidate_sha=candidate,
         stable_metrics=baseline,
         candidate_metrics=candidate_vector,
         constitution_candidate=constitution_candidate,
@@ -220,8 +216,8 @@ def promotion_contract(
     contract = {
         "version": LAB_VERSION,
         "shadow_fingerprint": fingerprint,
-        "stable_sha": stable_sha,
-        "candidate_sha": candidate_sha,
+        "stable_sha": stable,
+        "candidate_sha": candidate,
         "constitution_fingerprint": constitution_fingerprint,
         "fitness_fingerprint": canonical_fitness["fingerprint"],
         "requires_human_or_authorized_promotion": True,

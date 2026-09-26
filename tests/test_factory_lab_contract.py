@@ -99,6 +99,8 @@ class FactoryLabContractTests(unittest.TestCase):
         )
         contract = promotion_contract(
             shadow_result=shadow,
+            stable_sha="3" * 40,
+            candidate_sha="4" * 40,
             stable_metrics=metrics(0.90),
             candidate_metrics=metrics(0.95),
             constitution_candidate=constitution_candidate(),
@@ -121,6 +123,8 @@ class FactoryLabContractTests(unittest.TestCase):
         with self.assertRaisesRegex(FactoryLabError, "evidencia insuficiente"):
             promotion_contract(
                 shadow_result=not_improved,
+                stable_sha="5" * 40,
+                candidate_sha="6" * 40,
                 stable_metrics=not_improved_stable,
                 candidate_metrics=not_improved_candidate,
                 constitution_candidate=not_improved_constitution,
@@ -185,6 +189,8 @@ class FactoryLabContractTests(unittest.TestCase):
         with self.assertRaisesRegex(FactoryLabError, "Constitution no coincide"):
             promotion_contract(
                 shadow_result=forged,
+                stable_sha="9" * 40,
+                candidate_sha="8" * 40,
                 stable_metrics=stable,
                 candidate_metrics=candidate,
                 constitution_candidate=constitution,
@@ -211,6 +217,21 @@ class FactoryLabContractTests(unittest.TestCase):
         with self.assertRaisesRegex(FactoryLabError, "Fitness no coincide"):
             promotion_contract(
                 shadow_result=tampered,
+                stable_sha="a" * 40,
+                candidate_sha="b" * 40,
+                stable_metrics=stable,
+                candidate_metrics=candidate,
+                constitution_candidate=constitution,
+            )
+
+        sha_tampered = copy.deepcopy(shadow)
+        sha_tampered["candidate"]["sha"] = "1" * 40
+        sha_tampered["fingerprint"] = root_hash(sha_tampered)
+        with self.assertRaisesRegex(FactoryLabError, "evaluación canónica"):
+            promotion_contract(
+                shadow_result=sha_tampered,
+                stable_sha="a" * 40,
+                candidate_sha="b" * 40,
                 stable_metrics=stable,
                 candidate_metrics=candidate,
                 constitution_candidate=constitution,
@@ -230,6 +251,8 @@ class FactoryLabContractTests(unittest.TestCase):
 
         contract = promotion_contract(
             shadow_result=shadow,
+            stable_sha="c" * 40,
+            candidate_sha="d" * 40,
             stable_metrics=stable,
             candidate_metrics=candidate,
             constitution_candidate=constitution,
@@ -251,6 +274,8 @@ class FactoryLabContractTests(unittest.TestCase):
         )
         contract = promotion_contract(
             shadow_result=shadow,
+            stable_sha="e" * 40,
+            candidate_sha="f" * 40,
             stable_metrics=stable,
             candidate_metrics=candidate,
             constitution_candidate=constitution,
