@@ -1305,6 +1305,39 @@ class CoordinacionTests(unittest.TestCase):
             for row in api.check_runs
         ))
 
+    def test_renew_acceptance_invalidates_aggregate_check_first(self) -> None:
+        """Publica Validar failure antes del check específico sobre el mismo HEAD."""
+        api = self._renew_fixture()
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(
+            [check["name"] for check in api.check_runs],
+            ["Validar", "Criterios de aceptación"],
+        )
+        self.assertTrue(
+            all(check["head_sha"] == "head-renew" for check in api.check_runs)
+        )
+
+    def test_renew_acceptance_second_check_error_preserves_failed_aggregate(self) -> None:
+        """Fallo en segundo POST conserva sesión/PR y Validar failure."""
+        api = self._renew_fixture()
+        original = api.pulls[15]["body"]
+        original_check = api.create_failed_check
+        def fail_second_check(name, sha, title, summary):
+            if len(api.check_runs) == 1:
+                raise CoordinationError("segundo POST de check falló")
+            original_check(name, sha, title, summary)
+        api.create_failed_check = fail_second_check
+
+        with self.assertRaisesRegex(CoordinationError, "segundo POST"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+
+        self.assertEqual(len(api.check_runs), 1)
+        self.assertEqual(api.check_runs[0]["name"], "Validar")
+        self.assertEqual(api.check_runs[0]["head_sha"], "head-renew")
+        self.assertEqual(api.check_runs[0]["conclusion"], "failure")
+        self.assertEqual(api.pulls[15]["body"], original)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"], SESSION_A)
+
     def test_renew_acceptance_rejects_unauthorized_stale_and_races(self) -> None:
         api = self._renew_fixture()
         for actor, session in (("intruso", SESSION_A), ("pl0n3r", SESSION_B)):
