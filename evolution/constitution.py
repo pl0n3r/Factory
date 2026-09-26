@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,10 @@ class ConstitutionError(ValueError):
 
 CONSTITUTION_VERSION = 1
 CONSTITUTION_PATH = Path(__file__).with_name("constitution.json")
+PLAN_AGENTES_SOURCE = "PLAN-AGENTES.md"
 
 EXPECTED_AUTHORITY_SOURCES = (
-    "PLAN-AGENTES.md",
+    PLAN_AGENTES_SOURCE,
     "AGENTES.md",
     "decisiones.yml",
     "seguridad/puertas-humanas.json",
@@ -37,8 +39,8 @@ PROTECTED_INVARIANTS = (
     "authority",
 )
 EXPECTED_INVARIANT_SOURCES = {
-    "security": "PLAN-AGENTES.md",
-    "privacy": "PLAN-AGENTES.md",
+    "security": PLAN_AGENTES_SOURCE,
+    "privacy": PLAN_AGENTES_SOURCE,
     "traceability": "AGENTES.md",
     "reversibility": "docs/resiliencia-fabrica.md",
     "authority": "docs/puertas-humanas.md",
@@ -67,6 +69,10 @@ EXPECTED_LIFECYCLE = (
 )
 ALLOWED_OPERATIONS = ("add", "replace", "remove")
 REQUIRED_CANDIDATE_FIELDS = ("version", "changes", "evidence", "rollback")
+MAX_CANDIDATE_CHANGES = 32
+MAX_JSON_VALUE_DEPTH = 32
+MAX_JSON_VALUE_NODES = 4096
+MAX_JSON_VALUE_BYTES = 1_048_576
 _PATH = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 
 
@@ -184,7 +190,7 @@ def validate_constitution(document: Any) -> dict[str, Any]:
     )
     if (
         type(policy["max_changes"]) is not int
-        or not 1 <= policy["max_changes"] <= 128
+        or policy["max_changes"] != MAX_CANDIDATE_CHANGES
     ):
         raise ConstitutionError("candidate_policy.max_changes inválido")
 
@@ -206,6 +212,160 @@ def _under_prefix(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + ".")
 
 
+def _consume_json_budget(
+    budget: dict[str, int],
+    *,
+    nodes: int = 0,
+    byte_count: int = 0,
+) -> None:
+    budget["nodes"] += nodes
+    budget["bytes"] += byte_count
+    if budget["nodes"] > MAX_JSON_VALUE_NODES:
+        raise ConstitutionError("candidate.change.value: presupuesto de nodos excedido")
+    if budget["bytes"] > MAX_JSON_VALUE_BYTES:
+        raise ConstitutionError("candidate.change.value: presupuesto de bytes excedido")
+
+
+def _json_scalar_size(value: Any) -> int:
+    try:
+        return len(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConstitutionError("candidate.change.value: valor no JSON") from exc
+
+
+def _validate_json_value(
+    value: Any,
+    budget: dict[str, int],
+    depth: int = 0,
+    active: set[int] | None = None,
+) -> None:
+    if depth > MAX_JSON_VALUE_DEPTH:
+        raise ConstitutionError("candidate.change.value: profundidad JSON excesiva")
+
+    _consume_json_budget(budget, nodes=1)
+    if value is None or isinstance(value, (str, bool, int)):
+        _consume_json_budget(budget, byte_count=_json_scalar_size(value))
+        return
+    if isinstance(value, float):
+        if math.isfinite(value):
+            _consume_json_budget(budget, byte_count=_json_scalar_size(value))
+            return
+        raise ConstitutionError("candidate.change.value: número no finito")
+    if not isinstance(value, (list, dict)):
+        raise ConstitutionError("candidate.change.value: valor no JSON")
+
+    active_path = active if active is not None else set()
+    marker = id(value)
+    if marker in active_path:
+        raise ConstitutionError("candidate.change.value: ciclo JSON")
+    active_path.add(marker)
+    try:
+        if isinstance(value, list):
+            _consume_json_budget(
+                budget,
+                byte_count=2 + max(0, len(value) - 1),
+            )
+            for item in value:
+                _validate_json_value(item, budget, depth + 1, active_path)
+            return
+        if not all(isinstance(key, str) for key in value):
+            raise ConstitutionError("candidate.change.value: claves JSON no string")
+        _consume_json_budget(
+            budget,
+            byte_count=2 + max(0, len(value) - 1),
+        )
+        for key, item in value.items():
+            _consume_json_budget(
+                budget,
+                byte_count=_json_scalar_size(key) + 1,
+            )
+            _validate_json_value(item, budget, depth + 1, active_path)
+    finally:
+        active_path.remove(marker)
+
+
+def _validate_change(
+    change: Any,
+    prefixes: tuple[str, ...],
+    operations: set[str],
+    budget: dict[str, int],
+) -> None:
+    row = _exact_keys(
+        change,
+        {"path", "operation", "value"},
+        "candidate.change",
+    )
+    path = row["path"]
+    operation = row["operation"]
+    if not isinstance(path, str) or _PATH.fullmatch(path) is None:
+        raise ConstitutionError("candidate.change.path inválido")
+    if not isinstance(operation, str) or operation not in operations:
+        raise ConstitutionError("candidate.change.operation inválida")
+    if not any(_under_prefix(path, prefix) for prefix in prefixes):
+        raise ConstitutionError(
+            "candidate intenta modificar autoridad o invariantes protegidos"
+        )
+    _validate_json_value(row["value"], budget)
+
+
+def _validate_changes(changes: Any, contract: dict[str, Any]) -> None:
+    max_changes = contract["candidate_policy"]["max_changes"]
+    if not isinstance(changes, list) or not 1 <= len(changes) <= max_changes:
+        raise ConstitutionError("candidate.changes: lista vacía o excesiva")
+
+    prefixes = tuple(contract["candidate_policy"]["allowed_prefixes"])
+    operations = set(contract["candidate_policy"]["operations"])
+    budget = {"nodes": 0, "bytes": 0}
+    for change in changes:
+        _validate_change(change, prefixes, operations, budget)
+
+
+def _validate_evidence(evidence: Any) -> None:
+    if (
+        not isinstance(evidence, list)
+        or not 1 <= len(evidence) <= 32
+        or not all(isinstance(item, str) and item.strip() for item in evidence)
+    ):
+        raise ConstitutionError("candidate.evidence inválida")
+
+
+def _validate_rollback(value: Any) -> None:
+    rollback = _exact_keys(
+        value,
+        {"reversible", "strategy"},
+        "candidate.rollback",
+    )
+    if rollback["reversible"] is not True:
+        raise ConstitutionError("candidate.rollback debe ser reversible")
+    strategy = rollback["strategy"]
+    if not isinstance(strategy, str) or strategy not in {
+        "revert",
+        "restore_baseline",
+    }:
+        raise ConstitutionError("candidate.rollback.strategy inválida")
+
+
+def _candidate_fingerprint(candidate_root: dict[str, Any]) -> str:
+    try:
+        canonical = json.dumps(
+            candidate_root,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ConstitutionError("candidate contiene valores no serializables") from exc
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def validate_candidate(
     candidate: Any,
     constitution: dict[str, Any] | None = None,
@@ -214,64 +374,15 @@ def validate_candidate(
     contract = validate_constitution(
         constitution if constitution is not None else load_constitution()
     )
-    required = set(REQUIRED_CANDIDATE_FIELDS)
-    candidate_root = _exact_keys(candidate, required, "candidate")
-
+    candidate_root = _exact_keys(
+        candidate,
+        set(REQUIRED_CANDIDATE_FIELDS),
+        "candidate",
+    )
     if type(candidate_root["version"]) is not int or candidate_root["version"] != 1:
         raise ConstitutionError("candidate: versión no admitida")
 
-    changes = candidate_root["changes"]
-    max_changes = contract["candidate_policy"]["max_changes"]
-    if not isinstance(changes, list) or not 1 <= len(changes) <= max_changes:
-        raise ConstitutionError("candidate.changes: lista vacía o excesiva")
-
-    prefixes = tuple(contract["candidate_policy"]["allowed_prefixes"])
-    operations = set(contract["candidate_policy"]["operations"])
-    for change in changes:
-        row = _exact_keys(
-            change,
-            {"path", "operation", "value"},
-            "candidate.change",
-        )
-        path = row["path"]
-        operation = row["operation"]
-        if not isinstance(path, str) or _PATH.fullmatch(path) is None:
-            raise ConstitutionError("candidate.change.path inválido")
-        if not isinstance(operation, str) or operation not in operations:
-            raise ConstitutionError("candidate.change.operation inválida")
-        if not any(_under_prefix(path, prefix) for prefix in prefixes):
-            raise ConstitutionError(
-                "candidate intenta modificar autoridad o invariantes protegidos"
-            )
-
-    evidence = candidate_root["evidence"]
-    if (
-        not isinstance(evidence, list)
-        or not 1 <= len(evidence) <= 32
-        or not all(isinstance(item, str) and item.strip() for item in evidence)
-    ):
-        raise ConstitutionError("candidate.evidence inválida")
-
-    rollback = _exact_keys(
-        candidate_root["rollback"],
-        {"reversible", "strategy"},
-        "candidate.rollback",
-    )
-    if rollback["reversible"] is not True:
-        raise ConstitutionError("candidate.rollback debe ser reversible")
-    if (
-        not isinstance(rollback["strategy"], str)
-        or rollback["strategy"] not in {"revert", "restore_baseline"}
-    ):
-        raise ConstitutionError("candidate.rollback.strategy inválida")
-
-    try:
-        canonical = json.dumps(
-            candidate_root,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise ConstitutionError("candidate contiene valores no serializables") from exc
-    return hashlib.sha256(canonical).hexdigest()
+    _validate_changes(candidate_root["changes"], contract)
+    _validate_evidence(candidate_root["evidence"])
+    _validate_rollback(candidate_root["rollback"])
+    return _candidate_fingerprint(candidate_root)

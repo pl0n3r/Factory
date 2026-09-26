@@ -5,6 +5,7 @@ from pathlib import Path
 from evolution.constitution import (
     ConstitutionError,
     EXPECTED_INVARIANT_SOURCES,
+    MAX_JSON_VALUE_BYTES,
     PROTECTED_INVARIANTS,
     load_constitution,
     validate_candidate,
@@ -88,11 +89,12 @@ class LivingConstitutionTests(unittest.TestCase):
         ]
         for path in forbidden_paths:
             with self.subTest(path=path):
+                candidate = valid_candidate(path)
                 with self.assertRaisesRegex(
                     ConstitutionError,
                     "autoridad o invariantes protegidos",
                 ):
-                    validate_candidate(valid_candidate(path), contract)
+                    validate_candidate(candidate, contract)
 
         irreversible = valid_candidate()
         irreversible["rollback"]["reversible"] = False
@@ -142,6 +144,79 @@ class LivingConstitutionTests(unittest.TestCase):
             "rollback.strategy inválida",
         ):
             validate_candidate(invalid_rollback, contract)
+
+    def test_supplied_constitution_cannot_raise_v1_change_limit(self):
+        contract = load_constitution()
+        raised_limit = json.loads(json.dumps(contract))
+        raised_limit["candidate_policy"]["max_changes"] = 33
+        candidate = valid_candidate()
+        candidate["changes"] *= 33
+
+        with self.assertRaisesRegex(ConstitutionError, "max_changes inválido"):
+            validate_candidate(candidate, raised_limit)
+
+    def test_candidate_values_are_strict_json_before_fingerprinting(self):
+        contract = load_constitution()
+
+        valid_object = valid_candidate()
+        valid_object["changes"][0]["value"] = {"1": "x"}
+        self.assertRegex(validate_candidate(valid_object, contract), r"^[0-9a-f]{64}$")
+
+        invalid_values = [
+            {1: "x"},
+            {"nested": {1: "x"}},
+            float("nan"),
+            ("tuple", "is-not-json"),
+        ]
+        for value in invalid_values:
+            with self.subTest(value=repr(value)):
+                candidate = valid_candidate()
+                candidate["changes"][0]["value"] = value
+                with self.assertRaisesRegex(
+                    ConstitutionError,
+                    "candidate.change.value",
+                ):
+                    validate_candidate(candidate, contract)
+
+    def test_candidate_json_validation_rejects_cycles_and_excessive_depth(self):
+        contract = load_constitution()
+
+        cyclic_list = []
+        cyclic_list.append(cyclic_list)
+        cyclic_dict = {}
+        cyclic_dict["self"] = cyclic_dict
+
+        deep_value = 0
+        for _ in range(34):
+            deep_value = [deep_value]
+
+        invalid_values = [cyclic_list, cyclic_dict, deep_value]
+        for value in invalid_values:
+            with self.subTest(kind=type(value).__name__):
+                candidate = valid_candidate()
+                candidate["changes"][0]["value"] = value
+                with self.assertRaisesRegex(
+                    ConstitutionError,
+                    "candidate.change.value",
+                ):
+                    validate_candidate(candidate, contract)
+
+    def test_candidate_json_validation_limits_total_traversal_work(self):
+        contract = load_constitution()
+
+        shared = [0]
+        for _ in range(14):
+            shared = [shared, shared]
+
+        shared_candidate = valid_candidate()
+        shared_candidate["changes"][0]["value"] = shared
+        with self.assertRaisesRegex(ConstitutionError, "presupuesto de nodos"):
+            validate_candidate(shared_candidate, contract)
+
+        oversized_candidate = valid_candidate()
+        oversized_candidate["changes"][0]["value"] = "x" * (MAX_JSON_VALUE_BYTES + 1)
+        with self.assertRaisesRegex(ConstitutionError, "presupuesto de bytes"):
+            validate_candidate(oversized_candidate, contract)
 
     def test_documented_lifecycle_matches_machine_contract(self):
         contract = load_constitution()
