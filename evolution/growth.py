@@ -85,30 +85,26 @@ def detect_capability_gap(
 def compile_growth_candidate(
     *,
     gap: Any,
+    required_capability: Any,
+    available_capabilities: Any,
     evidence: Any,
     expected_value: Any,
 ) -> dict[str, Any] | None:
-    """Compile a Constitution-valid candidate only for a demonstrated gap."""
-    if not isinstance(gap, dict) or set(gap) != {
-        "version",
-        "required",
-        "gap",
-        "reuse",
-        "available",
-        "fingerprint",
-    }:
-        raise GrowthError("gap inválido")
-    expected_gap = dict(gap)
-    fingerprint = expected_gap.pop("fingerprint")
-    if fingerprint != _stable_hash(expected_gap):
-        raise GrowthError("gap fingerprint no coincide")
-    if gap["gap"] is not True:
+    """Compile only after recomputing the gap from source inventory."""
+    canonical_gap = detect_capability_gap(
+        required_capability=required_capability,
+        available_capabilities=available_capabilities,
+    )
+    if canonical_gap["gap"] is not True:
         return None
+    if not isinstance(gap, dict) or gap != canonical_gap:
+        raise GrowthError("gap no coincide con evidencia fuente")
     if not isinstance(expected_value, str) or not expected_value.strip():
         raise GrowthError("expected_value debe ser texto no vacío")
 
+    fingerprint = canonical_gap["fingerprint"]
     sources = _evidence(evidence)
-    required = gap["required"]
+    required = canonical_gap["required"]
     capability_id = f"capability_{hashlib.sha256(required.encode()).hexdigest()[:16]}"
     value = {
         "version": GROWTH_VERSION,

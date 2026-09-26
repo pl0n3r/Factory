@@ -122,39 +122,44 @@ def evaluate_pruning(
     return result
 
 
-def compile_pruning_candidate(evaluation: Any) -> dict[str, Any] | None:
-    """Compile a retirement candidate without deleting history or protected state."""
-    if not isinstance(evaluation, dict) or set(evaluation) != {
-        "version",
-        "capability",
-        "eligible",
-        "criteria",
-        "metrics",
-        "evidence",
-        "lineage",
-        "fingerprint",
-    }:
-        raise PruningError("evaluation inválida")
-    expected = dict(evaluation)
-    fingerprint = expected.pop("fingerprint")
-    if fingerprint != _stable_hash(expected):
-        raise PruningError("evaluation fingerprint no coincide")
-    if evaluation["capability"] in PROTECTED_CAPABILITIES:
-        raise PruningError("capability protegida no puede podarse")
-    if evaluation["eligible"] is not True:
+def compile_pruning_candidate(
+    evaluation: Any,
+    *,
+    capability: Any,
+    usage_count: Any,
+    age_days: Any,
+    value_score: Any,
+    evidence: Any,
+    protected: bool = False,
+    parent_fingerprint: Any = None,
+) -> dict[str, Any] | None:
+    """Compile only after recomputing pruning eligibility from source inputs."""
+    canonical = evaluate_pruning(
+        capability=capability,
+        usage_count=usage_count,
+        age_days=age_days,
+        value_score=value_score,
+        evidence=evidence,
+        protected=protected,
+        parent_fingerprint=parent_fingerprint,
+    )
+    if canonical["eligible"] is not True:
         return None
+    if not isinstance(evaluation, dict) or evaluation != canonical:
+        raise PruningError("evaluation no coincide con evidencia fuente")
 
-    prune_id = f"prune_{hashlib.sha256(evaluation['capability'].encode()).hexdigest()[:16]}"
+    fingerprint = canonical["fingerprint"]
+    prune_id = f"prune_{hashlib.sha256(canonical['capability'].encode()).hexdigest()[:16]}"
     value = {
         "version": PRUNING_VERSION,
-        "capability": evaluation["capability"],
+        "capability": canonical["capability"],
         "status": "prune-candidate",
-        "criteria": evaluation["criteria"],
-        "metrics": evaluation["metrics"],
+        "criteria": canonical["criteria"],
+        "metrics": canonical["metrics"],
         "lineage": {
-            **evaluation["lineage"],
+            **canonical["lineage"],
             "evaluation_fingerprint": fingerprint,
-            "evidence": evaluation["evidence"],
+            "evidence": canonical["evidence"],
         },
     }
     candidate = {
@@ -166,14 +171,14 @@ def compile_pruning_candidate(evaluation: Any) -> dict[str, Any] | None:
                 "value": value,
             }
         ],
-        "evidence": evaluation["evidence"],
+        "evidence": canonical["evidence"],
         "rollback": {"reversible": True, "strategy": "restore_baseline"},
     }
     candidate_fingerprint = validate_candidate(candidate)
     return {
         "version": PRUNING_VERSION,
         "prune_id": prune_id,
-        "capability": evaluation["capability"],
+        "capability": canonical["capability"],
         "candidate": candidate,
         "candidate_fingerprint": candidate_fingerprint,
         "lineage": value["lineage"],
