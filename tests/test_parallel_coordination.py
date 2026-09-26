@@ -269,6 +269,17 @@ class ParallelCoordinationTests(unittest.TestCase):
                     workflow,
                 )
                 self.assertIn("cancel-in-progress: false", workflow)
+                self.assertIn("queue: max", workflow)
+
+        actionlint = Path(".github/actionlint.yaml").read_text(encoding="utf-8")
+        self.assertIn(".github/workflows/coordinacion-trabajo.yml:", actionlint)
+        self.assertIn(".github/workflows/coordinacion.yml:", actionlint)
+        self.assertEqual(
+            actionlint.count('unexpected key "queue" for "concurrency" section'),
+            2,
+        )
+        self.assertNotIn("**/*.yml", actionlint)
+        self.assertNotIn("**/*.yaml", actionlint)
 
         template = Path(
             "template/.github/workflows/coordinacion.yml"
