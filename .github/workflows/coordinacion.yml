@@ -55,6 +55,7 @@ permissions:
 concurrency:
   group: factory-coordination-${{ github.repository_id }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   validar-input:
