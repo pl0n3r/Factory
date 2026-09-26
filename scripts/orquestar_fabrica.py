@@ -244,6 +244,11 @@ def _preserved_enrichment(body: str) -> str:
         )
 
     enrichment = body[marker_end:]
+    if "<!-- factory-plan-task" in enrichment:
+        raise PlanError(
+            "Body enriquecido ambiguo: factory-plan-task adicional o malformado."
+        )
+
     acceptance_mentions = enrichment.count("factory-acceptance")
     acceptance_markers = enrichment.count("<!-- factory-acceptance ")
     if acceptance_mentions:
@@ -383,6 +388,11 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
         raise PlanError(
             "No se eliminan tareas ya materializadas: " + ", ".join(orphaned)
         )
+
+    # Valida todos los bodies existentes antes de mutar la primera tarea.
+    # Así un body ambiguo en un nodo posterior no deja un sync parcial.
+    for issue in existing.values():
+        _preserved_enrichment(str(issue.get("body") or ""))
 
     issue_numbers: dict[str, int] = {}
     task_roles: dict[str, list[str]] = {}
