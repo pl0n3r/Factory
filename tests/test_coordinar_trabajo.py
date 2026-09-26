@@ -178,9 +178,12 @@ class FakeGitHub:
         self.branches.pop(branch, None)
 
     def issue_comments(self, issue_number: int) -> list[dict]:
-        """Devuelve comentarios del Issue."""
-        assert issue_number == 12
-        return list(self.comments)
+        """Devuelve comentarios por Issue sin asumir un único objetivo."""
+        if issue_number == 12:
+            return list(self.comments)
+        if any(issue.get("number") == issue_number for issue in self.open_issue_data):
+            return []
+        raise AssertionError(f"Issue falso desconocido: {issue_number}")
 
     def open_pulls(self) -> list[dict]:
         """Devuelve los PR falsos abiertos."""
