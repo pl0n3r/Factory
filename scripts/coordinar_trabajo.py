@@ -2056,13 +2056,12 @@ def invalidate_contract_drift_checks(
             f"Issue #{issue_number}: {reason} "
             "Actualiza la reserva/contrato y vuelve a ejecutar CI."
         )
-        for check_name in ("Criterios de aceptación", "Validar"):
-            api.create_failed_check(
-                check_name,
-                sha,
-                "Contrato de aceptación desactualizado",
-                summary,
-            )
+        api.create_failed_check(
+            "Validar",
+            sha,
+            "Contrato de aceptación desactualizado",
+            summary,
+        )
         invalidated += 1
     return invalidated
 
