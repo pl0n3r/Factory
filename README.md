@@ -197,6 +197,6 @@ Ese resumen no reemplaza el lifecycle completo de Constitution. Toda adopción c
 - **#213 Growth/Pruning source evidence:** 🚧 pendiente.
 - **#215 Repair human authority + immunity provenance:** 🚧 pendiente.
 
-Por eso, cerrar #157 significa **integración estructural del protocolo**, no autonomía completa, promoción verificada end-to-end ni self-healing production-ready. #143 debe permanecer abierto mientras queden hardenings Living Software pendientes.
+Por eso, cerrar #157 significa **integración estructural del protocolo**; no garantiza autonomía completa, promoción autónoma de extremo a extremo ni recuperación autónoma lista para producción. #143 debe permanecer abierto mientras queden hardenings Living Software pendientes.
 
 Las puertas humanas vigentes no cambian: dinero, legal, datos reales/personales, borrado irreversible, publicación/live y demás decisiones reservadas siguen fuera de la autoridad autónoma.
