@@ -200,7 +200,9 @@ def linked_issue_names(raw: Any) -> set[str] | None:
         return None
     if not isinstance(raw, dict):
         raise LabelError("Issue enlazado inválido.")
-    if raw.get("state") != "closed" or raw.get("pull_request") is not None:
+    if raw.get("pull_request") is not None:
+        return None
+    if raw.get("state") not in {"open", "closed"}:
         return None
     return selected_names(raw.get("labels", []))
 

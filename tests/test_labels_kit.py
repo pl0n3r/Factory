@@ -198,7 +198,10 @@ class LabelsKitTests(unittest.TestCase):
             {"type: infrastructure", "priority: high", "status: in review"},
         )
 
-        self.assertIsNone(linked_issue_names({**linked_issue, "state": "open"}))
+        self.assertEqual(
+            linked_issue_names({**linked_issue, "state": "open"}),
+            linked,
+        )
         self.assertIsNone(linked_issue_names({**linked_issue, "pull_request": {}}))
 
         ambiguous = validation_plan(
@@ -226,6 +229,124 @@ class LabelsKitTests(unittest.TestCase):
             "linked_issue": linked_issue,
         }
         self.assertTrue(validation_document_plan(catalog, document, "en")["valid"])
+
+    def test_open_linked_issue_inherits_type_and_priority(self):
+        for language, type_name, priority_name, review_name in (
+            ("es", "tipo: error", "prioridad: alta", "estado: en revisión"),
+            ("en", "type: bug", "priority: high", "status: in review"),
+        ):
+            catalog = catalog_for_language(language)
+            linked = linked_issue_names(
+                {
+                    "state": "open",
+                    "labels": [
+                        {"name": type_name},
+                        {"name": priority_name},
+                        {"name": "estado: reservado" if language == "es" else "status: reserved"},
+                    ],
+                }
+            )
+            plan = validation_plan(
+                catalog,
+                set(),
+                is_pull_request=True,
+                body="Closes #194",
+                linked_names=linked,
+            )
+            self.assertTrue(plan["valid"])
+            self.assertEqual(plan["closing_issue"], 194)
+            self.assertEqual(set(plan["add"]), {type_name, priority_name, review_name})
+
+    def test_closed_linked_issue_keeps_inheritance_and_pr_review_state(self):
+        catalog = catalog_for_language("es")
+        linked = linked_issue_names(
+            {
+                "state": "closed",
+                "labels": [
+                    {"name": "tipo: mejora"},
+                    {"name": "prioridad: media"},
+                    {"name": "estado: cerrado"},
+                ],
+            }
+        )
+        plan = validation_plan(
+            catalog,
+            set(),
+            is_pull_request=True,
+            body="Fixes #41",
+            linked_names=linked,
+        )
+        self.assertTrue(plan["valid"])
+        self.assertEqual(
+            set(plan["add"]),
+            {"tipo: mejora", "prioridad: media", "estado: en revisión"},
+        )
+        self.assertNotIn("estado: cerrado", plan["add"])
+
+    def test_ambiguous_or_pull_request_link_does_not_inherit(self):
+        catalog = catalog_for_language("en")
+        linked_issue = {
+            "state": "open",
+            "labels": [
+                {"name": "type: infrastructure"},
+                {"name": "priority: high"},
+            ],
+        }
+        self.assertIsNone(
+            linked_issue_names({**linked_issue, "pull_request": {"url": "ignored"}})
+        )
+        self.assertIsNone(linked_issue_names({**linked_issue, "state": "draft"}))
+
+        ambiguous = validation_plan(
+            catalog,
+            set(),
+            is_pull_request=True,
+            body="Closes #42\nResolves #43",
+            linked_names=linked_issue_names(linked_issue),
+        )
+        self.assertIsNone(ambiguous["closing_issue"])
+        self.assertFalse(ambiguous["valid"])
+        self.assertEqual(set(ambiguous["add"]), {"status: in review"})
+        self.assertEqual(ambiguous["missing"], ["type", "priority"])
+
+    def test_incomplete_open_linked_issue_keeps_pr_invalid(self):
+        catalog = catalog_for_language("es")
+
+        missing_priority = validation_plan(
+            catalog,
+            set(),
+            is_pull_request=True,
+            body="Resolves #7",
+            linked_names=linked_issue_names(
+                {
+                    "state": "open",
+                    "labels": [{"name": "tipo: error"}],
+                }
+            ),
+        )
+        self.assertFalse(missing_priority["valid"])
+        self.assertEqual(missing_priority["missing"], ["priority"])
+
+        duplicate_type = validation_plan(
+            catalog,
+            set(),
+            is_pull_request=True,
+            body="Resolves #8",
+            linked_names=linked_issue_names(
+                {
+                    "state": "open",
+                    "labels": [
+                        {"name": "tipo: error"},
+                        {"name": "tipo: mejora"},
+                        {"name": "prioridad: alta"},
+                    ],
+                }
+            ),
+        )
+        self.assertFalse(duplicate_type["valid"])
+        self.assertEqual(duplicate_type["missing"], ["type"])
+        self.assertNotIn("tipo: error", duplicate_type["add"])
+        self.assertNotIn("tipo: mejora", duplicate_type["add"])
 
     def test_warning_plan_is_idempotent_and_clears_when_valid(self):
         invalid = {"valid": False, "missing": ["priority"], "multiple": []}
