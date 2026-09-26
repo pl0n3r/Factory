@@ -180,7 +180,7 @@ Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
 
 ## Living Software
 
-**Living Software está integrado al protocolo en su arquitectura y ciclo operativo; el hardening de fronteras de evidencia continúa.**
+**Living Software está integrado y endurecido a nivel de arquitectura/protocolo; ese estado no amplía autoridad externa ni habilita producción autónoma irrestricta.**
 
 El objetivo es que Factory pueda observar, recordar, aprender, proponer, experimentar, medir, podar y reparar sin convertir aprendizaje en autoridad. El contrato canónico está documentado en [docs/factory-living-software.md](docs/factory-living-software.md) y las reglas operativas viven en [PLAN-AGENTES.md](PLAN-AGENTES.md#9-living-software-ciclo-operativo-canónico).
 
@@ -193,10 +193,12 @@ Ese resumen no reemplaza el lifecycle completo de Constitution. Toda adopción c
 ### Estado de confianza actual
 
 - **#209 Autonomy authority + canonical evidence:** ✅ cerrado.
-- **#211 Factory Lab promotion provenance:** 🚧 pendiente.
-- **#213 Growth/Pruning source evidence:** 🚧 pendiente.
-- **#215 Repair human authority + immunity provenance:** 🚧 pendiente.
+- **#211 Factory Lab promotion provenance:** ✅ cerrado.
+- **#213 Growth/Pruning source evidence:** ✅ cerrado.
+- **#215 Repair human authority + immunity provenance:** ✅ cerrado.
+- **#221 deterministic renewal retry:** ✅ cerrado.
+- **#223 trusted Repair/Immune provenance:** ✅ cerrado.
 
-Por eso, cerrar #157 significa **integración estructural del protocolo**; no garantiza autonomía completa, promoción autónoma de extremo a extremo ni recuperación autónoma lista para producción. #143 debe permanecer abierto mientras queden hardenings Living Software pendientes.
+Cerrar **#143** significa **arquitectura/protocolo Living Software integrado y endurecido**. No garantiza autonomía completa, no convierte Promotion/Repair en ejecución automática y **no concede autoridad de producción autónoma irrestricta**.
 
 Las puertas humanas vigentes no cambian: dinero, legal, datos reales/personales, borrado irreversible, publicación/live y demás decisiones reservadas siguen fuera de la autoridad autónoma.

@@ -323,15 +323,15 @@ Ante discrepancia entre documentación, evidencia canónica, Constitution, una d
 
 ### Estado de hardening de fronteras de evidencia
 
-La integración es estructural; algunas fronteras siguen en hardening y **no deben tratarse como gates finales confiables hasta cerrar sus Issues**:
+La arquitectura/protocolo Living Software y sus fronteras de evidencia previstas para #143 están integradas y endurecidas:
 
 - **#209** — Autonomy authority + evidencia canónica: ✅ cerrado; authority scope estructurado y Fitness/Risk se recomputan desde inputs fuente.
-- **#211** — Factory Lab promotion provenance: 🚧 pendiente.
-- **#213** — Growth/Pruning source evidence: 🚧 pendiente.
-- **#215** — Repair human authority + immunity provenance: 🚧 pendiente.
+- **#211** — Factory Lab promotion provenance: ✅ cerrado; la promoción revalida provenance y evidencia fuente antes de producir una decisión confiable.
+- **#213** — Growth/Pruning source evidence: ✅ cerrado; growth/pruning recompone candidatos desde evidencia fuente verificable.
+- **#215** — Repair human authority + immunity provenance: ✅ cerrado; Repair/Immune validan estructura, scope e integridad sin ampliar ejecución.
+- **#221** — retry de renovación v2: ✅ cerrado; successor determinista y revalidación de contrato/task/HEAD evitan sesiones stale.
+- **#223** — provenance confiable de Repair/Immune: ✅ cerrado; decisiones e incidentes se resuelven desde fuentes/handles confiables y append-only, no desde payloads autocertificados.
 
-Mientras cualquiera de #211/#213/#215 siga abierto:
-- #157 no habilita promoción autónoma adicional;
-- no se declara Living Software completo ni production-ready;
-- #143 permanece abierto;
-- todo consumidor de esas fronteras debe conservar comportamiento fail-closed.
+El cierre de **#143** significa que la **arquitectura/protocolo Living Software está integrada y endurecida** dentro de la autoridad ya existente. **No significa producción autónoma irrestricta**, no convierte Repair o Promotion en ejecución automática y no elimina ninguna puerta humana.
+
+Dinero, legal, datos reales/personales, borrado irreversible, publicación/live y cualquier otra decisión reservada siguen requiriendo sus puertas humanas canónicas. Ante evidencia inválida, fuente no confiable o conflicto de autoridad, Living Software continúa fallando cerrado.

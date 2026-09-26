@@ -40,12 +40,6 @@ class LivingIntegrationTests(unittest.TestCase):
 
     def test_docs_do_not_claim_unimplemented_capabilities(self):
         combined = "\n".join((PLAN, README, LIVING))
-        for issue in ("#209", "#211", "#213", "#215"):
-            self.assertIn(issue, combined)
-        self.assertIn("#143 permanece abierto", PLAN)
-        self.assertIn("#143 debe permanecer abierto", README)
-        self.assertIn("#143 permanece abierto", LIVING)
-
         forbidden_claims = (
             "autonomía segura/completa",
             "promoción verificada end-to-end",
@@ -56,12 +50,61 @@ class LivingIntegrationTests(unittest.TestCase):
         for claim in forbidden_claims:
             self.assertNotIn(claim.casefold(), lowered)
 
-        self.assertIn("#209", LIVING)
-        self.assertIn("cerrado", LIVING)
-        for issue in ("#211", "#213", "#215"):
+    def test_all_living_hardenings_are_documented_closed(self):
+        hardenings = ("#209", "#211", "#213", "#215", "#221", "#223")
+        for issue in hardenings:
+            self.assertIn(issue, PLAN)
+            self.assertIn(issue, README)
             self.assertIn(issue, LIVING)
-        self.assertIn("pendiente", LIVING)
-        self.assertIn("#157 no habilita promoción autónoma adicional", LIVING)
+
+        for fragment in (
+            "**#209** — Autonomy authority + evidencia canónica: ✅ cerrado",
+            "**#211** — Factory Lab promotion provenance: ✅ cerrado",
+            "**#213** — Growth/Pruning source evidence: ✅ cerrado",
+            "**#215** — Repair human authority + immunity provenance: ✅ cerrado",
+            "**#221** — retry de renovación v2: ✅ cerrado",
+            "**#223** — provenance confiable de Repair/Immune: ✅ cerrado",
+        ):
+            self.assertIn(fragment, PLAN)
+
+        self.assertNotIn("#211 Factory Lab promotion provenance:** 🚧 pendiente", README)
+        self.assertNotIn("#213 Growth/Pruning source evidence:** 🚧 pendiente", README)
+        self.assertNotIn("#215 Repair human authority + immunity provenance:** 🚧 pendiente", README)
+        self.assertNotIn("#211 — Factory Lab promotion provenance:** pendiente", LIVING)
+        self.assertNotIn("#213 — Growth/Pruning source evidence:** pendiente", LIVING)
+        self.assertNotIn("#215 — Repair human authority + immunity provenance:** pendiente", LIVING)
+
+    def test_completed_hardening_does_not_expand_external_authority(self):
+        combined = "\n".join((PLAN, README, LIVING))
+        for boundary in (
+            "dinero",
+            "legal",
+            "datos reales/personales",
+            "borrado irreversible",
+            "publicación/live",
+        ):
+            self.assertIn(boundary, combined.casefold())
+        self.assertIn("no amplía autoridad", README)
+        self.assertIn("automatic_execution_allowed=false", LIVING)
+        self.assertIn("execution=not-performed", LIVING)
+        self.assertIn("continúa fallando cerrado", PLAN)
+
+    def test_epic_completion_is_structural_not_unbounded_production_authority(self):
+        combined = "\n".join((PLAN, README, LIVING))
+        self.assertIn(
+            "arquitectura/protocolo Living Software está integrada y endurecida",
+            PLAN,
+        )
+        self.assertIn(
+            "arquitectura/protocolo Living Software integrado y endurecido",
+            README,
+        )
+        self.assertIn(
+            "arquitectura/protocolo Living Software integrado y endurecido",
+            LIVING,
+        )
+        self.assertIn("producción autónoma irrestricta", combined)
+        self.assertIn("no una concesión de producción autónoma irrestricta", LIVING)
 
 
 if __name__ == "__main__":

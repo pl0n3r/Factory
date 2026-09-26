@@ -170,21 +170,25 @@ La evidencia derivada no se autocertifica cuando existe un productor canónico. 
 
 Living Software no concede dinero, autoridad legal, acceso a datos personales, borrado irreversible ni permiso de publicar/pasar a live. Esas fronteras siguen gobernadas por PLAN-AGENTES, decisiones.yml y el registro canónico de puertas humanas.
 
-## Limitaciones activas / hardening pendiente
+## Hardening de fronteras de evidencia completado
 
-La arquitectura/protocolo está integrada, pero **no se declara capacidad plenamente confiable en todas las fronteras de evidencia** mientras queden estos hardenings:
+El DAG de #143 y sus hardenings posteriores de evidencia están cerrados en el alcance estructural previsto:
 
 - **#209 — Autonomy authority + canonical evidence:** cerrado. Autonomy separa capability/authority class y revalida Fitness/Risk desde inputs fuente.
-- **#211 — Factory Lab promotion provenance:** pendiente; el contrato de promoción debe revalidar su evidencia fuente antes de ser un gate confiable.
-- **#213 — Growth/Pruning source evidence:** pendiente; growth/pruning debe recomputar evidencia fuente antes de compilar candidatos confiables.
-- **#215 — Repair human authority + immunity provenance:** pendiente; repair/immunity debe validar autoridad destructiva y procedencia antes de ser gate confiable.
+- **#211 — Factory Lab promotion provenance:** cerrado. Factory Lab revalida provenance antes de considerar una decisión de promoción.
+- **#213 — Growth/Pruning source evidence:** cerrado. Growth/Pruning recompone evidencia fuente antes de producir candidatos confiables.
+- **#215 — Repair human authority + immunity provenance:** cerrado. Repair/Immune validan scope, integridad e historia.
+- **#221 — deterministic renewal retry:** cerrado. La renovación v2 deriva un successor estable y revalida acceptance/task/HEAD.
+- **#223 — trusted Repair/Immune provenance:** cerrado. La autoridad destructiva y los incidentes se resuelven mediante fuentes confiables/append-only; hashes del caller no sustituyen provenance.
 
-Reglas mientras #211/#213/#215 sigan abiertos:
+### Qué significa cerrar #143
 
-1. cualquier conflicto con estos hardenings falla cerrado;
-2. #157 no habilita promoción autónoma adicional;
-3. no se afirma autonomía completa, promoción end-to-end verificada ni self-healing production-ready;
-4. #143 permanece abierto;
-5. los componentes pueden usarse para evaluación/arquitectura dentro de sus contratos actuales, pero no como sustituto de una puerta humana ni de evidencia canónica pendiente.
+Cerrar #143 declara **arquitectura/protocolo Living Software integrado y endurecido**. Es un cierre estructural del contrato y sus fronteras de evidencia, **no una concesión de producción autónoma irrestricta**.
 
-Cuando esos hardenings cierren, esta sección debe actualizarse con evidencia del contrato real antes de cambiar el estado de #143.
+En particular:
+
+1. Living Software sigue sin concederse autoridad nueva;
+2. Promotion no publica ni despliega por sí sola;
+3. Repair conserva `automatic_execution_allowed=false` y `execution=not-performed`;
+4. dinero, legal, datos reales/personales, borrado irreversible y publicación/live conservan sus puertas humanas vigentes;
+5. cualquier fuente no confiable, evidencia inconsistente o conflicto de autoridad continúa fallando cerrado.
