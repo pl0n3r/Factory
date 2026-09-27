@@ -209,7 +209,12 @@ def classify_presence(payload: dict[str, object]) -> PresenceAssessment:
             uncertain = True
             reasons.append(f"session:{session['session_id']}:freshness_unknown")
             continue
-        if freshness == "stale" or state in DEGRADED_STATES:
+        if freshness == "stale":
+            uncertain = True
+            degraded_sessions += 1
+            reasons.append(f"session:{session['session_id']}:stale")
+            continue
+        if state in DEGRADED_STATES:
             degraded_sessions += 1
             reasons.append(f"session:{session['session_id']}:degraded")
             continue
