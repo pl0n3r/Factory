@@ -1,0 +1,64 @@
+name: Provisionar repositorio gobernado
+on:
+  workflow_dispatch:
+    inputs:
+      project_id: {description: Identidad canónica del Proyecto, required: true, type: string}
+      project_slug: {description: Slug canónico del Proyecto, required: true, type: string}
+      target_repository: {description: Repositorio objetivo pl0n3r/nombre, required: true, type: string}
+      governance_ref: {description: Contrato Factory publicado, required: true, type: string}
+      idempotency_key: {description: SHA-256 de la intención de provisión, required: true, type: string}
+
+permissions:
+  contents: read
+concurrency:
+  group: provision-${{ inputs.idempotency_key }}
+  cancel-in-progress: false
+
+jobs:
+  provisionar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validar contexto y autoridad externa
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == "workflow_dispatch" ]] || { echo "::error::evento no permitido"; exit 1; }
+          [[ "$ACTOR" == "$OWNER" ]] || { echo "::error::solo el owner puede provisionar"; exit 1; }
+          [[ "$REF" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::solo default branch"; exit 1; }
+          [[ -n "$FACTORY_PROVISION_TOKEN" ]] || { echo "::error::FACTORY_PROVISION_TOKEN no configurado"; exit 1; }
+
+      - name: Descargar runtime exacto del workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: runtime
+          persist-credentials: false
+
+      - name: Descargar gobernanza Factory publicada
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: v1
+          path: governance
+          persist-credentials: false
+
+      - name: Provisionar desde template canónico
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+          PROJECT_SLUG: ${{ inputs.project_slug }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          GOVERNANCE_REF: ${{ inputs.governance_ref }}
+          IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
+          FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
+        run: |
+          set -euo pipefail
+          governance_sha="$(git -C governance rev-parse HEAD)"
+          python3 runtime/scripts/provision_project.py \
+            --template governance/template \
+            --governance-sha "$governance_sha"
