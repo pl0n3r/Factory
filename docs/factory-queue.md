@@ -46,9 +46,9 @@ El scope de idempotencia excluye deliberadamente `origin_system` y `work_id`: do
 
 `engineering`, `security`, `infrastructure`, `operations`, `data_analytics`, `product`, `content`, `marketing_growth`, `sales_support`, `finance_analysis`, `compliance_review` y `knowledge_documentation`.
 
-## Fuera de este slice
+## Slices completados
 
-Factory #271 integrará WorkItem con readiness y Dispatcher V2. #272 añadirá evidencia/feedback de ejecución y #273 cubrirá el escenario E2E multi-origen/multi-institución. Este módulo no consulta servicios, no persiste la cola y no ejecuta agentes.
+Factory #271 integró WorkItem con readiness y Dispatcher V2. #272 añadió evidencia/feedback de ejecución y #273 cubrió el escenario E2E multi-origen/multi-institución. Este módulo no consulta servicios, no persiste la cola y no ejecuta agentes.
 
 ## Feedback atribuible de ejecución
 
