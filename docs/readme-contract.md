@@ -57,11 +57,12 @@ Los markers son frontera de escritura. Una implementación que no encuentre exac
 
 Las señales derivadas admiten:
 
-- `GREEN`: existe evidencia suficiente y verificable;
+- `GREEN`: existe evidencia suficiente y verificable de estado sano;
+- `DEGRADED`: existe evidencia suficiente y verificable de degradación;
 - `PENDING`: la evidencia está en proceso o todavía no es terminal;
 - `UNKNOWN`: no existe evidencia utilizable.
 
-Ausencia de datos **nunca** equivale a GREEN. El README tampoco convierte un merge o deploy en producción validada sin la evidencia que exija el proyecto.
+GREEN y DEGRADED requieren evidencia. Ausencia de datos **nunca** equivale a GREEN ni debe ocultar una degradación conocida. El README tampoco convierte un merge o deploy en producción validada sin la evidencia que exija el proyecto.
 
 ## Work Queue sin duplicar Roadmap
 
