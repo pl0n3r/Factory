@@ -75,3 +75,15 @@ La validación falla cerrada si provenance, fingerprint, scope, productor, evide
 
 El escenario E2E de #273 debe construir un WorkItem válido, pasarlo por readiness/Dispatcher V2, simular una ejecución terminal y producir feedback mediante `validate_execution_feedback()`. La evidencia E2E debe demostrar que el resultado conserva `work_fingerprint` e `idempotency_scope`, que entradas stale/inconsistentes fallan cerrado y que ninguna etapa introduce una jerarquía de despacho paralela.
 
+## Escenario E2E multi-origen y multi-institución
+
+Factory Queue v1 queda validada de extremo a extremo con el siguiente flujo canónico:
+
+`WorkItem → readiness → Dispatcher V2 → ejecución terminal → evidence/feedback`
+
+El escenario de #273 prueba dos observaciones equivalentes del mismo trabajo provenientes de instituciones distintas. Ambas comparten `idempotency_scope`, por lo que no se materializan como dos unidades ejecutables. La selección continúa usando exclusivamente readiness y Dispatcher V2 existentes.
+
+Tras la selección, el outcome terminal se transforma en feedback atribuible que conserva `work_fingerprint`, `idempotency_scope`, productor, ejecutor, evidencia y freshness. Provenance inconsistente, evidencia ausente o feedback stale fallan cerrado.
+
+Este slice constituye el **cierre funcional de Factory Queue v1** del épico #269. No añade una cola nueva, un ranking alternativo ni autoridad adicional; únicamente demuestra la composición coherente de los contratos entregados por #270, #271 y #272.
+
