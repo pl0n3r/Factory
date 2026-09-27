@@ -147,10 +147,11 @@ class PresenceContractTests(unittest.TestCase):
     def test_docs_define_external_authority_and_no_parallel_persistence(self):
         """AC-07: la documentación conserva autoridad runtime fuera de Factory."""
         docs = Path("docs/adaptive-orchestration.md").read_text(encoding="utf-8")
-        self.assertIn("ControlBot", docs)
-        self.assertIn("fuente autoritativa", docs)
-        self.assertIn("Factory consume snapshots", docs)
-        self.assertIn("no persiste Sessions", docs)
+        normalized = " ".join(docs.split())
+        self.assertIn("ControlBot", normalized)
+        self.assertIn("fuente autoritativa", normalized)
+        self.assertIn("Factory consume snapshots", normalized)
+        self.assertIn("no persiste Sessions", normalized)
 
 
 if __name__ == "__main__":
