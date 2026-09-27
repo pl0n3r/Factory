@@ -144,10 +144,16 @@ def decide_replan(
     assessment = classify_presence(snapshot)
     normalized_events = coalesce_events(events)
     reasons: list[str] = []
+    untrusted_events = [
+        f"event_{event.state}:{event.event_type}:{event.subject}"
+        for event in normalized_events
+        if event.state in {"unknown", "stale"}
+    ]
 
-    if _presence_fail_closed(assessment):
+    if _presence_fail_closed(assessment) or untrusted_events:
         reasons.extend(_presence_reasons(assessment))
         reasons.extend(assessment.reasons)
+        reasons.extend(untrusted_events)
         return ReplanDecision(
             action="fail_closed",
             reasons=tuple(sorted(set(reasons))),
