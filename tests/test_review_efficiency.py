@@ -9,7 +9,7 @@ FIXTURE = ROOT / "metricas/datos/review-efficiency-baseline.jsonl"
 def finding(fid="f1", classification="valid_fixed", severity="medium", material=True, change_ref="commit:abc"):
     return {"id": fid, "classification": classification, "severity": severity, "material": material, "change_ref": change_ref}
 def observation(**overrides):
-    row = {"repo": "pl0n3r/factory", "pr": 900, "issue": 901, "sha": "a" * 40, "task_type": "quality", "surface": "ci", "risk": "low", "provider": "coderabbit", "review_state": "COMMENTED", "round": 1, "findings": [finding()], "rework_commits": 1, "added_minutes": 10, "tokens": 100, "ci_minutes": 5, "escaped_defect": False, "incident_after": False, "rollback_after": False, "result_ref": "result:green"}
+    row = {"repo": "pl0n3r/factory", "pr": 900, "issue": 901, "sha": "a" * 40, "task_type": "quality", "surface": "ci", "risk": "low", "provider": "coderabbit", "review_state": "COMMENTED", "round": 1, "findings": [finding()], "rework_commits": 1, "added_minutes": 10, "tokens": 100, "ci_minutes": 5, "escaped_defect": False, "incident_after": False, "rollback_after": False, "result_ref": "result:green", "policy_id": "review-policy-v1"}
     row.update(overrides)
     return row
 def protected(value=1.0):
@@ -39,13 +39,24 @@ class ReviewEfficiencyTests(unittest.TestCase):
         report = build_report([observation()], min_samples=1)
         self.assertEqual(set(report["cohorts"][0]["rounds"]["1"]), {"quality", "cost", "risk", "noise"})
         self.assertNotIn("score", json.dumps(report).lower())
+        invalid = observation(added_minutes=float("nan"))
+        with self.assertRaisesRegex(ReviewEfficiencyError, "finito"):
+            build_report([invalid], min_samples=1)
     def test_incompatible_cohorts_are_not_merged(self):
-        report = build_report([observation(pr=1, risk="low", provider="coderabbit"), observation(pr=2, risk="high", provider="codeql")], min_samples=1)
-        self.assertEqual({(c["key"]["risk"], c["key"]["provider"]) for c in report["cohorts"]}, {("low", "coderabbit"), ("high", "codeql")})
+        report = build_report([observation(pr=1, policy_id="policy-a"), observation(pr=2, policy_id="policy-b")], min_samples=1)
+        self.assertEqual({c["key"]["policy_id"] for c in report["cohorts"]}, {"policy-a", "policy-b"})
+        legacy = build_report([observation(pr=3, policy_id=None), observation(pr=4, policy_id=None)], min_samples=1)
+        self.assertEqual(len(legacy["cohorts"]), 1)
     def test_insufficient_sample_yields_no_policy_recommendation(self):
         report = build_report(fixture(), min_samples=3)
         self.assertTrue(report["baseline_reproducible"])
         self.assertTrue(all(c["sample_status"] == "insufficient_data" and c["policy_recommendation"] is None for c in report["cohorts"]))
+        almost = sample()
+        almost = [r for r in almost if not (r["repo"] == "pl0n3r/factory" and r["pr"] in {2, 3} and r["round"] == 3)]
+        partial = build_report(almost, min_samples=3)
+        factory = next(c for c in partial["cohorts"] if c["key"]["repo"] == "pl0n3r/factory")
+        self.assertEqual(factory["paired_2_3_samples"], 1)
+        self.assertEqual(factory["sample_status"], "insufficient_data")
     def test_protected_regression_blocks_round_reduction_candidate(self):
         report = build_report(sample(), min_samples=3)
         key = next(c["key"] for c in report["cohorts"] if c["key"]["repo"] == "pl0n3r/factory")
@@ -66,6 +77,13 @@ class ReviewEfficiencyTests(unittest.TestCase):
         self.assertFalse(result["mutation_allowed"])
         self.assertEqual(result["external_writes"], [])
         self.assertEqual(result["lab"]["promotion"]["execution"], "not-performed")
+        material = sample()
+        target = next(r for r in material if r["repo"] == "pl0n3r/factory" and r["round"] == 3)
+        target["findings"] = [finding(fid="round3-security", severity="high", material=True)]
+        blocked_report = build_report(material, min_samples=3)
+        blocked_key = next(c["key"] for c in blocked_report["cohorts"] if c["key"]["repo"] == "pl0n3r/factory")
+        blocked = build_shadow_candidate(report=blocked_report, cohort_key=blocked_key, stable_sha="5" * 40, candidate_sha="6" * 40, protected_stable=protected(), protected_candidate=protected())
+        self.assertEqual((blocked["status"], blocked["reason"]), ("blocked", "round3_material_finding"))
     def test_lineage_preserves_pr_round_finding_change_result(self):
         report = build_report([observation(repo="pl0n3r/factory", pr=253, issue=252, round=2, findings=[finding(fid="security-fix", change_ref="commit:265ca2cb")], result_ref="main:34409905")], min_samples=1)
         link = report["cohorts"][0]["lineage"][0]

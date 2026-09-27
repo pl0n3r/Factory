@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import math
 import re
 from collections import defaultdict
 from statistics import mean
@@ -20,7 +21,7 @@ OBS_FIELDS = frozenset({
     "repo", "pr", "issue", "sha", "task_type", "surface", "risk", "provider",
     "review_state", "round", "findings", "rework_commits", "added_minutes",
     "tokens", "ci_minutes", "escaped_defect", "incident_after",
-    "rollback_after", "result_ref",
+    "rollback_after", "result_ref", "policy_id",
 })
 FINDING_FIELDS = frozenset({"id", "classification", "severity", "material", "change_ref"})
 SLUG = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
@@ -35,8 +36,9 @@ def _hash(value: Any) -> str:
 def _number(value: Any, field: str, optional: bool = False) -> int | float | None:
     if optional and value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-        raise ReviewEfficiencyError(f"{field}: número >= 0 o null requerido")
+    invalid = isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0
+    if invalid or (isinstance(value, float) and not math.isfinite(value)):
+        raise ReviewEfficiencyError(f"{field}: número finito >= 0 o null requerido")
     return value
 def _tri(value: Any, field: str) -> bool | None:
     if value is None or isinstance(value, bool):
@@ -71,6 +73,9 @@ def _validate_context(raw: dict[str, Any]) -> None:
         raise ReviewEfficiencyError("risk inválido")
     if raw["review_state"] not in {"COMMENTED", "APPROVED", "CHANGES_REQUESTED"}:
         raise ReviewEfficiencyError("review_state inválido")
+    policy_id = raw["policy_id"]
+    if policy_id is not None and (not isinstance(policy_id, str) or REF.fullmatch(policy_id) is None):
+        raise ReviewEfficiencyError("policy_id inválido")
     number = raw["round"]
     if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= STABLE_REVIEW_ROUND_LIMIT:
         raise ReviewEfficiencyError("round inválida")
@@ -126,7 +131,7 @@ def build_report(records: list[dict[str, Any]], min_samples: int = 3) -> dict[st
     repos = {row["repo"].lower() for row in substantive}
     grouped: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped[(row["repo"], row["task_type"], row["surface"], row["risk"], row["provider"])].append(row)
+        grouped[(row["repo"], row["task_type"], row["surface"], row["risk"], row["provider"], row["policy_id"])].append(row)
     cohorts = []
     for key, items in sorted(grouped.items()):
         useful = [row for row in items if is_substantive_review(row)]
@@ -134,11 +139,21 @@ def build_report(records: list[dict[str, Any]], min_samples: int = 3) -> dict[st
         for row in useful:
             by_round[row["round"]].append(row)
         samples = len({(row["repo"], row["pr"]) for row in useful})
+        rounds_by_pr: dict[tuple[str, int], set[int]] = defaultdict(set)
+        for row in useful:
+            rounds_by_pr[(row["repo"], row["pr"])].add(row["round"])
+        paired_samples = sum({2, 3}.issubset(rounds) for rounds in rounds_by_pr.values())
+        round3_material = sum(
+            finding["material"] and finding["classification"] not in {"duplicate", "administrative", "false_positive"}
+            for row in useful if row["round"] == 3 for finding in row["findings"]
+        )
         lineage = [{"pr": f"{row['repo']}#{row['pr']}", "sha": row["sha"], "round": row["round"], "finding": f["id"], "classification": f["classification"], "change": f["change_ref"], "result": row["result_ref"]} for row in sorted(useful, key=lambda item: (item["pr"], item["round"], item["sha"])) for f in row["findings"]]
         cohorts.append({
-            "key": dict(zip(("repo", "task_type", "surface", "risk", "provider"), key)),
+            "key": dict(zip(("repo", "task_type", "surface", "risk", "provider", "policy_id"), key)),
             "samples": samples,
-            "sample_status": "eligible" if samples >= min_samples else "insufficient_data",
+            "paired_2_3_samples": paired_samples,
+            "round3_material_findings": round3_material,
+            "sample_status": "eligible" if paired_samples >= min_samples else "insufficient_data",
             "administrative_events": len(items) - len(useful),
             "rounds": {str(n): _dimensions(group) for n, group in sorted(by_round.items())},
             "policy_recommendation": None,
@@ -155,6 +170,8 @@ def build_shadow_candidate(*, report: dict[str, Any], cohort_key: dict[str, str]
     base = {"stable_review_round_limit": 3, "candidate_review_round_limit": 2, "mutation_allowed": False, "external_writes": []}
     if cohort is None or not report["baseline_reproducible"] or cohort["sample_status"] != "eligible" or cohort["key"]["risk"] != "low" or "3" not in cohort["rounds"]:
         return {"status": "insufficient_evidence", **base}
+    if cohort["round3_material_findings"]:
+        return {"status": "blocked", "reason": "round3_material_finding", **base}
     if set(protected_stable) != set(PROTECTED_INVARIANTS) or set(protected_candidate) != set(PROTECTED_INVARIANTS):
         raise ReviewEfficiencyError("protected metrics incompletas")
     stable_metrics = {name: {"value": protected_stable[name], "direction": "higher"} for name in PROTECTED_INVARIANTS}
