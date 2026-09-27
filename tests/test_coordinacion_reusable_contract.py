@@ -78,3 +78,15 @@ class T(unittest.TestCase):
             TEMPLATE,
         )
         self.assertIn('("/renovar-contrato ", "renovar-contrato")', SCRIPT)
+
+    def test_release_candidate_keeps_downstream_coordination_contract(self):
+        """El artefacto publicable conserva el caller @v1 y la capacidad fail-closed."""
+        callers = [
+            block
+            for block in job_blocks(TEMPLATE).values()
+            if "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1" in block
+        ]
+        self.assertTrue(callers)
+        self.assertTrue(all("checks: write" in block for block in callers))
+        self.assertIn("checks: write", job_blocks(W)["comentario"])
+        self.assertIn("create_failed_check(", SCRIPT)
