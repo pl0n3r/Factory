@@ -15,8 +15,8 @@
     {"id": "factory_map", "title": "Mapa de la fábrica", "ownership": "human"}
   ],
   "project_metadata": {
-    "required": ["name", "role", "phase", "roadmap", "stack"],
-    "phase_values": ["construccion", "live"],
+    "required": ["name", "tagline", "role", "phase", "roadmap", "stack"],
+    "phase_values": ["construction", "live"],
     "forbidden_operational_fields": ["main_sha", "version", "ci", "release", "health", "smoke", "quality", "active_issue", "active_pr", "last_release"]
   },
   "derived_blocks": {

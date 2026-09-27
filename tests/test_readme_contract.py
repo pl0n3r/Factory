@@ -68,15 +68,16 @@ class ReadmeContractTests(unittest.TestCase):
         metadata = self.contract["project_metadata"]
         self.assertEqual(
             metadata["required"],
-            ["name", "role", "phase", "roadmap", "stack"],
+            ["name", "tagline", "role", "phase", "roadmap", "stack"],
         )
-        self.assertEqual(metadata["phase_values"], ["construccion", "live"])
+        self.assertEqual(metadata["phase_values"], ["construction", "live"])
         forbidden = set(metadata["forbidden_operational_fields"])
         self.assertTrue(
             {"main_sha", "version", "ci", "release", "health", "active_pr"}
             <= forbidden
         )
         self.assertTrue(set(metadata["required"]).isdisjoint(forbidden))
+        self.assertIn("`tagline`: propósito breve visible", self.docs)
         self.assertIn("No se versionan manualmente como metadata", self.docs)
 
     def test_readme_does_not_duplicate_roadmap_or_changelog(self):

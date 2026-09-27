@@ -34,8 +34,9 @@ La anatomía es común; el branding, el tono y la profundidad siguen pertenecien
 La metadata estable del proyecto declara:
 
 - `name`: identidad visible;
+- `tagline`: propósito breve visible en el Hero / Project Card;
 - `role`: papel arquitectónico dentro de la fábrica;
-- `phase`: `construccion` o `live`;
+- `phase`: `construction` o `live`;
 - `roadmap`: referencia al Roadmap canónico;
 - `stack`: descripción estructurada del stack estable.
 
