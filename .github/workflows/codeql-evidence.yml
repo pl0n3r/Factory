@@ -44,9 +44,7 @@ jobs:
 
       - name: Resumir findings y fallar cerrado
         run: |
-          python3 scripts/codeql_sarif_summary.py codeql-results \
-            --json-out codeql-results/summary.json \
-            --github-summary "$GITHUB_STEP_SUMMARY" \
+          python3 scripts/codeql_sarif_summary.py \
             --fail-severity 7.0 \
             --require-zero-rule actions/cache-poisoning/poisonable-step
 

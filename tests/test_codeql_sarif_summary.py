@@ -2,8 +2,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from scripts.codeql_sarif_summary import summarize
+from scripts.codeql_sarif_summary import SUMMARY_PATH, main, summarize
 
 
 def sarif(rule_id: str, severity: str, result: bool = True) -> dict:
@@ -85,6 +86,21 @@ class CodeqlSarifSummaryTests(unittest.TestCase):
         self.assertEqual(summary["analysis_run_count"], 1)
         self.assertEqual(summary["result_count"], 0)
         self.assertEqual(summary["required_zero_rule_count"], 0)
+
+    def test_main_uses_fixed_evidence_output_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence = root / "codeql-results"
+            evidence.mkdir()
+            (evidence / "actions.sarif").write_text(
+                json.dumps(sarif("actions/example", "6.9", result=False)),
+                encoding="utf-8",
+            )
+            with patch("scripts.codeql_sarif_summary.SARIF_DIR", evidence), \
+                 patch("scripts.codeql_sarif_summary.SUMMARY_PATH", evidence / "summary.json"), \
+                 patch("sys.argv", ["codeql_sarif_summary.py"]):
+                self.assertEqual(main(), 0)
+            self.assertTrue((evidence / "summary.json").is_file())
 
 
 if __name__ == "__main__":

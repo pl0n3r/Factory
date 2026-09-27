@@ -25,6 +25,8 @@ class CodeqlEvidenceWorkflowTests(unittest.TestCase):
         self.assertIn("upload-database: false", self.text)
         self.assertIn("--fail-severity 7.0", self.text)
         self.assertIn("--require-zero-rule actions/cache-poisoning/poisonable-step", self.text)
+        self.assertNotIn("--json-out", self.text)
+        self.assertNotIn("--github-summary", self.text)
         self.assertIn("if-no-files-found: error", self.text)
         self.assertIn("retention-days: 3", self.text)
 
