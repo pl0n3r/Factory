@@ -53,7 +53,7 @@ def render_markdown_table(
         raise DerivedViewError("sort_by debe ser una columna declarada.")
 
     normalized = [
-        {column: _cell(row.get(column, "")) for column in columns}
+        {column: markdown_cell(row.get(column, "")) for column in columns}
         for row in rows
     ]
     normalized.sort(key=lambda row: row[sort_by])
@@ -73,5 +73,32 @@ def check_drift(expected: str, actual: str) -> None:
         raise DerivedViewDriftError("La vista derivada difiere de la salida esperada.")
 
 
-def _cell(value: object) -> str:
+def replace_delimited_block(
+    document: str,
+    *,
+    start_marker: str,
+    end_marker: str,
+    content: str,
+) -> str:
+    """Reemplaza exactamente un bloque delimitado sin tocar los bytes exteriores."""
+    if not start_marker or not end_marker or start_marker == end_marker:
+        raise DerivedViewError("Los markers de la vista son inválidos.")
+    if document.count(start_marker) != 1 or document.count(end_marker) != 1:
+        raise DerivedViewError("La vista debe contener exactamente un par de markers.")
+    start = document.index(start_marker)
+    end = document.find(end_marker, start + len(start_marker))
+    if end < 0:
+        raise DerivedViewError("Los markers de la vista están desordenados.")
+    before = document[: start + len(start_marker)]
+    after = document[end:]
+    normalized = content.rstrip("\n")
+    return f"{before}\n{normalized}\n{after}"
+
+
+def markdown_cell(value: object) -> str:
+    """Escapa una celda Markdown conservando el contrato histórico."""
     return str(value).strip().replace("\\", "\\\\").replace("|", "\\|")
+
+
+def _cell(value: object) -> str:
+    return markdown_cell(value)

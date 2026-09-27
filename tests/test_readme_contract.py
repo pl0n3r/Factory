@@ -2,6 +2,10 @@ import json
 import unittest
 from pathlib import Path
 
+from intelligence.derived_views import DerivedViewDriftError
+from readme.generate_readme import ReadmeEngineError, generate_readme
+from readme.validate_readme import validate_readme
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "readme" / "contract.json"
@@ -16,6 +20,14 @@ class ReadmeContractTests(unittest.TestCase):
         cls.contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         cls.template = TEMPLATE.read_text(encoding="utf-8")
         cls.docs = DOCS.read_text(encoding="utf-8")
+        cls.metadata = {
+            "name": "Factory",
+            "tagline": "Gobernanza reproducible",
+            "role": "governance/kit",
+            "phase": "construction",
+            "roadmap": "GitHub Issues",
+            "stack": "Python + GitHub Actions",
+        }
 
     def test_contract_v1_requires_common_sections(self):
         """Exige la anatomía común declarada por README Contract v1."""
@@ -99,6 +111,94 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("Esta vista resume; no duplica el Roadmap", self.template)
         self.assertIn("No conserva una copia completa del Roadmap", self.docs)
         self.assertIn("GitHub Releases para entregas", self.docs)
+
+
+    def test_generation_is_deterministic(self):
+        """Mismos inputs generan exactamente el mismo cockpit."""
+        sources = {
+            "main_sha": {"value": "abc123", "evidence": "git:main"},
+            "version": {"value": "1.2.3", "evidence": "config/version"},
+            "ci": {"state": "GREEN", "evidence": "check:42"},
+            "release": {"value": "v1.2.3", "evidence": "release:1.2.3"},
+            "health": {"state": "GREEN", "evidence": "health:sha=abc123"},
+        }
+        first = generate_readme(self.template, self.contract, self.metadata, sources)
+        second = generate_readme(self.template, self.contract, self.metadata, sources)
+        self.assertEqual(first, second)
+
+    def test_validator_detects_canonical_status_drift(self):
+        """Cambios de SHA, versión, release o estado producen drift."""
+        sources = {
+            "main_sha": {"value": "abc123", "evidence": "git:main"},
+            "version": {"value": "1.2.3", "evidence": "version:file"},
+            "ci": {"state": "GREEN", "evidence": "check:42"},
+            "release": {"value": "v1.2.3", "evidence": "release:1.2.3"},
+        }
+        committed = generate_readme(self.template, self.contract, self.metadata, sources)
+        validate_readme(committed, self.contract, self.metadata, sources)
+        for field, changed in (
+            ("main_sha", {"value": "def456", "evidence": "git:main"}),
+            ("version", {"value": "1.2.4", "evidence": "version:file"}),
+            ("release", {"value": "v1.2.4", "evidence": "release:1.2.4"}),
+            ("ci", {"state": "DEGRADED", "evidence": "check:43"}),
+        ):
+            candidate = dict(sources)
+            candidate[field] = changed
+            with self.subTest(field=field), self.assertRaises(DerivedViewDriftError):
+                validate_readme(committed, self.contract, self.metadata, candidate)
+
+    def test_unknown_health_never_becomes_green(self):
+        """Ausencia de evidencia queda UNKNOWN y GREEN sin evidencia falla."""
+        generated = generate_readme(
+            self.template,
+            self.contract,
+            self.metadata,
+            {"main_sha": "abc123"},
+        )
+        self.assertIn("| CI | UNKNOWN |", generated)
+        self.assertIn("| health | UNKNOWN |", generated)
+        self.assertIn("| release | UNKNOWN |", generated)
+        with self.assertRaises(ReadmeEngineError):
+            generate_readme(
+                self.template,
+                self.contract,
+                self.metadata,
+                {"health": {"state": "GREEN"}},
+            )
+
+    def test_generated_blocks_preserve_human_content(self):
+        """Solo el interior de los markers declarados puede cambiar."""
+        marker_start = "<!-- factory:status:start -->"
+        marker_end = "<!-- factory:status:end -->"
+        prefix, rest = self.template.split(marker_start, 1)
+        _, suffix = rest.split(marker_end, 1)
+        generated = generate_readme(
+            self.template,
+            self.contract,
+            self.metadata,
+            {"version": "1.2.3"},
+        )
+        generated_prefix, generated_rest = generated.split(marker_start, 1)
+        _, generated_suffix = generated_rest.split(marker_end, 1)
+        self.assertEqual(prefix, generated_prefix)
+        self.assertEqual(suffix, generated_suffix)
+
+    def test_operational_metadata_rejects_sensitive_fields(self):
+        """Campos sensibles o no declarados fallan antes de renderizar."""
+        with self.assertRaises(ReadmeEngineError):
+            generate_readme(
+                self.template,
+                self.contract,
+                self.metadata,
+                {"token": "secret"},
+            )
+        with self.assertRaises(ReadmeEngineError):
+            generate_readme(
+                self.template,
+                self.contract,
+                self.metadata,
+                {"deployment_url": "https://example.test"},
+            )
 
 
 if __name__ == "__main__":
