@@ -3,12 +3,47 @@ import unittest
 
 from scripts.dispatcher_v2 import (
     Candidate,
+    WorkItemReadinessContext,
     authority_class,
+    candidate_from_work_item,
     classify_readiness,
     dispatch_record,
     parallel_ready,
     select_next,
 )
+
+
+def work_item(**overrides):
+    payload = {
+        "work_id": "work-1",
+        "origin_mode": "automatic",
+        "origin_system": "factory",
+        "group_id": "group-1",
+        "work_type": "engineering",
+        "requested_capabilities": ["python"],
+        "required_roles": ["ingenieria-software"],
+        "authority_level": "standard",
+        "producer_ref": "factory#269",
+        "priority_class": "high",
+        "depends_on": [],
+        "claims": ["scripts/example.py"],
+        "policy_ref": "policy/factory",
+        "evidence_refs": ["evidence/run-1"],
+        "idempotency_key": "same-logical-work",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def ready_context(**overrides):
+    values = {
+        "authority_valid": True,
+        "policy_valid": True,
+        "freshness_valid": True,
+        "evidence_valid": True,
+    }
+    values.update(overrides)
+    return WorkItemReadinessContext(**values)
 
 
 class DispatcherV2Tests(unittest.TestCase):
@@ -156,7 +191,6 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(record["candidates"]["chosen"]["active_pr"], "#99")
         self.assertEqual(record["candidates"]["chosen"]["ready_age"], 120)
 
-
     def test_dispatch_record_rejects_duplicate_candidate_keys(self):
         with self.assertRaisesRegex(ValueError, "candidate keys must be unique"):
             dispatch_record([
@@ -198,6 +232,141 @@ class DispatcherV2Tests(unittest.TestCase):
             select_next([controlbot_epic, controlbot_leaf]).key,
             "controlbot-leaf",
         )
+
+    def test_work_item_adapter_preserves_single_dispatch_pipeline(self):
+        directed = work_item(
+            work_id="directed",
+            origin_mode="directed",
+            priority_class="medium",
+            authority_level="incident",
+        )
+        automatic = work_item(
+            work_id="automatic",
+            origin_mode="automatic",
+            priority_class="critical",
+            authority_level="standard",
+        )
+        candidates = [
+            candidate_from_work_item(directed, ready_context()),
+            candidate_from_work_item(automatic, ready_context()),
+        ]
+
+        self.assertEqual(select_next(candidates).key, "directed")
+        record = dispatch_record(candidates)
+        self.assertEqual(record["selected"], "directed")
+        self.assertEqual(record["selected_class"], "incident")
+        self.assertEqual(
+            record["candidates"]["automatic"]["metadata"]["origin_mode"],
+            "automatic",
+        )
+        self.assertEqual(
+            len(record["candidates"]["automatic"]["metadata"]["work_fingerprint"]),
+            64,
+        )
+
+    def test_automatic_work_fails_closed_on_authority_policy_freshness_evidence(self):
+        payload = work_item(origin_mode="automatic")
+        cases = {
+            "authority_unknown": ready_context(authority_valid=None),
+            "policy_invalid": ready_context(policy_valid=False),
+            "freshness_unknown": ready_context(freshness_valid=None),
+            "evidence_invalid": ready_context(evidence_valid=False),
+        }
+        for expected_reason, context in cases.items():
+            with self.subTest(reason=expected_reason):
+                candidate = candidate_from_work_item(payload, context)
+                state = classify_readiness(candidate)
+                self.assertFalse(state.ready)
+                self.assertIn(expected_reason, state.reasons)
+
+    def test_budget_and_approval_gates_are_explicit(self):
+        payload = work_item(
+            origin_mode="directed",
+            budget_ref="budget/2026",
+            approval_ref="approval/42",
+        )
+        candidate = candidate_from_work_item(payload, ready_context())
+        self.assertEqual(
+            set(classify_readiness(candidate).reasons),
+            {"budget_unknown", "approval_unknown"},
+        )
+
+        ready = candidate_from_work_item(
+            payload,
+            ready_context(budget_valid=True, approval_valid=True),
+        )
+        self.assertTrue(classify_readiness(ready).ready)
+
+    def test_work_item_dependencies_claims_reservations_and_idempotency_block(self):
+        payload = work_item(
+            depends_on=["factory#270"],
+            claims=["scripts/dispatcher_v2.py"],
+        )
+        baseline = candidate_from_work_item(payload, ready_context())
+        scope = baseline.metadata["idempotency_scope"]
+
+        candidate = candidate_from_work_item(
+            payload,
+            ready_context(
+                completed_dependencies=frozenset(),
+                active_claims=frozenset({"scripts/dispatcher_v2.py"}),
+                incompatible_reservation=True,
+                active_idempotency_scopes=frozenset({scope}),
+            ),
+        )
+        self.assertEqual(
+            set(classify_readiness(candidate).reasons),
+            {
+                "open_dependencies",
+                "claim_overlap",
+                "incompatible_reservation",
+                "idempotency_active",
+            },
+        )
+
+    def test_work_item_authority_class_preserves_dispatcher_hierarchy(self):
+        candidates = [
+            candidate_from_work_item(
+                work_item(work_id="health", authority_level="health", priority_class="medium"),
+                ready_context(),
+            ),
+            candidate_from_work_item(
+                work_item(work_id="incident", authority_level="incident", priority_class="medium"),
+                ready_context(),
+            ),
+            candidate_from_work_item(
+                work_item(work_id="active", authority_level="active_fix", priority_class="medium"),
+                ready_context(),
+            ),
+            candidate_from_work_item(
+                work_item(work_id="decision", authority_level="owner_decision", priority_class="medium"),
+                ready_context(),
+            ),
+            candidate_from_work_item(
+                work_item(work_id="critical", authority_level="standard", priority_class="critical"),
+                ready_context(),
+            ),
+        ]
+        self.assertEqual(select_next(candidates).key, "health")
+        self.assertEqual([authority_class(c) for c in candidates], [
+            "health",
+            "incident",
+            "active_fix",
+            "owner_decision",
+            "critical",
+        ])
+
+    def test_non_code_work_item_can_be_ready_without_repository(self):
+        payload = work_item(
+            work_type="content",
+            repository_ref=None,
+            claims=[],
+            requested_capabilities=["writing"],
+            required_roles=["producto"],
+        )
+        candidate = candidate_from_work_item(payload, ready_context())
+        self.assertTrue(classify_readiness(candidate).ready)
+        self.assertIsNone(candidate.metadata["repository_ref"])
 
 
 if __name__ == "__main__":
