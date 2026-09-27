@@ -1,0 +1,8 @@
+{
+  "name": "Factory",
+  "tagline": "Gobernanza, automatización y kit común para la fábrica de software de pl0n3r.",
+  "role": "governance/kit",
+  "phase": "construction",
+  "roadmap": "GitHub Issues + PLAN-AGENTES.md",
+  "stack": "Python 3 + GitHub Actions + reusable workflows"
+}

@@ -6,6 +6,112 @@
 
 ---
 
+## Operational Cockpit
+
+<!-- factory:status:start -->
+| Señal | Estado |
+| --- | --- |
+| main SHA | UNKNOWN |
+| versión | UNKNOWN |
+| CI | UNKNOWN |
+| release | UNKNOWN |
+| health | UNKNOWN |
+| smoke/observer | UNKNOWN |
+| quality/security | UNKNOWN |
+| Issue activo | UNKNOWN |
+| PR activo | UNKNOWN |
+| último release | UNKNOWN |
+<!-- factory:status:end -->
+
+> Este bloque es derivado. UNKNOWN/PENDING significa que falta evidencia canónica. Nunca se escribe GREEN manualmente.
+
+## Work Queue
+
+- **NOW:** [cola automática y prioridades canónicas](PLAN-AGENTES.md#0-dónde-trabajar-modo-dirigido-o-modo-despachador).
+- **NEXT:** [Issues ready de Factory](https://github.com/pl0n3r/Factory/issues).
+- **LATER:** [épicos y planificación](https://github.com/pl0n3r/Factory/issues?q=is%3Aissue+is%3Aopen).
+- **BLOCKED:** bloqueos y puertas se consultan en sus Issues y en [decisiones.yml](decisiones.yml).
+
+Esta vista enlaza las fuentes canónicas y no añade una copia operativa paralela del Roadmap ni del changelog.
+
+## Qué hace el producto
+
+Factory publica contratos y herramientas compartidas para que cada repositorio no mantenga copias divergentes de la misma infraestructura: reusable workflows, scripts deterministas de gobernanza, catálogo de etiquetas, perfiles profesionales y template de proyectos.
+
+Los consumidores usan el kit por canales versionados como `@v1`; las decisiones humanas reservadas siguen en [PLAN-AGENTES.md](PLAN-AGENTES.md) y [decisiones.yml](decisiones.yml).
+
+## Arquitectura en 60 segundos
+
+```mermaid
+flowchart LR
+    O["Dueño / decisiones"] --> F["Factory · governance/kit"]
+    F --> C["Condor"]
+    F --> G["GrindFlow"]
+    F --> B["BRVTAL"]
+    F --> R["FactoryRunner"]
+    F --> CB["ControlBot"]
+    F --> AF["AutoFactory"]
+    F --> N["Proyecto nuevo / template"]
+```
+
+Factory es la capa de **governance/kit**. No reemplaza el estado ni la lógica de negocio de los productos.
+
+## Stack e infraestructura
+
+**Stack declarado:** Python 3 + GitHub Actions + reusable workflows.
+
+La ejecución de producto permanece en cada repositorio consumidor; Factory publica contratos, validadores y automatización compartida.
+
+## Ciclo de entrega
+
+Issue → criterios de aceptación → reserva → rama canónica → PR → CI/revisión → merge → release del kit cuando aplica → validación del consumidor.
+
+Un merge no equivale a release y un release no equivale a producción validada. La evidencia operativa permanece en checks, Releases, health/smoke e Issues canónicos.
+
+## Calidad y seguridad
+
+- criterios de aceptación ejecutables y fail-closed;
+- acciones de terceros fijadas a SHA cuando el contrato lo exige;
+- mínimo privilegio y trust boundaries explícitos;
+- límites de rondas de revisión y coordinación anti-duplicación;
+- privacidad, secretos y datos personales tratados por las políticas comunes;
+- rollback y puertas humanas conservan la autoridad definida en [PLAN-AGENTES.md](PLAN-AGENTES.md).
+
+## Roadmap y fuentes de verdad
+
+- **Cómo trabajan los agentes y prioridad global:** [PLAN-AGENTES.md](PLAN-AGENTES.md)
+- **Contrato técnico de Factory:** [AGENTES.md](AGENTES.md)
+- **Decisiones vigentes del dueño:** [decisiones.yml](decisiones.yml)
+- **Trabajo y aceptación:** [GitHub Issues](https://github.com/pl0n3r/Factory/issues)
+- **Cambios revisados:** [Pull Requests](https://github.com/pl0n3r/Factory/pulls)
+- **Entregas del kit:** [GitHub Releases](https://github.com/pl0n3r/Factory/releases)
+- **README Contract v1:** [docs/readme-contract.md](docs/readme-contract.md)
+
+El README es una portada y una guía humana. No reemplaza ninguna de estas fuentes.
+
+## Desarrollo local
+
+Validación principal del repositorio:
+
+```bash
+python3 -m py_compile scripts/*.py
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
+
+## Mapa de la fábrica
+
+- **Factory:** governance/kit compartido y fuente de contratos comunes.
+- **ControlBot:** control plane privado de dashboard, decisiones y orquestación.
+- **FactoryRunner:** execution plane autónomo.
+- **AutoFactory:** herramienta local/manual independiente.
+- **Condor:** producto.
+- **GrindFlow:** producto.
+- **BRVTAL:** producto.
+
+Los siete repositorios son elegibles para el despachador, pero esa elegibilidad **no mezcla sus responsabilidades arquitectónicas**.
+
+---
+
 ## ¿Por qué existe?
 
 Hoy los proyectos los construyen agentes de IA (GPT) de forma autónoma. Funcionó, pero aparecieron cuatro problemas:

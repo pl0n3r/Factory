@@ -19,6 +19,9 @@ REUSABLE_WORKFLOW = ROOT / ".github" / "workflows" / "readme.yml"
 TEMPLATE_CALLER = ROOT / "template" / ".github" / "workflows" / "readme-contract.yml"
 TEMPLATE_PROJECT = ROOT / "template" / "readme" / "project.json"
 TEMPLATE_BOOTSTRAP_README = ROOT / "template" / "README.md"
+FACTORY_PROJECT = ROOT / "readme" / "projects" / "factory.json"
+FACTORY_README = ROOT / "README.md"
+DERIVED_VIEWS = ROOT / "config" / "derived_views.json"
 
 
 class ReadmeContractTests(unittest.TestCase):
@@ -32,6 +35,9 @@ class ReadmeContractTests(unittest.TestCase):
         cls.template_caller = TEMPLATE_CALLER.read_text(encoding="utf-8")
         cls.template_project = json.loads(TEMPLATE_PROJECT.read_text(encoding="utf-8"))
         cls.template_bootstrap_readme = TEMPLATE_BOOTSTRAP_README.read_text(encoding="utf-8")
+        cls.factory_project = json.loads(FACTORY_PROJECT.read_text(encoding="utf-8"))
+        cls.factory_readme = FACTORY_README.read_text(encoding="utf-8")
+        cls.derived_views = json.loads(DERIVED_VIEWS.read_text(encoding="utf-8"))
         cls.metadata = {
             "name": "Factory",
             "tagline": "Gobernanza reproducible",
@@ -222,6 +228,101 @@ class ReadmeContractTests(unittest.TestCase):
                 self.metadata,
                 {"deployment_url": "https://example.test"},
             )
+
+
+    def test_factory_metadata_matches_contract_v1(self):
+        """Factory declara solo metadata estable y exactamente la exigida por v1."""
+        required = set(self.contract["project_metadata"]["required"])
+        forbidden = set(
+            self.contract["project_metadata"]["forbidden_operational_fields"]
+        )
+        self.assertEqual(set(self.factory_project), required)
+        self.assertTrue(set(self.factory_project).isdisjoint(forbidden))
+        self.assertEqual(self.factory_project["name"], "Factory")
+        self.assertEqual(self.factory_project["role"], "governance/kit")
+        self.assertEqual(self.factory_project["phase"], "construction")
+        validate_project_metadata(self.contract, self.factory_project)
+
+    def test_factory_readme_adopts_contract_v1(self):
+        """El README raíz adopta anatomía y markers sin convertirse en roadmap."""
+        for section in self.contract["sections"][1:]:
+            with self.subTest(section=section["id"]):
+                self.assertEqual(
+                    self.factory_readme.count(f"## {section['title']}"),
+                    1,
+                )
+        status = self.contract["derived_blocks"]["status"]
+        self.assertEqual(self.factory_readme.count(status["start_marker"]), 1)
+        self.assertEqual(self.factory_readme.count(status["end_marker"]), 1)
+        self.assertEqual(self.factory_readme.count("## Operational Cockpit"), 1)
+        self.assertEqual(self.factory_readme.count("## Work Queue"), 1)
+        self.assertNotIn("## Changelog", self.factory_readme)
+        self.assertNotIn("## Roadmap completo", self.factory_readme)
+
+    def test_factory_readme_status_is_derived_fail_closed(self):
+        """Sin evidencia el cockpit queda UNKNOWN y nunca GREEN manual."""
+        validate_readme(
+            self.factory_readme,
+            self.contract,
+            self.factory_project,
+            {},
+        )
+        start = self.contract["derived_blocks"]["status"]["start_marker"]
+        end = self.contract["derived_blocks"]["status"]["end_marker"]
+        status_block = self.factory_readme.split(start, 1)[1].split(end, 1)[0]
+        self.assertIn("| CI | UNKNOWN |", status_block)
+        self.assertIn("| health | UNKNOWN |", status_block)
+        self.assertNotIn("GREEN", status_block)
+        with self.assertRaises(ReadmeEngineError):
+            generate_readme(
+                self.factory_readme,
+                self.contract,
+                self.factory_project,
+                {"health": {"state": "GREEN"}},
+            )
+
+    def test_factory_readme_view_has_canonical_sources(self):
+        """La vista derivada usa fuentes externas al README y metadata separada."""
+        views = {
+            row["view_id"]: row
+            for row in self.derived_views["views"]
+        }
+        view = views["factory.readme.status"]
+        self.assertEqual(view["view"], "README.md#operational-cockpit")
+        self.assertEqual(view["mode"], "generated")
+        self.assertEqual(
+            view["generator"],
+            "readme.generate_readme:generate_readme",
+        )
+        self.assertEqual(
+            view["drift_check"],
+            "readme.validate_readme:validate_readme",
+        )
+        self.assertIn("readme/contract.json", view["source"])
+        self.assertIn("readme/projects/factory.json", view["source"])
+        self.assertIn("evidencia operativa canónica externa", view["source"])
+        self.assertNotIn("README.md +", view["source"])
+
+    def test_factory_readme_preserves_governance_links(self):
+        """La adopción conserva gobernanza y responsabilidades arquitectónicas."""
+        for link in ("PLAN-AGENTES.md", "AGENTES.md", "decisiones.yml"):
+            with self.subTest(link=link):
+                self.assertIn(link, self.factory_readme)
+        for component in (
+            "Factory",
+            "ControlBot",
+            "FactoryRunner",
+            "AutoFactory",
+            "Condor",
+            "GrindFlow",
+            "BRVTAL",
+        ):
+            with self.subTest(component=component):
+                self.assertIn(component, self.factory_readme)
+        self.assertIn(
+            "no mezcla sus responsabilidades arquitectónicas",
+            self.factory_readme,
+        )
 
 
     def test_reusable_readme_workflow_is_read_only_and_calls_validator(self):

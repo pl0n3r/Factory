@@ -11,7 +11,7 @@
     },
     {
       "view_id": "factory.readme.status",
-      "source": "readme/contract.json + metadata estable + evidencia operativa local explícita",
+      "source": "readme/contract.json + readme/projects/factory.json + evidencia operativa canónica externa (git/checks/releases/health cuando exista)",
       "view": "README.md#operational-cockpit",
       "mode": "generated",
       "generator": "readme.generate_readme:generate_readme",
