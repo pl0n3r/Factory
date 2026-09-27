@@ -374,8 +374,6 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertTrue(classify_readiness(candidate).ready)
         self.assertIsNone(candidate.metadata["repository_ref"])
 
-
-class AdaptiveDispatcherIntegrationTests(unittest.TestCase):
     def adaptive_snapshot(self, freshness="fresh"):
         """Snapshot mínimo para composición Presence -> Fencing -> Dispatcher."""
         return {
