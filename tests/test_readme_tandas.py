@@ -55,7 +55,7 @@ class ReadmeTandasTests(unittest.TestCase):
 
     def test_governance_summary_does_not_drift(self):
         self.assertIn("PLAN-AGENTES.md) sigue siendo la fuente de verdad.", self.readme)
-        self.assertIn("ControlBot y AutoFactory:** solo en modo dirigido", self.readme)
+        self.assertIn("Factory, ControlBot y AutoFactory:** también forman parte de la cola automática", self.readme)
 
 
 if __name__ == "__main__":
