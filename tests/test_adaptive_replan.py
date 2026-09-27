@@ -112,6 +112,21 @@ class AdaptiveReplanTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "fail_closed")
 
+        for event_type in ("health_changed", "incident_changed"):
+            for state in ("unknown", "stale"):
+                with self.subTest(event_type=event_type, state=state):
+                    untrusted = decide_replan(
+                        base_snapshot(),
+                        [event(event_type, state=state)],
+                        active_work_safe=True,
+                        active_work_ready=True,
+                    )
+                    self.assertEqual(untrusted.action, "fail_closed")
+                    self.assertIn(
+                        f"event_{state}:{event_type}:factory",
+                        untrusted.reasons,
+                    )
+
     def test_safe_active_work_preserves_continuity(self):
         """AC-04: una mejora marginal de capacidad no migra trabajo seguro."""
         decision = decide_replan(
