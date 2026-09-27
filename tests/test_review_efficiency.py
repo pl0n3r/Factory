@@ -47,6 +47,8 @@ class ReviewEfficiencyTests(unittest.TestCase):
         self.assertEqual({c["key"]["policy_id"] for c in report["cohorts"]}, {"policy-a", "policy-b"})
         legacy = build_report([observation(pr=3, policy_id=None), observation(pr=4, policy_id=None)], min_samples=1)
         self.assertEqual(len(legacy["cohorts"]), 1)
+        mixed = build_report([observation(pr=5, policy_id=None), observation(pr=6, policy_id="policy-a")], min_samples=1)
+        self.assertEqual([c["key"]["policy_id"] for c in mixed["cohorts"]], [None, "policy-a"])
     def test_insufficient_sample_yields_no_policy_recommendation(self):
         report = build_report(fixture(), min_samples=3)
         self.assertTrue(report["baseline_reproducible"])

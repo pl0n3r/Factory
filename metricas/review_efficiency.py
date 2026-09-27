@@ -133,7 +133,7 @@ def build_report(records: list[dict[str, Any]], min_samples: int = 3) -> dict[st
     for row in rows:
         grouped[(row["repo"], row["task_type"], row["surface"], row["risk"], row["provider"], row["policy_id"])].append(row)
     cohorts = []
-    for key, items in sorted(grouped.items()):
+    for key, items in sorted(grouped.items(), key=lambda item: tuple("" if value is None else value for value in item[0])):
         useful = [row for row in items if is_substantive_review(row)]
         by_round: dict[int, list[dict[str, Any]]] = defaultdict(list)
         for row in useful:
