@@ -59,6 +59,7 @@ class ReplanDecision:
 
 
 def _text(value: object, field: str) -> str:
+    """Normaliza texto obligatorio del contrato de eventos."""
     if not isinstance(value, str) or not value.strip():
         raise ReplanValidationError(f"invalid_{field}")
     return value.strip()
@@ -84,6 +85,7 @@ def normalize_event(payload: dict[str, object]) -> ReplanEvent:
 
 
 def _canonical_hash(payload: object) -> str:
+    """Calcula SHA-256 canónico para evidencia determinista."""
     encoded = json.dumps(
         payload,
         sort_keys=True,
@@ -118,6 +120,7 @@ def coalesce_events(events: list[dict[str, object]]) -> tuple[ReplanEvent, ...]:
 
 
 def _presence_fail_closed(assessment: PresenceAssessment) -> bool:
+    """Indica si la evidencia de presencia obliga a fallar cerrado."""
     return "unknown" in assessment.classifications or any(
         reason.endswith("stale")
         or reason.endswith("freshness_unknown")
@@ -128,6 +131,7 @@ def _presence_fail_closed(assessment: PresenceAssessment) -> bool:
 
 
 def _presence_reasons(assessment: PresenceAssessment) -> list[str]:
+    """Convierte clasificaciones de presencia en causas atribuibles."""
     return [f"presence:{value}" for value in assessment.classifications]
 
 
