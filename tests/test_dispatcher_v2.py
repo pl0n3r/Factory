@@ -14,7 +14,7 @@ from scripts.dispatcher_v2 import (
     select_next,
 )
 
-from scripts.adaptive_fencing import evaluate_fencing
+from scripts.adaptive_fencing import FencingContext, evaluate_fencing
 from scripts.adaptive_replan import decide_replan
 from scripts.presence_contract import classify_presence
 
@@ -424,14 +424,16 @@ class AdaptiveDispatcherIntegrationTests(unittest.TestCase):
                 "generation": generation,
                 "attempt": 1,
             }],
-            current_generation=7,
-            current_attempt=1,
-            cooldown_seconds=0,
-            elapsed_since_replan=0,
-            active_work_safe=False,
-            active_work_ready=True,
-            safe_point=True,
-            preemptibility="preemptible",
+            FencingContext(
+                current_generation=7,
+                current_attempt=1,
+                cooldown_seconds=0,
+                elapsed_since_replan=0,
+                active_work_safe=False,
+                active_work_ready=True,
+                safe_point=True,
+                preemptibility="preemptible",
+            ),
         )
 
     def test_presence_unknown_or_stale_is_not_ready(self):
@@ -567,14 +569,16 @@ class AdaptiveDispatcherIntegrationTests(unittest.TestCase):
         fencing = evaluate_fencing(
             snapshot,
             [{"event": event_payload, "generation": 7, "attempt": 1}],
-            current_generation=7,
-            current_attempt=1,
-            cooldown_seconds=300,
-            elapsed_since_replan=0,
-            active_work_safe=True,
-            active_work_ready=True,
-            safe_point=True,
-            preemptibility="preemptible",
+            FencingContext(
+                current_generation=7,
+                current_attempt=1,
+                cooldown_seconds=300,
+                elapsed_since_replan=0,
+                active_work_safe=True,
+                active_work_ready=True,
+                safe_point=True,
+                preemptibility="preemptible",
+            ),
         )
         record = adaptive_dispatch_record(
             [
