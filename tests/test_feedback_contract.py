@@ -17,6 +17,7 @@ class FeedbackContractTests(unittest.TestCase):
 
     @staticmethod
     def _work_item():
+        """Construye un WorkItem canónico determinista para el contrato."""
         return {
             "work_id": "work-272",
             "origin_mode": "automatic",
@@ -40,6 +41,7 @@ class FeedbackContractTests(unittest.TestCase):
 
     @classmethod
     def _feedback(cls):
+        """Construye un feedback terminal válido asociado al WorkItem fixture."""
         item = cls._work_item()
         return {
             "work_id": item["work_id"],
@@ -53,6 +55,7 @@ class FeedbackContractTests(unittest.TestCase):
         }
 
     def test_execution_feedback_is_attributable_to_work_item(self):
+        """AC-01: conserva atribución verificable al WorkItem original."""
         item = self._work_item()
         payload = self._feedback()
         result = validate_execution_feedback(
@@ -70,6 +73,7 @@ class FeedbackContractTests(unittest.TestCase):
         )
 
     def test_execution_feedback_fails_closed_on_invalid_provenance_or_freshness(self):
+        """AC-02: rechaza provenance, freshness y estados inválidos."""
         item = self._work_item()
         now = datetime(2026, 9, 27, 22, 20, tzinfo=timezone.utc)
         cases = []
@@ -103,6 +107,7 @@ class FeedbackContractTests(unittest.TestCase):
                 validate_execution_feedback(payload, item, now=now)
 
     def test_execution_feedback_is_idempotent(self):
+        """AC-03: feedback equivalente produce la misma identidad."""
         item = self._work_item()
         now = datetime(2026, 9, 27, 22, 20, tzinfo=timezone.utc)
         first = self._feedback()
@@ -114,6 +119,7 @@ class FeedbackContractTests(unittest.TestCase):
         )
 
     def test_execution_feedback_does_not_expand_dispatch_authority(self):
+        """AC-04: el feedback no amplía autoridad ni ranking."""
         item = self._work_item()
         now = datetime(2026, 9, 27, 22, 20, tzinfo=timezone.utc)
         forbidden_fields = ("priority_class", "authority_level", "rank", "executor_policy")
@@ -124,6 +130,7 @@ class FeedbackContractTests(unittest.TestCase):
                 validate_execution_feedback(payload, item, now=now)
 
     def test_factory_queue_docs_define_feedback_handoff(self):
+        """AC-05: la documentación define el handoff hacia #273."""
         root = Path(__file__).resolve().parents[1]
         docs = (root / "docs" / "factory-queue.md").read_text(encoding="utf-8")
         self.assertIn("WorkItem → readiness/dispatch → ejecución → evidence/feedback", docs)
@@ -133,6 +140,7 @@ class FeedbackContractTests(unittest.TestCase):
         self.assertIn("#273", docs)
 
     def test_producto_feedback_suite_is_part_of_required_ci(self):
+        """Mantiene la suite histórica de feedback dentro del CI requerido."""
         root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
             [
