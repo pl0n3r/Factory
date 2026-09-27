@@ -83,6 +83,9 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertTrue(set(metadata["required"]).isdisjoint(forbidden))
         self.assertIn("`tagline`: propósito breve visible", self.docs)
         self.assertIn("No se versionan manualmente como metadata", self.docs)
+        self.assertIn("{{project.stack}}", self.template)
+        self.assertIn("| CI | UNKNOWN |", self.template)
+        self.assertNotIn("| CI | PENDING |", self.template)
 
     def test_readme_does_not_duplicate_roadmap_or_changelog(self):
         """Impide que el README replique roadmap o historial de releases."""

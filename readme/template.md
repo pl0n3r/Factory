@@ -11,7 +11,7 @@
 | --- | --- |
 | main SHA | UNKNOWN |
 | versión | UNKNOWN |
-| CI | PENDING |
+| CI | UNKNOWN |
 | release | UNKNOWN |
 | health | UNKNOWN |
 | smoke/observer | UNKNOWN |
@@ -47,6 +47,8 @@ flowchart LR
 Mantén aquí solo los límites y dependencias que un lector necesita para orientarse.
 
 ## Stack e infraestructura
+
+**Stack declarado:** {{project.stack}}
 
 Documenta runtime, backend/frontend cuando apliquen, datos, hosting, observabilidad y storage desde metadata estable.
 
