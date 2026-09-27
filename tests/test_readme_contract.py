@@ -254,9 +254,10 @@ class ReadmeContractTests(unittest.TestCase):
         status = self.contract["derived_blocks"]["status"]
         self.assertEqual(self.factory_readme.count(status["start_marker"]), 1)
         self.assertEqual(self.factory_readme.count(status["end_marker"]), 1)
-        self.assertNotIn("## Estado actual", self.factory_readme)
-        self.assertNotIn("v1.0.5", self.factory_readme)
-        self.assertNotIn("#209", self.factory_readme)
+        self.assertEqual(self.factory_readme.count("## Operational Cockpit"), 1)
+        self.assertEqual(self.factory_readme.count("## Work Queue"), 1)
+        self.assertNotIn("## Changelog", self.factory_readme)
+        self.assertNotIn("## Roadmap completo", self.factory_readme)
 
     def test_factory_readme_status_is_derived_fail_closed(self):
         """Sin evidencia el cockpit queda UNKNOWN y nunca GREEN manual."""
