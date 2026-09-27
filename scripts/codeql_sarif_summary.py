@@ -79,18 +79,25 @@ def _validated_runs(path: Path) -> list[dict[str, Any]]:
 def _descriptor(
     run: dict[str, Any],
     result: dict[str, Any],
-) -> tuple[str, dict[str, Any] | None]:
+) -> tuple[str, str, dict[str, Any] | None]:
     by_id, driver_rules = _rules(run)
     nested_rule = result.get("rule")
     nested_rule_id = nested_rule.get("id") if isinstance(nested_rule, dict) else ""
     rule_id = str(result.get("ruleId") or nested_rule_id or "")
+    if not rule_id:
+        raise ValueError("SARIF result has no rule identifier")
+
     descriptor = by_id.get(rule_id)
     index = result.get("ruleIndex")
-
     if descriptor is None and isinstance(index, int) and 0 <= index < len(driver_rules):
         descriptor = driver_rules[index]
-        rule_id = rule_id or str(descriptor.get("id") or "")
-    return rule_id, descriptor
+
+    descriptor_rule_id = (
+        str(descriptor.get("id") or rule_id)
+        if isinstance(descriptor, dict)
+        else rule_id
+    )
+    return rule_id, descriptor_rule_id, descriptor
 
 
 def _record_result(
@@ -102,13 +109,13 @@ def _record_result(
     zero_rules: set[str],
 ) -> None:
     summary["result_count"] += 1
-    rule_id, descriptor = _descriptor(run, result)
+    rule_id, descriptor_rule_id, descriptor = _descriptor(run, result)
     severity = _security_severity(descriptor)
     if severity > 0:
         summary["security_result_count"] += 1
 
     blocks_by_severity = severity >= threshold
-    blocks_by_rule = rule_id in zero_rules
+    blocks_by_rule = descriptor_rule_id in zero_rules
     summary["high_or_critical_count"] += int(blocks_by_severity)
     summary["required_zero_rule_count"] += int(blocks_by_rule)
 

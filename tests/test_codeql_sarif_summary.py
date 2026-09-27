@@ -98,6 +98,28 @@ class CodeqlSarifSummaryTests(unittest.TestCase):
         self.assertEqual(summary["high_or_critical_count"], 1)
         self.assertEqual(summary["required_zero_rule_count"], 1)
 
+
+    def test_result_without_rule_identifier_is_rejected(self) -> None:
+        payload = sarif("actions/example", "6.9")
+        payload["runs"][0]["results"][0] = {}
+        path = self.write(payload)
+        with self.assertRaisesRegex(ValueError, "no rule identifier"):
+            summarize([path], 7.0, {"actions/cache-poisoning/poisonable-step"})
+
+    def test_descriptor_id_enforces_zero_rule_for_hierarchical_result_id(self) -> None:
+        payload = sarif("actions/cache-poisoning/poisonable-step", "6.9")
+        result = payload["runs"][0]["results"][0]
+        result["ruleId"] = "actions/cache-poisoning/poisonable-step/variant"
+        result["ruleIndex"] = 0
+        path = self.write(payload)
+        summary = summarize([path], 7.0, {"actions/cache-poisoning/poisonable-step"})
+        self.assertEqual(summary["high_or_critical_count"], 0)
+        self.assertEqual(summary["required_zero_rule_count"], 1)
+        self.assertEqual(
+            summary["findings"][0]["rule_id"],
+            "actions/cache-poisoning/poisonable-step/variant",
+        )
+
     def test_zero_results_is_valid_evidence(self) -> None:
         path = self.write(sarif("actions/cache-poisoning/poisonable-step", "8.1", result=False))
         summary = summarize([path], 7.0, {"actions/cache-poisoning/poisonable-step"})
