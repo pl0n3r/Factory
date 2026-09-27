@@ -12,11 +12,13 @@ DOCS = ROOT / "docs" / "readme-contract.md"
 class ReadmeContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        """Carga una sola vez los artefactos del contrato para la suite."""
         cls.contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         cls.template = TEMPLATE.read_text(encoding="utf-8")
         cls.docs = DOCS.read_text(encoding="utf-8")
 
     def test_contract_v1_requires_common_sections(self):
+        """Exige la anatomía común declarada por README Contract v1."""
         self.assertEqual(self.contract["version"], 1)
         self.assertEqual(self.contract["contract_id"], "factory.readme")
         expected = [
@@ -52,6 +54,7 @@ class ReadmeContractTests(unittest.TestCase):
                 self.assertIn(heading, self.template)
 
     def test_contract_v1_separates_human_and_generated_blocks(self):
+        """Verifica la frontera entre narrativa humana y bloques derivados."""
         status = self.contract["derived_blocks"]["status"]
         policy = self.contract["content_policy"]
         sections = {row["id"]: row for row in self.contract["sections"]}
@@ -65,6 +68,7 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("frontera de escritura", self.docs)
 
     def test_contract_v1_requires_minimal_project_metadata(self):
+        """Mantiene mínima y estable la metadata de proyecto requerida."""
         metadata = self.contract["project_metadata"]
         self.assertEqual(
             metadata["required"],
@@ -81,6 +85,7 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("No se versionan manualmente como metadata", self.docs)
 
     def test_readme_does_not_duplicate_roadmap_or_changelog(self):
+        """Impide que el README replique roadmap o historial de releases."""
         policy = self.contract["content_policy"]
         self.assertEqual(policy["readme_is_not"], ["roadmap", "changelog"])
         self.assertTrue(policy["canonical_sources_are_links_not_copies"])
