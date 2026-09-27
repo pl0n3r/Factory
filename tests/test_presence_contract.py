@@ -133,6 +133,46 @@ class PresenceContractTests(unittest.TestCase):
                 with self.assertRaises(PresenceValidationError):
                     validate_presence_snapshot(payload)
 
+    def test_normalized_duplicates_and_non_string_list_items_are_rejected(self):
+        """AC-05: listas se validan antes de deduplicar y tras normalizar."""
+        duplicate = snapshot()
+        duplicate["sessions"] = [fresh_session()]
+        duplicate["sessions"][0]["capabilities"] = ["python", " python "]
+
+        non_string = snapshot()
+        non_string["sessions"] = [fresh_session()]
+        non_string["sessions"][0]["claims"] = [{"path": "scripts/a.py"}]
+
+        for payload in (duplicate, non_string):
+            with self.subTest(payload=payload):
+                with self.assertRaises(PresenceValidationError):
+                    validate_presence_snapshot(payload)
+
+    def test_invalid_or_future_timestamps_are_rejected(self):
+        """AC-03: timestamps inválidos o temporalmente imposibles fallan cerrado."""
+        invalid_observed = snapshot()
+        invalid_observed["observed_at"] = "not-a-date"
+
+        invalid_heartbeat = snapshot()
+        invalid_heartbeat["sessions"] = [fresh_session()]
+        invalid_heartbeat["sessions"][0]["heartbeat_at"] = "not-a-date"
+
+        future_heartbeat = snapshot()
+        future_heartbeat["sessions"] = [fresh_session()]
+        future_heartbeat["sessions"][0]["heartbeat_at"] = "2026-09-27T23:11:00Z"
+
+        for payload in (invalid_observed, invalid_heartbeat, future_heartbeat):
+            with self.subTest(payload=payload):
+                with self.assertRaises(PresenceValidationError):
+                    validate_presence_snapshot(payload)
+
+    def test_boolean_version_is_rejected(self):
+        """AC-05: JSON true no puede suplantar la versión numérica 1."""
+        payload = snapshot()
+        payload["version"] = True
+        with self.assertRaisesRegex(PresenceValidationError, "unsupported_version"):
+            validate_presence_snapshot(payload)
+
     def test_classification_is_deterministic(self):
         """AC-06: mismo snapshot produce exactamente la misma salida."""
         payload = snapshot()
