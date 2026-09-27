@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-from intelligence.derived_views import DerivedViewDriftError
+from intelligence.derived_views import DerivedViewDriftError, DerivedViewError
 from readme.generate_readme import ReadmeEngineError, generate_readme
 from readme.validate_readme import validate_readme
 
@@ -182,6 +182,17 @@ class ReadmeContractTests(unittest.TestCase):
         _, generated_suffix = generated_rest.split(marker_end, 1)
         self.assertEqual(prefix, generated_prefix)
         self.assertEqual(suffix, generated_suffix)
+
+    def test_generated_content_rejects_contract_markers(self):
+        """Valores operativos no pueden inyectar markers del bloque derivado."""
+        end_marker = self.contract["derived_blocks"]["status"]["end_marker"]
+        with self.assertRaises(DerivedViewError):
+            generate_readme(
+                self.template,
+                self.contract,
+                self.metadata,
+                {"active_issue": f"#262 {end_marker}"},
+            )
 
     def test_operational_metadata_rejects_sensitive_fields(self):
         """Campos sensibles o no declarados fallan antes de renderizar."""

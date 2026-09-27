@@ -92,6 +92,8 @@ def replace_delimited_block(
     before = document[: start + len(start_marker)]
     after = document[end:]
     normalized = content.rstrip("\n")
+    if start_marker in normalized or end_marker in normalized:
+        raise DerivedViewError("El contenido generado contiene markers.")
     return f"{before}\n{normalized}\n{after}"
 
 
