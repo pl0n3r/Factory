@@ -74,6 +74,7 @@ class FactoryQueueE2ETests(unittest.TestCase):
         selected = select_next([first, duplicate])
         self.assertIsNotNone(selected)
         self.assertEqual(selected.key, factory_item["work_id"])
+        self.assertIsNone(select_next([duplicate]))
 
     def test_ready_work_flows_through_existing_dispatcher(self):
         """AC-02: readiness y selección usan exclusivamente Dispatcher V2 existente."""
