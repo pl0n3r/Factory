@@ -43,8 +43,8 @@ el motor de replan: generaciones o intentos anteriores/futuros fallan cerrado y
 no alteran el intento actual. Envelopes equivalentes se coalescen y producen un
 fingerprint estable independiente del orden de entrada.
 
-El cooldown se expresa como duración y tiempo transcurrido, sin reloj interno ni
-estado persistido. Solo retiene replans no críticos; health/incident válidos
+Los inputs del intento se agrupan en `FencingContext`; el cooldown se expresa
+como duración y tiempo transcurrido, sin reloj interno ni estado persistido. Solo retiene replans no críticos; health/incident válidos
 pueden bypassarlo, pero siguen sujetos a authority/readiness explícitos. Un
 `replan` no equivale a preemption: `pause_allowed` solo es true cuando el
 trabajo es `preemptible` y está en `safe_point`.

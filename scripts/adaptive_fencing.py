@@ -7,6 +7,7 @@ import hashlib
 import json
 
 from scripts.adaptive_replan import (
+    ReplanDecision,
     ReplanEvent,
     decide_replan,
     event_fingerprint as replan_event_fingerprint,
@@ -27,6 +28,24 @@ class FencedEvent:
     event: ReplanEvent
     generation: int
     attempt: int
+
+
+@dataclass(frozen=True)
+class FencingContext:
+    """Contexto explícito de fencing, cooldown y continuidad del intento."""
+
+    current_generation: int
+    current_attempt: int
+    cooldown_seconds: int
+    elapsed_since_replan: int
+    active_work_safe: bool
+    active_work_ready: bool
+    safe_point: bool
+    preemptibility: str
+    authority_valid: bool | None = True
+    readiness_valid: bool | None = True
+    readiness_changed: bool = False
+    owner_decision_target_ready: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +142,35 @@ def _gate_reason(name: str, value: bool | None) -> str | None:
     return f"{name}_unknown"
 
 
+def _validate_context(context: FencingContext) -> FencingContext:
+    """Valida el contexto completo y devuelve una copia normalizada."""
+    if not isinstance(context, FencingContext):
+        raise FencingValidationError("invalid_context")
+    if not isinstance(context.active_work_safe, bool) or not isinstance(context.active_work_ready, bool):
+        raise FencingValidationError("invalid_active_work_state")
+    if not isinstance(context.safe_point, bool):
+        raise FencingValidationError("invalid_safe_point")
+    if context.preemptibility not in {"preemptible", "non_preemptible"}:
+        raise FencingValidationError("invalid_preemptibility")
+    return FencingContext(
+        current_generation=_non_negative_int(context.current_generation, "current_generation"),
+        current_attempt=_non_negative_int(context.current_attempt, "current_attempt"),
+        cooldown_seconds=_non_negative_int(context.cooldown_seconds, "cooldown_seconds"),
+        elapsed_since_replan=_non_negative_int(
+            context.elapsed_since_replan,
+            "elapsed_since_replan",
+        ),
+        active_work_safe=context.active_work_safe,
+        active_work_ready=context.active_work_ready,
+        safe_point=context.safe_point,
+        preemptibility=context.preemptibility,
+        authority_valid=_boolean_or_unknown(context.authority_valid, "authority_valid"),
+        readiness_valid=_boolean_or_unknown(context.readiness_valid, "readiness_valid"),
+        readiness_changed=context.readiness_changed,
+        owner_decision_target_ready=context.owner_decision_target_ready,
+    )
+
+
 def _fence_reasons(
     events: tuple[FencedEvent, ...],
     *,
@@ -148,98 +196,106 @@ def _batch_fingerprint(events: tuple[FencedEvent, ...]) -> str:
     return _fingerprint([_fenced_event_fingerprint(event) for event in events])
 
 
+def _failed_fence_decision(
+    snapshot: dict[str, object],
+    events: tuple[FencedEvent, ...],
+    context: FencingContext,
+    reasons: tuple[str, ...],
+) -> FencingDecision:
+    """Construye una decisión fail-closed sin invocar el motor de replan."""
+    return FencingDecision(
+        action="fail_closed",
+        pause_allowed=False,
+        generation=context.current_generation,
+        attempt=context.current_attempt,
+        snapshot_fingerprint=_fingerprint(snapshot),
+        event_fingerprint=_batch_fingerprint(events),
+        coalesced_events=len(events),
+        reasons=reasons,
+    )
+
+
+def _apply_gates_and_cooldown(
+    replan: ReplanDecision,
+    events: tuple[FencedEvent, ...],
+    context: FencingContext,
+) -> tuple[str, list[str]]:
+    """Aplica gates y cooldown sin modificar la decisión fuente de #281."""
+    action = replan.action
+    reasons = list(replan.reasons)
+    if action == "replan":
+        gate_reasons = tuple(
+            reason
+            for name, value in (
+                ("authority", context.authority_valid),
+                ("readiness", context.readiness_valid),
+            )
+            if (reason := _gate_reason(name, value)) is not None
+        )
+        if gate_reasons:
+            reasons.extend(gate_reasons)
+            return "fail_closed", reasons
+
+    immediate = any(item.event.event_type in IMMEDIATE_TYPES for item in events)
+    remaining = max(context.cooldown_seconds - context.elapsed_since_replan, 0)
+    if action == "replan" and not immediate and remaining > 0:
+        reasons.append(f"cooldown_active:{remaining}")
+        return "keep", reasons
+    return action, reasons
+
+
+def _pause_policy(
+    action: str,
+    reasons: list[str],
+    context: FencingContext,
+) -> tuple[bool, list[str]]:
+    """Habilita pausa solo para replan preemptible en safe point."""
+    if action != "replan":
+        return False, reasons
+    if context.preemptibility != "preemptible":
+        reasons.append("pause_blocked_non_preemptible")
+        return False, reasons
+    if not context.safe_point:
+        reasons.append("pause_blocked_unsafe_point")
+        return False, reasons
+    reasons.append("pause_allowed_safe_point")
+    return True, reasons
+
+
 def evaluate_fencing(
     snapshot: dict[str, object],
     events: list[dict[str, object]],
-    *,
-    current_generation: int,
-    current_attempt: int,
-    cooldown_seconds: int,
-    elapsed_since_replan: int,
-    active_work_safe: bool,
-    active_work_ready: bool,
-    safe_point: bool,
-    preemptibility: str,
-    authority_valid: bool | None = True,
-    readiness_valid: bool | None = True,
-    readiness_changed: bool = False,
-    owner_decision_target_ready: bool | None = None,
+    context: FencingContext,
 ) -> FencingDecision:
     """Aplica fencing/cooldown alrededor de #281 sin ejecutar ni persistir runtime."""
-    generation = _non_negative_int(current_generation, "current_generation")
-    attempt = _non_negative_int(current_attempt, "current_attempt")
-    cooldown = _non_negative_int(cooldown_seconds, "cooldown_seconds")
-    elapsed = _non_negative_int(elapsed_since_replan, "elapsed_since_replan")
-    authority = _boolean_or_unknown(authority_valid, "authority_valid")
-    readiness = _boolean_or_unknown(readiness_valid, "readiness_valid")
-    if not isinstance(active_work_safe, bool) or not isinstance(active_work_ready, bool):
-        raise FencingValidationError("invalid_active_work_state")
-    if not isinstance(safe_point, bool):
-        raise FencingValidationError("invalid_safe_point")
-    if preemptibility not in {"preemptible", "non_preemptible"}:
-        raise FencingValidationError("invalid_preemptibility")
-
+    checked = _validate_context(context)
     normalized = coalesce_fenced_events(events)
-    event_fp = _batch_fingerprint(normalized)
     fence_reasons = _fence_reasons(
         normalized,
-        current_generation=generation,
-        current_attempt=attempt,
+        current_generation=checked.current_generation,
+        current_attempt=checked.current_attempt,
     )
     if fence_reasons:
-        return FencingDecision(
-            action="fail_closed",
-            pause_allowed=False,
-            generation=generation,
-            attempt=attempt,
-            snapshot_fingerprint=_fingerprint(snapshot),
-            event_fingerprint=event_fp,
-            coalesced_events=len(normalized),
-            reasons=fence_reasons,
-        )
+        return _failed_fence_decision(snapshot, normalized, checked, fence_reasons)
 
     replan = decide_replan(
         snapshot,
         [_event_payload(item.event) for item in normalized],
-        active_work_safe=active_work_safe,
-        active_work_ready=active_work_ready,
-        readiness_changed=readiness_changed,
-        owner_decision_target_ready=owner_decision_target_ready,
+        active_work_safe=checked.active_work_safe,
+        active_work_ready=checked.active_work_ready,
+        readiness_changed=checked.readiness_changed,
+        owner_decision_target_ready=checked.owner_decision_target_ready,
     )
-    reasons = list(replan.reasons)
-    action = replan.action
-    immediate = any(item.event.event_type in IMMEDIATE_TYPES for item in normalized)
-
-    if action == "replan":
-        for name, value in (("authority", authority), ("readiness", readiness)):
-            reason = _gate_reason(name, value)
-            if reason is not None:
-                reasons.append(reason)
-        if any(reason.startswith(("authority_", "readiness_")) for reason in reasons):
-            action = "fail_closed"
-
-    remaining = max(cooldown - elapsed, 0)
-    if action == "replan" and not immediate and remaining > 0:
-        action = "keep"
-        reasons.append(f"cooldown_active:{remaining}")
-
-    pause_allowed = False
-    if action == "replan":
-        if preemptibility != "preemptible":
-            reasons.append("pause_blocked_non_preemptible")
-        elif not safe_point:
-            reasons.append("pause_blocked_unsafe_point")
-        else:
-            pause_allowed = True
-            reasons.append("pause_allowed_safe_point")
+    action, reasons = _apply_gates_and_cooldown(replan, normalized, checked)
+    pause_allowed, reasons = _pause_policy(action, reasons, checked)
 
     return FencingDecision(
         action=action,
         pause_allowed=pause_allowed,
-        generation=generation,
-        attempt=attempt,
+        generation=checked.current_generation,
+        attempt=checked.current_attempt,
         snapshot_fingerprint=replan.snapshot_fingerprint,
-        event_fingerprint=event_fp,
+        event_fingerprint=_batch_fingerprint(normalized),
         coalesced_events=len(normalized),
         reasons=tuple(sorted(set(reasons))),
     )

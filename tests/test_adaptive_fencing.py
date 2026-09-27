@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import unittest
 
-from scripts.adaptive_fencing import evaluate_fencing
+from scripts.adaptive_fencing import FencingContext, evaluate_fencing
 
 
 def base_snapshot():
@@ -79,7 +79,7 @@ def evaluate(events, **overrides):
         "readiness_valid": True,
     }
     kwargs.update(overrides)
-    return evaluate_fencing(base_snapshot(), events, **kwargs)
+    return evaluate_fencing(base_snapshot(), events, FencingContext(**kwargs))
 
 
 class AdaptiveFencingTests(unittest.TestCase):
