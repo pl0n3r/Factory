@@ -32,8 +32,9 @@ class ReviewEfficiencyTests(unittest.TestCase):
         row = validate_observation(observation(findings=[finding(classification="unknown", severity="none", material=False, change_ref=None)]))
         self.assertEqual(row["findings"][0]["classification"], "unknown")
         self.assertIn("unknown", FINDING_CLASSES)
+        invalid = observation(findings=[finding(classification="maybe")])
         with self.assertRaisesRegex(ReviewEfficiencyError, "classification"):
-            validate_observation(observation(findings=[finding(classification="maybe")]))
+            validate_observation(invalid)
     def test_report_keeps_value_and_cost_dimensions_separate(self):
         report = build_report([observation()], min_samples=1)
         self.assertEqual(set(report["cohorts"][0]["rounds"]["1"]), {"quality", "cost", "risk", "noise"})

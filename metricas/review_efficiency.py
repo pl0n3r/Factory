@@ -55,15 +55,15 @@ def _finding(raw: Any) -> dict[str, Any]:
     if ref is not None and (not isinstance(ref, str) or REF.fullmatch(ref) is None):
         raise ReviewEfficiencyError("finding.change_ref inválida")
     return dict(raw)
-def validate_observation(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict) or set(raw) != OBS_FIELDS:
-        raise ReviewEfficiencyError("observation: esquema inválido")
+def _validate_identity(raw: dict[str, Any]) -> None:
     if not isinstance(raw["repo"], str) or REPO.fullmatch(raw["repo"]) is None:
         raise ReviewEfficiencyError("repo inválido")
-    if any(isinstance(raw[name], bool) or not isinstance(raw[name], int) or raw[name] < 1 for name in ("pr", "issue")):
+    invalid_number = lambda value: isinstance(value, bool) or not isinstance(value, int) or value < 1
+    if any(invalid_number(raw[name]) for name in ("pr", "issue")):
         raise ReviewEfficiencyError("pr/issue inválidos")
     if not isinstance(raw["sha"], str) or SHA.fullmatch(raw["sha"]) is None:
         raise ReviewEfficiencyError("sha inválido")
+def _validate_context(raw: dict[str, Any]) -> None:
     for name in ("task_type", "surface", "provider"):
         if not isinstance(raw[name], str) or SLUG.fullmatch(raw[name]) is None:
             raise ReviewEfficiencyError(f"{name} inválido")
@@ -71,17 +71,26 @@ def validate_observation(raw: Any) -> dict[str, Any]:
         raise ReviewEfficiencyError("risk inválido")
     if raw["review_state"] not in {"COMMENTED", "APPROVED", "CHANGES_REQUESTED"}:
         raise ReviewEfficiencyError("review_state inválido")
-    if isinstance(raw["round"], bool) or not isinstance(raw["round"], int) or not 1 <= raw["round"] <= STABLE_REVIEW_ROUND_LIMIT:
+    number = raw["round"]
+    if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= STABLE_REVIEW_ROUND_LIMIT:
         raise ReviewEfficiencyError("round inválida")
-    if not isinstance(raw["findings"], list) or len(raw["findings"]) > 50:
-        raise ReviewEfficiencyError("findings inválidos")
-    findings = [_finding(row) for row in raw["findings"]]
-    if len({row["id"] for row in findings}) != len(findings):
-        raise ReviewEfficiencyError("finding.id duplicado")
     if not isinstance(raw["result_ref"], str) or REF.fullmatch(raw["result_ref"]) is None:
         raise ReviewEfficiencyError("result_ref inválida")
+def _validate_findings(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    values = raw["findings"]
+    if not isinstance(values, list) or len(values) > 50:
+        raise ReviewEfficiencyError("findings inválidos")
+    findings = [_finding(row) for row in values]
+    if len({row["id"] for row in findings}) != len(findings):
+        raise ReviewEfficiencyError("finding.id duplicado")
+    return findings
+def validate_observation(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict) or set(raw) != OBS_FIELDS:
+        raise ReviewEfficiencyError("observation: esquema inválido")
+    _validate_identity(raw)
+    _validate_context(raw)
     row = dict(raw)
-    row["findings"] = findings
+    row["findings"] = _validate_findings(raw)
     row["rework_commits"] = _number(raw["rework_commits"], "rework_commits", optional=True)
     for name in ("added_minutes", "tokens", "ci_minutes"):
         row[name] = _number(raw[name], name, optional=True)
@@ -160,5 +169,10 @@ def build_shadow_candidate(*, report: dict[str, Any], cohort_key: dict[str, str]
         "rollback": {"reversible": True, "strategy": "restore_baseline"},
     }
     shadow = evaluate_shadow(stable_sha=stable_sha, candidate_sha=candidate_sha, stable_metrics=stable_metrics, candidate_metrics=candidate_metrics, constitution_candidate=constitution_candidate)
-    status = "blocked" if shadow["fitness"]["protected_regressions"] else "shadow_candidate" if shadow["promotion"]["ready"] else "insufficient_evidence"
+    if shadow["fitness"]["protected_regressions"]:
+        status = "blocked"
+    elif shadow["promotion"]["ready"]:
+        status = "shadow_candidate"
+    else:
+        status = "insufficient_evidence"
     return {"status": status, **base, "constitution_candidate": constitution_candidate, "lab": shadow}
