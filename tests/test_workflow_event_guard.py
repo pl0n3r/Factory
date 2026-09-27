@@ -61,6 +61,17 @@ class WorkflowEventGuardTests(unittest.TestCase):
             self.assertIn(key, retry)
         self.assertIn("env=environment", retry)
 
+    def test_factory_kit_checkout_never_executes_an_arbitrary_input_ref(self) -> None:
+        ci = self.text("ci.yml")
+        self.assertNotIn(r"ref: ${{ inputs.kit_ref }}", ci)
+        self.assertEqual(ci.count("ref: v1"), 2)
+        trusted_ref = r"ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+        self.assertEqual(ci.count(trusted_ref), 2)
+        self.assertIn('KIT_REF: ${{ inputs.kit_ref }}', ci)
+        self.assertIn('PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}', ci)
+        self.assertIn("Los consumidores solo pueden ejecutar Factory Kit desde el canal protegido v1", ci)
+        self.assertIn("Factory solo admite kit_ref=v1 o el SHA exacto del evento", ci)
+
     def test_consumer_code_jobs_disable_cache_access(self) -> None:
         ci = self.text("ci.yml")
         cache_env = (

@@ -61,11 +61,27 @@ jobs:
           PHASE: ${{ inputs.phase }}
           NODE_ENABLED: ${{ inputs.node_enabled }}
           WORKDIR: ${{ inputs.working_directory }}
+          KIT_REF: ${{ inputs.kit_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           case "$STACK" in symfony|laravel|php|node) ;; *) echo "::error::stack inválido"; exit 1 ;; esac
           case "$LABEL_LANGUAGE" in es|en) ;; *) echo "::error::label_language inválido"; exit 1 ;; esac
           case "$PHASE" in construccion|live) ;; *) echo "::error::phase inválida"; exit 1 ;; esac
+          repository="${GITHUB_REPOSITORY,,}"
+          if [[ "$repository" == "pl0n3r/factory" ]]; then
+            trusted_factory_ref="$GITHUB_SHA"
+            if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then trusted_factory_ref="$PR_HEAD_SHA"; fi
+            [[ "$KIT_REF" == "v1" || "$KIT_REF" == "$trusted_factory_ref" ]] || {
+              echo "::error::Factory solo admite kit_ref=v1 o el SHA exacto del evento"
+              exit 1
+            }
+          else
+            [[ "$KIT_REF" == "v1" ]] || {
+              echo "::error::Los consumidores solo pueden ejecutar Factory Kit desde el canal protegido v1"
+              exit 1
+            }
+          fi
           [[ "$WORKDIR" != /* && "$WORKDIR" != *".."* && "$WORKDIR" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::working_directory inválido"; exit 1; }
           test -d "$WORKDIR" || { echo "::error::working_directory no existe"; exit 1; }
           cd "$WORKDIR"
@@ -87,10 +103,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Checkout Factory Kit publicado
+        if: github.repository != 'pl0n3r/factory' || inputs.kit_ref == 'v1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: pl0n3r/factory
-          ref: ${{ inputs.kit_ref }}
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - name: Checkout Factory Kit del SHA exacto del evento
+        if: github.repository == 'pl0n3r/factory' && inputs.kit_ref != 'v1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: .factory
           persist-credentials: false
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
@@ -164,10 +190,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Checkout Factory Kit publicado
+        if: github.repository != 'pl0n3r/factory' || inputs.kit_ref == 'v1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: pl0n3r/factory
-          ref: ${{ inputs.kit_ref }}
+          ref: v1
+          path: .factory
+          persist-credentials: false
+      - name: Checkout Factory Kit del SHA exacto del evento
+        if: github.repository == 'pl0n3r/factory' && inputs.kit_ref != 'v1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: .factory
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
