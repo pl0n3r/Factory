@@ -5,6 +5,7 @@ from scripts.adaptive_replan import decide_replan
 
 
 def base_snapshot():
+    """Construye un snapshot fresh mínimo y válido para tests."""
     return {
         "version": 1,
         "source": "controlbot-runtime",
@@ -40,6 +41,7 @@ def base_snapshot():
 
 
 def event(event_type, subject="factory", state="changed", evidence="issue:281"):
+    """Construye un evento de replan válido para tests."""
     return {
         "event_type": event_type,
         "subject": subject,
