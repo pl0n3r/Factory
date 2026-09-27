@@ -49,3 +49,29 @@ El scope de idempotencia excluye deliberadamente `origin_system` y `work_id`: do
 ## Fuera de este slice
 
 Factory #271 integrará WorkItem con readiness y Dispatcher V2. #272 añadirá evidencia/feedback de ejecución y #273 cubrirá el escenario E2E multi-origen/multi-institución. Este módulo no consulta servicios, no persiste la cola y no ejecuta agentes.
+
+## Feedback atribuible de ejecución
+
+Factory Queue v1 cierra el ciclo operativo con un feedback terminal que conserva provenance hacia el WorkItem canónico. El flujo es:
+
+`WorkItem → readiness/dispatch → ejecución → evidence/feedback`
+
+El feedback no es una segunda cola ni un mecanismo de prioridad. Es evidencia posterior a la ejecución y **no concede autoridad**, presupuesto, aprobación, ranking ni permiso adicional.
+
+Campos requeridos del contrato de feedback:
+
+- `work_id`: identidad del WorkItem observado;
+- `work_fingerprint`: fingerprint canónico recomputado desde el WorkItem;
+- `idempotency_scope`: scope estable usado para deduplicación cross-origin;
+- `executor_ref`: ejecutor concreto que produjo el outcome;
+- `producer_ref`: productor original del WorkItem, que debe coincidir;
+- `status`: estado terminal `success|failed|rejected|cancelled`;
+- `evidence_refs[]`: referencias de evidencia no vacías y sin duplicados;
+- `observed_at`: timestamp con zona horaria y freshness válida.
+
+La validación falla cerrada si provenance, fingerprint, scope, productor, evidencia, estado o freshness no corresponden al WorkItem. La identidad del feedback se deriva del payload normalizado, por lo que evidence refs equivalentes en distinto orden producen el mismo identificador y no crean duplicación lógica.
+
+### Handoff a #273
+
+El escenario E2E de #273 debe construir un WorkItem válido, pasarlo por readiness/Dispatcher V2, simular una ejecución terminal y producir feedback mediante `validate_execution_feedback()`. La evidencia E2E debe demostrar que el resultado conserva `work_fingerprint` e `idempotency_scope`, que entradas stale/inconsistentes fallan cerrado y que ninguna etapa introduce una jerarquía de despacho paralela.
+

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -11,6 +12,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 
 PROJECT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 EPIC_RE = re.compile(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#[1-9]\d*$")
@@ -46,6 +49,120 @@ OUTPUT_DIR = REPO_ROOT / "artifacts"
 
 class FeedbackValidationError(ValueError):
     pass
+
+
+EXECUTION_FEEDBACK_FIELDS = {
+    "work_id",
+    "work_fingerprint",
+    "idempotency_scope",
+    "executor_ref",
+    "producer_ref",
+    "status",
+    "evidence_refs",
+    "observed_at",
+}
+EXECUTION_FEEDBACK_STATUSES = {"success", "failed", "rejected", "cancelled"}
+MAX_EXECUTION_FEEDBACK_AGE = timedelta(hours=24)
+MAX_EXECUTION_FEEDBACK_FUTURE_SKEW = timedelta(minutes=5)
+
+
+def _execution_feedback_text(value: Any, field: str) -> str:
+    """Valida referencias compactas sin aceptar valores vacíos."""
+    if not isinstance(value, str):
+        raise FeedbackValidationError(f"{field} debe ser texto.")
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 300:
+        raise FeedbackValidationError(f"{field} inválido.")
+    return cleaned
+
+
+def _execution_feedback_evidence(value: Any) -> list[str]:
+    """Normaliza evidence refs como set ordenado y no vacío."""
+    if not isinstance(value, list) or not value or len(value) > 50:
+        raise FeedbackValidationError("evidence_refs debe ser una lista no vacía.")
+    refs = [_execution_feedback_text(item, "evidence_refs") for item in value]
+    if len(refs) != len(set(refs)):
+        raise FeedbackValidationError("evidence_refs contiene duplicados.")
+    return sorted(refs)
+
+
+def validate_execution_feedback(
+    payload: Any,
+    work_item: dict[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    """Valida feedback terminal atribuible a un WorkItem canónico."""
+    if not isinstance(payload, dict) or set(payload) != EXECUTION_FEEDBACK_FIELDS:
+        raise FeedbackValidationError(
+            "Feedback de ejecución debe contener exactamente los campos permitidos."
+        )
+    item = validate_work_item(work_item)
+    if now.tzinfo is None:
+        raise FeedbackValidationError("now debe incluir zona horaria.")
+    current = now.astimezone(timezone.utc)
+
+    expected_fingerprint = work_fingerprint(work_item)
+    expected_scope = idempotency_scope(work_item)
+    work_id = _execution_feedback_text(payload["work_id"], "work_id")
+    if work_id != item["work_id"]:
+        raise FeedbackValidationError("work_id no corresponde al WorkItem.")
+    fingerprint = _execution_feedback_text(
+        payload["work_fingerprint"],
+        "work_fingerprint",
+    )
+    if fingerprint != expected_fingerprint:
+        raise FeedbackValidationError("work_fingerprint no corresponde al WorkItem.")
+    scope = _execution_feedback_text(
+        payload["idempotency_scope"],
+        "idempotency_scope",
+    )
+    if scope != expected_scope:
+        raise FeedbackValidationError("idempotency_scope no corresponde al WorkItem.")
+
+    producer_ref = _execution_feedback_text(payload["producer_ref"], "producer_ref")
+    if producer_ref != item["producer_ref"]:
+        raise FeedbackValidationError("producer_ref no corresponde al WorkItem.")
+    executor_ref = _execution_feedback_text(payload["executor_ref"], "executor_ref")
+
+    status = _execution_feedback_text(payload["status"], "status")
+    if status not in EXECUTION_FEEDBACK_STATUSES:
+        raise FeedbackValidationError("status debe ser terminal.")
+
+    evidence_refs = _execution_feedback_evidence(payload["evidence_refs"])
+    observed_at = _timestamp(payload["observed_at"], "observed_at")
+    if observed_at > current + MAX_EXECUTION_FEEDBACK_FUTURE_SKEW:
+        raise FeedbackValidationError("observed_at está en el futuro.")
+    if current - observed_at > MAX_EXECUTION_FEEDBACK_AGE:
+        raise FeedbackValidationError("Feedback stale: observed_at excede 24 horas.")
+
+    return {
+        "work_id": work_id,
+        "work_fingerprint": fingerprint,
+        "idempotency_scope": scope,
+        "executor_ref": executor_ref,
+        "producer_ref": producer_ref,
+        "status": status,
+        "evidence_refs": evidence_refs,
+        "observed_at": observed_at.isoformat(),
+    }
+
+
+def execution_feedback_identity(
+    payload: Any,
+    work_item: dict[str, Any],
+    *,
+    now: datetime,
+) -> str:
+    """Identidad estable para deduplicar feedback equivalente."""
+    normalized = validate_execution_feedback(payload, work_item, now=now)
+    encoded = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _timestamp(value: Any, field: str) -> datetime:
