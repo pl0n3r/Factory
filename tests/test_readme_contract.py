@@ -3,7 +3,11 @@ import unittest
 from pathlib import Path
 
 from intelligence.derived_views import DerivedViewDriftError, DerivedViewError
-from readme.generate_readme import ReadmeEngineError, generate_readme
+from readme.generate_readme import (
+    ReadmeEngineError,
+    generate_readme,
+    validate_project_metadata,
+)
 from readme.validate_readme import validate_readme
 
 
@@ -11,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "readme" / "contract.json"
 TEMPLATE = ROOT / "readme" / "template.md"
 DOCS = ROOT / "docs" / "readme-contract.md"
+REUSABLE_WORKFLOW = ROOT / ".github" / "workflows" / "readme.yml"
+TEMPLATE_CALLER = ROOT / "template" / ".github" / "workflows" / "readme-contract.yml"
+TEMPLATE_PROJECT = ROOT / "template" / "readme" / "project.json"
+TEMPLATE_BOOTSTRAP_README = ROOT / "template" / "README.md"
 
 
 class ReadmeContractTests(unittest.TestCase):
@@ -20,6 +28,10 @@ class ReadmeContractTests(unittest.TestCase):
         cls.contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         cls.template = TEMPLATE.read_text(encoding="utf-8")
         cls.docs = DOCS.read_text(encoding="utf-8")
+        cls.reusable_workflow = REUSABLE_WORKFLOW.read_text(encoding="utf-8")
+        cls.template_caller = TEMPLATE_CALLER.read_text(encoding="utf-8")
+        cls.template_project = json.loads(TEMPLATE_PROJECT.read_text(encoding="utf-8"))
+        cls.template_bootstrap_readme = TEMPLATE_BOOTSTRAP_README.read_text(encoding="utf-8")
         cls.metadata = {
             "name": "Factory",
             "tagline": "Gobernanza reproducible",
@@ -210,6 +222,101 @@ class ReadmeContractTests(unittest.TestCase):
                 self.metadata,
                 {"deployment_url": "https://example.test"},
             )
+
+
+    def test_reusable_readme_workflow_is_read_only_and_calls_validator(self):
+        """El reusable valida con permisos mínimos y sin mutar el caller."""
+        workflow = self.reusable_workflow
+        self.assertIn("workflow_call:", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("secrets: inherit", workflow)
+        self.assertGreaterEqual(
+            workflow.count(
+                "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+            ),
+            2,
+        )
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("from readme.validate_readme import validate_readme", workflow)
+        self.assertIn("validate_readme(readme_text, contract, metadata, sources)", workflow)
+
+    def test_template_calls_readme_contract_v1(self):
+        """El proyecto nuevo consume el reusable únicamente por el canal v1."""
+        caller = self.template_caller
+        self.assertIn(
+            "uses: pl0n3r/factory/.github/workflows/readme.yml@v1",
+            caller,
+        )
+        self.assertIn("permissions:\n  contents: read", caller)
+        self.assertNotIn("secrets:", caller)
+        self.assertIn("metadata_path: readme/project.json", caller)
+
+    def test_template_bootstraps_readme_project_metadata(self):
+        """La metadata del template coincide exactamente con Contract v1."""
+        required = set(self.contract["project_metadata"]["required"])
+        forbidden = set(
+            self.contract["project_metadata"]["forbidden_operational_fields"]
+        )
+        self.assertEqual(set(self.template_project), required)
+        self.assertTrue(set(self.template_project).isdisjoint(forbidden))
+        validate_project_metadata(self.contract, self.template_project)
+
+    def test_template_readme_bootstraps_contract_v1(self):
+        """El README del template nace válido y con cockpit UNKNOWN."""
+        for section in self.contract["sections"][1:]:
+            self.assertIn(f"## {section['title']}", self.template_bootstrap_readme)
+        status = self.contract["derived_blocks"]["status"]
+        self.assertEqual(
+            self.template_bootstrap_readme.count(status["start_marker"]),
+            1,
+        )
+        self.assertEqual(
+            self.template_bootstrap_readme.count(status["end_marker"]),
+            1,
+        )
+        self.assertIn("| CI | UNKNOWN |", self.template_bootstrap_readme)
+        self.assertNotIn("| CI | GREEN |", self.template_bootstrap_readme)
+        validate_readme(
+            self.template_bootstrap_readme,
+            self.contract,
+            self.template_project,
+            {},
+        )
+
+    def test_reusable_readme_workflow_rejects_missing_required_sections(self):
+        """La anatomía Contract v1 también se valida fail-closed."""
+        workflow = self.reusable_workflow
+        self.assertIn('for section in contract["sections"][1:]:', workflow)
+        self.assertIn("readme_text.count(heading) != 1", workflow)
+        self.assertIn("sección requerida ausente/duplicada", workflow)
+        missing_architecture = self.template_bootstrap_readme.replace(
+            "## Arquitectura en 60 segundos",
+            "## Arquitectura eliminada",
+            1,
+        )
+        self.assertNotIn("## Arquitectura en 60 segundos", missing_architecture)
+        self.assertTrue(
+            any(
+                f"## {section['title']}" not in missing_architecture
+                for section in self.contract["sections"][1:]
+            )
+        )
+
+    def test_reusable_readme_workflow_fails_closed(self):
+        """Paths o evidencia fuera del contrato hacen fallar el reusable."""
+        workflow = self.reusable_workflow
+        self.assertIn('[[ "$README_PATH" == "README.md" ]]', workflow)
+        self.assertIn(
+            '[[ "$METADATA_PATH" == "readme/project.json" ]]',
+            workflow,
+        )
+        self.assertIn("''|readme/evidence.json)", workflow)
+        self.assertIn("evidence_path no permitido", workflow)
+        self.assertIn("set -euo pipefail", workflow)
+        self.assertNotIn("continue-on-error: true", workflow)
+        self.assertNotIn("gh api", workflow)
+        self.assertNotIn("curl ", workflow)
 
 
 if __name__ == "__main__":

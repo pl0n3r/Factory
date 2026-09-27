@@ -1,0 +1,8 @@
+{
+  "name": "Proyecto Factory",
+  "tagline": "Plantilla mínima para consumir pl0n3r/factory@v1.",
+  "role": "producto consumidor",
+  "phase": "construction",
+  "roadmap": "GitHub Issues",
+  "stack": "PHP 8.3 + Factory Kit"
+}

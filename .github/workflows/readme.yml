@@ -1,0 +1,101 @@
+name: README Contract reusable
+
+on:
+  workflow_call:
+    inputs:
+      readme_path:
+        required: false
+        default: README.md
+        type: string
+      metadata_path:
+        required: false
+        default: readme/project.json
+        type: string
+      evidence_path:
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validar README Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Checkout Factory Kit confiable
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .factory-kit
+          persist-credentials: false
+
+      - name: Validar inputs
+        env:
+          README_PATH: ${{ inputs.readme_path }}
+          METADATA_PATH: ${{ inputs.metadata_path }}
+          EVIDENCE_PATH: ${{ inputs.evidence_path }}
+        run: |
+          set -euo pipefail
+          [[ "$README_PATH" == "README.md" ]] || { echo "::error::readme_path no permitido"; exit 1; }
+          [[ "$METADATA_PATH" == "readme/project.json" ]] || { echo "::error::metadata_path no permitido"; exit 1; }
+          case "$EVIDENCE_PATH" in
+            ''|readme/evidence.json) ;;
+            *) echo "::error::evidence_path no permitido"; exit 1 ;;
+          esac
+
+      - name: Validar contrato y drift
+        env:
+          README_PATH: ${{ inputs.readme_path }}
+          METADATA_PATH: ${{ inputs.metadata_path }}
+          EVIDENCE_PATH: ${{ inputs.evidence_path }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          kit = Path(".factory-kit").resolve()
+          sys.path.insert(0, str(kit))
+
+          from readme.generate_readme import validate_project_metadata
+          from readme.validate_readme import validate_readme
+          from scripts.safe_io import SafeIOError, read_repo_text
+
+          def load_json(path: str):
+              try:
+                  return json.loads(read_repo_text(Path(path), root=Path.cwd()))
+              except (SafeIOError, json.JSONDecodeError) as exc:
+                  raise SystemExit(f"ERROR: JSON inválido/no seguro en {path}: {exc}") from exc
+
+          contract = json.loads((kit / "readme" / "contract.json").read_text(encoding="utf-8"))
+          metadata = load_json(os.environ["METADATA_PATH"])
+          validate_project_metadata(contract, metadata)
+
+          evidence_path = os.environ["EVIDENCE_PATH"]
+          sources = load_json(evidence_path) if evidence_path else {}
+          try:
+              readme_text = read_repo_text(Path(os.environ["README_PATH"]), root=Path.cwd())
+              for section in contract["sections"][1:]:
+                  heading = f"## {section['title']}"
+                  if readme_text.count(heading) != 1:
+                      raise SystemExit(
+                          "ERROR: README Contract inválido: "
+                          f"sección requerida ausente/duplicada: {heading}"
+                      )
+              validate_readme(readme_text, contract, metadata, sources)
+          except (SafeIOError, ValueError) as exc:
+              raise SystemExit(f"ERROR: README Contract inválido: {exc}") from exc
+          PY
