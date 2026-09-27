@@ -9,14 +9,15 @@
 
 **Modo despachador:** si el prompt solo te apunta a factory (sin nombrar proyecto), eliges **tú** el proyecto que más te necesita, con este orden y tomando el **primer** caso que aplique:
 
-**Cola canónica de productos:** Condor, GrindFlow, BRVTAL y FactoryRunner. **ControlBot y AutoFactory quedan fuera del despacho automático de producto**: ControlBot es el control plane y AutoFactory una herramienta local/manual; ambos solo se trabajan en modo dirigido o cuando bloquean explícitamente a uno de los cuatro productos. Factory mantiene el kit cuando ese mantenimiento bloquea la cola.
+**Cola automática canónica:** Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner. Los siete repositorios son elegibles para despacho automático. Su inclusión en la cola no altera sus responsabilidades arquitectónicas: Factory gobierna el kit, ControlBot es el control plane privado, FactoryRunner es el execution plane, AutoFactory sigue siendo una herramienta local/manual y Condor/GrindFlow/BRVTAL son productos.
 
-1. Un producto con producción caída o no VERDE (sección 6) → ese producto.
-2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o `[AUTO]`) → su repo.
-3. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
-4. El Issue `prioridad: crítica` / `priority: critical` disponible más antiguo en Condor, GrindFlow, BRVTAL o FactoryRunner; si no hay candidato y un Issue de Factory bloquea a esos productos, toma Factory.
-5. Lo mismo con `prioridad: alta` y después `media`.
-6. Dentro de la misma prioridad, el trabajo que desbloquea más trabajo.
+1. Un repositorio con HEALTH degradado según su contrato real de operación → ese repo.
+2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o clasificación AUTO equivalente) → su repo.
+3. Una reparación activa válida de HEALTH/INCIDENT → continuar ese frente antes de abrir trabajo paralelo.
+4. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
+5. El Issue ready de `prioridad: crítica` / `priority: critical` mejor posicionado por el desempate de la regla 7 entre los siete repositorios.
+6. Lo mismo con `prioridad: alta` y después `media`, aplicando el mismo desempate.
+7. Dentro de la misma prioridad: desbloqueo → impacto transversal → continuidad → menor riesgo/esfuerzo → antigüedad.
 
 Reglas del despachador:
 - Una reserva activa conserva exclusividad para trabajo no planificado. Solo pueden coexistir líneas cuando el candidato y cada línea activa relevante están materializados por el orquestador, sus dependencias están completadas y los claims de paths son disjuntos. Si Factory no puede demostrarlo, falla cerrado y pasa al siguiente candidato. Tras perder una carrera de reserva, vuelve a evaluar el despacho sobre el estado actual.
@@ -24,7 +25,7 @@ Reglas del despachador:
 - Al bajar al proyecto, lee su AGENTES.md/AGENTS.md y sigue este plan como si te hubieran dirigido ahí.
 - Al terminar ese trabajo, vuelve a aplicar el despacho desde el paso 1.
 - **ControlBot (privado)** resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
-- ControlBot y AutoFactory no compiten por prioridad dentro de la cola canónica; se atienden por modo dirigido o por dependencia explícita de un producto.
+- Factory, ControlBot y AutoFactory compiten dentro de la misma cola automática con las mismas reglas de readiness y prioridad. Su naturaleza arquitectónica no les da prioridad artificial ni los excluye.
 
 ## Tu misión en una línea
 
@@ -185,8 +186,8 @@ Toma la **primera** tanda cuya condición de "terminada" no se cumple:
 | **2** | Los épicos pl0n3r/Condor#192, pl0n3r/GrindFlow#129, pl0n3r/brvtal#630 y pl0n3r/FactoryRunner#1 están cerrados como completados |
 | **3** | Continua: desarrollo normal |
 
-- Si tu repo ya cumplió su parte y otro no, **no avances**: comenta en tu épico que esperas y detente.
-- `factory` solo construye en la tanda 1; después mantiene el kit.
+- Para Condor, GrindFlow, BRVTAL y FactoryRunner, si el repo ya cumplió su parte de la tanda y otro no, **no avances a trabajo dependiente de la tanda siguiente**: comenta en tu épico que esperas y detente.
+- Esta regla de espera por tanda **no bloquea a Factory**: mantenimiento del kit, gobernanza, hardening y capacidades transversales permanecen elegibles cuando sean el candidato ready de mayor prioridad.
 - **Si producción de tu repo deja de estar en VERDE en cualquier momento, vuelves a la tanda 1 de tu repo antes que nada.**
 
 ### Definición de VERDE
@@ -199,7 +200,7 @@ Aplica a Condor, GrindFlow y BRVTAL. **FactoryRunner** usa el mismo principio: a
 4. No queda ningún Issue abierto de incidente (`tipo: incidente`/`type: incident`) ni ningún `[AUTO]` de fallo de producción.
 5. El último CI de main pasa.
 
-**ControlBot y AutoFactory no forman parte del gate automático de productos.** Conservan sus contratos de salud/entrega cuando se trabajen en modo dirigido, sin bloquear la cola Condor/GrindFlow/BRVTAL/FactoryRunner.
+**ControlBot y AutoFactory forman parte de la cola automática**, pero conservan contratos de salud/entrega propios. La ausencia de un gate de producción idéntico al de los productos no los excluye: se evalúan con evidencia adecuada a su arquitectura y estado real.
 
 ---
 
@@ -207,9 +208,9 @@ Aplica a Condor, GrindFlow y BRVTAL. **FactoryRunner** usa el mismo principio: a
 
 - Migraciones aditivas automáticas con backup en post-deploy (Condor D-054).
 - Escrituras autónomas en producción durante la fase de desarrollo (Condor #185, GrindFlow #126, brvtal #628), con backup previo. **SQL destructivo o borrado irreversible siguen requiriendo autorización.**
-- Sistema común de releases del kit en los cuatro productos canónicos: Condor, GrindFlow, BRVTAL y FactoryRunner (en BRVTAL reemplaza a `update-release-metadata.yml`). ControlBot y AutoFactory conservan sus contratos cuando se trabajen en modo dirigido.
+- Sistema común de releases del kit en Condor, GrindFlow, BRVTAL y FactoryRunner (en BRVTAL reemplaza a `update-release-metadata.yml`). ControlBot y AutoFactory conservan sus contratos técnicos propios, pero ambos siguen siendo elegibles para despacho automático.
 - Etiquetas obligatorias (tipo + prioridad + estado) en todo Issue y PR (BRVTAL en inglés).
-- **ControlBot es el centro de control privado de la fábrica** (pl0n3r/ControlBot): dashboard, decisiones y orquestación viven allí. **FactoryRunner** es el execution plane autónomo de la cola canónica. **AutoFactory** queda como herramienta local/manual independiente y no se modifica por la cola automática.
+- **ControlBot es el centro de control privado de la fábrica** (pl0n3r/ControlBot): dashboard, decisiones y orquestación viven allí. **FactoryRunner** es el execution plane autónomo. **AutoFactory** permanece como herramienta local/manual independiente. Los tres, junto con Factory, Condor, GrindFlow y BRVTAL, son elegibles para la cola automática; elegibilidad de despacho no significa dependencia arquitectónica.
 - **D-060 — administración de staff:** ControlBot administra únicamente cuentas de staff/administración de cada producto mediante el contrato común `/ops/staff`; los clientes finales permanecen y se administran en su propio producto. Las altas son por invitación y los resets los envía el producto; ControlBot nunca define ni recibe contraseñas/tokens. El contrato falla cerrado sin credencial configurada, exige firma/anti-replay/allowlist/rate limit/auditoría y no permite borrado físico.
 - Roles profesionales por tarea (factory#2).
 - Factory no genera trabajo para el dueño.
@@ -263,7 +264,7 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 
 Guía: el comentario de adopción en tu épico (Condor#192, GrindFlow#129, brvtal#630 y **FactoryRunner#1**).
 
-**FactoryRunner** adopta Factory v1 desde su primer PR funcional: Node.js 24/TypeScript, CI `stack: node`, coordinación, etiquetas, aceptación, roles, política, privacidad y release. ControlBot y AutoFactory quedan fuera de esta cola automática; sus adopciones previas se conservan y se trabajan solo en modo dirigido.
+**FactoryRunner** adopta Factory v1 desde su primer PR funcional: Node.js 24/TypeScript, CI `stack: node`, coordinación, etiquetas, aceptación, roles, política, privacidad y release. ControlBot y AutoFactory también permanecen elegibles para la cola automática, aunque no formen parte del gate histórico de adopción de estos cuatro productos.
 
 1. Reemplaza CI, coordinación, etiquetas, release, observador/smoke y deploy locales por reusable workflows del kit (`uses: pl0n3r/factory/...@v1`) cuando la superficie exista. Elimina copias locales divergentes.
 2. Crea `decisiones.yml` con la lista de la sección 7.
@@ -283,7 +284,7 @@ Retoma desde tu Roadmap (Condor#1, GrindFlow#2, brvtal#533 y FactoryRunner#1), d
 - GrindFlow: #127 (recuperación de cuenta y cambio de contraseña).
 - BRVTAL: #629 (account recovery and password change) y #623 si sigue abierto.
 - **FactoryRunner:** continúa su roadmap #1: runner identity/heartbeat → órdenes/eventos → adapters programáticos → browser execution compatible con el target de hosting.
-- **ControlBot / AutoFactory:** solo modo dirigido o dependencia explícita; no compiten en la cola automática de producto.
+- **Factory / ControlBot / AutoFactory:** continúan en desarrollo normal dentro de la misma cola automática, respetando su roadmap, arquitectura, readiness y prioridad reales.
 
 Elige siempre el siguiente trabajo así: **incidente de producción > prioridad crítica > alta > media**, y dentro de la misma prioridad, el que desbloquea más trabajo.
 

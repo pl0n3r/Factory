@@ -114,7 +114,7 @@ Frentes iniciales definidos por `PLAN-AGENTES.md`:
 - **GrindFlow:** recuperación de cuenta y continuación del roadmap.
 - **BRVTAL:** recuperación de cuenta y pendientes de producto.
 - **FactoryRunner:** identity/heartbeat → órdenes/eventos → adapters programáticos → browser execution.
-- **ControlBot y AutoFactory:** solo en modo dirigido o cuando una dependencia explícita de un producto los requiera.
+- **Factory, ControlBot y AutoFactory:** también forman parte de la cola automática; se despachan por readiness y prioridad sin alterar su rol arquitectónico.
 
 Esta sección es un resumen operativo; [`PLAN-AGENTES.md`](PLAN-AGENTES.md) sigue siendo la fuente de verdad.
 
@@ -150,7 +150,7 @@ El cierre histórico está resumido en **[docs/tanda1-handoff.md](docs/tanda1-ha
 Trabajas en el repositorio pl0n3r/Condor. Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md para este repositorio.
 ```
 
-**Cola automática de productos:** `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal` y `pl0n3r/FactoryRunner`. En modo dirigido también se puede trabajar en `pl0n3r/factory`, `pl0n3r/ControlBot` (control plane) y `pl0n3r/AutoFactory` (herramienta local/manual).
+**Cola automática de Factory:** `pl0n3r/factory`, `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal`, `pl0n3r/ControlBot`, `pl0n3r/AutoFactory` y `pl0n3r/FactoryRunner`. Los siete son elegibles; su rol arquitectónico no cambia por entrar en la cola.
 
 **Modo despachador:**
 
@@ -158,12 +158,12 @@ Trabajas en el repositorio pl0n3r/Condor. Lee y ejecuta https://github.com/pl0n3
 Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md en modo despachador.
 ```
 
-El despachador elige en este orden: sitio caído → incidente abierto → decisión tuya ya respondida → prioridad crítica → alta → media. Nunca toma un proyecto donde otro agente está trabajando, anuncia en el Issue por qué eligió ese trabajo y, al terminar, vuelve a elegir. Detalle en la sección 0 de [PLAN-AGENTES.md](PLAN-AGENTES.md).
+El despachador elige en este orden: HEALTH degradado → incidente abierto → reparación activa válida → decisión tuya ya respondida → prioridad crítica → alta → media. Antes de elegir aplica readiness, reservas, dependencias, PR equivalente y claims de paths para no duplicar trabajo; anuncia en el Issue por qué eligió ese frente y, al terminar, vuelve a elegir. Detalle en la sección 0 de [PLAN-AGENTES.md](PLAN-AGENTES.md).
 
 ### Cómo combinarlos
 
 - **Un solo agente:** modo despachador.
-- **Varios agentes a la vez:** uno dirigido a `pl0n3r/factory` para el kit y el resto en modo despachador; se reparten solos sin chocar.
+- **Varios agentes a la vez:** pueden operar en modo despachador; Factory aplica readiness, reservas y claims para repartir trabajo entre los siete repositorios sin duplicarlo.
 - **Algo urgente en un proyecto:** un agente dirigido a ese proyecto.
 
 ### Qué más te toca
@@ -192,10 +192,15 @@ Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
 | [BRVTAL](https://github.com/pl0n3r/brvtal) | Sitio público y panel editorial DISCADMIN | [brvtal.com.co](https://www.brvtal.com.co) |
 | [FactoryRunner](https://github.com/pl0n3r/FactoryRunner) | Execution plane autónomo: agentes, órdenes, adapters y browser execution | En construcción · `control.condorapp.com.co` como target primario |
 
-### Infraestructura de control (fuera de la cola automática de producto)
+### Infraestructura y herramientas dentro de la cola automática
 
+- **Factory:** gobierno, kit y capacidades transversales.
 - **ControlBot:** centro de mando/control plane privado.
-- **AutoFactory:** herramienta local/manual independiente; no se modifica desde la cola automática.
+- **FactoryRunner:** execution plane autónomo.
+- **AutoFactory:** herramienta local/manual independiente en su arquitectura funcional.
+- **Condor, GrindFlow y BRVTAL:** productos.
+
+Los siete repositorios comparten elegibilidad de despacho automático. Esto no fusiona responsabilidades ni convierte AutoFactory en dependencia de FactoryRunner/ControlBot.
 
 ---
 
