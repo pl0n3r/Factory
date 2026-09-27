@@ -15,8 +15,8 @@
 2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o clasificación AUTO equivalente) → su repo.
 3. Una reparación activa válida de HEALTH/INCIDENT → continuar ese frente antes de abrir trabajo paralelo.
 4. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
-5. El Issue ready de `prioridad: crítica` / `priority: critical` más antiguo entre los siete repositorios.
-6. Lo mismo con `prioridad: alta` y después `media`.
+5. El Issue ready de `prioridad: crítica` / `priority: critical` mejor posicionado por el desempate de la regla 7 entre los siete repositorios.
+6. Lo mismo con `prioridad: alta` y después `media`, aplicando el mismo desempate.
 7. Dentro de la misma prioridad: desbloqueo → impacto transversal → continuidad → menor riesgo/esfuerzo → antigüedad.
 
 Reglas del despachador:
@@ -186,8 +186,8 @@ Toma la **primera** tanda cuya condición de "terminada" no se cumple:
 | **2** | Los épicos pl0n3r/Condor#192, pl0n3r/GrindFlow#129, pl0n3r/brvtal#630 y pl0n3r/FactoryRunner#1 están cerrados como completados |
 | **3** | Continua: desarrollo normal |
 
-- Si tu repo ya cumplió su parte y otro no, **no avances**: comenta en tu épico que esperas y detente.
-- Factory permanece elegible en todas las tandas: mantenimiento del kit, gobernanza, hardening y capacidades transversales se despachan cuando sean el candidato ready de mayor prioridad.
+- Para Condor, GrindFlow, BRVTAL y FactoryRunner, si el repo ya cumplió su parte de la tanda y otro no, **no avances a trabajo dependiente de la tanda siguiente**: comenta en tu épico que esperas y detente.
+- Esta regla de espera por tanda **no bloquea a Factory**: mantenimiento del kit, gobernanza, hardening y capacidades transversales permanecen elegibles cuando sean el candidato ready de mayor prioridad.
 - **Si producción de tu repo deja de estar en VERDE en cualquier momento, vuelves a la tanda 1 de tu repo antes que nada.**
 
 ### Definición de VERDE

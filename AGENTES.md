@@ -4,7 +4,7 @@
 
 ## Qué es este repositorio
 
-El kit común de la fábrica: reusable workflows, composite actions, scripts de gobernanza, catálogos de etiquetas, núcleo común de AGENTES.md y template de proyectos. Lo consumen como cola canónica de productos pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal y pl0n3r/FactoryRunner. ControlBot es el control plane y AutoFactory una herramienta local/manual fuera de esa cola.
+El kit común de la fábrica: reusable workflows, composite actions, scripts de gobernanza, catálogos de etiquetas, núcleo común de AGENTES.md y template de proyectos. La cola automática canónica incluye pl0n3r/factory, pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal, pl0n3r/ControlBot, pl0n3r/AutoFactory y pl0n3r/FactoryRunner. La elegibilidad de despacho no altera responsabilidades: Factory gobierna el kit, ControlBot es el control plane, FactoryRunner el execution plane, AutoFactory sigue siendo herramienta local/manual y Condor/GrindFlow/BRVTAL son productos.
 
 **Regla del dueño:** factory no genera trabajo para el dueño. Todo se configura vía `gh`/API.
 
