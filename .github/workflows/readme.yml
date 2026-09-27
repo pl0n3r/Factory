@@ -88,6 +88,13 @@ jobs:
           sources = load_json(evidence_path) if evidence_path else {}
           try:
               readme_text = read_repo_text(Path(os.environ["README_PATH"]), root=Path.cwd())
+              for section in contract["sections"][1:]:
+                  heading = f"## {section['title']}"
+                  if readme_text.count(heading) != 1:
+                      raise SystemExit(
+                          "ERROR: README Contract inválido: "
+                          f"sección requerida ausente/duplicada: {heading}"
+                      )
               validate_readme(readme_text, contract, metadata, sources)
           except (SafeIOError, ValueError) as exc:
               raise SystemExit(f"ERROR: README Contract inválido: {exc}") from exc

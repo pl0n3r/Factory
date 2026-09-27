@@ -284,6 +284,25 @@ class ReadmeContractTests(unittest.TestCase):
             {},
         )
 
+    def test_reusable_readme_workflow_rejects_missing_required_sections(self):
+        """La anatomía Contract v1 también se valida fail-closed."""
+        workflow = self.reusable_workflow
+        self.assertIn('for section in contract["sections"][1:]:', workflow)
+        self.assertIn("readme_text.count(heading) != 1", workflow)
+        self.assertIn("sección requerida ausente/duplicada", workflow)
+        missing_architecture = self.template_bootstrap_readme.replace(
+            "## Arquitectura en 60 segundos",
+            "## Arquitectura eliminada",
+            1,
+        )
+        self.assertNotIn("## Arquitectura en 60 segundos", missing_architecture)
+        self.assertTrue(
+            any(
+                f"## {section['title']}" not in missing_architecture
+                for section in self.contract["sections"][1:]
+            )
+        )
+
     def test_reusable_readme_workflow_fails_closed(self):
         """Paths o evidencia fuera del contrato hacen fallar el reusable."""
         workflow = self.reusable_workflow
