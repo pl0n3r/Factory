@@ -1,0 +1,58 @@
+name: Evidencia CodeQL
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "actions/**"
+      - "scripts/codeql_sarif_summary.py"
+      - "tests/test_codeql_sarif_summary.py"
+      - "tests/test_codeql_evidence_workflow.py"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-evidence-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actions-sarif:
+    name: CodeQL Actions SARIF
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Inicializar CodeQL para GitHub Actions
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2
+        with:
+          languages: actions
+
+      - name: Generar SARIF local sin subirlo a Code Scanning
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2
+        with:
+          category: "/language:actions/evidence"
+          output: codeql-results
+          upload: never
+          upload-database: false
+
+      - name: Resumir findings y fallar cerrado
+        run: |
+          python3 scripts/codeql_sarif_summary.py \
+            --fail-severity 7.0 \
+            --require-zero-rule actions/cache-poisoning/poisonable-step
+
+      - name: Publicar evidencia SARIF
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: codeql-actions-sarif-${{ github.sha }}
+          path: codeql-results
+          if-no-files-found: error
+          retention-days: 3
