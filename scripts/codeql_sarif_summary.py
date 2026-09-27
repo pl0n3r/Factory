@@ -69,6 +69,9 @@ def _validated_runs(path: Path) -> list[dict[str, Any]]:
         driver_name = driver.get("name") if isinstance(driver, dict) else None
         if not isinstance(driver_name, str) or not driver_name.strip():
             raise ValueError(f"{path}: SARIF run has no tool driver name")
+        results = run.get("results")
+        if not isinstance(results, list):
+            raise ValueError(f"{path}: SARIF run has no results array")
         validated.append(run)
     return validated
 
@@ -78,7 +81,9 @@ def _descriptor(
     result: dict[str, Any],
 ) -> tuple[str, dict[str, Any] | None]:
     by_id, driver_rules = _rules(run)
-    rule_id = str(result.get("ruleId") or "")
+    nested_rule = result.get("rule")
+    nested_rule_id = nested_rule.get("id") if isinstance(nested_rule, dict) else ""
+    rule_id = str(result.get("ruleId") or nested_rule_id or "")
     descriptor = by_id.get(rule_id)
     index = result.get("ruleIndex")
 
@@ -135,7 +140,9 @@ def summarize(paths: list[Path], threshold: float, zero_rules: set[str]) -> dict
     for path in paths:
         for run in _validated_runs(path):
             summary["analysis_run_count"] += 1
-            for result in run.get("results", []) or []:
+            for result in run["results"]:
+                if not isinstance(result, dict):
+                    raise ValueError(f"{path}: SARIF result must be an object")
                 _record_result(summary, result, run, path.name, threshold, zero_rules)
 
     return summary

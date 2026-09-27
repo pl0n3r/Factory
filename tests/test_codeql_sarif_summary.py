@@ -80,6 +80,24 @@ class CodeqlSarifSummaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no tool driver name"):
             summarize([path], 7.0, {"actions/cache-poisoning/poisonable-step"})
 
+    def test_run_without_results_array_is_rejected(self) -> None:
+        payload = sarif("actions/example", "6.9", result=False)
+        payload["runs"][0].pop("results")
+        path = self.write(payload)
+        with self.assertRaisesRegex(ValueError, "no results array"):
+            summarize([path], 7.0, {"actions/cache-poisoning/poisonable-step"})
+
+    def test_nested_rule_id_is_blocking_without_rule_id_or_index(self) -> None:
+        payload = sarif("actions/cache-poisoning/poisonable-step", "8.1")
+        result = payload["runs"][0]["results"][0]
+        result.pop("ruleId")
+        result.pop("ruleIndex")
+        result["rule"] = {"id": "actions/cache-poisoning/poisonable-step"}
+        path = self.write(payload)
+        summary = summarize([path], 7.0, {"actions/cache-poisoning/poisonable-step"})
+        self.assertEqual(summary["high_or_critical_count"], 1)
+        self.assertEqual(summary["required_zero_rule_count"], 1)
+
     def test_zero_results_is_valid_evidence(self) -> None:
         path = self.write(sarif("actions/cache-poisoning/poisonable-step", "8.1", result=False))
         summary = summarize([path], 7.0, {"actions/cache-poisoning/poisonable-step"})
