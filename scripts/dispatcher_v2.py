@@ -2,8 +2,10 @@
 """Dispatcher V2: selección determinista, explicable y auditable de trabajo Factory."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Iterable
+
+from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 
 AUTHORITY_ORDER = {
     "health": 0,
@@ -45,6 +47,8 @@ class Candidate:
     claims: frozenset[str] = frozenset()
     active_claims: frozenset[str] = frozenset()
     requires_extra_authority: bool = False
+    idempotency_active: bool = False
+    external_readiness_reasons: tuple[str, ...] = ()
     is_epic: bool = False
     ready_children: tuple[str, ...] = ()
     equivalent_active_fix: str | None = None
@@ -61,13 +65,106 @@ class Candidate:
 
 
 @dataclass(frozen=True)
+class WorkItemReadinessContext:
+    """Evidencia externa necesaria para convertir WorkItem en candidato ejecutable."""
+
+    authority_valid: bool | None = None
+    policy_valid: bool | None = None
+    freshness_valid: bool | None = None
+    evidence_valid: bool | None = None
+    budget_valid: bool | None = None
+    approval_valid: bool | None = None
+    completed_dependencies: frozenset[str] = frozenset()
+    active_claims: frozenset[str] = frozenset()
+    incompatible_reservation: bool = False
+    active_idempotency_scopes: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class Readiness:
     ready: bool
     reasons: tuple[str, ...]
 
 
-def classify_readiness(candidate: Candidate) -> Readiness:
+def _gate_reason(name: str, value: bool | None) -> str | None:
+    if value is True:
+        return None
+    if value is False:
+        return f"{name}_invalid"
+    return f"{name}_unknown"
+
+
+def candidate_from_work_item(
+    payload: dict[str, object],
+    context: WorkItemReadinessContext,
+) -> Candidate:
+    """Adapta WorkItem v1 a Candidate sin crear una jerarquía de despacho paralela."""
+    item = validate_work_item(payload)
     reasons: list[str] = []
+
+    for name, value in (
+        ("authority", context.authority_valid),
+        ("policy", context.policy_valid),
+        ("freshness", context.freshness_valid),
+        ("evidence", context.evidence_valid),
+    ):
+        reason = _gate_reason(name, value)
+        if reason is not None:
+            reasons.append(reason)
+
+    if item.get("budget_ref") is not None:
+        reason = _gate_reason("budget", context.budget_valid)
+        if reason is not None:
+            reasons.append(reason)
+    if item.get("approval_ref") is not None:
+        reason = _gate_reason("approval", context.approval_valid)
+        if reason is not None:
+            reasons.append(reason)
+
+    authority = item["authority_level"]
+    health = authority == "health"
+    incident = authority == "incident"
+    active_fix = authority == "active_fix"
+    owner_decision = authority == "owner_decision"
+    scope = idempotency_scope(payload)
+
+    open_dependencies = tuple(
+        dependency
+        for dependency in item["depends_on"]
+        if dependency not in context.completed_dependencies
+    )
+
+    return Candidate(
+        key=item["work_id"],
+        priority=item["priority_class"],
+        health=health,
+        incident=incident,
+        active_fix=active_fix,
+        owner_decision_resolved=owner_decision,
+        dependencies_open=open_dependencies,
+        incompatible_reservation=context.incompatible_reservation,
+        claims=frozenset(item["claims"]),
+        active_claims=context.active_claims,
+        idempotency_active=scope in context.active_idempotency_scopes,
+        external_readiness_reasons=tuple(reasons),
+        metadata={
+            "work_fingerprint": work_fingerprint(payload),
+            "idempotency_scope": scope,
+            "origin_mode": item["origin_mode"],
+            "origin_system": item["origin_system"],
+            "producer_ref": item["producer_ref"],
+            "work_type": item["work_type"],
+            "repository_ref": item.get("repository_ref"),
+            "policy_ref": item["policy_ref"],
+            "budget_ref": item.get("budget_ref"),
+            "approval_ref": item.get("approval_ref"),
+            "evidence_refs": tuple(item["evidence_refs"]),
+        },
+    )
+
+
+def classify_readiness(candidate: Candidate) -> Readiness:
+    reasons: list[str] = list(candidate.external_readiness_reasons)
     if candidate.incompatible_reservation:
         reasons.append("incompatible_reservation")
     if candidate.dependencies_open:
@@ -84,6 +181,8 @@ def classify_readiness(candidate: Candidate) -> Readiness:
         reasons.append("missing_acceptance")
     if candidate.claims & candidate.active_claims:
         reasons.append("claim_overlap")
+    if candidate.idempotency_active:
+        reasons.append("idempotency_active")
     if candidate.requires_extra_authority:
         reasons.append("requires_extra_authority")
     if candidate.title.startswith("[AUTO]") and candidate.auto_class is None and not candidate.auto_evidence_reviewed:
