@@ -4,6 +4,8 @@ import unittest
 from scripts.dispatcher_v2 import (
     Candidate,
     WorkItemReadinessContext,
+    adaptive_dispatch_record,
+    adapt_candidates_for_adaptive,
     authority_class,
     candidate_from_work_item,
     classify_readiness,
@@ -11,6 +13,10 @@ from scripts.dispatcher_v2 import (
     parallel_ready,
     select_next,
 )
+
+from scripts.adaptive_fencing import evaluate_fencing
+from scripts.adaptive_replan import decide_replan
+from scripts.presence_contract import classify_presence
 
 
 def work_item(**overrides):
@@ -367,6 +373,224 @@ class DispatcherV2Tests(unittest.TestCase):
         candidate = candidate_from_work_item(payload, ready_context())
         self.assertTrue(classify_readiness(candidate).ready)
         self.assertIsNone(candidate.metadata["repository_ref"])
+
+
+class AdaptiveDispatcherIntegrationTests(unittest.TestCase):
+    def adaptive_snapshot(self, freshness="fresh"):
+        """Snapshot mínimo para composición Presence -> Fencing -> Dispatcher."""
+        return {
+            "version": 1,
+            "source": "controlbot-runtime",
+            "observed_at": "2026-09-27T23:50:00Z",
+            "sessions": [{
+                "session_id": "s1",
+                "agent_id": "a1",
+                "project": "factory",
+                "repo": "pl0n3r/Factory",
+                "work_item": "Factory#283",
+                "issue_ref": "#283",
+                "pr_ref": None,
+                "state": "working",
+                "assignment": "integration",
+                "claims": ["scripts/dispatcher_v2.py"],
+                "capabilities": ["python"],
+                "heartbeat_at": "2026-09-27T23:49:30Z",
+                "freshness": freshness,
+                "generation": 7,
+                "attempt": 1,
+                "safe_point": True,
+                "preemptibility": "preemptible",
+            }],
+            "capacity": {
+                "known_slots": 2,
+                "eligible_free_slots": 1,
+                "degraded_slots": 0,
+                "freshness": "fresh",
+            },
+        }
+
+    def fenced(self, snapshot=None, generation=7):
+        """Construye una decisión de fencing válida o stale según generation."""
+        snapshot = snapshot or self.adaptive_snapshot()
+        return evaluate_fencing(
+            snapshot,
+            [{
+                "event": {
+                    "event_type": "capacity_changed",
+                    "subject": "factory",
+                    "state": "changed",
+                    "evidence_ref": "issue:283",
+                },
+                "generation": generation,
+                "attempt": 1,
+            }],
+            current_generation=7,
+            current_attempt=1,
+            cooldown_seconds=0,
+            elapsed_since_replan=0,
+            active_work_safe=False,
+            active_work_ready=True,
+            safe_point=True,
+            preemptibility="preemptible",
+        )
+
+    def test_presence_unknown_or_stale_is_not_ready(self):
+        """AC-01: presence incierta nunca se convierte en capacidad utilizable."""
+        for freshness, expected in (("unknown", "adaptive_presence_unknown"), ("stale", "adaptive_presence_stale")):
+            with self.subTest(freshness=freshness):
+                snapshot = self.adaptive_snapshot(freshness)
+                presence = classify_presence(snapshot)
+                fencing = self.fenced(snapshot)
+                adapted = adapt_candidates_for_adaptive(
+                    [Candidate(key="candidate", priority="critical")],
+                    presence=presence,
+                    fencing=fencing,
+                    replan_action="fail_closed",
+                )
+                readiness = classify_readiness(adapted[0])
+                self.assertFalse(readiness.ready)
+                self.assertIn(expected, readiness.reasons)
+
+    def test_adaptive_replan_preserves_authority_hierarchy(self):
+        """AC-02: Adaptive no cambia la jerarquía canónica de autoridad."""
+        presence = classify_presence(self.adaptive_snapshot())
+        fencing = self.fenced()
+        candidates = [
+            Candidate(key="critical", priority="critical"),
+            Candidate(key="decision", owner_decision_resolved=True),
+            Candidate(key="active", active_fix=True),
+            Candidate(key="incident", incident=True),
+            Candidate(key="health", health=True),
+        ]
+        adapted = adapt_candidates_for_adaptive(
+            candidates,
+            presence=presence,
+            fencing=fencing,
+            replan_action="replan",
+        )
+        self.assertEqual(select_next(adapted).key, "health")
+        self.assertEqual(
+            [authority_class(c) for c in adapted],
+            ["critical", "owner_decision", "active_fix", "incident", "health"],
+        )
+
+    def test_stale_generation_is_excluded_before_selection(self):
+        """AC-03: generation stale bloquea candidatos antes del selector."""
+        snapshot = self.adaptive_snapshot()
+        presence = classify_presence(snapshot)
+        fencing = self.fenced(snapshot, generation=6)
+        adapted = adapt_candidates_for_adaptive(
+            [Candidate(key="stale", priority="critical")],
+            presence=presence,
+            fencing=fencing,
+            replan_action="fail_closed",
+        )
+        readiness = classify_readiness(adapted[0])
+        self.assertFalse(readiness.ready)
+        self.assertTrue(
+            any(
+                reason.startswith("adaptive_fencing_invalid:stale_generation")
+                for reason in readiness.reasons
+            )
+        )
+        self.assertIsNone(select_next(adapted))
+
+    def test_adaptive_parallelism_reuses_existing_dag_and_claim_rules(self):
+        """AC-04: paralelismo sigue DAG y claims del dispatcher existente."""
+        presence = classify_presence(self.adaptive_snapshot())
+        fencing = self.fenced()
+        candidates = [
+            Candidate(key="a", claims=frozenset({"x"})),
+            Candidate(key="b", claims=frozenset({"x"})),
+            Candidate(key="c", claims=frozenset({"y"})),
+            Candidate(key="blocked", dependencies_open=("dep",)),
+        ]
+        adapted = adapt_candidates_for_adaptive(
+            candidates,
+            presence=presence,
+            fencing=fencing,
+            replan_action="replan",
+        )
+        keys = {item.key for item in parallel_ready(adapted)}
+        self.assertIn("c", keys)
+        self.assertEqual(len(keys & {"a", "b"}), 1)
+        self.assertNotIn("blocked", keys)
+
+    def test_safe_active_work_continuity_survives_replan(self):
+        """AC-05: continuidad existente sobrevive si sigue siendo canónica."""
+        presence = classify_presence(self.adaptive_snapshot())
+        fencing = self.fenced()
+        active = Candidate(key="active", priority="high", continuity=10)
+        rival = Candidate(key="rival", priority="high")
+        adapted = adapt_candidates_for_adaptive(
+            [rival, active],
+            presence=presence,
+            fencing=fencing,
+            replan_action="keep",
+            replan_reasons=("continuity_preserved",),
+        )
+        self.assertEqual(select_next(adapted).key, "active")
+
+    def test_adaptive_metadata_is_attributable_without_runtime_persistence(self):
+        """AC-06: salida expone fingerprints/generation como metadata."""
+        presence = classify_presence(self.adaptive_snapshot())
+        fencing = self.fenced()
+        record = adaptive_dispatch_record(
+            [Candidate(key="chosen", priority="high")],
+            presence=presence,
+            fencing=fencing,
+            replan_action="replan",
+            replan_reasons=("presence_or_capacity_changed",),
+        )
+        adaptive = record["adaptive"]
+        self.assertEqual(len(adaptive["snapshot_fingerprint"]), 64)
+        self.assertEqual(len(adaptive["event_fingerprint"]), 64)
+        self.assertEqual(adaptive["generation"], 7)
+        self.assertEqual(record["candidates"]["chosen"]["metadata"]["adaptive"], adaptive)
+
+    def test_presence_replan_fencing_e2e_uses_single_dispatcher_ranking(self):
+        """AC-07: E2E termina en el único ranking de Dispatcher V2."""
+        snapshot = self.adaptive_snapshot()
+        presence = classify_presence(snapshot)
+        event_payload = {
+            "event_type": "incident_changed",
+            "subject": "factory",
+            "state": "open",
+            "evidence_ref": "issue:283",
+        }
+        replan = decide_replan(
+            snapshot,
+            [event_payload],
+            active_work_safe=True,
+            active_work_ready=True,
+        )
+        fencing = evaluate_fencing(
+            snapshot,
+            [{"event": event_payload, "generation": 7, "attempt": 1}],
+            current_generation=7,
+            current_attempt=1,
+            cooldown_seconds=300,
+            elapsed_since_replan=0,
+            active_work_safe=True,
+            active_work_ready=True,
+            safe_point=True,
+            preemptibility="preemptible",
+        )
+        record = adaptive_dispatch_record(
+            [
+                Candidate(key="critical", priority="critical"),
+                Candidate(key="incident", incident=True),
+                Candidate(key="health", health=True),
+            ],
+            presence=presence,
+            fencing=fencing,
+            replan_action=replan.action,
+            replan_reasons=replan.reasons,
+        )
+        self.assertEqual(replan.action, "replan")
+        self.assertEqual(fencing.action, "replan")
+        self.assertEqual(record["selected"], "health")
+        self.assertEqual(record["selected_class"], "health")
 
 
 if __name__ == "__main__":
