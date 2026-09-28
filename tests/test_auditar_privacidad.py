@@ -246,15 +246,15 @@ class PrivacyAuditTests(unittest.TestCase):
         report = audit_sources(
             sources={
                 "src/runtime.js": (
-                    "const root = document.querySelector('#app');\\n"
-                    "const origin = location.origin;\\n"
-                    'const mode = "mobile";\\n'
-                    "const status = data.health?.status || 'unknown';\\n"
+                    "const root = document.querySelector('#app');\n"
+                    "const origin = location.origin;\n"
+                    'const mode = "mobile";\n'
+                    "const status = data.health?.status || 'unknown';\n"
                 ),
                 "src/seo.php": (
-                    "<?php\\n"
-                    "$schema['location'] = ['@type' => 'Place'];\\n"
-                    "$schema['location']['address'] = ['@type' => 'PostalAddress'];\\n"
+                    "<?php\n"
+                    "$schema['location'] = ['@type' => 'Place'];\n"
+                    "$schema['location']['address'] = ['@type' => 'PostalAddress'];\n"
                 ),
             },
             current_document=current,
@@ -270,9 +270,9 @@ class PrivacyAuditTests(unittest.TestCase):
         report = audit_sources(
             sources={
                 "database/migration.sql": (
-                    "CREATE TABLE activity_log (\\n"
-                    "  ip_address VARCHAR(45) NULL\\n"
-                    ");\\n"
+                    "CREATE TABLE activity_log (\n"
+                    "  ip_address VARCHAR(45) NULL\n"
+                    ");\n"
                 )
             },
             current_document=current,
@@ -289,21 +289,21 @@ class PrivacyAuditTests(unittest.TestCase):
         report = audit_sources(
             sources={
                 "config/public_assets.php": (
-                    '$mobilePreload = \'<link data-lcp="mobile">\';\\n'
-                    '$font = "https://fonts.googleapis.com/css2?family=Barlow";\\n'
+                    '$mobilePreload = \'<link data-lcp="mobile">\';\n'
+                    '$font = "https://fonts.googleapis.com/css2?family=Barlow";\n'
                 ),
                 "config/public_seo.php": (
-                    "$schema['location'] = ['@type' => 'Place'];\\n"
-                    "$schema['location']['address'] = ['@type' => 'PostalAddress'];\\n"
+                    "$schema['location'] = ['@type' => 'Place'];\n"
+                    "$schema['location']['address'] = ['@type' => 'PostalAddress'];\n"
                 ),
                 "api/route.php": (
-                    "$resources = ['health', 'auth', 'public'];\\n"
+                    "$resources = ['health', 'auth', 'public'];\n"
                 ),
                 "discadmin/system-status-v2.js": (
-                    "const status = data.health?.status || 'unknown';\\n"
+                    "const status = data.health?.status || 'unknown';\n"
                 ),
                 "database/v4-cms-migration.sql": (
-                    "ip_address VARCHAR(45) NULL,\\n"
+                    "ip_address VARCHAR(45) NULL,\n"
                 ),
             },
             current_document=current,
@@ -314,7 +314,6 @@ class PrivacyAuditTests(unittest.TestCase):
             [{"signal": "ip_address", "paths": ["database/v4-cms-migration.sql"]}],
         )
         self.assertEqual(report["undocumented_providers"], [])
-
 
 if __name__ == "__main__":
     unittest.main()

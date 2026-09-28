@@ -28,10 +28,10 @@ IGNORED_PREFIXES = (
 )
 AMBIGUOUS_SIGNALS = {"name", "location", "document", "health", "mobile", "address"}
 PERSONAL_CONTEXT = re.compile(
-    r"(?:\\$_(?:post|get|request)\\b|"
-    r"\\b(?:request|req|body|formdata|form|input|payload|"
+    r"(?:\$_(?:post|get|request)\b|"
+    r"\b(?:request|req|body|formdata|form|input|payload|"
     r"user|profile|person|customer|contact|member|account|admin|staff|patient|"
-    r"employee|client|lead|attendee|subscriber|identity|record)\\b)"
+    r"employee|client|lead|attendee|subscriber|identity|record)\b)"
 )
 SQL_FIELD_TYPES = (
     r"(?:var)?char|text|json|(?:tiny|small|medium|big)?int|decimal|float|double|"
@@ -55,7 +55,7 @@ def _signal_present(signal: str, line: str) -> bool:
     if signal in AMBIGUOUS_SIGNALS:
         token = re.escape(signal)
         sql_field = re.search(
-            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\\s+(?:{SQL_FIELD_TYPES})\\b",
+            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s+(?:{SQL_FIELD_TYPES})\b",
             line,
         )
         if sql_field:
@@ -64,14 +64,14 @@ def _signal_present(signal: str, line: str) -> bool:
         quoted = (
             f'"{signal}"' in line
             or f"'{signal}'" in line
-            or re.search(rf"\\bname\\s*=\\s*['\\"]{token}['\\"]", line)
+            or re.search(rf"\bname\s*=\s*['\"]{token}['\"]", line)
         )
         object_field = re.search(
-            rf"(?:{{|,)\\s*{token}\\s*:",
+            rf"(?:{{|,)\s*{token}\s*:",
             line,
         )
         property_access = re.search(
-            rf"(?:\\.|\\?->|->)\\s*{token}(?![a-z0-9_])",
+            rf"(?:\.|\?->|->)\s*{token}(?![a-z0-9_])",
             line,
         )
         if not (quoted or object_field or property_access):
