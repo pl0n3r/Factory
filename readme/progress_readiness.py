@@ -1,630 +1,247 @@
-"""Cálculo determinista de Progress + Readiness para README Contract."""
+"""Cálculo puro y determinista de Progress + Readiness para README Contract v1."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from datetime import datetime, timezone
-from fractions import Fraction
 import hashlib
 import json
-import re
+import math
+from collections.abc import Mapping
 from typing import Any
+
+CONTRACT_ID = "factory.progress-readiness.v1"
+APPLICABILITY = {"APPLICABLE", "NOT_APPLICABLE"}
+FRESHNESS = {"CURRENT", "STALE", "UNKNOWN"}
+SIGNAL_STATES = {"DEMONSTRATED", "PARTIAL", "NOT_DEMONSTRATED", "UNKNOWN"}
+SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+BLOCKER_STATUSES = {"OPEN", "CLOSED"}
 
 
 class ProgressReadinessError(ValueError):
-    """Input o snapshot fuera del contrato Progress + Readiness v1."""
+    """Input incompatible con Progress + Readiness v1."""
 
 
-EVIDENCE_STATES = {
-    "SATISFIED",
-    "UNSATISFIED",
-    "UNKNOWN",
-    "STALE",
-    "NOT_APPLICABLE",
-}
-BLOCKER_STATES = {"OPEN", "RESOLVED", "UNKNOWN", "STALE"}
-SEVERITIES = {"critical", "high", "medium", "low", "info"}
-_ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
-_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
-MAX_DIMENSIONS = 50
-MAX_MILESTONES = 100
-MAX_BLOCKERS = 100
-MAX_EVIDENCE_REFS = 50
-MAX_WEIGHT = 1_000_000
+def calculate_progress_readiness(payload: Any) -> dict[str, Any]:
+    """Normaliza evidencia y calcula métricas explicables para un target."""
+    raw = _object(payload, {"target", "dimensions", "blockers"}, "payload")
+    target = _target(raw["target"])
+    dimensions = sorted((_dimension(row) for row in _list(raw["dimensions"], "dimensions")), key=lambda row: row["id"])
+    blockers = sorted((_blocker(row) for row in _list(raw["blockers"], "blockers")), key=lambda row: row["id"])
+    _unique(dimensions, "dimension")
+    _unique(blockers, "blocker")
 
-
-def calculate_progress_readiness(
-    payload: Mapping[str, Any],
-    previous: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Normaliza evidencia y produce el payload canónico v1."""
-    source = _normalize_input(payload)
-    dimension_rows: list[dict[str, Any]] = []
-    progress_parts: list[tuple[str, int, Fraction, dict[str, Any]]] = []
-    readiness_parts: list[tuple[str, int, Fraction, dict[str, Any]]] = []
-    degraded_evidence = False
-
-    for dimension in source["dimensions"]:
-        progress_detail, progress_fraction = _dimension_metric(
-            dimension, "progress_state"
-        )
-        readiness_detail, readiness_fraction = _dimension_metric(
-            dimension, "readiness_state"
-        )
-        if progress_detail["unknown_or_stale"] or readiness_detail["unknown_or_stale"]:
-            degraded_evidence = True
-
-        row = {
-            "id": dimension["id"],
-            "label": dimension["label"],
-            "weight": dimension["weight"],
-            "progress": progress_detail,
-            "readiness": readiness_detail,
-            "milestones": dimension["milestones"],
-        }
-        dimension_rows.append(row)
-        if progress_fraction is not None:
-            progress_parts.append(
-                (dimension["id"], dimension["weight"], progress_fraction, progress_detail)
-            )
-        if readiness_fraction is not None:
-            readiness_parts.append(
-                (dimension["id"], dimension["weight"], readiness_fraction, readiness_detail)
-            )
-
-    progress = _aggregate_metric(progress_parts)
-    readiness = _aggregate_metric(readiness_parts)
-    progress["status"] = (
-        "MEASURED" if progress["basis_points"] is not None else "UNKNOWN"
-    )
-
-    blockers = source["blockers"]
+    totals = {"progress": 0.0, "readiness": 0.0, "weight": 0.0}
+    freshness_values: list[str] = []
+    evidence: set[str] = set()
+    for dimension in dimensions:
+        if dimension["applicability"] == "NOT_APPLICABLE":
+            continue
+        totals["weight"] += dimension["weight"]
+        totals["progress"] += dimension["weight"] * dimension["progress_percent"] / 100.0
+        totals["readiness"] += dimension["weight"] * dimension["readiness_percent"] / 100.0
+        for milestone in dimension["milestones"]:
+            freshness_values.append(milestone["freshness"])
+            for metric in ("progress", "readiness"):
+                evidence.update(milestone[metric]["evidence_refs"])
     for blocker in blockers:
-        if blocker["state"] in {"UNKNOWN", "STALE"}:
-            degraded_evidence = True
-    critical_blockers = [
-        blocker
-        for blocker in blockers
-        if blocker["severity"] == "critical" and blocker["state"] != "RESOLVED"
-    ]
+        evidence.update(blocker["evidence_refs"])
 
-    if readiness["basis_points"] is None:
-        readiness_status = "UNKNOWN"
-    elif critical_blockers:
-        readiness_status = "BLOCKED"
-    elif readiness["basis_points"] == 10_000:
-        readiness_status = "READY"
-    else:
-        readiness_status = "BUILDING"
-    readiness["status"] = readiness_status
-
-    target = source["target"]
-    result: dict[str, Any] = {
-        "version": 1,
-        "target": target,
-        "target_fingerprint": _target_fingerprint(target, source["dimensions"]),
-        "observed_at": source["observed_at"],
-        "progress": progress,
-        "readiness": readiness,
-        "evidence_freshness": "DEGRADED" if degraded_evidence else "CURRENT",
-        "dimensions": dimension_rows,
-        "blockers": blockers,
-        "critical_blockers": critical_blockers,
-    }
-    result["trend"] = _no_trend()
-    if previous is not None:
-        result["trend"] = _compare(previous, result)
-    return result
-
-
-def canonical_payload(snapshot: Mapping[str, Any]) -> str:
-    """Serialización estable para README, tests y consumidores posteriores."""
-    _validate_snapshot_shape(snapshot)
-    return json.dumps(
-        snapshot,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
-def compare_progress_readiness(
-    previous: Mapping[str, Any],
-    current: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Compara snapshots; cambios de target son rebaseline, no tendencia."""
-    _validate_snapshot_shape(previous)
-    _validate_snapshot_shape(current)
-    return _compare(previous, current)
-
-
-def _normalize_input(payload: Mapping[str, Any]) -> dict[str, Any]:
-    if not isinstance(payload, Mapping):
-        raise ProgressReadinessError("payload debe ser objeto.")
-    _exact_keys(
-        payload,
-        {"version", "target", "dimensions", "blockers", "observed_at"},
-        "payload",
-    )
-    if payload["version"] != 1:
-        raise ProgressReadinessError("version debe ser 1.")
-
-    target = _normalize_target(payload["target"])
-    observed_at = _timestamp(payload["observed_at"], "observed_at")
-    dimensions = _normalize_dimensions(payload["dimensions"])
-    blockers = _normalize_blockers(payload["blockers"])
+    freshness = _freshness(freshness_values)
+    progress = _percent(totals["progress"], totals["weight"])
+    readiness = _percent(totals["readiness"], totals["weight"])
+    critical = [row for row in blockers if row["severity"] == "CRITICAL" and row["status"] == "OPEN"]
     return {
-        "version": 1,
+        "contract": CONTRACT_ID,
         "target": target,
-        "dimensions": dimensions,
-        "blockers": blockers,
-        "observed_at": observed_at,
-    }
-
-
-def _normalize_target(raw: Any) -> dict[str, str]:
-    if not isinstance(raw, Mapping):
-        raise ProgressReadinessError("target debe ser objeto.")
-    _exact_keys(raw, {"id", "label", "scope", "version"}, "target")
-    return {
-        "id": _identifier(raw["id"], "target.id"),
-        "label": _text(raw["label"], "target.label", 160),
-        "scope": _text(raw["scope"], "target.scope", 200),
-        "version": _text(raw["version"], "target.version", 80),
-    }
-
-
-def _normalize_dimensions(raw: Any) -> list[dict[str, Any]]:
-    if (
-        not isinstance(raw, list)
-        or not raw
-        or len(raw) > MAX_DIMENSIONS
-    ):
-        raise ProgressReadinessError("dimensions debe ser lista no vacía y acotada.")
-
-    seen: set[str] = set()
-    result: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            raise ProgressReadinessError("dimension debe ser objeto.")
-        _exact_keys(item, {"id", "label", "weight", "milestones"}, "dimension")
-        dimension_id = _identifier(item["id"], "dimension.id")
-        if dimension_id in seen:
-            raise ProgressReadinessError("dimension.id duplicado.")
-        seen.add(dimension_id)
-        result.append(
-            {
-                "id": dimension_id,
-                "label": _text(item["label"], "dimension.label", 160),
-                "weight": _weight(item["weight"], "dimension.weight"),
-                "milestones": _normalize_milestones(item["milestones"]),
-            }
-        )
-    result.sort(key=lambda row: row["id"])
-    return result
-
-
-def _normalize_milestones(raw: Any) -> list[dict[str, Any]]:
-    if (
-        not isinstance(raw, list)
-        or not raw
-        or len(raw) > MAX_MILESTONES
-    ):
-        raise ProgressReadinessError("milestones debe ser lista no vacía y acotada.")
-
-    seen: set[str] = set()
-    result: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            raise ProgressReadinessError("milestone debe ser objeto.")
-        _exact_keys(
-            item,
-            {
-                "id",
-                "label",
-                "weight",
-                "progress_state",
-                "readiness_state",
-                "evidence_refs",
-            },
-            "milestone",
-        )
-        milestone_id = _identifier(item["id"], "milestone.id")
-        if milestone_id in seen:
-            raise ProgressReadinessError("milestone.id duplicado.")
-        seen.add(milestone_id)
-        progress_state = _enum(
-            item["progress_state"], EVIDENCE_STATES, "milestone.progress_state"
-        )
-        readiness_state = _enum(
-            item["readiness_state"], EVIDENCE_STATES, "milestone.readiness_state"
-        )
-        evidence_refs = _refs(item["evidence_refs"], "milestone.evidence_refs")
-        if (
-            progress_state != "UNKNOWN" or readiness_state != "UNKNOWN"
-        ) and not evidence_refs:
-            raise ProgressReadinessError(
-                "Todo estado demostrado/stale/N/A requiere evidence_refs."
-            )
-        result.append(
-            {
-                "id": milestone_id,
-                "label": _text(item["label"], "milestone.label", 160),
-                "weight": _weight(item["weight"], "milestone.weight"),
-                "progress_state": progress_state,
-                "readiness_state": readiness_state,
-                "evidence_refs": evidence_refs,
-            }
-        )
-    result.sort(key=lambda row: row["id"])
-    return result
-
-
-def _normalize_blockers(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, list) or len(raw) > MAX_BLOCKERS:
-        raise ProgressReadinessError("blockers debe ser lista acotada.")
-    seen: set[str] = set()
-    result: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            raise ProgressReadinessError("blocker debe ser objeto.")
-        _exact_keys(
-            item,
-            {"id", "label", "severity", "state", "evidence_refs"},
-            "blocker",
-        )
-        blocker_id = _identifier(item["id"], "blocker.id")
-        if blocker_id in seen:
-            raise ProgressReadinessError("blocker.id duplicado.")
-        seen.add(blocker_id)
-        state = _enum(item["state"], BLOCKER_STATES, "blocker.state")
-        evidence_refs = _refs(item["evidence_refs"], "blocker.evidence_refs")
-        if state != "UNKNOWN" and not evidence_refs:
-            raise ProgressReadinessError("Blocker conocido/stale requiere evidence_refs.")
-        result.append(
-            {
-                "id": blocker_id,
-                "label": _text(item["label"], "blocker.label", 160),
-                "severity": _enum(item["severity"], SEVERITIES, "blocker.severity"),
-                "state": state,
-                "evidence_refs": evidence_refs,
-            }
-        )
-    result.sort(key=lambda row: (row["severity"], row["id"]))
-    return result
-
-
-def _dimension_metric(
-    dimension: Mapping[str, Any],
-    state_field: str,
-) -> tuple[dict[str, Any], Fraction | None]:
-    milestones = dimension["milestones"]
-    applicable = [
-        milestone
-        for milestone in milestones
-        if milestone[state_field] != "NOT_APPLICABLE"
-    ]
-    denominator = sum(milestone["weight"] for milestone in applicable)
-    satisfied = sum(
-        milestone["weight"]
-        for milestone in applicable
-        if milestone[state_field] == "SATISFIED"
-    )
-    evidence = sorted(
-        {
-            ref
-            for milestone in milestones
-            for ref in milestone["evidence_refs"]
-        }
-    )
-    unknown_or_stale = [
-        milestone["id"]
-        for milestone in applicable
-        if milestone[state_field] in {"UNKNOWN", "STALE"}
-    ]
-
-    if denominator == 0:
-        return (
-            {
-                "status": "NOT_APPLICABLE",
-                "basis_points": None,
-                "percent": None,
-                "satisfied_weight": 0,
-                "applicable_weight": 0,
-                "evidence_refs": evidence,
-                "unknown_or_stale": [],
-            },
-            None,
-        )
-
-    fraction = Fraction(satisfied, denominator)
-    basis_points = _to_basis_points(fraction)
-    return (
-        {
-            "status": "MEASURED",
-            "basis_points": basis_points,
-            "percent": _percent(basis_points),
-            "satisfied_weight": satisfied,
-            "applicable_weight": denominator,
-            "evidence_refs": evidence,
-            "unknown_or_stale": unknown_or_stale,
+        "baseline_fingerprint": _baseline(target, dimensions),
+        "progress": {"percent": progress, "status": _status(progress, freshness, "COMPLETE")},
+        "readiness": {
+            "percent": readiness,
+            "status": "BLOCKED" if critical else _status(readiness, freshness, "READY"),
         },
-        fraction,
-    )
-
-
-def _aggregate_metric(
-    parts: list[tuple[str, int, Fraction, dict[str, Any]]],
-) -> dict[str, Any]:
-    if not parts:
-        return {
-            "basis_points": None,
-            "percent": None,
-            "dimension_weight": 0,
-            "contributions": [],
-        }
-
-    denominator = sum(weight for _, weight, _, _ in parts)
-    weighted = sum(
-        (Fraction(weight) * score for _, weight, score, _ in parts),
-        start=Fraction(0),
-    )
-    score = weighted / denominator
-    basis_points = _to_basis_points(score)
-    contributions = [
-        {
-            "dimension_id": dimension_id,
-            "weight": weight,
-            "basis_points": _to_basis_points(fraction),
-            "evidence_refs": detail["evidence_refs"],
-            "unknown_or_stale": detail["unknown_or_stale"],
-        }
-        for dimension_id, weight, fraction, detail in parts
-    ]
-    return {
-        "basis_points": basis_points,
-        "percent": _percent(basis_points),
-        "dimension_weight": denominator,
-        "contributions": contributions,
+        "dimensions": dimensions,
+        "critical_blockers": critical,
+        "blockers": blockers,
+        "evidence_freshness": freshness,
+        "evidence_refs": sorted(evidence),
     }
 
 
-def _compare(
-    previous: Mapping[str, Any],
-    current: Mapping[str, Any],
-) -> dict[str, Any]:
-    _validate_snapshot_shape(previous)
-    _validate_snapshot_shape(current)
-    if previous["target_fingerprint"] != current["target_fingerprint"]:
-        return {
-            "kind": "REBASELINE",
-            "comparable": False,
-            "progress_delta_basis_points": None,
-            "readiness_delta_basis_points": None,
-            "causes": [
-                {
-                    "type": "target_change",
-                    "from": previous["target"],
-                    "to": current["target"],
-                }
-            ],
-        }
+def compare_snapshots(previous: Mapping[str, Any], current: Mapping[str, Any]) -> dict[str, Any]:
+    """Emite tendencia solo cuando target y denominador conservan el mismo baseline."""
+    for name, payload in (("previous", previous), ("current", current)):
+        if not isinstance(payload, Mapping) or payload.get("contract") != CONTRACT_ID:
+            raise ProgressReadinessError(f"{name} no es payload calculado compatible.")
+        required = {"baseline_fingerprint", "progress", "readiness", "dimensions", "critical_blockers"}
+        if not required <= set(payload):
+            raise ProgressReadinessError(f"{name} está incompleto.")
+    if previous["baseline_fingerprint"] != current["baseline_fingerprint"]:
+        return {"kind": "REBASELINE", "progress_delta": None, "readiness_delta": None, "causes": ["target_or_scope_changed"]}
 
-    progress_delta = _delta(
-        previous["progress"]["basis_points"], current["progress"]["basis_points"]
-    )
-    readiness_delta = _delta(
-        previous["readiness"]["basis_points"], current["readiness"]["basis_points"]
-    )
-    causes = _change_causes(previous, current)
+    before = {row["id"]: row for row in previous["dimensions"]}
+    after = {row["id"]: row for row in current["dimensions"]}
+    causes = [
+        f"{dimension_id}:{metric}:{before[dimension_id][metric]}->{after[dimension_id][metric]}"
+        for dimension_id in sorted(after)
+        for metric in ("progress_percent", "readiness_percent")
+        if before[dimension_id][metric] != after[dimension_id][metric]
+    ]
+    old_blockers = {row["id"] for row in previous["critical_blockers"]}
+    new_blockers = {row["id"] for row in current["critical_blockers"]}
+    causes += [f"blocker_opened:{item}" for item in sorted(new_blockers - old_blockers)]
+    causes += [f"blocker_closed:{item}" for item in sorted(old_blockers - new_blockers)]
     return {
-        "kind": "TREND",
-        "comparable": True,
-        "progress_delta_basis_points": progress_delta,
-        "readiness_delta_basis_points": readiness_delta,
+        "kind": "DELTA",
+        "progress_delta": _delta(previous["progress"]["percent"], current["progress"]["percent"]),
+        "readiness_delta": _delta(previous["readiness"]["percent"], current["readiness"]["percent"]),
         "causes": causes,
     }
 
 
-def _change_causes(
-    previous: Mapping[str, Any],
-    current: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    old = _milestone_map(previous)
-    new = _milestone_map(current)
-    causes: list[dict[str, Any]] = []
-    for key in sorted(set(old) | set(new)):
-        if old.get(key) == new.get(key):
-            continue
-        dimension_id, milestone_id = key
-        causes.append(
-            {
-                "type": "milestone_change",
-                "dimension_id": dimension_id,
-                "milestone_id": milestone_id,
-                "from": old.get(key),
-                "to": new.get(key),
-                "evidence_refs": (
-                    new.get(key, {}).get("evidence_refs", [])
-                    if isinstance(new.get(key), Mapping)
-                    else []
-                ),
-            }
-        )
-
-    old_blockers = {row["id"]: row for row in previous["blockers"]}
-    new_blockers = {row["id"]: row for row in current["blockers"]}
-    for blocker_id in sorted(set(old_blockers) | set(new_blockers)):
-        if old_blockers.get(blocker_id) == new_blockers.get(blocker_id):
-            continue
-        causes.append(
-            {
-                "type": "blocker_change",
-                "blocker_id": blocker_id,
-                "from": old_blockers.get(blocker_id),
-                "to": new_blockers.get(blocker_id),
-            }
-        )
-    return causes
+def _target(value: Any) -> dict[str, str]:
+    raw = _object(value, {"id", "label", "version", "scope"}, "target")
+    return {key: _text(raw[key], f"target.{key}") for key in ("id", "label", "version", "scope")}
 
 
-def _milestone_map(snapshot: Mapping[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+def _dimension(value: Any) -> dict[str, Any]:
+    raw = _object(value, {"id", "label", "weight", "applicability", "milestones"}, "dimension")
+    applicability = _enum(raw["applicability"], APPLICABILITY, "dimension.applicability")
+    milestones = sorted((_milestone(row) for row in _list(raw["milestones"], "dimension.milestones")), key=lambda row: row["id"])
+    _unique(milestones, "milestone")
+    if applicability == "APPLICABLE" and not milestones:
+        raise ProgressReadinessError("dimensión aplicable requiere al menos un hito.")
+    if applicability == "NOT_APPLICABLE" and milestones:
+        raise ProgressReadinessError("dimensión NOT_APPLICABLE no admite hitos.")
+
+    milestone_weight = sum(row["weight"] for row in milestones)
+    def metric_percent(metric: str) -> float | None:
+        score = sum(row["weight"] * row[metric]["effective_value"] for row in milestones)
+        return _percent(score, milestone_weight)
     return {
-        (dimension["id"], milestone["id"]): {
-            "weight": milestone["weight"],
-            "progress_state": milestone["progress_state"],
-            "readiness_state": milestone["readiness_state"],
-            "evidence_refs": milestone["evidence_refs"],
-        }
-        for dimension in snapshot["dimensions"]
-        for milestone in dimension["milestones"]
+        "id": _text(raw["id"], "dimension.id"),
+        "label": _text(raw["label"], "dimension.label"),
+        "weight": _positive(raw["weight"], "dimension.weight"),
+        "applicability": applicability,
+        "progress_percent": metric_percent("progress"),
+        "readiness_percent": metric_percent("readiness"),
+        "milestones": milestones,
     }
 
 
-def _validate_snapshot_shape(snapshot: Mapping[str, Any]) -> None:
-    if not isinstance(snapshot, Mapping):
-        raise ProgressReadinessError("snapshot debe ser objeto.")
-    required = {
-        "version",
-        "target",
-        "target_fingerprint",
-        "observed_at",
-        "progress",
-        "readiness",
-        "evidence_freshness",
-        "dimensions",
-        "blockers",
-        "critical_blockers",
-        "trend",
-    }
-    if set(snapshot) != required or snapshot.get("version") != 1:
-        raise ProgressReadinessError("snapshot no coincide con contrato v1.")
-
-
-def _no_trend() -> dict[str, Any]:
+def _milestone(value: Any) -> dict[str, Any]:
+    raw = _object(value, {"id", "label", "weight", "freshness", "progress", "readiness"}, "milestone")
+    freshness = _enum(raw["freshness"], FRESHNESS, "milestone.freshness")
     return {
-        "kind": "UNAVAILABLE",
-        "comparable": False,
-        "progress_delta_basis_points": None,
-        "readiness_delta_basis_points": None,
-        "causes": [],
+        "id": _text(raw["id"], "milestone.id"),
+        "label": _text(raw["label"], "milestone.label"),
+        "weight": _positive(raw["weight"], "milestone.weight"),
+        "freshness": freshness,
+        "progress": _signal(raw["progress"], "milestone.progress", freshness),
+        "readiness": _signal(raw["readiness"], "milestone.readiness", freshness),
     }
 
 
-def _target_fingerprint(
-    target: Mapping[str, str],
-    dimensions: list[dict[str, Any]],
-) -> str:
-    identity = {
-        "target": {
-            "id": target["id"],
-            "scope": target["scope"],
-            "version": target["version"],
-        },
-        "baseline": [
-            {
-                "id": dimension["id"],
-                "weight": dimension["weight"],
-                "milestones": [
-                    {
-                        "id": milestone["id"],
-                        "weight": milestone["weight"],
-                        "progress_applicable": (
-                            milestone["progress_state"] != "NOT_APPLICABLE"
-                        ),
-                        "readiness_applicable": (
-                            milestone["readiness_state"] != "NOT_APPLICABLE"
-                        ),
-                    }
-                    for milestone in dimension["milestones"]
-                ],
-            }
-            for dimension in dimensions
-        ],
+def _signal(value: Any, field: str, freshness: str) -> dict[str, Any]:
+    raw = _object(value, {"state", "value", "evidence_refs"}, field)
+    state = _enum(raw["state"], SIGNAL_STATES, f"{field}.state")
+    number = _ratio(raw["value"], f"{field}.value")
+    evidence = sorted({_text(ref, f"{field}.evidence_refs") for ref in _list(raw["evidence_refs"], f"{field}.evidence_refs")})
+    if state == "DEMONSTRATED" and number != 1.0:
+        raise ProgressReadinessError(f"{field}: DEMONSTRATED requiere value=1.")
+    if state in {"NOT_DEMONSTRATED", "UNKNOWN"} and number != 0.0:
+        raise ProgressReadinessError(f"{field}: {state} requiere value=0.")
+    if state == "PARTIAL" and not 0.0 < number < 1.0:
+        raise ProgressReadinessError(f"{field}: PARTIAL requiere 0 < value < 1.")
+    if state in {"DEMONSTRATED", "PARTIAL"} and freshness == "CURRENT" and not evidence:
+        raise ProgressReadinessError(f"{field}: señal positiva CURRENT requiere evidence_refs.")
+    effective = number if freshness == "CURRENT" and state != "UNKNOWN" else 0.0
+    return {"state": state, "value": number, "effective_value": effective, "evidence_refs": evidence}
+
+
+def _blocker(value: Any) -> dict[str, Any]:
+    raw = _object(value, {"id", "severity", "status", "evidence_refs"}, "blocker")
+    return {
+        "id": _text(raw["id"], "blocker.id"),
+        "severity": _enum(raw["severity"], SEVERITIES, "blocker.severity"),
+        "status": _enum(raw["status"], BLOCKER_STATUSES, "blocker.status"),
+        "evidence_refs": sorted({_text(ref, "blocker.evidence_refs") for ref in _list(raw["evidence_refs"], "blocker.evidence_refs")}),
     }
-    encoded = json.dumps(
-        identity,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+
+
+def _baseline(target: Mapping[str, str], dimensions: list[dict[str, Any]]) -> str:
+    scope = {
+        "target": {key: target[key] for key in ("id", "version", "scope")},
+        "dimensions": [{
+            "id": row["id"], "weight": row["weight"], "applicability": row["applicability"],
+            "milestones": [{"id": item["id"], "weight": item["weight"]} for item in row["milestones"]],
+        } for row in dimensions],
+    }
+    encoded = json.dumps(scope, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _delta(previous: Any, current: Any) -> int | None:
-    if not isinstance(previous, int) or not isinstance(current, int):
-        return None
-    return current - previous
+def _freshness(values: list[str]) -> str:
+    if not values or "UNKNOWN" in values:
+        return "UNKNOWN"
+    return "STALE" if "STALE" in values else "CURRENT"
 
 
-def _to_basis_points(value: Fraction) -> int:
-    numerator = value.numerator * 10_000
-    denominator = value.denominator
-    return (2 * numerator + denominator) // (2 * denominator)
+def _status(percent: float | None, freshness: str, complete: str) -> str:
+    if percent is None:
+        return "UNKNOWN"
+    return complete if percent == 100.0 and freshness == "CURRENT" else "BUILDING"
 
 
-def _percent(basis_points: int) -> str:
-    return f"{basis_points // 100}.{basis_points % 100:02d}"
+def _percent(score: float, weight: float) -> float | None:
+    return None if weight <= 0 else round(100.0 * score / weight, 2)
 
 
-def _exact_keys(value: Mapping[str, Any], expected: set[str], label: str) -> None:
-    if set(value) != expected:
-        raise ProgressReadinessError(f"{label} contiene campos faltantes o no permitidos.")
+def _delta(before: float | None, after: float | None) -> float | None:
+    return None if before is None or after is None else round(after - before, 2)
 
 
-def _identifier(value: Any, label: str) -> str:
-    if not isinstance(value, str) or _ID.fullmatch(value) is None:
-        raise ProgressReadinessError(f"{label} inválido.")
+def _object(value: Any, keys: set[str], field: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != keys:
+        raise ProgressReadinessError(f"{field} debe contener exactamente: {', '.join(sorted(keys))}.")
     return value
 
 
-def _text(value: Any, label: str, max_length: int) -> str:
+def _list(value: Any, field: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ProgressReadinessError(f"{field} debe ser lista.")
+    return value
+
+
+def _text(value: Any, field: str) -> str:
     if not isinstance(value, str):
-        raise ProgressReadinessError(f"{label} debe ser texto.")
-    normalized = " ".join(value.split())
-    if not normalized or len(normalized) > max_length:
-        raise ProgressReadinessError(f"{label} vacío o fuera de límites.")
-    return normalized
+        raise ProgressReadinessError(f"{field} debe ser texto.")
+    cleaned = " ".join(value.split())
+    if not cleaned or len(cleaned) > 240:
+        raise ProgressReadinessError(f"{field} inválido.")
+    return cleaned
 
 
-def _weight(value: Any, label: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ProgressReadinessError(f"{label} debe ser entero.")
-    if value < 1 or value > MAX_WEIGHT:
-        raise ProgressReadinessError(f"{label} fuera de límites.")
-    return value
-
-
-def _refs(value: Any, label: str) -> list[str]:
-    if (
-        not isinstance(value, list)
-        or len(value) > MAX_EVIDENCE_REFS
-        or not all(isinstance(item, str) for item in value)
-    ):
-        raise ProgressReadinessError(f"{label} debe ser lista acotada de refs.")
-    refs: set[str] = set()
-    for item in value:
-        normalized = item.strip()
-        if not normalized or _REF.fullmatch(normalized) is None:
-            raise ProgressReadinessError(f"{label} contiene ref inválida.")
-        refs.add(normalized)
-    return sorted(refs)
-
-
-def _enum(value: Any, allowed: set[str], label: str) -> str:
+def _enum(value: Any, allowed: set[str], field: str) -> str:
     if not isinstance(value, str) or value not in allowed:
-        raise ProgressReadinessError(f"{label} fuera del catálogo.")
+        raise ProgressReadinessError(f"{field} fuera del contrato.")
     return value
 
 
-def _timestamp(value: Any, label: str) -> str:
-    if not isinstance(value, str):
-        raise ProgressReadinessError(f"{label} debe ser ISO-8601.")
-    parsed = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        timestamp = datetime.fromisoformat(parsed)
-    except ValueError as exc:
-        raise ProgressReadinessError(f"{label} debe ser ISO-8601.") from exc
-    if timestamp.tzinfo is None:
-        raise ProgressReadinessError(f"{label} debe incluir zona horaria.")
-    return timestamp.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _positive(value: Any, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ProgressReadinessError(f"{field} debe ser numérico finito > 0.")
+    return float(value)
+
+
+def _ratio(value: Any, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
+        raise ProgressReadinessError(f"{field} debe estar entre 0 y 1.")
+    return float(value)
+
+
+def _unique(rows: list[dict[str, Any]], field: str) -> None:
+    ids = [row["id"] for row in rows]
+    if len(ids) != len(set(ids)):
+        raise ProgressReadinessError(f"{field} id duplicado.")
+
+
+__all__ = ["CONTRACT_ID", "ProgressReadinessError", "calculate_progress_readiness", "compare_snapshots"]

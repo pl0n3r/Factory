@@ -1,309 +1,92 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/pl0n3r/factory/readme/progress_readiness.schema.json",
-  "title": "Factory Progress + Readiness Snapshot v1",
+  "$id": "https://factory.pl0n3r.dev/schemas/progress-readiness-v1.json",
+  "title": "Factory Progress + Readiness v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "version",
-    "target",
-    "target_fingerprint",
-    "observed_at",
-    "progress",
-    "readiness",
-    "evidence_freshness",
-    "dimensions",
-    "blockers",
-    "critical_blockers",
-    "trend"
+    "contract", "target", "baseline_fingerprint", "progress", "readiness",
+    "dimensions", "critical_blockers", "blockers", "evidence_freshness", "evidence_refs"
   ],
   "properties": {
-    "version": { "const": 1 },
-    "target": { "$ref": "#/$defs/target" },
-    "target_fingerprint": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    },
-    "observed_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "progress": {
-      "allOf": [
-        { "$ref": "#/$defs/aggregateMetric" },
-        {
-          "type": "object",
-          "properties": {
-            "status": { "enum": ["MEASURED", "UNKNOWN"] }
-          },
-          "required": ["status"]
-        }
-      ]
-    },
-    "readiness": {
-      "allOf": [
-        { "$ref": "#/$defs/aggregateMetric" },
-        {
-          "type": "object",
-          "properties": {
-            "status": { "enum": ["READY", "BUILDING", "BLOCKED", "UNKNOWN"] }
-          },
-          "required": ["status"]
-        }
-      ]
-    },
-    "evidence_freshness": {
-      "enum": ["CURRENT", "DEGRADED"]
-    },
-    "dimensions": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/dimension" },
-      "maxItems": 50
-    },
-    "blockers": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/blocker" },
-      "maxItems": 100
-    },
-    "critical_blockers": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/blocker" },
-      "maxItems": 100
-    },
-    "trend": { "$ref": "#/$defs/trend" }
-  },
-  "$defs": {
+    "contract": {"const": "factory.progress-readiness.v1"},
     "target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "label", "scope", "version"],
+      "required": ["id", "label", "version", "scope"],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "label": { "$ref": "#/$defs/text" },
-        "scope": { "$ref": "#/$defs/text" },
-        "version": { "$ref": "#/$defs/text" }
+        "id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "scope": {"type": "string", "minLength": 1}
       }
     },
-    "aggregateMetric": {
+    "baseline_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "progress": {"$ref": "#/$defs/metric"},
+    "readiness": {"$ref": "#/$defs/metric"},
+    "dimensions": {"type": "array", "items": {"$ref": "#/$defs/dimension"}},
+    "critical_blockers": {"type": "array", "items": {"$ref": "#/$defs/blocker"}},
+    "blockers": {"type": "array", "items": {"$ref": "#/$defs/blocker"}},
+    "evidence_freshness": {"enum": ["CURRENT", "STALE", "UNKNOWN"]},
+    "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+  },
+  "$defs": {
+    "metric": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "basis_points",
-        "percent",
-        "dimension_weight",
-        "contributions",
-        "status"
-      ],
+      "required": ["percent", "status"],
       "properties": {
-        "basis_points": { "$ref": "#/$defs/basisPointsNullable" },
-        "percent": { "$ref": "#/$defs/percentNullable" },
-        "dimension_weight": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "contributions": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/contribution" }
-        },
-        "status": { "type": "string" }
+        "percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "status": {"enum": ["UNKNOWN", "BUILDING", "COMPLETE", "READY", "BLOCKED"]}
       }
     },
-    "contribution": {
+    "signal": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "dimension_id",
-        "weight",
-        "basis_points",
-        "evidence_refs",
-        "unknown_or_stale"
-      ],
+      "required": ["state", "value", "effective_value", "evidence_refs"],
       "properties": {
-        "dimension_id": { "$ref": "#/$defs/id" },
-        "weight": { "$ref": "#/$defs/weight" },
-        "basis_points": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 10000
-        },
-        "evidence_refs": { "$ref": "#/$defs/refs" },
-        "unknown_or_stale": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/id" }
-        }
-      }
-    },
-    "dimension": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "label",
-        "weight",
-        "progress",
-        "readiness",
-        "milestones"
-      ],
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "label": { "$ref": "#/$defs/text" },
-        "weight": { "$ref": "#/$defs/weight" },
-        "progress": { "$ref": "#/$defs/dimensionMetric" },
-        "readiness": { "$ref": "#/$defs/dimensionMetric" },
-        "milestones": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/milestone" },
-          "minItems": 1,
-          "maxItems": 100
-        }
-      }
-    },
-    "dimensionMetric": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "status",
-        "basis_points",
-        "percent",
-        "satisfied_weight",
-        "applicable_weight",
-        "evidence_refs",
-        "unknown_or_stale"
-      ],
-      "properties": {
-        "status": { "enum": ["MEASURED", "NOT_APPLICABLE"] },
-        "basis_points": { "$ref": "#/$defs/basisPointsNullable" },
-        "percent": { "$ref": "#/$defs/percentNullable" },
-        "satisfied_weight": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "applicable_weight": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "evidence_refs": { "$ref": "#/$defs/refs" },
-        "unknown_or_stale": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/id" }
-        }
+        "state": {"enum": ["DEMONSTRATED", "PARTIAL", "NOT_DEMONSTRATED", "UNKNOWN"]},
+        "value": {"type": "number", "minimum": 0, "maximum": 1},
+        "effective_value": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
       }
     },
     "milestone": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "id",
-        "label",
-        "weight",
-        "progress_state",
-        "readiness_state",
-        "evidence_refs"
-      ],
+      "required": ["id", "label", "weight", "freshness", "progress", "readiness"],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "label": { "$ref": "#/$defs/text" },
-        "weight": { "$ref": "#/$defs/weight" },
-        "progress_state": { "$ref": "#/$defs/evidenceState" },
-        "readiness_state": { "$ref": "#/$defs/evidenceState" },
-        "evidence_refs": { "$ref": "#/$defs/refs" }
+        "id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "weight": {"type": "number", "exclusiveMinimum": 0},
+        "freshness": {"enum": ["CURRENT", "STALE", "UNKNOWN"]},
+        "progress": {"$ref": "#/$defs/signal"},
+        "readiness": {"$ref": "#/$defs/signal"}
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "weight", "applicability", "progress_percent", "readiness_percent", "milestones"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "weight": {"type": "number", "exclusiveMinimum": 0},
+        "applicability": {"enum": ["APPLICABLE", "NOT_APPLICABLE"]},
+        "progress_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "readiness_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "milestones": {"type": "array", "items": {"$ref": "#/$defs/milestone"}}
       }
     },
     "blocker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "label", "severity", "state", "evidence_refs"],
+      "required": ["id", "severity", "status", "evidence_refs"],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "label": { "$ref": "#/$defs/text" },
-        "severity": {
-          "enum": ["critical", "high", "medium", "low", "info"]
-        },
-        "state": {
-          "enum": ["OPEN", "RESOLVED", "UNKNOWN", "STALE"]
-        },
-        "evidence_refs": { "$ref": "#/$defs/refs" }
-      }
-    },
-    "trend": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "kind",
-        "comparable",
-        "progress_delta_basis_points",
-        "readiness_delta_basis_points",
-        "causes"
-      ],
-      "properties": {
-        "kind": { "enum": ["UNAVAILABLE", "TREND", "REBASELINE"] },
-        "comparable": { "type": "boolean" },
-        "progress_delta_basis_points": {
-          "type": ["integer", "null"],
-          "minimum": -10000,
-          "maximum": 10000
-        },
-        "readiness_delta_basis_points": {
-          "type": ["integer", "null"],
-          "minimum": -10000,
-          "maximum": 10000
-        },
-        "causes": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/changeCause" }
-        }
-      }
-    },
-    "changeCause": {
-      "type": "object",
-      "required": ["type"],
-      "properties": {
-        "type": {
-          "enum": ["target_change", "milestone_change", "blocker_change"]
-        }
-      },
-      "additionalProperties": true
-    },
-    "evidenceState": {
-      "enum": [
-        "SATISFIED",
-        "UNSATISFIED",
-        "UNKNOWN",
-        "STALE",
-        "NOT_APPLICABLE"
-      ]
-    },
-    "basisPointsNullable": {
-      "type": ["integer", "null"],
-      "minimum": 0,
-      "maximum": 10000
-    },
-    "percentNullable": {
-      "type": ["string", "null"],
-      "pattern": "^(?:100\\.00|[0-9]{1,2}\\.[0-9]{2})$"
-    },
-    "weight": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 1000000
-    },
-    "id": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9_.:-]{0,79}$"
-    },
-    "text": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200
-    },
-    "refs": {
-      "type": "array",
-      "maxItems": 50,
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 240
+        "id": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]},
+        "status": {"enum": ["OPEN", "CLOSED"]},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
       }
     }
   }

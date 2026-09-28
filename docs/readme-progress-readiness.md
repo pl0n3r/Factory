@@ -1,192 +1,29 @@
-# README Progress + Readiness v1
+# Progress + Readiness v1
 
-Este contrato extiende README Contract v1 con dos métricas ejecutivas distintas y explicables:
+Este contrato complementa README Contract v1. Factory calcula dos métricas distintas para un **target explícito** y publica un único payload canónico que después pueden renderizar README y consumir ControlBot.
 
-- **Progress**: cuánto del alcance objetivo se ha construido o verificado.
-- **Readiness**: cuánto de lo necesario para el siguiente objetivo operativo/comercial está demostrado.
+## Semántica
 
-El motor vive en `readme/progress_readiness.py`. No consulta GitHub, producción, ControlBot ni redes. Recibe evidencia normalizada y produce un snapshot determinista descrito por `readme/progress_readiness.schema.json`.
+`progress` responde cuánto del alcance objetivo está construido o verificado. `readiness` responde qué tan preparado está ese mismo alcance para su siguiente objetivo operativo/comercial. No se deriva de `issues cerrados / issues totales`.
 
-## Target explícito
+El input declara `target`, dimensiones aplicables, hitos ponderados y blockers. Cada hito tiene señales independientes de progress/readiness, peso, freshness y referencias de evidencia. Los estados positivos `DEMONSTRATED`/`PARTIAL` solo cuentan con evidencia `CURRENT`; `STALE` y `UNKNOWN` conservan trazabilidad pero aportan cero.
 
-Todo cálculo pertenece a un target identificable:
+Las dimensiones `NOT_APPLICABLE` permanecen visibles y salen del denominador. Una dimensión aplicable siempre conserva su peso aunque su evidencia sea unknown/stale: por eso la ausencia de prueba no mejora el porcentaje.
 
-- `id`;
-- `label`;
-- `scope`;
-- `version`.
+## Cálculo y blockers
 
-El fingerprint del baseline usa `id + scope + version` del target más la estructura ponderada de dimensiones/hitos y su aplicabilidad por métrica. Cambiar target, pesos o qué queda `NOT_APPLICABLE` crea un baseline nuevo; cambiar únicamente SATISFIED/UNSATISFIED/UNKNOWN/STALE no lo hace.
+Primero se normaliza cada dimensión por el peso de sus hitos; después se ponderan dimensiones. Esto evita que muchos checks pequeños dominen una capacidad crítica. El resultado es determinista y ordena dimensiones, hitos, blockers y evidence refs por identidad estable.
 
-Un cambio de target se reporta como `REBASELINE`, con deltas nulos. No se presenta como mejora o deterioro comparable.
+Un blocker `CRITICAL + OPEN` no borra el porcentaje calculado: lo conserva para diagnóstico, pero fuerza `readiness.status=BLOCKED`. Así un promedio alto nunca se presenta como listo.
 
-## Evidencia y estados
+`evidence_freshness` es `UNKNOWN` si alguna evidencia aplicable tiene freshness desconocida, `STALE` si al menos una es stale y ninguna unknown, y `CURRENT` solo cuando todo el baseline aplicable está current.
 
-Cada dimensión contiene hitos ponderados. Cada hito declara por separado:
+## Baseline y tendencia
 
-- `progress_state`;
-- `readiness_state`;
-- `weight`;
-- `evidence_refs[]`.
+`baseline_fingerprint` incluye target (`id`, `version`, `scope`) y la estructura ponderada de dimensiones/hitos. `compare_snapshots()` solo emite `DELTA` cuando ese fingerprint coincide. Si cambia target, scope, pesos o denominador, devuelve `REBASELINE` con deltas nulos: un cambio de baseline nunca se disfraza de mejora.
 
-Estados canónicos:
+Para un baseline estable, la comparación conserva cambios de porcentaje por dimensión y apertura/cierre de blockers críticos como causas explicables.
 
-| Estado | Semántica |
-| --- | --- |
-| `SATISFIED` | evidencia actual demuestra el hito; aporta su peso |
-| `UNSATISFIED` | evidencia demuestra que falta; aporta 0 |
-| `UNKNOWN` | no existe evidencia suficiente; aporta 0 |
-| `STALE` | existió evidencia pero no es actual; aporta 0 |
-| `NOT_APPLICABLE` | explícitamente fuera de alcance; se excluye del denominador |
+## Frontera de responsabilidad
 
-`NOT_APPLICABLE` requiere `evidence_refs`: no puede usarse como truco para eliminar trabajo del denominador sin justificación.
-
-`UNKNOWN` puede no tener refs porque representa precisamente ausencia de evidencia. `STALE`, `SATISFIED`, `UNSATISFIED` y `NOT_APPLICABLE` requieren evidencia.
-
-Si existe cualquier hito o blocker `UNKNOWN/STALE`, `evidence_freshness` queda `DEGRADED`. Nunca se convierte automáticamente en CURRENT o GREEN.
-
-## Cálculo
-
-Para una dimensión y una métrica:
-
-```text
-dimension_score =
-  sum(weight de hitos SATISFIED)
-  / sum(weight de hitos aplicables)
-```
-
-Los hitos `NOT_APPLICABLE` no entran en el denominador. UNKNOWN, STALE y UNSATISFIED sí son aplicables y valen cero.
-
-El resultado global usa el peso de cada dimensión aplicable:
-
-```text
-metric =
-  sum(dimension_weight × dimension_score)
-  / sum(dimension_weight)
-```
-
-La aritmética interna usa fracciones exactas. El output expone:
-
-- `basis_points`: entero 0..10000;
-- `percent`: string decimal de dos posiciones, por ejemplo `"63.25"`;
-- `contributions[]`: score, peso, evidence refs y unknown/stale por dimensión.
-
-Esto evita depender de floats y deja el resultado reproducible byte a byte.
-
-### No es conteo de Issues
-
-El motor no recibe ni conoce “issues cerrados” o “issues totales”. Dos hitos pueden tener pesos 90/10 y producir 90% aunque solo uno de dos esté satisfecho. El peso representa impacto del objetivo, no cantidad de objetos administrativos.
-
-Los pesos son parte del baseline. Si cambian, el fingerprint cambia y la comparación devuelve `REBASELINE` aunque el caller olvide subir la versión del target.
-
-## Progress y Readiness son independientes
-
-Un mismo hito puede estar:
-
-- construido pero todavía no listo para operar;
-- listo en términos operativos aunque otra capacidad de producto siga incompleta;
-- N/A para una métrica y aplicable para la otra.
-
-Por eso cada milestone tiene dos estados distintos y el motor calcula dos agregados independientes.
-
-## Blockers
-
-Los blockers permanecen fuera del promedio.
-
-Campos:
-
-- `id`;
-- `label`;
-- `severity`;
-- `state: OPEN|RESOLVED|UNKNOWN|STALE`;
-- `evidence_refs[]`.
-
-Un blocker `critical` que no esté `RESOLVED` aparece en `critical_blockers[]` y fuerza:
-
-```text
-readiness.status = BLOCKED
-```
-
-aunque `readiness.basis_points == 10000`.
-
-Un blocker crítico UNKNOWN/STALE también bloquea fail-closed. Un promedio alto nunca convierte ausencia de evidencia crítica en autorización.
-
-Estados de readiness:
-
-- `READY`: 100% demostrado y cero blockers críticos no resueltos;
-- `BUILDING`: medición disponible pero incompleta;
-- `BLOCKED`: existe blocker crítico no resuelto/conocido;
-- `UNKNOWN`: no existe base aplicable para medir.
-
-## Tendencia y explicación
-
-El snapshot puede compararse con uno anterior del mismo target.
-
-### Mismo target
-
-Resultado:
-
-`TREND`
-
-Incluye:
-
-- delta de progress en basis points;
-- delta de readiness en basis points;
-- `causes[]` para milestones y blockers que cambiaron;
-- evidence refs nuevas en cambios de milestones.
-
-### Target distinto
-
-Resultado:
-
-`REBASELINE`
-
-- `comparable: false`;
-- deltas `null`;
-- causa `target_change`;
-- target anterior y nuevo explícitos.
-
-Así un cambio del denominador nunca se vende como “+12 puntos” de progreso real.
-
-## Determinismo
-
-Antes de calcular:
-
-- dimensiones se ordenan por `id`;
-- hitos se ordenan por `id`;
-- blockers se ordenan de forma estable;
-- evidence refs se deduplican y ordenan;
-- timestamps se normalizan a UTC;
-- aritmética usa `Fraction`;
-- JSON canónico usa keys ordenadas.
-
-Mismo input semántico produce el mismo snapshot y el mismo `canonical_payload()`.
-
-## Payload canónico
-
-El snapshot contiene:
-
-- target y `target_fingerprint`;
-- `observed_at`;
-- progress;
-- readiness;
-- evidence freshness;
-- dimensiones con milestones normalizados;
-- blockers y critical blockers;
-- trend/rebaseline.
-
-README y ControlBot deben consumir este mismo payload. Ningún consumidor debe recalcular porcentajes con otra fórmula.
-
-## Boundaries
-
-Este slice no:
-
-- modifica el generador o validador del README;
-- escribe porcentajes manuales;
-- consulta GitHub, producción o proveedores;
-- decide pesos automáticamente;
-- crea rankings entre proyectos;
-- mide productividad individual;
-- autoriza deploy, dinero, legal o go-live.
-
-La integración al bloque README, targets de los siete repos y E2E/consumer contract se entregan en los slices dependientes #295, #296 y #297.
+Este módulo no consulta GitHub, producción, AEGIS, LEX ni ControlBot. Recibe evidencia ya normalizada y no concede autoridad. #295 integra el payload con el bloque generado del README; #296 fija targets de los siete repos; #297 demuestra WorkItems/evidence → cálculo → README → consumer contract. ControlBot debe consumir este payload, no implementar una fórmula competidora.
