@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "target": {
+    "id": "grindflow-commercial-v1",
+    "label": "Commercial V1 Readiness",
+    "scope": "pl0n3r/GrindFlow",
+    "version": "1"
+  },
+  "dimensions": [
+    {
+      "id": "product",
+      "label": "Product",
+      "weight": 5,
+      "milestones": [
+        {
+          "id": "product-baseline",
+          "label": "Baseline Product",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "engineering",
+      "label": "Engineering",
+      "weight": 4,
+      "milestones": [
+        {
+          "id": "engineering-baseline",
+          "label": "Baseline Engineering",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "quality",
+      "label": "Quality",
+      "weight": 4,
+      "milestones": [
+        {
+          "id": "quality-baseline",
+          "label": "Baseline Quality",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "label": "Security",
+      "weight": 5,
+      "milestones": [
+        {
+          "id": "security-baseline",
+          "label": "Baseline Security",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "operations",
+      "label": "Operations",
+      "weight": 4,
+      "milestones": [
+        {
+          "id": "operations-baseline",
+          "label": "Baseline Operations",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "infrastructure",
+      "label": "Infrastructure",
+      "weight": 4,
+      "milestones": [
+        {
+          "id": "infrastructure-baseline",
+          "label": "Baseline Infrastructure",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "legal-compliance",
+      "label": "Legal/Compliance",
+      "weight": 5,
+      "milestones": [
+        {
+          "id": "legal-compliance-baseline",
+          "label": "Baseline Legal/Compliance",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "business-commercial",
+      "label": "Business/Commercial",
+      "weight": 5,
+      "milestones": [
+        {
+          "id": "business-commercial-baseline",
+          "label": "Baseline Business/Commercial",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "support-knowledge",
+      "label": "Support/Knowledge",
+      "weight": 3,
+      "milestones": [
+        {
+          "id": "support-knowledge-baseline",
+          "label": "Baseline Support/Knowledge",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    },
+    {
+      "id": "growth-market",
+      "label": "Growth/Market",
+      "weight": 5,
+      "milestones": [
+        {
+          "id": "growth-market-baseline",
+          "label": "Baseline Growth/Market",
+          "weight": 1,
+          "progress_state": "UNKNOWN",
+          "readiness_state": "UNKNOWN",
+          "evidence_refs": []
+        }
+      ]
+    }
+  ],
+  "blockers": [],
+  "observed_at": "2026-09-28T17:00:00Z"
+}
