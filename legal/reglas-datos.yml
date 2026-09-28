@@ -105,8 +105,6 @@
     ],
     "google_drive": [
       "drive.googleapis.com",
-      "www.googleapis.com/drive/",
-      "www.googleapis.com/upload/drive/",
       "accounts.google.com"
     ]
   },

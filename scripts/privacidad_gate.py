@@ -39,6 +39,10 @@ SQL_FIELD_TYPES = (
     r"(?:var)?char|text|json|(?:tiny|small|medium|big)?int|decimal|float|double|"
     r"date|datetime|timestamp|boolean|bool"
 )
+GOOGLE_DRIVE_SHARED_API_PATHS = (
+    "www.googleapis.com/drive/",
+    "www.googleapis.com/upload/drive/",
+)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -57,7 +61,7 @@ def _identifier_has_personal_context(identifier: str) -> bool:
     normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", identifier)
     parts = [
         part.lower()
-        for part in re.split(r"[^A-Za-z0-9]+|_", normalized)
+        for part in re.split(r"[^A-Za-z0-9]+", normalized)
         if part
     ]
     return any(part in PERSONAL_CONTEXT_TERMS for part in parts)
@@ -71,72 +75,99 @@ def _expression_has_personal_context(expression: str) -> bool:
     return any(_identifier_has_personal_context(item) for item in identifiers)
 
 
-def _signal_present(signal: str, line: str) -> bool:
-    """Detecta señales ambiguas solo cuando el campo tiene contexto asociado."""
-    if signal in AMBIGUOUS_SIGNALS:
-        token = re.escape(signal)
-        sql_field = re.search(
-            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s+(?:{SQL_FIELD_TYPES})\b",
-            line,
-            re.IGNORECASE,
-        )
-        if sql_field:
-            return True
-
-        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
-        access = r"(?:\.|\?->|->)"
-
-        property_pattern = (
-            rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})"
-            rf"\s*{access}\s*{token}(?![a-z0-9_])"
-        )
-        for match in re.finditer(property_pattern, line, re.IGNORECASE):
-            if _expression_has_personal_context(match.group("chain")):
-                return True
-
-        if re.search(
-            rf"\$_(?:post|get|request)\s*\[\s*['\"]{token}['\"]\s*\]",
-            line,
-            re.IGNORECASE,
-        ):
-            return True
-
-        quoted_access_pattern = (
-            rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})\s*"
-            rf"(?:\[\s*['\"]{token}['\"]\s*\]|"
-            rf"\(\s*['\"]{token}['\"]\))"
-        )
-        for match in re.finditer(quoted_access_pattern, line, re.IGNORECASE):
-            if _expression_has_personal_context(match.group("chain")):
-                return True
-
-        destructuring_pattern = (
-            r"\{(?P<fields>[^{}]{0,256})\}\s*=\s*(?P<source>[^;\n]+)"
-        )
-        for match in re.finditer(destructuring_pattern, line, re.IGNORECASE):
-            field_present = re.search(
-                rf"(?<![a-z0-9_]){token}(?![a-z0-9_])",
-                match.group("fields"),
-                re.IGNORECASE,
-            )
-            if field_present and _expression_has_personal_context(match.group("source")):
-                return True
-
-        literal_pattern = (
-            rf"(?P<target>{identifier})\s*=\s*(?:\{{|\[)[^;\n]{{0,256}}?"
-            rf"(?:['\"]{token}['\"]\s*(?::|=>)|"
-            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s*:)"
-        )
-        for match in re.finditer(literal_pattern, line, re.IGNORECASE):
-            if _identifier_has_personal_context(match.group("target")):
-                return True
-        return False
-
+def _sql_field_present(token: str, line: str) -> bool:
     return re.search(
-        rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",
+        rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s+(?:{SQL_FIELD_TYPES})\b",
         line,
         re.IGNORECASE,
     ) is not None
+
+
+def _property_signal_present(token: str, line: str) -> bool:
+    identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+    access = r"(?:\.|\?->|->)"
+    pattern = (
+        rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})"
+        rf"\s*{access}\s*{token}(?![a-z0-9_])"
+    )
+    return any(
+        _expression_has_personal_context(match.group("chain"))
+        for match in re.finditer(pattern, line, re.IGNORECASE)
+    )
+
+
+def _request_signal_present(token: str, line: str) -> bool:
+    direct = re.search(
+        rf"\$_(?:post|get|request)\s*\[\s*['\"]{token}['\"]\s*\]",
+        line,
+        re.IGNORECASE,
+    )
+    if direct:
+        return True
+    identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+    access = r"(?:\.|\?->|->)"
+    pattern = (
+        rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})\s*"
+        rf"(?:\[\s*['\"]{token}['\"]\s*\]|"
+        rf"\(\s*['\"]{token}['\"]\))"
+    )
+    return any(
+        _expression_has_personal_context(match.group("chain"))
+        for match in re.finditer(pattern, line, re.IGNORECASE)
+    )
+
+
+def _destructured_signal_present(token: str, line: str) -> bool:
+    pattern = r"\{(?P<fields>[^{}]{0,256})\}\s*=\s*(?P<source>[^;\n]+)"
+    for match in re.finditer(pattern, line, re.IGNORECASE):
+        field_present = re.search(
+            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])",
+            match.group("fields"),
+            re.IGNORECASE,
+        )
+        if field_present and _expression_has_personal_context(match.group("source")):
+            return True
+    return False
+
+
+def _literal_signal_present(token: str, line: str) -> bool:
+    identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+    pattern = (
+        rf"(?P<target>{identifier})\s*=\s*(?:\{{|\[)[^;\n]{{0,256}}?"
+        rf"(?:['\"]{token}['\"]\s*(?::|=>)|"
+        rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s*:)"
+    )
+    return any(
+        _identifier_has_personal_context(match.group("target"))
+        for match in re.finditer(pattern, line, re.IGNORECASE)
+    )
+
+
+def _signal_present(signal: str, line: str) -> bool:
+    """Detecta señales ambiguas solo cuando el campo tiene contexto asociado."""
+    if signal not in AMBIGUOUS_SIGNALS:
+        return re.search(
+            rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",
+            line,
+            re.IGNORECASE,
+        ) is not None
+    token = re.escape(signal)
+    checks = (
+        _sql_field_present,
+        _property_signal_present,
+        _request_signal_present,
+        _destructured_signal_present,
+        _literal_signal_present,
+    )
+    return any(check(token, line) for check in checks)
+
+
+def _provider_present(provider: str, domains: list[str], line: str) -> bool:
+    if any(domain in line for domain in domains):
+        return True
+    return provider == "google_drive" and any(
+        path in line for path in GOOGLE_DRIVE_SHARED_API_PATHS
+    )
 
 def scan_added_code(diff_text: str, rules: dict[str, Any]) -> dict[str, list[str]]:
     """Devuelve solo identificadores de señales; descarta el contenido observado."""
@@ -163,7 +194,7 @@ def scan_added_code(diff_text: str, rules: dict[str, Any]) -> dict[str, list[str
                 if _signal_present(signal, line):
                     personal.add(signal)
         for provider, domains in provider_signals.items():
-            if any(domain in normalized_line for domain in domains):
+            if _provider_present(provider, domains, normalized_line):
                 providers.add(provider)
 
     return {

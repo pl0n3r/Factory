@@ -255,6 +255,8 @@ class PrivacyGateTests(unittest.TestCase):
 
     def test_google_drive_api_still_requires_declaration(self):
         """El endpoint de Drive continúa detectándose tras acotar el host."""
+        item = data_map()
+        generated = docs(item)
         diff = """diff --git a/src/storage.js b/src/storage.js
 +++ b/src/storage.js
 +const endpoint = "https://www.googleapis.com/drive/v3/files";
@@ -263,8 +265,8 @@ class PrivacyGateTests(unittest.TestCase):
             evaluate_change(
                 diff_text=diff,
                 changed_files=["src/storage.js"],
-                current_document=data_map(),
-                documents=docs(data_map()),
+                current_document=item,
+                documents=generated,
             )
 
 
