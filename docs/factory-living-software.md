@@ -170,6 +170,13 @@ La evidencia derivada no se autocertifica cuando existe un productor canónico. 
 
 Living Software no concede dinero, autoridad legal, acceso a datos personales, borrado irreversible ni permiso de publicar/pasar a live. Esas fronteras siguen gobernadas por PLAN-AGENTES, decisiones.yml y el registro canónico de puertas humanas.
 
+
+## Lifecycle de conocimiento aprendido
+
+Los guardrails y reglas aprendidas usan el contrato ejecutable de `evolution/knowledge_lifecycle.py` y la guía `docs/knowledge-lifecycle.md`.
+
+El estado canónico es `candidate → active → needs_review → deprecated → archived`. Una regla cuya revisión vence deja de poder aumentar autonomía hasta revalidarse con evidencia nueva. Deprecation/archive preservan historial y provenance. Pruning solo genera candidatos de consolidación/retiro; nunca borra historia ni amplía autoridad.
+
 ## Hardening de fronteras de evidencia completado
 
 El DAG de #143 y su hardening final de provenance están integrados y cerrados en el alcance estructural previsto:
