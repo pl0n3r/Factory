@@ -135,6 +135,7 @@ def _history(value: Any) -> list[dict[str, Any]]:
         raise KnowledgeLifecycleError("history inválida")
     validated: list[dict[str, Any]] = []
     previous_at: datetime | None = None
+    previous_to: str | None = None
     for item in value:
         if not isinstance(item, dict) or set(item) != {
             "at", "from", "to", "reason", "evidence"
@@ -148,6 +149,9 @@ def _history(value: Any) -> list[dict[str, Any]]:
         target_state = _text(item["to"], "history.to")
         if source_state not in STATES or target_state not in STATES:
             raise KnowledgeLifecycleError("estado de history inválido")
+        if previous_to is not None and source_state != previous_to:
+            raise KnowledgeLifecycleError("history no encadena estados")
+        previous_to = target_state
         reason = _text(item["reason"], "history.reason", max_len=120)
         evidence = _sources(item["evidence"], "history.evidence")
         validated.append({
@@ -190,6 +194,13 @@ def validate_knowledge_record(raw: Any) -> dict[str, Any]:
     if state not in STATES:
         raise KnowledgeLifecycleError("state inválido")
 
+    history = _history(raw.get("history"))
+    if history:
+        if _timestamp(history[0]["at"], "history.at") < created:
+            raise KnowledgeLifecycleError("history anterior a created_at")
+        if history[-1]["to"] != state:
+            raise KnowledgeLifecycleError("history no coincide con state")
+
     return {
         "version": KNOWLEDGE_VERSION,
         "knowledge_id": knowledge_id,
@@ -204,7 +215,7 @@ def validate_knowledge_record(raw: Any) -> dict[str, Any]:
         "evidence_class": evidence_class,
         "review_policy": _review_policy(raw.get("review_policy")),
         "state": state,
-        "history": _history(raw.get("history")),
+        "history": history,
     }
 
 
@@ -380,10 +391,11 @@ def propose_pruning_candidates(records: Any, *, now_at: str) -> list[dict[str, A
             reasons.add("aged")
 
         if reasons:
+            proposal_ids = peers if "duplicate" in reasons else [item["knowledge_id"]]
             proposals.append({
                 "version": KNOWLEDGE_VERSION,
-                "proposal_id": f"knowledge-prune-{item['knowledge_id']}",
-                "knowledge_ids": peers if "duplicate" in reasons else [item["knowledge_id"]],
+                "proposal_id": f"knowledge-prune-{proposal_ids[0]}",
+                "knowledge_ids": proposal_ids,
                 "action": (
                     "review-consolidation"
                     if "duplicate" in reasons

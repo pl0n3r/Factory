@@ -184,6 +184,12 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         self.assertFalse(proposal["delete"])
         self.assertTrue(proposal["history_preserved"])
 
+        reversed_proposals = propose_knowledge_pruning(
+            [duplicate_b, duplicate_a],
+            now_at="2026-09-28T00:00:00Z",
+        )
+        self.assertEqual(reversed_proposals, proposals)
+
 
 if __name__ == "__main__":
     unittest.main()

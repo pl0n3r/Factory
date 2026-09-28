@@ -101,8 +101,8 @@ def _candidate_for_group(
         }
         for item in ordered
     ]
-    created_at = min(item["occurred_at"] for item in ordered)
-    latest_at = max(item["occurred_at"] for item in ordered)
+    created_at = min(item["_sort_at"] for item in ordered).isoformat().replace("+00:00", "Z")
+    latest_at = max(item["_sort_at"] for item in ordered).isoformat().replace("+00:00", "Z")
     lifecycle = create_knowledge_record(
         knowledge_id=guardrail_id,
         knowledge_type="guardrail",
