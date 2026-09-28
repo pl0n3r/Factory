@@ -495,6 +495,29 @@ class DispatcherV2Tests(unittest.TestCase):
         )
         self.assertIsNone(select_next(adapted))
 
+    def test_reasonless_fail_closed_still_blocks_readiness(self):
+        """Regresión: fail_closed sin reasons nunca puede quedar ready."""
+        presence = classify_presence(self.adaptive_snapshot())
+        fencing = FencingDecision(
+            action="fail_closed",
+            pause_allowed=False,
+            generation=7,
+            attempt=1,
+            snapshot_fingerprint="a" * 64,
+            event_fingerprint="b" * 64,
+            coalesced_events=0,
+            reasons=(),
+        )
+        adapted = adapt_candidates_for_adaptive(
+            [Candidate(key="blocked", priority="critical")],
+            presence=presence,
+            fencing=fencing,
+            replan_action="fail_closed",
+        )
+        readiness = classify_readiness(adapted[0])
+        self.assertFalse(readiness.ready)
+        self.assertIn("adaptive_fencing_invalid", readiness.reasons)
+
     def test_adaptive_parallelism_reuses_existing_dag_and_claim_rules(self):
         """AC-04: paralelismo sigue DAG y claims del dispatcher existente."""
         presence = classify_presence(self.adaptive_snapshot())
