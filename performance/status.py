@@ -37,28 +37,7 @@ def derive_performance_status(
     plan = _remediation(remediation) if remediation is not None else None
     outcome = _comparison(comparison) if comparison is not None else None
 
-    reasons = set(finding["reasons"])
-    if finding["evidence_state"] != "CURRENT":
-        status = "UNKNOWN"
-        reasons.add("evidence_not_current")
-    elif plan and plan["decision"] in {"ESCALATE", "BLOCKED"}:
-        status = "BLOCKED"
-        reasons.add(f"remediation_{plan['decision'].lower()}")
-    elif finding["classification"] == "PERF_INCIDENT":
-        status = "BLOCKED"
-        reasons.add("performance_incident")
-    elif finding["classification"] == "PERF_DEGRADATION":
-        status = "DEGRADED"
-        reasons.add("performance_degradation")
-    elif finding["classification"] == "PERF_INFO":
-        if outcome and outcome["decision"] != "ADOPT":
-            status = "DEGRADED"
-            reasons.add("improvement_not_adopted")
-        else:
-            status = "HEALTHY"
-    else:
-        status = "UNKNOWN"
-        reasons.add("classification_review")
+    status, reasons = _status_decision(finding, plan, outcome)
 
     refs = {finding["evidence_ref"]}
     if outcome:
@@ -82,6 +61,36 @@ def derive_performance_status(
         "execute_actions": False,
         "parallel_queue": False,
     }
+
+
+def _status_decision(
+    finding: Mapping[str, Any],
+    plan: Mapping[str, Any] | None,
+    outcome: Mapping[str, Any] | None,
+) -> tuple[str, set[str]]:
+    reasons = set(finding["reasons"])
+    if finding["evidence_state"] != "CURRENT":
+        reasons.add("evidence_not_current")
+        return "UNKNOWN", reasons
+    if plan and plan["decision"] in {"ESCALATE", "BLOCKED"}:
+        reasons.add(f"remediation_{plan['decision'].lower()}")
+        return "BLOCKED", reasons
+
+    classification = finding["classification"]
+    if classification == "PERF_INCIDENT":
+        reasons.add("performance_incident")
+        return "BLOCKED", reasons
+    if classification == "PERF_DEGRADATION":
+        reasons.add("performance_degradation")
+        return "DEGRADED", reasons
+    if classification == "PERF_INFO":
+        if outcome and outcome["decision"] != "ADOPT":
+            reasons.add("improvement_not_adopted")
+            return "DEGRADED", reasons
+        return "HEALTHY", reasons
+
+    reasons.add("classification_review")
+    return "UNKNOWN", reasons
 
 
 def readiness_projection(status: Mapping[str, Any]) -> dict[str, Any]:
