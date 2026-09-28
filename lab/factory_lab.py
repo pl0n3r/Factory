@@ -258,6 +258,16 @@ def causal_promotion_contract(
     if causal["promotion_allowed"] is not True:
         raise FactoryLabError("evidencia causal insuficiente para promoción")
 
+    stable_vector = _validated_metrics(stable_metrics, "stable_metrics")
+    candidate_vector = _validated_metrics(candidate_metrics, "candidate_metrics")
+    measured_metrics = set(stable_vector) | set(candidate_vector)
+    missing_protected = set(causal["protected_metrics"]) - measured_metrics
+    if missing_protected:
+        raise FactoryLabError(
+            "protected_metrics no presentes en Fitness: "
+            + ", ".join(sorted(missing_protected))
+        )
+
     contract = dict(base_contract)
     contract.pop("fingerprint", None)
     contract["experiment_evidence"] = causal
