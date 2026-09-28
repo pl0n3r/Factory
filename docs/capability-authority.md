@@ -15,6 +15,12 @@ junto con condiciones declarativas `degrade_on` y `revoke_on`. Un cambio de nive
 de autonomía conserva el mismo fingerprint de autoridad; las condiciones pueden
 disparar menos autonomía o revocación, nunca más permisos.
 
+Cuando una acción recibe varios grants, `scopes` y `targets` agregados son solo
+un resumen para inspección. La autoridad verificable vive en `bindings`, que
+conserva cada grant con su pareja exacta de scopes/targets y evita interpretar
+el resumen como un producto cartesiano. `authorize()` evalúa siempre el grant
+exacto y falla cerrado ante combinaciones no concedidas.
+
 ## Provenance
 
 Los grants y revocaciones se aceptan únicamente desde
