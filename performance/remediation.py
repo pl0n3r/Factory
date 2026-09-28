@@ -38,7 +38,7 @@ def plan_remediation(
     """Deriva una decisión y WorkItem puro; nunca ejecuta la intervención."""
     finding = _detection(detection)
     staffing = _triage(triage, finding)
-    change = _proposal(proposal, finding)
+    change = _proposal(proposal)
     work_item = validate_work_item(change["work_item"])
     _reject_sensitive_output(work_item)
     _bind_work_item(work_item, finding)
@@ -107,10 +107,12 @@ def evaluate_before_after(
     old_value, new_value = old["observed"]["value"], new["observed"]["value"]
     improved = new_value < old_value if operator == "lte" else new_value > old_value
     worse_classification = _RANK[new["classification"]] > _RANK[old["classification"]]
-    decision = "ADOPT" if improved and not worse_classification else "REVERT_OR_REPLAN"
-    reasons = [] if decision == "ADOPT" else [
-        "classification_worsened" if worse_classification else "no_measured_improvement"
-    ]
+    if improved and not worse_classification:
+        decision, reasons = "ADOPT", []
+    elif worse_classification:
+        decision, reasons = "REVERT_OR_REPLAN", ["classification_worsened"]
+    else:
+        decision, reasons = "REVERT_OR_REPLAN", ["no_measured_improvement"]
     return _comparison(old, new, improved, decision, reasons)
 
 
@@ -173,7 +175,7 @@ def _triage(raw: Any, finding: Mapping[str, Any]) -> dict[str, Any]:
     return dict(raw)
 
 
-def _proposal(raw: Any, finding: Mapping[str, Any]) -> dict[str, Any]:
+def _proposal(raw: Any) -> dict[str, Any]:
     fields = {
         "version", "workflow_action", "change_id", "hypothesis_ref", "reversible",
         "tests_covered", "within_authority", "changes_product_semantics",
