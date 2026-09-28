@@ -217,3 +217,40 @@ Cada fixture declara dimensiones y pesos propios del objetivo. Un milestone que 
 5. Las fuentes de verdad permanecen en roadmap, WorkItems, acceptance, CI, health, seguridad, legal, infraestructura y demás evidencia canónica. Los fixtures solo describen qué dimensiones pertenecen al objetivo.
 
 El slice E2E #297 enlaza después evidencia → cálculo → README → contrato consumidor de ControlBot.
+
+
+## E2E: evidence → cálculo → README → ControlBot
+
+El slice E2E de #297 prueba el recorrido completo sin red ni dependencias externas:
+
+1. toma un fixture canónico de `readme/projects/progress-readiness/`;
+2. representa la evidencia cambiando únicamente estados/evidence refs del mismo target;
+3. calcula con `calculate_progress_readiness()`;
+4. valida/serializa con `canonical_payload()`;
+5. entrega **ese mismo snapshot** a `generate_readme()`;
+6. proyecta el mismo payload canónico al consumer contract compatible con ControlBot.
+
+### Contrato consumidor de ControlBot
+
+ControlBot es un consumidor, no una segunda calculadora. La vista contractual puede leer del payload canónico:
+
+- `target`;
+- `progress`;
+- `readiness`;
+- `evidence_freshness`;
+- `critical_blockers`;
+- `trend`.
+
+No recibe una fórmula alternativa ni vuelve a sumar weights/milestones. Si necesita drill-down, debe conservar referencias al snapshot/evidencia canónica y ampliar el contrato de forma versionada, no recomputar el agregado.
+
+Un blocker crítico continúa visible y mantiene `readiness.status = BLOCKED` aunque otros hitos estén satisfechos. `UNKNOWN` y `STALE` siguen fail-closed según el motor canónico.
+
+### Tendencia frente a rebaseline
+
+Una transición de milestone dentro del mismo baseline produce `TREND` y causas explicables. Cambiar target, scope, version, pesos o aplicabilidad produce `REBASELINE` con deltas nulos.
+
+Por tanto el flujo E2E nunca presenta un cambio de denominador como mejora real.
+
+### Boundary de este E2E
+
+Este test no llama a GitHub, producción ni ControlBot, y no modifica ControlBot. Demuestra el **consumer contract** offline usando exactamente el mismo payload que README. La integración de UI/backend de ControlBot debe consumir este contrato sin ampliar autoridad ni introducir porcentajes manuales.
