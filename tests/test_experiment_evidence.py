@@ -177,6 +177,34 @@ class ExperimentEvidenceTests(unittest.TestCase):
                 ),
             )
 
+    def test_causal_promotion_rejects_unmeasured_protected_metric(self):
+        stable = metrics(0.90)
+        candidate = metrics(0.95)
+        constitution = constitution_candidate()
+        shadow = evaluate_shadow(
+            stable_sha="a" * 40,
+            candidate_sha="b" * 40,
+            stable_metrics=stable,
+            candidate_metrics=candidate,
+            constitution_candidate=constitution,
+        )
+        declaration = experiment()
+        declaration["protected_metrics"].append("latency")
+
+        with self.assertRaisesRegex(
+            FactoryLabError,
+            "protected_metrics no presentes en Fitness: latency",
+        ):
+            causal_promotion_contract(
+                shadow_result=shadow,
+                stable_sha="a" * 40,
+                candidate_sha="b" * 40,
+                stable_metrics=stable,
+                candidate_metrics=candidate,
+                constitution_candidate=constitution,
+                experiment_declaration=declaration,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
