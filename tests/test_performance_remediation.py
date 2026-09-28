@@ -78,8 +78,11 @@ class PerformanceRemediationTests(unittest.TestCase):
             plan_remediation(info, triage("PERF_INFO"), proposal())["decision"],
             "NO_ACTION",
         )
+        disallowed = proposal(workflow_action="diagnose")
+        material = finding()
+        staffing = triage()
         with self.assertRaisesRegex(PerformanceRemediationError, "no está permitida"):
-            plan_remediation(finding(), triage(), proposal(workflow_action="diagnose"))
+            plan_remediation(material, staffing, disallowed)
 
     def test_auto_repair_requires_reversible_tested_authorized_safe_change(self):
         for changes in (
@@ -123,8 +126,9 @@ class PerformanceRemediationTests(unittest.TestCase):
         gte_before["observed"]["value"], gte_after["observed"]["value"] = 220, 300
         self.assertEqual(evaluate_before_after(gte_before, gte_after)["decision"], "ADOPT")
 
+        other_surface = finding(surface="orders")
         with self.assertRaisesRegex(PerformanceRemediationError, "identidades distintas"):
-            evaluate_before_after(before, finding(surface="orders"))
+            evaluate_before_after(before, other_surface)
 
     def test_non_improving_or_stale_after_is_never_adopted(self):
         before = finding()
