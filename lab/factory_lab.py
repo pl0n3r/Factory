@@ -225,3 +225,42 @@ def promotion_contract(
     }
     contract["fingerprint"] = _stable_hash(contract)
     return contract
+
+
+def causal_promotion_contract(
+    *,
+    shadow_result: Any,
+    stable_sha: Any,
+    candidate_sha: Any,
+    stable_metrics: Any,
+    candidate_metrics: Any,
+    constitution_candidate: Any,
+    experiment_declaration: Any,
+) -> dict[str, Any]:
+    """Add reproducible causal evidence to the non-executing promotion contract."""
+    from lab.experiment_evidence import (
+        ExperimentEvidenceError,
+        evaluate_experiment_evidence,
+    )
+
+    base_contract = promotion_contract(
+        shadow_result=shadow_result,
+        stable_sha=stable_sha,
+        candidate_sha=candidate_sha,
+        stable_metrics=stable_metrics,
+        candidate_metrics=candidate_metrics,
+        constitution_candidate=constitution_candidate,
+    )
+    try:
+        causal = evaluate_experiment_evidence(experiment_declaration)
+    except ExperimentEvidenceError as exc:
+        raise FactoryLabError("evidencia causal inválida") from exc
+    if causal["promotion_allowed"] is not True:
+        raise FactoryLabError("evidencia causal insuficiente para promoción")
+
+    contract = dict(base_contract)
+    contract.pop("fingerprint", None)
+    contract["experiment_evidence"] = causal
+    contract["requires_causal_evidence"] = True
+    contract["fingerprint"] = _stable_hash(contract)
+    return contract
