@@ -36,7 +36,7 @@ Una mejora de Fitness no prueba causalidad por sí sola. Para convertir una
 mejora observada en candidata a promoción, `evaluate_experiment_evidence()`
 exige una declaración cerrada con:
 
-- baseline y treatment explícitos;
+- baseline y treatment explícitos, cada uno ligado a su SHA exacto;
 - métricas protegidas;
 - clase de evidencia: `observational`, `quasi_experimental` o
   `controlled_shadow`;
@@ -67,7 +67,9 @@ Factory Lab solo marca `promotion.ready=true` cuando:
 Ese estado sigue siendo insuficiente para afirmar causalidad.
 `causal_promotion_contract()` revalida primero el contrato de promoción
 existente y después exige evidencia causal reproducible con
-`promotion_allowed=true`. Una observación aislada o evidencia causal débil no
+`promotion_allowed=true`, verificando que los SHA declarados para baseline y
+treatment correspondan exactamente al par stable/candidate evaluado. Una
+observación aislada o evidencia causal débil no
 puede promover un cambio de alto impacto.
 
 Incluso con evidencia causal suficiente, el contrato conserva

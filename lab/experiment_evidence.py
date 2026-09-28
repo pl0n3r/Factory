@@ -23,6 +23,7 @@ _EVIDENCE_RANK = {
 _REQUIRED_RANK = {"low": 1, "medium": 2, "high": 3}
 _STRENGTH = {0: "insufficient", 1: "weak", 2: "moderate", 3: "strong"}
 _METRIC = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+_GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 class ExperimentEvidenceError(ValueError):
@@ -61,6 +62,13 @@ def _positive_int(value: Any, field: str) -> int:
     return value
 
 
+def _git_sha(value: Any, field: str) -> str:
+    """Validate an exact lowercase commit SHA."""
+    if not isinstance(value, str) or _GIT_SHA.fullmatch(value) is None:
+        raise ExperimentEvidenceError(f"{field} debe ser SHA-1 lowercase exacto")
+    return value
+
+
 def _strings(
     value: Any,
     field: str,
@@ -88,6 +96,8 @@ def evaluate_experiment_evidence(declaration: Any) -> dict[str, Any]:
     required = {
         "baseline",
         "treatment",
+        "baseline_sha",
+        "treatment_sha",
         "protected_metrics",
         "evidence_class",
         "impact",
@@ -105,6 +115,10 @@ def evaluate_experiment_evidence(declaration: Any) -> dict[str, Any]:
     treatment = _line(declaration["treatment"], "treatment")
     if baseline == treatment:
         raise ExperimentEvidenceError("baseline y treatment deben diferir")
+    baseline_sha = _git_sha(declaration["baseline_sha"], "baseline_sha")
+    treatment_sha = _git_sha(declaration["treatment_sha"], "treatment_sha")
+    if baseline_sha == treatment_sha:
+        raise ExperimentEvidenceError("baseline_sha y treatment_sha deben diferir")
 
     protected = _strings(
         declaration["protected_metrics"],
@@ -156,6 +170,8 @@ def evaluate_experiment_evidence(declaration: Any) -> dict[str, Any]:
         "version": EVIDENCE_VERSION,
         "baseline": baseline,
         "treatment": treatment,
+        "baseline_sha": baseline_sha,
+        "treatment_sha": treatment_sha,
         "protected_metrics": list(protected),
         "evidence_class": evidence_class,
         "impact": impact,

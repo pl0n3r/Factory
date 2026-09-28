@@ -257,6 +257,11 @@ def causal_promotion_contract(
         raise FactoryLabError("evidencia causal inválida") from exc
     if causal["promotion_allowed"] is not True:
         raise FactoryLabError("evidencia causal insuficiente para promoción")
+    if (
+        causal["baseline_sha"] != base_contract["stable_sha"]
+        or causal["treatment_sha"] != base_contract["candidate_sha"]
+    ):
+        raise FactoryLabError("evidencia causal no corresponde al par evaluado")
 
     stable_vector = _validated_metrics(stable_metrics, "stable_metrics")
     candidate_vector = _validated_metrics(candidate_metrics, "candidate_metrics")

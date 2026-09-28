@@ -42,10 +42,14 @@ def experiment(
     treatment_sample_size=8,
     confounders=(),
     simultaneous_changes=(),
+    baseline_sha="a" * 40,
+    treatment_sha="b" * 40,
 ):
     return {
         "baseline": "stable:main",
         "treatment": "candidate:issue-244",
+        "baseline_sha": baseline_sha,
+        "treatment_sha": treatment_sha,
         "protected_metrics": [
             "security",
             "privacy",
@@ -68,6 +72,8 @@ class ExperimentEvidenceTests(unittest.TestCase):
 
         self.assertEqual(result["baseline"], "stable:main")
         self.assertEqual(result["treatment"], "candidate:issue-244")
+        self.assertEqual(result["baseline_sha"], "a" * 40)
+        self.assertEqual(result["treatment_sha"], "b" * 40)
         self.assertEqual(
             result["protected_metrics"],
             ["authority", "privacy", "reversibility", "security", "traceability"],
@@ -203,6 +209,36 @@ class ExperimentEvidenceTests(unittest.TestCase):
                 candidate_metrics=candidate,
                 constitution_candidate=constitution,
                 experiment_declaration=declaration,
+            )
+
+
+    def test_causal_promotion_rejects_evidence_from_another_candidate_pair(self):
+        stable = metrics(0.90)
+        candidate = metrics(0.95)
+        constitution = constitution_candidate()
+        shadow = evaluate_shadow(
+            stable_sha="a" * 40,
+            candidate_sha="b" * 40,
+            stable_metrics=stable,
+            candidate_metrics=candidate,
+            constitution_candidate=constitution,
+        )
+
+        with self.assertRaisesRegex(
+            FactoryLabError,
+            "evidencia causal no corresponde al par evaluado",
+        ):
+            causal_promotion_contract(
+                shadow_result=shadow,
+                stable_sha="a" * 40,
+                candidate_sha="b" * 40,
+                stable_metrics=stable,
+                candidate_metrics=candidate,
+                constitution_candidate=constitution,
+                experiment_declaration=experiment(
+                    baseline_sha="c" * 40,
+                    treatment_sha="d" * 40,
+                ),
             )
 
 
