@@ -26,7 +26,17 @@ SOURCE_SUFFIXES = (
 IGNORED_PREFIXES = (
     "tests/", "docs/", ".github/", "vendor/", "node_modules/", "legal/"
 )
-AMBIGUOUS_SIGNALS = {"name", "location", "document", "health"}
+AMBIGUOUS_SIGNALS = {"name", "location", "document", "health", "mobile", "address"}
+PERSONAL_CONTEXT = re.compile(
+    r"(?:\\$_(?:post|get|request)\\b|"
+    r"\\b(?:request|req|body|formdata|form|input|payload|"
+    r"user|profile|person|customer|contact|member|account|admin|staff|patient|"
+    r"employee|client|lead|attendee|subscriber|identity|record)\\b)"
+)
+SQL_FIELD_TYPES = (
+    r"(?:var)?char|text|json|(?:tiny|small|medium|big)?int|decimal|float|double|"
+    r"date|datetime|timestamp|boolean|bool"
+)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -41,31 +51,37 @@ def _code_path(path: str) -> bool:
 
 
 def _signal_present(signal: str, line: str) -> bool:
-    """Detecta señales sensibles conservando contexto para nombres ambiguos."""
+    """Detecta señales sensibles exigiendo contexto para términos ambiguos."""
     if signal in AMBIGUOUS_SIGNALS:
+        token = re.escape(signal)
+        sql_field = re.search(
+            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\\s+(?:{SQL_FIELD_TYPES})\\b",
+            line,
+        )
+        if sql_field:
+            return True
+
         quoted = (
             f'"{signal}"' in line
             or f"'{signal}'" in line
-            or re.search(rf"\bname\s*=\s*['\"]{re.escape(signal)}['\"]", line)
+            or re.search(rf"\\bname\\s*=\\s*['\\"]{token}['\\"]", line)
         )
-        if quoted:
-            return True
-        if signal == "health":
-            object_field = re.search(
-                rf"(?:{{|,)\s*{re.escape(signal)}\s*:",
-                line,
-            )
-            property_access = re.search(
-                rf"(?:\.|\?->|->)\s*{re.escape(signal)}(?![a-z0-9_])",
-                line,
-            )
-            return bool(object_field or property_access)
-        return False
+        object_field = re.search(
+            rf"(?:{{|,)\\s*{token}\\s*:",
+            line,
+        )
+        property_access = re.search(
+            rf"(?:\\.|\\?->|->)\\s*{token}(?![a-z0-9_])",
+            line,
+        )
+        if not (quoted or object_field or property_access):
+            return False
+        return PERSONAL_CONTEXT.search(line) is not None
+
     return re.search(
         rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",
         line,
     ) is not None
-
 
 def scan_added_code(diff_text: str, rules: dict[str, Any]) -> dict[str, list[str]]:
     """Devuelve solo identificadores de señales; descarta el contenido observado."""

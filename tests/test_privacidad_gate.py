@@ -203,6 +203,35 @@ class PrivacyGateTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", content)
         self.assertIn("timeout-minutes: 8", content)
 
+    def test_google_fonts_is_not_google_drive(self):
+        """Google Fonts no activa el proveedor Google Drive."""
+        item = data_map()
+        diff = """diff --git a/src/theme.js b/src/theme.js
++++ b/src/theme.js
++const fontCss = "https://fonts.googleapis.com/css2?family=Barlow";
+"""
+        report = evaluate_change(
+            diff_text=diff,
+            changed_files=["src/theme.js"],
+            current_document=item,
+            documents=docs(item),
+        )
+        self.assertEqual(report["provider_signals"], [])
+
+    def test_google_drive_api_still_requires_declaration(self):
+        """El endpoint de Drive continúa detectándose tras acotar el host."""
+        diff = """diff --git a/src/storage.js b/src/storage.js
++++ b/src/storage.js
++const endpoint = "https://www.googleapis.com/drive/v3/files";
+"""
+        with self.assertRaisesRegex(PrivacyGateError, "google_drive"):
+            evaluate_change(
+                diff_text=diff,
+                changed_files=["src/storage.js"],
+                current_document=data_map(),
+                documents=docs(data_map()),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

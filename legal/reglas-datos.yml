@@ -104,7 +104,8 @@
       "dropbox.com"
     ],
     "google_drive": [
-      "googleapis.com",
+      "drive.googleapis.com",
+      "www.googleapis.com",
       "accounts.google.com"
     ]
   },
