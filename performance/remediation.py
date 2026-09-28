@@ -13,6 +13,16 @@ DECISIONS = {"NO_ACTION", "BLOCKED", "ESCALATE", "AUTO_REPAIR"}
 OUTCOMES = {"ADOPT", "REVERT_OR_REPLAN"}
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
+_SENSITIVE = re.compile(
+    r"(?:"
+    r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|"
+    r"\bgithub_pat_[A-Za-z0-9_]{10,}\b|"
+    r"\bsk-[A-Za-z0-9]{20,}\b|"
+    r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|"
+    r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
+    r")",
+    re.IGNORECASE,
+)
 _RANK = {"PERF_INFO": 0, "PERF_DEGRADATION": 1, "PERF_INCIDENT": 2, "PERF_REVIEW": 3}
 
 
@@ -30,6 +40,8 @@ def plan_remediation(
     staffing = _triage(triage, finding)
     change = _proposal(proposal, finding)
     work_item = validate_work_item(change["work_item"])
+    _reject_sensitive_output(work_item)
+    _bind_work_item(work_item, finding)
 
     missing_roles = sorted(set(staffing["role_hints"]) - set(work_item["required_roles"]))
     if missing_roles:
@@ -201,6 +213,40 @@ def _id(value: Any, label: str) -> str:
 
 
 def _ref(value: Any, label: str) -> str:
-    if not isinstance(value, str) or _REF.fullmatch(value) is None:
-        raise PerformanceRemediationError(f"{label} inválida.")
+    if (
+        not isinstance(value, str)
+        or _REF.fullmatch(value) is None
+        or _SENSITIVE.search(value)
+    ):
+        raise PerformanceRemediationError(f"{label} inválida o sensible.")
     return value
+
+
+def _bind_work_item(
+    work_item: Mapping[str, Any],
+    finding: Mapping[str, Any],
+) -> None:
+    if (
+        work_item.get("origin_mode") != "automatic"
+        or work_item.get("origin_system") != "factory"
+        or work_item.get("producer_ref") != "factory:performance"
+        or work_item.get("project_id") != finding["project"]
+        or finding["evidence_ref"] not in work_item.get("evidence_refs", [])
+    ):
+        raise PerformanceRemediationError(
+            "WorkItem no está ligado al hallazgo de performance."
+        )
+
+
+def _reject_sensitive_output(value: Any) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _reject_sensitive_output(key)
+            _reject_sensitive_output(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_sensitive_output(item)
+    elif isinstance(value, str) and _SENSITIVE.search(value):
+        raise PerformanceRemediationError(
+            "salida contiene referencia sensible no permitida."
+        )

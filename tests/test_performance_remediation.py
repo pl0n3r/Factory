@@ -140,6 +140,37 @@ class PerformanceRemediationTests(unittest.TestCase):
         self.assertTrue(plan["queue_required"])
         self.assertEqual(plan["work_item"]["origin_system"], "factory")
         self.assertNotIn("password", str(plan).lower())
+
+        foreign = proposal()
+        foreign["work_item"] = {**work_item(), "project_id": "brvtal"}
+        with self.assertRaisesRegex(
+            PerformanceRemediationError,
+            "ligado al hallazgo",
+        ):
+            plan_remediation(finding(), triage(), foreign)
+
+        with self.assertRaisesRegex(
+            PerformanceRemediationError,
+            "sensible",
+        ):
+            plan_remediation(
+                finding(),
+                triage(),
+                proposal(hypothesis_ref="user@example.com"),
+            )
+
+        sensitive_work = work_item()
+        sensitive_work["evidence_refs"] = ["user@example.com"]
+        with self.assertRaisesRegex(
+            PerformanceRemediationError,
+            "sensible",
+        ):
+            plan_remediation(
+                finding(),
+                triage(),
+                proposal(work_item=sensitive_work),
+            )
+
         docs = (ROOT / "docs" / "performance-remediation.md").read_text()
         self.assertIn("no crea WorkItems remotamente", docs)
         self.assertIn("Factory #269", docs)
