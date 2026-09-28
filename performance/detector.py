@@ -11,6 +11,7 @@ from performance.contract import validate_performance_contract
 
 CLASSIFICATIONS = {"PERF_INFO", "PERF_REVIEW", "PERF_DEGRADATION", "PERF_INCIDENT"}
 SEVERITIES = {"info", "low", "medium", "high", "critical"}
+_VALUE_ERROR = "value debe ser número finito y acotado."
 BOTTLENECKS = {
     "database", "backend", "frontend", "infrastructure",
     "sre", "data", "architecture", "unknown",
@@ -64,9 +65,12 @@ def detect_performance(
     if obs["window_seconds"] < metric["window"]["duration_seconds"]:
         reasons.append("insufficient_window")
 
-    state = "CURRENT" if not reasons else (
-        "STALE" if reasons == ["stale"] else "INSUFFICIENT"
-    )
+    if not reasons:
+        state = "CURRENT"
+    elif reasons == ["stale"]:
+        state = "STALE"
+    else:
+        state = "INSUFFICIENT"
     breach = (
         obs["value"] > metric["budget"]["value"]
         if metric["budget"]["operator"] == "lte"
@@ -209,11 +213,11 @@ def _time(value: Any, label: str) -> datetime:
 
 def _number(value: Any) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise PerformanceDetectionError("value debe ser número finito y acotado.")
+        raise PerformanceDetectionError(_VALUE_ERROR)
     if isinstance(value, float) and not math.isfinite(value):
-        raise PerformanceDetectionError("value debe ser número finito y acotado.")
+        raise PerformanceDetectionError(_VALUE_ERROR)
     if abs(value) > 1e15:
-        raise PerformanceDetectionError("value debe ser número finito y acotado.")
+        raise PerformanceDetectionError(_VALUE_ERROR)
     return value
 
 

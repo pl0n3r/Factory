@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from performance.detector import detect_performance
+from performance.detector import PerformanceDetectionError, detect_performance
 from performance.triage import ROLE_HINTS, triage_performance
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,20 +107,25 @@ class PerformanceDetectorTests(unittest.TestCase):
             "ghp_abcdefghijklmnopqrstuvwxyz123456",
         ):
             with self.subTest(sensitive_ref=sensitive_ref):
+                sensitive_observation = observation(evidence_ref=sensitive_ref)
                 with self.assertRaisesRegex(
-                    Exception,
+                    PerformanceDetectionError,
                     "forma sensible",
                 ):
                     detect_performance(
                         contract(),
-                        observation(evidence_ref=sensitive_ref),
+                        sensitive_observation,
                         evaluated_at="2026-09-28T20:06:00Z",
                     )
 
-        with self.assertRaises(Exception):
+        huge_observation = observation(value=10 ** 1000)
+        with self.assertRaisesRegex(
+            PerformanceDetectionError,
+            "finito y acotado",
+        ):
             detect_performance(
                 contract(),
-                observation(value=10 ** 1000),
+                huge_observation,
                 evaluated_at="2026-09-28T20:06:00Z",
             )
 
