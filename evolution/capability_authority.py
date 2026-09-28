@@ -331,6 +331,7 @@ class CapabilityAuthorityRegistry:
                 "human_gate": False,
                 "degrade_on": [],
                 "revoke_on": [],
+                "bindings": [],
             }
             for action in ACTIONS
         }
@@ -352,6 +353,16 @@ class CapabilityAuthorityRegistry:
                 )
                 row["revoke_on"] = sorted(
                     set(row["revoke_on"]) | set(grant.revoke_on)
+                )
+                row["bindings"].append(
+                    {
+                        "grant_id": grant.grant_id,
+                        "scopes": list(grant.scopes),
+                        "targets": list(grant.targets),
+                        "human_gate": grant.human_gate,
+                        "degrade_on": list(grant.degrade_on),
+                        "revoke_on": list(grant.revoke_on),
+                    }
                 )
         return {
             "version": AUTHORITY_VERSION,
