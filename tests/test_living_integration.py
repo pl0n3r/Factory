@@ -139,5 +139,19 @@ class LivingIntegrationTests(unittest.TestCase):
         self.assertIn("no una concesión de producción autónoma irrestricta", LIVING)
 
 
+    def test_learned_knowledge_lifecycle_is_documented_and_fail_closed(self):
+        combined = "\n".join((README, LIVING))
+        self.assertIn("docs/knowledge-lifecycle.md", README)
+        self.assertIn(
+            "candidate → active → needs_review → deprecated → archived",
+            combined,
+        )
+        self.assertIn(
+            "deja de poder aumentar autonomía hasta revalidarse",
+            combined,
+        )
+        self.assertIn("nunca borra historia", LIVING)
+
+
 if __name__ == "__main__":
     unittest.main()

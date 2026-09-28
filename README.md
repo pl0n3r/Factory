@@ -334,6 +334,8 @@ El ciclo de alto nivel es:
 
 Ese resumen no reemplaza el lifecycle completo de Constitution. Toda adopción conserva rollback, trazabilidad, invariantes protegidos y límites de autoridad humana.
 
+El conocimiento aprendido usa un lifecycle propio y revocable: `candidate → active → needs_review → deprecated → archived`. Una regla cuya evidencia envejece deja de poder aumentar autonomía hasta revalidarse; pruning solo propone consolidación/retiro y preserva historia. Ver [docs/knowledge-lifecycle.md](docs/knowledge-lifecycle.md).
+
 ### Estado de confianza actual
 
 - **#209 Autonomy authority + canonical evidence:** ✅ cerrado.
