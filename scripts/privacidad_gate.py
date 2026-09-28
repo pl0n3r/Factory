@@ -51,7 +51,7 @@ def _code_path(path: str) -> bool:
 
 
 def _signal_present(signal: str, line: str) -> bool:
-    """Detecta señales sensibles exigiendo contexto para términos ambiguos."""
+    """Detecta señales sensibles exigiendo contexto local para términos ambiguos."""
     if signal in AMBIGUOUS_SIGNALS:
         token = re.escape(signal)
         sql_field = re.search(
@@ -61,22 +61,22 @@ def _signal_present(signal: str, line: str) -> bool:
         if sql_field:
             return True
 
-        quoted = (
-            f'"{signal}"' in line
-            or f"'{signal}'" in line
-            or re.search(rf"\bname\s*=\s*['\"]{token}['\"]", line)
-        )
-        object_field = re.search(
+        patterns = (
+            rf"(['\"]){token}\1",
             rf"(?:{{|,)\s*{token}\s*:",
-            line,
-        )
-        property_access = re.search(
             rf"(?:\.|\?->|->)\s*{token}(?![a-z0-9_])",
-            line,
         )
-        if not (quoted or object_field or property_access):
-            return False
-        return PERSONAL_CONTEXT.search(line) is not None
+        matches = [
+            match
+            for pattern in patterns
+            for match in re.finditer(pattern, line)
+        ]
+        for match in matches:
+            start = max(0, match.start() - 96)
+            end = min(len(line), match.end() + 96)
+            if PERSONAL_CONTEXT.search(line[start:end]):
+                return True
+        return False
 
     return re.search(
         rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",

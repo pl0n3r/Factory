@@ -241,7 +241,7 @@ class PrivacyAuditTests(unittest.TestCase):
         self.assertIn("factory-privacy-material", content)
 
     def test_ambiguous_runtime_terms_do_not_create_personal_findings(self):
-        """DOM, UI, healthchecks y schema.org no son datos personales por léxico."""
+        """DOM, UI, healthchecks, media y schema.org no son datos por léxico."""
         current = data_map()
         report = audit_sources(
             sources={
@@ -256,6 +256,14 @@ class PrivacyAuditTests(unittest.TestCase):
                     "$schema['location'] = ['@type' => 'Place'];\n"
                     "$schema['location']['address'] = ['@type' => 'PostalAddress'];\n"
                 ),
+                "api/index.php": (
+                    "$type = $mime === 'application/pdf' ? 'document' : 'image';"
+                    + (" " * 128)
+                    + "$title = $_POST['title'];\n"
+                ),
+                "database/schema.sql": (
+                    "type ENUM('image','video','audio','document') NOT NULL,\n"
+                ),
             },
             current_document=current,
             previous_document=deepcopy(current),
@@ -263,6 +271,19 @@ class PrivacyAuditTests(unittest.TestCase):
         self.assertEqual(report["status"], "clean")
         self.assertEqual(report["undocumented_fields"], [])
         self.assertEqual(report["undocumented_providers"], [])
+
+    def test_ambiguous_personal_field_near_request_remains_detected(self):
+        """Un campo ambiguo ligado directamente a un request sigue siendo auditable."""
+        current = data_map()
+        report = audit_sources(
+            sources={"src/User.php": "$document = $_POST['document'];\n"},
+            current_document=current,
+            previous_document=deepcopy(current),
+        )
+        self.assertEqual(
+            report["undocumented_fields"],
+            [{"signal": "document", "paths": ["src/User.php"]}],
+        )
 
     def test_real_ip_address_signal_remains_detected(self):
         """Una columna real ip_address sigue siendo evidencia auditable."""
