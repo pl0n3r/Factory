@@ -164,28 +164,52 @@ def _history(value: Any) -> list[dict[str, Any]]:
     return validated
 
 
-def validate_knowledge_record(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict) or set(raw) != REQUIRED_FIELDS:
-        raise KnowledgeLifecycleError("registro de conocimiento con campos inválidos")
-    if raw.get("version") != KNOWLEDGE_VERSION:
-        raise KnowledgeLifecycleError("version de conocimiento no soportada")
-
+def _record_identity(raw: dict[str, Any]) -> tuple[str, str, str]:
     knowledge_id = _text(raw.get("knowledge_id"), "knowledge_id")
     if not ID_RE.fullmatch(knowledge_id):
         raise KnowledgeLifecycleError("knowledge_id inválido")
     knowledge_type = _text(raw.get("knowledge_type"), "knowledge_type")
     if not ID_RE.fullmatch(knowledge_type):
         raise KnowledgeLifecycleError("knowledge_type inválido")
-
     fingerprint = raw.get("content_fingerprint")
     if not isinstance(fingerprint, str) or not HEX64_RE.fullmatch(fingerprint):
         raise KnowledgeLifecycleError("content_fingerprint inválido")
+    return knowledge_id, knowledge_type, fingerprint
 
+
+def _record_times(raw: dict[str, Any]) -> tuple[datetime, datetime, datetime]:
     created = _timestamp(raw.get("created_at"), "created_at")
     validated_at = _timestamp(raw.get("last_validated_at"), "last_validated_at")
     useful_at = _timestamp(raw.get("last_useful_at"), "last_useful_at")
     if validated_at < created or useful_at < created:
         raise KnowledgeLifecycleError("timestamps de conocimiento regresivos")
+    return created, validated_at, useful_at
+
+
+def _validated_history(
+    raw: dict[str, Any],
+    *,
+    created: datetime,
+    state: str,
+) -> list[dict[str, Any]]:
+    history = _history(raw.get("history"))
+    if not history:
+        return history
+    if _timestamp(history[0]["at"], "history.at") < created:
+        raise KnowledgeLifecycleError("history anterior a created_at")
+    if history[-1]["to"] != state:
+        raise KnowledgeLifecycleError("history no coincide con state")
+    return history
+
+
+def validate_knowledge_record(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict) or set(raw) != REQUIRED_FIELDS:
+        raise KnowledgeLifecycleError("registro de conocimiento con campos inválidos")
+    if raw.get("version") != KNOWLEDGE_VERSION:
+        raise KnowledgeLifecycleError("version de conocimiento no soportada")
+
+    knowledge_id, knowledge_type, fingerprint = _record_identity(raw)
+    created, _, _ = _record_times(raw)
 
     evidence_class = raw.get("evidence_class")
     if evidence_class not in EVIDENCE_CLASSES:
@@ -193,13 +217,7 @@ def validate_knowledge_record(raw: Any) -> dict[str, Any]:
     state = raw.get("state")
     if state not in STATES:
         raise KnowledgeLifecycleError("state inválido")
-
-    history = _history(raw.get("history"))
-    if history:
-        if _timestamp(history[0]["at"], "history.at") < created:
-            raise KnowledgeLifecycleError("history anterior a created_at")
-        if history[-1]["to"] != state:
-            raise KnowledgeLifecycleError("history no coincide con state")
+    history = _validated_history(raw, created=created, state=state)
 
     return {
         "version": KNOWLEDGE_VERSION,
@@ -225,15 +243,13 @@ def create_knowledge_record(
     knowledge_type: str,
     content_fingerprint: str,
     provenance: list[str],
-    project: str,
-    domain: str,
+    scope: dict[str, str],
     created_at: str,
     last_validated_at: str,
     last_useful_at: str,
     confidence: float,
     evidence_class: str,
-    review_after_days: int,
-    expires_after_days: int,
+    review_policy: dict[str, int],
     state: str = "candidate",
 ) -> dict[str, Any]:
     return validate_knowledge_record({
@@ -242,16 +258,13 @@ def create_knowledge_record(
         "knowledge_type": knowledge_type,
         "content_fingerprint": content_fingerprint,
         "provenance": provenance,
-        "scope": {"project": project, "domain": domain},
+        "scope": scope,
         "created_at": created_at,
         "last_validated_at": last_validated_at,
         "last_useful_at": last_useful_at,
         "confidence": confidence,
         "evidence_class": evidence_class,
-        "review_policy": {
-            "review_after_days": review_after_days,
-            "expires_after_days": expires_after_days,
-        },
+        "review_policy": review_policy,
         "state": state,
         "history": [],
     })
@@ -374,6 +387,90 @@ def transition_knowledge(
     return validate_knowledge_record(updated)
 
 
+def _fingerprint_index(
+    records: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    index: dict[str, list[str]] = {}
+    for item in records:
+        index.setdefault(item["content_fingerprint"], []).append(
+            item["knowledge_id"]
+        )
+    return index
+
+
+def _pruning_reasons(
+    item: dict[str, Any],
+    *,
+    now: datetime,
+    now_at: str,
+    duplicate: bool,
+) -> list[str]:
+    state_now = effective_state(item, now_at)
+    useful_age = now - _timestamp(item["last_useful_at"], "last_useful_at")
+    validated_age = now - _timestamp(
+        item["last_validated_at"], "last_validated_at"
+    )
+    policy = item["review_policy"]
+    reasons: set[str] = set()
+    if duplicate:
+        reasons.add("duplicate")
+    if useful_age.days >= policy["expires_after_days"]:
+        reasons.add("unused")
+    if (
+        validated_age.days >= policy["review_after_days"]
+        or state_now in {"needs_review", "deprecated"}
+    ):
+        reasons.add("aged")
+    return sorted(reasons)
+
+
+def _pruning_proposal(
+    item: dict[str, Any],
+    *,
+    peers: list[str],
+    now: datetime,
+    now_at: str,
+) -> dict[str, Any] | None:
+    duplicate = len(peers) > 1
+    reasons = _pruning_reasons(
+        item,
+        now=now,
+        now_at=now_at,
+        duplicate=duplicate,
+    )
+    if not reasons:
+        return None
+    proposal_ids = peers if duplicate else [item["knowledge_id"]]
+    return {
+        "version": KNOWLEDGE_VERSION,
+        "proposal_id": f"knowledge-prune-{proposal_ids[0]}",
+        "knowledge_ids": proposal_ids,
+        "action": (
+            "review-consolidation" if duplicate else "review-retirement"
+        ),
+        "reasons": reasons,
+        "delete": False,
+        "history_preserved": True,
+        "generated_at": now_at,
+    }
+
+
+def _merge_pruning_proposals(
+    proposals: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    unique: dict[tuple[str, ...], dict[str, Any]] = {}
+    for proposal in proposals:
+        key = tuple(proposal["knowledge_ids"])
+        current = unique.get(key)
+        if current is None:
+            unique[key] = proposal
+        else:
+            current["reasons"] = sorted(
+                set(current["reasons"]) | set(proposal["reasons"])
+            )
+    return sorted(unique.values(), key=lambda item: item["proposal_id"])
+
+
 def propose_pruning_candidates(records: Any, *, now_at: str) -> list[dict[str, Any]]:
     if not isinstance(records, (list, tuple)) or not records:
         raise KnowledgeLifecycleError("records debe ser lista no vacía")
@@ -383,58 +480,16 @@ def propose_pruning_candidates(records: Any, *, now_at: str) -> list[dict[str, A
     if len(ids) != len(set(ids)):
         raise KnowledgeLifecycleError("knowledge_id duplicado")
 
-    by_fingerprint: dict[str, list[str]] = {}
+    by_fingerprint = _fingerprint_index(validated)
+    proposals = []
     for item in validated:
-        by_fingerprint.setdefault(item["content_fingerprint"], []).append(
-            item["knowledge_id"]
-        )
-
-    proposals: list[dict[str, Any]] = []
-    for item in validated:
-        state_now = effective_state(item, now_at)
-        reasons: set[str] = set()
         peers = sorted(by_fingerprint[item["content_fingerprint"]])
-        if len(peers) > 1:
-            reasons.add("duplicate")
-
-        useful_age = now - _timestamp(item["last_useful_at"], "last_useful_at")
-        validated_age = now - _timestamp(
-            item["last_validated_at"], "last_validated_at"
+        proposal = _pruning_proposal(
+            item,
+            peers=peers,
+            now=now,
+            now_at=now_at,
         )
-        policy = item["review_policy"]
-        if useful_age.days >= policy["expires_after_days"]:
-            reasons.add("unused")
-        if (
-            validated_age.days >= policy["review_after_days"]
-            or state_now in {"needs_review", "deprecated"}
-        ):
-            reasons.add("aged")
-
-        if reasons:
-            proposal_ids = peers if "duplicate" in reasons else [item["knowledge_id"]]
-            proposals.append({
-                "version": KNOWLEDGE_VERSION,
-                "proposal_id": f"knowledge-prune-{proposal_ids[0]}",
-                "knowledge_ids": proposal_ids,
-                "action": (
-                    "review-consolidation"
-                    if "duplicate" in reasons
-                    else "review-retirement"
-                ),
-                "reasons": sorted(reasons),
-                "delete": False,
-                "history_preserved": True,
-                "generated_at": now_at,
-            })
-
-    unique: dict[tuple[str, ...], dict[str, Any]] = {}
-    for proposal in proposals:
-        key = tuple(proposal["knowledge_ids"])
-        current = unique.get(key)
-        if current is None:
-            unique[key] = proposal
-            continue
-        current["reasons"] = sorted(
-            set(current["reasons"]) | set(proposal["reasons"])
-        )
-    return sorted(unique.values(), key=lambda item: item["proposal_id"])
+        if proposal is not None:
+            proposals.append(proposal)
+    return _merge_pruning_proposals(proposals)

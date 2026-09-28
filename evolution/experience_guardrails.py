@@ -108,15 +108,19 @@ def _candidate_for_group(
         knowledge_type="guardrail",
         content_fingerprint=pattern_fingerprint,
         provenance=sources,
-        project=ordered[0]["project"],
-        domain="experience-guardrails",
+        scope={
+            "project": ordered[0]["project"],
+            "domain": "experience-guardrails",
+        },
         created_at=created_at,
         last_validated_at=latest_at,
         last_useful_at=latest_at,
         confidence=min(1.0, 0.5 + (0.1 * len(ordered))),
         evidence_class="multi-source",
-        review_after_days=30,
-        expires_after_days=90,
+        review_policy={
+            "review_after_days": 30,
+            "expires_after_days": 90,
+        },
         state="candidate",
     )
     value = {

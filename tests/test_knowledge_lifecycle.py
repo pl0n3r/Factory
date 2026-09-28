@@ -28,15 +28,19 @@ def record(
         knowledge_type="guardrail",
         content_fingerprint=fingerprint,
         provenance=provenance or ["pl0n3r/factory#243"],
-        project="pl0n3r/factory",
-        domain="living-software",
+        scope={
+            "project": "pl0n3r/factory",
+            "domain": "living-software",
+        },
         created_at=created_at,
         last_validated_at=last_validated_at,
         last_useful_at=last_useful_at,
         confidence=0.90,
         evidence_class="verified",
-        review_after_days=30,
-        expires_after_days=90,
+        review_policy={
+            "review_after_days": 30,
+            "expires_after_days": 90,
+        },
         state=state,
     )
 
