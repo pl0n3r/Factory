@@ -113,6 +113,10 @@ class KnowledgeLifecycleTests(unittest.TestCase):
             ["pl0n3r/factory#243", "pl0n3r/factory#244"],
         )
         self.assertEqual(
+            [event["to"] for event in refreshed["history"]],
+            ["needs_review", "active"],
+        )
+        self.assertEqual(
             refreshed["history"][-1],
             {
                 "at": "2026-09-28T00:00:00Z",
@@ -143,10 +147,10 @@ class KnowledgeLifecycleTests(unittest.TestCase):
             reason="retained-for-audit",
         )
         self.assertEqual(archived["state"], "archived")
-        self.assertEqual(len(archived["history"]), 2)
+        self.assertEqual(len(archived["history"]), 3)
         self.assertEqual(
             [event["to"] for event in archived["history"]],
-            ["deprecated", "archived"],
+            ["needs_review", "deprecated", "archived"],
         )
         self.assertEqual(archived["provenance"], active["provenance"])
         self.assertFalse(

@@ -302,6 +302,14 @@ def revalidate_knowledge(
         raise KnowledgeLifecycleError("conocimiento retirado no se reactiva por revalidación")
 
     updated = deepcopy(record)
+    if source_state == "needs_review" and record["state"] == "active":
+        updated["history"].append({
+            "at": validated_at,
+            "from": "active",
+            "to": "needs_review",
+            "reason": "review-window-expired",
+            "evidence": new_sources,
+        })
     updated["provenance"] = sorted(set(record["provenance"]) | set(new_sources))
     updated["last_validated_at"] = validated_at
     updated["last_useful_at"] = validated_at
@@ -344,6 +352,14 @@ def transition_knowledge(
 
     transition_evidence = _sources(evidence, "transition.evidence")
     updated = deepcopy(record)
+    if source_state == "needs_review" and record["state"] == "active":
+        updated["history"].append({
+            "at": at,
+            "from": "active",
+            "to": "needs_review",
+            "reason": "review-window-expired",
+            "evidence": transition_evidence,
+        })
     updated["state"] = target_state
     updated["history"].append({
         "at": at,
