@@ -314,11 +314,19 @@ def _adaptive_presence_reasons(presence: PresenceAssessment) -> tuple[str, ...]:
 
 
 def _adaptive_fencing_reasons(fencing: FencingDecision) -> tuple[str, ...]:
-    """Convierte un fence fail-closed en razones que excluyen candidatos."""
+    """Convierte cualquier fail-closed en un bloqueo explícito de readiness."""
     if fencing.action != "fail_closed":
         return ()
     return tuple(
-        sorted(f"adaptive_fencing_invalid:{reason}" for reason in fencing.reasons)
+        sorted(
+            {
+                "adaptive_fencing_invalid",
+                *(
+                    f"adaptive_fencing_invalid:{reason}"
+                    for reason in fencing.reasons
+                ),
+            }
+        )
     )
 
 
