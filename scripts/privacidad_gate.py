@@ -26,7 +26,24 @@ SOURCE_SUFFIXES = (
 IGNORED_PREFIXES = (
     "tests/", "docs/", ".github/", "vendor/", "node_modules/", "legal/"
 )
-AMBIGUOUS_SIGNALS = {"name", "location", "document", "health"}
+AMBIGUOUS_SIGNALS = {"name", "location", "document", "health", "mobile", "address"}
+PERSONAL_CONTEXT_TERMS = frozenset(
+    {
+        "request", "req", "body", "formdata", "form", "input", "payload",
+        "user", "profile", "person", "customer", "contact", "member",
+        "account", "admin", "staff", "patient", "employee", "client",
+        "lead", "attendee", "subscriber", "identity", "record",
+    }
+)
+SQL_FIELD_TYPES = (
+    r"(?:var)?char|text|json|(?:tiny|small|medium|big)?int|decimal|float|double|"
+    r"date|datetime|timestamp|boolean|bool"
+)
+GOOGLE_DRIVE_SHARED_API_PATHS = (
+    "www.googleapis.com/drive/",
+    "www.googleapis.com/upload/drive/",
+)
+IDENTIFIER_PATTERN = r"[A-Za-z_$][A-Za-z0-9_$]*"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -40,32 +57,118 @@ def _code_path(path: str) -> bool:
     return path.endswith(SOURCE_SUFFIXES) or path.endswith(".blade.php")
 
 
-def _signal_present(signal: str, line: str) -> bool:
-    """Detecta señales sensibles conservando contexto para nombres ambiguos."""
-    if signal in AMBIGUOUS_SIGNALS:
-        quoted = (
-            f'"{signal}"' in line
-            or f"'{signal}'" in line
-            or re.search(rf"\bname\s*=\s*['\"]{re.escape(signal)}['\"]", line)
-        )
-        if quoted:
-            return True
-        if signal == "health":
-            object_field = re.search(
-                rf"(?:{{|,)\s*{re.escape(signal)}\s*:",
-                line,
-            )
-            property_access = re.search(
-                rf"(?:\.|\?->|->)\s*{re.escape(signal)}(?![a-z0-9_])",
-                line,
-            )
-            return bool(object_field or property_access)
-        return False
+def _identifier_has_personal_context(identifier: str) -> bool:
+    """Reconoce contexto personal dentro de identificadores compuestos."""
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", identifier)
+    parts = [
+        part.lower()
+        for part in re.split(r"[^A-Za-z0-9]+", normalized)
+        if part
+    ]
+    return any(part in PERSONAL_CONTEXT_TERMS for part in parts)
+
+
+def _expression_has_personal_context(expression: str) -> bool:
+    """Limita el contexto a la expresión asociada al campo observado."""
+    if re.search(r"\$_(?:post|get|request)\b", expression, re.IGNORECASE):
+        return True
+    identifiers = re.findall(IDENTIFIER_PATTERN, expression)
+    return any(_identifier_has_personal_context(item) for item in identifiers)
+
+
+def _sql_field_present(token: str, line: str) -> bool:
     return re.search(
-        rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",
+        rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s+(?:{SQL_FIELD_TYPES})\b",
         line,
+        re.IGNORECASE,
     ) is not None
 
+
+def _property_signal_present(token: str, line: str) -> bool:
+    identifier = IDENTIFIER_PATTERN
+    access = r"(?:\.|\?->|->)"
+    pattern = (
+        rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})"
+        rf"\s*{access}\s*{token}(?![a-z0-9_])"
+    )
+    return any(
+        _expression_has_personal_context(match.group("chain"))
+        for match in re.finditer(pattern, line, re.IGNORECASE)
+    )
+
+
+def _request_signal_present(token: str, line: str) -> bool:
+    direct = re.search(
+        rf"\$_(?:post|get|request)\s*\[\s*['\"]{token}['\"]\s*\]",
+        line,
+        re.IGNORECASE,
+    )
+    if direct:
+        return True
+    identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+    access = r"(?:\.|\?->|->)"
+    pattern = (
+        rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})\s*"
+        rf"(?:\[\s*['\"]{token}['\"]\s*\]|"
+        rf"\(\s*['\"]{token}['\"]\))"
+    )
+    return any(
+        _expression_has_personal_context(match.group("chain"))
+        for match in re.finditer(pattern, line, re.IGNORECASE)
+    )
+
+
+def _destructured_signal_present(token: str, line: str) -> bool:
+    pattern = r"\{(?P<fields>[^{}]{0,256})\}\s*=\s*(?P<source>[^;\n]+)"
+    for match in re.finditer(pattern, line, re.IGNORECASE):
+        field_present = re.search(
+            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])",
+            match.group("fields"),
+            re.IGNORECASE,
+        )
+        if field_present and _expression_has_personal_context(match.group("source")):
+            return True
+    return False
+
+
+def _literal_signal_present(token: str, line: str) -> bool:
+    identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+    pattern = (
+        rf"(?P<target>{identifier})\s*=\s*(?:\{{|\[)[^;\n]{{0,256}}?"
+        rf"(?:['\"]{token}['\"]\s*(?::|=>)|"
+        rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s*:)"
+    )
+    return any(
+        _identifier_has_personal_context(match.group("target"))
+        for match in re.finditer(pattern, line, re.IGNORECASE)
+    )
+
+
+def _signal_present(signal: str, line: str) -> bool:
+    """Detecta señales ambiguas solo cuando el campo tiene contexto asociado."""
+    if signal not in AMBIGUOUS_SIGNALS:
+        return re.search(
+            rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",
+            line,
+            re.IGNORECASE,
+        ) is not None
+    token = re.escape(signal)
+    checks = (
+        _sql_field_present,
+        _property_signal_present,
+        _request_signal_present,
+        _destructured_signal_present,
+        _literal_signal_present,
+    )
+    return any(check(token, line) for check in checks)
+
+
+def _provider_present(provider: str, domains: list[str], line: str) -> bool:
+    if any(domain in line for domain in domains):
+        return True
+    return provider == "google_drive" and any(
+        path in line for path in GOOGLE_DRIVE_SHARED_API_PATHS
+    )
 
 def scan_added_code(diff_text: str, rules: dict[str, Any]) -> dict[str, list[str]]:
     """Devuelve solo identificadores de señales; descarta el contenido observado."""
@@ -85,13 +188,14 @@ def scan_added_code(diff_text: str, rules: dict[str, Any]) -> dict[str, list[str
             continue
         if not raw.startswith("+") or raw.startswith("+++"):
             continue
-        line = raw[1:].lower()
+        line = raw[1:]
+        normalized_line = line.lower()
         for category in categories.values():
             for signal in category["signals"]:
                 if _signal_present(signal, line):
                     personal.add(signal)
         for provider, domains in provider_signals.items():
-            if any(domain in line for domain in domains):
+            if _provider_present(provider, domains, normalized_line):
                 providers.add(provider)
 
     return {

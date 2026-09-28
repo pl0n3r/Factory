@@ -85,6 +85,8 @@ class PrivacyAuditTests(unittest.TestCase):
             '$payload = ["health" => $value];\n',
             'const profile = { health: value };\n',
             'const value = record.health;\n',
+            'const value = userProfile.health;\n',
+            'const { health } = req.body;\n',
         )
         for snippet in snippets:
             with self.subTest(snippet=snippet):
@@ -240,6 +242,102 @@ class PrivacyAuditTests(unittest.TestCase):
         self.assertIn("timeout-minutes: 10", content)
         self.assertIn("factory-privacy-material", content)
 
+    def test_ambiguous_runtime_terms_do_not_create_personal_findings(self):
+        """DOM, UI, healthchecks, media y schema.org no son datos por léxico."""
+        current = data_map()
+        report = audit_sources(
+            sources={
+                "src/runtime.js": (
+                    "const root = document.querySelector('#app');\n"
+                    "const origin = location.origin;\n"
+                    'const user = getUser(); const mode = "mobile";\n'
+                    'const { health } = theme;\n'
+                    "const status = data.health?.status || 'unknown';\n"
+                ),
+                "src/seo.php": (
+                    "<?php\n"
+                    "$schema['location'] = ['@type' => 'Place'];\n"
+                    "$schema['location']['address'] = ['@type' => 'PostalAddress'];\n"
+                ),
+                "api/index.php": (
+                    "$type = $mime === 'application/pdf' ? 'document' : 'image';"
+                    + (" " * 128)
+                    + "$title = $_POST['title'];\n"
+                ),
+                "database/schema.sql": (
+                    "type ENUM('image','video','audio','document') NOT NULL,\n"
+                ),
+            },
+            current_document=current,
+            previous_document=deepcopy(current),
+        )
+        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report["undocumented_fields"], [])
+        self.assertEqual(report["undocumented_providers"], [])
+
+    def test_ambiguous_personal_field_near_request_remains_detected(self):
+        """Un campo ambiguo ligado directamente a un request sigue siendo auditable."""
+        current = data_map()
+        report = audit_sources(
+            sources={"src/User.php": "$document = $_POST['document'];\n"},
+            current_document=current,
+            previous_document=deepcopy(current),
+        )
+        self.assertEqual(
+            report["undocumented_fields"],
+            [{"signal": "document", "paths": ["src/User.php"]}],
+        )
+
+    def test_real_ip_address_signal_remains_detected(self):
+        """Una columna real ip_address sigue siendo evidencia auditable."""
+        current = data_map()
+        report = audit_sources(
+            sources={
+                "database/migration.sql": (
+                    "CREATE TABLE activity_log (\n"
+                    "  ip_address VARCHAR(45) NULL\n"
+                    ");\n"
+                )
+            },
+            current_document=current,
+            previous_document=deepcopy(current),
+        )
+        self.assertEqual(
+            report["undocumented_fields"],
+            [{"signal": "ip_address", "paths": ["database/migration.sql"]}],
+        )
+
+    def test_brvtal_style_sources_report_only_real_findings(self):
+        """La mezcla observada en BRVTAL conserva solo la señal real."""
+        current = data_map()
+        report = audit_sources(
+            sources={
+                "config/public_assets.php": (
+                    '$mobilePreload = \'<link data-lcp="mobile">\';\n'
+                    '$font = "https://fonts.googleapis.com/css2?family=Barlow";\n'
+                ),
+                "config/public_seo.php": (
+                    "$schema['location'] = ['@type' => 'Place'];\n"
+                    "$schema['location']['address'] = ['@type' => 'PostalAddress'];\n"
+                ),
+                "api/route.php": (
+                    "$resources = ['health', 'auth', 'public'];\n"
+                ),
+                "discadmin/system-status-v2.js": (
+                    "const status = data.health?.status || 'unknown';\n"
+                ),
+                "database/v4-cms-migration.sql": (
+                    "ip_address VARCHAR(45) NULL,\n"
+                ),
+            },
+            current_document=current,
+            previous_document=deepcopy(current),
+        )
+        self.assertEqual(
+            report["undocumented_fields"],
+            [{"signal": "ip_address", "paths": ["database/v4-cms-migration.sql"]}],
+        )
+        self.assertEqual(report["undocumented_providers"], [])
 
 if __name__ == "__main__":
     unittest.main()
