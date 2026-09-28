@@ -14,7 +14,7 @@ from scripts.dispatcher_v2 import (
     select_next,
 )
 
-from scripts.adaptive_fencing import FencingContext, evaluate_fencing
+from scripts.adaptive_fencing import FencingContext, FencingDecision, evaluate_fencing
 from scripts.adaptive_replan import decide_replan
 from scripts.presence_contract import classify_presence
 
