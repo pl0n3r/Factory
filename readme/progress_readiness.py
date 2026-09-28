@@ -102,7 +102,7 @@ def calculate_progress_readiness(
     result: dict[str, Any] = {
         "version": 1,
         "target": target,
-        "target_fingerprint": _target_fingerprint(target),
+        "target_fingerprint": _target_fingerprint(target, source["dimensions"]),
         "observed_at": source["observed_at"],
         "progress": progress,
         "readiness": readiness,
@@ -111,7 +111,9 @@ def calculate_progress_readiness(
         "blockers": blockers,
         "critical_blockers": critical_blockers,
     }
-    result["trend"] = _compare(previous, result) if previous is not None else _no_trend()
+    result["trend"] = _no_trend()
+    if previous is not None:
+        result["trend"] = _compare(previous, result)
     return result
 
 
@@ -509,11 +511,36 @@ def _no_trend() -> dict[str, Any]:
     }
 
 
-def _target_fingerprint(target: Mapping[str, str]) -> str:
+def _target_fingerprint(
+    target: Mapping[str, str],
+    dimensions: list[dict[str, Any]],
+) -> str:
     identity = {
-        "id": target["id"],
-        "scope": target["scope"],
-        "version": target["version"],
+        "target": {
+            "id": target["id"],
+            "scope": target["scope"],
+            "version": target["version"],
+        },
+        "baseline": [
+            {
+                "id": dimension["id"],
+                "weight": dimension["weight"],
+                "milestones": [
+                    {
+                        "id": milestone["id"],
+                        "weight": milestone["weight"],
+                        "progress_applicable": (
+                            milestone["progress_state"] != "NOT_APPLICABLE"
+                        ),
+                        "readiness_applicable": (
+                            milestone["readiness_state"] != "NOT_APPLICABLE"
+                        ),
+                    }
+                    for milestone in dimension["milestones"]
+                ],
+            }
+            for dimension in dimensions
+        ],
     }
     encoded = json.dumps(
         identity,
