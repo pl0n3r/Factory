@@ -7,6 +7,7 @@ on:
       - 'evolution/**'
       - 'intelligence/**'
       - 'tests/test_factory_lab_contract.py'
+      - 'tests/test_experiment_evidence.py'
       - 'docs/factory-lab.md'
       - '.github/workflows/evolution-lab.yml'
   workflow_dispatch:
@@ -35,4 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile lab/*.py
-          python3 -m unittest tests.test_factory_lab_contract -v
+          python3 -m unittest \
+            tests.test_factory_lab_contract \
+            tests.test_experiment_evidence \
+            -v
