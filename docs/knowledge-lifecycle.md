@@ -27,7 +27,7 @@ Una regla `active` cuya revisión vence se interpreta como `needs_review`. Mient
 
 ## Revalidación
 
-Revalidar exige evidencia nueva, actualiza provenance/fecha/confidence/evidence class y añade una transición trazable a `active`. Revalidar no revive conocimiento ya `deprecated` o `archived`; ese caso requiere una nueva propuesta.
+Revalidar exige al menos una **identidad de evidencia nueva**. La identidad puede ser la fuente histórica simple o una fuente versionada como `source@sha256:<digest>`, `source@rev:<revision>` o `source@event:<verification-id>`. Repetir la misma fuente base es válido solo cuando cambia esa identidad verificable; reenviar exactamente la misma identidad se rechaza y no refresca timestamps, estado ni autonomía. La revalidación actualiza provenance/fecha/confidence/evidence class y añade una transición trazable a `active`. Revalidar no revive conocimiento ya `deprecated` o `archived`; ese caso requiere una nueva propuesta.
 
 ## Pruning
 

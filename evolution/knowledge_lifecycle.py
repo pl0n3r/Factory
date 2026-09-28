@@ -25,7 +25,8 @@ PROJECT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SOURCE_RE = re.compile(
     r"^(?:https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/"
     r"(?:issues|pull)/[1-9]\d*"
-    r"|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9]\d*)$"
+    r"|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9]\d*)"
+    r"(?:@(?:sha256:[0-9a-f]{64}|rev:[A-Za-z0-9._-]{1,80}|event:[A-Za-z0-9._-]{1,80}))?$"
 )
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 REQUIRED_FIELDS = {
@@ -313,6 +314,14 @@ def revalidate_knowledge(
     if evidence_class not in EVIDENCE_CLASSES:
         raise KnowledgeLifecycleError("evidence_class inválida")
     new_sources = _sources(evidence, "revalidation.evidence")
+    fresh_evidence = [
+        identity for identity in new_sources
+        if identity not in record["provenance"]
+    ]
+    if not fresh_evidence:
+        raise KnowledgeLifecycleError(
+            "revalidación requiere al menos una identidad de evidencia nueva"
+        )
     source_state = effective_state(record, validated_at)
     if source_state in {"deprecated", "archived"}:
         raise KnowledgeLifecycleError("conocimiento retirado no se reactiva por revalidación")
@@ -324,9 +333,11 @@ def revalidate_knowledge(
             "from": "active",
             "to": "needs_review",
             "reason": "review-window-expired",
-            "evidence": new_sources,
+            "evidence": fresh_evidence,
         })
-    updated["provenance"] = sorted(set(record["provenance"]) | set(new_sources))
+    updated["provenance"] = sorted(
+        set(record["provenance"]) | set(fresh_evidence)
+    )
     updated["last_validated_at"] = validated_at
     updated["last_useful_at"] = validated_at
     updated["confidence"] = _confidence(confidence)
@@ -337,7 +348,7 @@ def revalidate_knowledge(
         "from": source_state,
         "to": "active",
         "reason": "revalidated",
-        "evidence": new_sources,
+        "evidence": fresh_evidence,
     })
     return validate_knowledge_record(updated)
 

@@ -145,6 +145,50 @@ class KnowledgeLifecycleTests(unittest.TestCase):
             can_increase_autonomy(refreshed, "2026-09-28T00:00:00Z")
         )
 
+    def test_revalidation_rejects_replayed_evidence_identity(self):
+        stale = record(
+            last_validated_at="2026-01-01T00:00:00Z",
+            last_useful_at="2026-01-01T00:00:00Z",
+        )
+        with self.assertRaisesRegex(
+            KnowledgeLifecycleError,
+            "identidad de evidencia nueva",
+        ):
+            revalidate_knowledge(
+                stale,
+                validated_at="2026-09-28T00:00:00Z",
+                evidence=["pl0n3r/factory#243"],
+                confidence=0.95,
+                evidence_class="verified",
+            )
+
+    def test_revalidation_accepts_new_identity_for_same_source(self):
+        digest_a = "a" * 64
+        digest_b = "b" * 64
+        stale = record(
+            last_validated_at="2026-01-01T00:00:00Z",
+            last_useful_at="2026-01-01T00:00:00Z",
+            provenance=[f"pl0n3r/factory#243@sha256:{digest_a}"],
+        )
+        refreshed = revalidate_knowledge(
+            stale,
+            validated_at="2026-09-28T00:00:00Z",
+            evidence=[f"pl0n3r/factory#243@sha256:{digest_b}"],
+            confidence=0.95,
+            evidence_class="verified",
+        )
+        self.assertEqual(
+            refreshed["provenance"],
+            [
+                f"pl0n3r/factory#243@sha256:{digest_a}",
+                f"pl0n3r/factory#243@sha256:{digest_b}",
+            ],
+        )
+        self.assertEqual(
+            refreshed["history"][-1]["evidence"],
+            [f"pl0n3r/factory#243@sha256:{digest_b}"],
+        )
+
     def test_archive_preserves_history(self):
         active = record()
         deprecated = transition_knowledge(
