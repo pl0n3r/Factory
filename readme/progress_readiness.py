@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from fractions import Fraction
 import hashlib
 import json
@@ -600,4 +600,4 @@ def _timestamp(value: Any, label: str) -> str:
         raise ProgressReadinessError(f"{label} debe ser ISO-8601.") from exc
     if timestamp.tzinfo is None:
         raise ProgressReadinessError(f"{label} debe incluir zona horaria.")
-    return timestamp.astimezone().isoformat(timespec="seconds")
+    return timestamp.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
