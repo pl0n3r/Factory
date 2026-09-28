@@ -43,6 +43,7 @@ GOOGLE_DRIVE_SHARED_API_PATHS = (
     "www.googleapis.com/drive/",
     "www.googleapis.com/upload/drive/",
 )
+IDENTIFIER_PATTERN = r"[A-Za-z_$][A-Za-z0-9_$]*"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -71,7 +72,7 @@ def _expression_has_personal_context(expression: str) -> bool:
     """Limita el contexto a la expresión asociada al campo observado."""
     if re.search(r"\$_(?:post|get|request)\b", expression, re.IGNORECASE):
         return True
-    identifiers = re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", expression)
+    identifiers = re.findall(IDENTIFIER_PATTERN, expression)
     return any(_identifier_has_personal_context(item) for item in identifiers)
 
 
@@ -84,7 +85,7 @@ def _sql_field_present(token: str, line: str) -> bool:
 
 
 def _property_signal_present(token: str, line: str) -> bool:
-    identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+    identifier = IDENTIFIER_PATTERN
     access = r"(?:\.|\?->|->)"
     pattern = (
         rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})"
