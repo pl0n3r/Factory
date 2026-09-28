@@ -106,7 +106,7 @@ class ReadmeProgressE2ETests(unittest.TestCase):
             generated,
         )
         self.assertIn(
-            f"| Readiness | {snapshot['readiness']['percent']} · "
+            f"| Readiness | {snapshot['readiness']['percent']}% · "
             f"{snapshot['readiness']['status']} |",
             generated,
         )
