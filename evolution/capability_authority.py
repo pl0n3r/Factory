@@ -44,6 +44,8 @@ class CapabilityGrant:
     targets: tuple[str, ...]
     authority_class: str
     human_gate: bool
+    degrade_on: tuple[str, ...]
+    revoke_on: tuple[str, ...]
     decision_ref: str
     source_id: str
     decision_fingerprint: str
@@ -130,6 +132,8 @@ def _validate_decision(
         "scopes",
         "targets",
         "authority_class",
+        "degrade_on",
+        "revoke_on",
         "actor_ref",
         "reason",
         "status",
@@ -172,6 +176,8 @@ def _normalized_grant_payload(decision: dict[str, Any]) -> dict[str, Any]:
     )
     scopes = _closed_list(decision["scopes"], "scopes")
     targets = _closed_list(decision["targets"], "targets")
+    degrade_on = _closed_list(decision["degrade_on"], "degrade_on")
+    revoke_on = _closed_list(decision["revoke_on"], "revoke_on")
     if authority_class in RESERVED_AUTHORITY_CLASSES and any(
         action in {"experiment", "execute", "promote_adopt"}
         for action in actions
@@ -186,6 +192,8 @@ def _normalized_grant_payload(decision: dict[str, Any]) -> dict[str, Any]:
         "targets": targets,
         "authority_class": authority_class,
         "human_gate": authority_class in RESERVED_AUTHORITY_CLASSES,
+        "degrade_on": degrade_on,
+        "revoke_on": revoke_on,
         "reason": _text(decision["reason"], "reason", 500),
     }
 
@@ -280,6 +288,8 @@ class CapabilityAuthorityRegistry:
             "targets",
             "authority_class",
             "human_gate",
+            "degrade_on",
+            "revoke_on",
         ):
             if normalized[field] != getattr(current, field):
                 raise CapabilityAuthorityError(
@@ -319,6 +329,8 @@ class CapabilityAuthorityRegistry:
                 "scopes": [],
                 "targets": [],
                 "human_gate": False,
+                "degrade_on": [],
+                "revoke_on": [],
             }
             for action in ACTIONS
         }
@@ -334,6 +346,12 @@ class CapabilityAuthorityRegistry:
                 )
                 row["human_gate"] = (
                     row["human_gate"] or grant.human_gate
+                )
+                row["degrade_on"] = sorted(
+                    set(row["degrade_on"]) | set(grant.degrade_on)
+                )
+                row["revoke_on"] = sorted(
+                    set(row["revoke_on"]) | set(grant.revoke_on)
                 )
         return {
             "version": AUTHORITY_VERSION,

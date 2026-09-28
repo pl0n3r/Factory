@@ -34,6 +34,8 @@ def decision(
     scopes=("project:brvtal",),
     targets=("production",),
     authority_class="operational",
+    degrade_on=("fitness-regression",),
+    revoke_on=("critical-incident",),
     actor_ref="decision:owner#1",
     reason="explicit reviewed authority",
     grant_id="",
@@ -46,6 +48,8 @@ def decision(
         "scopes": list(scopes),
         "targets": list(targets),
         "authority_class": authority_class,
+        "degrade_on": list(degrade_on),
+        "revoke_on": list(revoke_on),
         "actor_ref": actor_ref,
         "reason": reason,
         "status": "resolved",
@@ -76,6 +80,8 @@ def grant_decision(**kwargs):
         "targets": tuple(sorted(raw["targets"])),
         "authority_class": raw["authority_class"],
         "human_gate": raw["authority_class"] != "operational",
+        "degrade_on": tuple(sorted(raw["degrade_on"])),
+        "revoke_on": tuple(sorted(raw["revoke_on"])),
         "reason": raw["reason"],
     }
     ref = "owner-decision:factory#246:grant"
@@ -113,6 +119,14 @@ class CapabilityAuthorityTests(unittest.TestCase):
             matrix["actions"]["execute"]["targets"], ["production"]
         )
         self.assertFalse(matrix["actions"]["experiment"]["allowed"])
+        self.assertEqual(
+            matrix["actions"]["execute"]["degrade_on"],
+            ["fitness-regression"],
+        )
+        self.assertEqual(
+            matrix["actions"]["execute"]["revoke_on"],
+            ["critical-incident"],
+        )
         self.assertTrue(
             registry.authorize(
                 "deploy-observer", "execute", "project:brvtal", "production"

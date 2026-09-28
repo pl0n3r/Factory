@@ -10,8 +10,10 @@ Cada capability declara explícitamente cinco acciones:
 
 `observe → propose → experiment → execute → promote_adopt`
 
-Una acción ausente queda denegada. Cada grant además fija scopes y targets exactos.
-Un cambio de nivel de autonomía conserva el mismo fingerprint de autoridad.
+Una acción ausente queda denegada. Cada grant además fija scopes y targets exactos,
+junto con condiciones declarativas `degrade_on` y `revoke_on`. Un cambio de nivel
+de autonomía conserva el mismo fingerprint de autoridad; las condiciones pueden
+disparar menos autonomía o revocación, nunca más permisos.
 
 ## Provenance
 
