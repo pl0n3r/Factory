@@ -101,6 +101,7 @@ class PerformanceDetectorTests(unittest.TestCase):
         self.assertEqual(result["evidence_ref"], "run:2")
         self.assertNotIn("payload", result)
 
+        detection_contract = contract()
         for sensitive_ref in (
             "user@example.com",
             "192.168.1.10",
@@ -113,7 +114,7 @@ class PerformanceDetectorTests(unittest.TestCase):
                     "forma sensible",
                 ):
                     detect_performance(
-                        contract(),
+                        detection_contract,
                         sensitive_observation,
                         evaluated_at="2026-09-28T20:06:00Z",
                     )
@@ -124,7 +125,7 @@ class PerformanceDetectorTests(unittest.TestCase):
             "finito y acotado",
         ):
             detect_performance(
-                contract(),
+                detection_contract,
                 huge_observation,
                 evaluated_at="2026-09-28T20:06:00Z",
             )
