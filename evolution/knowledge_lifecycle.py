@@ -391,6 +391,7 @@ def propose_pruning_candidates(records: Any, *, now_at: str) -> list[dict[str, A
 
     proposals: list[dict[str, Any]] = []
     for item in validated:
+        state_now = effective_state(item, now_at)
         reasons: set[str] = set()
         peers = sorted(by_fingerprint[item["content_fingerprint"]])
         if len(peers) > 1:
@@ -405,7 +406,7 @@ def propose_pruning_candidates(records: Any, *, now_at: str) -> list[dict[str, A
             reasons.add("unused")
         if (
             validated_age.days >= policy["review_after_days"]
-            or effective_state(item, now_at) in {"needs_review", "deprecated"}
+            or state_now in {"needs_review", "deprecated"}
         ):
             reasons.add("aged")
 

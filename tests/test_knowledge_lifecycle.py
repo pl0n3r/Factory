@@ -2,6 +2,7 @@ import unittest
 
 from evolution.experience_guardrails import compile_guardrail_candidates
 from evolution.knowledge_lifecycle import (
+    KnowledgeLifecycleError,
     can_increase_autonomy,
     create_knowledge_record,
     effective_state,
@@ -100,7 +101,7 @@ class KnowledgeLifecycleTests(unittest.TestCase):
             last_useful_at="2026-10-01T00:00:00Z",
         )
         with self.assertRaisesRegex(
-            Exception,
+            KnowledgeLifecycleError,
             "fechado en el futuro",
         ):
             can_increase_autonomy(future, "2026-09-28T00:00:00Z")
@@ -197,6 +198,21 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         )
         self.assertFalse(proposal["delete"])
         self.assertTrue(proposal["history_preserved"])
+
+        future_use = record(
+            "rule-future",
+            fingerprint="c" * 64,
+            last_validated_at="2026-01-01T00:00:00Z",
+            last_useful_at="2026-10-01T00:00:00Z",
+        )
+        with self.assertRaisesRegex(
+            KnowledgeLifecycleError,
+            "fechado en el futuro",
+        ):
+            propose_knowledge_pruning(
+                [future_use],
+                now_at="2026-09-28T00:00:00Z",
+            )
 
         reversed_proposals = propose_knowledge_pruning(
             [duplicate_b, duplicate_a],
