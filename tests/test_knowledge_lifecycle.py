@@ -95,6 +95,16 @@ class KnowledgeLifecycleTests(unittest.TestCase):
             can_increase_autonomy(item, "2026-09-28T00:00:00Z")
         )
 
+        future = record(
+            last_validated_at="2026-10-01T00:00:00Z",
+            last_useful_at="2026-10-01T00:00:00Z",
+        )
+        with self.assertRaisesRegex(
+            Exception,
+            "fechado en el futuro",
+        ):
+            can_increase_autonomy(future, "2026-09-28T00:00:00Z")
+
     def test_revalidation_restores_active_state_with_new_evidence(self):
         stale = record(
             last_validated_at="2026-01-01T00:00:00Z",

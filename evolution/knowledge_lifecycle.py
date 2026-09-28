@@ -260,12 +260,15 @@ def create_knowledge_record(
 def effective_state(raw: Any, now_at: str) -> str:
     record = validate_knowledge_record(raw)
     now = _timestamp(now_at, "now_at")
-    if now < _timestamp(record["created_at"], "created_at"):
-        raise KnowledgeLifecycleError("now_at anterior a created_at")
+    created_at = _timestamp(record["created_at"], "created_at")
+    validated_at = _timestamp(record["last_validated_at"], "last_validated_at")
+    useful_at = _timestamp(record["last_useful_at"], "last_useful_at")
+    if now < created_at or now < validated_at or now < useful_at:
+        raise KnowledgeLifecycleError("conocimiento fechado en el futuro")
     if record["state"] != "active":
         return record["state"]
 
-    age = now - _timestamp(record["last_validated_at"], "last_validated_at")
+    age = now - validated_at
     review_days = record["review_policy"]["review_after_days"]
     expires_days = record["review_policy"]["expires_after_days"]
     if age.days >= expires_days or age.days >= review_days:
