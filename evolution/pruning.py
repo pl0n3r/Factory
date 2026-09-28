@@ -8,6 +8,7 @@ from typing import Any
 
 from evolution.constitution import PROTECTED_INVARIANTS, validate_candidate
 from evolution.growth import MAX_EVIDENCE, canonical_capability
+from evolution.knowledge_lifecycle import propose_pruning_candidates
 
 
 PRUNING_VERSION = 1
@@ -183,3 +184,8 @@ def compile_pruning_candidate(
         "candidate_fingerprint": candidate_fingerprint,
         "lineage": value["lineage"],
     }
+
+
+def propose_knowledge_pruning(records: Any, *, now_at: str) -> list[dict[str, Any]]:
+    """Propone consolidación/retiro; nunca borra conocimiento ni historia."""
+    return propose_pruning_candidates(records, now_at=now_at)

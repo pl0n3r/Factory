@@ -8,6 +8,7 @@ import unicodedata
 from typing import Any
 
 from evolution.constitution import validate_candidate
+from evolution.knowledge_lifecycle import create_knowledge_record
 from lecciones.memoria import LessonValidationError, validate_lesson
 
 
@@ -100,6 +101,24 @@ def _candidate_for_group(
         }
         for item in ordered
     ]
+    created_at = min(item["occurred_at"] for item in ordered)
+    latest_at = max(item["occurred_at"] for item in ordered)
+    lifecycle = create_knowledge_record(
+        knowledge_id=guardrail_id,
+        knowledge_type="guardrail",
+        content_fingerprint=pattern_fingerprint,
+        provenance=sources,
+        project=ordered[0]["project"],
+        domain="experience-guardrails",
+        created_at=created_at,
+        last_validated_at=latest_at,
+        last_useful_at=latest_at,
+        confidence=min(1.0, 0.5 + (0.1 * len(ordered))),
+        evidence_class="multi-source",
+        review_after_days=30,
+        expires_after_days=90,
+        state="candidate",
+    )
     value = {
         "version": GUARDRAIL_VERSION,
         "guardrail_id": guardrail_id,
@@ -109,6 +128,7 @@ def _candidate_for_group(
         "expected_prevention": prevention,
         "origins": origins,
         "status": "candidate",
+        "lifecycle": lifecycle,
     }
     candidate = {
         "version": 1,
