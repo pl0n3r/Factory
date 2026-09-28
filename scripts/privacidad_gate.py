@@ -27,11 +27,13 @@ IGNORED_PREFIXES = (
     "tests/", "docs/", ".github/", "vendor/", "node_modules/", "legal/"
 )
 AMBIGUOUS_SIGNALS = {"name", "location", "document", "health", "mobile", "address"}
-PERSONAL_CONTEXT = re.compile(
-    r"(?:\$_(?:post|get|request)\b|"
-    r"\b(?:request|req|body|formdata|form|input|payload|"
-    r"user|profile|person|customer|contact|member|account|admin|staff|patient|"
-    r"employee|client|lead|attendee|subscriber|identity|record)\b)"
+PERSONAL_CONTEXT_TERMS = frozenset(
+    {
+        "request", "req", "body", "formdata", "form", "input", "payload",
+        "user", "profile", "person", "customer", "contact", "member",
+        "account", "admin", "staff", "patient", "employee", "client",
+        "lead", "attendee", "subscriber", "identity", "record",
+    }
 )
 SQL_FIELD_TYPES = (
     r"(?:var)?char|text|json|(?:tiny|small|medium|big)?int|decimal|float|double|"
@@ -50,37 +52,90 @@ def _code_path(path: str) -> bool:
     return path.endswith(SOURCE_SUFFIXES) or path.endswith(".blade.php")
 
 
+def _identifier_has_personal_context(identifier: str) -> bool:
+    """Reconoce contexto personal dentro de identificadores compuestos."""
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", identifier)
+    parts = [
+        part.lower()
+        for part in re.split(r"[^A-Za-z0-9]+|_", normalized)
+        if part
+    ]
+    return any(part in PERSONAL_CONTEXT_TERMS for part in parts)
+
+
+def _expression_has_personal_context(expression: str) -> bool:
+    """Limita el contexto a la expresión asociada al campo observado."""
+    if re.search(r"\$_(?:post|get|request)\b", expression, re.IGNORECASE):
+        return True
+    identifiers = re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", expression)
+    return any(_identifier_has_personal_context(item) for item in identifiers)
+
+
 def _signal_present(signal: str, line: str) -> bool:
-    """Detecta señales sensibles exigiendo contexto local para términos ambiguos."""
+    """Detecta señales ambiguas solo cuando el campo tiene contexto asociado."""
     if signal in AMBIGUOUS_SIGNALS:
         token = re.escape(signal)
         sql_field = re.search(
             rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s+(?:{SQL_FIELD_TYPES})\b",
             line,
+            re.IGNORECASE,
         )
         if sql_field:
             return True
 
-        patterns = (
-            rf"(['\"]){token}\1",
-            rf"(?:{{|,)\s*{token}\s*:",
-            rf"(?:\.|\?->|->)\s*{token}(?![a-z0-9_])",
+        identifier = r"[A-Za-z_$][A-Za-z0-9_$]*"
+        access = r"(?:\.|\?->|->)"
+
+        property_pattern = (
+            rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})"
+            rf"\s*{access}\s*{token}(?![a-z0-9_])"
         )
-        matches = [
-            match
-            for pattern in patterns
-            for match in re.finditer(pattern, line)
-        ]
-        for match in matches:
-            start = max(0, match.start() - 96)
-            end = min(len(line), match.end() + 96)
-            if PERSONAL_CONTEXT.search(line[start:end]):
+        for match in re.finditer(property_pattern, line, re.IGNORECASE):
+            if _expression_has_personal_context(match.group("chain")):
+                return True
+
+        if re.search(
+            rf"\$_(?:post|get|request)\s*\[\s*['\"]{token}['\"]\s*\]",
+            line,
+            re.IGNORECASE,
+        ):
+            return True
+
+        quoted_access_pattern = (
+            rf"(?P<chain>{identifier}(?:\s*{access}\s*{identifier}){{0,3}})\s*"
+            rf"(?:\[\s*['\"]{token}['\"]\s*\]|"
+            rf"\(\s*['\"]{token}['\"]\))"
+        )
+        for match in re.finditer(quoted_access_pattern, line, re.IGNORECASE):
+            if _expression_has_personal_context(match.group("chain")):
+                return True
+
+        destructuring_pattern = (
+            r"\{(?P<fields>[^{}]{0,256})\}\s*=\s*(?P<source>[^;\n]+)"
+        )
+        for match in re.finditer(destructuring_pattern, line, re.IGNORECASE):
+            field_present = re.search(
+                rf"(?<![a-z0-9_]){token}(?![a-z0-9_])",
+                match.group("fields"),
+                re.IGNORECASE,
+            )
+            if field_present and _expression_has_personal_context(match.group("source")):
+                return True
+
+        literal_pattern = (
+            rf"(?P<target>{identifier})\s*=\s*(?:\{{|\[)[^;\n]{{0,256}}?"
+            rf"(?:['\"]{token}['\"]\s*(?::|=>)|"
+            rf"(?<![a-z0-9_]){token}(?![a-z0-9_])\s*:)"
+        )
+        for match in re.finditer(literal_pattern, line, re.IGNORECASE):
+            if _identifier_has_personal_context(match.group("target")):
                 return True
         return False
 
     return re.search(
         rf"(?<![a-z0-9_]){re.escape(signal)}(?![a-z0-9_])",
         line,
+        re.IGNORECASE,
     ) is not None
 
 def scan_added_code(diff_text: str, rules: dict[str, Any]) -> dict[str, list[str]]:
@@ -101,13 +156,14 @@ def scan_added_code(diff_text: str, rules: dict[str, Any]) -> dict[str, list[str
             continue
         if not raw.startswith("+") or raw.startswith("+++"):
             continue
-        line = raw[1:].lower()
+        line = raw[1:]
+        normalized_line = line.lower()
         for category in categories.values():
             for signal in category["signals"]:
                 if _signal_present(signal, line):
                     personal.add(signal)
         for provider, domains in provider_signals.items():
-            if any(domain in line for domain in domains):
+            if any(domain in normalized_line for domain in domains):
                 providers.add(provider)
 
     return {

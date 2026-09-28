@@ -85,6 +85,8 @@ class PrivacyAuditTests(unittest.TestCase):
             '$payload = ["health" => $value];\n',
             'const profile = { health: value };\n',
             'const value = record.health;\n',
+            'const value = userProfile.health;\n',
+            'const { health } = req.body;\n',
         )
         for snippet in snippets:
             with self.subTest(snippet=snippet):
@@ -248,7 +250,8 @@ class PrivacyAuditTests(unittest.TestCase):
                 "src/runtime.js": (
                     "const root = document.querySelector('#app');\n"
                     "const origin = location.origin;\n"
-                    'const mode = "mobile";\n'
+                    'const user = getUser(); const mode = "mobile";\n'
+                    'const { health } = theme;\n'
                     "const status = data.health?.status || 'unknown';\n"
                 ),
                 "src/seo.php": (

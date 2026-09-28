@@ -77,6 +77,8 @@ class PrivacyGateTests(unittest.TestCase):
             '$payload = ["health" => $request->get("health")];',
             'const profile = { health: value };',
             'const value = record.health;',
+            'const value = userProfile.health;',
+            'const { health } = req.body;',
         )
         for snippet in snippets:
             with self.subTest(snippet=snippet):
@@ -203,6 +205,23 @@ class PrivacyGateTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", content)
         self.assertIn("timeout-minutes: 8", content)
 
+
+    def test_unrelated_context_does_not_activate_ambiguous_field(self):
+        """Contexto personal en otra expresión no convierte UI en dato personal."""
+        item = data_map()
+        diff = """diff --git a/src/ui.js b/src/ui.js
++++ b/src/ui.js
++const user = getUser(); const mode = "mobile";
++const { health } = theme;
+"""
+        report = evaluate_change(
+            diff_text=diff,
+            changed_files=["src/ui.js"],
+            current_document=item,
+            documents=docs(item),
+        )
+        self.assertEqual(report["personal_signals"], [])
+
     def test_google_fonts_is_not_google_drive(self):
         """Google Fonts no activa el proveedor Google Drive."""
         item = data_map()
@@ -213,6 +232,22 @@ class PrivacyGateTests(unittest.TestCase):
         report = evaluate_change(
             diff_text=diff,
             changed_files=["src/theme.js"],
+            current_document=item,
+            documents=docs(item),
+        )
+        self.assertEqual(report["provider_signals"], [])
+
+
+    def test_google_youtube_api_is_not_google_drive(self):
+        """El host compartido de Google APIs exige una ruta específica de Drive."""
+        item = data_map()
+        diff = """diff --git a/src/video.js b/src/video.js
++++ b/src/video.js
++const endpoint = "https://www.googleapis.com/youtube/v3/videos";
+"""
+        report = evaluate_change(
+            diff_text=diff,
+            changed_files=["src/video.js"],
             current_document=item,
             documents=docs(item),
         )
