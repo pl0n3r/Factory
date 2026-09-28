@@ -19,6 +19,16 @@ _ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _RELEASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+_SENSITIVE_REF = re.compile(
+    r"(?:"
+    r"\bgh[pousr]_[A-Za-z0-9]{20,}\b|"
+    r"\bgithub_pat_[A-Za-z0-9_]{10,}\b|"
+    r"\bsk-[A-Za-z0-9]{20,}\b|"
+    r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|"
+    r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 class PerformanceDetectionError(ValueError):
@@ -175,7 +185,7 @@ def _observation(raw: Any) -> dict[str, Any]:
         "severity": _enum(raw["severity"], SEVERITIES, "severity"),
         "operational_impact": raw["operational_impact"],
         "bottleneck": _enum(raw["bottleneck"], BOTTLENECKS, "bottleneck"),
-        "evidence_ref": _match(raw["evidence_ref"], _REF, "evidence_ref"),
+        "evidence_ref": _evidence_ref(raw["evidence_ref"]),
         "sha": _nullable(raw["sha"], _SHA, "sha"),
         "release": _nullable(raw["release"], _RELEASE, "release"),
     }
@@ -198,8 +208,12 @@ def _time(value: Any, label: str) -> datetime:
 
 
 def _number(value: Any) -> int | float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        raise PerformanceDetectionError("value debe ser número finito.")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PerformanceDetectionError("value debe ser número finito y acotado.")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise PerformanceDetectionError("value debe ser número finito y acotado.")
+    if abs(value) > 1e15:
+        raise PerformanceDetectionError("value debe ser número finito y acotado.")
     return value
 
 
@@ -217,6 +231,15 @@ def _match(value: Any, pattern: re.Pattern[str], label: str) -> str:
 
 def _nullable(value: Any, pattern: re.Pattern[str], label: str) -> str | None:
     return None if value is None else _match(value, pattern, label)
+
+
+def _evidence_ref(value: Any) -> str:
+    ref = _match(value, _REF, "evidence_ref")
+    if _SENSITIVE_REF.search(ref):
+        raise PerformanceDetectionError(
+            "evidence_ref contiene forma sensible no permitida."
+        )
+    return ref
 
 
 def _enum(value: Any, allowed: set[str], label: str) -> str:

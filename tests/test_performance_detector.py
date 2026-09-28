@@ -50,6 +50,19 @@ class PerformanceDetectorTests(unittest.TestCase):
         self.assertFalse(healthy["breach"])
         self.assertEqual(healthy["classification"], "PERF_INFO")
 
+        gte = contract()
+        metric = gte["surfaces"][0]["metrics"][0]
+        metric["budget"]["operator"] = "gte"
+        metric["budget"]["value"] = 250
+        below = detect_performance(
+            gte, observation(value=220), evaluated_at="2026-09-28T20:06:00Z"
+        )
+        above = detect_performance(
+            gte, observation(value=300), evaluated_at="2026-09-28T20:06:00Z"
+        )
+        self.assertTrue(below["breach"])
+        self.assertFalse(above["breach"])
+
     def test_stale_insufficient_or_unknown_evidence_fails_closed(self):
         cases = (
             {"observed_at": "2026-09-28T19:00:00Z"},
@@ -87,6 +100,29 @@ class PerformanceDetectorTests(unittest.TestCase):
         self.assertEqual(result["identity"], {"sha": "a" * 40, "release": "v1.2.3"})
         self.assertEqual(result["evidence_ref"], "run:2")
         self.assertNotIn("payload", result)
+
+        for sensitive_ref in (
+            "user@example.com",
+            "192.168.1.10",
+            "ghp_abcdefghijklmnopqrstuvwxyz123456",
+        ):
+            with self.subTest(sensitive_ref=sensitive_ref):
+                with self.assertRaisesRegex(
+                    Exception,
+                    "forma sensible",
+                ):
+                    detect_performance(
+                        contract(),
+                        observation(evidence_ref=sensitive_ref),
+                        evaluated_at="2026-09-28T20:06:00Z",
+                    )
+
+        with self.assertRaises(Exception):
+            detect_performance(
+                contract(),
+                observation(value=10 ** 1000),
+                evaluated_at="2026-09-28T20:06:00Z",
+            )
 
     def test_docs_keep_detection_boundary_without_parallel_scheduler(self):
         docs = (ROOT / "docs" / "performance-detection.md").read_text()
