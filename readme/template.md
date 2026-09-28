@@ -21,6 +21,23 @@
 | último release | UNKNOWN |
 <!-- factory:status:end -->
 
+### Progress + Readiness
+
+<!-- factory:progress-readiness:start -->
+| Señal | Estado |
+| --- | --- |
+| Target | UNKNOWN |
+| Progress | UNKNOWN |
+| Readiness | UNKNOWN |
+| Evidence freshness | UNKNOWN |
+| Critical blockers | UNKNOWN |
+| Trend | UNKNOWN |
+
+| Dimensión | Progress | Readiness |
+| --- | --- | --- |
+| UNKNOWN | UNKNOWN | UNKNOWN |
+<!-- factory:progress-readiness:end -->
+
 > Este bloque es derivado. UNKNOWN/PENDING significa que falta evidencia canónica; nunca debe sustituirse por GREEN sin evidencia.
 
 ## Work Queue

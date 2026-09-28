@@ -14,9 +14,16 @@ def validate_readme(
     contract: Mapping[str, Any],
     metadata: Mapping[str, Any],
     sources: Mapping[str, Any],
+    progress_snapshot: Mapping[str, Any] | None = None,
 ) -> None:
     """Compara el README comprometido con la salida canónica del mismo input."""
-    expected = generate_readme(readme_text, contract, metadata, sources)
+    expected = generate_readme(
+        readme_text,
+        contract,
+        metadata,
+        sources,
+        progress_snapshot,
+    )
     check_drift(expected, readme_text)
 
 
