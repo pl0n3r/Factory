@@ -55,3 +55,22 @@ Este slice no pausa ni migra trabajo, no ejecuta órdenes, no persiste
 generation/cooldown, no llama a ControlBot y no reimplementa Dispatcher V2. El
 siguiente E2E del épico #260 debe componer Presence → Replan → Fencing usando
 estos contratos puros.
+
+
+## Integración con Dispatcher V2
+
+Adaptive Orchestration no introduce un scheduler ni un ranking alternativo.
+Presence y Fencing únicamente aportan razones de readiness y metadata atribuible
+al Candidate; la selección final continúa pasando por classify_readiness,
+select_next, parallel_ready y dispatch_record.
+
+Una Presence unknown o stale, o un Fencing fail_closed, excluye candidatos antes
+de selección mediante razones estructuradas. Cuando las señales son válidas, la
+jerarquía canónica de Dispatcher V2 permanece sin cambios: health, incident,
+active_fix, owner_decision, critical, high y medium.
+
+ControlBot observa el runtime y entrega presencia/capacidad autoritativa. Factory
+consume esa evidencia y aplica política de coordinación; no persiste Sessions,
+no crea ownership paralelo y no ejecuta asignaciones o preemption. Los
+fingerprints, generation, attempt y causas de replan/fencing se adjuntan como
+metadata de la decisión para auditoría, no como estado operativo durable.

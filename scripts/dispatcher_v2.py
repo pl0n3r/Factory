@@ -2,9 +2,11 @@
 """Dispatcher V2: selección determinista, explicable y auditable de trabajo Factory."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Iterable
 
+from scripts.adaptive_fencing import FencingDecision
+from scripts.presence_contract import PresenceAssessment
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 
 AUTHORITY_ORDER = {
@@ -296,3 +298,99 @@ def dispatch_record(
         },
         "aging_threshold": aging_threshold,
     }
+
+
+def _adaptive_presence_reasons(presence: PresenceAssessment) -> tuple[str, ...]:
+    """Convierte presencia no confiable en razones estructuradas de readiness."""
+    reasons: list[str] = []
+    if "unknown" in presence.classifications:
+        reasons.append("adaptive_presence_unknown")
+    for reason in presence.reasons:
+        if "stale" in reason:
+            reasons.append("adaptive_presence_stale")
+        if "freshness_unknown" in reason or reason.startswith("capacity:unknown"):
+            reasons.append("adaptive_presence_unknown")
+    return tuple(sorted(set(reasons)))
+
+
+def _adaptive_fencing_reasons(fencing: FencingDecision) -> tuple[str, ...]:
+    """Convierte cualquier fail-closed en un bloqueo explícito de readiness."""
+    if fencing.action != "fail_closed":
+        return ()
+    return tuple(
+        sorted(
+            {
+                "adaptive_fencing_invalid",
+                *(
+                    f"adaptive_fencing_invalid:{reason}"
+                    for reason in fencing.reasons
+                ),
+            }
+        )
+    )
+
+
+def adapt_candidates_for_adaptive(
+    candidates: Iterable[Candidate],
+    *,
+    presence: PresenceAssessment,
+    fencing: FencingDecision,
+    replan_action: str,
+    replan_reasons: tuple[str, ...] = (),
+) -> list[Candidate]:
+    """Añade readiness/metadata adaptativos sin alterar la jerarquía de selección."""
+    presence_reasons = _adaptive_presence_reasons(presence)
+    fencing_reasons = _adaptive_fencing_reasons(fencing)
+    adaptive_reasons = tuple(sorted(set((*presence_reasons, *fencing_reasons))))
+    adapted: list[Candidate] = []
+    for candidate in candidates:
+        metadata = dict(candidate.metadata)
+        metadata["adaptive"] = {
+            "snapshot_fingerprint": fencing.snapshot_fingerprint,
+            "event_fingerprint": fencing.event_fingerprint,
+            "generation": fencing.generation,
+            "attempt": fencing.attempt,
+            "replan_action": replan_action,
+            "fencing_action": fencing.action,
+            "reasons": tuple(sorted(set((*replan_reasons, *fencing.reasons)))),
+        }
+        adapted.append(
+            replace(
+                candidate,
+                external_readiness_reasons=tuple(
+                    sorted(set((*candidate.external_readiness_reasons, *adaptive_reasons)))
+                ),
+                metadata=metadata,
+            )
+        )
+    return adapted
+
+
+def adaptive_dispatch_record(
+    candidates: Iterable[Candidate],
+    *,
+    presence: PresenceAssessment,
+    fencing: FencingDecision,
+    replan_action: str,
+    replan_reasons: tuple[str, ...] = (),
+    aging_threshold: int = 3,
+) -> dict[str, object]:
+    """Compone Adaptive Orchestration con el único pipeline de Dispatcher V2."""
+    adapted = adapt_candidates_for_adaptive(
+        candidates,
+        presence=presence,
+        fencing=fencing,
+        replan_action=replan_action,
+        replan_reasons=replan_reasons,
+    )
+    record = dispatch_record(adapted, aging_threshold=aging_threshold)
+    record["adaptive"] = {
+        "snapshot_fingerprint": fencing.snapshot_fingerprint,
+        "event_fingerprint": fencing.event_fingerprint,
+        "generation": fencing.generation,
+        "attempt": fencing.attempt,
+        "replan_action": replan_action,
+        "fencing_action": fencing.action,
+        "reasons": tuple(sorted(set((*replan_reasons, *fencing.reasons)))),
+    }
+    return record
