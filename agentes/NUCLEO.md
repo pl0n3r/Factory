@@ -55,6 +55,16 @@ Merge o CI verde no equivalen a producción.
 
 Los consumidores fijan el kit por major (`@v1`). Cambios incompatibles requieren nueva versión mayor; mejoras compatibles se validan primero en Factory.
 
+## Progreso visible y contexto compacto
+
+Contrato de prompt (detalle y formato en `docs/conversacion-agentes.md`):
+
+- En trabajos largos, emite una actualización breve solo en transiciones significativas: siguiente paso concreto, hallazgo que cambia el enfoque, etapa completada, bloqueo, decisión requerida o resultado confirmado. Cada una dice qué se confirmó y qué sigue.
+- Prohibido el progreso vacío: «sigo revisando», «déjame pensar», «estoy trabajando en eso» o repetir «voy a revisar…» sin hallazgo nuevo. No narres cada tool call ni repitas el plan. No expongas razonamiento interno.
+- Al llegar a un hito (merge, cambio de enfoque, fallo relevante, cambio de Issue/PR, contexto ruidoso) escribe una nota `STATE` compacta y continúa desde ella sin releer todo el historial.
+- Eficiencia: no reexplicar lo que ya está en Issue/PR/`lecciones/`; busca antes de abrir y lee solo fragmentos; agrupa lecturas independientes; sin polling de CI (una lectura terminal); resultado primero; hitos en 3–7 líneas; no dupliques en el chat lo registrado en GitHub.
+- Streaming, persistencia de estado, truncado/resumen de contexto, caché y límites de tokens pertenecen a la integración (Factory/ControlBot/FactoryRunner), no al prompt: evalúalos allí.
+
 ## Handoff
 
 - dejar Issue/PR con estado, evidencia y siguiente acción;

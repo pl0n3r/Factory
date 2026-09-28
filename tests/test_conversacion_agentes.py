@@ -1,0 +1,65 @@
+"""Contrato ejecutable de progreso visible y estado compacto (Issue #290)."""
+
+import re
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CAMPOS = ("objetivo", "repo", "issue", "pr", "head", "decisiones",
+          "confirmado", "no repetir", "pendiente", "siguiente")
+
+
+def parse_state(text):
+    """Convierte una nota STATE en dict campo -> lista de valores."""
+    lines = text.strip().splitlines()
+    if lines[0] != "STATE":
+        raise ValueError("la nota debe empezar con STATE")
+    state, key = {}, None
+    for line in lines[1:]:
+        if line.startswith("- "):
+            state[key].append(line[2:].strip())
+        else:
+            key, _, value = line.partition(":")
+            state[key.strip()] = [value.strip()] if value.strip() else []
+    return state
+
+
+class ConversacionAgentesTests(unittest.TestCase):
+    """Verifica el contrato en NUCLEO, la doc y la fixture de continuidad."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.nucleo = (ROOT / "agentes/NUCLEO.md").read_text(encoding="utf-8")
+        cls.doc = (ROOT / "docs/conversacion-agentes.md").read_text(encoding="utf-8")
+        cls.state = parse_state(
+            (ROOT / "tests/fixtures/estado_compacto.md").read_text(encoding="utf-8")
+        )
+
+    def test_nucleo_define_progreso_solo_en_transiciones(self):
+        self.assertIn("transiciones significativas", self.nucleo)
+        self.assertIn("qué se confirmó y qué sigue", self.nucleo)
+
+    def test_nucleo_prohibe_progreso_vacio(self):
+        for frase in ("sigo revisando", "déjame pensar", "estoy trabajando en eso"):
+            self.assertIn(frase, self.nucleo)
+
+    def test_estado_compacto_canonico_y_por_hitos(self):
+        for campo in CAMPOS:
+            self.assertRegex(self.doc, rf"(?m)^{re.escape(campo)}:")
+        self.assertIn("por **hitos**", self.doc)
+
+    def test_prompt_separado_de_integracion(self):
+        self.assertIn("Prompt/contrato del agente", self.doc)
+        self.assertIn("Integración/API/UI", self.doc)
+        self.assertIn("pertenecen a la integración", self.nucleo)
+
+    def test_fixture_permite_continuar_sin_historial(self):
+        self.assertEqual(set(CAMPOS), set(self.state))
+        self.assertTrue(re.fullmatch(r"\S+@[0-9a-f]{40}", self.state["head"][0]))
+        self.assertTrue(self.state["no repetir"])
+        self.assertTrue(self.state["siguiente"][0])
+
+
+if __name__ == "__main__":
+    unittest.main()

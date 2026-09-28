@@ -108,6 +108,7 @@ Trucos para gastar menos:
 - **No re-derives** lo que ya está en el Issue, el PR o `lecciones/`.
 - **Salida concisa:** en comentarios y PRs, resultado primero, detalle después; tablas en vez de párrafos.
 - Si un revisor automático marca algo **no válido**, respóndelo una vez con la razón técnica y no cambies el código por complacer a la herramienta.
+- **Progreso visible y estado compacto:** actualizaciones solo en transiciones significativas (qué se confirmó y qué sigue), nota `STATE` por hitos y separación prompt/integración; formato y ejemplos en [`docs/conversacion-agentes.md`](docs/conversacion-agentes.md).
 
 ---
 
@@ -228,6 +229,7 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 - ❌ Declarar "listo" sin evidencia en producción.
 - ❌ Silenciar un test, un linter o un hallazgo de seguridad para pasar el CI.
 - ❌ Comentarios de "sigo trabajando…", "esperando CI…".
+- ❌ Mensajes de progreso vacíos («sigo revisando», «déjame pensar») o narrar cada tool call.
 - ❌ Pedir al dueño algo que puedes decidir tú según AGENTES.md.
 - ❌ Crear Issues o PRs sin etiquetas completas.
 
