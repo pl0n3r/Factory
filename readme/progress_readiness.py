@@ -39,38 +39,12 @@ def calculate_progress_readiness(
 ) -> dict[str, Any]:
     """Normaliza evidencia y produce el payload canónico v1."""
     source = _normalize_input(payload)
-    dimension_rows: list[dict[str, Any]] = []
-    progress_parts: list[tuple[str, int, Fraction, dict[str, Any]]] = []
-    readiness_parts: list[tuple[str, int, Fraction, dict[str, Any]]] = []
-    degraded_evidence = False
-
-    for dimension in source["dimensions"]:
-        progress_detail, progress_fraction = _dimension_metric(
-            dimension, "progress_state"
-        )
-        readiness_detail, readiness_fraction = _dimension_metric(
-            dimension, "readiness_state"
-        )
-        if progress_detail["unknown_or_stale"] or readiness_detail["unknown_or_stale"]:
-            degraded_evidence = True
-
-        row = {
-            "id": dimension["id"],
-            "label": dimension["label"],
-            "weight": dimension["weight"],
-            "progress": progress_detail,
-            "readiness": readiness_detail,
-            "milestones": dimension["milestones"],
-        }
-        dimension_rows.append(row)
-        if progress_fraction is not None:
-            progress_parts.append(
-                (dimension["id"], dimension["weight"], progress_fraction, progress_detail)
-            )
-        if readiness_fraction is not None:
-            readiness_parts.append(
-                (dimension["id"], dimension["weight"], readiness_fraction, readiness_detail)
-            )
+    (
+        dimension_rows,
+        progress_parts,
+        readiness_parts,
+        degraded_evidence,
+    ) = _calculate_dimensions(source["dimensions"])
 
     progress = _aggregate_metric(progress_parts)
     readiness = _aggregate_metric(readiness_parts)
@@ -115,6 +89,51 @@ def calculate_progress_readiness(
     if previous is not None:
         result["trend"] = _compare(previous, result)
     return result
+
+
+def _calculate_dimensions(
+    dimensions: list[dict[str, Any]],
+) -> tuple[
+    list[dict[str, Any]],
+    list[tuple[str, int, Fraction, dict[str, Any]]],
+    list[tuple[str, int, Fraction, dict[str, Any]]],
+    bool,
+]:
+    """Calcula detalle y contribuciones por dimensión sin efectos externos."""
+    rows: list[dict[str, Any]] = []
+    progress_parts: list[tuple[str, int, Fraction, dict[str, Any]]] = []
+    readiness_parts: list[tuple[str, int, Fraction, dict[str, Any]]] = []
+    degraded = False
+    for dimension in dimensions:
+        progress_detail, progress_fraction = _dimension_metric(
+            dimension, "progress_state"
+        )
+        readiness_detail, readiness_fraction = _dimension_metric(
+            dimension, "readiness_state"
+        )
+        degraded = degraded or bool(
+            progress_detail["unknown_or_stale"]
+            or readiness_detail["unknown_or_stale"]
+        )
+        rows.append(
+            {
+                "id": dimension["id"],
+                "label": dimension["label"],
+                "weight": dimension["weight"],
+                "progress": progress_detail,
+                "readiness": readiness_detail,
+                "milestones": dimension["milestones"],
+            }
+        )
+        if progress_fraction is not None:
+            progress_parts.append(
+                (dimension["id"], dimension["weight"], progress_fraction, progress_detail)
+            )
+        if readiness_fraction is not None:
+            readiness_parts.append(
+                (dimension["id"], dimension["weight"], readiness_fraction, readiness_detail)
+            )
+    return rows, progress_parts, readiness_parts, degraded
 
 
 def canonical_payload(snapshot: Mapping[str, Any]) -> str:
