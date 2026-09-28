@@ -16,7 +16,7 @@ Todo cálculo pertenece a un target identificable:
 - `scope`;
 - `version`.
 
-El fingerprint del target usa `id + scope + version`. Cambiar cualquiera de esos campos crea un baseline nuevo.
+El fingerprint del baseline usa `id + scope + version` del target más la estructura ponderada de dimensiones/hitos y su aplicabilidad por métrica. Cambiar target, pesos o qué queda `NOT_APPLICABLE` crea un baseline nuevo; cambiar únicamente SATISFIED/UNSATISFIED/UNKNOWN/STALE no lo hace.
 
 Un cambio de target se reporta como `REBASELINE`, con deltas nulos. No se presenta como mejora o deterioro comparable.
 
@@ -77,7 +77,7 @@ Esto evita depender de floats y deja el resultado reproducible byte a byte.
 
 El motor no recibe ni conoce “issues cerrados” o “issues totales”. Dos hitos pueden tener pesos 90/10 y producir 90% aunque solo uno de dos esté satisfecho. El peso representa impacto del objetivo, no cantidad de objetos administrativos.
 
-Los pesos son parte del target/contrato de evidencia y deben cambiarse mediante una nueva definición de target cuando alteren materialmente el baseline.
+Los pesos son parte del baseline. Si cambian, el fingerprint cambia y la comparación devuelve `REBASELINE` aunque el caller olvide subir la versión del target.
 
 ## Progress y Readiness son independientes
 

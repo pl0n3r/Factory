@@ -219,6 +219,27 @@ class ReadmeProgressTests(unittest.TestCase):
         self.assertIsNone(rebaseline["readiness_delta_basis_points"])
         self.assertEqual("target_change", rebaseline["causes"][0]["type"])
 
+        reweighted_payload = self.payload()
+        reweighted_payload["dimensions"][0]["weight"] = 30
+        reweighted = calculate_progress_readiness(reweighted_payload)
+        self.assertEqual(
+            "REBASELINE",
+            compare_progress_readiness(previous, reweighted)["kind"],
+        )
+
+        applicability_payload = self.payload()
+        applicability_payload["dimensions"][0]["milestones"][0][
+            "progress_state"
+        ] = "NOT_APPLICABLE"
+        applicability_payload["dimensions"][0]["milestones"][0][
+            "readiness_state"
+        ] = "NOT_APPLICABLE"
+        applicability = calculate_progress_readiness(applicability_payload)
+        self.assertEqual(
+            "REBASELINE",
+            compare_progress_readiness(previous, applicability)["kind"],
+        )
+
     def test_payload_explains_contributions_and_real_delta(self):
         previous = calculate_progress_readiness(self.payload())
         changed = self.payload()
