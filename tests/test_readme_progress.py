@@ -1,13 +1,22 @@
 import copy
 import json
 import unittest
+from pathlib import Path
 
+from intelligence.derived_views import DerivedViewDriftError
+from readme.generate_readme import ReadmeEngineError, generate_readme
+from readme.validate_readme import validate_readme
 from readme.progress_readiness import (
     ProgressReadinessError,
     calculate_progress_readiness,
     canonical_payload,
     compare_progress_readiness,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CONTRACT_PATH = ROOT / "readme" / "contract.json"
+TEMPLATE_PATH = ROOT / "readme" / "template.md"
 
 
 class ReadmeProgressTests(unittest.TestCase):
@@ -278,6 +287,151 @@ class ReadmeProgressTests(unittest.TestCase):
 
         with self.assertRaises(ProgressReadinessError):
             canonical_payload({"version": 1})
+
+
+    def readme_inputs(self):
+        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+        template = TEMPLATE_PATH.read_text(encoding="utf-8")
+        metadata = {
+            "name": "Factory",
+            "tagline": "Gobernanza reproducible",
+            "role": "governance/kit",
+            "phase": "construction",
+            "roadmap": "GitHub Issues",
+            "stack": "Python + GitHub Actions",
+        }
+        return contract, template, metadata
+
+    def test_readme_contract_declares_progress_readiness_block(self):
+        contract, template, _ = self.readme_inputs()
+        block = contract["derived_blocks"]["progress_readiness"]
+
+        self.assertEqual("derived", block["ownership"])
+        self.assertTrue(block["consumers_must_not_recalculate"])
+        self.assertEqual(
+            "readme/progress_readiness.schema.json",
+            block["source_contract"],
+        )
+        self.assertEqual(1, template.count(block["start_marker"]))
+        self.assertEqual(1, template.count(block["end_marker"]))
+        self.assertIn("### Progress + Readiness", template)
+
+    def test_readme_generator_consumes_canonical_snapshot_without_recalculation(self):
+        contract, template, metadata = self.readme_inputs()
+        snapshot = calculate_progress_readiness(self.payload())
+        snapshot["progress"]["basis_points"] = 1_234
+        snapshot["progress"]["percent"] = "12.34"
+
+        generated = generate_readme(
+            template,
+            contract,
+            metadata,
+            {},
+            snapshot,
+        )
+
+        self.assertIn("| Progress | 12.34% |", generated)
+        self.assertNotIn("| Progress | 100.00% |", generated)
+        self.assertIn("Autonomous Factory Readiness", generated)
+        self.assertIn("| Readiness | 40.00% · BUILDING |", generated)
+
+    def test_readme_preserves_fail_closed_states_and_critical_blockers(self):
+        contract, template, metadata = self.readme_inputs()
+        payload = self.payload()
+        for dimension in payload["dimensions"]:
+            for milestone in dimension["milestones"]:
+                milestone["readiness_state"] = "SATISFIED"
+        payload["dimensions"][0]["milestones"][0]["progress_state"] = "STALE"
+        payload["blockers"] = [
+            {
+                "id": "legal-gate",
+                "label": "Legal launch gate",
+                "severity": "critical",
+                "state": "UNKNOWN",
+                "evidence_refs": [],
+            }
+        ]
+        snapshot = calculate_progress_readiness(payload)
+
+        generated = generate_readme(
+            template,
+            contract,
+            metadata,
+            {},
+            snapshot,
+        )
+
+        self.assertIn("| Evidence freshness | DEGRADED |", generated)
+        self.assertIn("100.00% · BLOCKED", generated)
+        self.assertIn("1 · Legal launch gate [UNKNOWN]", generated)
+        self.assertNotIn("· READY |", generated)
+
+    def test_progress_readiness_block_preserves_human_content(self):
+        contract, template, metadata = self.readme_inputs()
+        block = contract["derived_blocks"]["progress_readiness"]
+        prefix, rest = template.split(block["start_marker"], 1)
+        _, suffix = rest.split(block["end_marker"], 1)
+        snapshot = calculate_progress_readiness(self.payload())
+
+        generated = generate_readme(
+            template,
+            contract,
+            metadata,
+            {},
+            snapshot,
+        )
+        generated_prefix, generated_rest = generated.split(
+            block["start_marker"],
+            1,
+        )
+        _, generated_suffix = generated_rest.split(block["end_marker"], 1)
+
+        self.assertEqual(prefix, generated_prefix)
+        self.assertEqual(suffix, generated_suffix)
+
+    def test_readme_validator_detects_progress_readiness_drift(self):
+        contract, template, metadata = self.readme_inputs()
+        original = calculate_progress_readiness(self.payload())
+        committed = generate_readme(
+            template,
+            contract,
+            metadata,
+            {},
+            original,
+        )
+        validate_readme(committed, contract, metadata, {}, original)
+
+        changed_payload = self.payload()
+        changed_payload["dimensions"][0]["milestones"][0][
+            "readiness_state"
+        ] = "SATISFIED"
+        changed = calculate_progress_readiness(changed_payload)
+
+        with self.assertRaises(DerivedViewDriftError):
+            validate_readme(
+                committed,
+                contract,
+                metadata,
+                {},
+                changed,
+            )
+
+    def test_readme_progress_readiness_generation_is_deterministic_and_strict(self):
+        contract, template, metadata = self.readme_inputs()
+        snapshot = calculate_progress_readiness(self.payload())
+
+        first = generate_readme(template, contract, metadata, {}, snapshot)
+        second = generate_readme(template, contract, metadata, {}, snapshot)
+        self.assertEqual(first, second)
+
+        missing = generate_readme(template, contract, metadata, {}, None)
+        self.assertIn("| Progress | UNKNOWN |", missing)
+        self.assertIn("| Readiness | UNKNOWN |", missing)
+
+        invalid = copy.deepcopy(snapshot)
+        invalid["token"] = "should-never-render"
+        with self.assertRaises(ReadmeEngineError):
+            generate_readme(template, contract, metadata, {}, invalid)
 
 
 if __name__ == "__main__":

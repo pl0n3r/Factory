@@ -27,6 +27,15 @@
       "allowed_states": ["GREEN", "DEGRADED", "PENDING", "UNKNOWN"],
       "green_requires_evidence": true,
       "terminal_states_require_evidence": ["GREEN", "DEGRADED"]
+    },
+    "progress_readiness": {
+      "start_marker": "<!-- factory:progress-readiness:start -->",
+      "end_marker": "<!-- factory:progress-readiness:end -->",
+      "fields": ["target", "progress", "readiness", "evidence_freshness", "critical_blockers", "dimensions", "trend"],
+      "ownership": "derived",
+      "source_contract": "readme/progress_readiness.schema.json",
+      "missing_snapshot_state": "UNKNOWN",
+      "consumers_must_not_recalculate": true
     }
   },
   "content_policy": {
