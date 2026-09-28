@@ -225,3 +225,57 @@ def promotion_contract(
     }
     contract["fingerprint"] = _stable_hash(contract)
     return contract
+
+
+def causal_promotion_contract(
+    *,
+    shadow_result: Any,
+    stable_sha: Any,
+    candidate_sha: Any,
+    stable_metrics: Any,
+    candidate_metrics: Any,
+    constitution_candidate: Any,
+    experiment_declaration: Any,
+) -> dict[str, Any]:
+    """Add reproducible causal evidence to the non-executing promotion contract."""
+    from lab.experiment_evidence import (
+        ExperimentEvidenceError,
+        evaluate_experiment_evidence,
+    )
+
+    base_contract = promotion_contract(
+        shadow_result=shadow_result,
+        stable_sha=stable_sha,
+        candidate_sha=candidate_sha,
+        stable_metrics=stable_metrics,
+        candidate_metrics=candidate_metrics,
+        constitution_candidate=constitution_candidate,
+    )
+    try:
+        causal = evaluate_experiment_evidence(experiment_declaration)
+    except ExperimentEvidenceError as exc:
+        raise FactoryLabError("evidencia causal inválida") from exc
+    if causal["promotion_allowed"] is not True:
+        raise FactoryLabError("evidencia causal insuficiente para promoción")
+    if (
+        causal["baseline_sha"] != base_contract["stable_sha"]
+        or causal["treatment_sha"] != base_contract["candidate_sha"]
+    ):
+        raise FactoryLabError("evidencia causal no corresponde al par evaluado")
+
+    stable_vector = _validated_metrics(stable_metrics, "stable_metrics")
+    candidate_vector = _validated_metrics(candidate_metrics, "candidate_metrics")
+    measured_metrics = set(stable_vector) | set(candidate_vector)
+    missing_protected = set(causal["protected_metrics"]) - measured_metrics
+    if missing_protected:
+        raise FactoryLabError(
+            "protected_metrics no presentes en Fitness: "
+            + ", ".join(sorted(missing_protected))
+        )
+
+    contract = dict(base_contract)
+    contract.pop("fingerprint", None)
+    contract["experiment_evidence"] = causal
+    contract["requires_causal_evidence"] = True
+    contract["fingerprint"] = _stable_hash(contract)
+    return contract
