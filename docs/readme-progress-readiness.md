@@ -190,3 +190,30 @@ Este slice no:
 - autoriza deploy, dinero, legal o go-live.
 
 La integración al bloque README, targets de los siete repos y E2E/consumer contract se entregan en los slices dependientes #295, #296 y #297.
+
+
+## Targets canónicos por proyecto
+
+Los targets de adopción viven en `readme/projects/progress-readiness/`. Son inputs declarativos para el motor canónico de este documento: **no contienen porcentajes manuales** y no sustituyen las fuentes de verdad de cada producto.
+
+| Proyecto | Target actual | Scope | Fuente de verdad / roadmap |
+| --- | --- | --- | --- |
+| Factory | Autonomous Factory Readiness | `pl0n3r/factory` | PLAN-AGENTES.md, #293 y roadmap del kit |
+| Condor | Colombia V1 Readiness | `pl0n3r/Condor` | Roadmap #1 y evidencia operativa canónica |
+| GrindFlow | Commercial V1 Readiness | `pl0n3r/GrindFlow` | Roadmap #2 y especificaciones/requirements |
+| BRVTAL | Platform / Event Operations Readiness | `pl0n3r/brvtal` | Roadmap #533 y evidencia de plataforma/eventos |
+| ControlBot | Business OS Readiness | `pl0n3r/ControlBot` | Business OS #121 y contratos del control plane |
+| FactoryRunner | Execution Plane Readiness | `pl0n3r/FactoryRunner` | Roadmap #1 y contratos del execution plane |
+| AutoFactory | Local Automation Readiness | `pl0n3r/AutoFactory` | Roadmap #1 y contratos locales/manuales |
+
+Cada fixture declara dimensiones y pesos propios del objetivo. Un milestone que todavía no tiene evidencia empieza como `UNKNOWN`, por lo que aporta cero y degrada freshness; el archivo no fabrica progreso inicial. `NOT_APPLICABLE` solo se usa cuando una dimensión queda explícitamente fuera del target y siempre conserva una `evidence_ref` de política.
+
+### Actualizar un target
+
+1. Cambia evidencia/estado de milestones cuando el objetivo y denominador siguen siendo los mismos.
+2. Cambia `target.version`, scope, pesos o aplicabilidad cuando cambia el baseline.
+3. El segundo caso debe producir `REBASELINE`; nunca se conserva un porcentaje del scope anterior como si fuera tendencia comparable.
+4. Los valores derivados se calculan con `calculate_progress_readiness()` y se serializan con `canonical_payload()`; README y ControlBot no implementan otra fórmula.
+5. Las fuentes de verdad permanecen en roadmap, WorkItems, acceptance, CI, health, seguridad, legal, infraestructura y demás evidencia canónica. Los fixtures solo describen qué dimensiones pertenecen al objetivo.
+
+El slice E2E #297 enlaza después evidencia → cálculo → README → contrato consumidor de ControlBot.
