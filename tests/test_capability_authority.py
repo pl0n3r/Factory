@@ -71,7 +71,7 @@ def authenticated_source(records):
         return authenticated_decision_reader_from_environment()
 
 
-def grant_decision(**kwargs):
+def grant_decision(*, decision_ref="owner-decision:factory#246:grant", **kwargs):
     raw = decision(**kwargs)
     normalized = {
         "capability": raw["capability"],
@@ -84,7 +84,7 @@ def grant_decision(**kwargs):
         "revoke_on": tuple(sorted(raw["revoke_on"])),
         "reason": raw["reason"],
     }
-    ref = "owner-decision:factory#246:grant"
+    ref = decision_ref
     raw["grant_id"] = stable_hash(
         {
             **normalized,
@@ -135,6 +135,55 @@ class CapabilityAuthorityTests(unittest.TestCase):
         self.assertFalse(
             registry.authorize(
                 "deploy-observer", "execute", "project:condor", "production"
+            )
+        )
+
+    def test_matrix_preserves_exact_bindings_without_cartesian_authority(self):
+        ref_a, raw_a = grant_decision(
+            decision_ref="owner-decision:factory#246:grant-a",
+            actions=("execute",),
+            scopes=("project:brvtal",),
+            targets=("production",),
+        )
+        ref_b, raw_b = grant_decision(
+            decision_ref="owner-decision:factory#246:grant-b",
+            actions=("execute",),
+            scopes=("project:condor",),
+            targets=("staging",),
+        )
+        registry = CapabilityAuthorityRegistry()
+        registry.grant(
+            ref_a, decision_source=authenticated_source({ref_a: raw_a})
+        )
+        registry.grant(
+            ref_b, decision_source=authenticated_source({ref_b: raw_b})
+        )
+
+        row = registry.matrix("deploy-observer")["actions"]["execute"]
+        self.assertEqual(row["scopes"], ["project:brvtal", "project:condor"])
+        self.assertEqual(row["targets"], ["production", "staging"])
+        self.assertEqual(len(row["bindings"]), 2)
+        self.assertEqual(
+            {(tuple(item["scopes"]), tuple(item["targets"])) for item in row["bindings"]},
+            {
+                (("project:brvtal",), ("production",)),
+                (("project:condor",), ("staging",)),
+            },
+        )
+        self.assertFalse(
+            registry.authorize(
+                "deploy-observer",
+                "execute",
+                "project:brvtal",
+                "staging",
+            )
+        )
+        self.assertFalse(
+            registry.authorize(
+                "deploy-observer",
+                "execute",
+                "project:condor",
+                "production",
             )
         )
 
