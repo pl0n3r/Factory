@@ -34,8 +34,9 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
 
     def test_preparation_and_apply_use_separate_jobs(self):
         text=WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("jobs:\n  prepare:",text)
-        self.assertIn("\n  apply:\n    needs: prepare",text)
+        self.assertIn("jobs:\n  resolve:",text)
+        self.assertIn("\n  prepare:\n    needs: resolve",text)
+        self.assertIn("\n  apply:\n    needs: [resolve, prepare]",text)
         prepare=text.split("\n  prepare:",1)[1].split("\n  apply:",1)[0]
         apply=text.split("\n  apply:",1)[1]
         self.assertNotIn("FACTORY_PROVISION_TOKEN",prepare)
@@ -46,7 +47,7 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
     def test_privileged_job_never_checks_out_or_executes_consumer(self):
         text=WORKFLOW.read_text(encoding="utf-8")
         apply=text.split("\n  apply:",1)[1]
-        self.assertNotIn("repository: ${{ inputs.target_repository }}",apply)
+        self.assertNotIn("repository: ${{ needs.resolve.outputs.repo }}",apply)
         self.assertNotIn("--consumer-root",apply)
         self.assertNotIn("readme-dashboard.py",apply)
         self.assertIn("python3 runtime/scripts/bootstrap_coordination.py --apply-prepared",apply)
@@ -63,21 +64,21 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
 
     def test_consumer_checkout_uses_fixed_main(self):
         text=WORKFLOW.read_text(encoding="utf-8")
-        block=text.split("repository: ${{ inputs.target_repository }}",1)[1].split("path: consumer",1)[0]
+        block=text.split("repository: ${{ needs.resolve.outputs.repo }}",1)[1].split("path: consumer",1)[0]
         self.assertIn("ref: main",block)
 
     def test_expected_main_sha_is_not_checkout_ref(self):
         text=WORKFLOW.read_text(encoding="utf-8")
-        self.assertNotIn("ref: ${{ inputs.expected_main_sha }}",text)
-        self.assertIn("EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}",text)
+        self.assertNotIn("ref: ${{ needs.resolve.outputs.sha }}",text)
+        self.assertIn("EXPECTED_MAIN_SHA: ${{ needs.resolve.outputs.sha }}",text)
 
     def test_expected_main_sha_remains_runtime_guard(self):
         text=WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}",text)
+        self.assertIn("EXPECTED_MAIN_SHA: ${{ needs.resolve.outputs.sha }}",text)
         self.assertIn("python3 runtime/scripts/bootstrap_coordination.py --prepare --consumer-root consumer",text)
-        block=text.split("repository: ${{ inputs.target_repository }}",1)[1].split("path: consumer",1)[0]
+        block=text.split("repository: ${{ needs.resolve.outputs.repo }}",1)[1].split("path: consumer",1)[0]
         self.assertIn("ref: main",block)
-        self.assertNotIn("inputs.expected_main_sha",block)
+        self.assertNotIn("needs.resolve.outputs.sha",block)
 
     def test_artifact_download_stays_under_runner_temp(self):
         text=WORKFLOW.read_text(encoding="utf-8")
@@ -97,6 +98,67 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden,text)
         self.assertEqual(text.count("FACTORY_PROVISION_TOKEN:"),1)
         self.assertIn("[[ \"$ACTOR\" == \"$OWNER\" ]]",text)
+
+
+    def test_manual_dispatch_contract_is_preserved(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        manual=text.split("workflow_dispatch:",1)[1].split("permissions:",1)[0]
+        for field in ("target_repository:","target_issue:","expected_main_sha:","governance_ref:","idempotency_key:"):
+            self.assertIn(field,manual)
+        self.assertIn('EVENT_NAME: ${{ github.event_name }}',text)
+        self.assertIn('if [[ "$EVENT_NAME" == "workflow_dispatch" ]]',text)
+        self.assertIn('[[ "$ACTOR" == "$OWNER" ]]',text)
+        self.assertIn('[[ "$REF" == "refs/heads/$DEFAULT_BRANCH" ]]',text)
+
+    def test_owner_issue_comment_can_resolve_bootstrap_request(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("issue_comment:\n    types: [created]",text)
+        self.assertIn('COMMENT_BODY: ${{ github.event.comment.body || \'\' }}',text)
+        self.assertIn('elif [[ "$EVENT_NAME" == "issue_comment" ]]',text)
+        self.assertIn(r'^/bootstrap-coordination\ (pl0n3r/[A-Za-z0-9_.-]{1,100})\ ([1-9][0-9]*)\ ([0-9a-f]{40})$',text)
+        self.assertIn('target_repository="${BASH_REMATCH[1]}"',text)
+        self.assertIn("repo=%s\\nissue=%s\\nsha=%s",text)
+
+    def test_comment_transport_fails_closed_for_untrusted_or_malformed_requests(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        resolve=text.split("\n  resolve:",1)[1].split("\n  prepare:",1)[0]
+        self.assertIn('[[ "$ACTOR" == "$OWNER" ]]',resolve)
+        self.assertIn('[[ -z "$COMMENT_PR_URL" ]]',resolve)
+        self.assertIn('comando bootstrap inválido',resolve)
+        self.assertIn('repositorio inválido',resolve)
+        self.assertIn('issue inválido',resolve)
+        self.assertIn('sha inválido',resolve)
+        self.assertNotIn("actions/checkout@",resolve)
+
+    def test_comment_transport_fixes_governance_and_derives_idempotency(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        resolve=text.split("\n  resolve:",1)[1].split("\n  prepare:",1)[0]
+        self.assertIn('governance_ref="pl0n3r/factory@v1"',resolve)
+        self.assertIn("sha256sum",resolve)
+        self.assertIn('[[ "$governance_ref" == "pl0n3r/factory@v1" ]]',resolve)
+        self.assertIn('[[ "$idempotency_key" =~ ^[0-9a-f]{64}$ ]]',resolve)
+        self.assertNotIn("COMMENT_GOVERNANCE",resolve)
+        self.assertNotIn("COMMENT_IDEMPOTENCY",resolve)
+
+    def test_prepare_and_apply_consume_resolved_request_outputs(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        prepare=text.split("\n  prepare:",1)[1].split("\n  apply:",1)[0]
+        apply=text.split("\n  apply:",1)[1]
+        for output in ("repo","issue","sha","governance","idempotency"):
+            self.assertIn(f"needs.resolve.outputs.{output}",prepare)
+            self.assertIn(f"needs.resolve.outputs.{output}",apply)
+        self.assertIn("needs: resolve",prepare)
+        self.assertIn("needs: [resolve, prepare]",text)
+
+    def test_comment_transport_does_not_expand_permissions_or_checkout_before_authority(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read",text)
+        for forbidden in ("contents: write","pull-requests: write","issues: write"):
+            self.assertNotIn(forbidden,text)
+        resolve=text.split("\n  resolve:",1)[1].split("\n  prepare:",1)[0]
+        self.assertNotIn("uses:",resolve)
+        self.assertLess(text.index("Resolver solicitud y validar autoridad"),text.index("actions/checkout@"))
+        self.assertEqual(text.count("FACTORY_PROVISION_TOKEN:"),1)
 
 if __name__=="__main__":
     unittest.main()
