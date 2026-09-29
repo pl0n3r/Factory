@@ -181,7 +181,28 @@ def _validate_d063_attestation(raw: object) -> dict[str, bool | None]:
     return result
 
 
-def validate_data_map(document: object, rules: dict[str, Any]) -> dict[str, Any]:
+def _validated_d063_attestation(
+    document: dict[str, Any],
+    *,
+    fail_closed: bool,
+) -> dict[str, bool | None] | None:
+    """Normaliza la atestación D-063 sin relajar el resto del mapa."""
+    if "d063_attestation" not in document:
+        return None
+    try:
+        return _validate_d063_attestation(document["d063_attestation"])
+    except PrivacyError:
+        if not fail_closed:
+            raise
+        return dict.fromkeys(D063_ATTESTATION_FIELDS)
+
+
+def validate_data_map(
+    document: object,
+    rules: dict[str, Any],
+    *,
+    d063_fail_closed: bool = False,
+) -> dict[str, Any]:
     required = {"version", "project", "phase", "controller", "treatments"}
     allowed = required | {"d063_attestation"}
     if (
@@ -198,10 +219,9 @@ def validate_data_map(document: object, rules: dict[str, Any]) -> dict[str, Any]
     phase = document["phase"]
     if phase not in {"construccion", "live"}:
         raise PrivacyError("datos: phase inválida")
-    d063_attestation = (
-        _validate_d063_attestation(document["d063_attestation"])
-        if "d063_attestation" in document
-        else None
+    d063_attestation = _validated_d063_attestation(
+        document,
+        fail_closed=d063_fail_closed,
     )
     controller = _validate_controller(
         document["controller"], phase, rules["owner_placeholder"]
@@ -232,13 +252,22 @@ def load_rules() -> dict[str, Any]:
     return validate_rules(_json_document(text, "reglas"))
 
 
-def load_data_map(path: Path, *, root: Path | None = None) -> dict[str, Any]:
+def load_data_map(
+    path: Path,
+    *,
+    root: Path | None = None,
+    d063_fail_closed: bool = False,
+) -> dict[str, Any]:
     base = (root or Path.cwd()).resolve()
     try:
         text = read_repo_text(path, root=base, max_bytes=MAX_BYTES)
     except SafeIOError as exc:
         raise PrivacyError("datos: ruta no confiable") from exc
-    return validate_data_map(_json_document(text, "datos"), load_rules())
+    return validate_data_map(
+        _json_document(text, "datos"),
+        load_rules(),
+        d063_fail_closed=d063_fail_closed,
+    )
 
 
 def _template(name: str) -> str:

@@ -1,5 +1,6 @@
 """Regresiones de la auditoría periódica de privacidad."""
 from copy import deepcopy
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from scripts.auditar_privacidad import (
     audit_sources,
     build_legal_gate_body,
     collect_sources,
+    evaluate_repository,
     main,
 )
 from scripts.privacidad_kit import PLACEHOLDER_TOKEN
@@ -224,6 +226,53 @@ class PrivacyAuditTests(unittest.TestCase):
                 self.assertFalse(report["d063_applies"])
                 self.assertIn('"recommendation":"A"', report["legal_gate_body"])
                 self.assertIn('"safe_default":"A"', report["legal_gate_body"])
+
+
+    def test_d063_invalid_type_fails_closed_without_aborting(self):
+        previous = d063_data_map()
+        previous["d063_attestation"]["nothing_live"] = "unknown"
+        current = deepcopy(previous)
+        current["treatments"][0]["purpose"] = "marketing_contact"
+        report = audit_sources(
+            sources={"src/User.php": "$email = $user->email;\n"},
+            current_document=current,
+            previous_document=previous,
+        )
+        self.assertFalse(report["d063_applies"])
+        self.assertIn('"recommendation":"A"', report["legal_gate_body"])
+        self.assertIn('"safe_default":"A"', report["legal_gate_body"])
+
+    def test_d063_invalid_fields_do_not_leak_into_report(self):
+        previous = d063_data_map()
+        previous["d063_attestation"] = {
+            "nothing_live": True,
+            "no_real_customer_data": True,
+            "free_text": "discarded",
+        }
+        current = deepcopy(previous)
+        current["treatments"][0]["purpose"] = "marketing_contact"
+        report = audit_sources(
+            sources={"src/User.php": "$email = $user->email;\n"},
+            current_document=current,
+            previous_document=previous,
+        )
+        self.assertFalse(report["d063_applies"])
+        self.assertIn('"recommendation":"A"', report["legal_gate_body"])
+        self.assertNotIn("discarded", str(report))
+
+    def test_evaluate_repository_uses_d063_fail_closed_mode(self):
+        current = d063_data_map()
+        current["d063_attestation"]["nothing_live"] = "unknown"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "datos.yml").write_text(
+                json.dumps(current),
+                encoding="utf-8",
+            )
+            report = evaluate_repository(root)
+        self.assertFalse(report["d063_applies"])
+        self.assertTrue(report["legal_gate_required"])
+        self.assertIn('"recommendation":"A"', report["legal_gate_body"])
 
     def test_live_gate_never_recommends_construction_default(self):
         previous = live_data_map()
