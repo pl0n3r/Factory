@@ -7,6 +7,7 @@ from scripts.orquestador_kit import (
     build_task_marker,
     claims_overlap,
     parse_plan,
+    parse_task_marker,
     reservation_blockers,
     topological_order,
 )
@@ -28,6 +29,82 @@ def task(key, *, paths, depends_on=None, owner="pl0n3r"):
 
 
 class OrchestratorKitTests(unittest.TestCase):
+    def test_marker_name_in_prose_is_not_malformed_marker(self):
+        """AC-01: nombres textuales no crean marker ni error de marker."""
+        prose = (
+            "Documenta factory-plan y `factory-plan-task` sin comentarios HTML. "
+            "También permite prefijos de palabras como factory-plan-tasking."
+        )
+        self.assertIsNone(parse_task_marker(prose))
+        with self.assertRaisesRegex(PlanError, "debe declarar"):
+            parse_plan(prose)
+
+    def test_truncated_html_marker_still_fails_closed(self):
+        """AC-02: un inicio HTML real sin contrato completo sigue fallando."""
+        for body, parser in (
+            ("<!-- factory-plan-task", parse_task_marker),
+            ("<!-- factory-plan-task\t", parse_task_marker),
+            ("<!-- factory-plan", parse_plan),
+        ):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(PlanError, "malformado"):
+                    parser(body)
+
+    def test_duplicate_html_markers_still_fail_closed(self):
+        """AC-03: dos markers canónicos conservan rechazo determinista."""
+        marker = build_task_marker(
+            epic=3,
+            task=PlannedTask(
+                key="A",
+                title="A",
+                owner="pl0n3r",
+                paths=("scripts/a.py",),
+                depends_on=(),
+            ),
+            order=1,
+            roles=["qa"],
+            dependency_issues=[],
+        )
+        with self.assertRaisesRegex(PlanError, "único marker"):
+            parse_task_marker(f"{marker}\n{marker}")
+
+    def test_single_canonical_marker_parsing_is_unchanged(self):
+        """AC-04: un marker canónico único conserva su payload."""
+        marker = build_task_marker(
+            epic=3,
+            task=PlannedTask(
+                key="A",
+                title="Tarea A",
+                owner="pl0n3r",
+                paths=("scripts/a.py",),
+                depends_on=(),
+            ),
+            order=1,
+            roles=["qa"],
+            dependency_issues=[],
+        )
+        parsed = parse_task_marker(marker)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["version"], 1)
+        self.assertEqual(parsed["epic"], 3)
+        self.assertEqual(parsed["task_key"], "A")
+        self.assertEqual(parsed["paths"], ["scripts/a.py"])
+
+    def test_issue_prose_can_describe_planning_contract_without_authority(self):
+        """AC-05: describir contratos en prosa no materializa autoridad."""
+        body = (
+            "### Contexto\n\n"
+            "Este Issue explica factory-plan-task.version y factory-plan.version.\n"
+            "No contiene comentarios HTML de planificación."
+        )
+        self.assertIsNone(parse_task_marker(body))
+        with self.assertRaisesRegex(PlanError, "debe declarar"):
+            parse_plan(body)
+        self.assertIsNone(
+            parse_task_marker("<!-- factory-plan-taskXYZ {\"version\":1} -->")
+        )
+
     def test_dag_has_deterministic_order(self):
         tasks = parse_plan(
             plan([
