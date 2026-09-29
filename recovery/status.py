@@ -47,55 +47,87 @@ def derive_recovery_health(
     now = _time(observed_at, "observed_at")
     if type(retention_drift) is not bool:
         raise RecoveryStatusError("retention_drift debe ser boolean.")
-
     if verified_backup is None:
         return _health(recovery, "UNKNOWN", now, ["BACKUP_MISSING"], ["backup_missing"])
 
-    try:
-        backup = _backup(recovery, verified_backup, now)
-    except _Problem as problem:
-        return _health(
-            recovery, "BLOCKED", now, [problem.reason], [problem.work_class]
-        )
-    except RecoveryStatusError:
-        return _health(
-            recovery, "BLOCKED", now,
-            ["BACKUP_TIMESTAMPS_INVALID"], ["backup_stale"],
-        )
+    backup, blocked = _validated_backup_or_blocked(
+        recovery, verified_backup, now
+    )
+    if blocked:
+        return blocked
 
     backup_age = int((now - backup["created_at"]).total_seconds())
     backup_max = recovery["target"]["rpo_minutes"] * 60
     backup_stale = backup_age > backup_max
-
     if drill_result is None or drill_observed_at is None:
-        reasons = ["RESTORE_DRILL_MISSING"]
-        classes = ["restore_drill_failed"]
-        if backup_stale:
-            reasons.append("BACKUP_STALE")
-            classes.append("backup_stale")
-        return _health(
-            recovery, "UNKNOWN", now, reasons, classes, backup=backup,
-            freshness={"backup_age_seconds": backup_age,
-                       "backup_max_age_seconds": backup_max},
+        return _missing_drill_health(
+            recovery, now, backup, backup_age, backup_max, backup_stale
         )
 
+    drill, drill_seen, blocked = _validated_drill_or_blocked(
+        recovery, backup, drill_result, drill_observed_at, now
+    )
+    if blocked:
+        return blocked
+    return _current_recovery_health(
+        recovery, now, backup, backup_age, backup_max, backup_stale,
+        drill, drill_seen, retention_drift,
+    )
+
+
+def _validated_backup_or_blocked(recovery, value, now):
+    try:
+        return _backup(recovery, value, now), None
+    except _Problem as problem:
+        return None, _health(
+            recovery, "BLOCKED", now, [problem.reason], [problem.work_class]
+        )
+    except RecoveryStatusError:
+        return None, _health(
+            recovery, "BLOCKED", now,
+            ["BACKUP_TIMESTAMPS_INVALID"], ["backup_stale"],
+        )
+
+
+def _missing_drill_health(
+    recovery, now, backup, backup_age, backup_max, backup_stale
+):
+    reasons, classes = ["RESTORE_DRILL_MISSING"], ["restore_drill_failed"]
+    if backup_stale:
+        reasons.append("BACKUP_STALE")
+        classes.append("backup_stale")
+    return _health(
+        recovery, "UNKNOWN", now, reasons, classes, backup=backup,
+        freshness={"backup_age_seconds": backup_age,
+                   "backup_max_age_seconds": backup_max},
+    )
+
+
+def _validated_drill_or_blocked(
+    recovery, backup, value, drill_observed_at, now
+):
     try:
         drill_seen = _time(drill_observed_at, "drill_observed_at")
         if drill_seen > now:
             raise _Problem("DRILL_EVIDENCE_FUTURE", "restore_drill_failed")
-        drill = _drill(recovery, backup, drill_result)
+        return _drill(recovery, backup, value), drill_seen, None
     except _Problem as problem:
-        return _health(
+        return None, None, _health(
             recovery, "BLOCKED", now, [problem.reason], [problem.work_class],
             backup=backup,
         )
     except RecoveryStatusError:
-        return _health(
+        return None, None, _health(
             recovery, "BLOCKED", now,
             ["DRILL_EVIDENCE_TIME_INVALID"], ["restore_drill_failed"],
             backup=backup,
         )
 
+
+def _current_recovery_health(
+    recovery, now, backup, backup_age, backup_max, backup_stale,
+    drill, drill_seen, retention_drift
+):
     drill_age = int((now - drill_seen).total_seconds())
     drill_max = recovery["restore_drill"]["cadence_days"] * 86_400
     freshness = {
@@ -112,18 +144,7 @@ def derive_recovery_health(
             drill=drill, freshness=freshness,
         )
 
-    reasons, classes = [], []
-    if retention_drift:
-        reasons.append("RETENTION_DRIFT")
-        classes.append("retention_drift")
-    if drill["status"] == "BREACHED":
-        if "RPO_EXCEEDED" in drill["reasons"]:
-            reasons.append("RPO_BREACHED")
-            classes.append("rpo_breached")
-        if "RTO_EXCEEDED" in drill["reasons"]:
-            reasons.append("RTO_BREACHED")
-            classes.append("rto_breached")
-
+    reasons, classes = _degradations(drill, retention_drift)
     if reasons:
         if backup_stale:
             reasons.append("BACKUP_STALE")
@@ -139,6 +160,20 @@ def derive_recovery_health(
         freshness=freshness,
     )
 
+
+def _degradations(drill, retention_drift):
+    reasons, classes = [], []
+    if retention_drift:
+        reasons.append("RETENTION_DRIFT")
+        classes.append("retention_drift")
+    if drill["status"] == "BREACHED":
+        if "RPO_EXCEEDED" in drill["reasons"]:
+            reasons.append("RPO_BREACHED")
+            classes.append("rpo_breached")
+        if "RTO_EXCEEDED" in drill["reasons"]:
+            reasons.append("RTO_BREACHED")
+            classes.append("rto_breached")
+    return reasons, classes
 
 def recovery_work_item_classes(health: Mapping[str, Any]) -> list[str]:
     if (
