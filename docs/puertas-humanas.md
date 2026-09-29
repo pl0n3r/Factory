@@ -24,12 +24,15 @@ El parser también admite campos simples opcionales para que ControlBot presente
   - `pros[]` y `cons[]`: entre 1 y 5 elementos, texto corto;
   - `risk`: `low`, `medium` o `high`;
   - `cost`: texto corto o vacío;
-  - `reversible`: booleano.
+  - `reversible`: booleano;
+  - `explain_simple`: qué significa elegir esa opción, explicado como a alguien de 12 años, hasta 3 líneas y 400 caracteres.
+- en la raíz:
+  - `explain_simple`: la pregunta explicada sin jerga, hasta 4 líneas y 600 caracteres.
 
-Ejemplo enriquecido:
+Ejemplo enriquecido para una puerta nueva:
 
 ```html
-<!-- factory-human-gate {"category":"money","context":"Cambiar el proveedor incrementa el gasto mensual.","title_simple":"¿Cambiamos de proveedor?","summary_simple":"El proveedor nuevo cuesta más, pero reduce trabajo manual.","options":[{"id":"A","label":"Mantener proveedor actual","effect":"Seguimos con el costo y flujo actuales.","pros":["Sin migración"],"cons":["Más trabajo manual"],"risk":"low","cost":"","reversible":true},{"id":"B","label":"Migrar al proveedor nuevo","effect":"Se migra la operación al proveedor nuevo.","pros":["Menos trabajo manual"],"cons":["Aumenta el costo mensual"],"risk":"medium","cost":"+$ mensual","reversible":true}],"recommendation":"A","safe_default":"A","why_recommended":"A evita gasto nuevo mientras se valida el beneficio.","blocks":"Bloquea la automatización del flujo asociado."} -->
+<!-- factory-human-gate {"category":"money","context":"Cambiar el proveedor incrementa el gasto mensual.","title_simple":"¿Cambiamos de proveedor?","summary_simple":"El proveedor nuevo cuesta más, pero reduce trabajo manual.","explain_simple":"Es como elegir entre seguir usando una herramienta conocida o pagar por una nueva que ahorra trabajo. Hay que decidir si el ahorro vale el costo.","options":[{"id":"A","label":"Mantener proveedor actual","effect":"Seguimos con el costo y flujo actuales.","pros":["Sin migración"],"cons":["Más trabajo manual"],"risk":"low","cost":"","reversible":true,"explain_simple":"Seguimos usando lo que ya funciona. No gastamos más, pero hacemos más cosas a mano."},{"id":"B","label":"Migrar al proveedor nuevo","effect":"Se migra la operación al proveedor nuevo.","pros":["Menos trabajo manual"],"cons":["Aumenta el costo mensual"],"risk":"medium","cost":"+$ mensual","reversible":true,"explain_simple":"Pagamos más para que una herramienta nueva haga parte del trabajo por nosotros."}],"recommendation":"A","safe_default":"A","why_recommended":"A evita gasto nuevo mientras se valida el beneficio.","blocks":"Bloquea la automatización del flujo asociado."} -->
 ```
 
 ### Tipos exactos y ejemplo de release Factory
@@ -39,14 +42,14 @@ Los campos simples admiten **tipos cerrados**. `title_simple`, `why_recommended`
 Ejemplo completo de puerta `factory-release` válido para el parser:
 
 ```html
-<!-- factory-human-gate {"category":"factory-release","context":"La versión propuesta superó las pruebas y requiere decisión de publicación.","title_simple":"¿Publicamos Factory?","summary_simple":"El candidato está validado y la publicación requiere aprobación.","options":[{"id":"A","label":"Publicar","effect":"Se inicia el release aprobado.","pros":["Entrega disponible"],"cons":["Requiere supervisión posterior"],"risk":"medium","cost":"","reversible":true},{"id":"B","label":"Mantener candidato","effect":"No se publica por ahora.","pros":["Más tiempo de revisión"],"cons":["Entrega aplazada"],"risk":"low","cost":"","reversible":true}],"recommendation":"B","safe_default":"B","why_recommended":"Evita un release sin aprobación explícita.","blocks":"Bloquea la publicación de la versión candidata."} -->
+<!-- factory-human-gate {"category":"factory-release","context":"La versión propuesta superó las pruebas y requiere decisión de publicación.","title_simple":"¿Publicamos Factory?","summary_simple":"El candidato está validado y la publicación requiere aprobación.","explain_simple":"La versión ya pasó las pruebas. Falta decidir si la hacemos disponible para que otros proyectos la usen ahora o si la dejamos guardada por el momento.","options":[{"id":"A","label":"Publicar","effect":"Se inicia el release aprobado.","pros":["Entrega disponible"],"cons":["Requiere supervisión posterior"],"risk":"medium","cost":"","reversible":true,"explain_simple":"Hacemos disponible esta versión ahora. Después toca vigilar que todo siga funcionando bien."},{"id":"B","label":"Mantener candidato","effect":"No se publica por ahora.","pros":["Más tiempo de revisión"],"cons":["Entrega aplazada"],"risk":"low","cost":"","reversible":true,"explain_simple":"La versión queda lista pero guardada. Podemos revisarla más antes de publicarla."}],"recommendation":"B","safe_default":"B","why_recommended":"Evita un release sin aprobación explícita.","blocks":"Bloquea la publicación de la versión candidata."} -->
 ```
 
 Si el parser clasifica una puerta confiable como `invalid-gate`, el workflow publica una explicación **idempotente** con el campo y la regla incumplida, sin copiar valores ni JSON del marker, y aplica `estado: bloqueado`. La corrección posterior del marker válido restaura `estado: disponible` cuando el bloqueo fue gestionado por este flujo; la cola `decisión: dueño` continúa siendo exclusiva de puertas válidas.
 
 ### Regla para puertas nuevas
 
-La compatibilidad existe para no romper Issues históricos. **Toda puerta nueva escrita por un agente debe incluir los campos simples completos**: `title_simple`, `summary_simple`, `why_recommended`, `blocks` y, en cada opción, `effect`, `pros`, `cons`, `risk`, `cost`, `reversible`.
+La compatibilidad existe para no romper Issues históricos. **Toda puerta nueva escrita por un agente debe incluir `explain_simple` en la raíz y en cada opción**, además de los campos simples completos: `title_simple`, `summary_simple`, `why_recommended`, `blocks` y, en cada opción, `effect`, `pros`, `cons`, `risk`, `cost`, `reversible`. `explain_simple` debe traducir la pregunta y cada respuesta como a alguien de 12 años: sin jerga, sin asustar ni empujar hacia una opción y sin contradecir los campos técnicos.
 
 El esquema sigue cerrado: cualquier campo desconocido, tipo incorrecto, riesgo fuera del enum, lista excesiva o longitud inválida hace que la puerta sea `invalid-gate`.
 
