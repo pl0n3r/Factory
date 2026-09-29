@@ -27,8 +27,23 @@ SHA_RE, KEY_RE = re.compile(r"^[0-9a-f]{40}$"), re.compile(r"^[0-9a-f]{64}$")
 MAX_FILE, MAX_TOTAL = 120_000, 240_000
 GRINDFLOW_MAX_FILE, GRINDFLOW_MAX_TOTAL = 400_000, 500_000
 PREPARED_FILE = Path(".factory-bootstrap-delivery.json")
+PREPARED_DIR_ENV = "FACTORY_PREPARED_DIR"
 
 class BootstrapError(RuntimeError): pass
+
+def prepared_file_for_mode(apply: bool) -> Path:
+    if not apply:
+        return PREPARED_FILE
+    raw=os.getenv(PREPARED_DIR_ENV,"").strip()
+    if not raw:
+        raise BootstrapError("Directorio de entrega preparada no configurado.")
+    root=Path(raw)
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+        raise BootstrapError("Directorio de entrega preparada inseguro.")
+    target=root/PREPARED_FILE.name
+    if target.parent!=root:
+        raise BootstrapError("Path de entrega preparada inválido.")
+    return target
 
 def validate_request(raw: Any) -> dict[str, Any]:
     keys = {"target_repository", "target_issue", "expected_main_sha", "governance_ref", "idempotency_key"}
@@ -490,7 +505,7 @@ def main()->int:
     raw=_raw_request()
     try:
         template=CALLER_TEMPLATE.read_text(encoding="utf-8")
-        target=PREPARED_FILE
+        target=prepared_file_for_mode(args.apply_prepared)
         if target.is_symlink() or target.is_dir():
             raise BootstrapError("Entrega preparada usa un path inseguro.")
         if args.prepare:
