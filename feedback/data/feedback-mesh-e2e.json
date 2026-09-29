@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "scenario": "review-efficiency-insufficient-evidence",
+  "baseline_fixture": "metricas/datos/review-efficiency-baseline.jsonl",
+  "evidence": [
+    {
+      "kind": "factory_baseline_pr",
+      "repo": "pl0n3r/Factory",
+      "pr": 253,
+      "state": "merged",
+      "head_sha": "265ca2cba57238f1ce988a2617d2b08b1e184763",
+      "merge_sha": "34409905f874b118b973ec316041467534fe2cd6",
+      "merged_at": "2026-09-27T11:26:29Z",
+      "verification_run": null,
+      "verification_status": null
+    },
+    {
+      "kind": "consumer_review_pr",
+      "repo": "pl0n3r/GrindFlow",
+      "pr": 181,
+      "state": "open",
+      "head_sha": "4a85df7dffb667a476afc3103c268e5f46f0e79a",
+      "merge_sha": null,
+      "merged_at": null,
+      "verification_run": null,
+      "verification_status": null
+    },
+    {
+      "kind": "shadow_experiment_pr",
+      "repo": "pl0n3r/Factory",
+      "pr": 256,
+      "state": "merged",
+      "head_sha": "182a0856e34c27bc5001dfd3aed5f72740cecd98",
+      "merge_sha": "3d5752bd33cfae73380610e30c5f9de9740af11f",
+      "merged_at": "2026-09-27T19:26:21Z",
+      "verification_run": null,
+      "verification_status": null
+    },
+    {
+      "kind": "next_execution",
+      "repo": "pl0n3r/Factory",
+      "pr": 325,
+      "state": "merged",
+      "head_sha": "93a15ffd2e216bdf1425a8bae919ebba31a00728",
+      "merge_sha": "8e369605eebc38c792a8b3275eaae9956a5cb83a",
+      "merged_at": "2026-09-29T00:24:36Z",
+      "verification_run": null,
+      "verification_status": null
+    },
+    {
+      "kind": "next_execution",
+      "repo": "pl0n3r/Factory",
+      "pr": 326,
+      "state": "merged",
+      "head_sha": "20df2598de608fa81d4f2b09a2a0b3ac72803f71",
+      "merge_sha": "3b99efa32ba4fe931f053f1023b34943fe63bf14",
+      "merged_at": "2026-09-29T00:30:09Z",
+      "verification_run": 36503410235,
+      "verification_status": "success"
+    }
+  ],
+  "stable_policy": {
+    "review_round_limit": 3,
+    "source": "scripts/politica_kit.py",
+    "changed": false
+  },
+  "decision": {
+    "status": "reject",
+    "reason": "insufficient_evidence",
+    "promotion_executed": false
+  },
+  "authority": {
+    "expanded": false,
+    "external_permissions_added": [],
+    "forbidden": [
+      "money",
+      "legal",
+      "personal_data",
+      "irreversible_delete"
+    ]
+  },
+  "rollback": {
+    "reversible": true,
+    "strategy": "restore_baseline"
+  }
+}
