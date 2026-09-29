@@ -57,6 +57,7 @@ def evidence(incident="2026-09-29T00:10:00Z", completed="2026-09-29T00:40:00Z"):
 
 class RecoveryDrillTests(unittest.TestCase):
     def test_restore_drill_plan_is_deterministic_disposable_and_external_io_free(self):
+        recovery = manifest()
         backup = verified_backup()
         target = {"kind": "disposable", "target_ref": "sandbox:001"}
         first = build_restore_drill_plan(recovery, backup, target)
@@ -69,6 +70,7 @@ class RecoveryDrillTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
 
     def test_drill_requires_verified_backup_and_health_smoke_integrity_evidence(self):
+        recovery = manifest()
         backup = verified_backup()
         target = {"kind": "disposable", "target_ref": "sandbox:001"}
         plan = build_restore_drill_plan(recovery, backup, target)
@@ -77,52 +79,53 @@ class RecoveryDrillTests(unittest.TestCase):
             build_restore_drill_plan(recovery, bad_backup, target)
         no_primary = dict(backup); no_primary["destinations"] = []
         with self.assertRaises(RecoveryDrillError):
-            build_restore_drill_plan(manifest(), no_primary, target)
+            build_restore_drill_plan(recovery, no_primary, target)
         for field in ("health_ok", "smoke_ok", "integrity_ok"):
             bad = evidence(); bad[field] = False
-            with self.subTest(field=field), self.assertRaises(RecoveryDrillError):
-                evaluate_restore_drill(recovery, plan, backup, bad)
+            with self.subTest(field=field):
+                with self.assertRaises(RecoveryDrillError):
+                    evaluate_restore_drill(recovery, plan, backup, bad)
         bad = evidence(); bad["checksum_sha256"] = "b" * 64
         with self.assertRaises(RecoveryDrillError):
             evaluate_restore_drill(recovery, plan, backup, bad)
 
     def test_drill_measures_rpo_rto_and_reports_passed_or_breached(self):
+        recovery = manifest()
         backup = verified_backup()
-        plan = build_restore_drill_plan(
-            manifest(), backup, {"kind": "disposable", "target_ref": "sandbox:001"}
-        )
-        passed = evaluate_restore_drill(manifest(), plan, backup, evidence())
+        target = {"kind": "disposable", "target_ref": "sandbox:001"}
+        plan = build_restore_drill_plan(recovery, backup, target)
+        passed = evaluate_restore_drill(recovery, plan, backup, evidence())
         self.assertEqual(passed["status"], "PASSED")
         self.assertEqual(passed["observed"]["rpo_seconds"], 600)
         self.assertEqual(passed["observed"]["rto_seconds"], 1680)
 
+        breached_evidence = evidence(
+            "2026-09-29T00:20:00Z", "2026-09-29T01:30:00Z"
+        )
         breached = evaluate_restore_drill(
-            manifest(), plan, backup,
-            evidence("2026-09-29T00:20:00Z", "2026-09-29T01:30:00Z"),
+            recovery, plan, backup, breached_evidence
         )
         self.assertEqual(breached["status"], "BREACHED")
         self.assertEqual(breached["reasons"], ["RPO_EXCEEDED", "RTO_EXCEEDED"])
 
     def test_drill_fails_closed_for_production_sensitive_or_authority_expansion(self):
+        recovery = manifest()
         backup = verified_backup()
         for target in (
             {"kind": "production", "target_ref": "prod:001"},
             {"kind": "disposable", "target_ref": "ghp_" + "A" * 24},
         ):
-            with self.subTest(target=target), self.assertRaises(RecoveryDrillError) as ctx:
-                build_restore_drill_plan(recovery, backup, target)
+            with self.subTest(target=target):
+                with self.assertRaises(RecoveryDrillError) as ctx:
+                    build_restore_drill_plan(recovery, backup, target)
             self.assertNotIn("ghp_", str(ctx.exception))
 
         expanded = dict(backup); expanded["authority"] = "production-write"
+        disposable = {"kind": "disposable", "target_ref": "sandbox:001"}
         with self.assertRaises(RecoveryDrillError):
-            build_restore_drill_plan(
-                manifest(), expanded,
-                {"kind": "disposable", "target_ref": "sandbox:001"},
-            )
+            build_restore_drill_plan(recovery, expanded, disposable)
 
-        plan = build_restore_drill_plan(
-            manifest(), backup, {"kind": "disposable", "target_ref": "sandbox:001"}
-        )
+        plan = build_restore_drill_plan(recovery, backup, disposable)
         tampered = copy.deepcopy(plan); tampered["source"] = "repository"
         with self.assertRaises(RecoveryDrillError):
             evaluate_restore_drill(recovery, tampered, backup, evidence())
