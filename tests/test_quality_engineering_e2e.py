@@ -189,7 +189,7 @@ def derive(gates, regressions, *, perf=None, recovery=None):
 
 
 class QualityEngineeringE2ETests(unittest.TestCase):
-    def test_contract_to_project_dna_to_risk_and_dod_preserves_fingerprint_and_authority(self):
+    def test_quality_happy_path_contract_to_readiness_uses_real_contracts(self):
         contract = quality_contract()
         dna = governed_dna(contract)
         extension = dna["extensions"]["quality_contract"]
@@ -227,6 +227,13 @@ class QualityEngineeringE2ETests(unittest.TestCase):
         self.assertNotIn("authority", risk)
         self.assertNotIn("authority", done)
 
+        health = derive(gate_evidence(), [regression()])
+        projected = readiness_projection(health)
+        self.assertEqual(health["state"], "PASS")
+        self.assertTrue(projected["ready"])
+        self.assertFalse(projected["recalculated"])
+        self.assertEqual(projected["quality_health"], "PASS")
+
     def test_current_verified_healthy_flow_reaches_quality_pass_and_ready(self):
         health = derive(gate_evidence(), [regression()])
         projected = readiness_projection(health)
@@ -240,7 +247,7 @@ class QualityEngineeringE2ETests(unittest.TestCase):
         self.assertFalse(projected["recalculated"])
         self.assertEqual(projected["quality_health"], "PASS")
 
-    def test_missing_stale_flaky_or_reproduced_evidence_fails_closed(self):
+    def test_stale_flaky_or_unknown_evidence_fails_closed_without_expanding_authority(self):
         missing = derive(gate_evidence()[:-1], [])
         self.assertEqual(missing["state"], "UNKNOWN")
         self.assertFalse(readiness_projection(missing)["ready"])
@@ -284,7 +291,7 @@ class QualityEngineeringE2ETests(unittest.TestCase):
         self.assertIn("RECOVERY_EVIDENCE_CURRENT", recovery["reasons"])
         self.assertIn("run:performance:348", health["evidence_refs"])
 
-    def test_corrective_quality_class_materializes_via_existing_workitem_dispatcher(self):
+    def test_critical_quality_failure_materializes_corrective_work_through_existing_dispatcher(self):
         gates = gate_evidence()
         gates[2]["status"] = "FAIL"
         health = derive(gates, [])
@@ -344,7 +351,7 @@ class QualityEngineeringE2ETests(unittest.TestCase):
             done["evidence"],
         )
 
-    def test_docs_close_quality_dag_without_parallel_engine(self):
+    def test_docs_define_single_quality_pipeline_and_external_dimension_boundaries(self):
         text = (
             ROOT / "docs" / "quality-engineering.md"
         ).read_text(encoding="utf-8")
