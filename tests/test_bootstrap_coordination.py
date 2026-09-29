@@ -76,7 +76,7 @@ class BootstrapCoordinationTests(unittest.TestCase):
     def test_patch_is_path_allowlisted_and_bounded(self):
         patch=b.build_patch(CALLER); self.assertEqual(set(patch), {b.CALLER_PATH,b.TEST_PATH})
         with self.assertRaises(b.BootstrapError): b.validate_patch({"evil.txt":"x", **patch})
-        with self.assertRaises(b.BootstrapError): b.validate_patch({b.CALLER_PATH:"x"*(b.MAX_FILE+1), b.TEST_PATH:"x"})
+        with self.assertRaises(b.BootstrapError): b.validate_patch({b.CALLER_PATH:"x"*(b.GRINDFLOW_MAX_FILE+1), b.TEST_PATH:"x"})
         gateway=b.GitHubGateway("token"); paths=set(patch)
         with mock.patch.object(gateway,"_request",side_effect=[{"tree":{"sha":"t"}}, {"tree":[{"path":".github","mode":"120000"}]}]):
             with self.assertRaisesRegex(b.BootstrapError,"symlinks"): gateway.tree_info("pl0n3r/Consumer",SHA,paths)
