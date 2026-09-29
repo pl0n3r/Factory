@@ -2,6 +2,7 @@ import copy
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from performance.contract import (
     ALLOWED_ACTIONS,
@@ -87,6 +88,35 @@ class PerformanceContractTests(unittest.TestCase):
         invalid["surfaces"][0]["metrics"][0]["allowed_actions"] = ["write_production"]
         with self.assertRaises(PerformanceContractError):
             validate_performance_contract(invalid)
+
+    def test_extreme_integer_fails_with_canonical_error_without_echo(self):
+        extreme = 10 ** 1000
+        payload = contract()
+        payload["surfaces"][0]["metrics"][0]["baseline"]["value"] = extreme
+
+        with self.assertRaises(PerformanceContractError) as caught:
+            validate_performance_contract(payload)
+
+        self.assertNotIn(str(extreme), str(caught.exception))
+
+    def test_extreme_integer_regression_protects_number_validation_order(self):
+        payload = contract()
+        payload["surfaces"][0]["metrics"][0]["baseline"]["value"] = 10 ** 1000
+
+        with patch(
+            "performance.contract.math.isfinite",
+            side_effect=AssertionError("int no debe llegar a math.isfinite"),
+        ):
+            with self.assertRaises(PerformanceContractError):
+                validate_performance_contract(payload)
+
+            valid = contract()
+            valid["surfaces"][0]["metrics"][0]["baseline"]["value"] = 10 ** 15
+            normalized = validate_performance_contract(valid)
+            self.assertEqual(
+                normalized["surfaces"][0]["metrics"][0]["baseline"]["value"],
+                10 ** 15,
+            )
 
     def test_schema_validator_and_docs_share_contract_v1(self):
         schema = json.loads((ROOT / "performance" / "contract.schema.json").read_text())
