@@ -46,4 +46,4 @@ jobs:
           GOVERNANCE_REF: ${{ inputs.governance_ref }}
           IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
           FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
-        run: python3 runtime/scripts/bootstrap_coordination.py --caller-template governance/template/.github/workflows/coordinacion.yml
+        run: python3 runtime/scripts/bootstrap_coordination.py
