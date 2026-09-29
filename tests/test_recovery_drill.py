@@ -46,11 +46,15 @@ def verified_backup():
     return verify_backup_evidence(m, pipeline, evidence)
 
 
-def evidence(incident="2026-09-29T00:10:00Z", completed="2026-09-29T00:40:00Z"):
+def evidence(
+    incident="2026-09-29T00:10:00Z",
+    started="2026-09-29T00:12:00Z",
+    completed="2026-09-29T00:40:00Z",
+):
     return {
         "backup_id": "backup:001", "checksum_sha256": "a" * 64,
         "health_ok": True, "smoke_ok": True, "integrity_ok": True,
-        "incident_at": incident, "started_at": "2026-09-29T00:12:00Z",
+        "incident_at": incident, "started_at": started,
         "completed_at": completed, "evidence_refs": ["drill:001"],
     }
 
@@ -100,7 +104,9 @@ class RecoveryDrillTests(unittest.TestCase):
         self.assertEqual(passed["observed"]["rto_seconds"], 1680)
 
         breached_evidence = evidence(
-            "2026-09-29T00:20:00Z", "2026-09-29T01:30:00Z"
+            "2026-09-29T00:20:00Z",
+            "2026-09-29T00:22:00Z",
+            "2026-09-29T01:30:00Z",
         )
         breached = evaluate_restore_drill(
             recovery, plan, backup, breached_evidence
