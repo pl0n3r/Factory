@@ -61,5 +61,15 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write",text)
         self.assertNotIn("issues: write",text)
 
+    def test_consumer_checkout_uses_fixed_main(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        block=text.split("repository: ${{ inputs.target_repository }}",1)[1].split("path: consumer",1)[0]
+        self.assertIn("ref: main",block)
+
+    def test_expected_main_sha_is_not_checkout_ref(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("ref: ${{ inputs.expected_main_sha }}",text)
+        self.assertIn("EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}",text)
+
 if __name__=="__main__":
     unittest.main()
