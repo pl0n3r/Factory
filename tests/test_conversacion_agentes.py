@@ -87,8 +87,11 @@ class ConversacionAgentesTests(unittest.TestCase):
             self.assertEqual(len(d063), 1, ruta)
             self.assertIn("ninguna puerta legal", d063[0]["text"])
         script = (ROOT / "scripts/auditar_privacidad.py").read_text(encoding="utf-8")
-        self.assertIn('"recommendation": "B"', script)
+        self.assertIn('recommendation = "B"', script)
+        self.assertIn('recommendation = "A"', script)
+        self.assertIn('"d063_applies": d063_applies', script)
         self.assertIn("no bloquea el trabajo en construcción", script)
+        self.assertIn("puerta es bloqueante", script)
         self.assertIn("go-live", (ROOT / "decisiones.yml").read_text(encoding="utf-8"))
 
 
