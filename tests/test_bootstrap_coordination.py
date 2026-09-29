@@ -507,4 +507,55 @@ class BootstrapCoordinationTests(unittest.TestCase):
             b.prepare_delivery_patch(raw,CALLER,root)
 
 
+    def test_grindflow_real_lock_uses_consumer_specific_limit(self):
+        tmp,root=self._grindflow_fixture()
+        self.addCleanup(tmp.cleanup)
+        lock=json.loads((root/"package-lock.json").read_text(encoding="utf-8"))
+        lock["padding"]="x"*(b.MAX_FILE+4096)
+        (root/"package-lock.json").write_text(json.dumps(lock,indent=2)+"\n",encoding="utf-8")
+        completed=lambda args,**kwargs: subprocess.CompletedProcess(
+            args,0,stdout=(SHA+"\n" if args[:3]==["git","rev-parse","HEAD"] else ""),stderr=""
+        )
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed):
+            patch=b.grindflow_delivery_patch(CALLER,root,SHA)
+        size=len(patch[b.LOCK_PATH].encode())
+        self.assertGreater(size,b.MAX_FILE)
+        self.assertLess(size,b.GRINDFLOW_MAX_FILE)
+
+        lock["padding"]="x"*(b.GRINDFLOW_MAX_FILE+4096)
+        (root/"package-lock.json").write_text(json.dumps(lock,indent=2)+"\n",encoding="utf-8")
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed):
+            with self.assertRaisesRegex(b.BootstrapError,"excede límite"):
+                b.grindflow_delivery_patch(CALLER,root,SHA)
+
+    def test_regular_consumer_keeps_generic_file_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/"plain.txt").write_text("x"*(b.MAX_FILE+1),encoding="utf-8")
+            with self.assertRaisesRegex(b.BootstrapError,"excede límite"):
+                b._regular_text(root,"plain.txt")
+
+    def test_prepared_manifest_remains_bound_before_write(self):
+        raw=request()
+        req=b.validate_request(raw)
+        patch=b.build_patch(CALLER)
+        prepared={
+            "version":1,
+            "identity":b.identity(req),
+            "target_repository":req["target_repository"],
+            "expected_main_sha":req["expected_main_sha"],
+            "patch_sha256":b.patch_sha(patch),
+            "patch":patch,
+        }
+        self.assertEqual(b.load_prepared_delivery(raw,prepared),patch)
+        tampered=json.loads(json.dumps(prepared))
+        tampered["patch"][b.CALLER_PATH]+="# tamper\n"
+        with self.assertRaisesRegex(b.BootstrapError,"cambió"):
+            b.load_prepared_delivery(raw,tampered)
+        wrong=json.loads(json.dumps(prepared))
+        wrong["identity"]="0"*64
+        with self.assertRaisesRegex(b.BootstrapError,"intención"):
+            b.load_prepared_delivery(raw,wrong)
+
+
 if __name__ == "__main__": unittest.main()
