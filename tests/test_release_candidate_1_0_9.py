@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -23,41 +24,39 @@ class ReleaseCandidate109Tests(unittest.TestCase):
         self.assertEqual(payload, {"version": "1.0.9"})
 
     def test_candidate_contains_cross_main_bootstrap_contract(self) -> None:
-        """El candidato conserva la reconciliación cross-main de GrindFlow #188."""
-        coordinator = (
+        """El candidato conserva autenticidad histórica y cadena legacy lineal."""
+        bootstrap = (
             self.root / "scripts" / "bootstrap_coordination.py"
         ).read_text(encoding="utf-8")
         regressions = (
             self.root / "tests" / "test_bootstrap_coordination.py"
         ).read_text(encoding="utf-8")
 
-        production_contract = (
-            'historical=parse_marker(pr.get("body"))',
-            'self.main_descends_from(name,historical["expected_main_sha"],req["expected_main_sha"])',
-            "def commit_matches_marker(",
-            "or len(parents)!=1",
-            'or parents[0].get("sha")!=previous',
-            "def materialize_replacement(",
-            '"parents":[expected]',
-            "Supersedes bootstrap PR #{legacy_pr}.",
-        )
-        for marker in production_contract:
-            self.assertIn(marker, coordinator)
+        for marker in (
+            "def main_descends_from",
+            "def legacy_marker",
+            "def commit_matches_marker",
+            "def materialize_replacement",
+            "historical=parse_marker",
+            "previous=expected",
+            "len(parents)!=1",
+            "parents[0].get(\"sha\")!=previous",
+        ):
+            self.assertIn(marker, bootstrap)
 
-        regression_contract = (
-            "test_historical_legacy_identity_is_verified_independently_from_new_request",
+        for marker in (
             "test_legacy_from_previous_main_can_be_reconciled_against_current_exact_main",
             "test_grindflow_188_real_sha_transition",
             "test_cross_main_legacy_rejects_non_linear_history",
             "f5b74ddff10569023dd1b2a73de5dd8937bc3192",
-            "4e28fbb277c3642e48535a005540d159c2c5c21e",
+            "e9d3daafd407abd4d375f5b7b344e4316b8935eb",
+            "3282f81e8bdec055bd91e2347f43a4c2bd9e6125",
             "7f5929a70990574453855e02d8c5021bf97a646b",
-        )
-        for marker in regression_contract:
+        ):
             self.assertIn(marker, regressions)
 
     def test_candidate_keeps_human_release_boundary(self) -> None:
-        """Preparar 1.0.9 no publica: exige dispatch, SHA exacto y gate humano."""
+        """Preparar 1.0.9 no elimina la puerta humana de publicación."""
         workflow = (
             self.root / ".github" / "workflows" / "release-bootstrap.yml"
         ).read_text(encoding="utf-8")
@@ -65,7 +64,8 @@ class ReleaseCandidate109Tests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("expected_sha:", workflow)
         self.assertIn("gate_issue:", workflow)
-        self.assertNotIn("\npush:", workflow)
+        self.assertIn("needs: preflight", workflow)
+        self.assertIsNone(re.search(r"(?m)^\s{2}push\s*:", workflow))
 
 
 if __name__ == "__main__":
