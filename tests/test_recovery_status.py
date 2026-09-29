@@ -182,10 +182,29 @@ class RecoveryStatusTests(unittest.TestCase):
         )
         self.assertEqual(future["state"], "BLOCKED")
 
+        forged = {
+            "version": 1, "state": "HEALTHY", "work_item_classes": [],
+            "authority": "production-write", "execute": False,
+        }
         with self.assertRaises(RecoveryStatusError):
-            recovery_work_item_classes(
-                {"state": "HEALTHY", "work_item_classes": ["other"]}
-            )
+            project_recovery_readiness(forged)
+
+        forged = {
+            "version": 1, "state": "HEALTHY", "work_item_classes": ["other"],
+            "authority": "unchanged", "execute": False,
+        }
+        with self.assertRaises(RecoveryStatusError):
+            recovery_work_item_classes(forged)
+
+        incoherent = copy.deepcopy(drill())
+        incoherent["status"] = "BREACHED"
+        incoherent["reasons"] = ["RPO_EXCEEDED"]
+        blocked = derive_recovery_health(
+            recovery, backup(), incoherent,
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(blocked["state"], "BLOCKED")
 
 
 if __name__ == "__main__":
