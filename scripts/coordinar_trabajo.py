@@ -1223,7 +1223,16 @@ def reserve_work(
         )
 
     if STATUS_AVAILABLE not in labels:
-        return None
+        visible_states = sorted(
+            label
+            for label in labels
+            if label.startswith("estado: ") or label.startswith("status: ")
+        )
+        rendered = ", ".join(visible_states) if visible_states else "sin estado canónico"
+        raise CoordinationError(
+            f"Issue #{issue_number} no está disponible para {PROFILE.take}: "
+            f"estado actual: {rendered}; se requiere {STATUS_AVAILABLE}."
+        )
 
     pending_recovery = recovery_issue_numbers(api)
     if pending_recovery:
