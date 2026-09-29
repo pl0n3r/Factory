@@ -6,6 +6,11 @@ import json
 from typing import Any
 
 from intelligence.project_dna import UNKNOWN, validate_project_dna
+from quality.contract import (
+    QualityContractError,
+    quality_contract_fingerprint,
+    validate_quality_contract,
+)
 
 
 DOD_VERSION = 1
@@ -58,6 +63,24 @@ RISK_PROFILES = {
         {"kind": "check", "target": "security:scan"},
         {"kind": "check", "target": "smoke:exact-sha"},
     ),
+}
+
+QUALITY_GATE_KIND = {
+    "unit": "test",
+    "integration": "test",
+    "contract": "test",
+    "database": "test",
+    "tenancy": "test",
+    "e2e": "test",
+    "browser": "test",
+    "mobile": "test",
+    "accessibility": "check",
+    "security": "check",
+    "performance": "check",
+    "resilience": "test",
+    "migration": "check",
+    "smoke": "check",
+    "observability": "check",
 }
 
 SAFE_FALLBACK = (
@@ -119,6 +142,59 @@ def _task_contract(task: Any) -> dict[str, Any]:
     }
 
 
+def _validated_quality_context(
+    dna: dict[str, Any],
+    quality_contract: Any,
+) -> dict[str, Any] | None:
+    declared = dna["extensions"].get("quality_contract")
+    if declared is None:
+        if quality_contract is not None:
+            raise DodCompilerError(
+                "Quality Contract no declarado por Project DNA"
+            )
+        return None
+    if quality_contract is None:
+        raise DodCompilerError(
+            "Project DNA declara Quality Contract pero falta evidencia fuente"
+        )
+    try:
+        normalized = validate_quality_contract(quality_contract)
+        fingerprint = quality_contract_fingerprint(normalized)
+    except QualityContractError as exc:
+        raise DodCompilerError("Quality Contract inválido") from exc
+    if (
+        declared["version"] != normalized["version"]
+        or declared["fingerprint"] != fingerprint
+    ):
+        raise DodCompilerError(
+            "Quality Contract no coincide con fingerprint de Project DNA"
+        )
+    return normalized
+
+
+def _quality_evidence(
+    quality: dict[str, Any],
+    surfaces: list[str],
+) -> list[dict[str, str]]:
+    declared = {row["id"]: row for row in quality["surfaces"]}
+    evidence: list[dict[str, str]] = []
+    for surface in surfaces:
+        if surface not in declared:
+            raise DodCompilerError(
+                "task.surfaces contiene superficie no declarada por Quality Contract"
+            )
+        for gate in declared[surface]["required_gates"]:
+            if gate not in QUALITY_GATE_KIND:
+                raise DodCompilerError("Quality gate fuera del catálogo")
+            evidence.append(
+                {
+                    "kind": QUALITY_GATE_KIND[gate],
+                    "target": f"quality:{gate}",
+                }
+            )
+    return evidence
+
+
 def _has_unknown_dna(dna: dict[str, Any]) -> bool:
     fields = (
         "stack",
@@ -146,10 +222,16 @@ def _machine_verifiable(item: dict[str, str]) -> bool:
     )
 
 
-def compile_done_contract(*, project_dna: Any, task: Any) -> dict[str, Any]:
+def compile_done_contract(
+    *,
+    project_dna: Any,
+    task: Any,
+    quality_contract: Any = None,
+) -> dict[str, Any]:
     """Deriva evidencia requerida sin debilitar el estándar ante unknown."""
     dna = validate_project_dna(project_dna)
     normalized_task = _task_contract(task)
+    quality = _validated_quality_context(dna, quality_contract)
 
     evidence = list(FACTORY_INVARIANTS)
     incomplete_context = (
@@ -174,6 +256,11 @@ def compile_done_contract(*, project_dna: Any, task: Any) -> dict[str, Any]:
             )
         profile = "derived"
 
+    if quality is not None:
+        evidence.extend(
+            _quality_evidence(quality, normalized_task["surfaces"])
+        )
+
     deduped = {
         _evidence_key(item): {"kind": item["kind"], "target": item["target"]}
         for item in evidence
@@ -195,5 +282,9 @@ def compile_done_contract(*, project_dna: Any, task: Any) -> dict[str, Any]:
         "evidence": ordered,
         "project_dna_fingerprint": dna["fingerprint"],
     }
+    if quality is not None:
+        contract["quality_contract_fingerprint"] = quality_contract_fingerprint(
+            quality
+        )
     contract["fingerprint"] = _stable_hash(contract)
     return contract
