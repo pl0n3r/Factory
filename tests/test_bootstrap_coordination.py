@@ -422,7 +422,7 @@ class BootstrapCoordinationTests(unittest.TestCase):
         lock={"name":"grindflow","version":version,"lockfileVersion":3,"packages":{"":{"name":"grindflow","version":version}}}
         (root/"package.json").write_text(json.dumps(package,indent=2)+"\n",encoding="utf-8")
         (root/"package-lock.json").write_text(json.dumps(lock,indent=2)+"\n",encoding="utf-8")
-        (root/"README.md").write_text("# GrindFlow — Último deploy\nVersion "+version+"\n",encoding="utf-8")
+        (root/"README.md").write_text("# GrindFlow — Último deploy\nVersion v"+version+"\n",encoding="utf-8")
         (root/"scripts/readme-dashboard.py").write_text("# README dashboard updater supports --update\n",encoding="utf-8")
         return tmp,root
 
