@@ -39,15 +39,32 @@ def _extract_marker(body: str, name: str) -> str | None:
     if not isinstance(body, str) or len(body) > MAX_BODY:
         raise PlanError("El cuerpo del Issue es inválido o demasiado grande.")
     prefix = f"<!-- {name} "
+    html_prefix = f"<!-- {name}"
     suffix = " -->"
-    count = body.count(prefix)
-    if count == 0:
-        if name in body:
-            raise PlanError(f"Marker {name} malformado.")
+    canonical_starts: list[int] = []
+    search_from = 0
+
+    while True:
+        start = body.find(html_prefix, search_from)
+        if start < 0:
+            break
+        boundary = start + len(html_prefix)
+        if (
+            boundary == len(body)
+            or body[boundary].isspace()
+            or body.startswith("-->", boundary)
+        ):
+            if body.startswith(prefix, start):
+                canonical_starts.append(start)
+            else:
+                raise PlanError(f"Marker {name} malformado.")
+        search_from = boundary
+
+    if not canonical_starts:
         return None
-    if count != 1:
+    if len(canonical_starts) != 1:
         raise PlanError(f"Debe existir un único marker {name}.")
-    start = body.index(prefix) + len(prefix)
+    start = canonical_starts[0] + len(prefix)
     end = body.find(suffix, start)
     if end < 0:
         raise PlanError(f"Marker {name} malformado.")

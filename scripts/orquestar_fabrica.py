@@ -120,6 +120,11 @@ def _existing_tasks(
                         f"(épico #{historical_epic})."
                     )
                 continue
+            if str(exc) == "Marker factory-plan-task malformado.":
+                raise PlanError(
+                    "Body enriquecido ambiguo: "
+                    "factory-plan-task adicional o malformado."
+                ) from exc
             raise PlanError(
                 f"Issue #{issue_number} tiene marker de tarea inválido."
             ) from exc
