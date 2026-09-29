@@ -2137,9 +2137,20 @@ class CoordinacionTests(unittest.TestCase):
         with self.assertRaisesRegex(CoordinationError, "como máximo un"):
             validate_pull(api, 15, True)
 
+        api.pulls[15]["body"] = (
+            '<!-- factory-issue-lifecycle '
+            '{"version":1,"issue":12,"mode":"post_merge_validation","extra":true} -->\n'
+            f"<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+        with self.assertRaisesRegex(CoordinationError, "solo admite"):
+            validate_pull(api, 15, True)
+
         api.comments.clear()
         api.pulls[15]["body"] = f"{marker}\n<!-- condor-reserva-id: {SESSION_A} -->"
-        with self.assertRaisesRegex(CoordinationError, "reserva activa"):
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "marcador de reserva activo y confiable",
+        ):
             validate_pull(api, 15, True)
 
     def test_post_merge_incident_lifecycle_is_documented(self) -> None:
