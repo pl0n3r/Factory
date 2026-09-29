@@ -17,41 +17,107 @@
     "fingerprint"
   ],
   "properties": {
-    "version": {"const": 1},
-    "stack": {"$ref": "#/$defs/knownOrList"},
-    "frameworks": {"$ref": "#/$defs/knownOrList"},
-    "data": {"$ref": "#/$defs/knownOrList"},
-    "ci": {"$ref": "#/$defs/knownOrList"},
-    "hosting": {"$ref": "#/$defs/knownOrList"},
-    "integrations": {"$ref": "#/$defs/knownOrList"},
-    "capabilities": {"$ref": "#/$defs/knownOrList"},
+    "version": {
+      "const": 1
+    },
+    "stack": {
+      "$ref": "#/$defs/knownOrList"
+    },
+    "frameworks": {
+      "$ref": "#/$defs/knownOrList"
+    },
+    "data": {
+      "$ref": "#/$defs/knownOrList"
+    },
+    "ci": {
+      "$ref": "#/$defs/knownOrList"
+    },
+    "hosting": {
+      "$ref": "#/$defs/knownOrList"
+    },
+    "integrations": {
+      "$ref": "#/$defs/knownOrList"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/knownOrList"
+    },
     "signals": {
       "type": "object",
-      "required": ["paths", "manifests"],
+      "required": [
+        "paths",
+        "manifests"
+      ],
       "properties": {
-        "paths": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-        "manifests": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "manifests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
       },
       "additionalProperties": false
     },
     "extensions": {
       "type": "object",
       "description": "Namespace para capacidades futuras sin romper los campos base.",
+      "properties": {
+        "quality_contract": {
+          "$ref": "#/$defs/qualityContractRef"
+        }
+      },
       "additionalProperties": true
     },
-    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
   },
   "$defs": {
     "knownOrList": {
       "oneOf": [
-        {"const": "unknown"},
+        {
+          "const": "unknown"
+        },
         {
           "type": "array",
-          "items": {"type": "string", "minLength": 1},
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "uniqueItems": true,
           "minItems": 1
         }
       ]
+    },
+    "qualityContractRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "source_ref",
+        "fingerprint"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "source_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$"
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
     }
   },
   "additionalProperties": false
