@@ -8,4 +8,4 @@ La selección filtra scope, categoría y tags; rechaza sensitivity distinta de n
 
 context_items contiene exactamente category, source, text y tags, compatibles con Context Compiler. Provenance, authority_class y estado permanecen en bindings de trazabilidad con authority=unchanged. El adapter no ejecuta Context Compiler.
 
-Boundary: #320 cubre postmortem, #321 selección, #322 E2E lifecycle/context/pruning/guardrails. Sin embeddings/vector DB, búsqueda externa, scheduler, polling, store documental ni mutaciones de Knowledge Items.
+Boundary: #320 cubre postmortem, #321 selección, #322 E2E lifecycle/context/pruning/guardrails. No crea un Knowledge Engine. Sin embeddings/vector DB, búsqueda externa, scheduler, polling, store documental ni mutaciones de Knowledge Items.
