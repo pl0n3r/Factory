@@ -108,6 +108,10 @@ class ConversacionAgentesTests(unittest.TestCase):
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
         self.assertIn("condición de desbloqueo", plan)
         self.assertIn("en masa", plan)
+        self.assertIn("comentario con la **causa**", plan)
+        self.assertIn("sin ese comentario en cada uno", plan)
+        self.assertIn("Quien cierra la causa desbloquea", plan)
+        self.assertIn("estado: disponible", plan)
         registros = (ROOT / "lecciones/registros/factory.jsonl").read_text(encoding="utf-8")
         ids = [json.loads(x)["id"] for x in registros.splitlines() if x.strip()]
         self.assertIn("factory-20260929-bloqueos-sin-causa", ids)
