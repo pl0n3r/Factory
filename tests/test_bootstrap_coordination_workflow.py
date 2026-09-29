@@ -61,5 +61,13 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write",text)
         self.assertNotIn("issues: write",text)
 
+    def test_artifact_download_stays_under_runner_temp(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        apply=text.split("\n  apply:",1)[1]
+        self.assertIn("path: ${{ runner.temp }}/factory-bootstrap-delivery",apply)
+        self.assertIn("FACTORY_PREPARED_DIR: ${{ runner.temp }}/factory-bootstrap-delivery",apply)
+        self.assertNotIn("path: .\n",apply)
+        self.assertNotIn("FACTORY_PREPARED_DIR: .",apply)
+
 if __name__=="__main__":
     unittest.main()
