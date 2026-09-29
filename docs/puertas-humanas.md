@@ -72,7 +72,7 @@ En eventos `opened|edited|reopened`, el workflow verifica primero la asociación
 
 ## Puertas automáticas de privacidad
 
-El reusable workflow `.github/workflows/auditoria-privacidad.yml` puede crear una puerta de categoría `legal` únicamente cuando el mapa `datos.yml` introduce o cambia una finalidad, incorpora una categoría sensible o agrega un proveedor receptor. La puerta usa el marker `factory-human-gate` y mantiene como default seguro continuar en fase `construccion` con estado `documented_not_legally_approved`.
+El reusable workflow `.github/workflows/auditoria-privacidad.yml` puede crear una puerta de categoría `legal` únicamente cuando el mapa `datos.yml` introduce o cambia una finalidad, incorpora una categoría sensible o agrega un proveedor receptor. En fase `construccion` la puerta es **informativa (D-063)**: recomienda y usa como default seguro continuar, y no detiene el trabajo; la revisión jurídica se resuelve antes de live. La puerta usa el marker `factory-human-gate` y mantiene como default seguro continuar en fase `construccion` con estado `documented_not_legally_approved`.
 
 La auditoría nunca copia valores observados del código a Issues: publica únicamente identificadores controlados de señales/proveedores y rutas del repositorio. El Issue técnico de auditoría es idempotente y se cierra automáticamente cuando deja de haber drift. Una puerta legal, en cambio, **no se cierra automáticamente**: requiere la decisión humana correspondiente.
 

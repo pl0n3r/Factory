@@ -79,6 +79,18 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertIn("| `pl0n3r/AutoFactory` | Público |", arquitectura)
         self.assertNotIn("| `pl0n3r/AutoFactory` | Privado |", arquitectura)
 
+    def test_legal_no_bloquea_en_construccion_d063(self):
+        import json
+        for ruta in ("decisiones.yml", "template/decisiones.yml"):
+            data = json.loads((ROOT / ruta).read_text(encoding="utf-8"))
+            d063 = [d for d in data["decisions"] if d["id"] == "D-063"]
+            self.assertEqual(len(d063), 1, ruta)
+            self.assertIn("ninguna puerta legal", d063[0]["text"])
+        script = (ROOT / "scripts/auditar_privacidad.py").read_text(encoding="utf-8")
+        self.assertIn('"recommendation": "B"', script)
+        self.assertIn("no bloquea el trabajo en construcción", script)
+        self.assertIn("go-live", (ROOT / "decisiones.yml").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

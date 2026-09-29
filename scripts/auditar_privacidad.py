@@ -182,7 +182,8 @@ def build_legal_gate_body(project: str, reasons: list[str]) -> str:
         raise PrivacyAuditError("no hay cambio material para puerta legal")
     context = (
         f"{project}: la auditoría detectó {len(reasons)} cambio(s) material(es) "
-        "de privacidad que requieren decisión jurídica humana."
+        "de privacidad; quedan documentados para revisión jurídica antes de live "
+        "(D-063: no bloquean el trabajo en construcción)."
     )
     gate = {
         "category": "legal",
@@ -197,7 +198,7 @@ def build_legal_gate_body(project: str, reasons: list[str]) -> str:
                 "label": "Continuar en construcción manteniendo documented_not_legally_approved",
             },
         ],
-        "recommendation": "A",
+        "recommendation": "B",
         "safe_default": "B",
     }
     try:
@@ -213,7 +214,8 @@ def build_legal_gate_body(project: str, reasons: list[str]) -> str:
         "Motivos estructurados:\n"
         f"{reason_lines}\n\n"
         "La documentación permanece en estado "
-        "`documented_not_legally_approved` hasta una decisión humana.\n\n"
+        "`documented_not_legally_approved` hasta la revisión jurídica previa a live. "
+        "Esta puerta es informativa: no bloquea el trabajo en construcción.\n\n"
         f"<!-- factory-human-gate {encoded} -->\n"
     )
 
