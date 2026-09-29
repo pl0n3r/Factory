@@ -304,7 +304,13 @@ def audit_sources(
     field_findings = _findings(observed_fields, declared_fields)
     provider_findings = _findings(observed_providers, declared_providers)
     reasons = material_change_reasons(previous_document, current, rules)
-    d063_applies = current["phase"] == "construccion"
+    attestation = current.get("d063_attestation")
+    d063_applies = (
+        current["phase"] == "construccion"
+        and isinstance(attestation, dict)
+        and attestation.get("nothing_live") is True
+        and attestation.get("no_real_customer_data") is True
+    )
 
     report: dict[str, Any] = {
         "project": current["project"],
