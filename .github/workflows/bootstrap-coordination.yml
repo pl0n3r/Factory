@@ -49,7 +49,7 @@ jobs:
           EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
           GOVERNANCE_REF: ${{ inputs.governance_ref }}
           IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
-        run: python3 runtime/scripts/bootstrap_coordination.py --prepare /tmp/bootstrap-delivery.json --consumer-root consumer
+        run: python3 runtime/scripts/bootstrap_coordination.py --prepare --consumer-root consumer
       - name: Crear rama y PR bootstrap desde entrega preparada
         env:
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
@@ -58,4 +58,4 @@ jobs:
           GOVERNANCE_REF: ${{ inputs.governance_ref }}
           IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
           FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
-        run: python3 runtime/scripts/bootstrap_coordination.py --apply-prepared /tmp/bootstrap-delivery.json
+        run: python3 runtime/scripts/bootstrap_coordination.py --apply-prepared
