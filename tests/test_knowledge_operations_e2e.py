@@ -168,7 +168,7 @@ class KnowledgeOperationsE2ETests(unittest.TestCase):
         )
         deprecated = transition_knowledge(
             first, target_state="deprecated", at="2026-09-28T00:00:00Z",
-            evidence=["pl0n3r/Factory#322@supersession"], reason="superseded",
+            evidence=["pl0n3r/Factory#322@event:supersession"], reason="superseded",
         )
         proposals = propose_pruning_candidates([deprecated, second], now_at=NOW)
         self.assertTrue(proposals)
