@@ -8,7 +8,7 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
     def test_consumer_preparation_has_no_provision_secret(self):
         text=WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("Preparar contrato del consumidor sin secretos",text)
-        self.assertIn("--prepare /tmp/bootstrap-delivery.json --consumer-root consumer",text)
+        self.assertIn("--prepare --consumer-root consumer",text)
         prepare=text.split("- name: Preparar contrato del consumidor sin secretos",1)[1].split(
             "- name: Crear rama y PR bootstrap desde entrega preparada",1
         )[0]
@@ -16,7 +16,7 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertIn("persist-credentials: false",text)
         apply=text.split("- name: Crear rama y PR bootstrap desde entrega preparada",1)[1]
         self.assertIn("FACTORY_PROVISION_TOKEN",apply)
-        self.assertIn("--apply-prepared /tmp/bootstrap-delivery.json",apply)
+        self.assertIn("--apply-prepared",apply)
         self.assertNotIn("--consumer-root",apply)
 
     def test_permissions_and_human_gates_are_not_expanded(self):
