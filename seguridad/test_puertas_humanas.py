@@ -137,6 +137,14 @@ class GateTests(unittest.TestCase):
             {"status": "no-gate", "category": None},
         )
 
+    def test_marker_name_in_prose_is_not_gate_intent(self):
+        self.assertEqual(
+            classify_body(
+                "El nombre canónico factory-human-gate puede mencionarse en prosa."
+            ),
+            {"status": "no-gate", "category": None},
+        )
+
     def test_allowed_gate_is_classified(self):
         self.assertEqual(
             classify_body(body(gate())),

@@ -13,6 +13,7 @@ MARKER_RE = re.compile(
     r"<!--\s*factory-human-gate\s+(\{.*?\})\s*-->",
     re.DOTALL,
 )
+MARKER_INTENT_RE = re.compile(r"<!--\s*factory-human-gate\b")
 CATEGORIES = {
     "product-direction",
     "brand",
@@ -217,7 +218,7 @@ def classify_body(body: str, *, include_reason: bool = False) -> dict[str, Any]:
             reason=reason if include_reason else None,
         )
 
-    marker_intent = MARKER_NAME in body
+    marker_intent = MARKER_INTENT_RE.search(body) is not None
     if len(body) > MAX_ISSUE_BODY_CHARS:
         return invalid("El cuerpo supera el límite permitido.") if marker_intent else _result("no-gate")
 
