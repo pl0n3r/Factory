@@ -1,3 +1,5 @@
+import hashlib
+import json
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -49,11 +51,15 @@ class FakeGateway:
     def file_text(self, *_): return None
     def commit_matches(self, *_): return self.same
     def branch_matches(self, *_): return self.same
+    def pr_matches(self, *_): return self.same
     def delete_branch(self, _, branch): self.deleted.append(branch)
     def create_pr(self, _, branch, __, ___): self.created.append(("pr",branch)); return 98
     def materialize(self, req, patch):
         self.created.append((req, patch, b.branch_name(req)))
         return "c" * 40, 99
+    def materialize_replacement(self, req, patch, branch, legacy_branch, legacy_sha, legacy_pr):
+        self.created.append(("replacement",req,patch,branch,legacy_branch,legacy_sha,legacy_pr))
+        return "d" * 40, 100
 
 
 class BootstrapCoordinationTests(unittest.TestCase):
@@ -180,8 +186,194 @@ class BootstrapCoordinationTests(unittest.TestCase):
         with self.assertRaises(b.BootstrapError): b.bootstrap(raw,conflict,CALLER)
         stale=FakeGateway(main="d"*40,branch="c"*40,pr=None,same=True)
         patch=b.build_patch(CALLER); branch=b.branch_name(req)
-        with self.assertRaises(b.BootstrapError): b.reuse_existing(req,stale,patch,branch,stale.branch,None)
+        with self.assertRaises(b.BootstrapError): b.reuse_existing(req,stale,patch,b.legacy_patch(CALLER),branch,stale.branch,None)
         self.assertEqual(stale.deleted,[branch])
+        restored=FakeGateway(branch="c"*40,pr=None,same=True)
+        with mock.patch.object(restored,"create_pr",return_value=101) as create_pr:
+            result=b.reuse_existing(req,restored,patch,b.legacy_patch(CALLER),branch,restored.branch,None)
+        self.assertEqual(result,{"status":"confirmed","branch":branch,"pr":101,"created":True})
+        body=create_pr.call_args.args[3]
+        self.assertIn(f"Base exacta: `{req['expected_main_sha']}`",body)
+        self.assertIn(b.marker(req),body)
+
+
+    def _legacy_pr(self, req, branch, number=188):
+        return {
+            "number":number,
+            "state":"open",
+            "body":b.marker(req),
+            "base":{"ref":"main"},
+            "head":{"ref":branch,"repo":{"full_name":req["target_repository"]}},
+        }
+
+    def _legacy_upgrade_gateway(self):
+        req=b.validate_request(request())
+        patch=b.build_patch(CALLER)
+        legacy=b.legacy_patch(CALLER)
+        branch=b.branch_name(req)
+        old_sha="c"*40
+        legacy_pr=self._legacy_pr(req,branch)
+        gateway=FakeGateway(branch=old_sha,pr=legacy_pr,same=True)
+        replacement=b.replacement_branch_name(req,patch)
+        return req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway
+
+    def test_same_intent_stale_generated_patch_can_be_upgraded(self):
+        req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
+        with mock.patch.object(gateway,"branch_sha",side_effect=lambda _,v: old_sha if v==branch else None), \
+             mock.patch.object(gateway,"open_pr",side_effect=lambda _,v: legacy_pr if v==branch else None), \
+             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==legacy if v==branch else p==patch):
+            result=b.bootstrap(request(),gateway,CALLER)
+        self.assertEqual(result,{"status":"confirmed","branch":replacement,"pr":100,"created":True})
+        replacements=[row for row in gateway.created if row[0]=="replacement"]
+        self.assertEqual(len(replacements),1)
+        self.assertEqual(replacements[0][3],replacement)
+        self.assertEqual(gateway.deleted,[])
+
+    def test_upgrade_rejects_tampered_or_conflicting_existing_branch(self):
+        req,patch,legacy,branch,old_sha,legacy_pr,_,gateway=self._legacy_upgrade_gateway()
+        with mock.patch.object(gateway,"branch_sha",return_value=old_sha), \
+             mock.patch.object(gateway,"open_pr",return_value=legacy_pr), \
+             mock.patch.object(gateway,"branch_matches",return_value=False):
+            with self.assertRaisesRegex(b.BootstrapError,"otra intención"):
+                b.bootstrap(request(),gateway,CALLER)
+        self.assertEqual(gateway.created,[])
+
+    def test_upgrade_aborts_on_remote_head_drift(self):
+        gateway=b.GitHubGateway("token")
+        req=b.validate_request(request())
+        patch=b.build_patch(CALLER)
+        legacy_branch=b.branch_name(req)
+        replacement=b.replacement_branch_name(req,patch)
+        legacy_sha="c"*40
+        for changed in ("d"*40,SHA,"e"*40):
+            calls=[]
+            def api(method,path,payload=None,allow=()):
+                calls.append((method,path))
+                if "/git/blobs" in path: return {"sha":"b"*40}
+                if "/git/trees" in path: return {"sha":"t"*40}
+                if "/git/commits" in path: return {"sha":"f"*40}
+                return {}
+            with self.subTest(changed=changed), \
+                 mock.patch.object(gateway,"tree_info",return_value="base"), \
+                 mock.patch.object(gateway,"_request",side_effect=api), \
+                 mock.patch.object(gateway,"main_sha",return_value=SHA), \
+                 mock.patch.object(gateway,"legacy_pr_matches_exact",return_value=True), \
+                 mock.patch.object(gateway,"branch_sha",side_effect=[legacy_sha,changed]):
+                with self.assertRaisesRegex(b.BootstrapError,"cambió"):
+                    gateway.materialize_replacement(req,patch,replacement,legacy_branch,legacy_sha,188)
+            self.assertFalse(any(method=="POST" and "/git/refs" in path for method,path in calls))
+
+        calls=[]
+        def api_after_ref(method,path,payload=None,allow=()):
+            calls.append((method,path))
+            if "/git/blobs" in path: return {"sha":"b"*40}
+            if "/git/trees" in path: return {"sha":"t"*40}
+            if "/git/commits" in path: return {"sha":"f"*40}
+            return {}
+        with mock.patch.object(gateway,"tree_info",return_value="base"), \
+             mock.patch.object(gateway,"_request",side_effect=api_after_ref), \
+             mock.patch.object(gateway,"main_sha",return_value=SHA), \
+             mock.patch.object(gateway,"legacy_pr_matches_exact",return_value=True), \
+             mock.patch.object(gateway,"branch_sha",side_effect=[legacy_sha,legacy_sha,"d"*40]):
+            with self.assertRaisesRegex(b.BootstrapError,"cambió"):
+                gateway.materialize_replacement(req,patch,replacement,legacy_branch,legacy_sha,188)
+        self.assertTrue(any(method=="POST" and "/git/refs" in path for method,path in calls))
+        self.assertTrue(any(method=="DELETE" and "/git/refs/heads/" in path for method,path in calls))
+
+    def test_upgrade_revalidates_legacy_pr_before_and_after_replacement_ref(self):
+        gateway=b.GitHubGateway("token")
+        req=b.validate_request(request())
+        patch=b.build_patch(CALLER)
+        legacy_branch=b.branch_name(req)
+        replacement=b.replacement_branch_name(req,patch)
+        legacy_sha="c"*40
+        with mock.patch.object(gateway,"tree_info",return_value="base"), \
+             mock.patch.object(gateway,"_request") as api, \
+             mock.patch.object(gateway,"main_sha",return_value=SHA), \
+             mock.patch.object(gateway,"branch_sha",return_value=legacy_sha), \
+             mock.patch.object(gateway,"legacy_pr_matches_exact",return_value=False):
+            with self.assertRaisesRegex(b.BootstrapError,"primer write"):
+                gateway.materialize_replacement(req,patch,replacement,legacy_branch,legacy_sha,188)
+        api.assert_not_called()
+
+        calls=[]
+        def api_after_ref(method,path,payload=None,allow=()):
+            calls.append((method,path))
+            if "/git/blobs" in path: return {"sha":"b"*40}
+            if "/git/trees" in path: return {"sha":"t"*40}
+            if "/git/commits" in path: return {"sha":"f"*40}
+            return {}
+        with mock.patch.object(gateway,"tree_info",return_value="base"), \
+             mock.patch.object(gateway,"_request",side_effect=api_after_ref), \
+             mock.patch.object(gateway,"main_sha",return_value=SHA), \
+             mock.patch.object(gateway,"branch_sha",return_value=legacy_sha), \
+             mock.patch.object(gateway,"legacy_pr_matches_exact",side_effect=[True,True,False]):
+            with self.assertRaisesRegex(b.BootstrapError,"durante la migración"):
+                gateway.materialize_replacement(req,patch,replacement,legacy_branch,legacy_sha,188)
+        self.assertTrue(any(method=="POST" and "/git/refs" in path for method,path in calls))
+        self.assertTrue(any(method=="DELETE" and "/git/refs/heads/" in path for method,path in calls))
+
+    def test_upgrade_uses_only_canonical_template_and_allowlist(self):
+        req=b.validate_request(request())
+        patch=b.build_patch(CALLER)
+        legacy=b.legacy_patch(CALLER)
+        self.assertEqual(set(patch),{b.CALLER_PATH,b.TEST_PATH})
+        self.assertEqual(set(legacy),{b.CALLER_PATH,b.TEST_PATH})
+        self.assertNotEqual(patch,legacy)
+        self.assertIn("author_association == 'OWNER'",patch[b.CALLER_PATH])
+        self.assertIn("!startsWith(",legacy[b.CALLER_PATH])
+        expected=hashlib.sha256(json.dumps(patch,sort_keys=True,separators=(",",":")).encode()).hexdigest()[:12]
+        self.assertEqual(b.replacement_branch_name(req,patch),f"{b.branch_name(req)}-{expected}")
+
+    def test_replacement_branch_without_pr_recovers_only_after_exact_revalidation(self):
+        req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
+        replacement_sha="d"*40
+        with mock.patch.object(gateway,"branch_sha",side_effect=lambda _,v: old_sha if v==branch else replacement_sha if v==replacement else None), \
+             mock.patch.object(gateway,"open_pr",side_effect=lambda _,v: legacy_pr if v==branch else None), \
+             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==legacy if v==branch else p==patch if v==replacement else False), \
+             mock.patch.object(gateway,"create_pr",return_value=190) as create_pr:
+            result=b.bootstrap(request(),gateway,CALLER)
+        self.assertEqual(result,{"status":"confirmed","branch":replacement,"pr":190,"created":True})
+        self.assertEqual(gateway.created,[])
+        args=create_pr.call_args.args
+        self.assertEqual(args[1],replacement)
+        self.assertIn(f"Base exacta: `{req['expected_main_sha']}`",args[3])
+        self.assertIn(f"Supersedes bootstrap PR #{legacy_pr['number']}.",args[3])
+        self.assertIn(b.marker(req),args[3])
+
+    def test_create_pr_rolls_back_best_effort_on_transport_error(self):
+        gateway=b.GitHubGateway("token")
+        with mock.patch.object(gateway,"_request",side_effect=OSError("timeout")), \
+             mock.patch.object(gateway,"delete_branch") as delete_branch:
+            with self.assertRaises(OSError):
+                gateway.create_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187","title","body")
+        delete_branch.assert_called_once_with("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+    def test_upgraded_bootstrap_is_idempotent(self):
+        req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
+        replacement_sha="d"*40
+        replacement_pr=self._legacy_pr(req,replacement,189)
+        replacement_pr["body"] += f"\n\nSupersedes bootstrap PR #{legacy_pr['number']}."
+        with mock.patch.object(gateway,"branch_sha",side_effect=lambda _,v: old_sha if v==branch else replacement_sha if v==replacement else None), \
+             mock.patch.object(gateway,"open_pr",side_effect=lambda _,v: legacy_pr if v==branch else replacement_pr if v==replacement else None), \
+             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==legacy if v==branch else p==patch if v==replacement else False):
+            result=b.bootstrap(request(),gateway,CALLER)
+        self.assertEqual(result,{"status":"confirmed","branch":replacement,"pr":189,"created":False})
+        self.assertEqual(gateway.created,[])
+
+    def test_grindflow_188_existing_bootstrap_can_be_hardened(self):
+        req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
+        self.assertEqual(branch,"factory/bootstrap-coordination-187")
+        self.assertIn("!startsWith(",legacy[b.CALLER_PATH])
+        self.assertIn("author_association == 'OWNER'",patch[b.CALLER_PATH])
+        with mock.patch.object(gateway,"branch_sha",side_effect=lambda _,v: old_sha if v==branch else None), \
+             mock.patch.object(gateway,"open_pr",side_effect=lambda _,v: legacy_pr if v==branch else None), \
+             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==legacy if v==branch else p==patch):
+            result=b.bootstrap(request(),gateway,CALLER)
+        self.assertTrue(result["created"])
+        self.assertEqual(result["branch"],replacement)
+        self.assertNotEqual(result["branch"],branch)
+        self.assertEqual(gateway.deleted,[])
 
     def test_materialize_rolls_back_partial_remote_state(self):
         gateway=b.GitHubGateway("token"); req=b.validate_request(request()); patch=b.build_patch(CALLER)

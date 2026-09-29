@@ -95,6 +95,37 @@ def validate_patch(patch: Any) -> None:
 def build_patch(template: str) -> dict[str, str]:
     patch = {CALLER_PATH: caller_content(template), TEST_PATH: adoption_test()}; validate_patch(patch); return patch
 
+def legacy_patch(template: str) -> dict[str, str]:
+    current = caller_content(template)
+    trusted = (
+        "  validar-pr:\n"
+        "    if: >-\n"
+        "      github.event_name == 'pull_request' &&\n"
+        "      !(\n"
+        "        startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-') &&\n"
+        "        github.event.pull_request.head.repo.full_name == github.repository &&\n"
+        "        github.event.pull_request.author_association == 'OWNER'\n"
+        "      )\n"
+    )
+    legacy = (
+        "  validar-pr:\n"
+        "    if: >-\n"
+        "      github.event_name == 'pull_request' &&\n"
+        "      !startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')\n"
+    )
+    if current.count(trusted) != 1:
+        raise BootstrapError("Caller actual no expone el guard bootstrap esperado.")
+    caller = current.replace(trusted, legacy, 1)
+    test = '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("!startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("require_reservation: true", text)\n        self.assertIn("operation: pr", text)\n        for event in ("issue_comment:", "issues:", "pull_request:", "workflow_dispatch:", "schedule:"):\n            self.assertIn(event, text)\n'''
+    patch = {CALLER_PATH: caller, TEST_PATH: test}; validate_patch(patch); return patch
+
+def patch_sha(patch: dict[str,str]) -> str:
+    validate_patch(patch)
+    return hashlib.sha256(json.dumps(patch,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+
+def replacement_branch_name(req: dict[str,Any], patch: dict[str,str]) -> str:
+    return f"{branch_name(req)}-{patch_sha(patch)[:12]}"
+
 class GitHubGateway:
     def __init__(self, token: str) -> None:
         if not isinstance(token, str) or not token.strip(): raise BootstrapError("FACTORY_PROVISION_TOKEN no configurado.")
@@ -129,6 +160,22 @@ class GitHubGateway:
         value=self._request("GET",f"/repos/{name}/pulls?state=open&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
         if not isinstance(value,list) or len(value)>1: raise BootstrapError("Estado de PR ambiguo.")
         return value[0] if value else None
+    def pr_matches(self,name: str,branch: str,pr: Any,req: dict[str,Any])->bool:
+        return bool(
+            isinstance(pr,dict)
+            and isinstance(pr.get("number"),int)
+            and pr.get("state","open")=="open"
+            and isinstance(pr.get("base"),dict)
+            and pr["base"].get("ref")=="main"
+            and isinstance(pr.get("head"),dict)
+            and pr["head"].get("ref")==branch
+            and isinstance(pr["head"].get("repo"),dict)
+            and pr["head"]["repo"].get("full_name")==name
+            and marker(req) in str(pr.get("body") or "")
+        )
+    def legacy_pr_matches_exact(self,name: str,branch: str,number: int,req: dict[str,Any])->bool:
+        pr=self.open_pr(name,branch)
+        return bool(self.pr_matches(name,branch,pr,req) and pr.get("number")==number)
     def delete_branch(self,name: str,branch: str)->None:
         self._request("DELETE",f"/repos/{name}/git/refs/heads/{quote(branch,safe='')}")
     def create_pr(self,name: str,branch: str,title: str,body: str)->int:
@@ -137,8 +184,11 @@ class GitHubGateway:
             if not isinstance(pr,dict) or not isinstance(pr.get("base"),dict) or pr["base"].get("ref")!="main" or not isinstance(pr.get("head"),dict) or pr["head"].get("ref")!=branch or not isinstance(pr.get("number"),int):
                 raise BootstrapError("PR bootstrap inválido.")
             return pr["number"]
-        except BootstrapError:
-            self.delete_branch(name,branch)
+        except (BootstrapError,OSError):
+            try:
+                self.delete_branch(name,branch)
+            except (BootstrapError,OSError):
+                pass
             raise
     def file_text(self,name: str, path: str, ref: str)->str|None:
         value=self._request("GET",f"/repos/{name}/contents/{path}?ref={quote(ref,safe='')}",allow=(404,))
@@ -177,28 +227,78 @@ class GitHubGateway:
             raise BootstrapError("main cambió antes de crear PR; rama bootstrap revertida.")
         pr=self.create_pr(name,branch,f"chore(factory): restaurar coordinación (#{req['target_issue']})",f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{expected}`\n\n{marker(req)}")
         return commit["sha"], pr
+    def materialize_replacement(self,req: dict[str,Any],patch: dict[str,str],branch: str,legacy_branch: str,legacy_sha: str,legacy_pr: int)->tuple[str,int]:
+        name,expected=req["target_repository"],req["expected_main_sha"]
+        base_tree=self.tree_info(name,expected,set(patch)); entries=[]
+        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(name,legacy_branch,legacy_pr,req):
+            raise BootstrapError("El bootstrap legacy cambió antes del primer write.")
+        for path,content in patch.items():
+            blob=self._request("POST",f"/repos/{name}/git/blobs",{"content":content,"encoding":"utf-8"}); entries.append({"path":path,"mode":"100644","type":"blob","sha":blob["sha"]})
+        tree=self._request("POST",f"/repos/{name}/git/trees",{"base_tree":base_tree,"tree":entries})
+        message=f"chore(factory): reemplazo bootstrap coordinación #{req['target_issue']}\n\nFactory-Bootstrap-Identity: {identity(req)}"
+        commit=self._request("POST",f"/repos/{name}/git/commits",{"message":message,"tree":tree["sha"],"parents":[expected]})
+        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(name,legacy_branch,legacy_pr,req):
+            raise BootstrapError("El bootstrap legacy cambió antes de crear replacement.")
+        self._request("POST",f"/repos/{name}/git/refs",{"ref":f"refs/heads/{branch}","sha":commit["sha"]})
+        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(name,legacy_branch,legacy_pr,req):
+            try:
+                self.delete_branch(name,branch)
+            except (BootstrapError,OSError):
+                pass
+            raise BootstrapError("El bootstrap legacy cambió durante la migración.")
+        body=f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{expected}`\n\nSupersedes bootstrap PR #{legacy_pr}.\n\n{marker(req)}"
+        pr=self.create_pr(name,branch,f"chore(factory): endurecer bootstrap coordinación (#{req['target_issue']})",body)
+        return commit["sha"],pr
 
-def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
+def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: dict[str,str],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
     if bsha is None and gpr is None: return None
     name=req["target_repository"]
-    if bsha is None or not gateway.commit_matches(name,bsha,req) or not gateway.branch_matches(name,branch,patch):
+    if bsha is not None and gateway.commit_matches(name,bsha,req) and gateway.branch_matches(name,branch,patch):
+        if gpr is None:
+            if gateway.main_sha(name)!=req["expected_main_sha"]:
+                gateway.delete_branch(name,branch)
+                raise BootstrapError("main cambió antes de crear PR; rama bootstrap revertida.")
+            body=f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{req['expected_main_sha']}`\n\n{marker(req)}"
+            pr=gateway.create_pr(name,branch,f"chore(factory): restaurar coordinación (#{req['target_issue']})",body)
+            return {"status":"confirmed","branch":branch,"pr":pr,"created":True}
+        if not gateway.pr_matches(name,branch,gpr,req): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
+        return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
+
+    if bsha is None or gpr is None or not gateway.commit_matches(name,bsha,req) or not gateway.branch_matches(name,branch,legacy) or not gateway.pr_matches(name,branch,gpr,req):
         raise BootstrapError("La rama bootstrap pertenece a otra intención.")
-    if gpr is None:
-        if gateway.main_sha(name)!=req["expected_main_sha"]:
-            gateway.delete_branch(name,branch)
-            raise BootstrapError("main cambió antes de crear PR; rama bootstrap revertida.")
-        pr=gateway.create_pr(name,branch,f"chore(factory): restaurar coordinación (#{req['target_issue']})",marker(req))
-        return {"status":"confirmed","branch":branch,"pr":pr,"created":True}
-    if marker(req) not in str(gpr.get("body") or ""): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
-    return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
+
+    replacement=replacement_branch_name(req,patch)
+    replacement_sha=gateway.branch_sha(name,replacement)
+    replacement_pr=gateway.open_pr(name,replacement)
+    if replacement_sha is not None or replacement_pr is not None:
+        if replacement_sha is not None and replacement_pr is None and gateway.commit_matches(name,replacement_sha,req) and gateway.branch_matches(name,replacement,patch):
+            if gateway.main_sha(name)!=req["expected_main_sha"] or gateway.branch_sha(name,branch)!=bsha:
+                raise BootstrapError("El bootstrap legacy cambió antes de crear PR replacement.")
+            fresh=gateway.open_pr(name,branch)
+            if not gateway.pr_matches(name,branch,fresh,req) or fresh.get("number")!=gpr.get("number"):
+                raise BootstrapError("El PR bootstrap legacy cambió antes de crear PR replacement.")
+            body=f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{req['expected_main_sha']}`\n\nSupersedes bootstrap PR #{gpr['number']}.\n\n{marker(req)}"
+            pr=gateway.create_pr(name,replacement,f"chore(factory): endurecer bootstrap coordinación (#{req['target_issue']})",body)
+            return {"status":"confirmed","branch":replacement,"pr":pr,"created":True}
+        if replacement_sha is None or replacement_pr is None or not gateway.commit_matches(name,replacement_sha,req) or not gateway.branch_matches(name,replacement,patch) or not gateway.pr_matches(name,replacement,replacement_pr,req) or f"Supersedes bootstrap PR #{gpr['number']}." not in str(replacement_pr.get("body") or ""):
+            raise BootstrapError("Replacement bootstrap pertenece a otra intención.")
+        return {"status":"confirmed","branch":replacement,"pr":replacement_pr.get("number"),"created":False}
+
+    if gateway.main_sha(name)!=req["expected_main_sha"] or gateway.branch_sha(name,branch)!=bsha:
+        raise BootstrapError("El bootstrap legacy cambió antes de migrar.")
+    fresh=gateway.open_pr(name,branch)
+    if not gateway.pr_matches(name,branch,fresh,req) or fresh.get("number")!=gpr.get("number"):
+        raise BootstrapError("El PR bootstrap legacy cambió antes de migrar.")
+    _,pr=gateway.materialize_replacement(req,patch,replacement,branch,bsha,gpr["number"])
+    return {"status":"confirmed","branch":replacement,"pr":pr,"created":True}
 
 def bootstrap(raw: dict[str,str],gateway: Any,template: str)->dict[str,Any]:
     req=validate_request(raw); gateway.authorize(); gateway.repository(req["target_repository"])
     name=req["target_repository"]
     if not gateway.issue_open(name,req["target_issue"]): raise BootstrapError("Issue objetivo no está abierto.")
     if gateway.main_sha(name)!=req["expected_main_sha"]: raise BootstrapError("expected_main_sha no coincide con main.")
-    patch,branch=build_patch(template),branch_name(req)
-    existing=reuse_existing(req,gateway,patch,branch,gateway.branch_sha(name,branch),gateway.open_pr(name,branch))
+    patch,legacy,branch=build_patch(template),legacy_patch(template),branch_name(req)
+    existing=reuse_existing(req,gateway,patch,legacy,branch,gateway.branch_sha(name,branch),gateway.open_pr(name,branch))
     if existing is not None: return existing
     if gateway.file_text(name,CALLER_PATH,"main")==patch[CALLER_PATH] and gateway.file_text(name,TEST_PATH,"main")==patch[TEST_PATH]:
         return {"status":"already_bootstrapped","branch":None,"pr":None,"created":False}
