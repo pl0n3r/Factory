@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "scenario": "reservation-readiness-preflight",
+  "origin": {
+    "issue": 247,
+    "candidate": "reservation-readiness-preflight",
+    "unsolicited": true,
+    "owner_request": false,
+    "hypothesis": "validate acceptance contract, available status and factory-plan-task together before /tomar",
+    "provenance": [
+      "run:36507015627",
+      "run:36507097760",
+      "run:36507219161",
+      "run:36507269422"
+    ]
+  },
+  "coordination_attempts": [
+    {
+      "run_id": 36507015627,
+      "head_sha": "7b129a43915959ab206afa089eb5f380383e0c3a",
+      "conclusion": "failure",
+      "effect": "acceptance_contract_rejected",
+      "started_at": "2026-09-29T01:15:14Z",
+      "completed_at": "2026-09-29T01:15:21Z",
+      "duration_seconds": 7
+    },
+    {
+      "run_id": 36507097760,
+      "head_sha": "7b129a43915959ab206afa089eb5f380383e0c3a",
+      "conclusion": "success",
+      "effect": "no_reservation_missing_available_state",
+      "started_at": "2026-09-29T01:16:13Z",
+      "completed_at": "2026-09-29T01:16:33Z",
+      "duration_seconds": 20
+    },
+    {
+      "run_id": 36507219161,
+      "head_sha": "7b129a43915959ab206afa089eb5f380383e0c3a",
+      "conclusion": "failure",
+      "effect": "unplanned_parallel_work_rejected",
+      "started_at": "2026-09-29T01:17:45Z",
+      "completed_at": "2026-09-29T01:17:53Z",
+      "duration_seconds": 8
+    },
+    {
+      "run_id": 36507269422,
+      "head_sha": "7b129a43915959ab206afa089eb5f380383e0c3a",
+      "conclusion": "success",
+      "effect": "reservation_created",
+      "started_at": "2026-09-29T01:18:23Z",
+      "completed_at": "2026-09-29T01:18:50Z",
+      "duration_seconds": 27
+    }
+  ],
+  "shadow_candidate": {
+    "stable_sha": "7b129a43915959ab206afa089eb5f380383e0c3a",
+    "candidate_sha": "68f2c41eeb183f6d396d86b543597bf16e0f7998",
+    "mode": "shadow",
+    "rollback": "restore_sequential_readiness_checks",
+    "external_writes": []
+  },
+  "posterior_execution": {
+    "reservation_run": 36507269422,
+    "reservation_comment": 5881792570,
+    "pr": 339,
+    "pr_head_sha": "68f2c41eeb183f6d396d86b543597bf16e0f7998",
+    "pr_ci_run": 36507555400,
+    "pr_ci_duration_seconds": 29,
+    "merge_sha": "7e9062203f3faae85a6dfc6fc9cb446d4faaf71e",
+    "exact_main": {
+      "ci_run": 36507695485,
+      "ci_conclusion": "success",
+      "codeql_run": 36507695254,
+      "codeql_conclusion": "success",
+      "codeql_evidence_run": 36507695555,
+      "codeql_evidence_conclusion": "success"
+    }
+  },
+  "complexity": {
+    "comparison_scope": "factory-247-reservation-readiness",
+    "before_coordination_seconds": 35,
+    "after_coordination_seconds": 27,
+    "useful_execution_seconds": 29,
+    "measured_from": [
+      "run:36507015627",
+      "run:36507097760",
+      "run:36507219161",
+      "run:36507269422",
+      "run:36507555400"
+    ]
+  },
+  "decision": {
+    "status": "adopted_bounded_scenario",
+    "stable_mutation": false,
+    "authority_expanded": false,
+    "scope": "issue-247-readiness-procedure"
+  }
+}
