@@ -61,12 +61,17 @@ class BootstrapCoordinationTests(unittest.TestCase):
         req,patch,branch=gateway.created[0]
         self.assertEqual(req["expected_main_sha"],SHA); self.assertEqual(branch,"factory/bootstrap-coordination-187")
         self.assertTrue(set(patch).issubset(b.ALLOWED_PATHS)); self.assertEqual(result["pr"],99)
+        source=(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8")
+        materialize=source.split("def materialize",1)[1].split("\ndef bootstrap",1)[0]
+        self.assertGreaterEqual(materialize.count("self.main_sha(name)"),3)
+        self.assertNotIn('refs/heads/main',materialize)
 
     def test_bootstrap_is_idempotent_and_rejects_conflicting_intent(self):
         req=b.validate_request(request()); good_pr={"number":7,"body":b.marker(req)}
         same=FakeGateway(branch="c"*40,pr=good_pr,same=True)
         self.assertFalse(b.bootstrap(request(),same,CALLER)["created"])
         with self.assertRaises(b.BootstrapError): b.bootstrap(request(),FakeGateway(branch="c"*40,pr=good_pr,same=False),CALLER)
+        self.assertIn("/compare/",(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8"))
 
     def test_workflow_reuses_existing_provision_authority_without_human_gate(self):
         text=(ROOT/".github/workflows/bootstrap-coordination.yml").read_text(encoding="utf-8")
