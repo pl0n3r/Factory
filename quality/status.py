@@ -104,6 +104,8 @@ def derive_quality_health(
     state = _highest_state(states)
     freshness_state = "DEGRADED" if any(
         item.startswith(("gate_missing:", "gate_stale:", "gate_unknown:"))
+        or item in {"performance_missing", "recovery_missing",
+                    "performance_unknown", "recovery_unknown"}
         for item in reasons
     ) else "CURRENT"
     return {
@@ -147,8 +149,8 @@ def readiness_projection(health: Mapping[str, Any]) -> dict[str, Any]:
         "version": 1,
         "dimension": "quality",
         "quality_health": state,
-        "ready": state == "PASS",
-        "critical_blocker": state == "BLOCKED",
+        "ready": state in {"PASS", "DEGRADED"},
+        "critical_blocker": state in {"UNKNOWN", "BLOCKED"},
         "reasons": list(health.get("reasons", [])),
         "evidence_refs": list(health.get("evidence_refs", [])),
         "work_item_classes": classes,
