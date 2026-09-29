@@ -3,7 +3,7 @@ import unittest
 
 from evolution.experience_guardrails import compile_guardrail_candidates
 from evolution.knowledge_lifecycle import (
-    create_knowledge_record, propose_pruning_candidates,
+    create_knowledge_record, propose_pruning_candidates, transition_knowledge,
 )
 from intelligence.context_compiler import compile_mission_context
 from intelligence.project_dna import discover_project_dna
@@ -156,6 +156,61 @@ class KnowledgeOperationsE2ETests(unittest.TestCase):
             "No promoción automática", "No crea un Knowledge Engine paralelo",
         ):
             self.assertIn(marker, docs)
+
+    def test_pruning_and_supersession_preserve_history_without_delete(self):
+        first = lifecycle(
+            "runbook-old", "runbook",
+            validated="2026-01-01T00:00:00Z", fingerprint="d" * 64,
+        )
+        second = lifecycle(
+            "runbook-new", "runbook",
+            validated="2026-01-02T00:00:00Z", fingerprint="d" * 64,
+        )
+        deprecated = transition_knowledge(
+            first, target_state="deprecated", at="2026-09-28T00:00:00Z",
+            evidence=["pl0n3r/Factory#322@supersession"], reason="superseded",
+        )
+        proposals = propose_pruning_candidates([deprecated, second], now_at=NOW)
+        self.assertTrue(proposals)
+        self.assertTrue(all(row["delete"] is False for row in proposals))
+        self.assertTrue(all(row["history_preserved"] is True for row in proposals))
+        self.assertTrue(deprecated["history"])
+        self.assertEqual(first["provenance"], deprecated["provenance"])
+
+    def test_capture_lifecycle_context_and_guardrail_flow_is_traceable(self):
+        item = knowledge_item("runbook-trace")
+        selection = select_knowledge_for_context(mission=mission(), knowledge_items=[item])
+        package = compile_mission_context(
+            project_dna=discover_project_dna(
+                paths=["pyproject.toml"], capabilities=["knowledge-operations"]
+            ),
+            task={
+                "id": "factory-322-trace", "title": "Trace Knowledge E2E",
+                "goal": "Use verified knowledge", "tags": ["knowledge"],
+            },
+            context_items=selection["context_items"],
+        )
+        lessons = [
+            guardrail_lesson_input(postmortem("postmortem-trace-a", "pl0n3r/Factory#320")),
+            guardrail_lesson_input(postmortem("postmortem-trace-b", "pl0n3r/Factory#321")),
+        ]
+        candidate = compile_guardrail_candidates(lessons)[0]
+        self.assertEqual(package["context"][0]["source"], "knowledge:runbook-trace")
+        self.assertEqual(
+            selection["bindings"][0]["provenance"], item["lifecycle"]["provenance"]
+        )
+        self.assertEqual(candidate["sources"], ["pl0n3r/Factory#320", "pl0n3r/Factory#321"])
+        self.assertEqual(candidate["candidate"]["changes"][0]["value"]["status"], "candidate")
+
+    def test_readme_boundary_keeps_deep_knowledge_outside_operational_portada(self):
+        root = Path(__file__).resolve().parents[1]
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        docs = (root / "docs" / "knowledge-operations-e2e.md").read_text(encoding="utf-8")
+        self.assertIn("README", docs)
+        for deep_term in (
+            "root_cause.status", "guardrail_lesson_input", "propose_pruning_candidates(",
+        ):
+            self.assertNotIn(deep_term, readme)
 
 
 if __name__ == "__main__":
