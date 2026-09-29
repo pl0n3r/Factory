@@ -1,6 +1,6 @@
 # Feedback Mesh E2E — evidencia real y rechazo seguro
 
-Este slice cierra la demostración operativa de Factory #161 sin crear un motor nuevo. Reutiliza Factory Queue/feedback (#269–#273), Review Efficiency (#163), Constitution/Evolution/Fitness/Factory Lab (#143/#149/#153), causalidad (#244), lifecycle (#243) y authority (#246).
+Este slice cierra la demostración operativa de Factory #161: **no crear un motor nuevo** es una restricción explícita. Reutiliza Factory Queue/feedback (#269–#273), Review Efficiency (#163), Constitution/Evolution/Fitness/Factory Lab (#143/#149/#153), causalidad (#244), lifecycle (#243) y authority (#246).
 
 ## Escenario real
 

@@ -21,8 +21,7 @@ BASELINE = ROOT / "metricas" / "datos" / "review-efficiency-baseline.jsonl"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
-def load_manifest():
-    data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+def validate_manifest(data):
     required = {
         "version",
         "scenario",
@@ -118,6 +117,12 @@ def load_manifest():
     }:
         raise ValueError("rollback inválido")
     return data
+
+
+def load_manifest():
+    return validate_manifest(
+        json.loads(MANIFEST.read_text(encoding="utf-8"))
+    )
 
 
 def baseline_rows():
@@ -353,13 +358,8 @@ class FeedbackMeshE2ETests(unittest.TestCase):
             if item["repo"] == "pl0n3r/GrindFlow"
         )
         consumer["state"] = "merged"
-        tmp = MANIFEST.read_text(encoding="utf-8")
-        try:
-            MANIFEST.write_text(json.dumps(broken), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "merged requiere merge_sha"):
-                load_manifest()
-        finally:
-            MANIFEST.write_text(tmp, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "merged requiere merge_sha"):
+            validate_manifest(broken)
 
     def test_docs_describe_complete_feedback_mesh_loop_without_parallel_engine(self):
         text = (ROOT / "docs" / "feedback-mesh-e2e.md").read_text(
