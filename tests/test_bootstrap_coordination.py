@@ -18,7 +18,7 @@ class FakeGateway:
     def __init__(self, *, owner=True, issue=True, main=SHA, branch=None, pr=None, same=True):
         self.owner, self.issue, self.main = owner, issue, main
         self.branch, self.pr, self.same = branch, pr, same
-        self.created = []
+        self.created, self.deleted = [], []
     def authorize(self):
         if not self.owner: raise b.BootstrapError("owner")
     def repository(self, _): return None
@@ -29,6 +29,8 @@ class FakeGateway:
     def file_text(self, *_): return None
     def commit_matches(self, *_): return self.same
     def branch_matches(self, *_): return self.same
+    def delete_branch(self, _, branch): self.deleted.append(branch)
+    def create_pr(self, _, branch, __, ___): self.created.append(("pr",branch)); return 98
     def materialize(self, req, patch):
         self.created.append((req, patch, b.branch_name(req)))
         return "c" * 40, 99
@@ -62,10 +64,7 @@ class BootstrapCoordinationTests(unittest.TestCase):
         req,patch,branch=gateway.created[0]
         self.assertEqual(req["expected_main_sha"],SHA); self.assertEqual(branch,"factory/bootstrap-coordination-187")
         self.assertTrue(set(patch).issubset(b.ALLOWED_PATHS)); self.assertEqual(result["pr"],99)
-        source=(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8")
-        materialize=source.split("def materialize",1)[1].split("\ndef bootstrap",1)[0]
-        self.assertGreaterEqual(materialize.count("self.main_sha(name)"),3)
-        self.assertNotIn('refs/heads/main',materialize)
+        self.assertEqual(result["pr"],99)
 
     def test_bootstrap_is_idempotent_and_rejects_conflicting_intent(self):
         req=b.validate_request(request()); good_pr={"number":7,"body":b.marker(req)}
@@ -73,7 +72,31 @@ class BootstrapCoordinationTests(unittest.TestCase):
         self.assertFalse(b.bootstrap(request(),same,CALLER)["created"])
         raw=request(); conflict=FakeGateway(branch="c"*40,pr=good_pr,same=False)
         with self.assertRaises(b.BootstrapError): b.bootstrap(raw,conflict,CALLER)
-        self.assertIn("/compare/",(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8"))
+        stale=FakeGateway(main="d"*40,branch="c"*40,pr=None,same=True)
+        with self.assertRaises(b.BootstrapError): b.reuse_existing(req,stale,b.build_patch(CALLER),b.branch_name(req),stale.branch,None)
+        self.assertEqual(stale.deleted,[b.branch_name(req)])
+
+    def test_materialize_rolls_back_partial_remote_state(self):
+        gateway=b.GitHubGateway("token"); req=b.validate_request(request()); patch=b.build_patch(CALLER)
+        calls=[]
+        def api(method,path,payload=None,allow=()):
+            calls.append((method,path))
+            if "/git/blobs" in path: return {"sha":"b"}
+            if "/git/trees" in path: return {"sha":"t"}
+            if "/git/commits" in path: return {"sha":"c"*40}
+            if method=="POST" and path.endswith("/pulls"): return {}
+            return {}
+        with mock.patch.object(gateway,"tree_info",return_value="base"), mock.patch.object(gateway,"_request",side_effect=api), mock.patch.object(gateway,"main_sha",side_effect=["d"*40]):
+            with self.assertRaises(b.BootstrapError): gateway.materialize(req,patch)
+        self.assertEqual(calls,[])
+        calls.clear()
+        with mock.patch.object(gateway,"tree_info",return_value="base"), mock.patch.object(gateway,"_request",side_effect=api), mock.patch.object(gateway,"main_sha",side_effect=[SHA,SHA,"d"*40]):
+            with self.assertRaises(b.BootstrapError): gateway.materialize(req,patch)
+        self.assertTrue(any(method=="DELETE" for method,_ in calls))
+        calls.clear()
+        with mock.patch.object(gateway,"tree_info",return_value="base"), mock.patch.object(gateway,"_request",side_effect=api), mock.patch.object(gateway,"main_sha",return_value=SHA):
+            with self.assertRaises(b.BootstrapError): gateway.materialize(req,patch)
+        self.assertTrue(any(method=="DELETE" for method,_ in calls))
 
     def test_workflow_reuses_existing_provision_authority_without_human_gate(self):
         text=(ROOT/".github/workflows/bootstrap-coordination.yml").read_text(encoding="utf-8")

@@ -113,6 +113,17 @@ class GitHubGateway:
         value=self._request("GET",f"/repos/{name}/pulls?state=open&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
         if not isinstance(value,list) or len(value)>1: raise BootstrapError("Estado de PR ambiguo.")
         return value[0] if value else None
+    def delete_branch(self,name: str,branch: str)->None:
+        self._request("DELETE",f"/repos/{name}/git/refs/heads/{quote(branch,safe='')}")
+    def create_pr(self,name: str,branch: str,title: str,body: str)->int:
+        try:
+            pr=self._request("POST",f"/repos/{name}/pulls",{"title":title,"head":branch,"base":"main","body":body})
+            if not isinstance(pr,dict) or not isinstance(pr.get("base"),dict) or pr["base"].get("ref")!="main" or not isinstance(pr.get("head"),dict) or pr["head"].get("ref")!=branch or not isinstance(pr.get("number"),int):
+                raise BootstrapError("PR bootstrap inválido.")
+            return pr["number"]
+        except BootstrapError:
+            self.delete_branch(name,branch)
+            raise
     def file_text(self,name: str, path: str, ref: str)->str|None:
         value=self._request("GET",f"/repos/{name}/contents/{path}?ref={quote(ref,safe='')}",allow=(404,))
         if value is None: return None
@@ -146,11 +157,10 @@ class GitHubGateway:
         if self.main_sha(name)!=expected: raise BootstrapError("main cambió antes de escribir.")
         self._request("POST",f"/repos/{name}/git/refs",{"ref":f"refs/heads/{branch}","sha":commit["sha"]})
         if self.main_sha(name)!=expected:
-            self._request("DELETE",f"/repos/{name}/git/refs/heads/{quote(branch,safe='')}")
+            self.delete_branch(name,branch)
             raise BootstrapError("main cambió antes de crear PR; rama bootstrap revertida.")
-        pr=self._request("POST",f"/repos/{name}/pulls",{"title":f"chore(factory): restaurar coordinación (#{req['target_issue']})","head":branch,"base":"main","body":f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{expected}`\n\n{marker(req)}"})
-        if not isinstance(pr,dict) or pr.get("base",{}).get("ref")!="main" or pr.get("head",{}).get("ref")!=branch: raise BootstrapError("PR bootstrap inválido.")
-        return commit["sha"], int(pr["number"])
+        pr=self.create_pr(name,branch,f"chore(factory): restaurar coordinación (#{req['target_issue']})",f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{expected}`\n\n{marker(req)}")
+        return commit["sha"], pr
 
 def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
     if bsha is None and gpr is None: return None
@@ -158,9 +168,11 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],branch: 
     if bsha is None or not gateway.commit_matches(name,bsha,req) or not gateway.branch_matches(name,branch,patch):
         raise BootstrapError("La rama bootstrap pertenece a otra intención.")
     if gpr is None:
-        if gateway.main_sha(name)!=req["expected_main_sha"]: raise BootstrapError("main cambió antes de crear PR.")
-        pr=gateway._request("POST",f"/repos/{name}/pulls",{"title":f"chore(factory): restaurar coordinación (#{req['target_issue']})","head":branch,"base":"main","body":marker(req)})
-        return {"status":"confirmed","branch":branch,"pr":pr["number"],"created":False}
+        if gateway.main_sha(name)!=req["expected_main_sha"]:
+            gateway.delete_branch(name,branch)
+            raise BootstrapError("main cambió antes de crear PR; rama bootstrap revertida.")
+        pr=gateway.create_pr(name,branch,f"chore(factory): restaurar coordinación (#{req['target_issue']})",marker(req))
+        return {"status":"confirmed","branch":branch,"pr":pr,"created":True}
     if marker(req) not in str(gpr.get("body") or ""): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
     return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
 
