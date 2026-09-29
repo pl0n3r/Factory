@@ -1,0 +1,49 @@
+name: Bootstrap coordinación en consumidor
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository: {description: Repositorio existente pl0n3r/*, required: true, type: string}
+      target_issue: {description: Issue abierto que necesita coordinación, required: true, type: number}
+      expected_main_sha: {description: SHA exacto de main del consumidor, required: true, type: string}
+      governance_ref: {description: Gobernanza publicada, required: true, default: 'pl0n3r/factory@v1', type: string}
+      idempotency_key: {description: SHA-256 de la intención, required: true, type: string}
+
+permissions:
+  contents: read
+concurrency:
+  group: bootstrap-coordination-${{ inputs.target_repository }}-${{ inputs.target_issue }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validar contexto y autoridad
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == "workflow_dispatch" ]] || { echo "::error::evento no permitido"; exit 1; }
+          [[ "$ACTOR" == "$OWNER" ]] || { echo "::error::solo owner"; exit 1; }
+          [[ "$REF" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::solo default branch"; exit 1; }
+          [[ -n "$FACTORY_PROVISION_TOKEN" ]] || { echo "::error::FACTORY_PROVISION_TOKEN no configurado"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ github.sha }}', path: runtime, persist-credentials: false}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {repository: pl0n3r/factory, ref: v1, path: governance, persist-credentials: false}
+      - name: Crear rama y PR bootstrap
+        env:
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          TARGET_ISSUE: ${{ inputs.target_issue }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          GOVERNANCE_REF: ${{ inputs.governance_ref }}
+          IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
+          FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
+        run: python3 runtime/scripts/bootstrap_coordination.py --caller-template governance/template/.github/workflows/coordinacion.yml

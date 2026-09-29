@@ -36,3 +36,11 @@ Los Issues históricos sin marker siguen usando el flujo normal. El validador de
 ## Garantía verificable
 
 Una tarea planificada no entra a /tomar si una dependencia o claim de archivos la hace incompatible con trabajo activo. El objetivo es prevenir la colisión antes de escribir código, no descubrirla al final del PR.
+
+## Bootstrap de coordinación en consumidores existentes
+
+Cuando un repositorio `pl0n3r/*` existente no puede usar `/tomar` porque todavía no contiene el caller de coordinación, Factory no crea una excepción manual ni escribe en `main`. El owner ejecuta `bootstrap-coordination.yml` desde la rama por defecto con `target_repository`, `target_issue`, `expected_main_sha`, `governance_ref=pl0n3r/factory@v1` e `idempotency_key`.
+
+El workflow reutiliza únicamente `FACTORY_PROVISION_TOKEN`, valida owner, Issue abierto y SHA exacto, y genera una rama `factory/bootstrap-coordination-<issue>` con PR a `main`. El patch está limitado a `.github/workflows/work-coordination.yml`, `tests/test_factory_coordination_adoption.py` y, solo cuando sea necesario, `AGENTS.md`. Nunca copia `coordinar_trabajo.py`: el caller consume `pl0n3r/factory/.github/workflows/coordinacion.yml@v1` con perfil `es`.
+
+Un retry con la misma intención converge sobre la misma rama/PR. Si cambian la intención, `main`, el owner, el Issue o aparece un path/symlink fuera de la allowlist, el bootstrap falla cerrado. El merge del PR no sustituye la evidencia del consumidor: después del merge, `/tomar` debe funcionar en el Issue objetivo antes de considerar restaurada la coordinación.
