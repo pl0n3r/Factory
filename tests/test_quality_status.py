@@ -178,9 +178,17 @@ class QualityStatusTests(unittest.TestCase):
         self.assertEqual(projected["quality_health"], passed["state"])
         self.assertFalse(projected["recalculated"])
 
-        for candidate in (health(gates()[:-1]), health([{**gates()[0], "status": "FAIL"}, *gates()[1:]])):
+        degraded_rows = gates(); degraded_rows[2]["status"] = "FAIL"
+        degraded = health(degraded_rows)
+        self.assertTrue(readiness_projection(degraded)["ready"])
+
+        for candidate in (
+            health(gates()[:-1]),
+            health([{**gates()[0], "status": "FAIL"}, *gates()[1:]]),
+        ):
             projected = readiness_projection(candidate)
             self.assertFalse(projected["ready"])
+            self.assertTrue(projected["critical_blocker"])
             self.assertEqual(projected["quality_health"], candidate["state"])
 
     def test_corrective_classes_materialize_through_existing_work_item_and_dispatcher_contracts(self):
