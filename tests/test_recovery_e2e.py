@@ -149,6 +149,13 @@ class RecoveryE2ETests(unittest.TestCase):
             build_backup_pipeline(recovery, sensitive)
         self.assertNotIn("ghp_", str(ctx.exception))
 
+        pii = dict(sensitive)
+        pii["backup_id"] = "backup:pii"
+        pii["object_storage_ref"] = "person@example.com"
+        with self.assertRaises(RecoveryPipelineError) as ctx:
+            build_backup_pipeline(recovery, pii)
+        self.assertNotIn("person@example.com", str(ctx.exception))
+
         _, backup = verified_backup()
         with self.assertRaises(RecoveryDrillError):
             build_restore_drill_plan(
