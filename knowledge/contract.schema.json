@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pl0n3r/Factory/knowledge/contract.schema.json",
+  "title": "Factory Knowledge Item Contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "item_id",
+    "item_class",
+    "title",
+    "summary",
+    "tags",
+    "owner_ref",
+    "authority_class",
+    "sensitivity",
+    "related_refs",
+    "supersedes",
+    "superseded_by",
+    "lifecycle"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "item_id": {"$ref": "#/$defs/id"},
+    "item_class": {
+      "enum": [
+        "decision",
+        "adr",
+        "runbook",
+        "postmortem",
+        "architecture_invariant",
+        "product_rule",
+        "operational_procedure",
+        "troubleshooting",
+        "known_limitation",
+        "experiment_result",
+        "lesson_guardrail_candidate"
+      ]
+    },
+    "title": {"type": "string", "minLength": 1, "maxLength": 160},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+    "tags": {
+      "type": "array",
+      "maxItems": 24,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/tag"}
+    },
+    "owner_ref": {"$ref": "#/$defs/ref"},
+    "authority_class": {
+      "enum": [
+        "operational",
+        "money",
+        "legal",
+        "personal_data",
+        "irreversible_delete",
+        "authority_expansion"
+      ]
+    },
+    "sensitivity": {
+      "enum": ["normal", "personal_data", "sensitive_data"]
+    },
+    "related_refs": {"$ref": "#/$defs/refs"},
+    "supersedes": {"$ref": "#/$defs/ids"},
+    "superseded_by": {"$ref": "#/$defs/ids"},
+    "lifecycle": {"$ref": "#/$defs/lifecycle"}
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.:-]{0,63}$"
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/#@+\\-]{0,239}$"
+    },
+    "refs": {
+      "type": "array",
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/ref"}
+    },
+    "ids": {
+      "type": "array",
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/id"}
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "domain"],
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "domain": {"$ref": "#/$defs/id"}
+      }
+    },
+    "reviewPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_after_days", "expires_after_days"],
+      "properties": {
+        "review_after_days": {"type": "integer", "minimum": 1, "maximum": 3649},
+        "expires_after_days": {"type": "integer", "minimum": 2, "maximum": 3650}
+      }
+    },
+    "historyEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "from", "to", "reason", "evidence"],
+      "properties": {
+        "at": {"type": "string", "format": "date-time"},
+        "from": {
+          "enum": ["candidate", "active", "needs_review", "deprecated", "archived"]
+        },
+        "to": {
+          "enum": ["candidate", "active", "needs_review", "deprecated", "archived"]
+        },
+        "reason": {"type": "string", "minLength": 1, "maxLength": 120},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "knowledge_id",
+        "knowledge_type",
+        "content_fingerprint",
+        "provenance",
+        "scope",
+        "created_at",
+        "last_validated_at",
+        "last_useful_at",
+        "confidence",
+        "evidence_class",
+        "review_policy",
+        "state",
+        "history"
+      ],
+      "properties": {
+        "version": {"const": 1},
+        "knowledge_id": {"$ref": "#/$defs/id"},
+        "knowledge_type": {"$ref": "#/$defs/id"},
+        "content_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "provenance": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "scope": {"$ref": "#/$defs/scope"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "last_validated_at": {"type": "string", "format": "date-time"},
+        "last_useful_at": {"type": "string", "format": "date-time"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence_class": {
+          "enum": ["single-source", "multi-source", "reproduced", "verified"]
+        },
+        "review_policy": {"$ref": "#/$defs/reviewPolicy"},
+        "state": {
+          "enum": ["candidate", "active", "needs_review", "deprecated", "archived"]
+        },
+        "history": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {"$ref": "#/$defs/historyEvent"}
+        }
+      }
+    }
+  }
+}
