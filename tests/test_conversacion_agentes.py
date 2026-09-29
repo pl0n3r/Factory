@@ -90,8 +90,17 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertIn('recommendation = "B"', script)
         self.assertIn('recommendation = "A"', script)
         self.assertIn('"d063_applies": d063_applies', script)
+        self.assertIn('attestation.get("nothing_live") is True', script)
+        self.assertIn('attestation.get("no_real_customer_data") is True', script)
         self.assertIn("no bloquea el trabajo en construcción", script)
         self.assertIn("puerta es bloqueante", script)
+
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("d063_attestation.nothing_live=true", plan)
+        self.assertIn("d063_attestation.no_real_customer_data=true", plan)
+        puertas = (ROOT / "docs/puertas-humanas.md").read_text(encoding="utf-8")
+        self.assertIn("d063_attestation.nothing_live=true", puertas)
+        self.assertIn("d063_attestation.no_real_customer_data=true", puertas)
         self.assertIn("go-live", (ROOT / "decisiones.yml").read_text(encoding="utf-8"))
 
 

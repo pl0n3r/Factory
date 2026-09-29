@@ -48,8 +48,17 @@ def data_map():
     }
 
 
-def live_data_map():
+def d063_data_map():
     current = data_map()
+    current["d063_attestation"] = {
+        "nothing_live": True,
+        "no_real_customer_data": True,
+    }
+    return current
+
+
+def live_data_map():
+    current = d063_data_map()
     current["phase"] = "live"
     current["controller"] = {
         "name": "Example Controller",
@@ -141,7 +150,7 @@ class PrivacyAuditTests(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_material_change_builds_legal_gate(self):
-        previous = data_map()
+        previous = d063_data_map()
         current = deepcopy(previous)
         current["treatments"][0]["purpose"] = "marketing_contact"
         report = audit_sources(
@@ -165,8 +174,8 @@ class PrivacyAuditTests(unittest.TestCase):
         )
         self.assertEqual(direct, report["legal_gate_body"])
 
-    def test_d063_construction_gate_is_informational(self):
-        previous = data_map()
+    def test_d063_complete_attestation_enables_informational_gate(self):
+        previous = d063_data_map()
         current = deepcopy(previous)
         current["treatments"][0]["purpose"] = "marketing_contact"
         report = audit_sources(
@@ -178,6 +187,43 @@ class PrivacyAuditTests(unittest.TestCase):
         self.assertIn('"recommendation":"B"', report["legal_gate_body"])
         self.assertIn('"safe_default":"B"', report["legal_gate_body"])
         self.assertIn("puerta es informativa", report["legal_gate_body"])
+
+
+    def test_d063_missing_attestation_fails_closed(self):
+        previous = data_map()
+        current = deepcopy(previous)
+        current["treatments"][0]["purpose"] = "marketing_contact"
+        report = audit_sources(
+            sources={"src/User.php": "$email = $user->email;\n"},
+            current_document=current,
+            previous_document=previous,
+        )
+        self.assertFalse(report["d063_applies"])
+        self.assertIn('"recommendation":"A"', report["legal_gate_body"])
+        self.assertIn('"safe_default":"A"', report["legal_gate_body"])
+        self.assertIn("puerta es bloqueante", report["legal_gate_body"])
+
+    def test_d063_false_or_unknown_attestation_fails_closed(self):
+        cases = (
+            ("nothing_live", False),
+            ("nothing_live", None),
+            ("no_real_customer_data", False),
+            ("no_real_customer_data", None),
+        )
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                previous = d063_data_map()
+                previous["d063_attestation"][field] = value
+                current = deepcopy(previous)
+                current["treatments"][0]["purpose"] = "marketing_contact"
+                report = audit_sources(
+                    sources={"src/User.php": "$email = $user->email;\n"},
+                    current_document=current,
+                    previous_document=previous,
+                )
+                self.assertFalse(report["d063_applies"])
+                self.assertIn('"recommendation":"A"', report["legal_gate_body"])
+                self.assertIn('"safe_default":"A"', report["legal_gate_body"])
 
     def test_live_gate_never_recommends_construction_default(self):
         previous = live_data_map()

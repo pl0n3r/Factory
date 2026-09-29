@@ -13,6 +13,9 @@ from scripts.privacidad_kit import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def data_map():
     return {
         "version": 1,
@@ -121,6 +124,51 @@ class PrivacyKitTests(unittest.TestCase):
             row for row in validated["treatments"] if row["id"] == "admin_totp"
         )
         self.assertEqual(sensitive["consent"], "documented_explicit")
+
+
+    def test_d063_attestation_is_structured_without_pii(self):
+        rules = load_rules()
+        item = data_map()
+        item["d063_attestation"] = {
+            "nothing_live": True,
+            "no_real_customer_data": None,
+        }
+        validated = validate_data_map(item, rules)
+        self.assertEqual(
+            validated["d063_attestation"],
+            {"nothing_live": True, "no_real_customer_data": None},
+        )
+
+        extra = data_map()
+        extra["d063_attestation"] = {
+            "nothing_live": True,
+            "no_real_customer_data": True,
+            "free_text": "forbidden",
+        }
+        with self.assertRaises(PrivacyError):
+            validate_data_map(extra, rules)
+
+        invalid = data_map()
+        invalid["d063_attestation"] = {
+            "nothing_live": "unknown",
+            "no_real_customer_data": True,
+        }
+        with self.assertRaisesRegex(PrivacyError, "bool o null"):
+            validate_data_map(invalid, rules)
+
+    def test_d063_attestation_migration_is_compatible(self):
+        rules = load_rules()
+        legacy = validate_data_map(data_map(), rules)
+        self.assertNotIn("d063_attestation", legacy)
+
+        template = json.loads(
+            (ROOT / "template" / "datos.yml").read_text(encoding="utf-8")
+        )
+        validated = validate_data_map(template, rules)
+        self.assertEqual(
+            validated["d063_attestation"],
+            {"nothing_live": None, "no_real_customer_data": None},
+        )
 
     def test_generated_documents_preserve_review_state(self):
         rules = load_rules()
