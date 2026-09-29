@@ -574,6 +574,8 @@ def valid_reservation_payload(value: Any) -> bool:
         "reason",
     }
     version = value.get("version")
+    if type(version) is not int:
+        return False
     if version == 1:
         if set(value) != base:
             return False

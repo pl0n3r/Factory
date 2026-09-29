@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
@@ -2172,6 +2173,94 @@ class CoordinacionTests(unittest.TestCase):
             ),
             SESSION_A,
         )
+
+    @staticmethod
+    def _reservation_payload_for_version(version: object) -> dict:
+        """Construye un marker con shape compatible para probar el tipo de version."""
+        payload = {
+            "version": version,
+            "owner": "pl0n3r",
+            "reservation_id": SESSION_A,
+            "branch": coordinator.branch_for_issue(12),
+            "active": True,
+            "reason": "tomar",
+        }
+        if version == 2:
+            payload["acceptance_sha256"] = "a" * 64
+        elif version == 3:
+            payload.update(
+                {
+                    "acceptance_sha256": "a" * 64,
+                    "task_marker_sha256": "b" * 64,
+                    "task_paths": ["scripts/coordinar_trabajo.py"],
+                    "task_depends_on": [],
+                }
+            )
+        return payload
+
+    def test_reservation_version_requires_strict_integer_type(self) -> None:
+        """AC-01: bool/float no pueden aprovechar igualdad con enteros."""
+        for version in (True, 1.0, 2.0, 3.0):
+            with self.subTest(version=version):
+                payload = self._reservation_payload_for_version(version)
+                self.assertFalse(coordinator.valid_reservation_payload(payload))
+
+    def test_reservation_version_rejects_bool_float_string_and_out_of_range(self) -> None:
+        """AC-02: todo tipo/rango ajeno a 1..3 falla cerrado."""
+        invalid_versions = (
+            True,
+            False,
+            1.0,
+            2.0,
+            3.0,
+            "1",
+            "2",
+            "3",
+            None,
+            0,
+            4,
+            -1,
+        )
+        for version in invalid_versions:
+            with self.subTest(version=version):
+                payload = self._reservation_payload_for_version(version)
+                self.assertFalse(coordinator.valid_reservation_payload(payload))
+
+    def test_reservation_versions_v1_v2_v3_remain_canonical(self) -> None:
+        """AC-03: los tres contratos enteros existentes conservan compatibilidad."""
+        for version in (1, 2, 3):
+            with self.subTest(version=version):
+                payload = self._reservation_payload_for_version(version)
+                self.assertIs(type(version), int)
+                self.assertTrue(coordinator.valid_reservation_payload(payload))
+
+    def test_noninteger_version_marker_never_becomes_reservation_authority(self) -> None:
+        """AC-04: un marker no entero se descarta antes de convertirse en autoridad."""
+        for version in (True, 1.0, 2.0, 3.0):
+            with self.subTest(version=version):
+                payload = self._reservation_payload_for_version(version)
+                body = (
+                    f"<!-- {coordinator.PROFILE.marker} "
+                    f"{json.dumps(payload, separators=(',', ':'))} -->"
+                )
+                self.assertIsNone(coordinator.reservation_from_text(body))
+
+    def test_reservation_version_type_is_profile_invariant(self) -> None:
+        """AC-05: ES y EN aplican exactamente el mismo cierre de tipos."""
+        previous = coordinator.PROFILE.name
+        try:
+            for profile in ("es", "en"):
+                coordinator.configure_profile(profile)
+                for version in (1, 2, 3):
+                    with self.subTest(profile=profile, version=version):
+                        payload = self._reservation_payload_for_version(version)
+                        self.assertTrue(coordinator.valid_reservation_payload(payload))
+                for version in (True, 1.0, 2.0, 3.0, "2"):
+                    with self.subTest(profile=profile, invalid=version):
+                        payload = self._reservation_payload_for_version(version)
+                        self.assertFalse(coordinator.valid_reservation_payload(payload))
+        finally:
+            coordinator.configure_profile(previous)
 
     def test_profiles_fail_closed_on_authority_and_collision_errors(self) -> None:
         """Exige autoridad y ausencia de colisiones en ambos perfiles."""
