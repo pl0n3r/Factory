@@ -457,7 +457,7 @@ class BootstrapCoordinationTests(unittest.TestCase):
         b.validate_patch(patch,b.GRINDFLOW_DELIVERY_PATHS)
         with self.assertRaises(b.BootstrapError):
             b.validate_patch({**patch,"evil.txt":"x"},b.GRINDFLOW_DELIVERY_PATHS)
-        oversized={**patch,"README.md":"x"*(b.MAX_FILE+1)}
+        oversized={**patch,"README.md":"x"*(b.GRINDFLOW_MAX_FILE+1)}
         with self.assertRaises(b.BootstrapError):
             b.validate_patch(oversized,b.GRINDFLOW_DELIVERY_PATHS)
 
