@@ -56,6 +56,18 @@ Debe conservar: objetivo, repo/Issue/PR, branch y SHA, decisiones tomadas, halla
 
 Lo de la segunda fila no se resuelve solo con instrucciones: si la integración es nuestra, se evalúa allí.
 
+## 5. Revisión de seguridad de la plataforma (ChatGPT web)
+
+ChatGPT puede mostrar «Nuestros sistemas están procesando esta solicitud un poco más antes de responder» tras una ejecución («Analizado»). Es una comprobación de la plataforma: el prompt no la controla, pero sí puede reducir sus disparadores y evitar reacciones dañinas.
+
+Contrato del agente:
+
+- **No es un fallo:** no reenviar el mensaje, no abrir otro chat y no cancelar mientras el aviso esté visible; una sola espera, luego continuar.
+- **Reducir disparadores:** pedir una sola tarea acotada por turno; no pegar secretos, tokens ni volcados grandes de logs/salida (resumir y citar solo el fragmento relevante); no encadenar ejecuciones de código innecesarias; describir la finalidad defensiva/operativa de cualquier comando de seguridad.
+- **Si se repite en el mismo chat:** escribir una nota `STATE`, continuar en un chat nuevo de la misma cuenta desde ella y anotar el hallazgo en el Issue.
+
+Capa de integración (AutoFactory/ControlBot): detectar el aviso en el DOM y tratarlo como estado «en revisión de plataforma», sin contarlo como sesión colgada ni disparar reenvíos. Requiere Issue propio.
+
 ## Fixture de continuidad
 
 [`tests/fixtures/estado_compacto.md`](../tests/fixtures/estado_compacto.md) es una nota `STATE` de ejemplo; `tests/test_conversacion_agentes.py` comprueba que trae todos los campos y que un agente puede reanudar solo con ella (objetivo, SHA, fallos a no repetir y siguiente acción).

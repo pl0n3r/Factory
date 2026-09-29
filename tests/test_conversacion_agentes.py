@@ -60,6 +60,10 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertTrue(self.state["no repetir"])
         self.assertTrue(self.state["siguiente"][0])
 
+    def test_revision_de_plataforma_no_es_fallo(self):
+        self.assertIn("procesando esta solicitud", self.doc)
+        self.assertIn("no reenvíes", self.nucleo)
+
 
 if __name__ == "__main__":
     unittest.main()
