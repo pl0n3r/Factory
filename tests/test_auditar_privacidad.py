@@ -199,7 +199,10 @@ class PrivacyAuditTests(unittest.TestCase):
         content = (
             ROOT / ".github" / "workflows" / "auditoria-privacidad.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn('d063_applies="$(jq -r '.d063_applies'', content)
+        self.assertIn(
+            "d063_applies=\"$(jq -r '.d063_applies' /tmp/privacy-audit.json)\"",
+            content,
+        )
         self.assertIn(
             'remove_label_if_present "$legal_issue" "$STATE_BLOCKED"',
             content,
