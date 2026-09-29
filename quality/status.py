@@ -44,7 +44,7 @@ def derive_quality_health(
     recovery_health: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deriva un único estado Quality sin ejecutar ni recalcular dimensiones externas."""
-    _safe((gate_evidence, regressions))
+    _safe((gate_evidence, regressions, performance_status, recovery_health))
     quality = validate_quality_contract(contract)
     now = _time(observed_at, "observed_at")
     project_ref = _project_ref(project_ref)
