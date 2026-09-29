@@ -103,6 +103,40 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertIn("d063_attestation.no_real_customer_data=true", puertas)
         self.assertIn("go-live", (ROOT / "decisiones.yml").read_text(encoding="utf-8"))
 
+    def test_puertas_nuevas_exigen_explain_simple(self):
+        import json
+        import sys
+
+        scripts_dir = str(ROOT / "scripts")
+        seguridad_dir = str(ROOT / "seguridad")
+        for directory in (scripts_dir, seguridad_dir):
+            if directory not in sys.path:
+                sys.path.insert(0, directory)
+
+        from auditar_privacidad import build_legal_gate_body
+
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("explain_simple", plan)
+        puertas = (ROOT / "docs/puertas-humanas.md").read_text(encoding="utf-8")
+        self.assertIn("como a alguien de 12 años", puertas)
+
+        for d063_applies in (True, False):
+            body = build_legal_gate_body(
+                "Factory",
+                ["finalidad"],
+                d063_applies=d063_applies,
+            )
+            marker = re.search(
+                r"<!--\s*factory-human-gate\s+(\{.*\})\s*-->",
+                body,
+            )
+            self.assertIsNotNone(marker)
+            payload = json.loads(marker.group(1))
+            self.assertTrue(payload["explain_simple"])
+            self.assertTrue(payload["options"])
+            for option in payload["options"]:
+                self.assertTrue(option["explain_simple"])
+
     def test_bloqueo_exige_causa_y_leccion_registrada(self):
         import json
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
