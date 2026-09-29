@@ -1,15 +1,23 @@
 """Project DNA: huella determinista basada solo en señales explícitas del repositorio."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
 from typing import Any
 
+from quality.contract import (
+    QualityContractError,
+    quality_contract_fingerprint,
+    validate_quality_contract,
+)
+
 
 DNA_VERSION = 1
 UNKNOWN = "unknown"
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
+REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 BASE_FIELDS = {
     "version",
     "stack",
@@ -258,6 +266,55 @@ def discover_project_dna(
     return dna
 
 
+def attach_quality_contract(
+    document: Any,
+    *,
+    source_ref: Any,
+    contract: Any,
+) -> dict[str, Any]:
+    """Adjunta una referencia validada a Quality Contract sin duplicar su payload."""
+    validate_project_dna(document)
+    if not isinstance(source_ref, str) or REFERENCE_RE.fullmatch(source_ref) is None:
+        raise ProjectDnaError("quality_contract.source_ref inválida")
+    try:
+        normalized_contract = validate_quality_contract(contract)
+        contract_fingerprint = quality_contract_fingerprint(normalized_contract)
+    except QualityContractError as exc:
+        raise ProjectDnaError("Quality Contract inválido") from exc
+
+    result = copy.deepcopy(document)
+    result["extensions"]["quality_contract"] = {
+        "version": normalized_contract["version"],
+        "source_ref": source_ref,
+        "fingerprint": contract_fingerprint,
+    }
+    result["fingerprint"] = _fingerprint_payload(result)
+    return validate_project_dna(result)
+
+
+def _validate_quality_extension(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != {
+        "version",
+        "source_ref",
+        "fingerprint",
+    }:
+        raise ProjectDnaError("extensions.quality_contract inválido")
+    if type(value["version"]) is not int or value["version"] != 1:
+        raise ProjectDnaError("extensions.quality_contract.version inválida")
+    if (
+        not isinstance(value["source_ref"], str)
+        or REFERENCE_RE.fullmatch(value["source_ref"]) is None
+    ):
+        raise ProjectDnaError("extensions.quality_contract.source_ref inválida")
+    if (
+        not isinstance(value["fingerprint"], str)
+        or FINGERPRINT_RE.fullmatch(value["fingerprint"]) is None
+    ):
+        raise ProjectDnaError("extensions.quality_contract.fingerprint inválido")
+
+
 def _validate_known_or_list(value: Any, field: str) -> None:
     if value == UNKNOWN:
         return
@@ -316,6 +373,7 @@ def validate_project_dna(document: Any) -> dict[str, Any]:
     if not isinstance(document["extensions"], dict):
         raise ProjectDnaError("extensions debe ser objeto")
     _validate_json_object_keys(document["extensions"])
+    _validate_quality_extension(document["extensions"].get("quality_contract"))
     try:
         json.dumps(
             document["extensions"],
