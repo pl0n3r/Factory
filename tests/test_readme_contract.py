@@ -325,6 +325,18 @@ class ReadmeContractTests(unittest.TestCase):
         )
 
 
+    def test_factory_1_0_7_candidate_includes_readme_contract_reusable(self):
+        """El candidato 1.0.7 contiene la capacidad README que luego publicará @v1."""
+        version = json.loads((ROOT / "config" / "version.json").read_text(encoding="utf-8"))
+        self.assertEqual(version, {"version": "1.0.7"})
+        self.assertTrue(REUSABLE_WORKFLOW.is_file())
+        self.assertIn("workflow_call:", self.reusable_workflow)
+        self.assertIn("from readme.validate_readme import validate_readme", self.reusable_workflow)
+        self.assertIn(
+            "uses: pl0n3r/factory/.github/workflows/readme.yml@v1",
+            self.template_caller,
+        )
+
     def test_reusable_readme_workflow_is_read_only_and_calls_validator(self):
         """El reusable valida con permisos mínimos y sin mutar el caller."""
         workflow = self.reusable_workflow
