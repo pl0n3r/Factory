@@ -196,6 +196,162 @@ def _add_signal(
     )
 
 
+def _task_trace(
+    task: dict[str, Any],
+) -> tuple[str, list[str], list[dict[str, Any]]]:
+    trace: list[dict[str, Any]] = []
+    task_level = CHANGE_TYPE_RISK[task["change_type"]]
+    _add_signal(
+        trace,
+        signal=f"change_type:{task['change_type']}",
+        source="task.change_type",
+        level=task_level,
+        reason="tipo de cambio declarado",
+    )
+    surface_levels: list[str] = []
+    for surface in task["surfaces"]:
+        level = SURFACE_RISK.get(surface, "medium")
+        surface_levels.append(level)
+        _add_signal(
+            trace,
+            signal=f"surface:{surface}",
+            source="task.surfaces",
+            level=level,
+            reason="superficie potencialmente afectada",
+        )
+    return task_level, surface_levels, trace
+
+
+def _quality_trace(
+    quality: dict[str, Any] | None,
+    surfaces: list[str],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    if quality is None:
+        return [], []
+    declared = {row["id"]: row["criticality"] for row in quality["surfaces"]}
+    levels: list[str] = []
+    trace: list[dict[str, Any]] = []
+    for surface in surfaces:
+        if surface not in declared:
+            raise RiskCompilerError(
+                "task.surfaces contiene superficie no declarada por Quality Contract"
+            )
+        criticality = declared[surface]
+        level = QUALITY_CRITICALITY_RISK[criticality]
+        levels.append(level)
+        _add_signal(
+            trace,
+            signal=f"quality:{surface}:{criticality}",
+            source=f"quality_contract.surfaces.{surface}.criticality",
+            level=level,
+            reason="criticidad declarada por Quality Contract",
+        )
+    return levels, trace
+
+
+def _signal_trace(
+    signals: dict[str, bool | str],
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    levels: list[str] = []
+    unknown_critical: list[str] = []
+    trace: list[dict[str, Any]] = []
+    for name, value in signals.items():
+        if value is True:
+            level = "high" if name in CRITICAL_SIGNALS else "medium"
+            levels.append(level)
+            _add_signal(
+                trace,
+                signal=f"{name}:true",
+                source=f"task.signals.{name}",
+                level=level,
+                reason="señal explícita de mayor blast radius",
+            )
+            continue
+        if value != UNKNOWN:
+            continue
+        critical = name in CRITICAL_SIGNALS
+        level = "high" if critical else "medium"
+        levels.append(level)
+        if critical:
+            unknown_critical.append(f"task.signals.{name}")
+        _add_signal(
+            trace,
+            signal=f"{name}:unknown",
+            source=f"task.signals.{name}",
+            level=level,
+            reason=(
+                "señal crítica desconocida: fail-safe"
+                if critical
+                else "incertidumbre explícita"
+            ),
+        )
+    return levels, unknown_critical, trace
+
+
+def _dna_trace(
+    dna: dict[str, Any],
+    task: dict[str, Any],
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    surfaces = set(task["surfaces"])
+    checks = (
+        ("data", "database" in surfaces),
+        ("hosting", bool(surfaces & {"web", "api", "release"})),
+        ("integrations", task["signals"]["external_integration"] is not False),
+        ("capabilities", bool(surfaces & {"auth", "billing"})),
+    )
+    levels: list[str] = []
+    unknown_critical: list[str] = []
+    trace: list[dict[str, Any]] = []
+    for field, critical_here in checks:
+        if dna[field] != UNKNOWN:
+            continue
+        level = "high" if critical_here else "medium"
+        source = f"project_dna.{field}"
+        levels.append(level)
+        if critical_here:
+            unknown_critical.append(source)
+        _add_signal(
+            trace,
+            signal=f"dna:{field}:unknown",
+            source=source,
+            level=level,
+            reason=(
+                "contexto crítico del proyecto desconocido: fail-safe"
+                if critical_here
+                else "contexto del proyecto incompleto"
+            ),
+        )
+    return levels, unknown_critical, trace
+
+
+def _blast_radius(trace: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows = [
+        {
+            "area": row["signal"],
+            "source": row["source"],
+            "risk": row["risk"],
+        }
+        for row in trace
+        if LEVEL_RANK[row["risk"]] >= LEVEL_RANK["medium"]
+    ]
+    return sorted(rows, key=lambda row: (row["risk"], row["source"], row["area"]))
+
+
+def _compiled_controls(
+    overall: str,
+    trace: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    sources = sorted({row["source"] for row in trace})
+    return [
+        {
+            "target": target,
+            "required_for": overall,
+            "sources": sources,
+        }
+        for target in _controls_for(overall)
+    ]
+
+
 def compile_risk(
     *,
     project_dna: Any,
@@ -207,144 +363,25 @@ def compile_risk(
     normalized_task = _normalize_task(task)
     quality = _validated_quality_context(dna, quality_contract)
 
-    trace: list[dict[str, Any]] = []
-    task_level = CHANGE_TYPE_RISK[normalized_task["change_type"]]
-    _add_signal(
-        trace,
-        signal=f"change_type:{normalized_task['change_type']}",
-        source="task.change_type",
-        level=task_level,
-        reason="tipo de cambio declarado",
+    task_level, surface_levels, task_rows = _task_trace(normalized_task)
+    quality_levels, quality_rows = _quality_trace(
+        quality,
+        normalized_task["surfaces"],
     )
-
-    surface_levels: list[str] = []
-    for surface in normalized_task["surfaces"]:
-        level = SURFACE_RISK.get(surface, "medium")
-        surface_levels.append(level)
-        _add_signal(
-            trace,
-            signal=f"surface:{surface}",
-            source="task.surfaces",
-            level=level,
-            reason="superficie potencialmente afectada",
-        )
-
-    quality_levels: list[str] = []
-    if quality is not None:
-        quality_surfaces = {
-            row["id"]: row["criticality"]
-            for row in quality["surfaces"]
-        }
-        for surface in normalized_task["surfaces"]:
-            if surface not in quality_surfaces:
-                raise RiskCompilerError(
-                    "task.surfaces contiene superficie no declarada por Quality Contract"
-                )
-            criticality = quality_surfaces[surface]
-            level = QUALITY_CRITICALITY_RISK[criticality]
-            quality_levels.append(level)
-            _add_signal(
-                trace,
-                signal=f"quality:{surface}:{criticality}",
-                source=f"quality_contract.surfaces.{surface}.criticality",
-                level=level,
-                reason="criticidad declarada por Quality Contract",
-            )
-
-    unknown_critical: list[str] = []
-    signal_levels: list[str] = []
-    for name, value in normalized_task["signals"].items():
-        if value is True:
-            level = "high" if name in CRITICAL_SIGNALS else "medium"
-            signal_levels.append(level)
-            _add_signal(
-                trace,
-                signal=f"{name}:true",
-                source=f"task.signals.{name}",
-                level=level,
-                reason="señal explícita de mayor blast radius",
-            )
-        elif value == UNKNOWN:
-            if name in CRITICAL_SIGNALS:
-                unknown_critical.append(f"task.signals.{name}")
-                signal_levels.append("high")
-                _add_signal(
-                    trace,
-                    signal=f"{name}:unknown",
-                    source=f"task.signals.{name}",
-                    level="high",
-                    reason="señal crítica desconocida: fail-safe",
-                )
-            else:
-                signal_levels.append("medium")
-                _add_signal(
-                    trace,
-                    signal=f"{name}:unknown",
-                    source=f"task.signals.{name}",
-                    level="medium",
-                    reason="incertidumbre explícita",
-                )
-
-    dna_levels: list[str] = []
-    surfaces = set(normalized_task["surfaces"])
-    dna_checks = (
-        ("data", "database" in surfaces),
-        ("hosting", bool(surfaces & {"web", "api", "release"})),
-        ("integrations", normalized_task["signals"]["external_integration"] is not False),
-        ("capabilities", bool(surfaces & {"auth", "billing"})),
+    signal_levels, signal_unknown, signal_rows = _signal_trace(
+        normalized_task["signals"]
     )
-    for field, critical_here in dna_checks:
-        value = dna[field]
-        if value == UNKNOWN:
-            level = "high" if critical_here else "medium"
-            dna_levels.append(level)
-            source = f"project_dna.{field}"
-            if critical_here:
-                unknown_critical.append(source)
-            _add_signal(
-                trace,
-                signal=f"dna:{field}:unknown",
-                source=source,
-                level=level,
-                reason=(
-                    "contexto crítico del proyecto desconocido: fail-safe"
-                    if critical_here
-                    else "contexto del proyecto incompleto"
-                ),
-            )
+    dna_levels, dna_unknown, dna_rows = _dna_trace(dna, normalized_task)
 
-    levels = [
+    trace = [*task_rows, *quality_rows, *signal_rows, *dna_rows]
+    unknown_critical = sorted(set([*signal_unknown, *dna_unknown]))
+    overall = _max_level(
         task_level,
         *surface_levels,
         *signal_levels,
         *dna_levels,
         *quality_levels,
-    ]
-    overall = _max_level(*levels)
-
-    blast_radius = []
-    for row in trace:
-        if LEVEL_RANK[row["risk"]] >= LEVEL_RANK["medium"]:
-            blast_radius.append(
-                {
-                    "area": row["signal"],
-                    "source": row["source"],
-                    "risk": row["risk"],
-                }
-            )
-    blast_radius.sort(key=lambda item: (item["risk"], item["source"], item["area"]))
-
-    controls = []
-    contributing_sources = sorted({row["source"] for row in trace})
-    for target in _controls_for(overall):
-        controls.append(
-            {
-                "target": target,
-                "required_for": overall,
-                "sources": contributing_sources,
-            }
-        )
-
+    )
     dimensions = {
         "change": task_level,
         "surface": _max_level(*surface_levels),
@@ -360,13 +397,18 @@ def compile_risk(
         "project_dna_fingerprint": dna["fingerprint"],
         "risk": overall,
         "dimensions": dimensions,
-        "blast_radius": blast_radius,
-        "controls": controls,
+        "blast_radius": _blast_radius(trace),
+        "controls": _compiled_controls(overall, trace),
         "trace": sorted(
             trace,
-            key=lambda row: (row["source"], row["signal"], row["risk"], row["reason"]),
+            key=lambda row: (
+                row["source"],
+                row["signal"],
+                row["risk"],
+                row["reason"],
+            ),
         ),
-        "unknown_critical_signals": sorted(set(unknown_critical)),
+        "unknown_critical_signals": unknown_critical,
         "context_complete": not unknown_critical,
     }
     if quality is not None:
@@ -375,7 +417,6 @@ def compile_risk(
         )
     result["fingerprint"] = _stable_hash(result)
     return result
-
 
 def validate_risk_evidence(
     *,
