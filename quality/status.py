@@ -193,16 +193,25 @@ def _regressions(value: Any, project_ref: str, required):
     for raw in value:
         row = _closed(
             raw,
-            {"version", "project", "surface", "classification",
-             "pass_evidence_eligible", "provenance"},
+            {"version", "regression_id", "project", "surface", "signature",
+             "classification", "flaky", "reproduced", "pass_evidence_eligible",
+             "guardrail_material", "provenance", "fingerprint"},
             "regression",
+        )
+        classification = row["classification"]
+        coherent = (
+            (classification == "VERIFIED" and row["pass_evidence_eligible"] is True
+             and row["reproduced"] is True and row["flaky"] is False)
+            or (classification == "FLAKY" and row["pass_evidence_eligible"] is False
+                and row["flaky"] is True)
+            or (classification == "REPRODUCED" and row["pass_evidence_eligible"] is False
+                and row["reproduced"] is True and row["flaky"] is False)
+            or (classification == "OBSERVED" and row["pass_evidence_eligible"] is False
+                and row["reproduced"] is False and row["flaky"] is False)
         )
         if (
             row["version"] != 1 or row["project"] != project_ref
-            or row["surface"] not in surfaces
-            or row["classification"] not in {"VERIFIED", "FLAKY", "OBSERVED", "REPRODUCED"}
-            or type(row["pass_evidence_eligible"]) is not bool
-            or (row["classification"] == "VERIFIED") != row["pass_evidence_eligible"]
+            or row["surface"] not in surfaces or not coherent
         ):
             raise QualityStatusError("regression evidence incoherente.")
         provenance = row["provenance"]
@@ -233,7 +242,7 @@ def _external_dimensions(quality, performance_status, recovery_health, states, r
             states.append("UNKNOWN"); reasons.append("recovery_missing")
             classes.append("quality_recovery_unknown")
         else:
-            if recovery_health.get("project") != quality["project"]:
+            if not isinstance(recovery_health, Mapping) or recovery_health.get("project") != quality["project"]:
                 raise QualityStatusError("recovery project incoherente.")
             try:
                 projected = project_recovery_readiness(recovery_health, critical=True)
@@ -253,6 +262,8 @@ def _external(name, status, payload, states, reasons, classes):
     return {
         "status": status, "source": payload.get("source"),
         "reasons": list(payload.get("reasons", [])),
+        "evidence_refs": list(payload.get("evidence_refs", [])),
+        "work_item_classes": list(payload.get("work_item_classes", [])),
         "recalculated": False,
     }
 
