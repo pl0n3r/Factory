@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bootstrap gobernado del caller de coordinación en repositorios existentes."""
 from __future__ import annotations
-import base64, hashlib, json, os, re, sys
+import argparse, base64, hashlib, json, os, re, subprocess, sys
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -14,6 +14,9 @@ CALLER_PATH = ".github/workflows/work-coordination.yml"
 TEST_PATH = "tests/test_factory_coordination_adoption.py"
 CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")
 ALLOWED_PATHS = {CALLER_PATH, TEST_PATH, "AGENTS.md"}
+GRINDFLOW_REPO = "pl0n3r/GrindFlow"
+GRINDFLOW_DELIVERY_PATHS = {CALLER_PATH, TEST_PATH, "config/version.php", "package.json", "package-lock.json", "README.md"}
+STRICT_CONTRACT_MARKERS = {"config/version.php", "package.json", "package-lock.json", "scripts/readme-dashboard.py"}
 REPO_RE = re.compile(r"^pl0n3r/[A-Za-z0-9_.-]{1,100}$")
 SHA_RE, KEY_RE = re.compile(r"^[0-9a-f]{40}$"), re.compile(r"^[0-9a-f]{64}$")
 MAX_FILE, MAX_TOTAL = 120_000, 240_000
@@ -82,18 +85,31 @@ def caller_content(template: str) -> str:
 def adoption_test() -> str:
     return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n        self.assertIn("operation: pr", text)\n        for event in ("issue_comment:", "issues:", "pull_request:", "workflow_dispatch:", "schedule:"):\n            self.assertIn(event, text)\n'''
 
-def validate_patch(patch: Any) -> None:
-    if not isinstance(patch, dict) or not patch or not set(patch).issubset(ALLOWED_PATHS): raise BootstrapError("Patch fuera de la allowlist.")
+def allowed_paths(scope: str | set[str] | None = None) -> set[str]:
+    if isinstance(scope, set):
+        return scope
+    return GRINDFLOW_DELIVERY_PATHS if scope == GRINDFLOW_REPO else ALLOWED_PATHS
+
+def validate_patch(patch: Any, scope: str | set[str] | None = None) -> None:
+    allowed = allowed_paths(scope)
+    if not isinstance(patch, dict) or not patch or not set(patch).issubset(allowed):
+        raise BootstrapError("Patch fuera de la allowlist.")
     total = 0
     for path, content in patch.items():
         rel = Path(path)
-        if rel.is_absolute() or ".." in rel.parts or ".git" in rel.parts or not isinstance(content, str): raise BootstrapError("Patch inválido.")
-        total += len(content.encode())
-        if len(content.encode()) > MAX_FILE or total > MAX_TOTAL: raise BootstrapError("Patch excede límites.")
-    if CALLER_PATH not in patch or TEST_PATH not in patch: raise BootstrapError("Patch incompleto.")
+        if rel.is_absolute() or ".." in rel.parts or ".git" in rel.parts or not isinstance(content, str):
+            raise BootstrapError("Patch inválido.")
+        size = len(content.encode())
+        total += size
+        if size > MAX_FILE or total > MAX_TOTAL:
+            raise BootstrapError("Patch excede límites.")
+    if CALLER_PATH not in patch or TEST_PATH not in patch:
+        raise BootstrapError("Patch incompleto.")
 
 def build_patch(template: str) -> dict[str, str]:
-    patch = {CALLER_PATH: caller_content(template), TEST_PATH: adoption_test()}; validate_patch(patch); return patch
+    patch = {CALLER_PATH: caller_content(template), TEST_PATH: adoption_test()}
+    validate_patch(patch)
+    return patch
 
 def legacy_patch(template: str) -> dict[str, str]:
     current = caller_content(template)
@@ -120,11 +136,142 @@ def legacy_patch(template: str) -> dict[str, str]:
     patch = {CALLER_PATH: caller, TEST_PATH: test}; validate_patch(patch); return patch
 
 def patch_sha(patch: dict[str,str]) -> str:
-    validate_patch(patch)
+    allowed = GRINDFLOW_DELIVERY_PATHS if set(patch).issubset(GRINDFLOW_DELIVERY_PATHS) else ALLOWED_PATHS
+    validate_patch(patch, allowed)
     return hashlib.sha256(json.dumps(patch,sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
 def replacement_branch_name(req: dict[str,Any], patch: dict[str,str]) -> str:
     return f"{branch_name(req)}-{patch_sha(patch)[:12]}"
+
+
+def _regular_text(root: Path, path: str) -> str:
+    target=(root/path)
+    if target.is_symlink() or not target.is_file():
+        raise BootstrapError(f"Contrato consumidor inválido: {path}.")
+    data=target.read_bytes()
+    if len(data)>MAX_FILE:
+        raise BootstrapError(f"Contrato consumidor excede límite: {path}.")
+    try: return data.decode()
+    except UnicodeDecodeError as exc: raise BootstrapError(f"Contrato consumidor no es UTF-8: {path}.") from exc
+
+def _write_regular(root: Path, path: str, content: str) -> None:
+    target=(root/path)
+    if target.exists() and target.is_symlink():
+        raise BootstrapError(f"Patch no admite symlinks: {path}.")
+    target.parent.mkdir(parents=True,exist_ok=True)
+    target.write_text(content,encoding="utf-8")
+
+def _grindflow_version(content: str) -> tuple[int,int,int]:
+    matches=re.findall(r"'number'\s*=>\s*'(\d+)\.(\d+)\.(\d+)'",content)
+    if len(matches)!=1: raise BootstrapError("GrindFlow exige una única versión.")
+    value=tuple(int(part) for part in matches[0])
+    if value[0]>=1: raise BootstrapError("GrindFlow bootstrap solo admite versión pre-1.0.")
+    return value
+
+def _json_object(content: str,label: str) -> dict[str,Any]:
+    try: value=json.loads(content)
+    except json.JSONDecodeError as exc: raise BootstrapError(f"{label} inválido.") from exc
+    if not isinstance(value,dict): raise BootstrapError(f"{label} inválido.")
+    return value
+
+def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_sha: str) -> dict[str,str]:
+    root=consumer_root.resolve()
+    try:
+        head=subprocess.run(["git","rev-parse","HEAD"],cwd=root,check=True,text=True,capture_output=True).stdout.strip()
+    except (OSError,subprocess.CalledProcessError) as exc:
+        raise BootstrapError("Checkout GrindFlow inválido.") from exc
+    if head!=expected_main_sha: raise BootstrapError("Checkout GrindFlow no coincide con expected_main_sha.")
+
+    version_text=_regular_text(root,"config/version.php")
+    package_text=_regular_text(root,"package.json")
+    lock_text=_regular_text(root,"package-lock.json")
+    _regular_text(root,"README.md")
+    updater=_regular_text(root,"scripts/readme-dashboard.py")
+    if "README dashboard" not in updater or "--update" not in updater:
+        raise BootstrapError("Updater README canónico de GrindFlow no reconocido.")
+
+    current=_grindflow_version(version_text)
+    package=_json_object(package_text,"package.json")
+    lock=_json_object(lock_text,"package-lock.json")
+    current_str=".".join(map(str,current))
+    root_pkg=(lock.get("packages") or {}).get("") if isinstance(lock.get("packages"),dict) else None
+    if package.get("version")!=current_str or lock.get("version")!=current_str or not isinstance(root_pkg,dict) or root_pkg.get("version")!=current_str:
+        raise BootstrapError("Versiones GrindFlow fuera de paridad.")
+    next_version=(current[0],current[1],current[2]+1)
+    next_str=".".join(map(str,next_version))
+
+    updated_version,count=re.subn(
+        r"('number'\s*=>\s*')\d+\.\d+\.\d+(')",
+        lambda m:m.group(1)+next_str+m.group(2),
+        version_text,count=1,
+    )
+    if count!=1: raise BootstrapError("No fue posible preparar config/version.php.")
+    package["version"]=next_str
+    lock["version"]=next_str
+    root_pkg["version"]=next_str
+
+    base=build_patch(template)
+    readme_text=_regular_text(root,"README.md")
+    visible_current=f"v{current_str}"
+    visible_next=f"v{next_str}"
+    if visible_current not in readme_text:
+        raise BootstrapError("README GrindFlow no expone la versión actual esperada.")
+    readme_text=readme_text.replace(visible_current,visible_next)
+    prepared={
+        **base,
+        "config/version.php":updated_version,
+        "package.json":json.dumps(package,ensure_ascii=False,indent=2)+"\n",
+        "package-lock.json":json.dumps(lock,ensure_ascii=False,indent=2)+"\n",
+        "README.md":readme_text,
+    }
+    for path,content in prepared.items(): _write_regular(root,path,content)
+    try:
+        subprocess.run(
+            [sys.executable,"scripts/readme-dashboard.py","--update","--base",expected_main_sha,"--head",expected_main_sha],
+            cwd=root,check=True,text=True,capture_output=True,
+            env={k:v for k,v in os.environ.items() if k!="FACTORY_PROVISION_TOKEN"},
+        )
+    except (OSError,subprocess.CalledProcessError) as exc:
+        raise BootstrapError("Updater README canónico de GrindFlow falló.") from exc
+    prepared["README.md"]=_regular_text(root,"README.md")
+    validate_patch(prepared,GRINDFLOW_DELIVERY_PATHS)
+    if set(prepared)!=GRINDFLOW_DELIVERY_PATHS:
+        raise BootstrapError("Patch GrindFlow incompleto.")
+    return prepared
+
+def prepare_delivery_patch(raw: dict[str,str], template: str, consumer_root: Path) -> dict[str,Any]:
+    req=validate_request(raw)
+    root=consumer_root.resolve()
+    if req["target_repository"]==GRINDFLOW_REPO:
+        patch=grindflow_delivery_patch(template,root,req["expected_main_sha"])
+    else:
+        present={path for path in STRICT_CONTRACT_MARKERS if (root/path).exists()}
+        if present==STRICT_CONTRACT_MARKERS:
+            raise BootstrapError("Consumidor estricto sin adapter soportado.")
+        patch=build_patch(template)
+    allowed=GRINDFLOW_DELIVERY_PATHS if req["target_repository"]==GRINDFLOW_REPO else ALLOWED_PATHS
+    validate_patch(patch,allowed)
+    return {
+        "version":1,
+        "identity":identity(req),
+        "target_repository":req["target_repository"],
+        "expected_main_sha":req["expected_main_sha"],
+        "patch_sha256":patch_sha(patch),
+        "patch":patch,
+    }
+
+def load_prepared_delivery(raw: dict[str,str], prepared: Any) -> dict[str,str]:
+    req=validate_request(raw)
+    if not isinstance(prepared,dict) or set(prepared)!={"version","identity","target_repository","expected_main_sha","patch_sha256","patch"}:
+        raise BootstrapError("Entrega preparada inválida.")
+    if prepared["version"]!=1 or prepared["identity"]!=identity(req) or prepared["target_repository"]!=req["target_repository"] or prepared["expected_main_sha"]!=req["expected_main_sha"]:
+        raise BootstrapError("Entrega preparada no corresponde a la intención.")
+    patch=prepared["patch"]
+    allowed=GRINDFLOW_DELIVERY_PATHS if req["target_repository"]==GRINDFLOW_REPO else ALLOWED_PATHS
+    validate_patch(patch,allowed)
+    if patch_sha(patch)!=prepared["patch_sha256"]:
+        raise BootstrapError("Entrega preparada cambió después de preparación.")
+    return patch
 
 class GitHubGateway:
     def __init__(self, token: str) -> None:
@@ -197,12 +344,18 @@ class GitHubGateway:
         try: return base64.b64decode(value["content"]).decode()
         except (KeyError,TypeError,ValueError) as exc: raise BootstrapError("Contenido remoto ilegible.") from exc
     def branch_matches(self,name: str,branch: str, patch: dict[str,str])->bool: return all(self.file_text(name,p,branch)==v for p,v in patch.items())
-    def commit_matches(self,name: str,sha: str,req: dict[str,Any])->bool:
+    def commit_matches(self,name: str,sha: str,req: dict[str,Any],paths_expected: set[str])->bool:
         value=self._request("GET",f"/repos/{name}/git/commits/{sha}")
         parents=value.get("parents",[]) if isinstance(value,dict) else []
         compare=self._request("GET",f"/repos/{name}/compare/{req['expected_main_sha']}...{sha}") or {}
         paths={row.get("filename") for row in compare.get("files",[])} if isinstance(compare,dict) else set()
-        return bool(isinstance(value,dict) and f"Factory-Bootstrap-Identity: {identity(req)}" in value.get("message","") and len(parents)==1 and parents[0].get("sha")==req["expected_main_sha"] and paths=={CALLER_PATH,TEST_PATH})
+        return bool(
+            isinstance(value,dict)
+            and f"Factory-Bootstrap-Identity: {identity(req)}" in value.get("message","")
+            and len(parents)==1
+            and parents[0].get("sha")==req["expected_main_sha"]
+            and paths==set(paths_expected)
+        )
     def tree_info(self,name: str,sha: str,paths: set[str])->str:
         commit=self._request("GET",f"/repos/{name}/git/commits/{sha}"); tree=(commit or {}).get("tree",{}).get("sha") if isinstance(commit,dict) else None
         if not isinstance(tree,str): raise BootstrapError("Árbol base inválido.")
@@ -253,7 +406,7 @@ class GitHubGateway:
 def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: dict[str,str],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
     if bsha is None and gpr is None: return None
     name=req["target_repository"]
-    if bsha is not None and gateway.commit_matches(name,bsha,req) and gateway.branch_matches(name,branch,patch):
+    if bsha is not None and gateway.commit_matches(name,bsha,req,set(patch)) and gateway.branch_matches(name,branch,patch):
         if gpr is None:
             if gateway.main_sha(name)!=req["expected_main_sha"]:
                 gateway.delete_branch(name,branch)
@@ -264,14 +417,14 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: 
         if not gateway.pr_matches(name,branch,gpr,req): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
         return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
 
-    if bsha is None or gpr is None or not gateway.commit_matches(name,bsha,req) or not gateway.branch_matches(name,branch,legacy) or not gateway.pr_matches(name,branch,gpr,req):
+    if bsha is None or gpr is None or not gateway.commit_matches(name,bsha,req,set(legacy)) or not gateway.branch_matches(name,branch,legacy) or not gateway.pr_matches(name,branch,gpr,req):
         raise BootstrapError("La rama bootstrap pertenece a otra intención.")
 
     replacement=replacement_branch_name(req,patch)
     replacement_sha=gateway.branch_sha(name,replacement)
     replacement_pr=gateway.open_pr(name,replacement)
     if replacement_sha is not None or replacement_pr is not None:
-        if replacement_sha is not None and replacement_pr is None and gateway.commit_matches(name,replacement_sha,req) and gateway.branch_matches(name,replacement,patch):
+        if replacement_sha is not None and replacement_pr is None and gateway.commit_matches(name,replacement_sha,req,set(patch)) and gateway.branch_matches(name,replacement,patch):
             if gateway.main_sha(name)!=req["expected_main_sha"] or gateway.branch_sha(name,branch)!=bsha:
                 raise BootstrapError("El bootstrap legacy cambió antes de crear PR replacement.")
             fresh=gateway.open_pr(name,branch)
@@ -280,7 +433,7 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: 
             body=f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{req['expected_main_sha']}`\n\nSupersedes bootstrap PR #{gpr['number']}.\n\n{marker(req)}"
             pr=gateway.create_pr(name,replacement,f"chore(factory): endurecer bootstrap coordinación (#{req['target_issue']})",body)
             return {"status":"confirmed","branch":replacement,"pr":pr,"created":True}
-        if replacement_sha is None or replacement_pr is None or not gateway.commit_matches(name,replacement_sha,req) or not gateway.branch_matches(name,replacement,patch) or not gateway.pr_matches(name,replacement,replacement_pr,req) or f"Supersedes bootstrap PR #{gpr['number']}." not in str(replacement_pr.get("body") or ""):
+        if replacement_sha is None or replacement_pr is None or not gateway.commit_matches(name,replacement_sha,req,set(patch)) or not gateway.branch_matches(name,replacement,patch) or not gateway.pr_matches(name,replacement,replacement_pr,req) or f"Supersedes bootstrap PR #{gpr['number']}." not in str(replacement_pr.get("body") or ""):
             raise BootstrapError("Replacement bootstrap pertenece a otra intención.")
         return {"status":"confirmed","branch":replacement,"pr":replacement_pr.get("number"),"created":False}
 
@@ -292,23 +445,61 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: 
     _,pr=gateway.materialize_replacement(req,patch,replacement,branch,bsha,gpr["number"])
     return {"status":"confirmed","branch":replacement,"pr":pr,"created":True}
 
-def bootstrap(raw: dict[str,str],gateway: Any,template: str)->dict[str,Any]:
+def bootstrap_prepared(raw: dict[str,str], gateway: Any, template: str, patch: dict[str,str]) -> dict[str,Any]:
+    req = validate_request(raw)
+    validate_patch(patch, GRINDFLOW_DELIVERY_PATHS if req["target_repository"] == GRINDFLOW_REPO else ALLOWED_PATHS)
+    return bootstrap(raw, gateway, template, patch)
+
+def bootstrap(raw: dict[str,str],gateway: Any,template: str,prepared_patch: dict[str,str] | None=None)->dict[str,Any]:
     req=validate_request(raw); gateway.authorize(); gateway.repository(req["target_repository"])
     name=req["target_repository"]
     if not gateway.issue_open(name,req["target_issue"]): raise BootstrapError("Issue objetivo no está abierto.")
     if gateway.main_sha(name)!=req["expected_main_sha"]: raise BootstrapError("expected_main_sha no coincide con main.")
-    patch,legacy,branch=build_patch(template),legacy_patch(template),branch_name(req)
+    patch = prepared_patch if prepared_patch is not None else build_patch(template)
+    validate_patch(patch, name if prepared_patch is not None else None)
+    legacy,branch=legacy_patch(template),branch_name(req)
     existing=reuse_existing(req,gateway,patch,legacy,branch,gateway.branch_sha(name,branch),gateway.open_pr(name,branch))
     if existing is not None: return existing
-    if gateway.file_text(name,CALLER_PATH,"main")==patch[CALLER_PATH] and gateway.file_text(name,TEST_PATH,"main")==patch[TEST_PATH]:
+    if all(gateway.file_text(name,path,"main")==content for path,content in patch.items()):
         return {"status":"already_bootstrapped","branch":None,"pr":None,"created":False}
     _,pr=gateway.materialize(req,patch)
     return {"status":"created","branch":branch,"pr":pr,"created":True}
 
+def _raw_request() -> dict[str, str]:
+    return {name:os.getenv(name.upper(),"") for name in ("target_repository","target_issue","expected_main_sha","governance_ref","idempotency_key")}
+
+def _prepared_file(path: str) -> Path:
+    value=Path(path)
+    if value.is_symlink() or value.is_dir() or value.is_absolute() and not str(value).startswith("/tmp/"):
+        raise BootstrapError("Ruta de entrega preparada inválida.")
+    return value
+
 def main()->int:
-    raw={name:os.getenv(name.upper(),"") for name in ("target_repository","target_issue","expected_main_sha","governance_ref","idempotency_key")}
-    try: result=bootstrap(raw,GitHubGateway(os.getenv("FACTORY_PROVISION_TOKEN","")),CALLER_TEMPLATE.read_text(encoding="utf-8"))
-    except (OSError,BootstrapError) as exc: print(f"ERROR: {exc}",file=sys.stderr); return 2
+    parser=argparse.ArgumentParser()
+    mode=parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--prepare",metavar="MANIFEST")
+    mode.add_argument("--apply-prepared",metavar="MANIFEST")
+    parser.add_argument("--consumer-root",default="consumer")
+    args=parser.parse_args()
+    raw=_raw_request()
+    try:
+        template=CALLER_TEMPLATE.read_text(encoding="utf-8")
+        if args.prepare:
+            if os.getenv("FACTORY_PROVISION_TOKEN"):
+                raise BootstrapError("Preparación de consumidor no admite FACTORY_PROVISION_TOKEN.")
+            prepared=prepare_delivery_patch(raw,template,Path(args.consumer_root))
+            target=_prepared_file(args.prepare)
+            target.write_text(json.dumps(prepared,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
+            result={"status":"prepared","paths":sorted(prepared["patch"]),"patch_sha":prepared["patch_sha256"]}
+        else:
+            target=_prepared_file(args.apply_prepared)
+            if not target.is_file() or target.stat().st_size>MAX_TOTAL*2:
+                raise BootstrapError("Entrega preparada ausente o excesiva.")
+            prepared=json.loads(target.read_text(encoding="utf-8"))
+            patch=load_prepared_delivery(raw,prepared)
+            result=bootstrap_prepared(raw,GitHubGateway(os.getenv("FACTORY_PROVISION_TOKEN","")),template,patch)
+    except (OSError,json.JSONDecodeError,BootstrapError) as exc:
+        print(f"ERROR: {exc}",file=sys.stderr); return 2
     print(json.dumps(result,sort_keys=True)); return 0
 
 if __name__=="__main__": raise SystemExit(main())

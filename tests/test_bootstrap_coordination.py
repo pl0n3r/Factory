@@ -1,5 +1,7 @@
 import hashlib
 import json
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -405,6 +407,104 @@ class BootstrapCoordinationTests(unittest.TestCase):
         source=(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8")
         self.assertIn('CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")',source)
         self.assertNotIn("--caller-template",source)
+
+
+    def _grindflow_fixture(self, version="0.1.144"):
+        tmp=tempfile.TemporaryDirectory()
+        root=Path(tmp.name)
+        for path in ("config","scripts","tests",".github/workflows"):
+            (root/path).mkdir(parents=True,exist_ok=True)
+        (root/"config/version.php").write_text(
+            "<?php return ['number' => '"+version+"', 'released_at' => '2026-09-25'];\n",
+            encoding="utf-8",
+        )
+        package={"name":"grindflow","version":version,"private":True}
+        lock={"name":"grindflow","version":version,"lockfileVersion":3,"packages":{"":{"name":"grindflow","version":version}}}
+        (root/"package.json").write_text(json.dumps(package,indent=2)+"\n",encoding="utf-8")
+        (root/"package-lock.json").write_text(json.dumps(lock,indent=2)+"\n",encoding="utf-8")
+        (root/"README.md").write_text("# GrindFlow — Último deploy\nVersion "+version+"\n",encoding="utf-8")
+        (root/"scripts/readme-dashboard.py").write_text("# README dashboard updater supports --update\n",encoding="utf-8")
+        return tmp,root
+
+    def _prepared_grindflow_patch(self, version="0.1.144"):
+        tmp,root=self._grindflow_fixture(version)
+        completed=lambda args,**kwargs: subprocess.CompletedProcess(
+            args,0,stdout=(SHA+"\n" if args[:3]==["git","rev-parse","HEAD"] else ""),stderr=""
+        )
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed):
+            patch=b.grindflow_delivery_patch(CALLER,root,SHA)
+        return tmp,root,patch
+
+    def test_grindflow_adapter_requires_exact_version_parity_and_patch_increment(self):
+        tmp,root,patch=self._prepared_grindflow_patch()
+        self.addCleanup(tmp.cleanup)
+        self.assertIn("'number' => '0.1.145'",patch["config/version.php"])
+        package=json.loads(patch["package.json"])
+        lock=json.loads(patch["package-lock.json"])
+        self.assertEqual(package["version"],"0.1.145")
+        self.assertEqual(lock["version"],"0.1.145")
+        self.assertEqual(lock["packages"][""]["version"],"0.1.145")
+        (root/"package.json").write_text('{"name":"grindflow","version":"0.1.143"}\n',encoding="utf-8")
+        completed=lambda args,**kwargs: subprocess.CompletedProcess(args,0,stdout=SHA+"\n",stderr="")
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed):
+            with self.assertRaisesRegex(b.BootstrapError,"paridad"):
+                b.grindflow_delivery_patch(CALLER,root,SHA)
+
+    def test_grindflow_patch_paths_are_closed_and_bounded(self):
+        tmp,_,patch=self._prepared_grindflow_patch()
+        self.addCleanup(tmp.cleanup)
+        self.assertEqual(set(patch),b.GRINDFLOW_DELIVERY_PATHS)
+        b.validate_patch(patch,b.GRINDFLOW_DELIVERY_PATHS)
+        with self.assertRaises(b.BootstrapError):
+            b.validate_patch({**patch,"evil.txt":"x"},b.GRINDFLOW_DELIVERY_PATHS)
+        oversized={**patch,"README.md":"x"*(b.MAX_FILE+1)}
+        with self.assertRaises(b.BootstrapError):
+            b.validate_patch(oversized,b.GRINDFLOW_DELIVERY_PATHS)
+
+    def test_grindflow_patch_updates_version_package_lock_and_readme(self):
+        tmp,root,patch=self._prepared_grindflow_patch()
+        self.addCleanup(tmp.cleanup)
+        self.assertIn("0.1.145",patch["config/version.php"])
+        self.assertEqual(json.loads(patch["package.json"])["version"],"0.1.145")
+        lock=json.loads(patch["package-lock.json"])
+        self.assertEqual((lock["version"],lock["packages"][""]["version"]),("0.1.145","0.1.145"))
+        self.assertEqual(patch["README.md"],(root/"README.md").read_text(encoding="utf-8"))
+        self.assertIn(b.CALLER_PATH,patch)
+        self.assertIn(b.TEST_PATH,patch)
+
+    def test_grindflow_188_fixture_no_longer_has_same_version_transition(self):
+        tmp,_,patch=self._prepared_grindflow_patch("0.1.143")
+        self.addCleanup(tmp.cleanup)
+        self.assertIn("'number' => '0.1.144'",patch["config/version.php"])
+        self.assertNotIn("'number' => '0.1.143'",patch["config/version.php"])
+
+    def test_replacement_idempotency_stays_fail_closed_with_delivery_patch(self):
+        tmp,_,patch=self._prepared_grindflow_patch()
+        self.addCleanup(tmp.cleanup)
+        raw=request()
+        raw["target_repository"]=b.GRINDFLOW_REPO
+        req=b.validate_request(raw)
+        legacy=b.legacy_patch(CALLER)
+        branch=b.branch_name(req)
+        old_sha="c"*40
+        legacy_pr=self._legacy_pr(req,branch)
+        gateway=FakeGateway(branch=old_sha,pr=legacy_pr,same=True)
+        replacement=b.replacement_branch_name(req,patch)
+        with mock.patch.object(gateway,"branch_sha",side_effect=lambda _,v: old_sha if v==branch else None), \
+             mock.patch.object(gateway,"open_pr",side_effect=lambda _,v: legacy_pr if v==branch else None), \
+             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==legacy if v==branch else p==patch):
+            result=b.reuse_existing(req,gateway,patch,legacy,branch,old_sha,legacy_pr)
+        self.assertEqual(result["branch"],replacement)
+        drift=FakeGateway(main="d"*40)
+        with self.assertRaisesRegex(b.BootstrapError,"expected_main_sha"):
+            b.bootstrap_prepared(raw,drift,CALLER,patch)
+
+    def test_unsupported_strict_consumer_fails_before_write(self):
+        tmp,root=self._grindflow_fixture()
+        self.addCleanup(tmp.cleanup)
+        raw=request()
+        with self.assertRaisesRegex(b.BootstrapError,"sin adapter"):
+            b.prepare_delivery_patch(raw,CALLER,root)
 
 
 if __name__ == "__main__": unittest.main()

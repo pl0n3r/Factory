@@ -41,7 +41,13 @@ Una tarea planificada no entra a /tomar si una dependencia o claim de archivos l
 
 Cuando un repositorio `pl0n3r/*` existente no puede usar `/tomar` porque todavía no contiene el caller de coordinación, Factory no crea una excepción manual ni escribe en `main`. El owner ejecuta `bootstrap-coordination.yml` desde la rama por defecto con `target_repository`, `target_issue`, `expected_main_sha`, `governance_ref=pl0n3r/factory@v1` e `idempotency_key`.
 
-El workflow reutiliza únicamente `FACTORY_PROVISION_TOKEN`, valida owner, Issue abierto y SHA exacto, y genera una rama `factory/bootstrap-coordination-<issue>` con PR a `main`. El patch está limitado a `.github/workflows/work-coordination.yml`, `tests/test_factory_coordination_adoption.py` y, solo cuando sea necesario, `AGENTS.md`. Nunca copia `coordinar_trabajo.py`: el caller consume `pl0n3r/factory/.github/workflows/coordinacion.yml@v1` con perfil `es`.
+El workflow reutiliza únicamente `FACTORY_PROVISION_TOKEN`, valida owner, Issue abierto y SHA exacto, y genera una rama `factory/bootstrap-coordination-<issue>` con PR a `main`. El request externo sigue cerrado: no acepta patches, comandos, rutas ni contenido arbitrario.
+
+La preparación del consumidor ocurre en un checkout fijado a `expected_main_sha` con `persist-credentials: false` y **sin** `FACTORY_PROVISION_TOKEN`. Para consumidores con contrato adicional, Factory usa adapters internos allowlisted. El primer adapter es `pl0n3r/GrindFlow`: exige paridad entre `config/version.php`, `package.json` y las dos versiones raíz de `package-lock.json`, calcula solo patch +1 y ejecuta el updater canónico `scripts/readme-dashboard.py --update` antes de serializar la entrega.
+
+El step privilegiado no ejecuta scripts del consumidor. Solo consume el JSON preparado, verifica identidad, SHA del patch, tamaño, ausencia de traversal/symlinks y una allowlist cerrada. Para GrindFlow esa allowlist contiene exactamente seis rutas: `.github/workflows/work-coordination.yml`, `tests/test_factory_coordination_adoption.py`, `config/version.php`, `package.json`, `package-lock.json` y `README.md`. Los consumidores sin adapter continúan con el bootstrap mínimo; si se detecta un contrato estricto conocido por estructura pero no soportado, el proceso falla antes del primer write.
+
+Nunca copia `coordinar_trabajo.py`: el caller consume `pl0n3r/factory/.github/workflows/coordinacion.yml@v1` con perfil `es`.
 
 Un retry con la misma intención converge sobre la misma rama/PR. Si cambian la intención, `main`, el owner, el Issue o aparece un path/symlink fuera de la allowlist, el bootstrap falla cerrado. El merge del PR no sustituye la evidencia del consumidor: después del merge, `/tomar` debe funcionar en el Issue objetivo antes de considerar restaurada la coordinación.
 
