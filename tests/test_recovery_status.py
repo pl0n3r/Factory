@@ -5,11 +5,8 @@ from pathlib import Path
 from recovery.drill import build_restore_drill_plan, evaluate_restore_drill
 from recovery.pipeline import build_backup_pipeline, verify_backup_evidence
 from recovery.status import (
-    RecoveryStatusError,
-    WORK_ITEM_CLASSES,
-    derive_recovery_health,
-    project_recovery_readiness,
-    recovery_work_item_classes,
+    RecoveryStatusError, WORK_ITEM_CLASSES, derive_recovery_health,
+    project_recovery_readiness, recovery_work_item_classes,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,30 +40,33 @@ def backup():
         "checksum_sha256": "a" * 64, "encrypted": True,
         "primary_verified": True, "primary_ref": "object:001",
         "immutable_version_ref": "version:001",
-        "cold_copy_verified": "NOT_APPLICABLE",
-        "cold_copy_ref": "NOT_APPLICABLE",
+        "cold_copy_verified": "NOT_APPLICABLE", "cold_copy_ref": "NOT_APPLICABLE",
         "created_at": "2026-09-29T01:20:00Z",
         "verified_at": "2026-09-29T01:21:00Z",
         "evidence_refs": ["run:backup:001"],
     })
 
 
-def drill(status="PASSED"):
+def drill(breached=False):
     m, b = manifest(), backup()
     plan = build_restore_drill_plan(
         m, b, {"kind": "disposable", "target_ref": "sandbox:001"}
     )
-    completed = "2026-09-29T01:31:00Z"
-    incident = "2026-09-29T01:25:00Z"
-    if status == "BREACHED":
-        completed = "2026-09-29T02:40:00Z"
-        incident = "2026-09-29T01:40:00Z"
-    return evaluate_restore_drill(m, plan, b, {
+    observed = {
         "backup_id": "backup:001", "checksum_sha256": "a" * 64,
         "health_ok": True, "smoke_ok": True, "integrity_ok": True,
-        "incident_at": incident, "started_at": "2026-09-29T01:26:00Z",
-        "completed_at": completed, "evidence_refs": ["drill:001"],
-    })
+        "incident_at": "2026-09-29T01:25:00Z",
+        "started_at": "2026-09-29T01:26:00Z",
+        "completed_at": "2026-09-29T01:31:00Z",
+        "evidence_refs": ["drill:001"],
+    }
+    if breached:
+        observed.update({
+            "incident_at": "2026-09-29T01:36:00Z",
+            "started_at": "2026-09-29T01:37:00Z",
+            "completed_at": "2026-09-29T02:40:00Z",
+        })
+    return evaluate_restore_drill(m, plan, b, observed)
 
 
 class RecoveryStatusTests(unittest.TestCase):
@@ -76,8 +76,8 @@ class RecoveryStatusTests(unittest.TestCase):
             observed_at="2026-09-29T01:34:00Z",
             drill_observed_at="2026-09-29T01:32:00Z",
         )
-        self.assertEqual(healthy["state"], "HEALTHY")
-        self.assertEqual(healthy["reasons"], ["RECOVERY_EVIDENCE_CURRENT"])
+        self.assertEqual((healthy["state"], healthy["reasons"]),
+                         ("HEALTHY", ["RECOVERY_EVIDENCE_CURRENT"]))
 
         missing = derive_recovery_health(
             manifest(), None, None, observed_at="2026-09-29T01:34:00Z"
@@ -88,33 +88,32 @@ class RecoveryStatusTests(unittest.TestCase):
         stale = derive_recovery_health(
             manifest(), backup(), drill(),
             observed_at="2026-09-29T02:00:01Z",
-            drill_observed_at="2026-09-29T01:32:00Z",
+            drill_observed_at="2026-09-29T01:59:00Z",
         )
         self.assertEqual((stale["state"], stale["work_item_classes"]),
                          ("UNKNOWN", ["backup_stale"]))
 
         breached = derive_recovery_health(
-            manifest(), backup(), drill("BREACHED"),
-            observed_at="2026-09-29T01:45:00Z",
-            drill_observed_at="2026-09-29T01:44:00Z",
+            manifest(), backup(), drill(True),
+            observed_at="2026-09-29T02:42:00Z",
+            drill_observed_at="2026-09-29T02:41:00Z",
         )
         self.assertEqual(breached["state"], "DEGRADED")
         self.assertEqual(
-            breached["work_item_classes"], ["rpo_breached", "rto_breached"]
+            breached["work_item_classes"],
+            ["backup_stale", "rpo_breached", "rto_breached"],
         )
 
     def test_recovery_drift_maps_to_canonical_work_item_classes_without_scheduler(self):
-        recovery = manifest()
-        valid_backup = backup()
+        recovery, valid_backup, valid_drill = manifest(), backup(), drill()
         cases = []
 
         no_primary = copy.deepcopy(valid_backup); no_primary["destinations"] = []
-        cases.append(("offsite_missing", no_primary, drill(), False))
+        cases.append(("offsite_missing", no_primary, valid_drill, False))
 
-        bad_checksum = copy.deepcopy(drill()); bad_checksum["checksum_sha256"] = "b" * 64
+        bad_checksum = copy.deepcopy(valid_drill); bad_checksum["checksum_sha256"] = "b" * 64
         cases.append(("checksum_failed", valid_backup, bad_checksum, False))
-
-        cases.append(("retention_drift", valid_backup, drill(), True))
+        cases.append(("retention_drift", valid_backup, valid_drill, True))
 
         for expected, candidate_backup, candidate_drill, retention in cases:
             health = derive_recovery_health(
@@ -126,6 +125,11 @@ class RecoveryStatusTests(unittest.TestCase):
             self.assertIn(expected, recovery_work_item_classes(health))
             self.assertTrue(set(health["work_item_classes"]) <= WORK_ITEM_CLASSES)
 
+        no_drill = derive_recovery_health(
+            recovery, valid_backup, None, observed_at="2026-09-29T01:34:00Z"
+        )
+        self.assertIn("restore_drill_failed", no_drill["work_item_classes"])
+
         source = (ROOT / "recovery" / "status.py").read_text()
         for forbidden in ("schedule(", "create_issue", "dispatch(", "requests."):
             self.assertNotIn(forbidden, source)
@@ -134,19 +138,17 @@ class RecoveryStatusTests(unittest.TestCase):
         unknown = derive_recovery_health(
             manifest(), None, None, observed_at="2026-09-29T01:34:00Z"
         )
-        projection = project_recovery_readiness(unknown, critical=True)
-        self.assertEqual(projection["recovery_health"], unknown["state"])
-        self.assertFalse(projection["ready"])
-        self.assertTrue(projection["critical_blocker"])
-        self.assertFalse(projection["recalculated"])
-        self.assertEqual(
-            projection["work_item_classes"], unknown["work_item_classes"]
-        )
+        projected = project_recovery_readiness(unknown, critical=True)
+        self.assertEqual(projected["recovery_health"], unknown["state"])
+        self.assertFalse(projected["ready"])
+        self.assertTrue(projected["critical_blocker"])
+        self.assertFalse(projected["recalculated"])
+        self.assertEqual(projected["work_item_classes"], unknown["work_item_classes"])
 
         degraded = derive_recovery_health(
-            manifest(), backup(), drill("BREACHED"),
-            observed_at="2026-09-29T01:45:00Z",
-            drill_observed_at="2026-09-29T01:44:00Z",
+            manifest(), backup(), drill(True),
+            observed_at="2026-09-29T02:42:00Z",
+            drill_observed_at="2026-09-29T02:41:00Z",
         )
         projected = project_recovery_readiness(degraded, critical=True)
         self.assertEqual(projected["recovery_health"], "DEGRADED")
@@ -180,9 +182,10 @@ class RecoveryStatusTests(unittest.TestCase):
         )
         self.assertEqual(future["state"], "BLOCKED")
 
-        forged = {"state": "HEALTHY", "work_item_classes": ["other"]}
         with self.assertRaises(RecoveryStatusError):
-            recovery_work_item_classes(forged)
+            recovery_work_item_classes(
+                {"state": "HEALTHY", "work_item_classes": ["other"]}
+            )
 
 
 if __name__ == "__main__":
