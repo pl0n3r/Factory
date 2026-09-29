@@ -79,8 +79,9 @@ class RecoveryAdaptersTests(unittest.TestCase):
             "primary_offsite",
         )
         disabled = manifest("NOT_APPLICABLE")
+        disabled_request = request(provider="google_drive")
         with self.assertRaises(RecoveryAdapterError):
-            build_adapter_descriptor(disabled, request(provider="google_drive"))
+            build_adapter_descriptor(disabled, disabled_request)
 
     def test_invalid_sensitive_or_unsafe_adapter_input_fails_closed_without_echo(self):
         invalid = []
@@ -92,15 +93,18 @@ class RecoveryAdaptersTests(unittest.TestCase):
         value = request(); value["future"] = True; invalid.append(value)
         secret = "token=supersecretvalue"
         value = request(); value["idempotency_key"] = secret; invalid.append(value)
+        opaque_secret = "ghp_" + ("A" * 24)
+        value = request(); value["object_ref"] = opaque_secret; invalid.append(value)
         pii = "person@example.com"
         value = request(); value["object_ref"] = pii; invalid.append(value)
 
+        recovery_manifest = manifest()
         for value in invalid:
-            with self.subTest(case=str(value)[:50]), self.assertRaises(
-                RecoveryAdapterError
-            ) as ctx:
-                build_adapter_descriptor(manifest(), value)
+            with self.subTest(case=str(value)[:50]):
+                with self.assertRaises(RecoveryAdapterError) as ctx:
+                    build_adapter_descriptor(recovery_manifest, value)
             self.assertNotIn("supersecretvalue", str(ctx.exception))
+            self.assertNotIn("ghp_", str(ctx.exception))
             self.assertNotIn("person@example.com", str(ctx.exception))
 
     def test_adapter_contract_is_declarative_external_io_free_and_non_authorizing(self):
