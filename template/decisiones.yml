@@ -46,6 +46,11 @@
       "id": "D-062",
       "status": "active",
       "text": "Los siete repositorios de la fábrica (Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner) son públicos. Los términos «privado» o «cabina privada» describen acceso restringido a paneles y datos operativos, no visibilidad del repositorio; secretos, tokens y datos de clientes nunca viven en ningún repositorio."
+    },
+    {
+      "id": "D-063",
+      "status": "active",
+      "text": "Mientras un proyecto esté en fase construccion y no haya nada live ni datos reales de clientes, ninguna puerta legal ni de privacidad detiene el trabajo: el agente sigue con el default seguro (documented_not_legally_approved), documenta en datos.yml y no espera al dueño. La revisión jurídica y la puerta go-live se resuelven antes de salir a live; salir a live sigue exigiendo decisión explícita del dueño."
     }
   ]
 }
