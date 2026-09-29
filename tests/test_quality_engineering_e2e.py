@@ -1,4 +1,3 @@
-import copy
 import unittest
 from pathlib import Path
 
@@ -50,8 +49,8 @@ def quality_contract():
     }
 
 
-def governed_dna(contract):
-    dna = discover_project_dna(
+def base_dna():
+    return discover_project_dna(
         paths=[
             "package.json",
             ".github/workflows/ci.yml",
@@ -69,8 +68,11 @@ def governed_dna(contract):
         },
         capabilities=["api", "auth", "web"],
     )
+
+
+def governed_dna(contract):
     return attach_quality_contract(
-        dna,
+        base_dna(),
         source_ref="pl0n3r/Factory#343",
         contract=contract,
     )
@@ -89,6 +91,16 @@ def risk_task():
             "touches_auth": False,
             "external_integration": False,
         },
+    }
+
+
+def dod_task(risk):
+    return {
+        "id": "factory#348-api",
+        "title": "Quality E2E API",
+        "change_type": "code",
+        "surfaces": ["api"],
+        "risk": risk,
     }
 
 
@@ -164,73 +176,122 @@ def recovery_health():
     }
 
 
-def derive(gates, regressions):
+def derive(gates, regressions, *, perf=None, recovery=None):
     return derive_quality_health(
         quality_contract(),
         gates,
         regressions,
         observed_at=NOW,
         project_ref="pl0n3r/Factory",
-        performance_status=performance_health(),
-        recovery_health=recovery_health(),
+        performance_status=performance_health() if perf is None else perf,
+        recovery_health=recovery_health() if recovery is None else recovery,
     )
 
 
 class QualityEngineeringE2ETests(unittest.TestCase):
-    def test_quality_happy_path_contract_to_readiness_uses_real_contracts(self):
+    def test_contract_to_project_dna_to_risk_and_dod_preserves_fingerprint_and_authority(self):
         contract = quality_contract()
         dna = governed_dna(contract)
+        extension = dna["extensions"]["quality_contract"]
+        self.assertEqual(
+            set(extension),
+            {"version", "source_ref", "fingerprint"},
+        )
+        self.assertEqual(extension["source_ref"], "pl0n3r/Factory#343")
 
         risk = compile_risk(
             project_dna=dna,
             task=risk_task(),
             quality_contract=contract,
         )
-        self.assertEqual(risk["risk"], "high")
-        self.assertEqual(risk["dimensions"]["quality"], "high")
-
         done = compile_done_contract(
             project_dna=dna,
             quality_contract=contract,
-            task={
-                "id": "factory#348-api",
-                "title": "Quality E2E API",
-                "change_type": "code",
-                "surfaces": ["api"],
-                "risk": risk["risk"],
-            },
-        )
-        required = {
-            (row["kind"], row["target"])
-            for row in done["evidence"]
-        }
-        self.assertIn(("test", "quality:contract"), required)
-        self.assertIn(("test", "quality:e2e"), required)
-        self.assertIn(("check", "quality:security"), required)
-        self.assertEqual(
-            done["quality_contract_fingerprint"],
-            dna["extensions"]["quality_contract"]["fingerprint"],
+            task=dod_task(risk["risk"]),
         )
 
+        self.assertEqual(risk["risk"], "high")
+        self.assertEqual(risk["dimensions"]["quality"], "high")
+        self.assertEqual(
+            risk["quality_contract_fingerprint"],
+            extension["fingerprint"],
+        )
+        self.assertEqual(
+            done["quality_contract_fingerprint"],
+            extension["fingerprint"],
+        )
+        targets = {(row["kind"], row["target"]) for row in done["evidence"]}
+        self.assertIn(("test", "quality:contract"), targets)
+        self.assertIn(("test", "quality:e2e"), targets)
+        self.assertIn(("check", "quality:security"), targets)
+        self.assertNotIn("authority", risk)
+        self.assertNotIn("authority", done)
+
+    def test_current_verified_healthy_flow_reaches_quality_pass_and_ready(self):
         health = derive(gate_evidence(), [regression()])
-        readiness = readiness_projection(health)
+        projected = readiness_projection(health)
+
         self.assertEqual(health["state"], "PASS")
         self.assertEqual(health["authority"], "unchanged")
         self.assertFalse(health["execute_actions"])
         self.assertFalse(health["parallel_queue"])
-        self.assertTrue(readiness["ready"])
-        self.assertFalse(readiness["recalculated"])
-        self.assertEqual(readiness["quality_health"], health["state"])
+        self.assertTrue(projected["ready"])
+        self.assertFalse(projected["critical_blocker"])
+        self.assertFalse(projected["recalculated"])
+        self.assertEqual(projected["quality_health"], "PASS")
 
-    def test_critical_quality_failure_materializes_corrective_work_through_existing_dispatcher(self):
+    def test_missing_stale_flaky_or_reproduced_evidence_fails_closed(self):
+        missing = derive(gate_evidence()[:-1], [])
+        self.assertEqual(missing["state"], "UNKNOWN")
+        self.assertFalse(readiness_projection(missing)["ready"])
+
+        stale = derive(
+            gate_evidence(observed_at="2026-09-29T00:00:00Z"),
+            [],
+        )
+        self.assertEqual(stale["state"], "UNKNOWN")
+        self.assertFalse(readiness_projection(stale)["ready"])
+
+        flaky = derive(
+            gate_evidence(),
+            [regression(before_failures=1)],
+        )
+        self.assertEqual(flaky["state"], "DEGRADED")
+        self.assertNotEqual(flaky["state"], "PASS")
+
+        reproduced = derive(
+            gate_evidence(),
+            [regression(after_failures=3)],
+        )
+        self.assertEqual(reproduced["state"], "BLOCKED")
+        self.assertFalse(readiness_projection(reproduced)["ready"])
+
+        for artifact in (missing, stale, flaky, reproduced):
+            self.assertEqual(artifact["authority"], "unchanged")
+            self.assertFalse(artifact["execute_actions"])
+            self.assertFalse(artifact["parallel_queue"])
+
+    def test_performance_and_recovery_remain_external_without_recalculation(self):
+        health = derive(gate_evidence(), [regression()])
+        perf = health["external_dimensions"]["performance"]
+        recovery = health["external_dimensions"]["recovery"]
+
+        self.assertEqual(perf["status"], "HEALTHY")
+        self.assertEqual(recovery["status"], "HEALTHY")
+        self.assertFalse(perf["recalculated"])
+        self.assertFalse(recovery["recalculated"])
+        self.assertIn("run:performance:348", perf["evidence_refs"])
+        self.assertIn("RECOVERY_EVIDENCE_CURRENT", recovery["reasons"])
+        self.assertIn("run:performance:348", health["evidence_refs"])
+
+    def test_corrective_quality_class_materializes_via_existing_workitem_dispatcher(self):
         gates = gate_evidence()
         gates[2]["status"] = "FAIL"
         health = derive(gates, [])
-        readiness = readiness_projection(health)
+        projected = readiness_projection(health)
 
         self.assertEqual(health["state"], "BLOCKED")
-        self.assertFalse(readiness["ready"])
-        self.assertTrue(readiness["critical_blocker"])
+        self.assertFalse(projected["ready"])
         self.assertIn("quality_gate_failed", health["work_item_classes"])
 
         work_item = {
@@ -263,37 +324,32 @@ class QualityEngineeringE2ETests(unittest.TestCase):
         self.assertEqual(select_next([candidate]).key, "quality-fix-348")
         self.assertEqual(candidate.metadata["origin_system"], "factory")
 
-    def test_stale_flaky_or_unknown_evidence_fails_closed_without_expanding_authority(self):
-        stale = derive(
-            gate_evidence(observed_at="2026-09-29T00:00:00Z"),
-            [],
+    def test_project_without_quality_extension_keeps_legacy_risk_and_dod_behavior(self):
+        dna = base_dna()
+        risk = compile_risk(
+            project_dna=dna,
+            task=risk_task(),
         )
-        self.assertEqual(stale["state"], "UNKNOWN")
-        self.assertFalse(readiness_projection(stale)["ready"])
-
-        flaky = derive(
-            gate_evidence(),
-            [regression(before_failures=1)],
+        done = compile_done_contract(
+            project_dna=dna,
+            task=dod_task(risk["risk"]),
         )
-        self.assertEqual(flaky["state"], "DEGRADED")
-        self.assertNotEqual(flaky["state"], "PASS")
 
-        unknown_gates = gate_evidence()
-        unknown_gates[0]["status"] = "UNKNOWN"
-        unknown = derive(unknown_gates, [])
-        self.assertEqual(unknown["state"], "UNKNOWN")
-        self.assertFalse(readiness_projection(unknown)["ready"])
+        self.assertEqual(risk["risk"], "medium")
+        self.assertNotIn("quality", risk["dimensions"])
+        self.assertNotIn("quality_contract_fingerprint", risk)
+        self.assertNotIn("quality_contract_fingerprint", done)
+        self.assertIn(
+            {"kind": "test", "target": "api:contract"},
+            done["evidence"],
+        )
 
-        for artifact in (stale, flaky, unknown):
-            self.assertEqual(artifact["authority"], "unchanged")
-            self.assertFalse(artifact["execute_actions"])
-            self.assertFalse(artifact["parallel_queue"])
-
-    def test_docs_define_single_quality_pipeline_and_external_dimension_boundaries(self):
+    def test_docs_close_quality_dag_without_parallel_engine(self):
         text = (
             ROOT / "docs" / "quality-engineering.md"
         ).read_text(encoding="utf-8")
         for marker in (
+            "#343–#347",
             "Quality Contract",
             "Project DNA",
             "Risk/DoD",
@@ -306,8 +362,10 @@ class QualityEngineeringE2ETests(unittest.TestCase):
             "sin recalcular",
             "sin scheduler",
             "sin backlog",
+            "Quality Engine",
             "authority=unchanged",
             "execute_actions=false",
+            "rollout",
         ):
             self.assertIn(marker, text)
 
