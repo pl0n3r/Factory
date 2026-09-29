@@ -105,7 +105,7 @@ def gate_evidence(status="PASS", *, observed_at="2026-09-29T02:30:00Z"):
     ]
 
 
-def verified_regression():
+def regression(*, before_failures=3, after_failures=0):
     return analyze_regression(
         {
             "version": 1,
@@ -119,13 +119,13 @@ def verified_regression():
             "prevention": "Keep the gate in the compiled Definition of Done.",
             "before": {
                 "runs": 3,
-                "failures": 3,
+                "failures": before_failures,
                 "evidence_ref": "ci:quality:before",
                 "observed_at": "2026-09-29T02:10:00Z",
             },
             "after": {
                 "runs": 3,
-                "failures": 0,
+                "failures": after_failures,
                 "evidence_ref": "ci:quality:after",
                 "observed_at": "2026-09-29T02:20:00Z",
             },
@@ -212,7 +212,7 @@ class QualityEngineeringE2ETests(unittest.TestCase):
             dna["extensions"]["quality_contract"]["fingerprint"],
         )
 
-        health = derive(gate_evidence(), [verified_regression()])
+        health = derive(gate_evidence(), [regression()])
         readiness = readiness_projection(health)
         self.assertEqual(health["state"], "PASS")
         self.assertEqual(health["authority"], "unchanged")
@@ -271,13 +271,10 @@ class QualityEngineeringE2ETests(unittest.TestCase):
         self.assertEqual(stale["state"], "UNKNOWN")
         self.assertFalse(readiness_projection(stale)["ready"])
 
-        flaky_regression = verified_regression()
-        flaky_regression["classification"] = "FLAKY"
-        flaky_regression["flaky"] = True
-        flaky_regression["reproduced"] = False
-        flaky_regression["pass_evidence_eligible"] = False
-        flaky_regression["guardrail_material"] = None
-        flaky = derive(gate_evidence(), [flaky_regression])
+        flaky = derive(
+            gate_evidence(),
+            [regression(before_failures=1)],
+        )
         self.assertEqual(flaky["state"], "DEGRADED")
         self.assertNotEqual(flaky["state"], "PASS")
 
