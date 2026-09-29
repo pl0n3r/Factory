@@ -23,7 +23,7 @@ Fitness compara por separado:
 - segundos de coordinación;
 - cantidad de intentos necesarios para obtener una reserva.
 
-No existe score agregado. Los invariantes permanecen iguales y las dimensiones operativas mejoran. Shadow no permite mutación ni escrituras externas y conserva rollback `restore_sequential_readiness_checks`.
+No existe score agregado. Los invariantes permanecen iguales y las dimensiones operativas mejoran. Shadow no permite mutación ni escrituras externas y conserva rollback `restore_baseline`.
 
 La adopción demostrada es **acotada al escenario**: el bundle se usó para obtener la reserva válida de #247. No se modifica automáticamente `coordinar_trabajo.py` ni se declara todavía una regla universal.
 
