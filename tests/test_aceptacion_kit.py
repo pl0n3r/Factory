@@ -14,9 +14,9 @@ from scripts.aceptacion_kit import (
 )
 
 
-def issue_body(criteria_lines, machine_rows):
+def issue_body(criteria_lines, machine_rows, version=1):
     marker = json.dumps(
-        {"version": 1, "criteria": machine_rows},
+        {"version": version, "criteria": machine_rows},
         separators=(",", ":"),
     )
     return f"""### Contexto
@@ -62,6 +62,31 @@ class AcceptanceContractTests(unittest.TestCase):
                     [row],
                 )
             )
+
+    def test_acceptance_marker_version_requires_strict_integer_type(self):
+        """AC-01: version acepta solo el entero exacto 1."""
+        row = {"id": "AC-01", "kind": "check", "target": "Tests de scripts"}
+        for version in (True, False, 1.0, 2.0, "1", None, 0, 2):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(AcceptanceError, "version=1"):
+                    parse_contract(
+                        issue_body(
+                            "- [ ] [AC-01] Debe pasar.",
+                            [row],
+                            version=version,
+                        )
+                    )
+
+    def test_canonical_acceptance_fingerprint_remains_stable(self):
+        """AC-04: el guard de tipo no altera la huella canónica existente."""
+        body = issue_body(
+            "- [ ] [AC-01] Debe pasar.",
+            [{"id": "AC-01", "kind": "check", "target": "Tests de scripts"}],
+        )
+        self.assertEqual(
+            contract_fingerprint(body),
+            "7889f18cb8c388b068c95d0a7563227c4cf4681820a1a7565d0a8d03dff8e0e8",
+        )
 
     def test_contract_rejects_non_string_kind_without_typeerror(self):
         body = issue_body(
