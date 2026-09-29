@@ -9,13 +9,28 @@ from scripts.orquestador_kit import (
     parse_plan,
     parse_task_marker,
     reservation_blockers,
+    task_marker_fingerprint,
     topological_order,
 )
 
 
-def plan(tasks):
-    payload = json.dumps({"version": 1, "tasks": tasks}, separators=(",", ":"))
+def plan(tasks, version=1):
+    payload = json.dumps({"version": version, "tasks": tasks}, separators=(",", ":"))
     return f"Epic\n<!-- factory-plan {payload} -->"
+
+
+def raw_task_marker(version):
+    payload = {
+        "version": version,
+        "epic": 3,
+        "task_key": "A",
+        "order": 1,
+        "owner": "pl0n3r",
+        "roles": ["qa"],
+        "depends_on": [],
+        "paths": ["scripts/a.py"],
+    }
+    return f"<!-- factory-plan-task {json.dumps(payload, separators=(',', ':'), sort_keys=True)} -->"
 
 
 def task(key, *, paths, depends_on=None, owner="pl0n3r"):
@@ -119,6 +134,53 @@ class OrchestratorKitTests(unittest.TestCase):
         self.assertIsNone(
             parse_task_marker("<!-- factory-plan-taskXYZ {\"version\":1} -->")
         )
+
+    def test_plan_marker_version_requires_strict_integer_type(self):
+        """AC-02: factory-plan acepta solo version entera exacta 1."""
+        tasks = [task("A", paths=["scripts/a.py"])]
+        for version in (True, False, 1.0, 2.0, "1", None, 0, 2):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(PlanError, "version=1"):
+                    parse_plan(plan(tasks, version=version))
+
+    def test_task_marker_version_requires_strict_integer_type(self):
+        """AC-03: factory-plan-task rechaza versiones no enteras y fuera de rango."""
+        for version in (True, False, 1.0, 2.0, "1", None, 0, 2):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(PlanError, "esquema inválido"):
+                    parse_task_marker(raw_task_marker(version))
+
+    def test_canonical_plan_and_task_markers_remain_stable(self):
+        """AC-05: plan canónico parsea igual y task fingerprint no cambia."""
+        parsed_plan = parse_plan(plan([task("A", paths=["scripts/a.py"])]))
+        self.assertEqual(
+            parsed_plan,
+            [
+                PlannedTask(
+                    key="A",
+                    title="Tarea A",
+                    owner="pl0n3r",
+                    paths=("scripts/a.py",),
+                    depends_on=(),
+                )
+            ],
+        )
+        parsed_task = parse_task_marker(raw_task_marker(1))
+        self.assertEqual(
+            task_marker_fingerprint(parsed_task),
+            "a9c16fef3a7f725bb41a0459429b9c844aaca2bf14ebefda17061eaa7e2d547b",
+        )
+
+    def test_numeric_equality_does_not_authorize_noninteger_marker_versions(self):
+        """AC-06: bool/float no aprovechan la igualdad numérica de Python."""
+        tasks = [task("A", paths=["scripts/a.py"])]
+        for version in (True, 1.0):
+            with self.subTest(contract="plan", version=version):
+                with self.assertRaises(PlanError):
+                    parse_plan(plan(tasks, version=version))
+            with self.subTest(contract="task", version=version):
+                with self.assertRaises(PlanError):
+                    parse_task_marker(raw_task_marker(version))
 
     def test_dag_has_deterministic_order(self):
         tasks = parse_plan(

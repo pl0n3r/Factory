@@ -118,7 +118,7 @@ def _machine_criteria(body: str) -> list[Criterion]:
         raise AcceptanceError(
             "factory-acceptance debe contener exactamente version y criteria."
         )
-    if raw["version"] != 1:
+    if type(raw["version"]) is not int or raw["version"] != 1:
         raise AcceptanceError("factory-acceptance requiere version=1.")
     rows = raw["criteria"]
     if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_CRITERIA:

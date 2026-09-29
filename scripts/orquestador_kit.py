@@ -171,7 +171,7 @@ def parse_plan(body: str) -> list[PlannedTask]:
         raise PlanError("factory-plan contiene JSON inválido.") from exc
     if not isinstance(raw, dict) or set(raw) != {"version", "tasks"}:
         raise PlanError("factory-plan debe contener version y tasks.")
-    if raw["version"] != 1:
+    if type(raw["version"]) is not int or raw["version"] != 1:
         raise PlanError("factory-plan requiere version=1.")
     tasks_raw = raw["tasks"]
     if not isinstance(tasks_raw, list) or not 1 <= len(tasks_raw) <= MAX_TASKS:
@@ -305,7 +305,9 @@ def parse_task_marker(body: str) -> dict[str, Any] | None:
         "version", "epic", "task_key", "order", "owner",
         "roles", "depends_on", "paths",
     }
-    if not isinstance(raw, dict) or set(raw) != required or raw["version"] != 1:
+    if not isinstance(raw, dict) or set(raw) != required:
+        raise PlanError("factory-plan-task tiene esquema inválido.")
+    if type(raw["version"]) is not int or raw["version"] != 1:
         raise PlanError("factory-plan-task tiene esquema inválido.")
     _valid_key(raw["task_key"])
     _valid_owner(raw["owner"])
