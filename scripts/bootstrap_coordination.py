@@ -15,11 +15,18 @@ TEST_PATH = "tests/test_factory_coordination_adoption.py"
 CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")
 ALLOWED_PATHS = {CALLER_PATH, TEST_PATH, "AGENTS.md"}
 GRINDFLOW_REPO = "pl0n3r/GrindFlow"
-GRINDFLOW_DELIVERY_PATHS = {CALLER_PATH, TEST_PATH, "config/version.php", "package.json", "package-lock.json", "README.md"}
-STRICT_CONTRACT_MARKERS = {"config/version.php", "package.json", "package-lock.json", "scripts/readme-dashboard.py"}
+VERSION_PATH = "config/version.php"
+PACKAGE_PATH = "package.json"
+LOCK_PATH = "package-lock.json"
+README_PATH = "README.md"
+README_UPDATER_PATH = "scripts/readme-dashboard.py"
+GRINDFLOW_DELIVERY_PATHS = {CALLER_PATH, TEST_PATH, VERSION_PATH, PACKAGE_PATH, LOCK_PATH, README_PATH}
+STRICT_CONTRACT_MARKERS = {VERSION_PATH, PACKAGE_PATH, LOCK_PATH, README_UPDATER_PATH}
 REPO_RE = re.compile(r"^pl0n3r/[A-Za-z0-9_.-]{1,100}$")
 SHA_RE, KEY_RE = re.compile(r"^[0-9a-f]{40}$"), re.compile(r"^[0-9a-f]{64}$")
 MAX_FILE, MAX_TOTAL = 120_000, 240_000
+GRINDFLOW_MAX_FILE, GRINDFLOW_MAX_TOTAL = 400_000, 500_000
+PREPARED_FILE = Path(".factory-bootstrap-delivery.json")
 
 class BootstrapError(RuntimeError): pass
 
@@ -94,6 +101,11 @@ def validate_patch(patch: Any, scope: str | set[str] | None = None) -> None:
     allowed = allowed_paths(scope)
     if not isinstance(patch, dict) or not patch or not set(patch).issubset(allowed):
         raise BootstrapError("Patch fuera de la allowlist.")
+    file_limit, total_limit = (
+        (GRINDFLOW_MAX_FILE, GRINDFLOW_MAX_TOTAL)
+        if allowed == GRINDFLOW_DELIVERY_PATHS
+        else (MAX_FILE, MAX_TOTAL)
+    )
     total = 0
     for path, content in patch.items():
         rel = Path(path)
@@ -101,7 +113,7 @@ def validate_patch(patch: Any, scope: str | set[str] | None = None) -> None:
             raise BootstrapError("Patch inválido.")
         size = len(content.encode())
         total += size
-        if size > MAX_FILE or total > MAX_TOTAL:
+        if size > file_limit or total > total_limit:
             raise BootstrapError("Patch excede límites.")
     if CALLER_PATH not in patch or TEST_PATH not in patch:
         raise BootstrapError("Patch incompleto.")
@@ -182,11 +194,11 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
         raise BootstrapError("Checkout GrindFlow inválido.") from exc
     if head!=expected_main_sha: raise BootstrapError("Checkout GrindFlow no coincide con expected_main_sha.")
 
-    version_text=_regular_text(root,"config/version.php")
-    package_text=_regular_text(root,"package.json")
-    lock_text=_regular_text(root,"package-lock.json")
-    _regular_text(root,"README.md")
-    updater=_regular_text(root,"scripts/readme-dashboard.py")
+    version_text=_regular_text(root,VERSION_PATH)
+    package_text=_regular_text(root,PACKAGE_PATH)
+    lock_text=_regular_text(root,LOCK_PATH)
+    _regular_text(root,README_PATH)
+    updater=_regular_text(root,README_UPDATER_PATH)
     if "README dashboard" not in updater or "--update" not in updater:
         raise BootstrapError("Updater README canónico de GrindFlow no reconocido.")
 
@@ -211,7 +223,7 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
     root_pkg["version"]=next_str
 
     base=build_patch(template)
-    readme_text=_regular_text(root,"README.md")
+    readme_text=_regular_text(root,README_PATH)
     visible_current=f"v{current_str}"
     visible_next=f"v{next_str}"
     if visible_current not in readme_text:
@@ -219,9 +231,9 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
     readme_text=readme_text.replace(visible_current,visible_next)
     prepared={
         **base,
-        "config/version.php":updated_version,
-        "package.json":json.dumps(package,ensure_ascii=False,indent=2)+"\n",
-        "package-lock.json":json.dumps(lock,ensure_ascii=False,indent=2)+"\n",
+        VERSION_PATH:updated_version,
+        PACKAGE_PATH:json.dumps(package,ensure_ascii=False,indent=2)+"\n",
+        LOCK_PATH:json.dumps(lock,ensure_ascii=False,indent=2)+"\n",
         "README.md":readme_text,
     }
     for path,content in prepared.items(): _write_regular(root,path,content)
@@ -233,7 +245,7 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
         )
     except (OSError,subprocess.CalledProcessError) as exc:
         raise BootstrapError("Updater README canónico de GrindFlow falló.") from exc
-    prepared["README.md"]=_regular_text(root,"README.md")
+    prepared[README_PATH]=_regular_text(root,README_PATH)
     validate_patch(prepared,GRINDFLOW_DELIVERY_PATHS)
     if set(prepared)!=GRINDFLOW_DELIVERY_PATHS:
         raise BootstrapError("Patch GrindFlow incompleto.")
@@ -468,32 +480,27 @@ def bootstrap(raw: dict[str,str],gateway: Any,template: str,prepared_patch: dict
 def _raw_request() -> dict[str, str]:
     return {name:os.getenv(name.upper(),"") for name in ("target_repository","target_issue","expected_main_sha","governance_ref","idempotency_key")}
 
-def _prepared_file(path: str) -> Path:
-    value=Path(path)
-    if value.is_symlink() or value.is_dir() or value.is_absolute() and not str(value).startswith("/tmp/"):
-        raise BootstrapError("Ruta de entrega preparada inválida.")
-    return value
-
 def main()->int:
     parser=argparse.ArgumentParser()
     mode=parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--prepare",metavar="MANIFEST")
-    mode.add_argument("--apply-prepared",metavar="MANIFEST")
+    mode.add_argument("--prepare",action="store_true")
+    mode.add_argument("--apply-prepared",action="store_true")
     parser.add_argument("--consumer-root",default="consumer")
     args=parser.parse_args()
     raw=_raw_request()
     try:
         template=CALLER_TEMPLATE.read_text(encoding="utf-8")
+        target=PREPARED_FILE
+        if target.is_symlink() or target.is_dir():
+            raise BootstrapError("Entrega preparada usa un path inseguro.")
         if args.prepare:
             if os.getenv("FACTORY_PROVISION_TOKEN"):
                 raise BootstrapError("Preparación de consumidor no admite FACTORY_PROVISION_TOKEN.")
             prepared=prepare_delivery_patch(raw,template,Path(args.consumer_root))
-            target=_prepared_file(args.prepare)
             target.write_text(json.dumps(prepared,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
             result={"status":"prepared","paths":sorted(prepared["patch"]),"patch_sha":prepared["patch_sha256"]}
         else:
-            target=_prepared_file(args.apply_prepared)
-            if not target.is_file() or target.stat().st_size>MAX_TOTAL*2:
+            if not target.is_file() or target.stat().st_size>GRINDFLOW_MAX_TOTAL*2:
                 raise BootstrapError("Entrega preparada ausente o excesiva.")
             prepared=json.loads(target.read_text(encoding="utf-8"))
             patch=load_prepared_delivery(raw,prepared)
