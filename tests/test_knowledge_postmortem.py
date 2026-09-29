@@ -1,5 +1,6 @@
 import copy
 import unittest
+from pathlib import Path
 
 from evolution.knowledge_lifecycle import create_knowledge_record
 from knowledge.postmortem import (
@@ -112,8 +113,8 @@ class KnowledgePostmortemTests(unittest.TestCase):
         self.assertNotIn("payload", validated)
 
     def test_docs_keep_postmortem_boundary_without_parallel_engine(self):
-        docs = open("docs/knowledge-postmortem.md", encoding="utf-8").read()
-        for text in ("#321", "#322", "no crear un Knowledge Engine", "No existe scheduler/backlog paralelo"):
+        docs = Path("docs/knowledge-postmortem.md").read_text(encoding="utf-8")
+        for text in ("#321", "#322", "sin crear un Knowledge Engine", "No existe scheduler/backlog paralelo"):
             self.assertIn(text, docs)
 
 
