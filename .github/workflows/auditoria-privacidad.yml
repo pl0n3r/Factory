@@ -115,6 +115,26 @@ jobs:
             python3 -c 'import json,sys; marker=sys.argv[1]; rows=(json.loads(line) for line in open(sys.argv[2],encoding="utf-8")); print(next((str(item["number"]) for item in rows if not item.get("pull_request") and marker in (item.get("body") or "").splitlines()),""))' "$1" /tmp/open-privacy-issues.ndjson
           }
 
+          issue_has_label() {
+            gh issue view "$1" --repo "$REPOSITORY" --json labels --jq '.labels[].name' | grep -Fxq "$2"
+          }
+
+          remove_label_if_present() {
+            if issue_has_label "$1" "$2"; then
+              gh issue edit "$1" --repo "$REPOSITORY" --remove-label "$2" >/dev/null
+            fi
+          }
+
+          owner_is_assigned() {
+            gh issue view "$1" --repo "$REPOSITORY" --json assignees --jq '.assignees[].login' | grep -Fxq "$OWNER"
+          }
+
+          remove_owner_if_assigned() {
+            if owner_is_assigned "$1"; then
+              gh issue edit "$1" --repo "$REPOSITORY" --remove-assignee "$OWNER" >/dev/null
+            fi
+          }
+
           status="$(jq -r '.status' /tmp/privacy-audit.json)"
           audit_issue="$(find_marker '<!-- factory-privacy-audit -->')"
           jq -r '.audit_issue_body' /tmp/privacy-audit.json > /tmp/audit-body.md
@@ -129,14 +149,49 @@ jobs:
           fi
 
           legal_required="$(jq -r '.legal_gate_required' /tmp/privacy-audit.json)"
+          d063_applies="$(jq -r '.d063_applies' /tmp/privacy-audit.json)"
           if [[ "$legal_required" == "true" ]]; then
             legal_issue="$(find_marker '<!-- factory-privacy-material -->')"
             jq -r '.legal_gate_body' /tmp/privacy-audit.json > /tmp/legal-body.md
-            if [[ -n "$legal_issue" ]]; then
-              gh issue edit "$legal_issue" --repo "$REPOSITORY"                 --body-file /tmp/legal-body.md                 --add-assignee "$OWNER" --add-label "$DECISION_OWNER" >/dev/null
+            if [[ "$d063_applies" == "true" ]]; then
+              if [[ -n "$legal_issue" ]]; then
+                remove_label_if_present "$legal_issue" "$STATE_BLOCKED"
+                remove_label_if_present "$legal_issue" "$DECISION_OWNER"
+                remove_label_if_present "$legal_issue" "$PRIORITY_CRITICAL"
+                remove_owner_if_assigned "$legal_issue"
+                gh issue edit "$legal_issue" --repo "$REPOSITORY" \
+                  --title 'privacidad: cambio material documentado' \
+                  --body-file /tmp/legal-body.md \
+                  --add-label "$TYPE_PRODUCT" --add-label "$PRIORITY_HIGH" \
+                  --add-label "$STATE_AVAILABLE" --add-label "$ROLE_LEGAL" >/dev/null
+              else
+                legal_url="$(gh issue create --repo "$REPOSITORY" \
+                  --title 'privacidad: cambio material documentado' \
+                  --body-file /tmp/legal-body.md \
+                  --label "$TYPE_PRODUCT" --label "$PRIORITY_HIGH" \
+                  --label "$STATE_AVAILABLE" --label "$ROLE_LEGAL")"
+                legal_issue="${legal_url##*/}"
+              fi
             else
-              legal_url="$(gh issue create --repo "$REPOSITORY"                 --title 'decisión: cambio material de privacidad'                 --body-file /tmp/legal-body.md                 --assignee "$OWNER"                 --label "$TYPE_PRODUCT" --label "$PRIORITY_CRITICAL"                 --label "$STATE_BLOCKED" --label "$ROLE_LEGAL"                 --label "$DECISION_OWNER")"
-              legal_issue="${legal_url##*/}"
-              gh issue comment "$legal_issue" --repo "$REPOSITORY"                 --body "@$OWNER 🧭 DECISIÓN NECESARIA · categoría legal. La documentación sigue en documented_not_legally_approved hasta tu decisión." >/dev/null
+              if [[ -n "$legal_issue" ]]; then
+                remove_label_if_present "$legal_issue" "$STATE_AVAILABLE"
+                remove_label_if_present "$legal_issue" "$PRIORITY_HIGH"
+                gh issue edit "$legal_issue" --repo "$REPOSITORY" \
+                  --title 'decisión: cambio material de privacidad' \
+                  --body-file /tmp/legal-body.md \
+                  --add-assignee "$OWNER" --add-label "$TYPE_PRODUCT" \
+                  --add-label "$PRIORITY_CRITICAL" --add-label "$STATE_BLOCKED" \
+                  --add-label "$ROLE_LEGAL" --add-label "$DECISION_OWNER" >/dev/null
+              else
+                legal_url="$(gh issue create --repo "$REPOSITORY" \
+                  --title 'decisión: cambio material de privacidad' \
+                  --body-file /tmp/legal-body.md --assignee "$OWNER" \
+                  --label "$TYPE_PRODUCT" --label "$PRIORITY_CRITICAL" \
+                  --label "$STATE_BLOCKED" --label "$ROLE_LEGAL" \
+                  --label "$DECISION_OWNER")"
+                legal_issue="${legal_url##*/}"
+              fi
+              gh issue comment "$legal_issue" --repo "$REPOSITORY" \
+                --body "@$OWNER 🧭 DECISIÓN NECESARIA · categoría legal. La documentación sigue en documented_not_legally_approved hasta tu decisión." >/dev/null
             fi
           fi
