@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bootstrap gobernado del caller de coordinación en repositorios existentes."""
 from __future__ import annotations
-import argparse, base64, hashlib, json, os, re, sys
+import base64, hashlib, json, os, re, sys
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -12,6 +12,7 @@ API, OWNER = "https://api.github.com", "pl0n3r"
 GOVERNANCE_REF = "pl0n3r/factory@v1"
 CALLER_PATH = ".github/workflows/work-coordination.yml"
 TEST_PATH = "tests/test_factory_coordination_adoption.py"
+CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")
 ALLOWED_PATHS = {CALLER_PATH, TEST_PATH, "AGENTS.md"}
 REPO_RE = re.compile(r"^pl0n3r/[A-Za-z0-9_.-]{1,100}$")
 SHA_RE, KEY_RE = re.compile(r"^[0-9a-f]{40}$"), re.compile(r"^[0-9a-f]{64}$")
@@ -117,7 +118,7 @@ class GitHubGateway:
         if value is None: return None
         if not isinstance(value,dict) or value.get("type") not in (None,"file") or value.get("encoding")!="base64": raise BootstrapError("Path remoto no es archivo regular.")
         try: return base64.b64decode(value["content"]).decode()
-        except (KeyError,TypeError,ValueError,UnicodeDecodeError) as exc: raise BootstrapError("Contenido remoto ilegible.") from exc
+        except (KeyError,TypeError,ValueError) as exc: raise BootstrapError("Contenido remoto ilegible.") from exc
     def branch_matches(self,name: str,branch: str, patch: dict[str,str])->bool: return all(self.file_text(name,p,branch)==v for p,v in patch.items())
     def commit_matches(self,name: str,sha: str,req: dict[str,Any])->bool:
         value=self._request("GET",f"/repos/{name}/git/commits/{sha}")
@@ -144,32 +145,41 @@ class GitHubGateway:
         commit=self._request("POST",f"/repos/{name}/git/commits",{"message":message,"tree":tree["sha"],"parents":[expected]})
         if self.main_sha(name)!=expected: raise BootstrapError("main cambió antes de escribir.")
         self._request("POST",f"/repos/{name}/git/refs",{"ref":f"refs/heads/{branch}","sha":commit["sha"]})
-        if self.main_sha(name)!=expected: raise BootstrapError("main cambió antes de crear PR.")
+        if self.main_sha(name)!=expected:
+            self._request("DELETE",f"/repos/{name}/git/refs/heads/{quote(branch,safe='')}")
+            raise BootstrapError("main cambió antes de crear PR; rama bootstrap revertida.")
         pr=self._request("POST",f"/repos/{name}/pulls",{"title":f"chore(factory): restaurar coordinación (#{req['target_issue']})","head":branch,"base":"main","body":f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{expected}`\n\n{marker(req)}"})
         if not isinstance(pr,dict) or pr.get("base",{}).get("ref")!="main" or pr.get("head",{}).get("ref")!=branch: raise BootstrapError("PR bootstrap inválido.")
         return commit["sha"], int(pr["number"])
 
+def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
+    if bsha is None and gpr is None: return None
+    name=req["target_repository"]
+    if bsha is None or not gateway.commit_matches(name,bsha,req) or not gateway.branch_matches(name,branch,patch):
+        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    if gpr is None:
+        if gateway.main_sha(name)!=req["expected_main_sha"]: raise BootstrapError("main cambió antes de crear PR.")
+        pr=gateway._request("POST",f"/repos/{name}/pulls",{"title":f"chore(factory): restaurar coordinación (#{req['target_issue']})","head":branch,"base":"main","body":marker(req)})
+        return {"status":"confirmed","branch":branch,"pr":pr["number"],"created":False}
+    if marker(req) not in str(gpr.get("body") or ""): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
+    return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
+
 def bootstrap(raw: dict[str,str],gateway: Any,template: str)->dict[str,Any]:
     req=validate_request(raw); gateway.authorize(); gateway.repository(req["target_repository"])
-    if not gateway.issue_open(req["target_repository"],req["target_issue"]): raise BootstrapError("Issue objetivo no está abierto.")
-    if gateway.main_sha(req["target_repository"])!=req["expected_main_sha"]: raise BootstrapError("expected_main_sha no coincide con main.")
-    patch,branch=build_patch(template),branch_name(req); bsha,gpr=gateway.branch_sha(req["target_repository"],branch),gateway.open_pr(req["target_repository"],branch)
-    if bsha is not None or gpr is not None:
-        same=bsha is not None and gateway.commit_matches(req["target_repository"],bsha,req) and gateway.branch_matches(req["target_repository"],branch,patch)
-        if not same: raise BootstrapError("La rama bootstrap pertenece a otra intención.")
-        if gpr is None:
-            if gateway.main_sha(req["target_repository"])!=req["expected_main_sha"]: raise BootstrapError("main cambió antes de crear PR.")
-            pr=gateway._request("POST",f"/repos/{req['target_repository']}/pulls",{"title":f"chore(factory): restaurar coordinación (#{req['target_issue']})","head":branch,"base":"main","body":marker(req)}); return {"status":"confirmed","branch":branch,"pr":pr["number"],"created":False}
-        if marker(req) not in str(gpr.get("body") or ""): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
-        return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
-    if gateway.file_text(req["target_repository"],CALLER_PATH,"main")==patch[CALLER_PATH] and gateway.file_text(req["target_repository"],TEST_PATH,"main")==patch[TEST_PATH]:
+    name=req["target_repository"]
+    if not gateway.issue_open(name,req["target_issue"]): raise BootstrapError("Issue objetivo no está abierto.")
+    if gateway.main_sha(name)!=req["expected_main_sha"]: raise BootstrapError("expected_main_sha no coincide con main.")
+    patch,branch=build_patch(template),branch_name(req)
+    existing=reuse_existing(req,gateway,patch,branch,gateway.branch_sha(name,branch),gateway.open_pr(name,branch))
+    if existing is not None: return existing
+    if gateway.file_text(name,CALLER_PATH,"main")==patch[CALLER_PATH] and gateway.file_text(name,TEST_PATH,"main")==patch[TEST_PATH]:
         return {"status":"already_bootstrapped","branch":None,"pr":None,"created":False}
-    _,pr=gateway.materialize(req,patch); return {"status":"created","branch":branch,"pr":pr,"created":True}
+    _,pr=gateway.materialize(req,patch)
+    return {"status":"created","branch":branch,"pr":pr,"created":True}
 
 def main()->int:
-    parser=argparse.ArgumentParser(); parser.add_argument("--caller-template",required=True); args=parser.parse_args()
     raw={name:os.getenv(name.upper(),"") for name in ("target_repository","target_issue","expected_main_sha","governance_ref","idempotency_key")}
-    try: result=bootstrap(raw,GitHubGateway(os.getenv("FACTORY_PROVISION_TOKEN","")),Path(args.caller_template).read_text(encoding="utf-8"))
+    try: result=bootstrap(raw,GitHubGateway(os.getenv("FACTORY_PROVISION_TOKEN","")),CALLER_TEMPLATE.read_text(encoding="utf-8"))
     except (OSError,BootstrapError) as exc: print(f"ERROR: {exc}",file=sys.stderr); return 2
     print(json.dumps(result,sort_keys=True)); return 0
 
