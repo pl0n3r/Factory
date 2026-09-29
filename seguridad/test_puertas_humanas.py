@@ -175,6 +175,33 @@ class GateTests(unittest.TestCase):
             {"status": "gate", "category": "legal"},
         )
 
+    def test_explain_simple_para_12_anos(self):
+        value = simple_gate()
+        value["explain_simple"] = (
+            "Hay que elegir cómo guardar datos.\n"
+            "Si no eliges, seguimos con la opción segura."
+        )
+        value["options"][0]["explain_simple"] = (
+            "Es como guardar la tarea por menos tiempo."
+        )
+        normalized = validate_gate(value)
+        self.assertIn("explain_simple", normalized)
+        self.assertIn("explain_simple", normalized["options"][0])
+
+        self.assertNotIn("explain_simple", validate_gate(simple_gate()))
+
+        for bad in ("", "x" * 601, "a\nb\nc\nd\ne"):
+            invalid = simple_gate()
+            invalid["explain_simple"] = bad
+            with self.subTest(root=bad):
+                with self.assertRaises(GateValidationError):
+                    validate_gate(invalid)
+
+        invalid_option = simple_gate()
+        invalid_option["options"][0]["explain_simple"] = "y" * 401
+        with self.assertRaises(GateValidationError):
+            validate_gate(invalid_option)
+
     def test_invalid_simple_gate_fields(self):
         invalid = []
 
