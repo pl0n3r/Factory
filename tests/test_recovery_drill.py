@@ -126,12 +126,13 @@ class RecoveryDrillTests(unittest.TestCase):
             build_restore_drill_plan(recovery, expanded, disposable)
 
         plan = build_restore_drill_plan(recovery, backup, disposable)
+        observed = evidence()
         tampered = copy.deepcopy(plan); tampered["source"] = "repository"
         with self.assertRaises(RecoveryDrillError):
-            evaluate_restore_drill(recovery, tampered, backup, evidence())
+            evaluate_restore_drill(recovery, tampered, backup, observed)
         tampered = copy.deepcopy(plan); tampered["steps"][0]["authority"] = "production-write"
         with self.assertRaises(RecoveryDrillError):
-            evaluate_restore_drill(recovery, tampered, backup, evidence())
+            evaluate_restore_drill(recovery, tampered, backup, observed)
 
 
 if __name__ == "__main__":
