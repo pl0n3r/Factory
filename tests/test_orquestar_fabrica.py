@@ -241,6 +241,31 @@ class OrquestarFabricaTests(unittest.TestCase):
             ))
             self.assertEqual(api.issues[issue["number"]]["body"], before)
 
+        with self.subTest("duplicate canonical task marker is atomic"):
+            api = FakeGitHub()
+            first = sync_plan(api, 3)
+            issue = api.issues[first["issues"]["A"]]
+            marker = parse_task_marker(issue["body"])
+            self.assertIsNotNone(marker)
+            start = issue["body"].find("<!-- factory-plan-task ")
+            end = issue["body"].find(" -->", start) + len(" -->")
+            canonical_marker = issue["body"][start:end]
+            issue["body"] += "\n\n" + canonical_marker
+            before = issue["body"]
+            api.requests.clear()
+
+            with self.assertRaisesRegex(
+                PlanError,
+                "marker de tarea inválido",
+            ):
+                sync_plan(api, 3)
+
+            self.assertFalse(any(
+                call[0] == "PATCH" and "/issues/" in call[1]
+                for call in api.requests
+            ))
+            self.assertEqual(api.issues[issue["number"]]["body"], before)
+
         with self.subTest("malformed acceptance type"):
             api = FakeGitHub()
             first = sync_plan(api, 3)
