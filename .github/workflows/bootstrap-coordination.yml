@@ -72,7 +72,7 @@ jobs:
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: factory-bootstrap-delivery
-          path: .
+          path: ${{ runner.temp }}/factory-bootstrap-delivery
       - name: Crear rama y PR bootstrap desde entrega preparada
         env:
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
@@ -80,5 +80,6 @@ jobs:
           EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
           GOVERNANCE_REF: ${{ inputs.governance_ref }}
           IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
+          FACTORY_PREPARED_DIR: ${{ runner.temp }}/factory-bootstrap-delivery
           FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
         run: python3 runtime/scripts/bootstrap_coordination.py --apply-prepared
