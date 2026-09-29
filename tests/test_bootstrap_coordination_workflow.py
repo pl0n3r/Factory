@@ -87,5 +87,16 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertNotIn("path: .\n",apply)
         self.assertNotIn("FACTORY_PREPARED_DIR: .",apply)
 
+
+    def test_cross_main_fix_does_not_expand_permissions_or_inputs(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read",text)
+        for field in ("target_repository:","target_issue:","expected_main_sha:","governance_ref:","idempotency_key:"):
+            self.assertEqual(text.count(field),1)
+        for forbidden in ("contents: write","pull-requests: write","issues: write"):
+            self.assertNotIn(forbidden,text)
+        self.assertEqual(text.count("FACTORY_PROVISION_TOKEN:"),1)
+        self.assertIn("[[ \"$ACTOR\" == \"$OWNER\" ]]",text)
+
 if __name__=="__main__":
     unittest.main()
