@@ -45,6 +45,22 @@ def marker(req: dict[str, Any]) -> str:
     value = {"version":1, "identity":identity(req), "target_issue":req["target_issue"], "expected_main_sha":req["expected_main_sha"], "governance_ref":req["governance_ref"]}
     return "<!-- factory-coordination-bootstrap " + json.dumps(value, sort_keys=True, separators=(",", ":")) + " -->"
 
+def guard_bootstrap_validation(value: str) -> str:
+    validation = "  validar-pr:\n    if: github.event_name == 'pull_request'\n"
+    guarded = (
+        "  validar-pr:\n"
+        "    if: >-\n"
+        "      github.event_name == 'pull_request' &&\n"
+        "      !(\n"
+        "        startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-') &&\n"
+        "        github.event.pull_request.head.repo.full_name == github.repository &&\n"
+        "        github.event.pull_request.author_association == 'OWNER'\n"
+        "      )\n"
+    )
+    if value.count(validation) != 1:
+        raise BootstrapError("Caller v1 no expone validar-pr con el contrato esperado.")
+    return value.replace(validation, guarded, 1)
+
 def caller_content(template: str) -> str:
     required = "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
     if not isinstance(template, str) or len(template.encode()) > MAX_FILE or required not in template or "@main" in template or "coordinar_trabajo.py" in template:
@@ -59,12 +75,12 @@ def caller_content(template: str) -> str:
             in_with, profile = False, False
         out.append(line)
     if in_with and not profile: out.append("      profile: es")
-    value = "\n".join(out).rstrip() + "\n"
+    value = guard_bootstrap_validation("\n".join(out).rstrip() + "\n")
     if "profile: es" not in value: raise BootstrapError("No fue posible fijar profile es.")
     return value
 
 def adoption_test() -> str:
-    return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        for event in ("issue_comment:", "issues:", "pull_request:", "workflow_dispatch:", "schedule:"):\n            self.assertIn(event, text)\n'''
+    return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n        self.assertIn("operation: pr", text)\n        for event in ("issue_comment:", "issues:", "pull_request:", "workflow_dispatch:", "schedule:"):\n            self.assertIn(event, text)\n'''
 
 def validate_patch(patch: Any) -> None:
     if not isinstance(patch, dict) or not patch or not set(patch).issubset(ALLOWED_PATHS): raise BootstrapError("Patch fuera de la allowlist.")

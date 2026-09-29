@@ -11,7 +11,27 @@ SHA = "a" * 40
 def request(key="b" * 64):
     return {"target_repository":"pl0n3r/Consumer","target_issue":"187","expected_main_sha":SHA,"governance_ref":b.GOVERNANCE_REF,"idempotency_key":key}
 
-CALLER = """name: Coordinación\non:\n  schedule:\n    - cron: '17 * * * *'\n  workflow_dispatch:\n  pull_request:\n  issues:\n  issue_comment:\njobs:\n  comentario:\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: comment\n"""
+CALLER = """name: Coordinación\non:\n  schedule:\n    - cron: '17 * * * *'\n  workflow_dispatch:\n  pull_request:\n  issues:\n  issue_comment:\njobs:\n  comentario:\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: comment\n  pr:\n    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: pr\n  validar-pr:\n    if: github.event_name == 'pull_request'\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: validate\n      require_reservation: true\n"""
+
+def generated_validation_runs(value, *, event_name="pull_request", ref, head_repo, repository, association):
+    block=value.split("  validar-pr:",1)[1].split("    uses:",1)[0]
+    expression=" ".join(
+        line.strip()
+        for line in block.splitlines()
+        if line.strip() and line.strip() != "if: >-"
+    )
+    atoms={
+        "github.event_name == 'pull_request'": event_name == "pull_request",
+        "startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')": ref.startswith("factory/bootstrap-coordination-"),
+        "github.event.pull_request.head.repo.full_name == github.repository": head_repo == repository,
+        "github.event.pull_request.author_association == 'OWNER'": association == "OWNER",
+    }
+    for atom,result in atoms.items():
+        expression=expression.replace(atom,str(result))
+    expression=expression.replace("&&"," and ").replace("!(","not (")
+    if "github." in expression or "startsWith(" in expression:
+        raise AssertionError(f"Expresión no evaluada completamente: {expression}")
+    return bool(eval(expression, {"__builtins__": {}}, {}))
 
 
 class FakeGateway:
@@ -58,6 +78,93 @@ class BootstrapCoordinationTests(unittest.TestCase):
         self.assertIn("coordinacion.yml@v1",value); self.assertIn("profile: es",value)
         self.assertNotIn("@main",value); self.assertNotIn("coordinar_trabajo.py",value)
         for event in ("schedule:","workflow_dispatch:","pull_request:","issues:","issue_comment:"): self.assertIn(event,value)
+
+    def test_generated_caller_skips_validation_only_for_owner_same_repo_bootstrap(self):
+        value=b.caller_content(CALLER)
+        block=value.split("  validar-pr:",1)[1]
+        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",block)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",block)
+        self.assertIn("github.event.pull_request.author_association == 'OWNER'",block)
+        self.assertEqual(value.count("factory/bootstrap-coordination-"),1)
+
+    def test_generated_caller_keeps_validation_for_regular_and_untrusted_prefixed_prs(self):
+        value=b.caller_content(CALLER)
+        repo="pl0n3r/Consumer"
+        cases=(
+            ("trabajo/issue-123",repo,"OWNER",True),
+            ("factory/bootstrap-coordination-187",repo,"MEMBER",True),
+            ("factory/bootstrap-coordination-187",repo,"COLLABORATOR",True),
+            ("factory/bootstrap-coordination-187","fork/Consumer","OWNER",True),
+            ("factory/bootstrap-coordination-187",repo,"OWNER",False),
+        )
+        for ref,head_repo,association,expected_validation in cases:
+            with self.subTest(ref=ref,head_repo=head_repo,association=association):
+                self.assertEqual(
+                    generated_validation_runs(
+                        value,
+                        ref=ref,
+                        head_repo=head_repo,
+                        repository=repo,
+                        association=association,
+                    ),
+                    expected_validation,
+                )
+
+    def test_generated_caller_keeps_require_reservation_true(self):
+        value=b.caller_content(CALLER)
+        block=value.split("  validar-pr:",1)[1]
+        self.assertIn("operation: validate",block)
+        self.assertIn("require_reservation: true",block)
+
+    def test_generated_caller_keeps_pr_sync_for_same_repo_bootstrap_branch(self):
+        value=b.caller_content(CALLER)
+        pr_block=value.split("  pr:",1)[1].split("  validar-pr:",1)[0]
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",pr_block)
+        self.assertIn("operation: pr",pr_block)
+        self.assertNotIn("factory/bootstrap-coordination-",pr_block)
+
+    def test_generated_caller_remains_pinned_and_permission_bounded(self):
+        value=b.caller_content(CALLER)
+        self.assertIn("coordinacion.yml@v1",value)
+        self.assertNotIn("@main",value)
+        self.assertNotIn("coordinar_trabajo.py",value)
+
+    def test_grindflow_188_bootstrap_branch_does_not_self_block(self):
+        value=b.caller_content(CALLER)
+        validation=value.split("  validar-pr:",1)[1]
+        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",validation)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",validation)
+        self.assertIn("github.event.pull_request.author_association == 'OWNER'",validation)
+        self.assertIn("require_reservation: true",validation)
+
+    def test_untrusted_bootstrap_prefix_does_not_bypass_validation(self):
+        value=b.caller_content(CALLER)
+        repo="pl0n3r/Consumer"
+        for head_repo,association in (
+            (repo,"MEMBER"),
+            (repo,"COLLABORATOR"),
+            ("fork/Consumer","OWNER"),
+            ("fork/Consumer","MEMBER"),
+        ):
+            with self.subTest(head_repo=head_repo,association=association):
+                self.assertTrue(
+                    generated_validation_runs(
+                        value,
+                        ref="factory/bootstrap-coordination-187",
+                        head_repo=head_repo,
+                        repository=repo,
+                        association=association,
+                    )
+                )
+        self.assertFalse(
+            generated_validation_runs(
+                value,
+                ref="factory/bootstrap-coordination-187",
+                head_repo=repo,
+                repository=repo,
+                association="OWNER",
+            )
+        )
 
     def test_bootstrap_pins_main_and_writes_only_branch_and_pr(self):
         gateway=FakeGateway(); result=b.bootstrap(request(),gateway,CALLER)
