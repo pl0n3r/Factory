@@ -72,8 +72,9 @@ class BootstrapCoordinationTests(unittest.TestCase):
         raw=request(); conflict=FakeGateway(branch="c"*40,pr=good_pr,same=False)
         with self.assertRaises(b.BootstrapError): b.bootstrap(raw,conflict,CALLER)
         stale=FakeGateway(main="d"*40,branch="c"*40,pr=None,same=True)
-        with self.assertRaises(b.BootstrapError): b.reuse_existing(req,stale,b.build_patch(CALLER),b.branch_name(req),stale.branch,None)
-        self.assertEqual(stale.deleted,[b.branch_name(req)])
+        patch=b.build_patch(CALLER); branch=b.branch_name(req)
+        with self.assertRaises(b.BootstrapError): b.reuse_existing(req,stale,patch,branch,stale.branch,None)
+        self.assertEqual(stale.deleted,[branch])
 
     def test_materialize_rolls_back_partial_remote_state(self):
         gateway=b.GitHubGateway("token"); req=b.validate_request(request()); patch=b.build_patch(CALLER)
