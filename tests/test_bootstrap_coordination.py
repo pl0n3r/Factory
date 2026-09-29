@@ -557,5 +557,30 @@ class BootstrapCoordinationTests(unittest.TestCase):
         with self.assertRaisesRegex(b.BootstrapError,"intención"):
             b.load_prepared_delivery(raw,wrong)
 
+    def test_prepared_manifest_temp_path_keeps_binding_before_write(self):
+        raw=request()
+        req=b.validate_request(raw)
+        patch=b.build_patch(CALLER)
+        prepared={
+            "version":1,
+            "identity":b.identity(req),
+            "target_repository":req["target_repository"],
+            "expected_main_sha":req["expected_main_sha"],
+            "patch_sha256":b.patch_sha(patch),
+            "patch":patch,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            target=root/b.PREPARED_FILE.name
+            target.write_text(json.dumps(prepared),encoding="utf-8")
+            with mock.patch.dict(os.environ,{b.PREPARED_DIR_ENV:str(root)},clear=False):
+                resolved=b.prepared_file_for_mode(True)
+            self.assertEqual(resolved,target)
+            loaded=json.loads(resolved.read_text(encoding="utf-8"))
+            self.assertEqual(b.load_prepared_delivery(raw,loaded),patch)
+            loaded["patch"][b.CALLER_PATH]+="# tamper\n"
+            with self.assertRaisesRegex(b.BootstrapError,"cambió"):
+                b.load_prepared_delivery(raw,loaded)
+
 
 if __name__ == "__main__": unittest.main()
