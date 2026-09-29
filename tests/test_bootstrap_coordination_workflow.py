@@ -34,8 +34,9 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
 
     def test_preparation_and_apply_use_separate_jobs(self):
         text=WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("jobs:\n  prepare:",text)
-        self.assertIn("\n  apply:\n    needs: prepare",text)
+        self.assertIn("jobs:\n  resolve:",text)
+        self.assertIn("\n  prepare:\n    needs: resolve",text)
+        self.assertIn("\n  apply:\n    needs: [resolve, prepare]",text)
         prepare=text.split("\n  prepare:",1)[1].split("\n  apply:",1)[0]
         apply=text.split("\n  apply:",1)[1]
         self.assertNotIn("FACTORY_PROVISION_TOKEN",prepare)
@@ -73,9 +74,9 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
 
     def test_expected_main_sha_remains_runtime_guard(self):
         text=WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}",text)
+        self.assertIn("EXPECTED_MAIN_SHA: ${{ needs.resolve.outputs.sha }}",text)
         self.assertIn("python3 runtime/scripts/bootstrap_coordination.py --prepare --consumer-root consumer",text)
-        block=text.split("repository: ${{ inputs.target_repository }}",1)[1].split("path: consumer",1)[0]
+        block=text.split("repository: ${{ needs.resolve.outputs.repo }}",1)[1].split("path: consumer",1)[0]
         self.assertIn("ref: main",block)
         self.assertNotIn("needs.resolve.outputs.sha",block)
 
