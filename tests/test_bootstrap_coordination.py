@@ -37,8 +37,9 @@ class FakeGateway:
 class BootstrapCoordinationTests(unittest.TestCase):
     def test_request_requires_owner_main_exact_sha_and_open_issue(self):
         self.assertTrue(b.bootstrap(request(), FakeGateway(), CALLER)["created"])
+        raw=request()
         for gateway in (FakeGateway(owner=False), FakeGateway(issue=False), FakeGateway(main="c"*40)):
-            with self.assertRaises(b.BootstrapError): b.bootstrap(request(), gateway, CALLER)
+            with self.assertRaises(b.BootstrapError): b.bootstrap(raw, gateway, CALLER)
         for invalid in ({**request(), "target_repository":"other/x"}, {**request(), "governance_ref":"pl0n3r/factory@main"}, {**request(), "target_issue":"0"}):
             with self.assertRaises(b.BootstrapError): b.validate_request(invalid)
 
@@ -46,9 +47,9 @@ class BootstrapCoordinationTests(unittest.TestCase):
         patch=b.build_patch(CALLER); self.assertEqual(set(patch), {b.CALLER_PATH,b.TEST_PATH})
         with self.assertRaises(b.BootstrapError): b.validate_patch({"evil.txt":"x", **patch})
         with self.assertRaises(b.BootstrapError): b.validate_patch({b.CALLER_PATH:"x"*(b.MAX_FILE+1), b.TEST_PATH:"x"})
-        gateway=b.GitHubGateway("token")
+        gateway=b.GitHubGateway("token"); paths=set(patch)
         with mock.patch.object(gateway,"_request",side_effect=[{"tree":{"sha":"t"}}, {"tree":[{"path":".github","mode":"120000"}]}]):
-            with self.assertRaisesRegex(b.BootstrapError,"symlinks"): gateway.tree_info("pl0n3r/Consumer",SHA,set(patch))
+            with self.assertRaisesRegex(b.BootstrapError,"symlinks"): gateway.tree_info("pl0n3r/Consumer",SHA,paths)
 
     def test_generated_caller_uses_factory_v1_spanish_profile_only(self):
         value=b.caller_content(CALLER)
@@ -70,14 +71,18 @@ class BootstrapCoordinationTests(unittest.TestCase):
         req=b.validate_request(request()); good_pr={"number":7,"body":b.marker(req)}
         same=FakeGateway(branch="c"*40,pr=good_pr,same=True)
         self.assertFalse(b.bootstrap(request(),same,CALLER)["created"])
-        with self.assertRaises(b.BootstrapError): b.bootstrap(request(),FakeGateway(branch="c"*40,pr=good_pr,same=False),CALLER)
+        raw=request(); conflict=FakeGateway(branch="c"*40,pr=good_pr,same=False)
+        with self.assertRaises(b.BootstrapError): b.bootstrap(raw,conflict,CALLER)
         self.assertIn("/compare/",(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8"))
 
     def test_workflow_reuses_existing_provision_authority_without_human_gate(self):
         text=(ROOT/".github/workflows/bootstrap-coordination.yml").read_text(encoding="utf-8")
-        for value in ("workflow_dispatch:","FACTORY_PROVISION_TOKEN","github.repository_owner","contents: read","ref: v1","--caller-template governance/template/.github/workflows/coordinacion.yml"):
+        for value in ("workflow_dispatch:","FACTORY_PROVISION_TOKEN","github.repository_owner","contents: read","ref: v1","python3 runtime/scripts/bootstrap_coordination.py"):
             self.assertIn(value,text)
         self.assertNotIn("factory-human-gate",text); self.assertNotIn("github.token",text)
+        source=(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8")
+        self.assertIn('CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")',source)
+        self.assertNotIn("--caller-template",source)
 
 
 if __name__ == "__main__": unittest.main()
