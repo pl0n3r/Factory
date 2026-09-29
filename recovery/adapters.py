@@ -14,11 +14,11 @@ OPERATIONS = frozenset({"upload", "materialize", "verify"})
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SENSITIVE = re.compile(
-    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\\bBearer\\s+[A-Za-z0-9._~+/=-]{10,}|"
-    r"\\bgithub_pat_[A-Za-z0-9_]{10,}|\\bgh[pousr]_[A-Za-z0-9]{20,}|"
-    r"\\bsk-[A-Za-z0-9]{20,}|"
-    r"\\b(?:password|passwd|secret|token|api[_-]?key|cookie)\\s*[:=]|"
-    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})",
+    r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/=-]{10,}|"
+    r"\bgithub_pat_[A-Za-z0-9_]{10,}|\bgh[pousr]_[A-Za-z0-9]{20,}|"
+    r"\bsk-[A-Za-z0-9]{20,}|"
+    r"\b(?:password|passwd|secret|token|api[_-]?key|cookie)\s*[:=]|"
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})",
     re.IGNORECASE,
 )
 
