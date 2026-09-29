@@ -48,6 +48,18 @@ def data_map():
     }
 
 
+def live_data_map():
+    current = data_map()
+    current["phase"] = "live"
+    current["controller"] = {
+        "name": "Example Controller",
+        "identifier": "example-controller",
+        "address": "Example Address",
+        "rights_email": "privacy@example.invalid",
+    }
+    return current
+
+
 class PrivacyAuditTests(unittest.TestCase):
     def test_undocumented_signal_is_reported_without_values(self):
         current = data_map()
@@ -141,9 +153,73 @@ class PrivacyAuditTests(unittest.TestCase):
         self.assertEqual(report["material_reasons"], ["account_email:purpose"])
         self.assertIn(MATERIAL_MARKER, report["legal_gate_body"])
         self.assertEqual(classify_body(report["legal_gate_body"])["category"], "legal")
+        self.assertTrue(report["d063_applies"])
+        self.assertIn('"recommendation":"B"', report["legal_gate_body"])
+        self.assertIn('"safe_default":"B"', report["legal_gate_body"])
+        self.assertIn("no bloquea el trabajo en construcción", report["legal_gate_body"])
 
-        direct = build_legal_gate_body(current["project"], report["material_reasons"])
+        direct = build_legal_gate_body(
+            current["project"],
+            report["material_reasons"],
+            d063_applies=True,
+        )
         self.assertEqual(direct, report["legal_gate_body"])
+
+    def test_d063_construction_gate_is_informational(self):
+        previous = data_map()
+        current = deepcopy(previous)
+        current["treatments"][0]["purpose"] = "marketing_contact"
+        report = audit_sources(
+            sources={"src/User.php": "$email = $user->email;\n"},
+            current_document=current,
+            previous_document=previous,
+        )
+        self.assertTrue(report["d063_applies"])
+        self.assertIn('"recommendation":"B"', report["legal_gate_body"])
+        self.assertIn('"safe_default":"B"', report["legal_gate_body"])
+        self.assertIn("puerta es informativa", report["legal_gate_body"])
+
+    def test_live_gate_never_recommends_construction_default(self):
+        previous = live_data_map()
+        current = deepcopy(previous)
+        current["treatments"][0]["purpose"] = "marketing_contact"
+        report = audit_sources(
+            sources={"src/User.php": "$email = $user->email;\n"},
+            current_document=current,
+            previous_document=previous,
+        )
+        self.assertFalse(report["d063_applies"])
+        self.assertNotIn('"recommendation":"B"', report["legal_gate_body"])
+        self.assertNotIn('"safe_default":"B"', report["legal_gate_body"])
+        self.assertIn('"recommendation":"A"', report["legal_gate_body"])
+        self.assertIn('"safe_default":"A"', report["legal_gate_body"])
+        self.assertIn("puerta es bloqueante", report["legal_gate_body"])
+
+    def test_workflow_removes_blocked_state_for_informational_gate(self):
+        content = (
+            ROOT / ".github" / "workflows" / "auditoria-privacidad.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('d063_applies="$(jq -r '.d063_applies'', content)
+        self.assertIn(
+            'remove_label_if_present "$legal_issue" "$STATE_BLOCKED"',
+            content,
+        )
+        self.assertIn(
+            'remove_label_if_present "$legal_issue" "$DECISION_OWNER"',
+            content,
+        )
+        self.assertIn('remove_owner_if_assigned "$legal_issue"', content)
+        self.assertIn('--add-label "$STATE_AVAILABLE"', content)
+
+    def test_workflow_keeps_blocked_state_outside_d063(self):
+        content = (
+            ROOT / ".github" / "workflows" / "auditoria-privacidad.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('if [[ "$d063_applies" == "true" ]]', content)
+        self.assertIn('--add-assignee "$OWNER"', content)
+        self.assertIn('--add-label "$STATE_BLOCKED"', content)
+        self.assertIn('--add-label "$DECISION_OWNER"', content)
+        self.assertIn('--add-label "$PRIORITY_CRITICAL"', content)
 
     def test_clean_audit_has_no_spurious_work(self):
         current = data_map()

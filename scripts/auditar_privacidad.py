@@ -176,19 +176,25 @@ def _findings(
     ]
 
 
-def build_legal_gate_body(project: str, reasons: list[str]) -> str:
-    """Construye una puerta legal válida sin incluir contenido libre del código."""
+def build_legal_gate_body(
+    project: str,
+    reasons: list[str],
+    *,
+    d063_applies: bool = False,
+) -> str:
+    """Construye una puerta legal fail-closed según la aplicabilidad de D-063."""
     if not reasons:
         raise PrivacyAuditError("no hay cambio material para puerta legal")
-    context = (
-        f"{project}: la auditoría detectó {len(reasons)} cambio(s) material(es) "
-        "de privacidad; quedan documentados para revisión jurídica antes de live "
-        "(D-063: no bloquean el trabajo en construcción)."
-    )
-    gate = {
-        "category": "legal",
-        "context": context,
-        "options": [
+    if type(d063_applies) is not bool:
+        raise PrivacyAuditError("estado D-063 inválido")
+
+    if d063_applies:
+        context = (
+            f"{project}: la auditoría detectó {len(reasons)} cambio(s) material(es) "
+            "de privacidad; quedan documentados para revisión jurídica antes de live "
+            "(D-063: no bloquean el trabajo en construcción)."
+        )
+        options = [
             {
                 "id": "A",
                 "label": "Solicitar revisión jurídica antes de aprobar la documentación",
@@ -197,9 +203,44 @@ def build_legal_gate_body(project: str, reasons: list[str]) -> str:
                 "id": "B",
                 "label": "Continuar en construcción manteniendo documented_not_legally_approved",
             },
-        ],
-        "recommendation": "B",
-        "safe_default": "B",
+        ]
+        recommendation = "B"
+        safe_default = "B"
+        gate_status = (
+            "La documentación permanece en estado "
+            "`documented_not_legally_approved` hasta la revisión jurídica previa a live. "
+            "Esta puerta es informativa: no bloquea el trabajo en construcción."
+        )
+    else:
+        context = (
+            f"{project}: la auditoría detectó {len(reasons)} cambio(s) material(es) "
+            "de privacidad fuera de las condiciones de D-063; requieren revisión "
+            "jurídica antes de continuar hacia live."
+        )
+        options = [
+            {
+                "id": "A",
+                "label": "Solicitar revisión jurídica antes de aprobar la documentación",
+            },
+            {
+                "id": "C",
+                "label": "Mantener el cambio bloqueado hasta completar la revisión jurídica",
+            },
+        ]
+        recommendation = "A"
+        safe_default = "A"
+        gate_status = (
+            "La documentación permanece en estado "
+            "`documented_not_legally_approved`. Esta puerta es bloqueante: "
+            "D-063 no aplica y se exige revisión jurídica antes de continuar hacia live."
+        )
+
+    gate = {
+        "category": "legal",
+        "context": context,
+        "options": options,
+        "recommendation": recommendation,
+        "safe_default": safe_default,
     }
     try:
         validated = validate_gate(gate)
@@ -213,9 +254,7 @@ def build_legal_gate_body(project: str, reasons: list[str]) -> str:
         f"Producto: `{project}`\n\n"
         "Motivos estructurados:\n"
         f"{reason_lines}\n\n"
-        "La documentación permanece en estado "
-        "`documented_not_legally_approved` hasta la revisión jurídica previa a live. "
-        "Esta puerta es informativa: no bloquea el trabajo en construcción.\n\n"
+        f"{gate_status}\n\n"
         f"<!-- factory-human-gate {encoded} -->\n"
     )
 
@@ -265,6 +304,7 @@ def audit_sources(
     field_findings = _findings(observed_fields, declared_fields)
     provider_findings = _findings(observed_providers, declared_providers)
     reasons = material_change_reasons(previous_document, current, rules)
+    d063_applies = current["phase"] == "construccion"
 
     report: dict[str, Any] = {
         "project": current["project"],
@@ -272,11 +312,16 @@ def audit_sources(
         "undocumented_fields": field_findings,
         "undocumented_providers": provider_findings,
         "legal_gate_required": bool(reasons),
+        "d063_applies": d063_applies,
         "material_reasons": reasons,
     }
     report["audit_issue_body"] = render_audit_issue_body(report)
     report["legal_gate_body"] = (
-        build_legal_gate_body(current["project"], reasons) if reasons else ""
+        build_legal_gate_body(
+            current["project"],
+            reasons,
+            d063_applies=d063_applies,
+        ) if reasons else ""
     )
     return report
 
