@@ -12,6 +12,7 @@ from lecciones.memoria import LessonValidationError, validate_lesson
 
 VERSION = 1
 MAX_RUNS = 10_000
+_TEMPORAL_ERROR = "evidence temporal inválida."
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,79}$")
 _PROJECT = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _REF = re.compile(
@@ -50,15 +51,14 @@ def analyze_regression(observation: Any, *, evaluated_at: Any) -> dict[str, Any]
     source = _source(data["source"])
     evaluated = _timestamp(evaluated_at, "evaluated_at")
     occurred = _timestamp(data["occurred_at"], "occurred_at")
-    if occurred > evaluated:
-        raise QualityRegressionError("evidence temporal inválida.")
-
     before = _sample(data["before"], "before")
     after = _sample(data["after"], "after")
-    if before["observed_at"] < occurred or after["observed_at"] < before["observed_at"]:
-        raise QualityRegressionError("evidence temporal inválida.")
-    if after["observed_at"] > evaluated:
-        raise QualityRegressionError("evidence temporal inválida.")
+    _validate_temporal_evidence(
+        evaluated=evaluated,
+        occurred=occurred,
+        before=before,
+        after=after,
+    )
     if before["failures"] == 0:
         raise QualityRegressionError("before debe demostrar al menos un fallo.")
 
@@ -81,14 +81,10 @@ def analyze_regression(observation: Any, *, evaluated_at: Any) -> dict[str, Any]
         and after["failures"] == 0
         and regression_test_ref is not None
     )
-    classification = (
-        "FLAKY"
-        if flaky
-        else "VERIFIED"
-        if verified
-        else "REPRODUCED"
-        if reproduced
-        else "OBSERVED"
+    classification = _classification(
+        flaky=flaky,
+        verified=verified,
+        reproduced=reproduced,
     )
     lesson = None
     if verified:
@@ -125,6 +121,35 @@ def analyze_regression(observation: Any, *, evaluated_at: Any) -> dict[str, Any]
     }
     result["fingerprint"] = _stable_hash(result)
     return result
+
+
+
+
+def _validate_temporal_evidence(
+    *,
+    evaluated: datetime,
+    occurred: datetime,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> None:
+    invalid = (
+        occurred > evaluated
+        or before["observed_at"] < occurred
+        or after["observed_at"] < before["observed_at"]
+        or after["observed_at"] > evaluated
+    )
+    if invalid:
+        raise QualityRegressionError(_TEMPORAL_ERROR)
+
+
+def _classification(*, flaky: bool, verified: bool, reproduced: bool) -> str:
+    if flaky:
+        return "FLAKY"
+    if verified:
+        return "VERIFIED"
+    if reproduced:
+        return "REPRODUCED"
+    return "OBSERVED"
 
 
 def compile_regression_guardrail_candidates(
