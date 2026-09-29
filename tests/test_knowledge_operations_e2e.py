@@ -19,7 +19,7 @@ def lifecycle(knowledge_id, knowledge_type, *, validated="2026-09-28T00:00:00Z",
     return create_knowledge_record(
         knowledge_id=knowledge_id, knowledge_type=knowledge_type,
         content_fingerprint=fingerprint,
-        provenance=[f"pl0n3r/Factory#322@{knowledge_id}"],
+        provenance=[f"pl0n3r/Factory#322@rev:{knowledge_id}"],
         scope={"project": "pl0n3r/Factory", "domain": "operations"},
         created_at="2025-01-01T00:00:00Z",
         last_validated_at=validated, last_useful_at=validated,
