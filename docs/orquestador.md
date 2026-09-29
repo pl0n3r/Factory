@@ -44,3 +44,29 @@ Cuando un repositorio `pl0n3r/*` existente no puede usar `/tomar` porque todaví
 El workflow reutiliza únicamente `FACTORY_PROVISION_TOKEN`, valida owner, Issue abierto y SHA exacto, y genera una rama `factory/bootstrap-coordination-<issue>` con PR a `main`. El patch está limitado a `.github/workflows/work-coordination.yml`, `tests/test_factory_coordination_adoption.py` y, solo cuando sea necesario, `AGENTS.md`. Nunca copia `coordinar_trabajo.py`: el caller consume `pl0n3r/factory/.github/workflows/coordinacion.yml@v1` con perfil `es`.
 
 Un retry con la misma intención converge sobre la misma rama/PR. Si cambian la intención, `main`, el owner, el Issue o aparece un path/symlink fuera de la allowlist, el bootstrap falla cerrado. El merge del PR no sustituye la evidencia del consumidor: después del merge, `/tomar` debe funcionar en el Issue objetivo antes de considerar restaurada la coordinación.
+
+## Incidentes con validación post-merge
+
+La relación normal entre una rama reservada y su Issue sigue siendo `Closes #N`,
+`Fixes #N` o `Resolves #N`. Esa es la opción por defecto y permite que GitHub
+cierre el trabajo al integrar el PR.
+
+Una excepción cerrada existe **solo para incidentes** que necesitan evidencia
+productiva del SHA fusionado antes de poder declararse resueltos. En ese caso el
+PR no usa una keyword de cierre y declara exactamente un marker:
+
+```html
+<!-- factory-issue-lifecycle {"version":1,"issue":739,"mode":"post_merge_validation"} -->
+```
+
+El coordinador acepta el marker únicamente cuando `issue` coincide con el Issue
+derivado de la rama reservada y ese Issue tiene `tipo: incidente` o
+`type: incident`. JSON inválido, campos extra, markers duplicados, otro número,
+un Issue que no sea incidente, una reserva inválida o mezclar el marker con una
+keyword de cierre fallan cerrado.
+
+El incidente **permanece abierto** tras el merge hasta que su contrato específico
+obtenga la evidencia post-merge requerida, por ejemplo health/smoke exact-main.
+Esta relación no relaja reservas, aceptación, colisiones, permisos ni gates y
+**no amplía autoridad** para cerrar el incidente o mutar producción.
+

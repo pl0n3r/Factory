@@ -85,6 +85,10 @@ SESSION_RE = re.compile(
     r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
 CLOSING_RE = re.compile(r"(?im)\b(?:closes|fixes|resolves)\s+#(\d+)\b")
+POST_MERGE_INCIDENT_RE = re.compile(
+    r"<!--\s*factory-issue-lifecycle\s+(\{[^{}]*\})\s*-->",
+    re.IGNORECASE,
+)
 
 def configure_profile(name: str) -> CoordinationProfile:
     """Activa uno de los perfiles cerrados y recompone sus contratos derivados."""
@@ -413,6 +417,42 @@ def closing_issues(body: str) -> set[int]:
     """Extrae referencias Closes/Fixes/Resolves del cuerpo de un PR."""
     return {int(value) for value in CLOSING_RE.findall(body or "")}
 
+
+
+def post_merge_incident_issue(body: str) -> int | None:
+    """Extrae una relación no-closing explícita para validar un incidente post-merge."""
+    matches = POST_MERGE_INCIDENT_RE.findall(body or "")
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise CoordinationError(
+            "El PR debe declarar como máximo un factory-issue-lifecycle."
+        )
+    try:
+        payload = json.loads(matches[0])
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise CoordinationError(
+            "factory-issue-lifecycle debe contener JSON válido y cerrado."
+        ) from exc
+    if not isinstance(payload, dict) or set(payload) != {"version", "issue", "mode"}:
+        raise CoordinationError(
+            "factory-issue-lifecycle solo admite version, issue y mode."
+        )
+    version = payload.get("version")
+    issue = payload.get("issue")
+    mode = payload.get("mode")
+    if version != 1 or isinstance(version, bool):
+        raise CoordinationError("factory-issue-lifecycle requiere version=1.")
+    if (
+        not isinstance(issue, int)
+        or isinstance(issue, bool)
+        or issue <= 0
+        or mode != "post_merge_validation"
+    ):
+        raise CoordinationError(
+            "factory-issue-lifecycle requiere issue positivo y mode=post_merge_validation."
+        )
+    return issue
 
 def reservation_from_pr_body(body: str) -> str | None:
     """Extrae el ID de reserva visible legacy u oculto de un Pull Request."""
@@ -2270,12 +2310,36 @@ def issue_contract_errors(
 ) -> list[str]:
     """Valida relación con Issue y, cuando aplica, su reserva activa."""
     errors: list[str] = []
-    if issue_number not in closing_issues(body):
+    closings = closing_issues(body)
+    try:
+        post_merge_issue = post_merge_incident_issue(body)
+    except CoordinationError as exc:
+        errors.append(str(exc))
+        post_merge_issue = None
+
+    issue = api.issue(issue_number)
+    labels = label_names(issue)
+    is_incident = bool({"tipo: incidente", "type: incident"} & labels)
+
+    if issue_number in closings:
+        if post_merge_issue is not None:
+            errors.append(
+                "El PR no puede mezclar una relación de cierre con "
+                "factory-issue-lifecycle post-merge."
+            )
+    elif post_merge_issue is None:
         errors.append(
             f"El PR debe incluir Closes #{issue_number} (o Fixes/Resolves) en el cuerpo."
         )
+    elif post_merge_issue != issue_number:
+        errors.append(
+            "factory-issue-lifecycle debe apuntar al mismo Issue de la rama reservada."
+        )
+    elif not is_incident:
+        errors.append(
+            "factory-issue-lifecycle post-merge solo se permite para Issues de incidente."
+        )
 
-    issue = api.issue(issue_number)
     if issue.get("state") != "open":
         errors.append(f"Issue #{issue_number} debe estar abierto durante el PR.")
     if require_reservation:
@@ -2289,7 +2353,6 @@ def issue_contract_errors(
             )
         )
     return errors
-
 
 def collision_validation_errors(
     api: GitHub,
