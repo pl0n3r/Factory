@@ -234,6 +234,7 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 - ❌ Mensajes de progreso vacíos («sigo revisando», «déjame pensar») o narrar cada tool call.
 - ❌ Pedir al dueño algo que puedes decidir tú según AGENTES.md.
 - ❌ Crear Issues o PRs sin etiquetas completas.
+- ❌ Poner `estado: bloqueado` sin un comentario con la **causa** y la **condición de desbloqueo**, o bloquear varios Issues en masa sin ese comentario en cada uno. Quien cierra la causa desbloquea; un bloqueo sin causa vigente se restaura a `estado: disponible`. Lección: `factory-20260929-bloqueos-sin-causa`.
 
 ---
 

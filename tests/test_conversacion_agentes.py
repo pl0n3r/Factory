@@ -103,6 +103,19 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertIn("d063_attestation.no_real_customer_data=true", puertas)
         self.assertIn("go-live", (ROOT / "decisiones.yml").read_text(encoding="utf-8"))
 
+    def test_bloqueo_exige_causa_y_leccion_registrada(self):
+        import json
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("condición de desbloqueo", plan)
+        self.assertIn("en masa", plan)
+        self.assertIn("comentario con la **causa**", plan)
+        self.assertIn("sin ese comentario en cada uno", plan)
+        self.assertIn("Quien cierra la causa desbloquea", plan)
+        self.assertIn("estado: disponible", plan)
+        registros = (ROOT / "lecciones/registros/factory.jsonl").read_text(encoding="utf-8")
+        ids = [json.loads(x)["id"] for x in registros.splitlines() if x.strip()]
+        self.assertIn("factory-20260929-bloqueos-sin-causa", ids)
+
 
 if __name__ == "__main__":
     unittest.main()
