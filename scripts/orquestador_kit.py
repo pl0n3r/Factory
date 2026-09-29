@@ -42,9 +42,20 @@ def _extract_marker(body: str, name: str) -> str | None:
     suffix = " -->"
     count = body.count(prefix)
     if count == 0:
-        if name in body:
-            raise PlanError(f"Marker {name} malformado.")
-        return None
+        html_prefix = f"<!-- {name}"
+        search_from = 0
+        while True:
+            start = body.find(html_prefix, search_from)
+            if start < 0:
+                return None
+            boundary = start + len(html_prefix)
+            if (
+                boundary == len(body)
+                or body[boundary].isspace()
+                or body.startswith("-->", boundary)
+            ):
+                raise PlanError(f"Marker {name} malformado.")
+            search_from = boundary
     if count != 1:
         raise PlanError(f"Debe existir un único marker {name}.")
     start = body.index(prefix) + len(prefix)
