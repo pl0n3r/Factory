@@ -68,15 +68,27 @@ def analyze_regression(observation: Any, *, evaluated_at: Any) -> dict[str, Any]
             regression_test_ref, "regression_test_ref"
         )
 
-    flaky = 0 < before["failures"] < before["runs"]
-    reproduced = before["failures"] == before["runs"]
+    flaky = (
+        0 < before["failures"] < before["runs"]
+        or 0 < after["failures"] < after["runs"]
+    )
+    reproduced = (
+        before["runs"] >= 2
+        and before["failures"] == before["runs"]
+    )
     verified = (
         reproduced
         and after["failures"] == 0
         and regression_test_ref is not None
     )
     classification = (
-        "FLAKY" if flaky else "VERIFIED" if verified else "REPRODUCED"
+        "FLAKY"
+        if flaky
+        else "VERIFIED"
+        if verified
+        else "REPRODUCED"
+        if reproduced
+        else "OBSERVED"
     )
     lesson = None
     if verified:
