@@ -105,8 +105,10 @@ class ConversacionAgentesTests(unittest.TestCase):
 
     def test_puertas_nuevas_exigen_explain_simple(self):
         import json
+        import runpy
 
-        from scripts.auditar_privacidad import build_legal_gate_body
+        namespace = runpy.run_path(str(ROOT / "scripts/auditar_privacidad.py"))
+        build_legal_gate_body = namespace["build_legal_gate_body"]
 
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
         self.assertIn("explain_simple", plan)
