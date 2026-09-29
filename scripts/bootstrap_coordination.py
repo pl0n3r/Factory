@@ -51,7 +51,11 @@ def guard_bootstrap_validation(value: str) -> str:
         "  validar-pr:\n"
         "    if: >-\n"
         "      github.event_name == 'pull_request' &&\n"
-        "      !startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')\n"
+        "      !(\n"
+        "        startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-') &&\n"
+        "        github.event.pull_request.head.repo.full_name == github.repository &&\n"
+        "        github.event.pull_request.author_association == 'OWNER'\n"
+        "      )\n"
     )
     if value.count(validation) != 1:
         raise BootstrapError("Caller v1 no expone validar-pr con el contrato esperado.")
@@ -76,7 +80,7 @@ def caller_content(template: str) -> str:
     return value
 
 def adoption_test() -> str:
-    return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("!startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("require_reservation: true", text)\n        self.assertIn("operation: pr", text)\n        for event in ("issue_comment:", "issues:", "pull_request:", "workflow_dispatch:", "schedule:"):\n            self.assertIn(event, text)\n'''
+    return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n        self.assertIn("operation: pr", text)\n        for event in ("issue_comment:", "issues:", "pull_request:", "workflow_dispatch:", "schedule:"):\n            self.assertIn(event, text)\n'''
 
 def validate_patch(patch: Any) -> None:
     if not isinstance(patch, dict) or not patch or not set(patch).issubset(ALLOWED_PATHS): raise BootstrapError("Patch fuera de la allowlist.")
