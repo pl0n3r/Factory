@@ -25,7 +25,7 @@ def knowledge_item(
         content_fingerprint="a" * 64,
         provenance=["pl0n3r/Factory#319@rev:v1"],
         scope={"project": project, "domain": domain},
-        created_at="2026-09-20T00:00:00Z",
+        created_at="2026-06-01T00:00:00Z",
         last_validated_at=last_validated_at,
         last_useful_at=last_validated_at,
         confidence=0.9,
