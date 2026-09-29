@@ -171,6 +171,17 @@ class QualityStatusTests(unittest.TestCase):
         unknown = health(external=True, perf=performance(), rec=recovery("UNKNOWN"))
         self.assertEqual(unknown["state"], "UNKNOWN")
 
+        missing = health(external=True, perf=None, rec=None)
+        self.assertEqual(missing["state"], "UNKNOWN")
+        self.assertEqual(
+            missing["external_dimensions"]["performance"]["status"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            missing["external_dimensions"]["recovery"]["status"],
+            "UNKNOWN",
+        )
+
     def test_readiness_projection_reuses_quality_health_and_unknown_or_blocked_never_ready(self):
         passed = health()
         projected = readiness_projection(passed)

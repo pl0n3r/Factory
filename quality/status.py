@@ -230,6 +230,11 @@ def _external_dimensions(quality, performance_status, recovery_health, states, r
         if performance_status is None:
             states.append("UNKNOWN"); reasons.append("performance_missing")
             classes.append("quality_performance_unknown")
+            result["performance"] = {
+                "status": "UNKNOWN", "source": "performance-v1",
+                "reasons": ["performance_missing"], "evidence_refs": [],
+                "work_item_classes": [], "recalculated": False,
+            }
         else:
             try:
                 projected = performance_projection(performance_status)
@@ -243,6 +248,11 @@ def _external_dimensions(quality, performance_status, recovery_health, states, r
         if recovery_health is None:
             states.append("UNKNOWN"); reasons.append("recovery_missing")
             classes.append("quality_recovery_unknown")
+            result["recovery"] = {
+                "status": "UNKNOWN", "source": "recovery_health_v1",
+                "reasons": ["recovery_missing"], "evidence_refs": [],
+                "work_item_classes": [], "recalculated": False,
+            }
         else:
             if not isinstance(recovery_health, Mapping) or recovery_health.get("project") != quality["project"]:
                 raise QualityStatusError("recovery project incoherente.")
