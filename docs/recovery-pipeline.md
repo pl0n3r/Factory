@@ -1,39 +1,11 @@
 # Recovery backup pipeline v1
 
-#329 conecta Recovery Manifest (#327) con los adapters declarativos (#328). El módulo modela el ciclo mínimo:
+#329 conecta Recovery Manifest (#327) y adapters (#328) sin ejecutar I/O.
 
-```text
-snapshot/dump
-→ checksum
-→ encrypt
-→ upload object storage
-→ verify remote object
-→ cold-copy opcional
-→ record evidence
-```
+Flujo canónico: **snapshot/dump → checksum → encrypt → upload object storage → verify → cold-copy opcional → evidence**. `build_backup_pipeline()` solo emite un plan `PLANNED`; cada paso mantiene `authority=unchanged` y `execute=false`.
 
-Todo el resultado es **descriptivo**: cada paso conserva `authority=unchanged` y `execute=false`. Factory no abre sockets, no ejecuta subprocess, no lee/escribe backups reales y no cifra ni sube datos.
+Object storage siempre es `primary_offsite`. Google Drive solo existe como `cold_copy` cuando el manifest lo exige y nunca sustituye el destino primario. Las idempotency keys de adapters se derivan con SHA-256 para ser estables y acotadas.
 
-## Plan
+`verify_backup_evidence()` solo devuelve `VERIFIED` si manifest, pipeline y evidencia coinciden y existen encryption observada, checksum exacto, primary verification, referencia de inmutabilidad/versionado, cold-copy cuando aplica, timestamps coherentes y evidence refs opacas. Conserva RPO como `freshness_target_seconds`; #331 decidirá freshness real contra el tiempo observado.
 
-`build_backup_pipeline()` exige una source `REQUIRED` del Recovery Manifest, refs opacas, SHA-256 e idempotency key. Object storage siempre es `primary_offsite`. Google Drive solo se añade como `cold_copy` si el manifest lo declara; nunca sustituye el destino técnico primario.
-
-El pipeline permanece `PLANNED`; construirlo no demuestra que exista un backup.
-
-## Evidence gate
-
-`verify_backup_evidence()` solo emite `status=VERIFIED` si coinciden manifest, pipeline y evidencia y además:
-
-- encryption está observada como realizada;
-- checksum coincide con el plan;
-- object storage primario fue verificado;
-- existe una referencia opaca de versión/inmutabilidad;
-- Drive fue verificado cuando el manifest lo requiere;
-- timestamps tienen zona y `verified_at >= created_at`;
-- existe al menos una evidence ref opaca.
-
-La salida conserva timestamps, RPO como `freshness_target_seconds`, destinos y evidence refs para que #331 calcule estado/freshness. Este slice **no** calcula salud contra el reloj actual.
-
-## Límites
-
-No dumps, cifrado real, cloud SDK, OAuth, Google Drive API, filesystem externo, subprocess, retention execution, restore, scheduler, creación de WorkItems ni producción. #330 define restore drill; #331 health/Readiness; #332 E2E.
+No hay dumps/cifrado/uploads reales, SDK/OAuth, filesystem externo, subprocess, retention execution, restore, scheduler, WorkItems ni producción. #330 define restore drill; #331 health/Readiness; #332 E2E.
