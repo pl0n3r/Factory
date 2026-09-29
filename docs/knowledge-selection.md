@@ -1,48 +1,11 @@
 # Knowledge Selection v1
 
-Este slice adapta Knowledge Item Contract v1 al **Context Compiler existente**. No crea un buscador, motor de memoria ni almacén nuevo.
+#321 adapta Knowledge Item Contract v1 al Context Compiler existente; no crea buscador, store ni motor paralelo.
 
-## Misión cerrada
+La misión declara scope exacto project+domain, tags, categorías decision|lesson|constraint|evidence, require_current, max_items (≤12) y now_at. Cada item se valida con knowledge.contract y su freshness proviene exclusivamente de knowledge_item_status().
 
-La misión declara:
+La selección filtra scope, categoría y tags; rechaza sensitivity distinta de normal; solo proyecta items current. Con require_current=true, si no queda selección compatible/current falla cerrado. No existe score mágico: el orden es determinista por categoría + item_id.
 
-- `project` y `domain` exactos;
-- `tags` relevantes;
-- categorías admitidas por Context Compiler: `decision|lesson|constraint|evidence`;
-- `require_current`;
-- `max_items` (máximo 12);
-- `now_at` para evaluar freshness con Knowledge Lifecycle.
+context_items contiene exactamente category, source, text y tags, compatibles con Context Compiler. Provenance, authority_class y estado permanecen en bindings de trazabilidad con authority=unchanged. El adapter no ejecuta Context Compiler.
 
-La selección valida cada Knowledge Item mediante `knowledge.contract` y usa `knowledge_item_status()`. Solo items con estado efectivo `active/current` pueden convertirse en contexto.
-
-## Selección
-
-No existe score mágico. El algoritmo:
-
-1. exige scope exacto `project + domain`;
-2. filtra categoría y, cuando existen, tags de misión;
-3. descarta items no-current;
-4. rechaza conocimiento con sensibilidad distinta de `normal`;
-5. ordena determinísticamente por categoría + `item_id`;
-6. aplica el límite explícito de la misión.
-
-Si `require_current=true` y no queda conocimiento compatible/current, falla cerrado. Stale/deprecated/archived nunca se presenta como current.
-
-## Adapter a Context Compiler
-
-`context_items` contiene **solo** los cuatro campos admitidos por Context Compiler:
-
-- `category`;
-- `source`;
-- `text`;
-- `tags`.
-
-Provenance, authority y estado se conservan sin modificación en `bindings` paralelos de trazabilidad. El adapter no concede authority ni ejecuta Context Compiler.
-
-## Boundary del DAG
-
-- #320: semántica de postmortem verificable.
-- #321: selección scoped/current para Context Compiler.
-- #322: E2E Knowledge Operations con lifecycle/context/pruning/guardrails.
-
-Fuera de alcance: embeddings, vector DB, búsqueda externa, scheduler, polling, store documental, mutaciones de Knowledge Items o un Knowledge Engine paralelo.
+Boundary: #320 cubre postmortem, #321 selección, #322 E2E lifecycle/context/pruning/guardrails. Sin embeddings/vector DB, búsqueda externa, scheduler, polling, store documental ni mutaciones de Knowledge Items.
