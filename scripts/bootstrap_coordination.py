@@ -70,6 +70,29 @@ def marker(req: dict[str, Any]) -> str:
     value = {"version":1, "identity":identity(req), "target_issue":req["target_issue"], "expected_main_sha":req["expected_main_sha"], "governance_ref":req["governance_ref"]}
     return "<!-- factory-coordination-bootstrap " + json.dumps(value, sort_keys=True, separators=(",", ":")) + " -->"
 
+def parse_marker(body: Any) -> dict[str, Any] | None:
+    if not isinstance(body, str):
+        return None
+    matches = re.findall(r"<!-- factory-coordination-bootstrap (\{[^\n]*\}) -->", body)
+    if len(matches) != 1:
+        return None
+    try:
+        value = json.loads(matches[0])
+    except json.JSONDecodeError:
+        return None
+    required = {"version", "identity", "target_issue", "expected_main_sha", "governance_ref"}
+    if not isinstance(value, dict) or set(value) != required:
+        return None
+    if value.get("version") != 1 or value.get("governance_ref") != GOVERNANCE_REF:
+        return None
+    if not isinstance(value.get("target_issue"), int) or value["target_issue"] < 1:
+        return None
+    if not isinstance(value.get("identity"), str) or KEY_RE.fullmatch(value["identity"]) is None:
+        return None
+    if not isinstance(value.get("expected_main_sha"), str) or SHA_RE.fullmatch(value["expected_main_sha"]) is None:
+        return None
+    return value
+
 def guard_bootstrap_validation(value: str) -> str:
     validation = "  validar-pr:\n    if: github.event_name == 'pull_request'\n"
     guarded = (
@@ -347,9 +370,115 @@ class GitHubGateway:
             and pr["head"]["repo"].get("full_name")==name
             and marker(req) in str(pr.get("body") or "")
         )
-    def legacy_pr_matches_exact(self,name: str,branch: str,number: int,req: dict[str,Any])->bool:
+    def main_descends_from(self,name: str,ancestor: str,current: str)->bool:
+        if ancestor == current:
+            return True
+        value=self._request("GET",f"/repos/{name}/compare/{ancestor}...{current}") or {}
+        merge_base=value.get("merge_base_commit",{}) if isinstance(value,dict) else {}
+        return bool(
+            isinstance(value,dict)
+            and value.get("status")=="ahead"
+            and value.get("behind_by")==0
+            and isinstance(merge_base,dict)
+            and merge_base.get("sha")==ancestor
+        )
+    def legacy_marker(self,name: str,branch: str,pr: Any,req: dict[str,Any])->dict[str,Any]|None:
+        if not (
+            isinstance(pr,dict)
+            and isinstance(pr.get("number"),int)
+            and pr.get("state","open")=="open"
+            and isinstance(pr.get("base"),dict)
+            and pr["base"].get("ref")=="main"
+            and isinstance(pr.get("head"),dict)
+            and pr["head"].get("ref")==branch
+            and branch==branch_name(req)
+            and isinstance(pr["head"].get("repo"),dict)
+            and pr["head"]["repo"].get("full_name")==name
+            and isinstance(pr.get("user"),dict)
+            and pr["user"].get("login")==OWNER
+        ):
+            return None
+        historical=parse_marker(pr.get("body"))
+        if historical is None:
+            return None
+        if historical["target_issue"]!=req["target_issue"] or historical["governance_ref"]!=req["governance_ref"]:
+            return None
+        if pr["base"].get("sha")!=historical["expected_main_sha"]:
+            return None
+        if isinstance(pr["base"].get("repo"),dict) and pr["base"]["repo"].get("full_name")!=name:
+            return None
+        if not self.main_descends_from(name,historical["expected_main_sha"],req["expected_main_sha"]):
+            return None
+        return historical
+    def commit_matches_marker(self,name: str,sha: str,historical: dict[str,Any],paths_expected: set[str])->bool:
+        expected=historical["expected_main_sha"]
+        compare=self._request("GET",f"/repos/{name}/compare/{expected}...{sha}") or {}
+        commits=compare.get("commits",[]) if isinstance(compare,dict) else []
+        merge_base=compare.get("merge_base_commit",{}) if isinstance(compare,dict) else {}
+        paths={row.get("filename") for row in compare.get("files",[])} if isinstance(compare,dict) else set()
+        ahead=compare.get("ahead_by") if isinstance(compare,dict) else None
+        if not (
+            isinstance(commits,list)
+            and isinstance(ahead,int)
+            and 1<=ahead<=10
+            and len(commits)==ahead
+            and compare.get("status")=="ahead"
+            and compare.get("behind_by")==0
+            and isinstance(merge_base,dict)
+            and merge_base.get("sha")==expected
+            and paths==set(paths_expected)
+            and isinstance(commits[0],dict)
+            and isinstance(commits[-1],dict)
+            and commits[-1].get("sha")==sha
+        ):
+            return False
+        previous=expected
+        for item in commits:
+            if not isinstance(item,dict):
+                return False
+            commit_sha=item.get("sha")
+            parents=item.get("parents")
+            if (
+                not isinstance(commit_sha,str)
+                or SHA_RE.fullmatch(commit_sha) is None
+                or not isinstance(parents,list)
+                or len(parents)!=1
+                or not isinstance(parents[0],dict)
+                or parents[0].get("sha")!=previous
+            ):
+                return False
+            previous=commit_sha
+        first_sha=commits[0].get("sha")
+        first=self._request("GET",f"/repos/{name}/git/commits/{first_sha}")
+        parents=first.get("parents",[]) if isinstance(first,dict) else []
+        return bool(
+            isinstance(first,dict)
+            and f"Factory-Bootstrap-Identity: {historical['identity']}" in first.get("message","")
+            and len(parents)==1
+            and parents[0].get("sha")==expected
+        )
+    def legacy_pr_matches_exact(
+        self,name: str,branch: str,number: int,req: dict[str,Any],legacy_sha: str|None=None,
+        legacy_body: str|None=None,legacy_patch: dict[str,str]|None=None
+    )->bool:
         pr=self.open_pr(name,branch)
-        return bool(self.pr_matches(name,branch,pr,req) and pr.get("number")==number)
+        historical=self.legacy_marker(name,branch,pr,req)
+        if historical is None or pr.get("number")!=number:
+            return False
+        if legacy_body is not None and str(pr.get("body") or "")!=legacy_body:
+            return False
+        if legacy_sha is not None:
+            paths=set(legacy_patch) if legacy_patch is not None else set()
+            if (
+                self.branch_sha(name,branch)!=legacy_sha
+                or pr["head"].get("sha")!=legacy_sha
+                or not paths
+                or not self.commit_matches_marker(name,legacy_sha,historical,paths)
+            ):
+                return False
+        if legacy_patch is not None and not self.branch_matches(name,branch,legacy_patch):
+            return False
+        return True
     def delete_branch(self,name: str,branch: str)->None:
         self._request("DELETE",f"/repos/{name}/git/refs/heads/{quote(branch,safe='')}")
     def create_pr(self,name: str,branch: str,title: str,body: str)->int:
@@ -407,20 +536,29 @@ class GitHubGateway:
             raise BootstrapError("main cambió antes de crear PR; rama bootstrap revertida.")
         pr=self.create_pr(name,branch,f"chore(factory): restaurar coordinación (#{req['target_issue']})",f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{expected}`\n\n{marker(req)}")
         return commit["sha"], pr
-    def materialize_replacement(self,req: dict[str,Any],patch: dict[str,str],branch: str,legacy_branch: str,legacy_sha: str,legacy_pr: int)->tuple[str,int]:
+    def materialize_replacement(
+        self,req: dict[str,Any],patch: dict[str,str],branch: str,legacy_branch: str,legacy_sha: str,
+        legacy_pr: int,legacy_body: str,legacy_patch: dict[str,str]
+    )->tuple[str,int]:
         name,expected=req["target_repository"],req["expected_main_sha"]
         base_tree=self.tree_info(name,expected,set(patch)); entries=[]
-        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(name,legacy_branch,legacy_pr,req):
+        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(
+            name,legacy_branch,legacy_pr,req,legacy_sha,legacy_body,legacy_patch
+        ):
             raise BootstrapError("El bootstrap legacy cambió antes del primer write.")
         for path,content in patch.items():
             blob=self._request("POST",f"/repos/{name}/git/blobs",{"content":content,"encoding":"utf-8"}); entries.append({"path":path,"mode":"100644","type":"blob","sha":blob["sha"]})
         tree=self._request("POST",f"/repos/{name}/git/trees",{"base_tree":base_tree,"tree":entries})
         message=f"chore(factory): reemplazo bootstrap coordinación #{req['target_issue']}\n\nFactory-Bootstrap-Identity: {identity(req)}"
         commit=self._request("POST",f"/repos/{name}/git/commits",{"message":message,"tree":tree["sha"],"parents":[expected]})
-        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(name,legacy_branch,legacy_pr,req):
+        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(
+            name,legacy_branch,legacy_pr,req,legacy_sha,legacy_body,legacy_patch
+        ):
             raise BootstrapError("El bootstrap legacy cambió antes de crear replacement.")
         self._request("POST",f"/repos/{name}/git/refs",{"ref":f"refs/heads/{branch}","sha":commit["sha"]})
-        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(name,legacy_branch,legacy_pr,req):
+        if self.main_sha(name)!=expected or self.branch_sha(name,legacy_branch)!=legacy_sha or not self.legacy_pr_matches_exact(
+            name,legacy_branch,legacy_pr,req,legacy_sha,legacy_body,legacy_patch
+        ):
             try:
                 self.delete_branch(name,branch)
             except (BootstrapError,OSError):
@@ -444,32 +582,38 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: 
         if not gateway.pr_matches(name,branch,gpr,req): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
         return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
 
-    if bsha is None or gpr is None or not gateway.commit_matches(name,bsha,req,set(legacy)) or not gateway.branch_matches(name,branch,legacy) or not gateway.pr_matches(name,branch,gpr,req):
+    if bsha is None or gpr is None:
         raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    historical=gateway.legacy_marker(name,branch,gpr,req)
+    if historical is None or not gateway.commit_matches_marker(name,bsha,historical,set(legacy)) or not gateway.branch_matches(name,branch,legacy):
+        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    legacy_body=str(gpr.get("body") or "")
 
     replacement=replacement_branch_name(req,patch)
     replacement_sha=gateway.branch_sha(name,replacement)
     replacement_pr=gateway.open_pr(name,replacement)
     if replacement_sha is not None or replacement_pr is not None:
         if replacement_sha is not None and replacement_pr is None and gateway.commit_matches(name,replacement_sha,req,set(patch)) and gateway.branch_matches(name,replacement,patch):
-            if gateway.main_sha(name)!=req["expected_main_sha"] or gateway.branch_sha(name,branch)!=bsha:
+            if gateway.main_sha(name)!=req["expected_main_sha"] or not gateway.legacy_pr_matches_exact(
+                name,branch,gpr["number"],req,bsha,legacy_body,legacy
+            ):
                 raise BootstrapError("El bootstrap legacy cambió antes de crear PR replacement.")
-            fresh=gateway.open_pr(name,branch)
-            if not gateway.pr_matches(name,branch,fresh,req) or fresh.get("number")!=gpr.get("number"):
-                raise BootstrapError("El PR bootstrap legacy cambió antes de crear PR replacement.")
             body=f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{req['expected_main_sha']}`\n\nSupersedes bootstrap PR #{gpr['number']}.\n\n{marker(req)}"
             pr=gateway.create_pr(name,replacement,f"chore(factory): endurecer bootstrap coordinación (#{req['target_issue']})",body)
             return {"status":"confirmed","branch":replacement,"pr":pr,"created":True}
         if replacement_sha is None or replacement_pr is None or not gateway.commit_matches(name,replacement_sha,req,set(patch)) or not gateway.branch_matches(name,replacement,patch) or not gateway.pr_matches(name,replacement,replacement_pr,req) or f"Supersedes bootstrap PR #{gpr['number']}." not in str(replacement_pr.get("body") or ""):
             raise BootstrapError("Replacement bootstrap pertenece a otra intención.")
+        if not gateway.legacy_pr_matches_exact(name,branch,gpr["number"],req,bsha,legacy_body,legacy):
+            raise BootstrapError("El bootstrap legacy cambió después de crear replacement.")
         return {"status":"confirmed","branch":replacement,"pr":replacement_pr.get("number"),"created":False}
 
-    if gateway.main_sha(name)!=req["expected_main_sha"] or gateway.branch_sha(name,branch)!=bsha:
+    if gateway.main_sha(name)!=req["expected_main_sha"] or not gateway.legacy_pr_matches_exact(
+        name,branch,gpr["number"],req,bsha,legacy_body,legacy
+    ):
         raise BootstrapError("El bootstrap legacy cambió antes de migrar.")
-    fresh=gateway.open_pr(name,branch)
-    if not gateway.pr_matches(name,branch,fresh,req) or fresh.get("number")!=gpr.get("number"):
-        raise BootstrapError("El PR bootstrap legacy cambió antes de migrar.")
-    _,pr=gateway.materialize_replacement(req,patch,replacement,branch,bsha,gpr["number"])
+    _,pr=gateway.materialize_replacement(
+        req,patch,replacement,branch,bsha,gpr["number"],legacy_body,legacy
+    )
     return {"status":"confirmed","branch":replacement,"pr":pr,"created":True}
 
 def bootstrap_prepared(raw: dict[str,str], gateway: Any, template: str, patch: dict[str,str]) -> dict[str,Any]:
