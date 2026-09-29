@@ -71,5 +71,13 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertNotIn("ref: ${{ inputs.expected_main_sha }}",text)
         self.assertIn("EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}",text)
 
+    def test_expected_main_sha_remains_runtime_guard(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}",text)
+        self.assertIn("python3 runtime/scripts/bootstrap_coordination.py --prepare --consumer-root consumer",text)
+        block=text.split("repository: ${{ inputs.target_repository }}",1)[1].split("path: consumer",1)[0]
+        self.assertIn("ref: main",block)
+        self.assertNotIn("inputs.expected_main_sha",block)
+
 if __name__=="__main__":
     unittest.main()
