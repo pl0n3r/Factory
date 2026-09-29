@@ -934,6 +934,76 @@ class CoordinacionTests(unittest.TestCase):
             )
         )
 
+    def test_far_future_commit_does_not_extend_stale_reservation(self) -> None:
+        """Una fecha Git arbitrariamente futura no mantiene viva la reserva."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        stale = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = stale
+        api.comments[-1]["updated_at"] = stale
+        api.commit_times["abc123"] = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        reference = datetime(2020, 1, 1, 0, 31, tzinfo=timezone.utc)
+
+        activity = work_activity_timestamp(
+            api,
+            12,
+            "trabajo/issue-12",
+            now=reference,
+        )
+
+        self.assertEqual(activity, datetime(2020, 1, 1, tzinfo=timezone.utc))
+        self.assertTrue(
+            work_is_stale(
+                api,
+                12,
+                "trabajo/issue-12",
+                now=reference,
+            )
+        )
+
+    def test_small_future_clock_skew_is_bounded(self) -> None:
+        """Un skew pequeño se acota al reloj de evaluación y deja de renovarse."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        stale = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = stale
+        api.comments[-1]["updated_at"] = stale
+        api.commit_times["abc123"] = datetime(
+            2020,
+            1,
+            1,
+            0,
+            34,
+            tzinfo=timezone.utc,
+        )
+        first_reference = datetime(2020, 1, 1, 0, 30, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            work_activity_timestamp(
+                api,
+                12,
+                "trabajo/issue-12",
+                now=first_reference,
+            ),
+            first_reference,
+        )
+        self.assertFalse(
+            work_is_stale(
+                api,
+                12,
+                "trabajo/issue-12",
+                now=first_reference,
+            )
+        )
+        self.assertTrue(
+            work_is_stale(
+                api,
+                12,
+                "trabajo/issue-12",
+                now=datetime(2020, 1, 1, 1, 5, tzinfo=timezone.utc),
+            )
+        )
+
     def test_reservation_marker_starts_lease(self) -> None:
         """Una reserva recién creada no nace stale aunque main sea antiguo."""
         api = FakeGitHub()

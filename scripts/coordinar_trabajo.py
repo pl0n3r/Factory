@@ -51,6 +51,8 @@ try:
 except ValueError:
     RESERVATION_STALE_MINUTES = 30
 
+COMMIT_CLOCK_SKEW_SECONDS = 300
+
 ALLOWED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 @dataclass(frozen=True)
@@ -738,8 +740,10 @@ def work_activity_timestamp(
     api: GitHub,
     issue_number: int,
     branch: str,
+    *,
+    now: datetime | None = None,
 ) -> datetime | None:
-    """Calcula actividad atribuible a la reserva: marker confiable o commit."""
+    """Calcula actividad atribuible sin confiar en relojes Git arbitrariamente futuros."""
     candidates: list[datetime] = []
     comments = api.issue_comments(issue_number)
     lease_start = latest_reservation_timestamp(comments)
@@ -750,7 +754,14 @@ def work_activity_timestamp(
     if branch_sha:
         timestamp = api.commit_timestamp(branch_sha)
         if timestamp is not None:
-            candidates.append(timestamp)
+            if now is not None:
+                maximum = now + timedelta(seconds=COMMIT_CLOCK_SKEW_SECONDS)
+                if timestamp > maximum:
+                    timestamp = None
+                elif timestamp > now:
+                    timestamp = now
+            if timestamp is not None:
+                candidates.append(timestamp)
 
     return max(candidates) if candidates else None
 
@@ -854,10 +865,15 @@ def work_is_stale(
     now: datetime | None = None,
 ) -> bool:
     """Solo permite recuperar trabajo con evidencia suficiente de inactividad."""
-    last_activity = work_activity_timestamp(api, issue_number, branch)
+    reference = now or datetime.now(timezone.utc)
+    last_activity = work_activity_timestamp(
+        api,
+        issue_number,
+        branch,
+        now=reference,
+    )
     if last_activity is None:
         return False
-    reference = now or datetime.now(timezone.utc)
     return reference - last_activity >= timedelta(minutes=stale_minutes)
 
 
