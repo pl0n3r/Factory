@@ -29,7 +29,7 @@ def lifecycle(
         content_fingerprint="a" * 64,
         provenance=["pl0n3r/Factory#307", "pl0n3r/Factory#319"],
         scope={"project": "pl0n3r/Factory", "domain": "knowledge-operations"},
-        created_at="2026-09-01T00:00:00Z",
+        created_at="2025-01-01T00:00:00Z",
         last_validated_at=last_validated_at,
         last_useful_at=last_validated_at,
         confidence=0.9,
