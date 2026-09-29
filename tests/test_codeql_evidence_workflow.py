@@ -15,7 +15,7 @@ class CodeqlEvidenceWorkflowTests(unittest.TestCase):
         self.assertNotIn("security-events: write", self.text)
         self.assertIn("github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2", self.text)
         self.assertIn("github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2", self.text)
-        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", self.text)
+        self.assertIn("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", self.text)
         self.assertIn("persist-credentials: false", self.text)
 
     def test_codeql_evidence_keeps_sarif_local_and_fails_closed(self) -> None:
