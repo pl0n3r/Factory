@@ -124,6 +124,15 @@ def _validate_simple_root(raw: dict[str, Any], normalized: dict[str, Any]) -> No
         )
 
 
+def _option_risk(value: Any) -> str:
+    risk = _line(value, "option.risk", 16)
+    if risk not in RISK_VALUES:
+        raise GateValidationError(
+            "option.risk debe ser low, medium o high."
+        )
+    return risk
+
+
 def _validate_option(item: Any, seen: set[str]) -> dict[str, Any]:
     allowed = {"id", "label"} | OPTIONAL_OPTION
     if not isinstance(item, dict) or not {"id", "label"}.issubset(item):
@@ -149,12 +158,7 @@ def _validate_option(item: Any, seen: set[str]) -> dict[str, Any]:
     if "cons" in item:
         normalized["cons"] = _line_list(item["cons"], "option.cons")
     if "risk" in item:
-        risk = _line(item["risk"], "option.risk", 16)
-        if risk not in RISK_VALUES:
-            raise GateValidationError(
-                "option.risk debe ser low, medium o high."
-            )
-        normalized["risk"] = risk
+        normalized["risk"] = _option_risk(item["risk"])
     if "cost" in item:
         normalized["cost"] = _line(
             item["cost"], "option.cost", 120, allow_empty=True
