@@ -123,7 +123,7 @@ class RecoveryStatusTests(unittest.TestCase):
                 retention_drift=retention,
             )
             self.assertIn(expected, recovery_work_item_classes(health))
-            self.assertTrue(set(health["work_item_classes"]) <= WORK_ITEM_CLASSES)
+            self.assertLessEqual(set(health["work_item_classes"]), WORK_ITEM_CLASSES)
 
         no_drill = derive_recovery_health(
             recovery, valid_backup, None, observed_at="2026-09-29T01:34:00Z"
