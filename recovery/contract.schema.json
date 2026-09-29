@@ -1,0 +1,30 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://github.com/pl0n3r/factory/recovery/contract.schema.json",
+  "title":"Factory Recovery Manifest v1",
+  "type":"object","additionalProperties":false,
+  "required":["version","project","target","protection","retention","sources","offsite","encryption","restore_drill"],
+  "properties":{
+    "version":{"const":1},
+    "project":{"type":"string","pattern":"^[a-z][a-z0-9-]{1,62}$"},
+    "target":{"type":"object","additionalProperties":false,"required":["rpo_minutes","rto_minutes"],
+      "properties":{"rpo_minutes":{"type":"integer","minimum":1,"maximum":525600},"rto_minutes":{"type":"integer","minimum":1,"maximum":525600}}},
+    "protection":{"type":"object","additionalProperties":false,
+      "required":["copies","media_types","offsite_copies","immutable_copies","undetected_restore_failures"],
+      "properties":{"copies":{"const":3},"media_types":{"const":2},"offsite_copies":{"const":1},"immutable_copies":{"const":1},"undetected_restore_failures":{"const":0}}},
+    "retention":{"type":"object","additionalProperties":false,"required":["hourly","daily","weekly","monthly"],
+      "properties":{"hourly":{"$ref":"#/$defs/count"},"daily":{"$ref":"#/$defs/count"},"weekly":{"$ref":"#/$defs/count"},"monthly":{"$ref":"#/$defs/count"}}},
+    "sources":{"type":"object","additionalProperties":false,"required":["database","media","repository"],
+      "properties":{"database":{"$ref":"#/$defs/sourceState"},"media":{"$ref":"#/$defs/sourceState"},"repository":{"$ref":"#/$defs/sourceState"}}},
+    "offsite":{"type":"object","additionalProperties":false,"required":["object_storage","cold_copy"],
+      "properties":{"object_storage":{"const":"REQUIRED"},"cold_copy":{"enum":["google_drive","NOT_APPLICABLE"]}}},
+    "encryption":{"type":"object","additionalProperties":false,"required":["required","key_material"],
+      "properties":{"required":{"const":true},"key_material":{"const":"EXTERNAL_ONLY"}}},
+    "restore_drill":{"type":"object","additionalProperties":false,"required":["cadence_days"],
+      "properties":{"cadence_days":{"type":"integer","minimum":1,"maximum":365}}}
+  },
+  "$defs":{
+    "count":{"type":"integer","minimum":0,"maximum":100000},
+    "sourceState":{"enum":["REQUIRED","NOT_APPLICABLE"]}
+  }
+}
