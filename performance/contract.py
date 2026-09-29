@@ -141,7 +141,13 @@ def _text(value: Any, label: str) -> str:
 
 
 def _number(value: Any, label: str) -> int | float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > 1e15:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PerformanceContractError(f"{label} debe ser número finito y acotado.")
+    if isinstance(value, int):
+        if abs(value) > 1e15:
+            raise PerformanceContractError(f"{label} debe ser número finito y acotado.")
+        return value
+    if not math.isfinite(value) or abs(value) > 1e15:
         raise PerformanceContractError(f"{label} debe ser número finito y acotado.")
     return value
 
