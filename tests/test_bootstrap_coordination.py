@@ -64,7 +64,6 @@ class BootstrapCoordinationTests(unittest.TestCase):
         req,patch,branch=gateway.created[0]
         self.assertEqual(req["expected_main_sha"],SHA); self.assertEqual(branch,"factory/bootstrap-coordination-187")
         self.assertTrue(set(patch).issubset(b.ALLOWED_PATHS)); self.assertEqual(result["pr"],99)
-        self.assertEqual(result["pr"],99)
 
     def test_bootstrap_is_idempotent_and_rejects_conflicting_intent(self):
         req=b.validate_request(request()); good_pr={"number":7,"body":b.marker(req)}
