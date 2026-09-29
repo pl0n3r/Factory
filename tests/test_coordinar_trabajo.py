@@ -883,7 +883,58 @@ class CoordinacionTests(unittest.TestCase):
             )
         )
 
-    def test_reservation_marker_starts_fresh_work_lease(self) -> None:
+    def test_read_only_comment_does_not_refresh_stale_reservation(self) -> None:
+        """Una revisión ajena no mantiene viva una rama sin progreso."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        stale = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = stale
+        api.comments[-1]["updated_at"] = stale
+        api.commit_times["abc123"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        api.comments.append(
+            {
+                "user": {"login": "pl0n3r"},
+                "body": "Revisión read-only: sin cambios en la rama reservada.",
+                "created_at": "2020-01-01T00:29:00+00:00",
+                "updated_at": "2020-01-01T00:29:00+00:00",
+            }
+        )
+
+        activity = work_activity_timestamp(api, 12, "trabajo/issue-12")
+
+        self.assertEqual(activity, datetime(2020, 1, 1, tzinfo=timezone.utc))
+        self.assertTrue(
+            work_is_stale(
+                api,
+                12,
+                "trabajo/issue-12",
+                now=datetime(2020, 1, 1, 0, 31, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_branch_commit_refreshes_stale_reservation(self) -> None:
+        """Un commit real de la rama sí renueva el lease."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        stale = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = stale
+        api.comments[-1]["updated_at"] = stale
+        commit_time = datetime(2020, 1, 1, 0, 20, tzinfo=timezone.utc)
+        api.commit_times["abc123"] = commit_time
+
+        activity = work_activity_timestamp(api, 12, "trabajo/issue-12")
+
+        self.assertEqual(activity, commit_time)
+        self.assertFalse(
+            work_is_stale(
+                api,
+                12,
+                "trabajo/issue-12",
+                now=datetime(2020, 1, 1, 0, 31, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_reservation_marker_starts_lease(self) -> None:
         """Una reserva recién creada no nace stale aunque main sea antiguo."""
         api = FakeGitHub()
         add_active_reservation(api)
@@ -2088,9 +2139,8 @@ class CoordinacionTests(unittest.TestCase):
 
 
     def test_english_coordination_commands_do_not_refresh_stale_lease(self) -> None:
-        """Los comandos EN de coordinación no cuentan como actividad de trabajo."""
+        """Los comandos EN tampoco alteran el lease de trabajo."""
         coordinator.configure_profile("en")
-        timestamp = "2026-01-01T00:31:00+00:00"
         commands = [
             "/take",
             "/force-release",
@@ -2100,17 +2150,37 @@ class CoordinacionTests(unittest.TestCase):
         ]
 
         for body in commands:
-            comments = [
+            api = FakeGitHub()
+            api.repo = "pl0n3r/brvtal"
+            api.branches = {"main": "abc123", "work/issue-12": "abc123"}
+            stale = "2020-01-01T00:00:00+00:00"
+            api.comments = [
+                {
+                    "user": {"login": BOT},
+                    "body": coordinator.reservation_marker(
+                        "pl0n3r",
+                        SESSION_A,
+                        "work/issue-12",
+                        True,
+                        "take",
+                        contract_fingerprint(VALID_ACCEPTANCE_BODY),
+                    ),
+                    "created_at": stale,
+                    "updated_at": stale,
+                },
                 {
                     "user": {"login": "pl0n3r"},
                     "body": body,
-                    "created_at": timestamp,
-                    "updated_at": timestamp,
-                }
+                    "created_at": "2020-01-01T00:29:00+00:00",
+                    "updated_at": "2020-01-01T00:29:00+00:00",
+                },
             ]
+            api.commit_times["abc123"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
             with self.subTest(body=body):
-                self.assertIsNone(
-                    coordinator.human_issue_activity_timestamp(comments)
+                self.assertEqual(
+                    coordinator.work_activity_timestamp(api, 12, "work/issue-12"),
+                    datetime(2020, 1, 1, tzinfo=timezone.utc),
                 )
 
     def test_reusable_profile_runtime_and_template_are_publish_safe(self) -> None:

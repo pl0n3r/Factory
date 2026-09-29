@@ -677,33 +677,6 @@ def latest_reservation_timestamp(
     return latest
 
 
-def human_issue_activity_timestamp(
-    comments: list[dict[str, Any]],
-) -> datetime | None:
-    """Toma comentarios humanos útiles, excluyendo comandos de coordinación."""
-    latest: datetime | None = None
-    for comment in comments:
-        user = comment.get("user")
-        login = user.get("login") if isinstance(user, dict) else None
-        if login == TRUSTED_MARKER_LOGIN:
-            continue
-        body = str(comment.get("body") or "").strip()
-        if (
-            body == PROFILE.take
-            or body == PROFILE.force_release
-            or (PROFILE.release and body.startswith(PROFILE.release))
-            or (PROFILE.transfer and body.startswith(PROFILE.transfer))
-            or (PROFILE.recover and body.startswith(PROFILE.recover))
-        ):
-            continue
-        timestamp = parse_github_time(
-            comment.get("updated_at") or comment.get("created_at")
-        )
-        if timestamp is not None and (latest is None or timestamp > latest):
-            latest = timestamp
-    return latest
-
-
 def file_overlaps(
     current_files: set[str],
     others: dict[int, set[str]],
@@ -766,15 +739,12 @@ def work_activity_timestamp(
     issue_number: int,
     branch: str,
 ) -> datetime | None:
-    """Calcula la señal más reciente sin contar el comando /tomar actual."""
+    """Calcula actividad atribuible a la reserva: marker confiable o commit."""
     candidates: list[datetime] = []
     comments = api.issue_comments(issue_number)
     lease_start = latest_reservation_timestamp(comments)
     if lease_start is not None:
         candidates.append(lease_start)
-    human_activity = human_issue_activity_timestamp(comments)
-    if human_activity is not None:
-        candidates.append(human_activity)
 
     branch_sha = api.branch_sha(branch)
     if branch_sha:
