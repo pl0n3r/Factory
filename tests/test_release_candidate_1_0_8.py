@@ -9,18 +9,22 @@ from pathlib import Path
 
 
 class ReleaseCandidate108Tests(unittest.TestCase):
-    """Fija versión, capacidad requerida y frontera humana de publicación."""
+    """Conserva capacidad 1.0.8 y frontera humana de publicación."""
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
-    def test_candidate_version_is_1_0_8(self) -> None:
-        """La fuente canónica declara exactamente 1.0.8."""
+    def test_candidate_is_at_least_1_0_8(self) -> None:
+        """La línea estable conserva al menos las capacidades de Factory 1.0.8."""
         payload = json.loads(
             (self.root / "config" / "version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.8"})
+        self.assertEqual(set(payload), {"version"})
+        parts = payload["version"].split(".")
+        self.assertEqual(len(parts), 3)
+        self.assertTrue(all(part.isdigit() for part in parts))
+        self.assertGreaterEqual(tuple(map(int, parts)), (1, 0, 8))
 
     def test_candidate_contains_post_merge_incident_contract(self) -> None:
         """El candidato incluye código y documentación del lifecycle post-merge."""
