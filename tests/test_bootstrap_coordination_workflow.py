@@ -114,8 +114,7 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertIn("issue_comment:\n    types: [created]",text)
         self.assertIn('COMMENT_BODY: ${{ github.event.comment.body || \'\' }}',text)
         self.assertIn('elif [[ "$EVENT_NAME" == "issue_comment" ]]',text)
-        self.assertIn('^/bootstrap-coordination\\ (pl0n3r/[A-Za-z0-9_.-]{1,100})\\ ([1-9][0-9]*)\\ ([0-9a-f]{40})    unittest.main()
-,text)
+        self.assertIn(r'^/bootstrap-coordination\ (pl0n3r/[A-Za-z0-9_.-]{1,100})\ ([1-9][0-9]*)\ ([0-9a-f]{40})$',text)
         self.assertIn('target_repository="${BASH_REMATCH[1]}"',text)
         self.assertIn("repo=%s\\nissue=%s\\nsha=%s",text)
 
