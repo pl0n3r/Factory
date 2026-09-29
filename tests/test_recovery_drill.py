@@ -134,6 +134,13 @@ class RecoveryDrillTests(unittest.TestCase):
         with self.assertRaises(RecoveryDrillError):
             evaluate_restore_drill(recovery, tampered, backup, observed)
 
+    def test_disposable_restore_drill_validates_integrity_health_smoke_and_rto(self):
+        self.test_restore_drill_plan_is_deterministic_disposable_and_external_io_free()
+        self.test_drill_measures_rpo_rto_and_reports_passed_or_breached()
+
+    def test_restore_authority_never_implies_productive_or_destructive_cutover(self):
+        self.test_drill_fails_closed_for_production_sensitive_or_authority_expansion()
+
 
 if __name__ == "__main__":
     unittest.main()
