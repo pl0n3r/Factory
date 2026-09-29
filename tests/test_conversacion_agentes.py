@@ -75,6 +75,9 @@ class ConversacionAgentesTests(unittest.TestCase):
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
         self.assertNotIn("ControlBot (privado)", plan)
         self.assertIn("D-062", plan)
+        arquitectura = (ROOT / "docs/arquitectura-tecnica.md").read_text(encoding="utf-8")
+        self.assertIn("| `pl0n3r/AutoFactory` | Público |", arquitectura)
+        self.assertNotIn("| `pl0n3r/AutoFactory` | Privado |", arquitectura)
 
 
 if __name__ == "__main__":
