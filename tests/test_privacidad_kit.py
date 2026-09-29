@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
-
 from scripts.privacidad_kit import (
     PLACEHOLDER_TOKEN,
     PrivacyError,
@@ -13,6 +11,9 @@ from scripts.privacidad_kit import (
     load_rules,
     validate_data_map,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def data_map():
