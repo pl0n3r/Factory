@@ -17,6 +17,7 @@ MAX_BYTES = 256_000
 SLUG = re.compile(r"[a-z][a-z0-9_.-]{0,63}\Z")
 PROJECT = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 OWNER_FIELDS = ("name", "identifier", "address", "rights_email")
+D063_ATTESTATION_FIELDS = ("nothing_live", "no_real_customer_data")
 TREATMENT_FIELDS = (
     "id", "category", "fields", "purpose", "basis", "retention", "consent", "providers"
 )
@@ -167,9 +168,27 @@ def _validate_treatment(raw: object, rules: dict[str, Any], phase: str) -> dict[
     }
 
 
+def _validate_d063_attestation(raw: object) -> dict[str, bool | None]:
+    """Valida solo hechos declarativos de D-063; nunca acepta texto ni PII."""
+    if not isinstance(raw, dict) or set(raw) != set(D063_ATTESTATION_FIELDS):
+        raise PrivacyError("datos: atestación D-063 incompleta o adicional")
+    result: dict[str, bool | None] = {}
+    for field in D063_ATTESTATION_FIELDS:
+        value = raw[field]
+        if value is not None and type(value) is not bool:
+            raise PrivacyError("datos: atestación D-063 debe ser bool o null")
+        result[field] = value
+    return result
+
+
 def validate_data_map(document: object, rules: dict[str, Any]) -> dict[str, Any]:
-    expected = {"version", "project", "phase", "controller", "treatments"}
-    if not isinstance(document, dict) or set(document) != expected:
+    required = {"version", "project", "phase", "controller", "treatments"}
+    allowed = required | {"d063_attestation"}
+    if (
+        not isinstance(document, dict)
+        or not required.issubset(document)
+        or not set(document).issubset(allowed)
+    ):
         raise PrivacyError("datos: campos raíz incompletos o adicionales")
     if type(document["version"]) is not int or document["version"] != 1:
         raise PrivacyError("datos: versión no admitida")
@@ -179,6 +198,11 @@ def validate_data_map(document: object, rules: dict[str, Any]) -> dict[str, Any]
     phase = document["phase"]
     if phase not in {"construccion", "live"}:
         raise PrivacyError("datos: phase inválida")
+    d063_attestation = (
+        _validate_d063_attestation(document["d063_attestation"])
+        if "d063_attestation" in document
+        else None
+    )
     controller = _validate_controller(
         document["controller"], phase, rules["owner_placeholder"]
     )
@@ -189,13 +213,16 @@ def validate_data_map(document: object, rules: dict[str, Any]) -> dict[str, Any]
     ids = [row["id"] for row in treatments]
     if len(set(ids)) != len(ids):
         raise PrivacyError("datos: tratamientos duplicados")
-    return {
+    result: dict[str, Any] = {
         "version": 1,
         "project": project,
         "phase": phase,
         "controller": controller,
         "treatments": sorted(treatments, key=lambda row: row["id"]),
     }
+    if d063_attestation is not None:
+        result["d063_attestation"] = d063_attestation
+    return result
 
 
 def load_rules() -> dict[str, Any]:
