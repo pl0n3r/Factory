@@ -141,8 +141,13 @@ def derive_recovery_health(
 
 
 def recovery_work_item_classes(health: Mapping[str, Any]) -> list[str]:
-    if health.get("state") not in HEALTH_STATES:
-        raise RecoveryStatusError("Recovery Health state inválido.")
+    if (
+        health.get("version") != 1
+        or health.get("state") not in HEALTH_STATES
+        or health.get("authority") != "unchanged"
+        or health.get("execute") is not False
+    ):
+        raise RecoveryStatusError("Recovery Health contract inválido.")
     classes = health.get("work_item_classes")
     if (
         not isinstance(classes, list)
@@ -271,11 +276,16 @@ def _drill(recovery, backup, value):
 
     reasons = data["reasons"]
     allowed = {"RPO_EXCEEDED", "RTO_EXCEEDED"}
+    expected = []
+    if observed["rpo_seconds"] > observed["rpo_target_seconds"]:
+        expected.append("RPO_EXCEEDED")
+    if observed["rto_seconds"] > observed["rto_target_seconds"]:
+        expected.append("RTO_EXCEEDED")
     if (
         not isinstance(reasons, list) or len(reasons) != len(set(reasons))
         or any(item not in allowed for item in reasons)
-        or (data["status"] == "PASSED" and reasons)
-        or (data["status"] == "BREACHED" and not reasons)
+        or sorted(reasons) != sorted(expected)
+        or data["status"] != ("BREACHED" if expected else "PASSED")
     ):
         raise _Problem("DRILL_STATUS_INCOHERENT", "restore_drill_failed")
     if not _refs(data["evidence_refs"], "DRILL_EVIDENCE_INVALID", "restore_drill_failed"):
