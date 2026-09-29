@@ -1226,7 +1226,7 @@ def reserve_work(
         visible_states = sorted(
             label
             for label in labels
-            if label.startswith("estado: ") or label.startswith("status: ")
+            if label.startswith(("estado: ", "status: "))
         )
         rendered = ", ".join(visible_states) if visible_states else "sin estado canónico"
         raise CoordinationError(
