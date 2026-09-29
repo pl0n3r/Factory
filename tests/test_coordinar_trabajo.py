@@ -2066,6 +2066,104 @@ class CoordinacionTests(unittest.TestCase):
         with self.assertRaises(CoordinationError):
             validate_pull(api, 15, True)
 
+    def test_normal_reserved_pr_still_requires_closing_relation(self) -> None:
+        """El flujo normal conserva la relación de cierre obligatoria."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": f"<!-- condor-reserva-id: {SESSION_A} -->",
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+        with self.assertRaisesRegex(CoordinationError, r"Closes #12"):
+            validate_pull(api, 15, True)
+
+    def test_incident_can_use_explicit_non_closing_post_merge_relation(self) -> None:
+        """Un incidente puede conservarse abierto hasta su validación post-merge."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.issue_data["labels"].append({"name": "tipo: incidente"})
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                '<!-- factory-issue-lifecycle '
+                '{"version":1,"issue":12,"mode":"post_merge_validation"} -->\n'
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+        api.pull_files_map[15] = {"src/a.php"}
+
+        validate_pull(api, 15, True)
+
+    def test_non_closing_relation_fails_closed_outside_incident_contract(self) -> None:
+        """Número, tipo, unicidad y reserva siguen siendo requisitos fail-closed."""
+        marker = (
+            '<!-- factory-issue-lifecycle '
+            '{"version":1,"issue":12,"mode":"post_merge_validation"} -->'
+        )
+
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": f"{marker}\n<!-- condor-reserva-id: {SESSION_A} -->",
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+        with self.assertRaisesRegex(CoordinationError, "solo se permite.*incidente"):
+            validate_pull(api, 15, True)
+
+        api.issue_data["labels"].append({"name": "tipo: incidente"})
+        api.pulls[15]["body"] = (
+            '<!-- factory-issue-lifecycle '
+            '{"version":1,"issue":13,"mode":"post_merge_validation"} -->\n'
+            f"<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+        with self.assertRaisesRegex(CoordinationError, "mismo Issue"):
+            validate_pull(api, 15, True)
+
+        api.pulls[15]["body"] = (
+            f"{marker}\n{marker}\n<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+        with self.assertRaisesRegex(CoordinationError, "como máximo un"):
+            validate_pull(api, 15, True)
+
+        api.pulls[15]["body"] = (
+            '<!-- factory-issue-lifecycle '
+            '{"version":1,"issue":12,"mode":"post_merge_validation","extra":true} -->\n'
+            f"<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+        with self.assertRaisesRegex(CoordinationError, "solo admite"):
+            validate_pull(api, 15, True)
+
+        api.comments.clear()
+        api.pulls[15]["body"] = f"{marker}\n<!-- condor-reserva-id: {SESSION_A} -->"
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "marcador de reserva activo y confiable",
+        ):
+            validate_pull(api, 15, True)
+
+    def test_post_merge_incident_lifecycle_is_documented(self) -> None:
+        """La excepción queda documentada sin ampliar autoridad."""
+        root = Path(__file__).resolve().parents[1]
+        docs = (root / "docs" / "orquestador.md").read_text(encoding="utf-8")
+
+        self.assertIn("factory-issue-lifecycle", docs)
+        self.assertIn("post_merge_validation", docs)
+        self.assertIn("solo para incidentes", docs)
+        self.assertIn("permanece abierto", docs)
+        self.assertIn("no amplía autoridad", docs)
+
     def test_file_overlap_detects_collisions(self) -> None:
         """Detecta colisiones exactas de archivos."""
         current = {"src/a.php", "README.md", "src/b.php"}
