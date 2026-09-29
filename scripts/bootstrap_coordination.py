@@ -45,6 +45,18 @@ def marker(req: dict[str, Any]) -> str:
     value = {"version":1, "identity":identity(req), "target_issue":req["target_issue"], "expected_main_sha":req["expected_main_sha"], "governance_ref":req["governance_ref"]}
     return "<!-- factory-coordination-bootstrap " + json.dumps(value, sort_keys=True, separators=(",", ":")) + " -->"
 
+def guard_bootstrap_validation(value: str) -> str:
+    validation = "  validar-pr:\n    if: github.event_name == 'pull_request'\n"
+    guarded = (
+        "  validar-pr:\n"
+        "    if: >-\n"
+        "      github.event_name == 'pull_request' &&\n"
+        "      !startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')\n"
+    )
+    if value.count(validation) != 1:
+        raise BootstrapError("Caller v1 no expone validar-pr con el contrato esperado.")
+    return value.replace(validation, guarded, 1)
+
 def caller_content(template: str) -> str:
     required = "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
     if not isinstance(template, str) or len(template.encode()) > MAX_FILE or required not in template or "@main" in template or "coordinar_trabajo.py" in template:
@@ -59,17 +71,7 @@ def caller_content(template: str) -> str:
             in_with, profile = False, False
         out.append(line)
     if in_with and not profile: out.append("      profile: es")
-    value = "\n".join(out).rstrip() + "\n"
-    validation = "  validar-pr:\n    if: github.event_name == 'pull_request'\n"
-    guarded = (
-        "  validar-pr:\n"
-        "    if: >-\n"
-        "      github.event_name == 'pull_request' &&\n"
-        "      !startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')\n"
-    )
-    if value.count(validation) != 1:
-        raise BootstrapError("Caller v1 no expone validar-pr con el contrato esperado.")
-    value = value.replace(validation, guarded, 1)
+    value = guard_bootstrap_validation("\n".join(out).rstrip() + "\n")
     if "profile: es" not in value: raise BootstrapError("No fue posible fijar profile es.")
     return value
 
