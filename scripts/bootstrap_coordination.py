@@ -90,14 +90,14 @@ class GitHubGateway:
                 raw=response.read(); return None if not raw else json.loads(raw.decode())
         except HTTPError as exc:
             if exc.code in allow: return None
-            raise BootstrapError("GitHub rechazó la operación ({exc.code}).") from exc
+            raise BootstrapError(f"GitHub rechazó la operación ({exc.code}).") from exc
     def authorize(self) -> None:
         if (self._request("GET","/user") or {}).get("login") != OWNER: raise BootstrapError("Autoridad GitHub inválida.")
     def repository(self, name: str) -> None:
         repo=self._request("GET",f"/repos/{name}")
         if not isinstance(repo,dict) or repo.get("full_name")!=name or (repo.get("owner") or {}).get("login")!=OWNER or repo.get("default_branch")!="main": raise BootstrapError("Repositorio objetivo incompatible.")
     def issue_open(self,name: str,number: int)->bool:
-        issue=self._request("GET",f"/repos/{name}/issues/{number}",allow=(404,)); return bool(isinstance(issue,dict) and issue.get("state")="open" and "pull_request" not in issue)
+        issue=self._request("GET",f"/repos/{name}/issues/{number}",allow=(404,)); return bool(isinstance(issue,dict) and issue.get("state")=="open" and "pull_request" not in issue)
     def main_sha(self,name: str)->str:
         ref=self._request("GET",f"/repos/{name}/git/ref/heads/main"); sha=(ref or {}).get("object",{}).get("sha") if isinstance(ref,dict) else None
         if not isinstance(sha,str) or SHA_RE.fullmatch(sha) is None: raise BootstrapError("main inválido.")
@@ -122,7 +122,9 @@ class GitHubGateway:
     def commit_matches(self,name: str,sha: str,req: dict[str,Any])->bool:
         value=self._request("GET",f"/repos/{name}/git/commits/{sha}")
         parents=value.get("parents",[]) if isinstance(value,dict) else []
-        return bool(isinstance(value,dict) and f"Factory-Bootstrap-Identity: {identity(req)}" in value.get("message","") and len(parents)==1 and parents[0].get("sha")==req["expected_main_sha"])
+        compare=self._request("GET",f"/repos/{name}/compare/{req['expected_main_sha']}...{sha}") or {}
+        paths={row.get("filename") for row in compare.get("files",[])} if isinstance(compare,dict) else set()
+        return bool(isinstance(value,dict) and f"Factory-Bootstrap-Identity: {identity(req)}" in value.get("message","") and len(parents)==1 and parents[0].get("sha")==req["expected_main_sha"] and paths=={CALLER_PATH,TEST_PATH})
     def tree_info(self,name: str,sha: str,paths: set[str])->str:
         commit=self._request("GET",f"/repos/{name}/git/commits/{sha}"); tree=(commit or {}).get("tree",{}).get("sha") if isinstance(commit,dict) else None
         if not isinstance(tree,str): raise BootstrapError("Árbol base inválido.")
@@ -134,6 +136,7 @@ class GitHubGateway:
     def materialize(self,req: dict[str,Any],patch: dict[str,str])->tuple[str,int]:
         name,branch,expected=req["target_repository"],branch_name(req),req["expected_main_sha"]
         base_tree=self.tree_info(name,expected,set(patch)); entries=[]
+        if self.main_sha(name)!=expected: raise BootstrapError("main cambió antes del primer write.")
         for path,content in patch.items():
             blob=self._request("POST",f"/repos/{name}/git/blobs",{"content":content,"encoding":"utf-8"}); entries.append({"path":path,"mode":"100644","type":"blob","sha":blob["sha"]})
         tree=self._request("POST",f"/repos/{name}/git/trees",{"base_tree":base_tree,"tree":entries})
@@ -141,6 +144,7 @@ class GitHubGateway:
         commit=self._request("POST",f"/repos/{name}/git/commits",{"message":message,"tree":tree["sha"],"parents":[expected]})
         if self.main_sha(name)!=expected: raise BootstrapError("main cambió antes de escribir.")
         self._request("POST",f"/repos/{name}/git/refs",{"ref":f"refs/heads/{branch}","sha":commit["sha"]})
+        if self.main_sha(name)!=expected: raise BootstrapError("main cambió antes de crear PR.")
         pr=self._request("POST",f"/repos/{name}/pulls",{"title":f"chore(factory): restaurar coordinación (#{req['target_issue']})","head":branch,"base":"main","body":f"Bootstrap gobernado de coordinación para #{req['target_issue']}.\n\nBase exacta: `{expected}`\n\n{marker(req)}"})
         if not isinstance(pr,dict) or pr.get("base",{}).get("ref")!="main" or pr.get("head",{}).get("ref")!=branch: raise BootstrapError("PR bootstrap inválido.")
         return commit["sha"], int(pr["number"])
@@ -154,8 +158,9 @@ def bootstrap(raw: dict[str,str],gateway: Any,template: str)->dict[str,Any]:
         same=bsha is not None and gateway.commit_matches(req["target_repository"],bsha,req) and gateway.branch_matches(req["target_repository"],branch,patch)
         if not same: raise BootstrapError("La rama bootstrap pertenece a otra intención.")
         if gpr is None:
+            if gateway.main_sha(req["target_repository"])!=req["expected_main_sha"]: raise BootstrapError("main cambió antes de crear PR.")
             pr=gateway._request("POST",f"/repos/{req['target_repository']}/pulls",{"title":f"chore(factory): restaurar coordinación (#{req['target_issue']})","head":branch,"base":"main","body":marker(req)}); return {"status":"confirmed","branch":branch,"pr":pr["number"],"created":False}
-        if marker(req) not in str(gpr.get("body" or "")): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
+        if marker(req) not in str(gpr.get("body") or ""): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
         return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
     if gateway.file_text(req["target_repository"],CALLER_PATH,"main")==patch[CALLER_PATH] and gateway.file_text(req["target_repository"],TEST_PATH,"main")==patch[TEST_PATH]:
         return {"status":"already_bootstrapped","branch":None,"pr":None,"created":False}
