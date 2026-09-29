@@ -57,6 +57,11 @@ def derive_recovery_health(
         return _health(
             recovery, "BLOCKED", now, [problem.reason], [problem.work_class]
         )
+    except RecoveryStatusError:
+        return _health(
+            recovery, "BLOCKED", now,
+            ["BACKUP_TIMESTAMPS_INVALID"], ["backup_stale"],
+        )
 
     backup_age = int((now - backup["created_at"]).total_seconds())
     backup_max = recovery["target"]["rpo_minutes"] * 60
@@ -82,6 +87,12 @@ def derive_recovery_health(
     except _Problem as problem:
         return _health(
             recovery, "BLOCKED", now, [problem.reason], [problem.work_class],
+            backup=backup,
+        )
+    except RecoveryStatusError:
+        return _health(
+            recovery, "BLOCKED", now,
+            ["DRILL_EVIDENCE_TIME_INVALID"], ["restore_drill_failed"],
             backup=backup,
         )
 
