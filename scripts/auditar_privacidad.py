@@ -176,6 +176,30 @@ def _findings(
     ]
 
 
+LEGAL_EXPLAIN_INFORMATIVE = (
+    "Cambiamos algo que usa datos de personas. Un abogado tendrá que revisarlo, "
+    "pero solo antes de abrir la app al público. Mientras construimos, nada se detiene."
+)
+LEGAL_EXPLAIN_BLOCKING = (
+    "Cambiamos algo que usa datos de personas y no se cumplen las condiciones para "
+    "seguir sin revisión. Hay que parar y que un abogado lo mire antes de continuar."
+)
+LEGAL_OPTION_EXPLAIN = {
+    "A": (
+        "Es como pedirle a un profesor que revise la tarea antes de entregarla: "
+        "más seguro, pero hay que esperar."
+    ),
+    "B": (
+        "Seguimos construyendo y dejamos anotado que falta revisión legal. "
+        "Esa revisión ocurre antes de abrir al público."
+    ),
+    "C": (
+        "Dejamos este cambio guardado sin usarlo hasta que la revisión legal "
+        "confirme que puede continuar."
+    ),
+}
+
+
 def build_legal_gate_body(
     project: str,
     reasons: list[str],
@@ -238,9 +262,17 @@ def build_legal_gate_body(
     gate = {
         "category": "legal",
         "context": context,
-        "options": options,
+        "options": [
+            {**option, "explain_simple": LEGAL_OPTION_EXPLAIN[option["id"]]}
+            for option in options
+        ],
         "recommendation": recommendation,
         "safe_default": safe_default,
+        "explain_simple": (
+            LEGAL_EXPLAIN_INFORMATIVE
+            if recommendation == "B"
+            else LEGAL_EXPLAIN_BLOCKING
+        ),
     }
     try:
         validated = validate_gate(gate)
