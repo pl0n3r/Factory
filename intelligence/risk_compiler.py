@@ -6,6 +6,11 @@ import json
 from typing import Any
 
 from intelligence.project_dna import UNKNOWN, validate_project_dna
+from quality.contract import (
+    QualityContractError,
+    quality_contract_fingerprint,
+    validate_quality_contract,
+)
 
 
 RISK_VERSION = 1
@@ -58,6 +63,12 @@ CRITICAL_SIGNALS = {
     "destructive",
     "migration",
     "touches_auth",
+}
+QUALITY_CRITICALITY_RISK = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "critical": "high",
 }
 
 
@@ -128,6 +139,36 @@ def _normalize_task(task: Any) -> dict[str, Any]:
     }
 
 
+def _validated_quality_context(
+    dna: dict[str, Any],
+    quality_contract: Any,
+) -> dict[str, Any] | None:
+    declared = dna["extensions"].get("quality_contract")
+    if declared is None:
+        if quality_contract is not None:
+            raise RiskCompilerError(
+                "Quality Contract no declarado por Project DNA"
+            )
+        return None
+    if quality_contract is None:
+        raise RiskCompilerError(
+            "Project DNA declara Quality Contract pero falta evidencia fuente"
+        )
+    try:
+        normalized = validate_quality_contract(quality_contract)
+        fingerprint = quality_contract_fingerprint(normalized)
+    except QualityContractError as exc:
+        raise RiskCompilerError("Quality Contract inválido") from exc
+    if (
+        declared["version"] != normalized["version"]
+        or declared["fingerprint"] != fingerprint
+    ):
+        raise RiskCompilerError(
+            "Quality Contract no coincide con fingerprint de Project DNA"
+        )
+    return normalized
+
+
 def _controls_for(level: str) -> list[str]:
     controls = list(BASE_CONTROLS)
     if LEVEL_RANK[level] >= LEVEL_RANK["medium"]:
@@ -155,10 +196,16 @@ def _add_signal(
     )
 
 
-def compile_risk(*, project_dna: Any, task: Any) -> dict[str, Any]:
+def compile_risk(
+    *,
+    project_dna: Any,
+    task: Any,
+    quality_contract: Any = None,
+) -> dict[str, Any]:
     """Compila riesgo sin ejecutar controles ni sustituir puertas humanas."""
     dna = validate_project_dna(project_dna)
     normalized_task = _normalize_task(task)
+    quality = _validated_quality_context(dna, quality_contract)
 
     trace: list[dict[str, Any]] = []
     task_level = CHANGE_TYPE_RISK[normalized_task["change_type"]]
@@ -181,6 +228,28 @@ def compile_risk(*, project_dna: Any, task: Any) -> dict[str, Any]:
             level=level,
             reason="superficie potencialmente afectada",
         )
+
+    quality_levels: list[str] = []
+    if quality is not None:
+        quality_surfaces = {
+            row["id"]: row["criticality"]
+            for row in quality["surfaces"]
+        }
+        for surface in normalized_task["surfaces"]:
+            if surface not in quality_surfaces:
+                raise RiskCompilerError(
+                    "task.surfaces contiene superficie no declarada por Quality Contract"
+                )
+            criticality = quality_surfaces[surface]
+            level = QUALITY_CRITICALITY_RISK[criticality]
+            quality_levels.append(level)
+            _add_signal(
+                trace,
+                signal=f"quality:{surface}:{criticality}",
+                source=f"quality_contract.surfaces.{surface}.criticality",
+                level=level,
+                reason="criticidad declarada por Quality Contract",
+            )
 
     unknown_critical: list[str] = []
     signal_levels: list[str] = []
@@ -244,7 +313,13 @@ def compile_risk(*, project_dna: Any, task: Any) -> dict[str, Any]:
                 ),
             )
 
-    levels = [task_level, *surface_levels, *signal_levels, *dna_levels]
+    levels = [
+        task_level,
+        *surface_levels,
+        *signal_levels,
+        *dna_levels,
+        *quality_levels,
+    ]
     overall = _max_level(*levels)
 
     blast_radius = []
@@ -276,6 +351,8 @@ def compile_risk(*, project_dna: Any, task: Any) -> dict[str, Any]:
         "signals": _max_level(*(signal_levels or ["low"])),
         "project_context": _max_level(*(dna_levels or ["low"])),
     }
+    if quality is not None:
+        dimensions["quality"] = _max_level(*(quality_levels or ["low"]))
 
     result = {
         "version": RISK_VERSION,
@@ -292,6 +369,10 @@ def compile_risk(*, project_dna: Any, task: Any) -> dict[str, Any]:
         "unknown_critical_signals": sorted(set(unknown_critical)),
         "context_complete": not unknown_critical,
     }
+    if quality is not None:
+        result["quality_contract_fingerprint"] = quality_contract_fingerprint(
+            quality
+        )
     result["fingerprint"] = _stable_hash(result)
     return result
 
@@ -301,9 +382,14 @@ def validate_risk_evidence(
     project_dna: Any,
     task: Any,
     result: Any,
+    quality_contract: Any = None,
 ) -> dict[str, Any]:
     """Recomputa Risk desde inputs fuente y exige igualdad exacta."""
-    expected = compile_risk(project_dna=project_dna, task=task)
+    expected = compile_risk(
+        project_dna=project_dna,
+        task=task,
+        quality_contract=quality_contract,
+    )
     if not isinstance(result, dict) or result != expected:
         raise RiskCompilerError("resultado Risk no coincide con evidencia fuente")
     return expected
