@@ -55,3 +55,10 @@ Authority permanece `unchanged` y `execute_actions=false`.
 ## Boundary
 
 No hay Quality Engine, ranking, score, scheduler, backlog ni pipeline paralelo. Readiness #293, Factory Queue #269, Performance #304 y Recovery #305 siguen siendo contratos externos.
+
+
+## Identidad y flags canónicos
+
+Quality Contract usa un identificador lógico de proyecto y Regression Intelligence usa `owner/repo`; por eso `derive_quality_health()` exige `project_ref` explícito y valida cada regresión contra ese valor.
+
+Los flags contractuales son literalmente `authority = unchanged`, `execute_actions = false` y `parallel_queue = false`. La integración opera sin scheduler y sin recalcular Performance o Recovery.
