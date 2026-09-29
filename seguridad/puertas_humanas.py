@@ -13,7 +13,7 @@ MARKER_RE = re.compile(
     r"<!--\s*factory-human-gate\s+(\{.*?\})\s*-->",
     re.DOTALL,
 )
-MARKER_INTENT_RE = re.compile(r"<!--\\s*factory-human-gate\\b")
+MARKER_INTENT_RE = re.compile(r"<!--\s*factory-human-gate\b")
 CATEGORIES = {
     "product-direction",
     "brand",
