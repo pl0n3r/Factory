@@ -17,4 +17,4 @@ Knowledge Lifecycle sigue siendo la única fuente de freshness. Items stale/depr
 - Context Compiler recibe únicamente category/source/text/tags.
 - Provenance permanece en bindings/artefactos canónicos, no se inventa.
 
-Este E2E cierra el DAG local de #307: Contract → Postmortem/Selection → Context/Guardrail/Pruning. No crea un Knowledge Engine paralelo.
+README permanece como portada operativa derivada: el detalle de root cause, lifecycle, guardrails y pruning vive en estos artefactos/docs, no en README.\n\nEste E2E cierra el DAG local de #307: Contract → Postmortem/Selection → Context/Guardrail/Pruning. No crea un Knowledge Engine paralelo.
