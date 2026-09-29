@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  bootstrap:
+  prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -50,6 +50,29 @@ jobs:
           GOVERNANCE_REF: ${{ inputs.governance_ref }}
           IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
         run: python3 runtime/scripts/bootstrap_coordination.py --prepare --consumer-root consumer
+      - name: Publicar entrega preparada
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: factory-bootstrap-delivery
+          path: .factory-bootstrap-delivery.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  apply:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ github.sha }}', path: runtime, persist-credentials: false}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {repository: pl0n3r/factory, ref: v1, path: governance, persist-credentials: false}
+      - name: Descargar entrega preparada
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: factory-bootstrap-delivery
+          path: .
       - name: Crear rama y PR bootstrap desde entrega preparada
         env:
           TARGET_REPOSITORY: ${{ inputs.target_repository }}

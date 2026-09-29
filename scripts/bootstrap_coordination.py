@@ -156,12 +156,12 @@ def replacement_branch_name(req: dict[str,Any], patch: dict[str,str]) -> str:
     return f"{branch_name(req)}-{patch_sha(patch)[:12]}"
 
 
-def _regular_text(root: Path, path: str) -> str:
+def _regular_text(root: Path, path: str, max_bytes: int = MAX_FILE) -> str:
     target=(root/path)
     if target.is_symlink() or not target.is_file():
         raise BootstrapError(f"Contrato consumidor inválido: {path}.")
     data=target.read_bytes()
-    if len(data)>MAX_FILE:
+    if len(data)>max_bytes:
         raise BootstrapError(f"Contrato consumidor excede límite: {path}.")
     try: return data.decode()
     except UnicodeDecodeError as exc: raise BootstrapError(f"Contrato consumidor no es UTF-8: {path}.") from exc
@@ -196,7 +196,7 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
 
     version_text=_regular_text(root,VERSION_PATH)
     package_text=_regular_text(root,PACKAGE_PATH)
-    lock_text=_regular_text(root,LOCK_PATH)
+    lock_text=_regular_text(root,LOCK_PATH,GRINDFLOW_MAX_FILE)
     _regular_text(root,README_PATH)
     updater=_regular_text(root,README_UPDATER_PATH)
     if "README dashboard" not in updater or "--update" not in updater:

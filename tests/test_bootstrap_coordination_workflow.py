@@ -31,5 +31,35 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertEqual(text.count("FACTORY_PROVISION_TOKEN:"),1)
         self.assertNotIn("github.token",text)
 
+
+    def test_preparation_and_apply_use_separate_jobs(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("jobs:\n  prepare:",text)
+        self.assertIn("\n  apply:\n    needs: prepare",text)
+        prepare=text.split("\n  prepare:",1)[1].split("\n  apply:",1)[0]
+        apply=text.split("\n  apply:",1)[1]
+        self.assertNotIn("FACTORY_PROVISION_TOKEN",prepare)
+        self.assertIn("FACTORY_PROVISION_TOKEN",apply)
+        self.assertIn("Publicar entrega preparada",prepare)
+        self.assertIn("Descargar entrega preparada",apply)
+
+    def test_privileged_job_never_checks_out_or_executes_consumer(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        apply=text.split("\n  apply:",1)[1]
+        self.assertNotIn("repository: ${{ inputs.target_repository }}",apply)
+        self.assertNotIn("--consumer-root",apply)
+        self.assertNotIn("readme-dashboard.py",apply)
+        self.assertIn("python3 runtime/scripts/bootstrap_coordination.py --apply-prepared",apply)
+
+    def test_artifact_handoff_is_sha_pinned_without_permission_expansion(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",text)
+        self.assertIn("actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",text)
+        self.assertIn("include-hidden-files: true",text)
+        self.assertIn("permissions:\n  contents: read",text)
+        self.assertNotIn("contents: write",text)
+        self.assertNotIn("pull-requests: write",text)
+        self.assertNotIn("issues: write",text)
+
 if __name__=="__main__":
     unittest.main()
