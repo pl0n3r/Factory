@@ -11,7 +11,7 @@ SHA = "a" * 40
 def request(key="b" * 64):
     return {"target_repository":"pl0n3r/Consumer","target_issue":"187","expected_main_sha":SHA,"governance_ref":b.GOVERNANCE_REF,"idempotency_key":key}
 
-CALLER = """name: Coordinación\non:\n  schedule:\n    - cron: '17 * * * *'\n  workflow_dispatch:\n  pull_request:\n  issues:\n  issue_comment:\njobs:\n  comentario:\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: comment\n"""
+CALLER = """name: Coordinación\non:\n  schedule:\n    - cron: '17 * * * *'\n  workflow_dispatch:\n  pull_request:\n  issues:\n  issue_comment:\njobs:\n  comentario:\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: comment\n  pr:\n    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: pr\n  validar-pr:\n    if: github.event_name == 'pull_request'\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: validate\n      require_reservation: true\n"""
 
 
 class FakeGateway:
@@ -58,6 +58,42 @@ class BootstrapCoordinationTests(unittest.TestCase):
         self.assertIn("coordinacion.yml@v1",value); self.assertIn("profile: es",value)
         self.assertNotIn("@main",value); self.assertNotIn("coordinar_trabajo.py",value)
         for event in ("schedule:","workflow_dispatch:","pull_request:","issues:","issue_comment:"): self.assertIn(event,value)
+
+    def test_generated_caller_skips_reservation_validation_only_for_bootstrap_branch(self):
+        value=b.caller_content(CALLER)
+        self.assertIn("!startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",value)
+        self.assertEqual(value.count("factory/bootstrap-coordination-"),1)
+
+    def test_generated_caller_keeps_validation_for_regular_work_branch(self):
+        value=b.caller_content(CALLER)
+        block=value.split("  validar-pr:",1)[1]
+        self.assertIn("github.event_name == 'pull_request'",block)
+        self.assertNotIn("trabajo/issue-",block)
+
+    def test_generated_caller_keeps_require_reservation_true(self):
+        value=b.caller_content(CALLER)
+        block=value.split("  validar-pr:",1)[1]
+        self.assertIn("operation: validate",block)
+        self.assertIn("require_reservation: true",block)
+
+    def test_generated_caller_keeps_pr_sync_for_same_repo_bootstrap_branch(self):
+        value=b.caller_content(CALLER)
+        pr_block=value.split("  pr:",1)[1].split("  validar-pr:",1)[0]
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",pr_block)
+        self.assertIn("operation: pr",pr_block)
+        self.assertNotIn("factory/bootstrap-coordination-",pr_block)
+
+    def test_generated_caller_remains_pinned_and_permission_bounded(self):
+        value=b.caller_content(CALLER)
+        self.assertIn("coordinacion.yml@v1",value)
+        self.assertNotIn("@main",value)
+        self.assertNotIn("coordinar_trabajo.py",value)
+
+    def test_grindflow_188_bootstrap_branch_does_not_self_block(self):
+        value=b.caller_content(CALLER)
+        validation=value.split("  validar-pr:",1)[1]
+        self.assertIn("!startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",validation)
+        self.assertIn("require_reservation: true",validation)
 
     def test_bootstrap_pins_main_and_writes_only_branch_and_pr(self):
         gateway=FakeGateway(); result=b.bootstrap(request(),gateway,CALLER)
