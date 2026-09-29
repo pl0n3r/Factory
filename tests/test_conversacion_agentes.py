@@ -105,15 +105,8 @@ class ConversacionAgentesTests(unittest.TestCase):
 
     def test_puertas_nuevas_exigen_explain_simple(self):
         import json
-        import sys
 
-        scripts_dir = str(ROOT / "scripts")
-        seguridad_dir = str(ROOT / "seguridad")
-        for directory in (scripts_dir, seguridad_dir):
-            if directory not in sys.path:
-                sys.path.insert(0, directory)
-
-        from auditar_privacidad import build_legal_gate_body
+        from scripts.auditar_privacidad import build_legal_gate_body
 
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
         self.assertIn("explain_simple", plan)
