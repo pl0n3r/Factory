@@ -298,12 +298,25 @@ def audit_sources(
 ) -> dict[str, Any]:
     """Compara código y mapa de datos con salida determinista y sanitizada."""
     rules = load_rules() if rules_document is None else rules_document
-    current = validate_data_map(current_document, rules)
+    current = validate_data_map(
+        current_document,
+        rules,
+        d063_fail_closed=True,
+    )
+    previous = (
+        None
+        if previous_document is None
+        else validate_data_map(
+            previous_document,
+            rules,
+            d063_fail_closed=True,
+        )
+    )
     declared_fields, declared_providers = _declared(current)
     observed_fields, observed_providers = _observed_sources(sources, rules)
     field_findings = _findings(observed_fields, declared_fields)
     provider_findings = _findings(observed_providers, declared_providers)
-    reasons = material_change_reasons(previous_document, current, rules)
+    reasons = material_change_reasons(previous, current, rules)
     attestation = current.get("d063_attestation")
     d063_applies = (
         current["phase"] == "construccion"
@@ -370,7 +383,11 @@ def _git_show(root: Path, sha: str) -> object | None:
         raise PrivacyAuditError("datos.yml histórico inválido") from exc
 
 def evaluate_repository(root: Path, previous_sha: str = "") -> dict[str, Any]:
-    current = load_data_map(DATA_MAP_PATH, root=root)
+    current = load_data_map(
+        DATA_MAP_PATH,
+        root=root,
+        d063_fail_closed=True,
+    )
     previous = _git_show(root, previous_sha)
     return audit_sources(
         sources=collect_sources(root),
