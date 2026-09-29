@@ -231,6 +231,12 @@ class QualityStatusTests(unittest.TestCase):
         with self.assertRaises(QualityStatusError):
             health(duplicate)
 
+        leaked_recovery = recovery()
+        leaked_recovery["reasons"] = ["token=supersecretvalue"]
+        with self.assertRaises(QualityStatusError) as caught:
+            health(external=True, perf=performance(), rec=leaked_recovery)
+        self.assertNotIn("supersecretvalue", str(caught.exception))
+
     def test_docs_define_quality_health_boundary_without_parallel_queue_or_recalculation(self):
         text = (ROOT / "docs" / "quality-health.md").read_text(encoding="utf-8")
         for marker in (
