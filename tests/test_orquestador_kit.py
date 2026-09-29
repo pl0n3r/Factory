@@ -40,11 +40,26 @@ class OrchestratorKitTests(unittest.TestCase):
             parse_plan(prose)
 
     def test_truncated_html_marker_still_fails_closed(self):
-        """AC-02: un inicio HTML real sin contrato completo sigue fallando."""
+        """AC-02: cualquier inicio HTML real malformado invalida el body."""
+        marker = build_task_marker(
+            epic=3,
+            task=PlannedTask(
+                key="A",
+                title="A",
+                owner="pl0n3r",
+                paths=("scripts/a.py",),
+                depends_on=(),
+            ),
+            order=1,
+            roles=["qa"],
+            dependency_issues=[],
+        )
         for body, parser in (
             ("<!-- factory-plan-task", parse_task_marker),
             ("<!-- factory-plan-task\t", parse_task_marker),
             ("<!-- factory-plan", parse_plan),
+            (f"{marker}\n<!-- factory-plan-task", parse_task_marker),
+            (f"{marker}\n<!-- factory-plan-task\t", parse_task_marker),
         ):
             with self.subTest(body=body):
                 with self.assertRaisesRegex(PlanError, "malformado"):
