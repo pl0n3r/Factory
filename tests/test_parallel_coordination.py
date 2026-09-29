@@ -276,7 +276,10 @@ class ParallelCoordinationTests(unittest.TestCase):
         self.assertIn(".github/workflows/coordinacion.yml:", actionlint)
         self.assertEqual(
             actionlint.count('unexpected key "queue" for "concurrency" section'),
-            2,
+            3,
+        )
+        self.assertIn(
+            "template/.github/workflows/coordinacion.yml:", actionlint
         )
         self.assertNotIn("**/*.yml", actionlint)
         self.assertNotIn("**/*.yaml", actionlint)

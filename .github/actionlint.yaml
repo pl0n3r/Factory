@@ -5,3 +5,6 @@ paths:
   .github/workflows/coordinacion.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
+  template/.github/workflows/coordinacion.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

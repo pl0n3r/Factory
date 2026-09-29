@@ -696,4 +696,60 @@ class BootstrapCoordinationTests(unittest.TestCase):
             self.assertFalse(gateway.commit_matches_marker(req["target_repository"],head,historical,{b.CALLER_PATH,b.TEST_PATH}))
 
 
+    def test_bootstrap_validation_bypass_requires_owner_same_repo_identity(self):
+        template=(ROOT/"template/.github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+        value=b.caller_content(template)
+        repo="pl0n3r/Consumer"
+        self.assertFalse(
+            generated_validation_runs(
+                value,
+                ref="factory/bootstrap-coordination-187",
+                head_repo=repo,
+                repository=repo,
+                association="OWNER",
+            )
+        )
+        for ref,head_repo,association in (
+            ("trabajo/issue-187",repo,"OWNER"),
+            ("factory/bootstrap-coordination-187",repo,"MEMBER"),
+            ("factory/bootstrap-coordination-187",repo,"COLLABORATOR"),
+            ("factory/bootstrap-coordination-187","fork/Consumer","OWNER"),
+        ):
+            with self.subTest(ref=ref,head_repo=head_repo,association=association):
+                self.assertTrue(
+                    generated_validation_runs(
+                        value,
+                        ref=ref,
+                        head_repo=head_repo,
+                        repository=repo,
+                        association=association,
+                    )
+                )
+
+    def test_grindflow_regeneration_inherits_hardened_consumer_caller(self):
+        template=(ROOT/"template/.github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+        tmp,root=self._grindflow_fixture("0.1.144")
+        self.addCleanup(tmp.cleanup)
+        completed=lambda args,**kwargs: subprocess.CompletedProcess(
+            args,0,stdout=(SHA+"\n" if args[:3]==["git","rev-parse","HEAD"] else ""),stderr=""
+        )
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed):
+            patch=b.grindflow_delivery_patch(template,root,SHA)
+        caller=patch[b.CALLER_PATH]
+        self.assertIn(
+            "types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]",
+            caller,
+        )
+        self.assertIn("group: coordinacion-${{ github.repository }}",caller)
+        self.assertIn("cancel-in-progress: false",caller)
+        self.assertIn("queue: max",caller)
+        comment=caller.split("  comentario:",1)[1].split("  etiqueta:",1)[0]
+        self.assertIn("github.event.comment.body == '/tomar'",comment)
+        self.assertIn("contains(github.event.comment.body, '/tomar')",comment)
+        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')",comment)
+        self.assertIn("profile: es",caller)
+        self.assertIn("require_reservation: true",caller)
+        self.assertNotIn("@main",caller)
+
+
 if __name__ == "__main__": unittest.main()
