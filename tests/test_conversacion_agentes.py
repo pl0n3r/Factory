@@ -103,6 +103,43 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertIn("d063_attestation.no_real_customer_data=true", puertas)
         self.assertIn("go-live", (ROOT / "decisiones.yml").read_text(encoding="utf-8"))
 
+    def test_puertas_nuevas_exigen_explain_simple(self):
+        import json
+        import subprocess
+        import sys
+
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("explain_simple", plan)
+        puertas = (ROOT / "docs/puertas-humanas.md").read_text(encoding="utf-8")
+        self.assertIn("como a alguien de 12 años", puertas)
+
+        for d063_applies in (True, False):
+            script = (
+                "from scripts.auditar_privacidad import build_legal_gate_body; "
+                "print(build_legal_gate_body("
+                "'Factory', ['finalidad'], d063_applies="
+                + repr(d063_applies)
+                + "))"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            marker = re.search(
+                r"<!--\s*factory-human-gate\s+(\{.*\})\s*-->",
+                completed.stdout,
+            )
+            self.assertIsNotNone(marker)
+            payload = json.loads(marker.group(1))
+            self.assertTrue(payload["explain_simple"])
+            self.assertTrue(payload["options"])
+            for option in payload["options"]:
+                self.assertTrue(option["explain_simple"])
+
     def test_bloqueo_exige_causa_y_leccion_registrada(self):
         import json
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")

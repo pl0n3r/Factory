@@ -30,6 +30,7 @@ OPTIONAL_SIMPLE = {
     "summary_simple",
     "why_recommended",
     "blocks",
+    "explain_simple",
 }
 OPTIONAL_OPTION = {
     "effect",
@@ -38,6 +39,7 @@ OPTIONAL_OPTION = {
     "risk",
     "cost",
     "reversible",
+    "explain_simple",
 }
 OPTION_ID_RE = re.compile(r"^[A-D]$")
 RISK_VALUES = {"low", "medium", "high"}
@@ -116,6 +118,19 @@ def _validate_simple_root(raw: dict[str, Any], normalized: dict[str, Any]) -> No
         )
     if "blocks" in raw:
         normalized["blocks"] = _line(raw["blocks"], "blocks", 300)
+    if "explain_simple" in raw:
+        normalized["explain_simple"] = _short_text(
+            raw["explain_simple"], "explain_simple", 600, 4
+        )
+
+
+def _option_risk(value: Any) -> str:
+    risk = _line(value, "option.risk", 16)
+    if risk not in RISK_VALUES:
+        raise GateValidationError(
+            "option.risk debe ser low, medium o high."
+        )
+    return risk
 
 
 def _validate_option(item: Any, seen: set[str]) -> dict[str, Any]:
@@ -143,15 +158,14 @@ def _validate_option(item: Any, seen: set[str]) -> dict[str, Any]:
     if "cons" in item:
         normalized["cons"] = _line_list(item["cons"], "option.cons")
     if "risk" in item:
-        risk = _line(item["risk"], "option.risk", 16)
-        if risk not in RISK_VALUES:
-            raise GateValidationError(
-                "option.risk debe ser low, medium o high."
-            )
-        normalized["risk"] = risk
+        normalized["risk"] = _option_risk(item["risk"])
     if "cost" in item:
         normalized["cost"] = _line(
             item["cost"], "option.cost", 120, allow_empty=True
+        )
+    if "explain_simple" in item:
+        normalized["explain_simple"] = _short_text(
+            item["explain_simple"], "option.explain_simple", 400, 3
         )
     if "reversible" in item:
         if type(item["reversible"]) is not bool:
