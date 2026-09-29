@@ -59,16 +59,34 @@ class BootstrapCoordinationTests(unittest.TestCase):
         self.assertNotIn("@main",value); self.assertNotIn("coordinar_trabajo.py",value)
         for event in ("schedule:","workflow_dispatch:","pull_request:","issues:","issue_comment:"): self.assertIn(event,value)
 
-    def test_generated_caller_skips_reservation_validation_only_for_bootstrap_branch(self):
+    def test_generated_caller_skips_validation_only_for_owner_same_repo_bootstrap(self):
         value=b.caller_content(CALLER)
-        self.assertIn("!startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",value)
+        block=value.split("  validar-pr:",1)[1]
+        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",block)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",block)
+        self.assertIn("github.event.pull_request.author_association == 'OWNER'",block)
         self.assertEqual(value.count("factory/bootstrap-coordination-"),1)
 
-    def test_generated_caller_keeps_validation_for_regular_work_branch(self):
+    def test_generated_caller_keeps_validation_for_regular_and_untrusted_prefixed_prs(self):
         value=b.caller_content(CALLER)
         block=value.split("  validar-pr:",1)[1]
         self.assertIn("github.event_name == 'pull_request'",block)
-        self.assertNotIn("trabajo/issue-",block)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",block)
+        self.assertIn("github.event.pull_request.author_association == 'OWNER'",block)
+
+        def trusted_bootstrap(ref, head_repo, repository, association):
+            return (
+                ref.startswith("factory/bootstrap-coordination-")
+                and head_repo == repository
+                and association == "OWNER"
+            )
+
+        repo="pl0n3r/Consumer"
+        self.assertFalse(trusted_bootstrap("trabajo/issue-123",repo,repo,"OWNER"))
+        self.assertFalse(trusted_bootstrap("factory/bootstrap-coordination-187",repo,repo,"MEMBER"))
+        self.assertFalse(trusted_bootstrap("factory/bootstrap-coordination-187",repo,repo,"COLLABORATOR"))
+        self.assertFalse(trusted_bootstrap("factory/bootstrap-coordination-187","fork/Consumer",repo,"OWNER"))
+        self.assertTrue(trusted_bootstrap("factory/bootstrap-coordination-187",repo,repo,"OWNER"))
 
     def test_generated_caller_keeps_require_reservation_true(self):
         value=b.caller_content(CALLER)
@@ -92,8 +110,38 @@ class BootstrapCoordinationTests(unittest.TestCase):
     def test_grindflow_188_bootstrap_branch_does_not_self_block(self):
         value=b.caller_content(CALLER)
         validation=value.split("  validar-pr:",1)[1]
-        self.assertIn("!startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",validation)
+        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')",validation)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",validation)
+        self.assertIn("github.event.pull_request.author_association == 'OWNER'",validation)
         self.assertIn("require_reservation: true",validation)
+
+    def test_untrusted_bootstrap_prefix_does_not_bypass_validation(self):
+        value=b.caller_content(CALLER)
+        validation=value.split("  validar-pr:",1)[1]
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository",validation)
+        self.assertIn("github.event.pull_request.author_association == 'OWNER'",validation)
+
+        def trusted_bootstrap(ref, same_repo, association):
+            return (
+                ref.startswith("factory/bootstrap-coordination-")
+                and same_repo
+                and association == "OWNER"
+            )
+
+        for same_repo, association in (
+            (True,"MEMBER"),
+            (True,"COLLABORATOR"),
+            (False,"OWNER"),
+            (False,"MEMBER"),
+        ):
+            with self.subTest(same_repo=same_repo,association=association):
+                self.assertFalse(
+                    trusted_bootstrap(
+                        "factory/bootstrap-coordination-187",
+                        same_repo,
+                        association,
+                    )
+                )
 
     def test_bootstrap_pins_main_and_writes_only_branch_and_pr(self):
         gateway=FakeGateway(); result=b.bootstrap(request(),gateway,CALLER)
