@@ -60,6 +60,25 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertTrue(self.state["no repetir"])
         self.assertTrue(self.state["siguiente"][0])
 
+    def test_revision_de_plataforma_no_es_fallo(self):
+        self.assertIn("procesando esta solicitud", self.doc)
+        self.assertIn("no reenvíes", self.nucleo)
+
+    def test_decision_d062_repos_publicos_en_root_y_template(self):
+        import json
+        for ruta in ("decisiones.yml", "template/decisiones.yml"):
+            data = json.loads((ROOT / ruta).read_text(encoding="utf-8"))
+            d062 = [d for d in data["decisions"] if d["id"] == "D-062"]
+            self.assertEqual(len(d062), 1, ruta)
+            self.assertEqual(d062[0]["status"], "active")
+            self.assertIn("son públicos", d062[0]["text"])
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertNotIn("ControlBot (privado)", plan)
+        self.assertIn("D-062", plan)
+        arquitectura = (ROOT / "docs/arquitectura-tecnica.md").read_text(encoding="utf-8")
+        self.assertIn("| `pl0n3r/AutoFactory` | Público |", arquitectura)
+        self.assertNotIn("| `pl0n3r/AutoFactory` | Privado |", arquitectura)
+
 
 if __name__ == "__main__":
     unittest.main()

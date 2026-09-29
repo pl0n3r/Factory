@@ -24,7 +24,7 @@ Reglas del despachador:
 - Antes de bajar, **anuncia tu elección** como primer comentario del Issue elegido: `Despacho: elegí <repo>#<n> porque <regla N>`.
 - Al bajar al proyecto, lee su AGENTES.md/AGENTS.md y sigue este plan como si te hubieran dirigido ahí.
 - Al terminar ese trabajo, vuelve a aplicar el despacho desde el paso 1.
-- **ControlBot (privado)** resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
+- **ControlBot** (repositorio público, acceso al panel restringido; D-062) resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
 - Factory, ControlBot y AutoFactory compiten dentro de la misma cola automática con las mismas reglas de readiness y prioridad. Su naturaleza arquitectónica no les da prioridad artificial ni los excluye.
 
 ## Tu misión en una línea
@@ -211,8 +211,9 @@ Aplica a Condor, GrindFlow y BRVTAL. **FactoryRunner** usa el mismo principio: a
 - Escrituras autónomas en producción durante la fase de desarrollo (Condor #185, GrindFlow #126, brvtal #628), con backup previo. **SQL destructivo o borrado irreversible siguen requiriendo autorización.**
 - Sistema común de releases del kit en Condor, GrindFlow, BRVTAL y FactoryRunner (en BRVTAL reemplaza a `update-release-metadata.yml`). ControlBot y AutoFactory conservan sus contratos técnicos propios, pero ambos siguen siendo elegibles para despacho automático.
 - Etiquetas obligatorias (tipo + prioridad + estado) en todo Issue y PR (BRVTAL en inglés).
-- **ControlBot es el centro de control privado de la fábrica** (pl0n3r/ControlBot): dashboard, decisiones y orquestación viven allí. **FactoryRunner** es el execution plane autónomo. **AutoFactory** permanece como herramienta local/manual independiente. Los tres, junto con Factory, Condor, GrindFlow y BRVTAL, son elegibles para la cola automática; elegibilidad de despacho no significa dependencia arquitectónica.
+- **ControlBot es el centro de control de la fábrica (panel de acceso restringido; repositorio público, D-062)** (pl0n3r/ControlBot): dashboard, decisiones y orquestación viven allí. **FactoryRunner** es el execution plane autónomo. **AutoFactory** permanece como herramienta local/manual independiente. Los tres, junto con Factory, Condor, GrindFlow y BRVTAL, son elegibles para la cola automática; elegibilidad de despacho no significa dependencia arquitectónica.
 - **D-060 — administración de staff:** ControlBot administra únicamente cuentas de staff/administración de cada producto mediante el contrato común `/ops/staff`; los clientes finales permanecen y se administran en su propio producto. Las altas son por invitación y los resets los envía el producto; ControlBot nunca define ni recibe contraseñas/tokens. El contrato falla cerrado sin credencial configurada, exige firma/anti-replay/allowlist/rate limit/auditoría y no permite borrado físico.
+- **D-062 — repositorios públicos:** los siete repositorios de la fábrica son públicos; «privado» significa acceso restringido a paneles y datos, no visibilidad del repo. Nada de secretos, tokens ni datos de clientes en repos.
 - Roles profesionales por tarea (factory#2).
 - Factory no genera trabajo para el dueño.
 - **Uso de Hostinger (D-059), para todos los agentes conectados al MCP remoto de Hostinger, incluidos Claude y GPT:** mirar y diagnosticar es libre; cambiar DNS, bases de datos, cron o despliegues exige backup previo y dejarlo registrado en el Issue; borrar sitios, bases de datos o archivos requiere autorización explícita del dueño; **comprar, renovar o cambiar planes y pagos nunca lo hace un agente** (es una decisión de dinero del dueño).

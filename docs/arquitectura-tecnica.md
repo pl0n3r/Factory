@@ -146,9 +146,9 @@ flowchart TB
 | `pl0n3r/Condor` | Público | Producto: plataforma multi-empresa (catálogo, inventario, pedidos, tienda) | PHP 8.5, Symfony 7.4 LTS, Doctrine, MariaDB, React + TS + Vite, Twig SSR |
 | `pl0n3r/GrindFlow` | Público | Producto: SaaS de gestión corporativa | PHP 8.5, Laravel 13, MariaDB, workers Python, módulo `symfony/` |
 | `pl0n3r/brvtal` | Público | Producto: sitio público + panel editorial DISCADMIN | PHP 8.5 plano (sin Composer), JS vanilla, MariaDB |
-| `pl0n3r/ControlBot` | Privado | Control plane, workspace operativo y estado durable | PHP 8.5 + MariaDB en Hostinger |
+| `pl0n3r/ControlBot` | Público (panel de acceso restringido) | Control plane, workspace operativo y estado durable | PHP 8.5 + MariaDB en Hostinger |
 | `pl0n3r/FactoryRunner` | Público | Execution plane independiente; adapters, heartbeat y ejecución reconstructible | Node.js 24 + TypeScript; capabilities por adapter |
-| `pl0n3r/AutoFactory` | Privado | Herramienta local/manual del dueño, independiente de FactoryRunner | JavaScript MV3, Swift (contenedor Safari) |
+| `pl0n3r/AutoFactory` | Público | Herramienta local/manual del dueño, independiente de FactoryRunner | JavaScript MV3, Swift (contenedor Safari) |
 
 ### 4.1 Estructura de `factory`
 

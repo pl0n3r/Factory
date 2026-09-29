@@ -41,6 +41,11 @@
       "id": "D-061",
       "status": "active",
       "text": "Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner forman parte de la cola automática del despachador. La elegibilidad no altera sus responsabilidades arquitectónicas; el despacho conserva readiness y el orden HEALTH > INCIDENT > ACTIVE FIX > decisión del dueño respondida > crítica > alta > media."
+    },
+    {
+      "id": "D-062",
+      "status": "active",
+      "text": "Los siete repositorios de la fábrica (Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner) son públicos. Los términos «privado» o «cabina privada» describen acceso restringido a paneles y datos operativos, no visibilidad del repositorio; secretos, tokens y datos de clientes nunca viven en ningún repositorio."
     }
   ]
 }
