@@ -552,6 +552,51 @@ class CoordinacionTests(unittest.TestCase):
         assert latest is not None
         self.assertFalse(latest["active"])
 
+    def test_reserve_work_rejects_noncanonical_ready_state(self) -> None:
+        """Un estado visible no canónico no puede convertirse en éxito silencioso."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": "estado: listo"}]
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            r"estado: listo.*estado: disponible",
+        ):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertIsNone(active_reservation(api, 12))
+        self.assertEqual(api.assignees, set())
+
+    def test_reserve_work_rejects_missing_canonical_state(self) -> None:
+        """La ausencia de estado canónico falla con requisito explícito."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": "prioridad: media"}]
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            r"sin estado canónico.*estado: disponible",
+        ):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertIsNone(active_reservation(api, 12))
+        self.assertEqual(api.assignees, set())
+
+    def test_blocked_issue_is_not_reserved(self) -> None:
+        """Un Issue bloqueado conserva el no-op explícito y no crea autoridad."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        output = StringIO()
+
+        with redirect_stdout(output):
+            session = reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        self.assertIsNone(session)
+        self.assertIn(STATUS_BLOCKED, output.getvalue())
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertIsNone(active_reservation(api, 12))
+        self.assertEqual(api.assignees, set())
+
     def test_reserve_work_creates_atomic_lock_and_session(self) -> None:
         """Una toma exitosa crea rama, estado y sesión única."""
         api = FakeGitHub()
