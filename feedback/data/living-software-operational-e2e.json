@@ -56,7 +56,7 @@
     "stable_sha": "7b129a43915959ab206afa089eb5f380383e0c3a",
     "candidate_sha": "68f2c41eeb183f6d396d86b543597bf16e0f7998",
     "mode": "shadow",
-    "rollback": "restore_sequential_readiness_checks",
+    "rollback": "restore_baseline",
     "external_writes": []
   },
   "posterior_execution": {
