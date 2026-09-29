@@ -59,8 +59,8 @@ class RecoveryDrillTests(unittest.TestCase):
     def test_restore_drill_plan_is_deterministic_disposable_and_external_io_free(self):
         backup = verified_backup()
         target = {"kind": "disposable", "target_ref": "sandbox:001"}
-        first = build_restore_drill_plan(manifest(), backup, target)
-        self.assertEqual(first, build_restore_drill_plan(manifest(), backup, target))
+        first = build_restore_drill_plan(recovery, backup, target)
+        self.assertEqual(first, build_restore_drill_plan(recovery, backup, target))
         self.assertEqual(first["target"]["kind"], "disposable")
         self.assertEqual((first["authority"], first["execute"]), ("unchanged", False))
         source = (ROOT / "recovery" / "drill.py").read_text()
@@ -71,20 +71,20 @@ class RecoveryDrillTests(unittest.TestCase):
     def test_drill_requires_verified_backup_and_health_smoke_integrity_evidence(self):
         backup = verified_backup()
         target = {"kind": "disposable", "target_ref": "sandbox:001"}
-        plan = build_restore_drill_plan(manifest(), backup, target)
+        plan = build_restore_drill_plan(recovery, backup, target)
         bad_backup = dict(backup); bad_backup["status"] = "PLANNED"
         with self.assertRaises(RecoveryDrillError):
-            build_restore_drill_plan(manifest(), bad_backup, target)
+            build_restore_drill_plan(recovery, bad_backup, target)
         no_primary = dict(backup); no_primary["destinations"] = []
         with self.assertRaises(RecoveryDrillError):
             build_restore_drill_plan(manifest(), no_primary, target)
         for field in ("health_ok", "smoke_ok", "integrity_ok"):
             bad = evidence(); bad[field] = False
             with self.subTest(field=field), self.assertRaises(RecoveryDrillError):
-                evaluate_restore_drill(manifest(), plan, backup, bad)
+                evaluate_restore_drill(recovery, plan, backup, bad)
         bad = evidence(); bad["checksum_sha256"] = "b" * 64
         with self.assertRaises(RecoveryDrillError):
-            evaluate_restore_drill(manifest(), plan, backup, bad)
+            evaluate_restore_drill(recovery, plan, backup, bad)
 
     def test_drill_measures_rpo_rto_and_reports_passed_or_breached(self):
         backup = verified_backup()
@@ -110,7 +110,7 @@ class RecoveryDrillTests(unittest.TestCase):
             {"kind": "disposable", "target_ref": "ghp_" + "A" * 24},
         ):
             with self.subTest(target=target), self.assertRaises(RecoveryDrillError) as ctx:
-                build_restore_drill_plan(manifest(), backup, target)
+                build_restore_drill_plan(recovery, backup, target)
             self.assertNotIn("ghp_", str(ctx.exception))
 
         expanded = dict(backup); expanded["authority"] = "production-write"
@@ -125,10 +125,10 @@ class RecoveryDrillTests(unittest.TestCase):
         )
         tampered = copy.deepcopy(plan); tampered["source"] = "repository"
         with self.assertRaises(RecoveryDrillError):
-            evaluate_restore_drill(manifest(), tampered, backup, evidence())
+            evaluate_restore_drill(recovery, tampered, backup, evidence())
         tampered = copy.deepcopy(plan); tampered["steps"][0]["authority"] = "production-write"
         with self.assertRaises(RecoveryDrillError):
-            evaluate_restore_drill(manifest(), tampered, backup, evidence())
+            evaluate_restore_drill(recovery, tampered, backup, evidence())
 
 
 if __name__ == "__main__":
