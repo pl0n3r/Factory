@@ -181,6 +181,22 @@ def _validate_d063_attestation(raw: object) -> dict[str, bool | None]:
     return result
 
 
+def _validated_d063_attestation(
+    document: dict[str, Any],
+    *,
+    fail_closed: bool,
+) -> dict[str, bool | None] | None:
+    """Normaliza la atestación D-063 sin relajar el resto del mapa."""
+    if "d063_attestation" not in document:
+        return None
+    try:
+        return _validate_d063_attestation(document["d063_attestation"])
+    except PrivacyError:
+        if not fail_closed:
+            raise
+        return dict.fromkeys(D063_ATTESTATION_FIELDS)
+
+
 def validate_data_map(
     document: object,
     rules: dict[str, Any],
@@ -203,18 +219,10 @@ def validate_data_map(
     phase = document["phase"]
     if phase not in {"construccion", "live"}:
         raise PrivacyError("datos: phase inválida")
-    d063_attestation = None
-    if "d063_attestation" in document:
-        try:
-            d063_attestation = _validate_d063_attestation(
-                document["d063_attestation"]
-            )
-        except PrivacyError:
-            if not d063_fail_closed:
-                raise
-            d063_attestation = {
-                field: None for field in D063_ATTESTATION_FIELDS
-            }
+    d063_attestation = _validated_d063_attestation(
+        document,
+        fail_closed=d063_fail_closed,
+    )
     controller = _validate_controller(
         document["controller"], phase, rules["owner_placeholder"]
     )
