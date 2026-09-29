@@ -103,6 +103,15 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertIn("d063_attestation.no_real_customer_data=true", puertas)
         self.assertIn("go-live", (ROOT / "decisiones.yml").read_text(encoding="utf-8"))
 
+    def test_puertas_nuevas_exigen_explain_simple(self):
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("explain_simple", plan)
+        docs = (ROOT / "docs/puertas-humanas.md").read_text(encoding="utf-8")
+        self.assertIn("como a alguien de 12 años", docs)
+        script = (ROOT / "scripts/auditar_privacidad.py").read_text(encoding="utf-8")
+        self.assertIn("LEGAL_OPTION_EXPLAIN", script)
+        self.assertIn("LEGAL_EXPLAIN_BLOCKING", script)
+
 
 if __name__ == "__main__":
     unittest.main()

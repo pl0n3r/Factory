@@ -44,9 +44,18 @@ Ejemplo completo de puerta `factory-release` válido para el parser:
 
 Si el parser clasifica una puerta confiable como `invalid-gate`, el workflow publica una explicación **idempotente** con el campo y la regla incumplida, sin copiar valores ni JSON del marker, y aplica `estado: bloqueado`. La corrección posterior del marker válido restaura `estado: disponible` cuando el bloqueo fue gestionado por este flujo; la cola `decisión: dueño` continúa siendo exclusiva de puertas válidas.
 
+### Explicación «para 12 años» (`explain_simple`)
+
+El dueño decide mejor si entiende la pregunta y cada respuesta sin jerga. Campos opcionales en el esquema (compatibles con puertas históricas), **obligatorios por regla para toda puerta nueva**:
+
+- raíz `explain_simple`: la pregunta explicada como a alguien de 12 años (hasta 4 líneas, 600 caracteres): qué está pasando, por qué hay que decidir y qué pasa si no se decide;
+- por opción `explain_simple`: qué significa elegir esa respuesta, con una comparación cotidiana si ayuda (hasta 3 líneas, 400 caracteres).
+
+Sin siglas ni términos técnicos sin traducir, sin asustar ni empujar hacia una opción, y sin contradecir `effect`, `pros`, `cons` ni `risk`.
+
 ### Regla para puertas nuevas
 
-La compatibilidad existe para no romper Issues históricos. **Toda puerta nueva escrita por un agente debe incluir los campos simples completos**: `title_simple`, `summary_simple`, `why_recommended`, `blocks` y, en cada opción, `effect`, `pros`, `cons`, `risk`, `cost`, `reversible`.
+La compatibilidad existe para no romper Issues históricos. **Toda puerta nueva escrita por un agente debe incluir los campos simples completos**: `title_simple`, `summary_simple`, `why_recommended`, `blocks` y, en cada opción, `effect`, `pros`, `cons`, `risk`, `cost`, `reversible` y `explain_simple` (raíz y por opción).
 
 El esquema sigue cerrado: cualquier campo desconocido, tipo incorrecto, riesgo fuera del enum, lista excesiva o longitud inválida hace que la puerta sea `invalid-gate`.
 
