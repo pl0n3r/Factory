@@ -105,10 +105,8 @@ class ConversacionAgentesTests(unittest.TestCase):
 
     def test_puertas_nuevas_exigen_explain_simple(self):
         import json
-        import runpy
-
-        namespace = runpy.run_path(str(ROOT / "scripts/auditar_privacidad.py"))
-        build_legal_gate_body = namespace["build_legal_gate_body"]
+        import subprocess
+        import sys
 
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
         self.assertIn("explain_simple", plan)
@@ -116,14 +114,24 @@ class ConversacionAgentesTests(unittest.TestCase):
         self.assertIn("como a alguien de 12 años", puertas)
 
         for d063_applies in (True, False):
-            body = build_legal_gate_body(
-                "Factory",
-                ["finalidad"],
-                d063_applies=d063_applies,
+            script = (
+                "from scripts.auditar_privacidad import build_legal_gate_body; "
+                "print(build_legal_gate_body("
+                "'Factory', ['finalidad'], d063_applies="
+                + repr(d063_applies)
+                + "))"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             marker = re.search(
                 r"<!--\s*factory-human-gate\s+(\{.*\})\s*-->",
-                body,
+                completed.stdout,
             )
             self.assertIsNotNone(marker)
             payload = json.loads(marker.group(1))
