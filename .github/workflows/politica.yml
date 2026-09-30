@@ -50,9 +50,11 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR: ${{ inputs.pr_number }}
           REQUIRED_REVIEW_BOT: ${{ inputs.required_review_bot }}
+          REPOSITORY_REQUIRED_REVIEW_BOT: ${{ vars.FACTORY_REQUIRED_REVIEW_BOT }}
         run: |
           set -euo pipefail
           gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100" --jq '.[] | @json' \
             | python3 .factory/scripts/politica_kit.py \
                 --required-review-bot "$REQUIRED_REVIEW_BOT" \
+                --repository-required-review-bot "$REPOSITORY_REQUIRED_REVIEW_BOT" \
                 --head-sha "$PR_HEAD_SHA"

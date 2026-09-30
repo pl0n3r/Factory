@@ -95,6 +95,25 @@ def count_review_rounds(lines: list[str]) -> int:
             counts[login] += 1
     return max(counts.values(), default=0)
 
+def resolve_required_review_bot(
+    caller_value: str = "",
+    repository_value: str = "",
+) -> str:
+    """Resuelve configuración persistida sin permitir que el HEAD candidato la rebaje."""
+    for value in (caller_value, repository_value):
+        if value != "" and not BOT_LOGIN_RE.fullmatch(value):
+            raise PolicyError("Reviewer-bot requerido inválido.")
+    if repository_value:
+        if caller_value and caller_value != repository_value:
+            raise PolicyError("El input del caller contradice el reviewer-bot configurado.")
+        return repository_value
+    if caller_value:
+        raise PolicyError(
+            "required_review_bot no es autoritativo sin FACTORY_REQUIRED_REVIEW_BOT."
+        )
+    return ""
+
+
 def validate_required_bot_review(lines: list[str], required_review_bot: str = "", head_sha: str = "") -> None:
     if required_review_bot == "":
         return
@@ -122,6 +141,7 @@ def validate_rounds(rounds: int, limit: int) -> None:
 def args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--required-review-bot", default="")
+    parser.add_argument("--repository-required-review-bot", default="")
     parser.add_argument("--head-sha", default="")
     return parser.parse_args()
 
@@ -136,14 +156,18 @@ def main() -> int:
         policy = load_policy()
         rounds = count_review_rounds(lines)
         validate_rounds(rounds, policy["review_round_limit"])
-        validate_required_bot_review(lines, options.required_review_bot, options.head_sha)
+        required_review_bot = resolve_required_review_bot(
+            options.required_review_bot,
+            options.repository_required_review_bot,
+        )
+        validate_required_bot_review(lines, required_review_bot, options.head_sha)
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     print(json.dumps({
         "decisions": len(policy["decisions"]),
         "review_rounds": rounds,
-        "required_review_bot": options.required_review_bot or None,
+        "required_review_bot": required_review_bot or None,
     }, sort_keys=True))
     return 0
 

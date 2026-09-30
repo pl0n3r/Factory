@@ -7,6 +7,7 @@ from scripts.politica_kit import (
     PolicyError,
     count_review_rounds,
     load_policy,
+    resolve_required_review_bot,
     validate_required_bot_review,
     validate_rounds,
 )
@@ -67,9 +68,22 @@ class T(unittest.TestCase):
 
     def test_optional_reviewer_preserves_existing_round_policy(self):
         lines = [review(review_id=i, login="review-bot") for i in (1, 2, 3)]
+        self.assertEqual(resolve_required_review_bot("", ""), "")
         validate_required_bot_review(lines, "", "")
         self.assertEqual(count_review_rounds(lines), 3)
         validate_rounds(3, 3)
+
+    def test_repository_reviewer_configuration_cannot_be_downgraded_by_caller_input(self):
+        configured = "coderabbitai[bot]"
+        self.assertEqual(resolve_required_review_bot("", configured), configured)
+        self.assertEqual(
+            resolve_required_review_bot(configured, configured),
+            configured,
+        )
+        with self.assertRaises(PolicyError):
+            resolve_required_review_bot("other-bot", configured)
+        with self.assertRaises(PolicyError):
+            resolve_required_review_bot(configured, "")
 
     def test_green_checks_without_required_final_review_fail_closed(self):
         with self.assertRaises(PolicyError):
