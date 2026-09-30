@@ -158,6 +158,22 @@ class QualitySonarTests(unittest.TestCase):
             signal(normalized_current, "coverage")["status"], "UNKNOWN"
         )
 
+        stale_snapshot = snapshot()
+        stale_snapshot["snapshot_at"] = "2026-09-30T09:00:00Z"
+        stale_snapshot["analysis"]["analyzed_at"] = "2026-09-30T09:00:00Z"
+        normalized_stale = normalize_sonar_snapshot(
+            contract(), stale_snapshot, observed_at=NOW
+        )
+        self.assertTrue(
+            all(item["status"] == "STALE" for item in normalized_stale["signals"])
+        )
+        self.assertTrue(
+            all(
+                item["freshness"]["state"] == "STALE"
+                for item in normalized_stale["signals"]
+            )
+        )
+
     def test_historical_debt_is_grouped_against_explicit_thresholds(self):
         raw = snapshot()
         raw["debt"] = [
