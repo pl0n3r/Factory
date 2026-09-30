@@ -45,6 +45,8 @@ class FakeAPI:
     def __init__(
         self, *, body=None, labels=None, state="open",
         crash_after_decision_label_once=False,
+        mutate_body_on_issue_get=None,
+        replacement_body=None,
     ):
         self.issue = {
             "number": 519,
@@ -67,6 +69,9 @@ class FakeAPI:
         self.calls = []
         self.next_id = 1000
         self.crash_after_decision_label_once = crash_after_decision_label_once
+        self.mutate_body_on_issue_get = mutate_body_on_issue_get
+        self.replacement_body = replacement_body
+        self.issue_gets = 0
 
     def label_names(self):
         return {item["name"] for item in self.issue["labels"]}
@@ -74,6 +79,12 @@ class FakeAPI:
     def __call__(self, method, path, payload=None):
         self.calls.append((method, path, payload))
         if method == "GET" and path.endswith("/issues/519"):
+            self.issue_gets += 1
+            if (
+                self.mutate_body_on_issue_get == self.issue_gets
+                and self.replacement_body is not None
+            ):
+                self.issue["body"] = self.replacement_body
             return json.loads(json.dumps(self.issue))
         if method == "GET" and path.endswith("/comments?per_page=100"):
             return json.loads(json.dumps(self.comments))
@@ -126,7 +137,7 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn("tipo: infraestructura", api.label_names())
         self.assertEqual(len(api.comments), 1)
         self.assertIn('"option":"B"', api.comments[0]["body"])
-        self.assertIn("no ejecuta el efecto", api.comments[0]["body"])
+        self.assertIn("sin ejecutar el efecto", api.comments[0]["body"])
 
     def test_untrusted_bot_or_free_text_is_noop(self):
         cases = (
@@ -212,6 +223,18 @@ class DecisionRespuestaTests(unittest.TestCase):
             ]),
             1,
         )
+
+        stale = FakeAPI(
+            mutate_body_on_issue_get=2,
+            replacement_body=gate_body(("A", "C")),
+        )
+        self.assertFalse(
+            materialize_decision(event(), stale, "pl0n3r/Factory")
+        )
+        self.assertEqual(stale.issue["state"], "open")
+        self.assertIn(DECISION_LABEL, stale.label_names())
+        self.assertEqual(stale.comments, [])
+        self.assertFalse(any(call[0] != "GET" for call in stale.calls))
 
     def test_decision_materialization_has_no_parent_side_effects(self):
         api = FakeAPI()

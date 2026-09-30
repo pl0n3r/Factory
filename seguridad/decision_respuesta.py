@@ -198,6 +198,23 @@ def materialize_decision(
     if DECISION_LABEL not in labels and existing != option:
         return False
     if existing is None:
+        # Revalidar inmediatamente antes de publicar el journal: una edición
+        # concurrente no puede registrar una opción que ya salió del marker.
+        issue = api("GET", base)
+        if not isinstance(issue, dict) or issue.get("state") != "open":
+            return False
+        labels = _labels(issue)
+        if DECISION_LABEL not in labels:
+            return False
+        live_body = issue.get("body")
+        if not isinstance(live_body, str):
+            return False
+        try:
+            live_options = _gate_options(live_body)
+        except (DecisionError, ValueError):
+            return False
+        if option not in live_options:
+            return False
         api("POST", f"{base}/comments", {"body": _evidence_body(option)})
         existing = option
 
