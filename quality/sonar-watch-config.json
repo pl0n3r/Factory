@@ -1,0 +1,364 @@
+{
+  "version": 1,
+  "provenance": {
+    "issue": "pl0n3r/Factory#513",
+    "observed_at": "2026-09-30",
+    "policy": "Runtime Sonar V1: seis proyectos exactos; visibilidad pública; métodos de análisis fijados a la lectura pública de sonar.autoscan.enabled; thresholds explícitos, sin defaults ocultos."
+  },
+  "projects": [
+    {
+      "project": "brvtal",
+      "sonar_key": "pl0n3r_brvtal",
+      "github_repo": "pl0n3r/brvtal",
+      "contract": {
+        "version": 1,
+        "project": "brvtal",
+        "surfaces": [
+          {
+            "id": "sonar",
+            "criticality": "high",
+            "required_gates": [
+              "observability"
+            ]
+          }
+        ],
+        "invariants": [
+          "sonar-read-only"
+        ],
+        "compatibility": {
+          "runtimes": [
+            "factory"
+          ],
+          "browsers": [],
+          "devices": []
+        },
+        "accessibility": {
+          "target": "NOT_APPLICABLE"
+        },
+        "migration": {
+          "strategy": "NOT_APPLICABLE"
+        },
+        "smoke": {
+          "required": false,
+          "source_ref": null
+        },
+        "evidence_freshness_seconds": 3600,
+        "dimensions": {
+          "performance": {
+            "required": false,
+            "source_ref": null
+          },
+          "recovery": {
+            "required": false,
+            "source_ref": null
+          }
+        },
+        "sonar": {
+          "expected_visibility": "public",
+          "analysis_method": "automatic",
+          "max_analysis_age_seconds": 86400,
+          "max_organization_line_usage_percent": 80,
+          "max_open_vulnerabilities": 0,
+          "max_open_bugs": 10,
+          "max_open_hotspots": 0,
+          "max_debt_age_days": 30
+        }
+      }
+    },
+    {
+      "project": "condor",
+      "sonar_key": "pl0n3r_Condor",
+      "github_repo": "pl0n3r/Condor",
+      "contract": {
+        "version": 1,
+        "project": "condor",
+        "surfaces": [
+          {
+            "id": "sonar",
+            "criticality": "high",
+            "required_gates": [
+              "observability"
+            ]
+          }
+        ],
+        "invariants": [
+          "sonar-read-only"
+        ],
+        "compatibility": {
+          "runtimes": [
+            "factory"
+          ],
+          "browsers": [],
+          "devices": []
+        },
+        "accessibility": {
+          "target": "NOT_APPLICABLE"
+        },
+        "migration": {
+          "strategy": "NOT_APPLICABLE"
+        },
+        "smoke": {
+          "required": false,
+          "source_ref": null
+        },
+        "evidence_freshness_seconds": 3600,
+        "dimensions": {
+          "performance": {
+            "required": false,
+            "source_ref": null
+          },
+          "recovery": {
+            "required": false,
+            "source_ref": null
+          }
+        },
+        "sonar": {
+          "expected_visibility": "public",
+          "analysis_method": "automatic",
+          "max_analysis_age_seconds": 86400,
+          "max_organization_line_usage_percent": 80,
+          "max_open_vulnerabilities": 0,
+          "max_open_bugs": 10,
+          "max_open_hotspots": 0,
+          "max_debt_age_days": 30
+        }
+      }
+    },
+    {
+      "project": "controlbot",
+      "sonar_key": "pl0n3r_factory-control",
+      "github_repo": "pl0n3r/ControlBot",
+      "contract": {
+        "version": 1,
+        "project": "controlbot",
+        "surfaces": [
+          {
+            "id": "sonar",
+            "criticality": "high",
+            "required_gates": [
+              "observability"
+            ]
+          }
+        ],
+        "invariants": [
+          "sonar-read-only"
+        ],
+        "compatibility": {
+          "runtimes": [
+            "factory"
+          ],
+          "browsers": [],
+          "devices": []
+        },
+        "accessibility": {
+          "target": "NOT_APPLICABLE"
+        },
+        "migration": {
+          "strategy": "NOT_APPLICABLE"
+        },
+        "smoke": {
+          "required": false,
+          "source_ref": null
+        },
+        "evidence_freshness_seconds": 3600,
+        "dimensions": {
+          "performance": {
+            "required": false,
+            "source_ref": null
+          },
+          "recovery": {
+            "required": false,
+            "source_ref": null
+          }
+        },
+        "sonar": {
+          "expected_visibility": "public",
+          "analysis_method": "ci",
+          "max_analysis_age_seconds": 86400,
+          "max_organization_line_usage_percent": 80,
+          "max_open_vulnerabilities": 0,
+          "max_open_bugs": 10,
+          "max_open_hotspots": 0,
+          "max_debt_age_days": 30
+        }
+      }
+    },
+    {
+      "project": "factory",
+      "sonar_key": "pl0n3r_factory",
+      "github_repo": "pl0n3r/Factory",
+      "contract": {
+        "version": 1,
+        "project": "factory",
+        "surfaces": [
+          {
+            "id": "sonar",
+            "criticality": "high",
+            "required_gates": [
+              "observability"
+            ]
+          }
+        ],
+        "invariants": [
+          "sonar-read-only"
+        ],
+        "compatibility": {
+          "runtimes": [
+            "factory"
+          ],
+          "browsers": [],
+          "devices": []
+        },
+        "accessibility": {
+          "target": "NOT_APPLICABLE"
+        },
+        "migration": {
+          "strategy": "NOT_APPLICABLE"
+        },
+        "smoke": {
+          "required": false,
+          "source_ref": null
+        },
+        "evidence_freshness_seconds": 3600,
+        "dimensions": {
+          "performance": {
+            "required": false,
+            "source_ref": null
+          },
+          "recovery": {
+            "required": false,
+            "source_ref": null
+          }
+        },
+        "sonar": {
+          "expected_visibility": "public",
+          "analysis_method": "ci",
+          "max_analysis_age_seconds": 86400,
+          "max_organization_line_usage_percent": 80,
+          "max_open_vulnerabilities": 0,
+          "max_open_bugs": 10,
+          "max_open_hotspots": 0,
+          "max_debt_age_days": 30
+        }
+      }
+    },
+    {
+      "project": "factoryrunner",
+      "sonar_key": "pl0n3r_FactoryRunner",
+      "github_repo": "pl0n3r/FactoryRunner",
+      "contract": {
+        "version": 1,
+        "project": "factoryrunner",
+        "surfaces": [
+          {
+            "id": "sonar",
+            "criticality": "high",
+            "required_gates": [
+              "observability"
+            ]
+          }
+        ],
+        "invariants": [
+          "sonar-read-only"
+        ],
+        "compatibility": {
+          "runtimes": [
+            "factory"
+          ],
+          "browsers": [],
+          "devices": []
+        },
+        "accessibility": {
+          "target": "NOT_APPLICABLE"
+        },
+        "migration": {
+          "strategy": "NOT_APPLICABLE"
+        },
+        "smoke": {
+          "required": false,
+          "source_ref": null
+        },
+        "evidence_freshness_seconds": 3600,
+        "dimensions": {
+          "performance": {
+            "required": false,
+            "source_ref": null
+          },
+          "recovery": {
+            "required": false,
+            "source_ref": null
+          }
+        },
+        "sonar": {
+          "expected_visibility": "public",
+          "analysis_method": "automatic",
+          "max_analysis_age_seconds": 86400,
+          "max_organization_line_usage_percent": 80,
+          "max_open_vulnerabilities": 0,
+          "max_open_bugs": 10,
+          "max_open_hotspots": 0,
+          "max_debt_age_days": 30
+        }
+      }
+    },
+    {
+      "project": "grindflow",
+      "sonar_key": "pl0n3r_GrindFlow",
+      "github_repo": "pl0n3r/GrindFlow",
+      "contract": {
+        "version": 1,
+        "project": "grindflow",
+        "surfaces": [
+          {
+            "id": "sonar",
+            "criticality": "high",
+            "required_gates": [
+              "observability"
+            ]
+          }
+        ],
+        "invariants": [
+          "sonar-read-only"
+        ],
+        "compatibility": {
+          "runtimes": [
+            "factory"
+          ],
+          "browsers": [],
+          "devices": []
+        },
+        "accessibility": {
+          "target": "NOT_APPLICABLE"
+        },
+        "migration": {
+          "strategy": "NOT_APPLICABLE"
+        },
+        "smoke": {
+          "required": false,
+          "source_ref": null
+        },
+        "evidence_freshness_seconds": 3600,
+        "dimensions": {
+          "performance": {
+            "required": false,
+            "source_ref": null
+          },
+          "recovery": {
+            "required": false,
+            "source_ref": null
+          }
+        },
+        "sonar": {
+          "expected_visibility": "public",
+          "analysis_method": "automatic",
+          "max_analysis_age_seconds": 86400,
+          "max_organization_line_usage_percent": 80,
+          "max_open_vulnerabilities": 0,
+          "max_open_bugs": 10,
+          "max_open_hotspots": 0,
+          "max_debt_age_days": 30
+        }
+      }
+    }
+  ]
+}
