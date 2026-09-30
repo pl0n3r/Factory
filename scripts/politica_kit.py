@@ -174,30 +174,29 @@ def _comment_has_exact_head_coverage(
         and isinstance(body, str)
     ):
         return False
-    for match in COMMENT_COVERAGE_RE.finditer(body):
-        try:
-            marker = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(marker, dict) or set(marker) != {
-            "sourceCommitId",
-            "coveredCommitId",
-            "kind",
-        }:
-            continue
-        source_sha = marker["sourceCommitId"]
-        covered_sha = marker["coveredCommitId"]
-        kind = marker["kind"]
-        if (
-            isinstance(source_sha, str)
-            and SHA_RE.fullmatch(source_sha)
-            and isinstance(covered_sha, str)
-            and SHA_RE.fullmatch(covered_sha)
-            and kind == "reviewed"
-            and covered_sha == head_sha
-        ):
-            return True
-    return False
+    matches = list(COMMENT_COVERAGE_RE.finditer(body))
+    if len(matches) != 1:
+        return False
+    try:
+        marker = json.loads(matches[0].group(1))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(marker, dict) or set(marker) != {
+        "sourceCommitId",
+        "coveredCommitId",
+        "kind",
+    }:
+        return False
+    source_sha = marker["sourceCommitId"]
+    covered_sha = marker["coveredCommitId"]
+    return bool(
+        isinstance(source_sha, str)
+        and SHA_RE.fullmatch(source_sha)
+        and isinstance(covered_sha, str)
+        and SHA_RE.fullmatch(covered_sha)
+        and marker["kind"] == "reviewed"
+        and covered_sha == head_sha
+    )
 
 
 def validate_required_bot_review(

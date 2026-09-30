@@ -209,6 +209,22 @@ class T(unittest.TestCase):
             comment_lines=[exact_comment],
         )
 
+    def test_duplicate_comment_markers_are_ambiguous_and_rejected(self):
+        first = json.loads(comment())
+        second = json.loads(comment(comment_id=2))
+        duplicate = json.dumps({
+            "id": 11,
+            "body": first["body"] + "\n" + second["body"],
+            "user": {"type": "Bot", "login": "coderabbitai[bot]"},
+        })
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review(
+                [],
+                "coderabbitai[bot]",
+                HEAD,
+                comment_lines=[duplicate],
+            )
+
     def test_comment_marker_schema_is_closed(self):
         extra_field = json.dumps({
             "id": 9,
