@@ -177,10 +177,12 @@ def sync_project(
 
 
 class HttpJson:
-    def __init__(self, *, token: str, base_url: str):
-        self.token, self.base_url = token, base_url.rstrip("/")
+    def __init__(self, *, token: str, base_url: str, read_only: bool = False):
+        self.token, self.base_url, self.read_only = token, base_url.rstrip("/"), read_only
 
     def request(self, path: str, *, method: str = "GET", payload: Any = None) -> Any:
+        if self.read_only and method != "GET":
+            raise SonarWatchError("Sonar Watch solo permite GET contra Sonar.")
         headers = {"Accept": "application/json", "User-Agent": "factory-sonar-watch/1"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
