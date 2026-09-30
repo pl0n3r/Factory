@@ -19,9 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 NOW = "2026-09-29T03:00:00Z"
 
 
-def contract(*, external=False):
+def contract(*, external=False, sonar=False):
     required = external
-    return {
+    result = {
         "version": 1,
         "project": "factory",
         "surfaces": [
@@ -47,6 +47,18 @@ def contract(*, external=False):
             },
         },
     }
+    if sonar:
+        result["sonar"] = {
+            "expected_visibility": "public",
+            "analysis_method": "ci",
+            "max_analysis_age_seconds": 86400,
+            "max_organization_line_usage_percent": 80,
+            "max_open_vulnerabilities": 0,
+            "max_open_bugs": 10,
+            "max_open_hotspots": 0,
+            "max_debt_age_days": 30,
+        }
+    return result
 
 
 def gates():
@@ -102,15 +114,52 @@ def recovery(state="HEALTHY"):
     }
 
 
-def health(gate_rows=None, regressions=None, *, external=False, perf=None, rec=None):
+def sonar_evidence():
+    names = [
+        "quality_gate", "analysis_freshness", "ce_task",
+        "organization_line_usage", "visibility", "analysis_method",
+        "coverage", "historical_debt",
+    ]
+    return {
+        "version": 1,
+        "project": "factory",
+        "observed_at": NOW,
+        "snapshot_freshness": {
+            "state": "CURRENT", "age_seconds": 300, "max_age_seconds": 3600,
+        },
+        "signals": [
+            {
+                "signal": name,
+                "status": "PASS",
+                "reason": f"{name}_ok",
+                "observed_at": "2026-09-29T02:55:00Z",
+                "freshness": {
+                    "state": "CURRENT", "age_seconds": 300,
+                    "max_age_seconds": 3600,
+                },
+                "evidence_refs": ["sonar:factory:snapshot:001"],
+                "details": {},
+            }
+            for name in names
+        ],
+        "authority": "read_only",
+        "execute_actions": False,
+    }
+
+
+def health(
+    gate_rows=None, regressions=None, *, external=False, perf=None, rec=None,
+    sonar=False, sonar_ev=None,
+):
     return derive_quality_health(
-        contract(external=external),
+        contract(external=external, sonar=sonar),
         gates() if gate_rows is None else gate_rows,
         [] if regressions is None else regressions,
         observed_at=NOW,
         project_ref="pl0n3r/Factory",
         performance_status=perf,
         recovery_health=rec,
+        sonar_evidence=sonar_ev,
     )
 
 
@@ -247,6 +296,111 @@ class QualityStatusTests(unittest.TestCase):
         with self.assertRaises(QualityStatusError) as caught:
             health(external=True, perf=performance(), rec=leaked_recovery)
         self.assertNotIn("supersecretvalue", str(caught.exception))
+
+    def test_sonar_evidence_is_consumed_without_recalculation(self):
+        evidence = sonar_evidence()
+        result = health(sonar=True, sonar_ev=evidence)
+
+        self.assertEqual(result["state"], "PASS")
+        sonar = result["external_dimensions"]["sonar"]
+        self.assertEqual(sonar["status"], "PASS")
+        self.assertFalse(sonar["recalculated"])
+        self.assertEqual(len(sonar["signals"]), 8)
+        self.assertIn("sonar:factory:snapshot:001", result["evidence_refs"])
+
+    def test_sonar_fail_unknown_and_stale_never_promote_to_pass(self):
+        failed = sonar_evidence()
+        failed["signals"][0]["status"] = "FAIL"
+        failed["signals"][0]["reason"] = "quality_gate_failed"
+        blocked = health(sonar=True, sonar_ev=failed)
+        self.assertEqual(blocked["state"], "BLOCKED")
+        self.assertIn(
+            "quality_gate_failed",
+            blocked["work_item_classes"],
+        )
+
+        unknown = sonar_evidence()
+        unknown["signals"][1]["status"] = "UNKNOWN"
+        unknown["signals"][1]["reason"] = "analysis_missing"
+        unknown_health = health(sonar=True, sonar_ev=unknown)
+        self.assertEqual(unknown_health["state"], "UNKNOWN")
+        self.assertEqual(unknown_health["freshness"]["state"], "DEGRADED")
+        self.assertIn("quality_evidence_unknown", unknown_health["work_item_classes"])
+
+        stale = sonar_evidence()
+        stale["signals"][2]["status"] = "STALE"
+        stale["signals"][2]["reason"] = "ce_task_stale"
+        stale["signals"][2]["freshness"]["state"] = "STALE"
+        stale_health = health(sonar=True, sonar_ev=stale)
+        self.assertEqual(stale_health["state"], "UNKNOWN")
+        self.assertIn("quality_evidence_stale", stale_health["work_item_classes"])
+
+    def test_sonar_reasons_and_refs_are_preserved_safely(self):
+        evidence = sonar_evidence()
+        evidence["signals"][4]["status"] = "FAIL"
+        evidence["signals"][4]["reason"] = "visibility_drift"
+        evidence["signals"][4]["evidence_refs"] = [
+            "sonar:factory:visibility:001",
+        ]
+
+        result = health(sonar=True, sonar_ev=evidence)
+        self.assertIn(
+            "sonar:visibility:visibility_drift",
+            result["reasons"],
+        )
+        self.assertIn("sonar:factory:visibility:001", result["evidence_refs"])
+        self.assertIn(
+            "quality_gate_failed",
+            result["work_item_classes"],
+        )
+
+        leaked = sonar_evidence()
+        leaked["signals"][0]["evidence_refs"] = ["token=supersecretvalue"]
+        with self.assertRaises(QualityStatusError) as caught:
+            health(sonar=True, sonar_ev=leaked)
+        self.assertNotIn("supersecretvalue", str(caught.exception))
+
+    def test_sonar_corrective_classes_use_existing_work_item_pipeline(self):
+        evidence = sonar_evidence()
+        evidence["signals"][7]["status"] = "FAIL"
+        evidence["signals"][7]["reason"] = "historical_debt_threshold_exceeded"
+        degraded = health(sonar=True, sonar_ev=evidence)
+        classes = quality_work_item_classes(degraded)
+        self.assertIn("quality_gate_failed", classes)
+
+        payload = {
+            "work_id": "quality-sonar-fix-491", "origin_mode": "automatic",
+            "origin_system": "factory", "group_id": "pl0n3r",
+            "work_type": "engineering", "requested_capabilities": ["python"],
+            "required_roles": ["qa"], "authority_level": "standard",
+            "producer_ref": "quality-health-v1", "priority_class": "high",
+            "depends_on": [], "claims": ["quality/status.py"],
+            "policy_ref": "factory:quality", "evidence_refs": degraded["evidence_refs"],
+            "idempotency_key": "quality_gate_failed",
+        }
+        context = WorkItemReadinessContext(
+            authority_valid=True, policy_valid=True,
+            freshness_valid=True, evidence_valid=True,
+        )
+        candidate = candidate_from_work_item(payload, context)
+        self.assertTrue(classify_readiness(candidate).ready)
+
+    def test_quality_health_without_sonar_keeps_legacy_behavior(self):
+        legacy = health()
+        self.assertEqual(legacy["state"], "PASS")
+        self.assertNotIn("sonar", legacy["external_dimensions"])
+        self.assertEqual(
+            legacy["reasons"],
+            ["quality_evidence_current"],
+        )
+
+        missing = health(sonar=True, sonar_ev=None)
+        self.assertEqual(missing["state"], "UNKNOWN")
+        self.assertIn("sonar_missing", missing["reasons"])
+        self.assertIn("quality_evidence_missing", missing["work_item_classes"])
+
+        with self.assertRaises(QualityStatusError):
+            health(sonar=False, sonar_ev=sonar_evidence())
 
     def test_docs_define_quality_health_boundary_without_parallel_queue_or_recalculation(self):
         text = (ROOT / "docs" / "quality-health.md").read_text(encoding="utf-8")
