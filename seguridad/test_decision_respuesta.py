@@ -1,0 +1,219 @@
+import json
+import unittest
+from pathlib import Path
+from urllib.parse import unquote
+
+from decision_respuesta import (
+    BOT,
+    COMPLETED,
+    DECISION_LABEL,
+    materialize_decision,
+)
+
+
+def gate_body(options=("A", "B")):
+    gate = {
+        "category": "money",
+        "context": "La decisión requiere autorización explícita antes de cualquier efecto.",
+        "options": [
+            {"id": option, "label": f"Opción {option}"}
+            for option in options
+        ],
+        "recommendation": options[0],
+        "safe_default": options[0],
+    }
+    return (
+        "Contexto\n<!-- factory-human-gate "
+        + json.dumps(gate, separators=(",", ":"))
+        + " -->"
+    )
+
+
+def event(command="/decidir B", association="OWNER", user_type="User"):
+    return {
+        "repository": {"full_name": "pl0n3r/Factory"},
+        "issue": {"number": 519},
+        "comment": {
+            "body": command,
+            "author_association": association,
+            "user": {"login": "pl0n3r", "type": user_type},
+        },
+    }
+
+
+class FakeAPI:
+    def __init__(self, *, body=None, labels=None, state="open"):
+        self.issue = {
+            "number": 519,
+            "state": state,
+            "body": gate_body() if body is None else body,
+            "labels": [
+                {"name": name}
+                for name in (
+                    labels
+                    or {
+                        "tipo: infraestructura",
+                        "prioridad: alta",
+                        "estado: bloqueado",
+                        DECISION_LABEL,
+                    }
+                )
+            ],
+        }
+        self.comments = []
+        self.calls = []
+        self.next_id = 1000
+
+    def label_names(self):
+        return {item["name"] for item in self.issue["labels"]}
+
+    def __call__(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
+        if method == "GET" and path.endswith("/issues/519"):
+            return json.loads(json.dumps(self.issue))
+        if method == "GET" and path.endswith("/comments?per_page=100"):
+            return json.loads(json.dumps(self.comments))
+        if method == "POST" and path.endswith("/comments"):
+            self.next_id += 1
+            value = {
+                "id": self.next_id,
+                "body": payload["body"],
+                "user": {"login": BOT, "type": "Bot"},
+            }
+            self.comments.append(value)
+            return value
+        if method == "DELETE" and "/labels/" in path:
+            label = unquote(path.rsplit("/", 1)[-1])
+            self.issue["labels"] = [
+                item for item in self.issue["labels"]
+                if item["name"] != label
+            ]
+            return None
+        if method == "POST" and path.endswith("/labels"):
+            for label in payload["labels"]:
+                if label not in self.label_names():
+                    self.issue["labels"].append({"name": label})
+            return self.issue["labels"]
+        if method == "PATCH" and path.endswith("/issues/519"):
+            self.issue["state"] = payload["state"]
+            self.issue["state_reason"] = payload["state_reason"]
+            return self.issue
+        raise AssertionError(f"Unexpected API call: {method} {path}")
+
+
+class DecisionRespuestaTests(unittest.TestCase):
+    def test_authorized_exact_command_completes_valid_gate(self):
+        api = FakeAPI()
+        changed = materialize_decision(event(), api, "pl0n3r/Factory")
+
+        self.assertTrue(changed)
+        self.assertEqual(api.issue["state"], "closed")
+        self.assertEqual(api.issue["state_reason"], "completed")
+        self.assertNotIn(DECISION_LABEL, api.label_names())
+        self.assertNotIn("estado: bloqueado", api.label_names())
+        self.assertIn(COMPLETED, api.label_names())
+        self.assertIn("prioridad: alta", api.label_names())
+        self.assertIn("tipo: infraestructura", api.label_names())
+        self.assertEqual(len(api.comments), 1)
+        self.assertIn('"option":"B"', api.comments[0]["body"])
+        self.assertIn("no ejecuta el efecto", api.comments[0]["body"])
+
+    def test_untrusted_bot_or_free_text_is_noop(self):
+        cases = (
+            event(association="NONE"),
+            event(user_type="Bot"),
+            event(command="/decidir B "),
+            event(command="Decisión del dueño: B"),
+            event(command="/decidir b"),
+        )
+        for candidate in cases:
+            with self.subTest(candidate=candidate):
+                api = FakeAPI()
+                self.assertFalse(
+                    materialize_decision(candidate, api, "pl0n3r/Factory")
+                )
+                self.assertEqual(api.issue["state"], "open")
+                self.assertEqual(api.comments, [])
+                self.assertFalse(any(call[0] != "GET" for call in api.calls))
+
+    def test_invalid_option_marker_or_queue_fails_closed(self):
+        invalid_marker = '<!-- factory-human-gate {"category":"money" -->'
+        cases = (
+            (event("/decidir C"), FakeAPI()),
+            (event(), FakeAPI(body=invalid_marker)),
+            (
+                event(),
+                FakeAPI(labels={"estado: bloqueado", "prioridad: alta"}),
+            ),
+        )
+        for candidate, api in cases:
+            with self.subTest(body=api.issue["body"], labels=api.label_names()):
+                before = json.dumps(api.issue, sort_keys=True)
+                self.assertFalse(
+                    materialize_decision(candidate, api, "pl0n3r/Factory")
+                )
+                self.assertEqual(json.dumps(api.issue, sort_keys=True), before)
+                self.assertEqual(api.comments, [])
+                self.assertFalse(any(call[0] != "GET" for call in api.calls))
+
+    def test_retry_is_idempotent(self):
+        api = FakeAPI()
+        self.assertTrue(materialize_decision(event(), api, "pl0n3r/Factory"))
+        self.assertFalse(materialize_decision(event(), api, "pl0n3r/Factory"))
+
+        evidence = [
+            item for item in api.comments
+            if item["user"]["login"] == BOT
+            and item["body"].startswith("<!-- factory-human-decision ")
+        ]
+        self.assertEqual(len(evidence), 1)
+        closes = [
+            call for call in api.calls
+            if call[0] == "PATCH" and call[1].endswith("/issues/519")
+        ]
+        self.assertEqual(len(closes), 1)
+
+    def test_decision_materialization_has_no_parent_side_effects(self):
+        api = FakeAPI()
+        self.assertTrue(materialize_decision(event(), api, "pl0n3r/Factory"))
+
+        for method, path, payload in api.calls:
+            self.assertIn("/issues/519", path)
+            self.assertNotIn("/issues/577", path)
+            self.assertNotIn("/issues/384", path)
+            if payload is not None:
+                text = json.dumps(payload, ensure_ascii=False)
+                self.assertNotIn("billing", text)
+                self.assertNotIn("go-live", text)
+                self.assertNotIn("parent", text)
+        self.assertEqual(
+            [
+                call[2] for call in api.calls
+                if call[0] == "PATCH" and call[1].endswith("/issues/519")
+            ],
+            [{"state": "closed", "state_reason": "completed"}],
+        )
+
+    def test_workflow_contract_is_comment_scoped_and_minimal(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "seguridad.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("issues:\n    types: [opened, edited, reopened]", workflow)
+        self.assertIn("issue_comment:\n    types: [created]", workflow)
+        self.assertIn("materializar-respuesta:", workflow)
+        section = workflow.split("  materializar-respuesta:", 1)[1]
+        self.assertIn("contents: read", section)
+        self.assertIn("issues: write", section)
+        self.assertIn("github.event.repository.default_branch", section)
+        self.assertIn("persist-credentials: false", section)
+        self.assertIn("seguridad/decision_respuesta.py", section)
+        self.assertNotIn("pull_request_target:", workflow)
+        self.assertNotIn("secrets:", section)
+
+
+if __name__ == "__main__":
+    unittest.main()
