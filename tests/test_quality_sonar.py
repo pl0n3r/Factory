@@ -204,9 +204,24 @@ class QualitySonarTests(unittest.TestCase):
         self.assertEqual(
             debt["details"]["counts"],
             [
-                {"type": "bug", "severity": "MAJOR", "count": 1},
-                {"type": "vulnerability", "severity": "CRITICAL", "count": 1},
-                {"type": "vulnerability", "severity": "MAJOR", "count": 1},
+                {
+                    "type": "bug",
+                    "severity": "MAJOR",
+                    "count": 1,
+                    "oldest_age_days": 1,
+                },
+                {
+                    "type": "vulnerability",
+                    "severity": "CRITICAL",
+                    "count": 1,
+                    "oldest_age_days": 60,
+                },
+                {
+                    "type": "vulnerability",
+                    "severity": "MAJOR",
+                    "count": 1,
+                    "oldest_age_days": 5,
+                },
             ],
         )
         self.assertEqual(debt["details"]["oldest_age_days"], 60)
