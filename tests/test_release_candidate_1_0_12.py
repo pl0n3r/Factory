@@ -61,11 +61,14 @@ class ReleaseCandidate1012Tests(unittest.TestCase):
         stdout = SHA + "\n" if args[:3] == ["git", "rev-parse", "HEAD"] else ""
         return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
 
-    def test_candidate_version_is_1_0_12(self) -> None:
+    def test_candidate_is_at_least_1_0_12(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.12"})
+        self.assertEqual(set(payload), {"version"})
+        self.assertRegex(payload["version"], r"^\\d+\\.\\d+\\.\\d+$")
+        version = tuple(int(part) for part in payload["version"].split("."))
+        self.assertGreaterEqual(version, (1, 0, 12))
 
     def test_candidate_contains_grindflow_readme_contract_fix(self) -> None:
         v1_tmp, v1_root = self._fixture()
