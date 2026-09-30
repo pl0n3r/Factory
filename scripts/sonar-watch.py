@@ -421,32 +421,74 @@ def _compact_time(value: str) -> str:
     return parsed.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def load_runtime_config(path: Path = CONFIG_PATH) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SonarWatchError("configuración Sonar versionada ilegible o inválida.") from exc
+    if not isinstance(payload, dict) or set(payload) != _CONFIG_FIELDS or payload.get("version") != 1:
+        raise SonarWatchError("configuración Sonar versionada fuera de contrato.")
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict) or set(provenance) != _PROVENANCE_FIELDS:
+        raise SonarWatchError("provenance Sonar inválida.")
+    for field in _PROVENANCE_FIELDS:
+        if not isinstance(provenance[field], str) or not provenance[field].strip():
+            raise SonarWatchError("provenance Sonar incompleta.")
+    projects = payload.get("projects")
+    expected = set(factory_project_catalog())
+    if not isinstance(projects, list) or len(projects) != len(expected):
+        raise SonarWatchError("config debe cubrir exactamente los seis proyectos Factory.")
+    seen: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for cfg in projects:
+        if not isinstance(cfg, dict) or set(cfg) != _PROJECT_CONFIG_FIELDS:
+            raise SonarWatchError("config de proyecto incompleta.")
+        project = cfg["project"]
+        if project not in expected or project in seen:
+            raise SonarWatchError("config contiene proyecto duplicado o fuera del catálogo.")
+        seen.add(project)
+        if cfg["github_repo"] != _FACTORY_REPOS[project]:
+            raise SonarWatchError("github_repo no coincide con el catálogo Factory.")
+        if not isinstance(cfg["sonar_key"], str) or not _SONAR_KEY.fullmatch(cfg["sonar_key"]):
+            raise SonarWatchError("sonar_key inválido.")
+        try:
+            contract = validate_quality_contract(cfg["contract"])
+        except QualityContractError as exc:
+            raise SonarWatchError("Quality Contract Sonar inválido.") from exc
+        if contract["project"] != project or "sonar" not in contract:
+            raise SonarWatchError("Quality Contract no corresponde al proyecto o carece de Sonar.")
+        normalized.append({
+            "project": project,
+            "sonar_key": cfg["sonar_key"],
+            "github_repo": cfg["github_repo"],
+            "contract": contract,
+        })
+    if seen != expected or len({cfg["sonar_key"] for cfg in normalized}) != len(normalized):
+        raise SonarWatchError("config Sonar no cubre el catálogo de forma única.")
+    return normalized
+
+
 def run_live() -> int:
     token, gh_token = os.getenv("SONAR_TOKEN", ""), os.getenv("GH_TOKEN", "")
-    repository, raw = os.getenv("GITHUB_REPOSITORY", ""), os.getenv("SONAR_WATCH_CONFIG_JSON", "")
-    if not token or not gh_token or not repository or not raw:
-        raise SonarWatchError("configuración runtime incompleta.")
-    try:
-        projects = json.loads(raw).get("projects")
-    except (json.JSONDecodeError, AttributeError) as exc:
-        raise SonarWatchError("SONAR_WATCH_CONFIG_JSON inválido.") from exc
-    expected = set(factory_project_catalog())
-    if (
-        not isinstance(projects, list) or len(projects) != len(expected)
-        or {row.get("project") for row in projects if isinstance(row, dict)} != expected
-    ):
-        raise SonarWatchError("config debe cubrir exactamente los seis proyectos Factory.")
+    repository = os.getenv("GITHUB_REPOSITORY", "")
+    if not gh_token or not repository:
+        raise SonarWatchError("configuración GitHub incompleta.")
+    projects = load_runtime_config()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    sonar, github, operations = SonarApi(token=token), GitHubIssues(repository=repository, token=gh_token), []
+    sonar = SonarApi(token=token)
+    components = sonar.preflight_visibility(projects)
+    github = GitHubIssues(repository=repository, token=gh_token)
+    operations = []
     for cfg in projects:
-        if not isinstance(cfg, dict) or not all(
-            isinstance(cfg.get(key), expected_type)
-            for key, expected_type in (("contract", dict), ("github_repo", str), ("sonar_key", str))
-        ):
-            raise SonarWatchError("config de proyecto incompleta.")
         operations += sync_project(
-            contract=cfg["contract"], snapshot=sonar.snapshot(cfg, observed_at=now),
-            observed_at=now, project_ref=cfg["github_repo"],
+            contract=cfg["contract"],
+            snapshot=sonar.snapshot(
+                cfg,
+                observed_at=now,
+                component={"component": {"visibility": components[cfg["project"]]}},
+            ),
+            observed_at=now,
+            project_ref=cfg["github_repo"],
             origin_ref=f"sonar:{cfg['project']}",
             origin_url=_origin_url(cfg["sonar_key"]),
             issues=github,
