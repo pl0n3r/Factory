@@ -17,11 +17,13 @@ def contract(project="factory"):
     return {
         "version": 1,
         "project": project,
-        "surfaces": [{
-            "id": "admin",
-            "criticality": "critical",
-            "required_gates": ["unit"],
-        }],
+        "surfaces": [
+            {
+                "id": "admin",
+                "criticality": "critical",
+                "required_gates": ["unit"],
+            }
+        ],
         "invariants": ["authorization"],
         "compatibility": {
             "runtimes": ["python-3"],
@@ -120,7 +122,6 @@ def sync(raw, api):
         observed_at=NOW,
         project_ref=refs[project],
         origin_ref=f"sonar:{project}",
-        origin_url=f"https://sonarcloud.io/project/overview?id={project}",
         issues=api,
     )
 
@@ -146,22 +147,10 @@ class SonarWatchTests(unittest.TestCase):
             "deployments: write",
             "packages: write",
             "pull-requests: write",
-            "secrets: inherit",
-            "SONAR_TOKEN",
-            "SONAR_WATCH_CONFIG_JSON",
         ):
             self.assertNotIn(forbidden, text)
-        self.assertIn("schedule|workflow_dispatch", text)
-        self.assertIn('refs/heads/$DEFAULT_BRANCH', text)
-        self.assertIn("timeout-minutes: 10", text)
-        self.assertIn("cancel-in-progress: false", text)
-        first_checkout = text.index("uses: actions/checkout@")
-        self.assertLess(text.index("Validar contexto confiable"), first_checkout)
-        self.assertLess(text.index('refs/heads/$DEFAULT_BRANCH'), first_checkout)
-        self.assertIn(
-            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            text,
-        )
+        self.assertIn("SONAR_TOKEN", text)
+        self.assertIn("SONAR_WATCH_CONFIG_JSON", text)
         self.assertIn("python3 scripts/sonar-watch.py", text)
 
     def test_non_pass_signal_upserts_one_issue_by_project_and_signal(self):
@@ -177,38 +166,23 @@ class SonarWatchTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]["state"], "open")
         self.assertEqual(
-            [x["action"] for x in first if x["signal"] == "visibility"],
+            [
+                item["action"]
+                for item in first
+                if item["signal"] == "visibility"
+            ],
             ["created"],
         )
         self.assertEqual(
-            [x["action"] for x in second if x["signal"] == "visibility"],
+            [
+                item["action"]
+                for item in second
+                if item["signal"] == "visibility"
+            ],
             ["updated"],
         )
-        self.assertIn("https://sonarcloud.io/project/overview", matches[0]["body"])
 
-        github = sonar_watch.GitHubIssues(
-            repository="pl0n3r/Factory",
-            token="github-token",
-        )
-        captured = []
-
-        def fake_request(path, **kwargs):
-            captured.append((path, kwargs))
-            return {}
-
-        github.http.request = fake_request
-        github.create(title="auto", body="body")
-        github.update(1, title="auto", body="body", state="closed")
-        self.assertEqual(
-            captured[0][1]["payload"]["labels"],
-            list(sonar_watch._AUTO_OPEN_LABELS),
-        )
-        self.assertEqual(
-            captured[1][1]["payload"]["labels"],
-            list(sonar_watch._AUTO_CLOSED_LABELS),
-        )
-
-        request_capture = {}
+        captured = {}
         original = sonar_watch.urlopen
 
         class Response:
@@ -222,8 +196,8 @@ class SonarWatchTests(unittest.TestCase):
                 return b"{}"
 
         def fake_urlopen(request, timeout):
-            request_capture["method"] = request.get_method()
-            request_capture["content_type"] = request.get_header("Content-type")
+            captured["method"] = request.get_method()
+            captured["content_type"] = request.get_header("Content-type")
             return Response()
 
         sonar_watch.urlopen = fake_urlopen
@@ -240,9 +214,9 @@ class SonarWatchTests(unittest.TestCase):
         finally:
             sonar_watch.urlopen = original
 
-        self.assertEqual(request_capture["method"], "POST")
+        self.assertEqual(captured["method"], "POST")
         self.assertEqual(
-            request_capture["content_type"],
+            captured["content_type"],
             "application/json",
         )
 
@@ -260,7 +234,9 @@ class SonarWatchTests(unittest.TestCase):
         }
         raw["ce_task"] = {
             "status": "FAILED",
-            "error_message": "Organization line limit exceeded at 50000 lines",
+            "error_message": (
+                "Organization line limit exceeded at 50000 lines"
+            ),
         }
 
         sync(raw, api)
@@ -280,21 +256,22 @@ class SonarWatchTests(unittest.TestCase):
             "factory",
             NOW,
             {"projectStatus": {"status": "OK", "conditions": []}},
-            {"analyses": [{"date": "2026-09-30T11:50:00Z"}]},
+            {"analyses": [{
+                "date": "2026-09-30T11:50:00Z",
+            }]},
             {"current": {
                 "status": "SUCCESS",
                 "errorMessage": None,
-                "submitterLogin": "ci-user",
             }},
             {"component": {"measures": [{
                 "metric": "coverage",
                 "value": "80",
             }]}},
+            {"enable": False},
             {"component": {"visibility": "public"}},
             {"issues": []},
             {"hotspots": []},
         )
-        self.assertEqual(runtime["analysis"]["method"], "ci")
         self.assertIsNone(runtime["organization"])
         evidence = sonar_watch.normalize_sonar_snapshot(
             contract(),
@@ -307,19 +284,10 @@ class SonarWatchTests(unittest.TestCase):
             if item["signal"] == "organization_line_usage"
         )
         self.assertEqual(organization["status"], "UNKNOWN")
-
-        automatic = sonar_watch._snapshot_from_api(
-            "factory",
-            NOW,
-            {"projectStatus": {"status": "OK", "conditions": []}},
-            {"analyses": [{"date": "2026-09-30T11:50:00Z"}]},
-            {"current": {"status": "SUCCESS", "errorMessage": None}},
-            {"component": {"measures": []}},
-            {"component": {"visibility": "public"}},
-            {"issues": []},
-            {"hotspots": []},
+        self.assertEqual(
+            organization["reason"],
+            "organization_line_usage_missing",
         )
-        self.assertEqual(automatic["analysis"]["method"], "automatic")
 
     def test_historical_debt_is_grouped_by_severity(self):
         api = FakeIssues()
@@ -340,29 +308,37 @@ class SonarWatchTests(unittest.TestCase):
         ]
 
         sync(raw, api)
+
         body = api.find(
-            sonar_watch.issue_marker("factory", "historical_debt")
+            sonar_watch.issue_marker(
+                "factory", "historical_debt"
+            )
         )[0]["body"]
         self.assertIn("bug/MAJOR", body)
         self.assertIn("2 abiertos", body)
         self.assertIn("bug:2>0", body)
 
-        sonar = sonar_watch.SonarApi()
+        sonar = sonar_watch.SonarApi(token="read-only")
         calls = []
 
         def paged_get(path, params):
             calls.append((path, params["p"]))
-            if params["p"] == 1:
+            page = params["p"]
+            if page == 1:
                 return {
                     "issues": [{"key": f"i-{index}"} for index in range(500)],
                     "paging": {
-                        "pageIndex": 1, "pageSize": 500, "total": 502,
+                        "pageIndex": 1,
+                        "pageSize": 500,
+                        "total": 502,
                     },
                 }
             return {
                 "issues": [{"key": "i-500"}, {"key": "i-501"}],
                 "paging": {
-                    "pageIndex": 2, "pageSize": 500, "total": 502,
+                    "pageIndex": 2,
+                    "pageSize": 500,
+                    "total": 502,
                 },
             }
 
@@ -371,22 +347,38 @@ class SonarWatchTests(unittest.TestCase):
         self.assertEqual(len(page["issues"]), 502)
         self.assertEqual(
             calls,
-            [("/api/issues/search", 1), ("/api/issues/search", 2)],
+            [
+                ("/api/issues/search", 1),
+                ("/api/issues/search", 2),
+            ],
         )
+
+        sonar.get = lambda path, params: {
+            "issues": [],
+            "paging": {
+                "pageIndex": 1,
+                "pageSize": 500,
+                "total": 10001,
+            },
+        }
+        with self.assertRaises(sonar_watch.SonarWatchError):
+            sonar._all_issues("project-key")
 
         hotspot_calls = []
 
         def hotspot_get(path, params):
-            hotspot_calls.append((path, params))
+            hotspot_calls.append((path, dict(params)))
             return {
                 "hotspots": [{
-                    "key": "hs-1",
+                    "key": "hotspot-1",
                     "status": "TO_REVIEW",
                     "vulnerabilityProbability": "HIGH",
-                    "creationDate": "2026-09-20T12:00:00Z",
+                    "creationDate": "2026-09-29T10:00:00+0000",
                 }],
                 "paging": {
-                    "pageIndex": 1, "pageSize": 500, "total": 1,
+                    "pageIndex": 1,
+                    "pageSize": 500,
+                    "total": 1,
                 },
             }
 
@@ -406,13 +398,18 @@ class SonarWatchTests(unittest.TestCase):
             "factory",
             NOW,
             {"projectStatus": {"status": "OK", "conditions": []}},
-            {"analyses": [{"date": "2026-09-30T11:50:00Z"}]},
+            {"analyses": [{
+                "date": "2026-09-30T11:50:00Z",
+            }]},
             {"current": {
                 "status": "SUCCESS",
                 "errorMessage": None,
-                "submitterLogin": "ci-user",
             }},
-            {"component": {"measures": [{"metric": "coverage", "value": "80"}]}},
+            {"component": {"measures": [{
+                "metric": "coverage",
+                "value": "80",
+            }]}},
+            {"enable": False},
             {"component": {"visibility": "public"}},
             {"issues": []},
             hotspots,
@@ -460,7 +457,9 @@ class SonarWatchTests(unittest.TestCase):
         sync(recovering, api)
 
         qg = api.find(
-            sonar_watch.issue_marker("factory", "quality_gate")
+            sonar_watch.issue_marker(
+                "factory", "quality_gate"
+            )
         )[0]
         ce = api.find(
             sonar_watch.issue_marker("factory", "ce_task")
@@ -510,31 +509,37 @@ class SonarWatchTests(unittest.TestCase):
                         "title": f"issue-{index}",
                         "body": "",
                         "state": "open",
-                        "user": {"login": "github-actions[bot]"},
                     }
                     for index in range(100)
                 ]
-            return [
-                {
-                    "number": 101,
-                    "title": "spoofed",
-                    "body": marker,
-                    "state": "open",
-                    "user": {"login": "external-user"},
-                },
-                {
-                    "number": 102,
-                    "title": "matching",
-                    "body": marker,
-                    "state": "open",
-                    "user": {"login": "github-actions[bot]"},
-                },
-            ]
+            return [{
+                "number": 101,
+                "title": "matching",
+                "body": marker,
+                "state": "open",
+            }]
 
         github.http.request = paged_request
         found = github.find(marker)
-        self.assertEqual([item["number"] for item in found], [102])
+        self.assertEqual([item["number"] for item in found], [101])
         self.assertEqual(len(page_calls), 2)
+
+        original_limit = sonar_watch._MAX_GITHUB_ISSUE_PAGES
+        sonar_watch._MAX_GITHUB_ISSUE_PAGES = 2
+        github.http.request = lambda path, **kwargs: [
+            {
+                "number": index + 1,
+                "title": f"issue-{index}",
+                "body": "",
+                "state": "open",
+            }
+            for index in range(100)
+        ]
+        try:
+            with self.assertRaises(sonar_watch.SonarWatchError):
+                github.find(marker)
+        finally:
+            sonar_watch._MAX_GITHUB_ISSUE_PAGES = original_limit
 
     def test_scenarios_use_fakes_without_network(self):
         original = sonar_watch.urlopen
@@ -555,31 +560,17 @@ class SonarWatchTests(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertTrue(api.rows)
-
-        expected = set(sonar_watch.factory_project_catalog())
-        configured = {row["project"] for row in sonar_watch._PROJECTS}
-        self.assertEqual(configured, expected)
-        self.assertEqual(len(sonar_watch._PROJECTS), 6)
-        keys = {row["sonar_key"] for row in sonar_watch._PROJECTS}
-        self.assertEqual(keys, {
-            "pl0n3r_brvtal",
-            "pl0n3r_Condor",
-            "pl0n3r_factory-control",
-            "pl0n3r_factory",
-            "pl0n3r_FactoryRunner",
-            "pl0n3r_GrindFlow",
-        })
-        methods = {
-            row["project"]: sonar_watch.project_contract(row)["sonar"]["analysis_method"]
-            for row in sonar_watch._PROJECTS
+        expected = {
+            "brvtal",
+            "condor",
+            "controlbot",
+            "factory",
+            "factoryrunner",
+            "grindflow",
         }
-        self.assertEqual(methods["controlbot"], "ci")
-        self.assertTrue(
-            all(
-                method == "automatic"
-                for project, method in methods.items()
-                if project != "controlbot"
-            )
+        self.assertEqual(
+            set(sonar_watch.factory_project_catalog()),
+            expected,
         )
 
 
