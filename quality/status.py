@@ -20,9 +20,6 @@ WORK_ITEM_CLASSES = frozenset({
     "quality_performance_degraded", "quality_performance_unknown",
     "quality_performance_blocked", "quality_recovery_degraded",
     "quality_recovery_unknown", "quality_recovery_blocked",
-    "quality_sonar_quality_gate_failed", "quality_sonar_ce_task_failed",
-    "quality_sonar_line_usage_failed", "quality_sonar_config_drift",
-    "quality_sonar_debt_failed", "quality_sonar_unknown", "quality_sonar_stale",
 })
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _PROJECT_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -237,15 +234,15 @@ _SONAR_SIGNALS = frozenset({
     "quality_gate", "analysis_freshness", "ce_task", "organization_line_usage",
     "visibility", "analysis_method", "coverage", "historical_debt",
 })
-_SONAR_FAIL_CLASSES = {
-    "quality_gate": ("BLOCKED", "quality_sonar_quality_gate_failed"),
-    "ce_task": ("BLOCKED", "quality_sonar_ce_task_failed"),
-    "organization_line_usage": ("DEGRADED", "quality_sonar_line_usage_failed"),
-    "visibility": ("DEGRADED", "quality_sonar_config_drift"),
-    "analysis_method": ("DEGRADED", "quality_sonar_config_drift"),
-    "coverage": ("DEGRADED", "quality_sonar_config_drift"),
-    "analysis_freshness": ("DEGRADED", "quality_sonar_config_drift"),
-    "historical_debt": ("DEGRADED", "quality_sonar_debt_failed"),
+_SONAR_FAIL_STATES = {
+    "quality_gate": "BLOCKED",
+    "ce_task": "BLOCKED",
+    "organization_line_usage": "DEGRADED",
+    "visibility": "DEGRADED",
+    "analysis_method": "DEGRADED",
+    "coverage": "DEGRADED",
+    "analysis_freshness": "DEGRADED",
+    "historical_debt": "DEGRADED",
 }
 
 
@@ -258,11 +255,11 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
     if evidence is None:
         states.append("UNKNOWN")
         reasons.append("sonar_missing")
-        classes.append("quality_sonar_unknown")
+        classes.append("quality_evidence_unknown")
         return {
             "status": "UNKNOWN", "source": "sonar_evidence_v1",
             "reasons": ["sonar_missing"], "evidence_refs": [],
-            "work_item_classes": ["quality_sonar_unknown"],
+            "work_item_classes": ["quality_evidence_unknown"],
             "signals": [], "recalculated": False,
         }
 
@@ -340,16 +337,17 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
         local_reasons.append(reason_key)
         if status == "STALE":
             states.append("UNKNOWN"); local_states.append("UNKNOWN")
-            classes.append("quality_sonar_stale")
-            local_classes.append("quality_sonar_stale")
+            classes.append("quality_evidence_stale")
+            local_classes.append("quality_evidence_stale")
         elif status == "UNKNOWN":
             states.append("UNKNOWN"); local_states.append("UNKNOWN")
-            classes.append("quality_sonar_unknown")
-            local_classes.append("quality_sonar_unknown")
+            classes.append("quality_evidence_unknown")
+            local_classes.append("quality_evidence_unknown")
         else:
-            health_state, work_class = _SONAR_FAIL_CLASSES[name]
+            health_state = _SONAR_FAIL_STATES[name]
             states.append(health_state); local_states.append(health_state)
-            classes.append(work_class); local_classes.append(work_class)
+            classes.append("quality_gate_failed")
+            local_classes.append("quality_gate_failed")
 
     if seen != _SONAR_SIGNALS:
         raise QualityStatusError("sonar signals incompletas.")
