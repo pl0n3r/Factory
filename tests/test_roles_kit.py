@@ -198,6 +198,59 @@ class RolesKitTests(unittest.TestCase):
         self.assertNotIn("dba", roles)
         self.assertEqual(roles, ["contenido"])
 
+    def test_exact_word_does_not_trigger_marketing_roles(self):
+        roles, _ = classify(
+            context(
+                title="Validar SHA exacto",
+                body="La base exacta se conserva sin cambios de producto.",
+            )
+        )
+        self.assertNotIn("marketing", roles)
+        self.assertNotIn("contenido", roles)
+
+    def test_non_database_migration_does_not_trigger_dba(self):
+        roles, _ = classify(
+            context(
+                title="Migración de Sonar a CI-based",
+                body="Migración reversible de Automatic Analysis a CI-based.",
+                files=[".github/workflows/sonar.yml"],
+            )
+        )
+        self.assertNotIn("dba", roles)
+
+    def test_real_marketing_signals_still_trigger_marketing_and_content(self):
+        roles, _ = classify(context(body="CTA de campaña y campaign tracking."))
+        self.assertTrue({"marketing", "contenido"} <= set(roles))
+
+    def test_database_migration_signals_still_trigger_dba(self):
+        for body in (
+            "Migración de schema para pedidos.",
+            "Database migration for orders.",
+            "DB migration for orders.",
+        ):
+            with self.subTest(body=body):
+                roles, _ = classify(context(body=body))
+                self.assertIn("dba", roles)
+
+        roles, risks = classify(context(files=["migrations/2026_add_index.sql"]))
+        self.assertIn("dba", roles)
+        self.assertIn("schema", risks)
+
+    def test_text_role_false_positive_regression_matrix(self):
+        cases = (
+            ("SHA exacto y base exacta", {"marketing", "contenido"}, False),
+            ("Migración de Sonar a CI-based", {"dba"}, False),
+            ("CTA de campaña", {"marketing", "contenido"}, True),
+            ("Migración de schema", {"dba"}, True),
+        )
+        for body, expected, present in cases:
+            with self.subTest(body=body):
+                roles, _ = classify(context(body=body))
+                if present:
+                    self.assertTrue(expected <= set(roles))
+                else:
+                    self.assertTrue(expected.isdisjoint(roles))
+
     def test_catalog_accepts_additional_valid_role(self):
         original = json.loads(CATALOG.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
