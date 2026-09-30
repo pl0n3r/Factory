@@ -315,7 +315,7 @@ class QualityStatusTests(unittest.TestCase):
         blocked = health(sonar=True, sonar_ev=failed)
         self.assertEqual(blocked["state"], "BLOCKED")
         self.assertIn(
-            "quality_sonar_quality_gate_failed",
+            "quality_gate_failed",
             blocked["work_item_classes"],
         )
 
@@ -325,7 +325,7 @@ class QualityStatusTests(unittest.TestCase):
         unknown_health = health(sonar=True, sonar_ev=unknown)
         self.assertEqual(unknown_health["state"], "UNKNOWN")
         self.assertEqual(unknown_health["freshness"]["state"], "DEGRADED")
-        self.assertIn("quality_sonar_unknown", unknown_health["work_item_classes"])
+        self.assertIn("quality_evidence_unknown", unknown_health["work_item_classes"])
 
         stale = sonar_evidence()
         stale["signals"][2]["status"] = "STALE"
@@ -333,7 +333,7 @@ class QualityStatusTests(unittest.TestCase):
         stale["signals"][2]["freshness"]["state"] = "STALE"
         stale_health = health(sonar=True, sonar_ev=stale)
         self.assertEqual(stale_health["state"], "UNKNOWN")
-        self.assertIn("quality_sonar_stale", stale_health["work_item_classes"])
+        self.assertIn("quality_evidence_stale", stale_health["work_item_classes"])
 
     def test_sonar_reasons_and_refs_are_preserved_safely(self):
         evidence = sonar_evidence()
@@ -350,7 +350,7 @@ class QualityStatusTests(unittest.TestCase):
         )
         self.assertIn("sonar:factory:visibility:001", result["evidence_refs"])
         self.assertIn(
-            "quality_sonar_config_drift",
+            "quality_gate_failed",
             result["work_item_classes"],
         )
 
@@ -366,7 +366,7 @@ class QualityStatusTests(unittest.TestCase):
         evidence["signals"][7]["reason"] = "historical_debt_threshold_exceeded"
         degraded = health(sonar=True, sonar_ev=evidence)
         classes = quality_work_item_classes(degraded)
-        self.assertIn("quality_sonar_debt_failed", classes)
+        self.assertIn("quality_gate_failed", classes)
 
         payload = {
             "work_id": "quality-sonar-fix-491", "origin_mode": "automatic",
@@ -376,7 +376,7 @@ class QualityStatusTests(unittest.TestCase):
             "producer_ref": "quality-health-v1", "priority_class": "high",
             "depends_on": [], "claims": ["quality/status.py"],
             "policy_ref": "factory:quality", "evidence_refs": degraded["evidence_refs"],
-            "idempotency_key": "quality_sonar_debt_failed",
+            "idempotency_key": "quality_gate_failed",
         }
         context = WorkItemReadinessContext(
             authority_valid=True, policy_valid=True,
@@ -397,7 +397,7 @@ class QualityStatusTests(unittest.TestCase):
         missing = health(sonar=True, sonar_ev=None)
         self.assertEqual(missing["state"], "UNKNOWN")
         self.assertIn("sonar_missing", missing["reasons"])
-        self.assertIn("quality_sonar_unknown", missing["work_item_classes"])
+        self.assertIn("quality_evidence_unknown", missing["work_item_classes"])
 
         with self.assertRaises(QualityStatusError):
             health(sonar=False, sonar_ev=sonar_evidence())
