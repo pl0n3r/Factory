@@ -361,6 +361,7 @@ def _historical_debt(value, sonar, source_at, now, max_age, refs):
         raise SonarEvidenceError("debt debe ser lista acotada.")
 
     counts: dict[tuple[str, str], int] = {}
+    oldest_by_group: dict[tuple[str, str], int] = {}
     debt_refs = set(refs)
     oldest_age_days: int | None = None
     for raw in value:
@@ -376,7 +377,9 @@ def _historical_debt(value, sonar, source_at, now, max_age, refs):
         oldest_age_days = (
             age_days if oldest_age_days is None else max(oldest_age_days, age_days)
         )
-        counts[(debt_type, severity)] = counts.get((debt_type, severity), 0) + 1
+        key = (debt_type, severity)
+        counts[key] = counts.get(key, 0) + 1
+        oldest_by_group[key] = max(oldest_by_group.get(key, 0), age_days)
         debt_refs.add(_ref(row["evidence_ref"]))
 
     totals = {
@@ -400,7 +403,12 @@ def _historical_debt(value, sonar, source_at, now, max_age, refs):
             f"age_days:{oldest_age_days}>{sonar['max_debt_age_days']}"
         )
     grouped = [
-        {"type": debt_type, "severity": severity, "count": count}
+        {
+            "type": debt_type,
+            "severity": severity,
+            "count": count,
+            "oldest_age_days": oldest_by_group[(debt_type, severity)],
+        }
         for (debt_type, severity), count in sorted(counts.items())
     ]
     return _signal(
