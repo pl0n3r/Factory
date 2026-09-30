@@ -30,6 +30,8 @@ Cuando Quality Contract declara `sonar`, Quality Health consume exclusivamente l
 
 - PASS no degrada por sí solo;
 - UNKNOWN y STALE proyectan Quality Health a UNKNOWN y nunca habilitan PASS;
+- un FAIL con evidencia CURRENT afecta la salud, pero conserva freshness global CURRENT;
+- snapshot STALE exige señales STALE; PASS/FAIL solo son válidos con freshness CURRENT y cualquier combinación incoherente falla cerrado;
 - FAIL de Quality Gate o CE task es bloqueante;
 - FAIL de line usage, configuración/cobertura o deuda degrada y emite una clase correctiva cerrada;
 - razones y `evidence_refs` del normalizador se preservan con validación fail-closed;
