@@ -6,6 +6,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WF = (ROOT / ".github/workflows/etiquetas.yml").read_text(encoding="utf-8")
 
+
+def labels_job_permissions():
+    match = re.search(
+        r"(?ms)^  etiquetas:\n.*?^    permissions:\n"
+        r"(?P<permissions>(?:^      [^\n]+\n)+)^    steps:\n",
+        WF,
+    )
+    if match is None:
+        raise AssertionError("No se encontró el bloque permissions del job Labels")
+    return match.group("permissions")
+
+
 class EtiquetasWorkflowContractTests(unittest.TestCase):
     def test_modes_and_language_are_closed(self):
         self.assertIn('case "$MODE" in sync|validate|sweep)', WF)
@@ -20,13 +32,38 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("--catalog", WF)
         self.assertNotIn("inputs.kit_ref", WF)
 
+    def test_pr_validation_has_minimum_write_authority(self):
+        self.assertEqual(
+            labels_job_permissions(),
+            "      contents: read\n"
+            "      issues: write\n"
+            "      pull-requests: write\n",
+        )
+
+    def test_pr_validation_cannot_regress_to_read_only(self):
+        permissions = labels_job_permissions()
+        self.assertIn("pull-requests: write", permissions)
+        self.assertNotIn("pull-requests: read", permissions)
+
+    def test_metadata_permissions_remain_least_privilege(self):
+        permissions = labels_job_permissions()
+        self.assertEqual(
+            set(line.strip() for line in permissions.splitlines()),
+            {"contents: read", "issues: write", "pull-requests: write"},
+        )
+        self.assertIn("permissions:\n  contents: read", WF)
+        self.assertNotIn("contents: write", WF)
+        self.assertNotIn("actions: write", WF)
+        self.assertNotIn("checks: write", WF)
+        self.assertNotIn("id-token: write", WF)
+        self.assertNotIn("secrets: inherit", WF)
+
     def test_validate_and_sweep_lifecycle_remains_metadata_only(self):
         self.assertIn("name: Labels", WF)
         self.assertIn("plan-validation", WF)
         self.assertIn("sweep-plan", WF)
         self.assertIn("<!-- factory-label-validation -->", WF)
         self.assertIn("<!-- factory-auto-unlabeled -->", WF)
-        self.assertIn("pull-requests: read", WF)
         self.assertIn("linked_issue:$linked[0]", WF)
         self.assertIn("group: labels-${{ github.repository }}-${{ inputs.mode }}-${{ inputs.issue_number }}", WF)
         self.assertNotIn("github.run_id", WF)
@@ -35,8 +72,6 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertIn("auto-update.json", WF)
         self.assertIn("auto-close.json", WF)
         self.assertNotIn('-f state=open --input', WF)
-        self.assertNotIn("contents: write", WF)
-        self.assertNotIn("secrets: inherit", WF)
         self.assertIn("repository: pl0n3r/factory", WF)
 
     def test_external_actions_are_sha_pinned(self):
@@ -44,6 +79,7 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertTrue(actions)
         for action in actions:
             self.assertRegex(action, r"@[0-9a-f]{40}$")
+
 
 if __name__ == "__main__":
     unittest.main()
