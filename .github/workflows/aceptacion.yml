@@ -101,7 +101,8 @@ jobs:
           )
           print(json.dumps(pin))
           PY
-          gh api "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" > /tmp/checks.json
+          gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --slurp > /tmp/check-pages.json
+          jq '{check_runs: [.[].check_runs[]]}' /tmp/check-pages.json > /tmp/checks.json
           jq -n \
             --slurpfile issue /tmp/issue.json \
             --slurpfile checks /tmp/checks.json \
