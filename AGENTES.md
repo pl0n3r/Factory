@@ -74,6 +74,15 @@ Después de obtener la reserva con `/tomar`, revisa las etiquetas `rol: …` / `
 
 
 
+## Uso eficiente de Remote Desktop Commander
+
+- Prioriza GitHub/API y usa Remote Desktop Commander solo para trabajo que realmente requiera el Mac del dueño.
+- Agrupa varios pasos locales en una sola llamada o script; cuando leas archivos, combina lecturas relacionadas en vez de una llamada por archivo.
+- No sondees procesos ni releas archivos/directorios sin cambios. Ejecuta con espera acotada y lee el resultado una sola vez.
+- Limita la salida con filtros como `grep`, `head` o `--jq`; evita volcados completos cuando basta evidencia acotada.
+- Si una tarea previsiblemente requiere más de ~20 llamadas remotas, avisa antes y propone una ejecución más corta.
+- No hagas revisiones periódicas ni revalidaciones globales no solicitadas mediante este canal.
+- No está autorizado comprar plan Pro, recargar saldo ni asumir gasto para ampliar límites de Remote Desktop Commander.
 ## Contrato de eventos de reusable workflows
 
 Los reusables que hacen checkout o ejecutan código del repositorio consumidor deben fallar cerrado antes del checkout cuando el caller proviene de un evento privilegiado o no permitido. Además, esos reusables declaran `cache-mode: read`: pueden restaurar cachés, pero el código del consumidor no puede guardar ni sobrescribir caché de GitHub Actions. El CI base admite `pull_request`, `push` y `merge_group` para su contrato/preflight, pero los jobs que ejecutan PHP/Node del consumidor solo corren en `pull_request` o `merge_group`; en `push` el reusable no ejecuta código arbitrario del proyecto. Preview y aceptación solo admiten `pull_request`. No se permite ejecutar código del consumidor desde `pull_request_target`, `workflow_run`, `issue_comment`, `check_run`, `issues`, `schedule` ni `repository_dispatch`. Los workflows operativos que necesiten otros eventos deben validar explícitamente evento y rama principal antes del primer checkout.
