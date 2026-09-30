@@ -397,7 +397,7 @@ class QualityStatusTests(unittest.TestCase):
         missing = health(sonar=True, sonar_ev=None)
         self.assertEqual(missing["state"], "UNKNOWN")
         self.assertIn("sonar_missing", missing["reasons"])
-        self.assertIn("quality_evidence_unknown", missing["work_item_classes"])
+        self.assertIn("quality_evidence_missing", missing["work_item_classes"])
 
         with self.assertRaises(QualityStatusError):
             health(sonar=False, sonar_ev=sonar_evidence())
