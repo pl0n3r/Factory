@@ -67,6 +67,18 @@ class T(unittest.TestCase):
         self.assertNotIn("pull_request_target", TEMPLATE)
         self.assertNotIn("issue_comment", TEMPLATE)
 
+    def test_required_reviewer_comments_are_read_only_bounded_and_exact_pr(self):
+        self.assertIn('issues/$PR/comments?per_page=100', W)
+        self.assertIn('--comments-file "$comments_file"', W)
+        self.assertIn('MAX_EVIDENCE_BYTES: "2000000"', W)
+        self.assertIn('comments_bytes="$(wc -c < "$comments_file")"', W)
+        self.assertIn('(( comments_bytes <= MAX_EVIDENCE_BYTES ))', W)
+        self.assertIn('PR_JSON="$(gh api "repos/$REPOSITORY/pulls/$INPUT_PR")"', W)
+        self.assertIn('[[ "$CURRENT_HEAD" == "$EVENT_HEAD" ]]', W)
+        self.assertIn('[[ "$CURRENT_BASE" == "$EVENT_BASE" ]]', W)
+        self.assertNotIn("issues: write", W)
+        self.assertNotIn("issue_comment", W)
+
 
 if __name__ == "__main__":
     unittest.main()
