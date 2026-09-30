@@ -64,6 +64,9 @@ class Candidate:
     displaced_cycles: int = 0
     active_pr: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+    tranche_subject: bool = False
+    tranche: int | None = None
+    tranche_exception: bool = False
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,9 @@ class WorkItemReadinessContext:
     active_claims: frozenset[str] = frozenset()
     incompatible_reservation: bool = False
     active_idempotency_scopes: frozenset[str] = frozenset()
+    tranche_subject: bool = False
+    tranche: int | None = None
+    tranche_exception: bool = False
 
 
 @dataclass(frozen=True)
@@ -149,6 +155,9 @@ def candidate_from_work_item(
         active_claims=context.active_claims,
         idempotency_active=scope in context.active_idempotency_scopes,
         external_readiness_reasons=tuple(reasons),
+        tranche_subject=context.tranche_subject,
+        tranche=context.tranche,
+        tranche_exception=context.tranche_exception,
         metadata={
             "work_fingerprint": work_fingerprint(payload),
             "idempotency_scope": scope,
@@ -165,8 +174,58 @@ def candidate_from_work_item(
     )
 
 
-def classify_readiness(candidate: Candidate) -> Readiness:
-    reasons: list[str] = list(candidate.external_readiness_reasons)
+def _bypasses_tranche_gate(candidate: Candidate) -> bool:
+    """Conserva preempciones y la excepción Factory explícita de PLAN-AGENTES."""
+    if (
+        candidate.health
+        or candidate.incident
+        or candidate.auto_class == "AUTO_INCIDENT"
+        or candidate.active_fix
+        or candidate.owner_decision_resolved
+    ):
+        return True
+    return (
+        candidate.tranche_exception
+        and candidate.metadata.get("repository_ref") == "pl0n3r/Factory"
+    )
+
+
+def _tranche_readiness_reasons(
+    candidate: Candidate,
+    active_tranche: int | None,
+) -> tuple[str, ...]:
+    """Aplica §6 solo a trabajo que declara explícitamente estar sujeto a tandas."""
+    if not candidate.tranche_subject or _bypasses_tranche_gate(candidate):
+        return ()
+
+    if candidate.tranche is None or active_tranche is None:
+        return ("tranche_evidence_missing",)
+
+    if (
+        isinstance(candidate.tranche, bool)
+        or isinstance(active_tranche, bool)
+        or not isinstance(candidate.tranche, int)
+        or not isinstance(active_tranche, int)
+        or candidate.tranche < 1
+        or active_tranche < 1
+    ):
+        return ("tranche_evidence_invalid",)
+
+    if candidate.tranche > active_tranche:
+        return ("future_tranche_blocked",)
+
+    return ()
+
+
+def classify_readiness(
+    candidate: Candidate,
+    *,
+    active_tranche: int | None = None,
+) -> Readiness:
+    reasons: list[str] = [
+        *candidate.external_readiness_reasons,
+        *_tranche_readiness_reasons(candidate, active_tranche),
+    ]
     if candidate.incompatible_reservation:
         reasons.append("incompatible_reservation")
     if candidate.dependencies_open:
@@ -226,8 +285,15 @@ def select_next(
     candidates: Iterable[Candidate],
     *,
     aging_threshold: int = 3,
+    active_tranche: int | None = None,
 ) -> Candidate | None:
-    evaluated = [(candidate, classify_readiness(candidate)) for candidate in candidates]
+    evaluated = [
+        (
+            candidate,
+            classify_readiness(candidate, active_tranche=active_tranche),
+        )
+        for candidate in candidates
+    ]
     ready = [candidate for candidate, state in evaluated if state.ready]
     if not ready:
         return None
@@ -244,12 +310,24 @@ def parallel_ready(
     candidates: Iterable[Candidate],
     *,
     aging_threshold: int = 3,
+    active_tranche: int | None = None,
 ) -> list[Candidate]:
-    remaining = [candidate for candidate in candidates if classify_readiness(candidate).ready]
+    remaining = [
+        candidate
+        for candidate in candidates
+        if classify_readiness(
+            candidate,
+            active_tranche=active_tranche,
+        ).ready
+    ]
     selected: list[Candidate] = []
     claimed: set[str] = set()
     while remaining:
-        candidate = select_next(remaining, aging_threshold=aging_threshold)
+        candidate = select_next(
+            remaining,
+            aging_threshold=aging_threshold,
+            active_tranche=active_tranche,
+        )
         if candidate is None:
             break
         remaining.remove(candidate)
@@ -263,13 +341,24 @@ def dispatch_record(
     candidates: Iterable[Candidate],
     *,
     aging_threshold: int = 3,
+    active_tranche: int | None = None,
 ) -> dict[str, object]:
     items = list(candidates)
     keys = [candidate.key for candidate in items]
     if len(keys) != len(set(keys)):
         raise ValueError("candidate keys must be unique")
-    states = {candidate.key: classify_readiness(candidate) for candidate in items}
-    selected = select_next(items, aging_threshold=aging_threshold)
+    states = {
+        candidate.key: classify_readiness(
+            candidate,
+            active_tranche=active_tranche,
+        )
+        for candidate in items
+    }
+    selected = select_next(
+        items,
+        aging_threshold=aging_threshold,
+        active_tranche=active_tranche,
+    )
     ready = [candidate for candidate in items if states[candidate.key].ready]
     excluded = {
         candidate.key: list(states[candidate.key].reasons)
@@ -292,11 +381,15 @@ def dispatch_record(
                 "unlock_impact": candidate.unlock_impact,
                 "transversal_impact": candidate.transversal_impact,
                 "claims": sorted(candidate.claims),
+                "tranche_subject": candidate.tranche_subject,
+                "tranche": candidate.tranche,
+                "tranche_exception": candidate.tranche_exception,
                 "metadata": dict(candidate.metadata),
             }
             for candidate in items
         },
         "aging_threshold": aging_threshold,
+        "active_tranche": active_tranche,
     }
 
 
@@ -374,6 +467,7 @@ def adaptive_dispatch_record(
     replan_action: str,
     replan_reasons: tuple[str, ...] = (),
     aging_threshold: int = 3,
+    active_tranche: int | None = None,
 ) -> dict[str, object]:
     """Compone Adaptive Orchestration con el único pipeline de Dispatcher V2."""
     adapted = adapt_candidates_for_adaptive(
@@ -383,7 +477,11 @@ def adaptive_dispatch_record(
         replan_action=replan_action,
         replan_reasons=replan_reasons,
     )
-    record = dispatch_record(adapted, aging_threshold=aging_threshold)
+    record = dispatch_record(
+        adapted,
+        aging_threshold=aging_threshold,
+        active_tranche=active_tranche,
+    )
     record["adaptive"] = {
         "snapshot_fingerprint": fencing.snapshot_fingerprint,
         "event_fingerprint": fencing.event_fingerprint,
