@@ -20,7 +20,7 @@ La concurrencia del workflow está serializada y el sincronizador falla cerrado 
 
 ## Evidencia y remediación
 
-El cuerpo del Issue conserva estado, razón, freshness, referencias opacas y origen. Además:
+El cuerpo del Issue conserva estado, razón, freshness, referencias opacas y un enlace de origen canónico `https://sonarcloud.io/project/overview?id=<sonar_key>`. La URL se valida contra ese único host/path y no acepta parámetros adicionales. Además:
 
 - Quality Gate incluye la condición fallida con actual/threshold;
 - CE task incluye `error_message` ya saneado por el normalizador, incluido un line-limit;
