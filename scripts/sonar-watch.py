@@ -112,6 +112,8 @@ def render_issue_body(
 def sync_project(
     *, contract, snapshot, observed_at, project_ref, origin_ref, origin_url, issues
 ):
+    if not isinstance(origin_url, str) or _ORIGIN_URL.fullmatch(origin_url) is None:
+        raise SonarWatchError("origin_url Sonar inválida.")
     evidence = normalize_sonar_snapshot(contract, snapshot, observed_at=observed_at)
     health = derive_quality_health(
         contract, [], [], observed_at=observed_at, project_ref=project_ref,
