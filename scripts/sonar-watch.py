@@ -331,21 +331,36 @@ class SonarApi:
             result_name="hotspots", extra={"status": "TO_REVIEW"},
         )}
 
-    def snapshot(self, cfg: dict[str, Any], *, observed_at: str):
+    def snapshot(
+        self,
+        cfg: dict[str, Any],
+        *,
+        observed_at: str,
+        component: dict[str, Any] | None = None,
+    ):
         key = cfg["sonar_key"]
+        component = component or self.get(
+            "/api/components/show",
+            {"component": key},
+        )
         qg = self.get("/api/qualitygates/project_status", {"projectKey": key})
         analyses = self.get("/api/project_analyses/search", {"project": key, "ps": 1})
         ce = self.get("/api/ce/component", {"component": key})
-        measures = self.get("/api/measures/component", {"component": key, "metricKeys": "coverage,ncloc"})
-        autoscan = self.get("/api/autoscan/activation", {"projectKey": key})
-        component = self.get("/api/components/show", {"component": key})
+        measures = self.get(
+            "/api/measures/component",
+            {"component": key, "metricKeys": "coverage,ncloc"},
+        )
+        settings = self.get(
+            "/api/settings/values",
+            {"component": key, "keys": "sonar.autoscan.enabled"},
+        )
         return _snapshot_from_api(
-            cfg["project"], observed_at, qg, analyses, ce, measures, autoscan,
+            cfg["project"], observed_at, qg, analyses, ce, measures, settings,
             component, self._all_issues(key), self._all_hotspots(key),
         )
 
 
-def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, autoscan, component, issues, hotspots):
+def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, settings, component, issues, hotspots):
     status = qg.get("projectStatus", {})
     conditions = [{
         "metric": row.get("metricKey"), "status": row.get("status"),
@@ -379,12 +394,13 @@ def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, autosca
             "evidence_ref": f"sonar:{project}:hotspot:{row['key']}",
         })
     current = ce.get("current")
+    method = None if not analysis_rows else SonarApi.analysis_method_from_settings(settings)
     return {
         "project": project, "snapshot_at": observed_at,
         "quality_gate": {"status": status.get("status"), "conditions": conditions},
         "analysis": None if not analysis_rows else {
             "analyzed_at": analysis_rows[0].get("date"),
-            "method": "automatic" if autoscan.get("enable") is True else "ci",
+            "method": method,
             "coverage_available": coverage,
         },
         "ce_task": None if not current else {
