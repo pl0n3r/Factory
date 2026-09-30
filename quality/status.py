@@ -255,11 +255,11 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
     if evidence is None:
         states.append("UNKNOWN")
         reasons.append("sonar_missing")
-        classes.append("quality_evidence_unknown")
+        classes.append("quality_evidence_missing")
         return {
             "status": "UNKNOWN", "source": "sonar_evidence_v1",
             "reasons": ["sonar_missing"], "evidence_refs": [],
-            "work_item_classes": ["quality_evidence_unknown"],
+            "work_item_classes": ["quality_evidence_missing"],
             "signals": [], "recalculated": False,
         }
 
