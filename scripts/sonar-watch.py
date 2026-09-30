@@ -251,6 +251,7 @@ class GitHubIssues:
 
 class SonarApi:
     def __init__(self, *, token: str):
+        self.token = token
         self.http = HttpJson(
             token=token,
             base_url="https://sonarcloud.io",
