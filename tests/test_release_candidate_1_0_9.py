@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regresiones del candidato Factory 1.0.9."""
+"""Regresiones históricas introducidas con Factory 1.0.9."""
 
 from __future__ import annotations
 
@@ -10,18 +10,21 @@ from pathlib import Path
 
 
 class ReleaseCandidate109Tests(unittest.TestCase):
-    """Fija versión, contrato cross-main y frontera humana de publicación."""
+    """Conserva el contrato cross-main sin congelar versiones posteriores."""
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
-    def test_candidate_version_is_1_0_9(self) -> None:
-        """La fuente canónica declara exactamente 1.0.9."""
+    def test_candidate_is_at_least_1_0_9(self) -> None:
+        """Las versiones posteriores conservan como mínimo la capacidad de 1.0.9."""
         payload = json.loads(
             (self.root / "config" / "version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.9"})
+        self.assertEqual(set(payload), {"version"})
+        self.assertRegex(payload["version"], r"^\d+\.\d+\.\d+$")
+        version = tuple(int(part) for part in payload["version"].split("."))
+        self.assertGreaterEqual(version, (1, 0, 9))
 
     def test_candidate_contains_cross_main_bootstrap_contract(self) -> None:
         """El candidato conserva autenticidad histórica y cadena legacy lineal."""
@@ -56,7 +59,7 @@ class ReleaseCandidate109Tests(unittest.TestCase):
             self.assertIn(marker, regressions)
 
     def test_candidate_keeps_human_release_boundary(self) -> None:
-        """Preparar 1.0.9 no elimina la puerta humana de publicación."""
+        """Versiones posteriores no eliminan la puerta humana de publicación."""
         workflow = (
             self.root / ".github" / "workflows" / "release-bootstrap.yml"
         ).read_text(encoding="utf-8")
