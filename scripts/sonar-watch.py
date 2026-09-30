@@ -81,6 +81,11 @@ def _origin_url(sonar_key: str) -> str:
     return f"https://sonarcloud.io/project/overview?id={sonar_key}"
 
 
+def _validate_origin_url(origin_url: str) -> None:
+    if not isinstance(origin_url, str) or _ORIGIN_URL.fullmatch(origin_url) is None:
+        raise SonarWatchError("origin_url Sonar inválida.")
+
+
 def render_issue_body(
     project: str,
     signal: dict[str, Any],
@@ -88,8 +93,7 @@ def render_issue_body(
     origin: str,
     origin_url: str,
 ) -> str:
-    if not isinstance(origin_url, str) or _ORIGIN_URL.fullmatch(origin_url) is None:
-        raise SonarWatchError("origin_url Sonar inválida.")
+    _validate_origin_url(origin_url)
     _safe(signal, "signal")
     freshness = signal["freshness"]
     refs = "\n".join(f"- `{ref}`" for ref in signal["evidence_refs"]) or "- ninguna"
