@@ -52,6 +52,19 @@ def sample(project="factory"):
     }
 
 
+def sonar_config():
+    return {
+        "expected_visibility": "public",
+        "analysis_method": "ci",
+        "max_analysis_age_seconds": 86400,
+        "max_organization_line_usage_percent": 80,
+        "max_open_vulnerabilities": 0,
+        "max_open_bugs": 10,
+        "max_open_hotspots": 0,
+        "max_debt_age_days": 30,
+    }
+
+
 class QualityContractTests(unittest.TestCase):
     def test_contract_v1_schema_is_closed_and_deterministic(self):
         left = sample()
@@ -73,6 +86,105 @@ class QualityContractTests(unittest.TestCase):
         )
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(schema["properties"]["version"], {"const": 1})
+
+    def test_legacy_contract_without_sonar_preserves_canonical_form_and_fingerprint(self):
+        expected = (
+            '{"accessibility":{"target":"WCAG_AA"},'
+            '"compatibility":{"browsers":["chromium"],"devices":[],"runtimes":["python-3"]},'
+            '"dimensions":{"performance":{"required":true,"source_ref":"pl0n3r/Factory#304"},'
+            '"recovery":{"required":true,"source_ref":"pl0n3r/Factory#305"}},'
+            '"evidence_freshness_seconds":3600,'
+            '"invariants":["authorization","no-secret-logging"],'
+            '"migration":{"strategy":"NOT_APPLICABLE"},'
+            '"project":"factory",'
+            '"smoke":{"required":true,"source_ref":"pl0n3r/Factory#306"},'
+            '"surfaces":[{"criticality":"high","id":"admin","required_gates":["contract","security","unit"]},'
+            '{"criticality":"medium","id":"public-web","required_gates":["accessibility","browser","e2e"]}],'
+            '"version":1}'
+        )
+        self.assertEqual(canonical_quality_contract(sample()), expected)
+        self.assertEqual(
+            quality_contract_fingerprint(sample()),
+            "6f98b2e3c47f7552df263a41bd20894c518cdfb276cad269c4e930f0f8ec5133",
+        )
+        self.assertNotIn("sonar", validate_quality_contract(sample()))
+
+    def test_sonar_monitoring_thresholds_are_explicit_and_deterministic(self):
+        payload = sample()
+        payload["sonar"] = sonar_config()
+        normalized = validate_quality_contract(payload)
+
+        self.assertEqual(normalized["sonar"], sonar_config())
+        self.assertEqual(
+            canonical_quality_contract(payload),
+            canonical_quality_contract(copy.deepcopy(payload)),
+        )
+        self.assertEqual(
+            set(normalized["sonar"]),
+            {
+                "expected_visibility",
+                "analysis_method",
+                "max_analysis_age_seconds",
+                "max_organization_line_usage_percent",
+                "max_open_vulnerabilities",
+                "max_open_bugs",
+                "max_open_hotspots",
+                "max_debt_age_days",
+            },
+        )
+
+    def test_invalid_sonar_monitoring_contract_fails_closed(self):
+        cases = []
+
+        unknown = sonar_config()
+        unknown["extra"] = True
+        cases.append(unknown)
+
+        for field, value in (
+            ("expected_visibility", "internal"),
+            ("analysis_method", "hybrid"),
+            ("max_analysis_age_seconds", 0),
+            ("max_organization_line_usage_percent", 0),
+            ("max_organization_line_usage_percent", 101),
+            ("max_open_vulnerabilities", -1),
+            ("max_open_bugs", True),
+            ("max_open_hotspots", -1),
+            ("max_debt_age_days", -1),
+        ):
+            candidate = sonar_config()
+            candidate[field] = value
+            cases.append(candidate)
+
+        for sonar in cases:
+            payload = sample()
+            payload["sonar"] = sonar
+            with self.subTest(sonar=sonar):
+                with self.assertRaises(QualityContractError):
+                    validate_quality_contract(payload)
+
+    def test_sonar_schema_extension_is_optional_and_closed(self):
+        schema = json.loads(
+            (ROOT / "quality" / "contract.schema.json").read_text()
+        )
+        self.assertIn("sonar", schema["properties"])
+        self.assertNotIn("sonar", schema["required"])
+
+        sonar = schema["$defs"]["sonar"]
+        self.assertFalse(sonar["additionalProperties"])
+        self.assertEqual(
+            set(sonar["required"]),
+            {
+                "expected_visibility",
+                "analysis_method",
+                "max_analysis_age_seconds",
+                "max_organization_line_usage_percent",
+                "max_open_vulnerabilities",
+                "max_open_bugs",
+                "max_open_hotspots",
+                "max_debt_age_days",
+            },
+        )
+        self.assertEqual(set(sonar["properties"]), set(sonar["required"]))
 
     def test_contract_supports_project_specific_surfaces_and_required_gates(self):
         factory = validate_quality_contract(sample("factory"))
@@ -162,6 +274,9 @@ class QualityContractTests(unittest.TestCase):
             "Recovery",
             "scheduler/backlog",
             "#344–#348",
+            "Sonar monitoring no configurado",
+            "No existen defaults Sonar implícitos",
+            "max_organization_line_usage_percent",
         ):
             self.assertIn(marker, text)
 

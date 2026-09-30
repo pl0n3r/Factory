@@ -16,6 +16,8 @@ GATES = {
 }
 ACCESSIBILITY = {"NOT_APPLICABLE", "WCAG_AA", "WCAG_AAA"}
 MIGRATION = {"NOT_APPLICABLE", "FORWARD_ROLLBACK", "EXPAND_CONTRACT"}
+SONAR_VISIBILITY = {"public", "private"}
+SONAR_ANALYSIS_METHOD = {"automatic", "ci"}
 _ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _SENSITIVE = re.compile(
@@ -25,6 +27,8 @@ _SENSITIVE = re.compile(
 MAX_SURFACES = 50
 MAX_ITEMS = 64
 MAX_FRESHNESS_SECONDS = 31_536_000
+MAX_SONAR_DEBT_ITEMS = 1_000_000
+MAX_SONAR_DEBT_AGE_DAYS = 36_500
 
 
 class QualityContractError(ValueError):
@@ -34,11 +38,12 @@ class QualityContractError(ValueError):
 def validate_quality_contract(payload: Any) -> dict[str, Any]:
     """Valida y normaliza Quality Contract v1 de forma determinista."""
     _reject_sensitive(payload)
-    data = _exact(payload, {
+    required = {
         "version", "project", "surfaces", "invariants", "compatibility",
         "accessibility", "migration", "smoke", "evidence_freshness_seconds",
         "dimensions",
-    }, "contract")
+    }
+    data = _closed_optional(payload, required, {"sonar"}, "contract")
     if data["version"] != VERSION:
         raise QualityContractError("version debe ser 1.")
 
@@ -47,7 +52,7 @@ def validate_quality_contract(payload: Any) -> dict[str, Any]:
     )
     dimensions = _exact(data["dimensions"], {"performance", "recovery"}, "dimensions")
 
-    return {
+    normalized = {
         "version": VERSION,
         "project": _identifier(data["project"], "project"),
         "surfaces": _surfaces(data["surfaces"]),
@@ -69,6 +74,9 @@ def validate_quality_contract(payload: Any) -> dict[str, Any]:
             for key in ("performance", "recovery")
         },
     }
+    if "sonar" in data:
+        normalized["sonar"] = _sonar(data["sonar"])
+    return normalized
 
 
 def canonical_quality_contract(payload: Any) -> str:
@@ -80,6 +88,58 @@ def canonical_quality_contract(payload: Any) -> str:
 
 def quality_contract_fingerprint(payload: Any) -> str:
     return hashlib.sha256(canonical_quality_contract(payload).encode()).hexdigest()
+
+
+def _sonar(value: Any) -> dict[str, Any]:
+    row = _exact(
+        value,
+        {
+            "expected_visibility",
+            "analysis_method",
+            "max_analysis_age_seconds",
+            "max_organization_line_usage_percent",
+            "max_open_vulnerabilities",
+            "max_open_bugs",
+            "max_open_hotspots",
+            "max_debt_age_days",
+        },
+        "sonar",
+    )
+    visibility = row["expected_visibility"]
+    if not isinstance(visibility, str) or visibility not in SONAR_VISIBILITY:
+        raise QualityContractError("sonar.expected_visibility fuera del catálogo.")
+    method = row["analysis_method"]
+    if not isinstance(method, str) or method not in SONAR_ANALYSIS_METHOD:
+        raise QualityContractError("sonar.analysis_method fuera del catálogo.")
+
+    return {
+        "expected_visibility": visibility,
+        "analysis_method": method,
+        "max_analysis_age_seconds": _bounded_int(
+            row["max_analysis_age_seconds"], "sonar.max_analysis_age_seconds"
+        ),
+        "max_organization_line_usage_percent": _bounded_int_range(
+            row["max_organization_line_usage_percent"],
+            "sonar.max_organization_line_usage_percent",
+            minimum=1,
+            maximum=100,
+        ),
+        "max_open_vulnerabilities": _bounded_nonnegative_int(
+            row["max_open_vulnerabilities"], "sonar.max_open_vulnerabilities"
+        ),
+        "max_open_bugs": _bounded_nonnegative_int(
+            row["max_open_bugs"], "sonar.max_open_bugs"
+        ),
+        "max_open_hotspots": _bounded_nonnegative_int(
+            row["max_open_hotspots"], "sonar.max_open_hotspots"
+        ),
+        "max_debt_age_days": _bounded_int_range(
+            row["max_debt_age_days"],
+            "sonar.max_debt_age_days",
+            minimum=0,
+            maximum=MAX_SONAR_DEBT_AGE_DAYS,
+        ),
+    }
 
 
 def _surfaces(value: Any) -> list[dict[str, Any]]:
@@ -140,7 +200,31 @@ def _catalog(value: Any, allowed: set[str] | None, label: str, *, require_nonemp
 
 
 def _bounded_int(value: Any, label: str) -> int:
-    if type(value) is not int or not 1 <= value <= MAX_FRESHNESS_SECONDS:
+    return _bounded_int_range(
+        value,
+        label,
+        minimum=1,
+        maximum=MAX_FRESHNESS_SECONDS,
+    )
+
+
+def _bounded_nonnegative_int(value: Any, label: str) -> int:
+    return _bounded_int_range(
+        value,
+        label,
+        minimum=0,
+        maximum=MAX_SONAR_DEBT_ITEMS,
+    )
+
+
+def _bounded_int_range(
+    value: Any,
+    label: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
         raise QualityContractError(f"{label} fuera de límites.")
     return value
 
@@ -148,6 +232,20 @@ def _bounded_int(value: Any, label: str) -> int:
 def _identifier(value: Any, label: str) -> str:
     if not isinstance(value, str) or _ID.fullmatch(value) is None:
         raise QualityContractError(f"{label} inválido.")
+    return value
+
+
+def _closed_optional(
+    value: Any,
+    required: set[str],
+    optional: set[str],
+    label: str,
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise QualityContractError(f"{label} contiene campos faltantes o no permitidos.")
+    keys = set(value)
+    if not required.issubset(keys) or not keys.issubset(required | optional):
+        raise QualityContractError(f"{label} contiene campos faltantes o no permitidos.")
     return value
 
 
