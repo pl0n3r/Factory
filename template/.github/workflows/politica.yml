@@ -2,6 +2,8 @@ name: Política
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
 permissions:
   contents: read
   pull-requests: read
@@ -10,3 +12,4 @@ jobs:
     uses: pl0n3r/factory/.github/workflows/politica.yml@v1
     with:
       pr_number: ${{ github.event.pull_request.number }}
+      required_review_bot: ""
