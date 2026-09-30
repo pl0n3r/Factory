@@ -32,24 +32,24 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("--catalog", WF)
         self.assertNotIn("inputs.kit_ref", WF)
 
-    def test_pr_validation_has_minimum_write_authority(self):
+    def test_pr_validation_uses_metadata_only_permissions(self):
         self.assertEqual(
             labels_job_permissions(),
             "      contents: read\n"
             "      issues: write\n"
-            "      pull-requests: write\n",
+            "      pull-requests: read\n",
         )
 
-    def test_pr_validation_cannot_regress_to_read_only(self):
+    def test_pr_validation_cannot_regress_to_write(self):
         permissions = labels_job_permissions()
-        self.assertIn("pull-requests: write", permissions)
-        self.assertNotIn("pull-requests: read", permissions)
+        self.assertIn("pull-requests: read", permissions)
+        self.assertNotIn("pull-requests: write", permissions)
 
     def test_metadata_permissions_remain_least_privilege(self):
         permissions = labels_job_permissions()
         self.assertEqual(
             set(line.strip() for line in permissions.splitlines()),
-            {"contents: read", "issues: write", "pull-requests: write"},
+            {"contents: read", "issues: write", "pull-requests: read"},
         )
         self.assertIn("permissions:\n  contents: read", WF)
         self.assertNotIn("contents: write", WF)

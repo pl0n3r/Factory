@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Regresión del contrato de arranque caller↔reusable para Etiquetas."""
+
+from __future__ import annotations
+
+import re
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REUSABLE = (ROOT / ".github/workflows/etiquetas.yml").read_text(encoding="utf-8")
+TEMPLATE = (ROOT / "template/.github/workflows/etiquetas.yml").read_text(encoding="utf-8")
+EXPECTED = {"contents: read", "issues: write", "pull-requests: read"}
+
+
+def job_block(text: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)",
+        text,
+    )
+    if match is None:
+        raise AssertionError(f"No se encontró el job {name}")
+    return match.group("body")
+
+
+def permissions(text: str, name: str) -> set[str]:
+    block = job_block(text, name)
+    match = re.search(
+        r"(?ms)^    permissions:\n(?P<permissions>(?:^      [^\n]+\n)+)",
+        block,
+    )
+    if match is None:
+        raise AssertionError(f"No se encontró permissions en {name}")
+    return {line.strip() for line in match.group("permissions").splitlines()}
+
+
+class LabelsReusableStartupTests(unittest.TestCase):
+    def test_reusable_contract_is_valid_for_pull_request_callers(self) -> None:
+        self.assertEqual(permissions(REUSABLE, "etiquetas"), EXPECTED)
+        self.assertNotIn("pull-requests: write", job_block(REUSABLE, "etiquetas"))
+
+    def test_template_caller_uses_minimum_mode_specific_permissions(self) -> None:
+        for name in ("sync", "validar-issue", "validar-pr", "sweep"):
+            with self.subTest(job=name):
+                self.assertEqual(permissions(TEMPLATE, name), EXPECTED)
+
+    def test_caller_and_reusable_startup_contract_regression(self) -> None:
+        reusable = permissions(REUSABLE, "etiquetas")
+        for name in ("sync", "validar-issue", "validar-pr", "sweep"):
+            caller = permissions(TEMPLATE, name)
+            self.assertTrue(
+                reusable.issubset(caller),
+                msg=f"{name} concede menos autoridad que el reusable: {caller} vs {reusable}",
+            )
+        self.assertEqual(TEMPLATE.count("pull-requests: write"), 0)
+        self.assertEqual(REUSABLE.count("pull-requests: write"), 0)
+
+    def test_modes_remain_closed_timed_and_fail_closed(self) -> None:
+        self.assertIn("workflow_call:", REUSABLE)
+        self.assertIn("timeout-minutes: 8", REUSABLE)
+        self.assertIn('case "$MODE" in sync|validate|sweep)', REUSABLE)
+        self.assertIn('case "$LANGUAGE" in es|en)', REUSABLE)
+        self.assertIn("persist-credentials: false", REUSABLE)
+        self.assertIn("repository: pl0n3r/factory", REUSABLE)
+        self.assertNotIn("secrets: inherit", REUSABLE)
+        self.assertNotIn("contents: write", REUSABLE)
+        self.assertNotIn("actions: write", REUSABLE)
+        self.assertNotIn("checks: write", REUSABLE)
+        self.assertNotIn("id-token: write", REUSABLE)
+
+
+if __name__ == "__main__":
+    unittest.main()
