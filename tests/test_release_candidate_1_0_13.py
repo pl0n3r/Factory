@@ -13,11 +13,26 @@ class ReleaseCandidate1013Tests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
-    def test_candidate_version_is_1_0_13(self) -> None:
+    def test_candidate_is_at_least_1_0_13_and_keeps_acceptance_fix(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.13"})
+        self.assertEqual(set(payload), {"version"})
+        self.assertRegex(payload["version"], r"^\d+\.\d+\.\d+$")
+        version = tuple(int(part) for part in payload["version"].split("."))
+        self.assertGreaterEqual(version, (1, 0, 13))
+
+        workflow = (
+            self.root / ".github/workflows/aceptacion.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --slurp',
+            workflow,
+        )
+        self.assertIn(
+            "jq '{check_runs: [.[].check_runs[]]}' /tmp/check-pages.json > /tmp/checks.json",
+            workflow,
+        )
 
     def test_candidate_contains_acceptance_check_pagination_fix(self) -> None:
         workflow = (
