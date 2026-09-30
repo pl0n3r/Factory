@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Watcher Sonar: lectura read-only + Issues AUTO idempotentes en Factory."""
+"""Sonar Watch: lectura Sonar read-only e Issues AUTO idempotentes."""
 from __future__ import annotations
 
-import base64
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -19,238 +18,134 @@ from quality.status import derive_quality_health
 
 AUTO_PREFIX = "[AUTO] Sonar"
 MARKER_PREFIX = "<!-- factory-sonar-watch "
-_SENSITIVE = re.compile(
+_SONAR_PAGE_SIZE = 500
+_MAX_SONAR_ISSUES = 10_000
+_MAX_GITHUB_ISSUE_PAGES = 100
+SENSITIVE = re.compile(
     r"(?i)(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)"
     r"\s*[:=]|bearer\s+[A-Za-z0-9._~+/-]{8,}"
 )
-_MAX_GITHUB_ISSUE_PAGES = 100
-_MAX_SONAR_ISSUES = 10_000
-_SONAR_PAGE_SIZE = 500
 
 
 class SonarWatchError(ValueError):
-    """Fallo seguro del watcher."""
+    """El watcher no puede demostrar una operación segura."""
 
 
-def _json_bytes(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+def issue_marker(project: str, signal: str) -> str:
+    fingerprint = hashlib.sha256(f"{project}|{signal}".encode()).hexdigest()[:24]
+    payload = {"fingerprint": fingerprint, "project": project, "signal": signal, "version": 1}
+    return MARKER_PREFIX + json.dumps(payload, sort_keys=True, separators=(",", ":")) + " -->"
 
 
-def _safe_json(value: Any, label: str) -> Any:
+def _safe(value: Any, label: str) -> None:
     try:
         encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise SonarWatchError(f"{label} inválido.") from exc
-    if len(encoded.encode()) > 500_000 or _SENSITIVE.search(encoded):
+    if len(encoded.encode()) > 500_000 or SENSITIVE.search(encoded):
         raise SonarWatchError(f"{label} contiene forma sensible.")
-    return value
-
-
-def _fingerprint(project: str, signal: str) -> str:
-    return hashlib.sha256(f"{project}|{signal}".encode()).hexdigest()[:24]
-
-
-def issue_marker(project: str, signal: str) -> str:
-    payload = {
-        "fingerprint": _fingerprint(project, signal),
-        "project": project,
-        "signal": signal,
-        "version": 1,
-    }
-    return MARKER_PREFIX + json.dumps(
-        payload, sort_keys=True, separators=(",", ":")
-    ) + " -->"
-
-
-def _fresh_current(signal: dict[str, Any]) -> bool:
-    freshness = signal.get("freshness")
-    return (
-        signal.get("status") == "PASS"
-        and isinstance(freshness, dict)
-        and freshness.get("state") == "CURRENT"
-    )
 
 
 def _detail_lines(signal: dict[str, Any]) -> list[str]:
     details = signal.get("details")
     if not isinstance(details, dict):
         raise SonarWatchError("details Sonar inválidos.")
-    name = signal["signal"]
-    lines: list[str] = []
-    if name == "quality_gate":
-        for row in details.get("failed_conditions", []):
-            if not isinstance(row, dict):
-                raise SonarWatchError("condición QG inválida.")
-            lines.append(
-                f"- QG `{row.get('metric')}`: actual=`{row.get('actual')}`, "
-                f"threshold=`{row.get('threshold')}`"
-            )
-    elif name == "ce_task" and details.get("error_message"):
-        lines.append(f"- CE: {details['error_message']}")
-    elif name == "historical_debt":
-        for row in details.get("counts", []):
-            if not isinstance(row, dict):
-                raise SonarWatchError("deuda Sonar inválida.")
-            lines.append(
-                f"- `{row.get('type')}/{row.get('severity')}`: "
-                f"{row.get('count')} abiertos; oldest={row.get('oldest_age_days')}d"
-            )
-        for item in details.get("exceeded", []):
-            lines.append(f"- umbral excedido: `{item}`")
-    return lines or ["- sin detalle adicional"]
+    if signal["signal"] == "quality_gate":
+        return [
+            f"- QG `{row.get('metric')}`: actual=`{row.get('actual')}`, "
+            f"threshold=`{row.get('threshold')}`"
+            for row in details.get("failed_conditions", [])
+            if isinstance(row, dict)
+        ] or ["- sin detalle adicional"]
+    if signal["signal"] == "ce_task" and details.get("error_message"):
+        return [f"- CE: {details['error_message']}"]
+    if signal["signal"] == "historical_debt":
+        rows = [
+            f"- `{row.get('type')}/{row.get('severity')}`: "
+            f"{row.get('count')} abiertos; oldest={row.get('oldest_age_days')}d"
+            for row in details.get("counts", [])
+            if isinstance(row, dict)
+        ]
+        rows += [f"- umbral excedido: `{item}`" for item in details.get("exceeded", [])]
+        return rows or ["- sin detalle adicional"]
+    return ["- sin detalle adicional"]
 
 
-def render_issue_body(
-    *,
-    project: str,
-    signal: dict[str, Any],
-    health_sonar: dict[str, Any],
-    origin_ref: str,
-) -> str:
-    _safe_json(signal, "signal")
-    marker = issue_marker(project, signal["signal"])
+def render_issue_body(project: str, signal: dict[str, Any], health: dict[str, Any], origin: str) -> str:
+    _safe(signal, "signal")
     freshness = signal["freshness"]
-    refs = signal["evidence_refs"]
-    classes = health_sonar.get("work_item_classes", [])
-    detail = "\n".join(_detail_lines(signal))
-    refs_text = "\n".join(f"- `{ref}`" for ref in refs) or "- ninguna"
-    classes_text = ", ".join(f"`{item}`" for item in classes) or "`none`"
+    refs = "\n".join(f"- `{ref}`" for ref in signal["evidence_refs"]) or "- ninguna"
+    classes = ", ".join(f"`{item}`" for item in health.get("work_item_classes", [])) or "`none`"
     return (
-        f"{marker}\n"
-        "## Sonar Watch\n\n"
-        f"Proyecto: `{project}`  \n"
-        f"Señal: `{signal['signal']}`  \n"
-        f"Estado: `{signal['status']}`  \n"
-        f"Razón: `{signal['reason']}`  \n"
+        f"{issue_marker(project, signal['signal'])}\n## Sonar Watch\n\n"
+        f"Proyecto: `{project}`  \nSeñal: `{signal['signal']}`  \n"
+        f"Estado: `{signal['status']}`  \nRazón: `{signal['reason']}`  \n"
         f"Freshness: `{freshness['state']}` "
         f"(age={freshness['age_seconds']}, max={freshness['max_age_seconds']})  \n"
-        f"Origen: `{origin_ref}`  \n"
-        f"Clases correctivas Quality Health: {classes_text}\n\n"
-        "### Evidencia\n\n"
-        f"{refs_text}\n\n"
-        "### Detalle\n\n"
-        f"{detail}\n\n"
-        "Este Issue es administrado automáticamente por Factory Sonar Watch. "
-        "No implica una acción de escritura sobre Sonar.\n"
+        f"Origen: `{origin}`  \nClases correctivas Quality Health: {classes}\n\n"
+        f"### Evidencia\n\n{refs}\n\n### Detalle\n\n"
+        + "\n".join(_detail_lines(signal))
+        + "\n\nEste Issue es administrado automáticamente por Factory Sonar Watch. "
+        "No implica escritura sobre Sonar.\n"
     )
 
 
-def sync_project(
-    *,
-    contract: dict[str, Any],
-    snapshot: dict[str, Any],
-    observed_at: str,
-    project_ref: str,
-    origin_ref: str,
-    issues: Any,
-) -> list[dict[str, Any]]:
-    """Normaliza Sonar, pasa por Quality Health y sincroniza un Issue por señal."""
+def sync_project(*, contract, snapshot, observed_at, project_ref, origin_ref, issues):
     evidence = normalize_sonar_snapshot(contract, snapshot, observed_at=observed_at)
     health = derive_quality_health(
-        contract,
-        [],
-        [],
-        observed_at=observed_at,
-        project_ref=project_ref,
+        contract, [], [], observed_at=observed_at, project_ref=project_ref,
         sonar_evidence=evidence,
     )
-    sonar_health = health.get("external_dimensions", {}).get("sonar")
-    if not isinstance(sonar_health, dict) or sonar_health.get("recalculated") is not False:
+    sonar = health.get("external_dimensions", {}).get("sonar")
+    if not isinstance(sonar, dict) or sonar.get("recalculated") is not False:
         raise SonarWatchError("Quality Health no proyectó Sonar canónicamente.")
-
-    project = evidence["project"]
-    projected = {row["signal"]: row for row in sonar_health["signals"]}
-    operations: list[dict[str, Any]] = []
+    projected = {row["signal"]: row for row in sonar["signals"]}
+    operations = []
     for signal in evidence["signals"]:
         canonical = projected.get(signal["signal"])
         if canonical is None or canonical["status"] != signal["status"]:
             raise SonarWatchError("proyección Sonar incoherente.")
-        marker = issue_marker(project, signal["signal"])
+        marker = issue_marker(evidence["project"], signal["signal"])
         matches = issues.find(marker)
         if len(matches) > 1:
-            raise SonarWatchError(
-                "existen Issues AUTO duplicados para la misma señal."
-            )
+            raise SonarWatchError("Issues AUTO duplicados para la misma señal.")
         current = matches[0] if matches else None
-
-        if _fresh_current(signal):
+        fresh_pass = signal["status"] == "PASS" and signal["freshness"]["state"] == "CURRENT"
+        if fresh_pass:
             if current is not None and current["state"] != "closed":
-                issues.update(
-                    current["number"],
-                    title=current["title"],
-                    body=current["body"],
-                    state="closed",
-                )
-                operations.append(
-                    {"action": "closed", "signal": signal["signal"]}
-                )
+                issues.update(current["number"], title=current["title"], body=current["body"], state="closed")
+                operations.append({"action": "closed", "signal": signal["signal"]})
             continue
-
-        title = f"{AUTO_PREFIX} {project}: {signal['signal']}"
-        body = render_issue_body(
-            project=project,
-            signal=signal,
-            health_sonar=sonar_health,
-            origin_ref=origin_ref,
-        )
+        title = f"{AUTO_PREFIX} {evidence['project']}: {signal['signal']}"
+        body = render_issue_body(evidence["project"], signal, sonar, origin_ref)
         if current is None:
             issues.create(title=title, body=body)
-            operations.append(
-                {"action": "created", "signal": signal["signal"]}
-            )
+            action = "created"
         else:
-            issues.update(
-                current["number"], title=title, body=body, state="open"
-            )
-            operations.append(
-                {"action": "updated", "signal": signal["signal"]}
-            )
+            issues.update(current["number"], title=title, body=body, state="open")
+            action = "updated"
+        operations.append({"action": action, "signal": signal["signal"]})
     return operations
 
 
 class HttpJson:
-    def __init__(
-        self,
-        *,
-        token: str,
-        base_url: str,
-        auth: str = "bearer",
-    ):
-        self.token = token
-        self.base_url = base_url.rstrip("/")
-        self.auth = auth
+    def __init__(self, *, token: str, base_url: str):
+        self.token, self.base_url = token, base_url.rstrip("/")
 
-    def request(
-        self,
-        path: str,
-        *,
-        method: str = "GET",
-        payload: Any = None,
-    ) -> Any:
-        url = self.base_url + path
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "factory-sonar-watch/1",
-        }
+    def request(self, path: str, *, method: str = "GET", payload: Any = None) -> Any:
+        headers = {"Accept": "application/json", "User-Agent": "factory-sonar-watch/1"}
         if self.token:
-            if self.auth == "basic":
-                encoded = base64.b64encode(
-                    f"{self.token}:".encode()
-                ).decode()
-                headers["Authorization"] = f"Basic {encoded}"
-            elif self.auth == "bearer":
-                headers["Authorization"] = f"Bearer {self.token}"
-            else:
-                raise SonarWatchError("esquema de autenticación inválido.")
-        data = None if payload is None else _json_bytes(payload)
+            headers["Authorization"] = f"Bearer {self.token}"
+        data = None
         if payload is not None:
             headers["Content-Type"] = "application/json"
-        req = Request(url, data=data, headers=headers, method=method)
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+        request = Request(self.base_url + path, data=data, headers=headers, method=method)
         try:
-            with urlopen(req, timeout=20) as response:
+            with urlopen(request, timeout=20) as response:
                 raw = response.read(1_000_001)
         except (HTTPError, URLError, TimeoutError) as exc:
-            raise SonarWatchError("falló una lectura/API remota.") from exc
+            raise SonarWatchError("falló una API remota.") from exc
         if len(raw) > 1_000_000:
             raise SonarWatchError("respuesta remota excede tamaño máximo.")
         try:
@@ -262,13 +157,9 @@ class HttpJson:
 class GitHubIssues:
     def __init__(self, *, repository: str, token: str):
         self.repository = repository
-        self.http = HttpJson(
-            token=token,
-            base_url="https://api.github.com",
-            auth="bearer",
-        )
+        self.http = HttpJson(token=token, base_url="https://api.github.com")
 
-    def find(self, marker: str) -> list[dict[str, Any]]:
+    def find(self, marker: str):
         found = []
         for page in range(1, _MAX_GITHUB_ISSUE_PAGES + 1):
             rows = self.http.request(
@@ -278,333 +169,175 @@ class GitHubIssues:
             if not isinstance(rows, list):
                 raise SonarWatchError("respuesta GitHub Issues inválida.")
             for row in rows:
-                if "pull_request" in row:
-                    continue
-                if (
-                    marker in (row.get("body") or "")
-                    and (row.get("user") or {}).get("login") == "github-actions[bot]"
-                ):
+                if "pull_request" not in row and marker in (row.get("body") or ""):
                     found.append({
-                        "number": row["number"],
-                        "title": row["title"],
-                        "body": row.get("body") or "",
-                        "state": row["state"],
+                        "number": row["number"], "title": row["title"],
+                        "body": row.get("body") or "", "state": row["state"],
                     })
             if len(rows) < 100:
                 return found
-        raise SonarWatchError(
-            "paginación GitHub Issues excede límite seguro."
-        )
+        raise SonarWatchError("paginación GitHub Issues excede límite seguro.")
 
-    def create(self, *, title: str, body: str) -> None:
+    def create(self, *, title: str, body: str):
         self.http.request(
-            f"/repos/{self.repository}/issues",
-            method="POST",
+            f"/repos/{self.repository}/issues", method="POST",
             payload={"title": title, "body": body},
         )
 
-    def update(
-        self,
-        number: int,
-        *,
-        title: str,
-        body: str,
-        state: str,
-    ) -> None:
+    def update(self, number: int, *, title: str, body: str, state: str):
         self.http.request(
-            f"/repos/{self.repository}/issues/{number}",
-            method="PATCH",
+            f"/repos/{self.repository}/issues/{number}", method="PATCH",
             payload={"title": title, "body": body, "state": state},
         )
 
 
 class SonarApi:
     def __init__(self, *, token: str):
-        self.http = HttpJson(
-            token=token,
-            base_url="https://sonarcloud.io",
-            auth="basic",
-        )
+        self.http = HttpJson(token=token, base_url="https://sonarcloud.io")
 
-    def get(self, path: str, params: dict[str, Any]) -> Any:
+    def get(self, path: str, params: dict[str, Any]):
         return self.http.request(path + "?" + urlencode(params))
 
-    def _paged_search(
-        self,
-        path: str,
-        *,
-        key_name: str,
-        key: str,
-        result_name: str,
-        extra: dict[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        collected: list[dict[str, Any]] = []
-        page = 1
-        total: int | None = None
+    def _paged(self, path, *, key_name, key, result_name, extra=None):
+        rows, page, total = [], 1, None
         while True:
-            params = {
-                key_name: key,
-                "ps": _SONAR_PAGE_SIZE,
-                "p": page,
-            }
-            params.update(extra or {})
+            params = {key_name: key, "ps": _SONAR_PAGE_SIZE, "p": page, **(extra or {})}
             payload = self.get(path, params)
-            if not isinstance(payload, dict):
-                raise SonarWatchError("respuesta Sonar paginada inválida.")
-            rows = payload.get(result_name)
-            paging = payload.get("paging")
-            if not isinstance(rows, list) or not isinstance(paging, dict):
+            batch, paging = payload.get(result_name), payload.get("paging")
+            if not isinstance(batch, list) or not isinstance(paging, dict):
                 raise SonarWatchError("paginación Sonar inválida.")
-            candidate_total = paging.get("total")
-            page_index = paging.get("pageIndex")
-            page_size = paging.get("pageSize")
+            candidate = paging.get("total")
             if (
-                type(candidate_total) is not int
-                or candidate_total < 0
-                or candidate_total > _MAX_SONAR_ISSUES
-                or page_index != page
-                or page_size != _SONAR_PAGE_SIZE
+                type(candidate) is not int or candidate < 0 or candidate > _MAX_SONAR_ISSUES
+                or paging.get("pageIndex") != page or paging.get("pageSize") != _SONAR_PAGE_SIZE
             ):
                 raise SonarWatchError("paginación Sonar incoherente.")
-            if total is None:
-                total = candidate_total
-            elif candidate_total != total:
+            total = candidate if total is None else total
+            if candidate != total:
                 raise SonarWatchError("total Sonar cambió durante paginación.")
-            collected.extend(rows)
-            if len(collected) > total:
+            rows.extend(batch)
+            if len(rows) > total:
                 raise SonarWatchError("Sonar devolvió filas excedentes.")
-            if len(collected) == total:
-                return collected
-            if not rows or len(rows) < _SONAR_PAGE_SIZE:
+            if len(rows) == total:
+                return rows
+            if not batch or len(batch) < _SONAR_PAGE_SIZE:
                 raise SonarWatchError("Sonar truncó filas antes del total.")
             page += 1
 
-    def _all_issues(self, key: str) -> dict[str, Any]:
-        return {
-            "issues": self._paged_search(
-                "/api/issues/search",
-                key_name="componentKeys",
-                key=key,
-                result_name="issues",
-                extra={"resolved": "false"},
-            )
-        }
+    def _all_issues(self, key):
+        return {"issues": self._paged(
+            "/api/issues/search", key_name="componentKeys", key=key,
+            result_name="issues", extra={"resolved": "false"},
+        )}
 
-    def _all_hotspots(self, key: str) -> dict[str, Any]:
-        return {
-            "hotspots": self._paged_search(
-                "/api/hotspots/search",
-                key_name="projectKey",
-                key=key,
-                result_name="hotspots",
-                extra={"status": "TO_REVIEW"},
-            )
-        }
+    def _all_hotspots(self, key):
+        return {"hotspots": self._paged(
+            "/api/hotspots/search", key_name="projectKey", key=key,
+            result_name="hotspots", extra={"status": "TO_REVIEW"},
+        )}
 
-    def snapshot(
-        self,
-        cfg: dict[str, Any],
-        *,
-        observed_at: str,
-    ) -> dict[str, Any]:
+    def snapshot(self, cfg: dict[str, Any], *, observed_at: str):
         key = cfg["sonar_key"]
-        project = cfg["project"]
-        qg = self.get(
-            "/api/qualitygates/project_status",
-            {"projectKey": key},
-        )
-        analyses = self.get(
-            "/api/project_analyses/search",
-            {"project": key, "ps": 1},
-        )
+        qg = self.get("/api/qualitygates/project_status", {"projectKey": key})
+        analyses = self.get("/api/project_analyses/search", {"project": key, "ps": 1})
         ce = self.get("/api/ce/component", {"component": key})
-        measures = self.get(
-            "/api/measures/component",
-            {"component": key, "metricKeys": "coverage,ncloc"},
-        )
-        autoscan = self.get(
-            "/api/autoscan/activation",
-            {"projectKey": key},
-        )
-        component = self.get(
-            "/api/components/show",
-            {"component": key},
-        )
-        issues = self._all_issues(key)
-        hotspots = self._all_hotspots(key)
+        measures = self.get("/api/measures/component", {"component": key, "metricKeys": "coverage,ncloc"})
+        autoscan = self.get("/api/autoscan/activation", {"projectKey": key})
+        component = self.get("/api/components/show", {"component": key})
         return _snapshot_from_api(
-            project,
-            observed_at,
-            qg,
-            analyses,
-            ce,
-            measures,
-            autoscan,
-            component,
-            issues,
-            hotspots,
+            cfg["project"], observed_at, qg, analyses, ce, measures, autoscan,
+            component, self._all_issues(key), self._all_hotspots(key),
         )
 
 
-def _snapshot_from_api(
-    project,
-    observed_at,
-    qg,
-    analyses,
-    ce,
-    measures,
-    autoscan,
-    component,
-    issues,
-    hotspots,
-):
-    project_status = qg.get("projectStatus", {})
-    qg_conditions = [
-        {
-            "metric": row.get("metricKey"),
-            "status": row.get("status"),
-            "actual": row.get("actualValue"),
-            "threshold": row.get("errorThreshold"),
-        }
-        for row in project_status.get("conditions", [])
-    ]
+def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, autoscan, component, issues, hotspots):
+    status = qg.get("projectStatus", {})
+    conditions = [{
+        "metric": row.get("metricKey"), "status": row.get("status"),
+        "actual": row.get("actualValue"), "threshold": row.get("errorThreshold"),
+    } for row in status.get("conditions", [])]
     analysis_rows = analyses.get("analyses", [])
-    measure_rows = measures.get("component", {}).get("measures", [])
     coverage = any(
-        row.get("metric") == "coverage" for row in measure_rows
+        row.get("metric") == "coverage"
+        for row in measures.get("component", {}).get("measures", [])
     )
-    current = ce.get("current")
-    visibility = component.get("component", {}).get("visibility")
     debt = []
     for row in issues.get("issues", []):
-        kind = {
-            "BUG": "bug",
-            "VULNERABILITY": "vulnerability",
-        }.get(row.get("type"))
-        if kind is None:
-            continue
-        debt.append({
-            "type": kind,
-            "severity": row.get("severity", "INFO"),
-            "opened_at": row.get("creationDate"),
-            "evidence_ref": (
-                f"sonar:{project}:issue:{row.get('key', 'unknown')}"
-            ),
-        })
+        kind = {"BUG": "bug", "VULNERABILITY": "vulnerability"}.get(row.get("type"))
+        if kind:
+            debt.append({
+                "type": kind, "severity": row.get("severity", "INFO"),
+                "opened_at": row.get("creationDate"),
+                "evidence_ref": f"sonar:{project}:issue:{row.get('key', 'unknown')}",
+            })
     for row in hotspots.get("hotspots", []):
         if (
-            not isinstance(row, dict)
-            or row.get("status") != "TO_REVIEW"
+            not isinstance(row, dict) or row.get("status") != "TO_REVIEW"
             or row.get("vulnerabilityProbability") not in {"HIGH", "MEDIUM", "LOW"}
-            or not isinstance(row.get("key"), str)
-            or not row["key"]
+            or not isinstance(row.get("key"), str) or not row["key"]
             or not isinstance(row.get("creationDate"), str)
         ):
             raise SonarWatchError("Security Hotspot Sonar inválido.")
         debt.append({
-            "type": "hotspot",
-            "severity": row["vulnerabilityProbability"],
+            "type": "hotspot", "severity": row["vulnerabilityProbability"],
             "opened_at": row["creationDate"],
-            "evidence_ref": (
-                f"sonar:{project}:hotspot:{row['key']}"
-            ),
+            "evidence_ref": f"sonar:{project}:hotspot:{row['key']}",
         })
+    current = ce.get("current")
     return {
-        "project": project,
-        "snapshot_at": observed_at,
-        "quality_gate": {
-            "status": project_status.get("status"),
-            "conditions": qg_conditions,
-        },
+        "project": project, "snapshot_at": observed_at,
+        "quality_gate": {"status": status.get("status"), "conditions": conditions},
         "analysis": None if not analysis_rows else {
             "analyzed_at": analysis_rows[0].get("date"),
-            "method": (
-                "automatic"
-                if autoscan.get("enable") is True
-                else "ci"
-            ),
+            "method": "automatic" if autoscan.get("enable") is True else "ci",
             "coverage_available": coverage,
         },
         "ce_task": None if not current else {
-            "status": current.get("status"),
-            "error_message": current.get("errorMessage"),
+            "status": current.get("status"), "error_message": current.get("errorMessage"),
         },
         "organization": None,
-        "visibility": visibility,
+        "visibility": component.get("component", {}).get("visibility"),
         "debt": debt,
-        "evidence_refs": [
-            f"sonar:{project}:snapshot:{_compact_time(observed_at)}"
-        ],
+        "evidence_refs": [f"sonar:{project}:snapshot:{_compact_time(observed_at)}"],
     }
 
 
 def _compact_time(value: str) -> str:
     try:
-        parsed = datetime.fromisoformat(
-            value.replace("Z", "+00:00")
-        )
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise SonarWatchError("observed_at inválido.") from exc
-    return parsed.astimezone(timezone.utc).strftime(
-        "%Y%m%dT%H%M%SZ"
-    )
+    return parsed.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def run_live() -> int:
-    token = os.environ.get("SONAR_TOKEN", "")
-    gh_token = os.environ.get("GH_TOKEN", "")
-    repository = os.environ.get("GITHUB_REPOSITORY", "")
-    raw_config = os.environ.get("SONAR_WATCH_CONFIG_JSON", "")
-    if not token or not gh_token or not repository or not raw_config:
+    token, gh_token = os.getenv("SONAR_TOKEN", ""), os.getenv("GH_TOKEN", "")
+    repository, raw = os.getenv("GITHUB_REPOSITORY", ""), os.getenv("SONAR_WATCH_CONFIG_JSON", "")
+    if not token or not gh_token or not repository or not raw:
         raise SonarWatchError("configuración runtime incompleta.")
     try:
-        config = json.loads(raw_config)
-    except json.JSONDecodeError as exc:
-        raise SonarWatchError(
-            "SONAR_WATCH_CONFIG_JSON inválido."
-        ) from exc
-    projects = config.get("projects")
-    if not isinstance(projects, list):
-        raise SonarWatchError("config.projects debe ser lista.")
+        projects = json.loads(raw).get("projects")
+    except (json.JSONDecodeError, AttributeError) as exc:
+        raise SonarWatchError("SONAR_WATCH_CONFIG_JSON inválido.") from exc
     expected = set(factory_project_catalog())
-    actual = {
-        row.get("project")
-        for row in projects
-        if isinstance(row, dict)
-    }
-    if actual != expected or len(projects) != len(expected):
-        raise SonarWatchError(
-            "config debe cubrir exactamente los seis proyectos Factory."
-        )
-
-    now = datetime.now(timezone.utc).isoformat(
-        timespec="seconds"
-    ).replace("+00:00", "Z")
-    sonar = SonarApi(token=token)
-    gh = GitHubIssues(repository=repository, token=gh_token)
-    operations = []
+    if (
+        not isinstance(projects, list) or len(projects) != len(expected)
+        or {row.get("project") for row in projects if isinstance(row, dict)} != expected
+    ):
+        raise SonarWatchError("config debe cubrir exactamente los seis proyectos Factory.")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    sonar, github, operations = SonarApi(token=token), GitHubIssues(repository=repository, token=gh_token), []
     for cfg in projects:
-        if not isinstance(cfg, dict):
-            raise SonarWatchError("config de proyecto inválida.")
-        contract = cfg.get("contract")
-        project_ref = cfg.get("github_repo")
-        sonar_key = cfg.get("sonar_key")
-        if (
-            not isinstance(contract, dict)
-            or not isinstance(project_ref, str)
-            or not isinstance(sonar_key, str)
-            or not sonar_key
+        if not isinstance(cfg, dict) or not all(
+            isinstance(cfg.get(key), expected_type)
+            for key, expected_type in (("contract", dict), ("github_repo", str), ("sonar_key", str))
         ):
             raise SonarWatchError("config de proyecto incompleta.")
-        snapshot = sonar.snapshot(cfg, observed_at=now)
-        operations.extend(sync_project(
-            contract=contract,
-            snapshot=snapshot,
-            observed_at=now,
-            project_ref=project_ref,
-            origin_ref=f"sonar:{cfg['project']}",
-            issues=gh,
-        ))
+        operations += sync_project(
+            contract=cfg["contract"], snapshot=sonar.snapshot(cfg, observed_at=now),
+            observed_at=now, project_ref=cfg["github_repo"],
+            origin_ref=f"sonar:{cfg['project']}", issues=github,
+        )
     print(json.dumps({"operations": operations}, sort_keys=True))
     return 0
 
