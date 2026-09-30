@@ -8,8 +8,6 @@ import re
 import subprocess
 import sys
 from typing import Any
-from urllib.parse import quote
-
 from puertas_humanas import (
     MARKER_RE,
     classify_body,
@@ -142,9 +140,6 @@ def _existing_evidence(api, base: str) -> str | None:
     return next(iter(found), None)
 
 
-def _remove_label(api, base: str, label: str) -> None:
-    api("DELETE", f"{base}/labels/{quote(label, safe='')}")
-
 
 def materialize_decision(
     event: dict[str, Any],
@@ -236,28 +231,43 @@ def materialize_decision(
     if DECISION_LABEL not in labels and existing != option:
         return False
 
-    # Transición recuperable: primero converger el estado, luego retirar la
-    # cola. Cualquier crash intermedio puede reanudarse por el journal de la
-    # misma opción sin duplicar evidencia.
-    for label in sorted(labels):
-        if label.startswith(STATUS_PREFIX) and label != COMPLETED:
-            _remove_label(api, base, label)
-    if COMPLETED not in labels:
-        api("POST", f"{base}/labels", {"labels": [COMPLETED]})
-
+    # Última fotografía inmediatamente antes de la transición final.
+    # Revalidar marker/opción y calcular labels desde esta misma foto.
     issue = api("GET", base)
     if not isinstance(issue, dict) or issue.get("state") != "open":
         return False
-    labels = _labels(issue)
-    if DECISION_LABEL in labels:
-        _remove_label(api, base, DECISION_LABEL)
-    elif existing != option:
+    final_body = issue.get("body")
+    if not isinstance(final_body, str):
+        return False
+    try:
+        final_options = _gate_options(final_body)
+    except (DecisionError, ValueError):
+        return False
+    if option not in final_options:
         return False
 
+    labels = _labels(issue)
+    if DECISION_LABEL not in labels and existing != option:
+        return False
+
+    final_labels = sorted(
+        label
+        for label in labels
+        if label != DECISION_LABEL and not label.startswith(STATUS_PREFIX)
+    )
+    final_labels.append(COMPLETED)
+
+    # Un único write final: estado + labels convergen juntos. Si el proceso
+    # cae tras publicar el journal pero antes de este PATCH, el retry encuentra
+    # la misma evidencia y vuelve a intentar esta transición sin duplicarla.
     api(
         "PATCH",
         base,
-        {"state": "closed", "state_reason": "completed"},
+        {
+            "state": "closed",
+            "state_reason": "completed",
+            "labels": final_labels,
+        },
     )
     return True
 

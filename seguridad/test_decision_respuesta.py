@@ -1,8 +1,6 @@
 import json
 import unittest
 from pathlib import Path
-from urllib.parse import unquote
-
 from decision_respuesta import (
     BOT,
     COMPLETED,
@@ -44,7 +42,7 @@ def event(command="/decidir B", association="OWNER", user_type="User"):
 class FakeAPI:
     def __init__(
         self, *, body=None, labels=None, state="open",
-        crash_after_decision_label_once=False,
+        crash_after_evidence_once=False,
         mutate_body_on_issue_get=None,
         replacement_body=None,
     ):
@@ -60,6 +58,7 @@ class FakeAPI:
                         "tipo: infraestructura",
                         "prioridad: alta",
                         "estado: bloqueado",
+                        "equipo: externo",
                         DECISION_LABEL,
                     }
                 )
@@ -68,7 +67,7 @@ class FakeAPI:
         self.comments = []
         self.calls = []
         self.next_id = 1000
-        self.crash_after_decision_label_once = crash_after_decision_label_once
+        self.crash_after_evidence_once = crash_after_evidence_once
         self.mutate_body_on_issue_get = mutate_body_on_issue_get
         self.replacement_body = replacement_body
         self.issue_gets = 0
@@ -96,20 +95,10 @@ class FakeAPI:
                 "user": {"login": BOT, "type": "Bot"},
             }
             self.comments.append(value)
+            if self.crash_after_evidence_once:
+                self.crash_after_evidence_once = False
+                raise RuntimeError("simulated crash after evidence")
             return value
-        if method == "DELETE" and "/labels/" in path:
-            label = unquote(path.rsplit("/", 1)[-1])
-            self.issue["labels"] = [
-                item for item in self.issue["labels"]
-                if item["name"] != label
-            ]
-            if (
-                label == DECISION_LABEL
-                and self.crash_after_decision_label_once
-            ):
-                self.crash_after_decision_label_once = False
-                raise RuntimeError("simulated crash after queue removal")
-            return None
         if method == "POST" and path.endswith("/labels"):
             for label in payload["labels"]:
                 if label not in self.label_names():
@@ -118,6 +107,10 @@ class FakeAPI:
         if method == "PATCH" and path.endswith("/issues/519"):
             self.issue["state"] = payload["state"]
             self.issue["state_reason"] = payload["state_reason"]
+            if "labels" in payload:
+                self.issue["labels"] = [
+                    {"name": name} for name in payload["labels"]
+                ]
             return self.issue
         raise AssertionError(f"Unexpected API call: {method} {path}")
 
@@ -135,6 +128,7 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn(COMPLETED, api.label_names())
         self.assertIn("prioridad: alta", api.label_names())
         self.assertIn("tipo: infraestructura", api.label_names())
+        self.assertIn("equipo: externo", api.label_names())
         self.assertEqual(len(api.comments), 1)
         self.assertIn('"option":"B"', api.comments[0]["body"])
         self.assertIn("sin ejecutar el efecto", api.comments[0]["body"])
@@ -194,15 +188,16 @@ class DecisionRespuestaTests(unittest.TestCase):
         ]
         self.assertEqual(len(closes), 1)
 
-        partial = FakeAPI(crash_after_decision_label_once=True)
+        partial = FakeAPI(crash_after_evidence_once=True)
         with self.assertRaisesRegex(
-            RuntimeError, "simulated crash after queue removal"
+            RuntimeError, "simulated crash after evidence"
         ):
             materialize_decision(event(), partial, "pl0n3r/Factory")
 
         self.assertEqual(partial.issue["state"], "open")
-        self.assertNotIn(DECISION_LABEL, partial.label_names())
-        self.assertIn(COMPLETED, partial.label_names())
+        self.assertIn(DECISION_LABEL, partial.label_names())
+        self.assertIn("estado: bloqueado", partial.label_names())
+        self.assertNotIn(COMPLETED, partial.label_names())
         partial_evidence = [
             item for item in partial.comments
             if item["user"]["login"] == BOT
@@ -236,6 +231,20 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertEqual(stale.comments, [])
         self.assertFalse(any(call[0] != "GET" for call in stale.calls))
 
+        stale_final = FakeAPI(
+            mutate_body_on_issue_get=4,
+            replacement_body=gate_body(("A", "C")),
+        )
+        self.assertFalse(
+            materialize_decision(event(), stale_final, "pl0n3r/Factory")
+        )
+        self.assertEqual(stale_final.issue["state"], "open")
+        self.assertIn(DECISION_LABEL, stale_final.label_names())
+        self.assertEqual(len(stale_final.comments), 1)
+        self.assertFalse(any(
+            call[0] == "PATCH" for call in stale_final.calls
+        ))
+
     def test_decision_materialization_has_no_parent_side_effects(self):
         api = FakeAPI()
         self.assertTrue(materialize_decision(event(), api, "pl0n3r/Factory"))
@@ -254,7 +263,16 @@ class DecisionRespuestaTests(unittest.TestCase):
                 call[2] for call in api.calls
                 if call[0] == "PATCH" and call[1].endswith("/issues/519")
             ],
-            [{"state": "closed", "state_reason": "completed"}],
+            [{
+                "state": "closed",
+                "state_reason": "completed",
+                "labels": [
+                    "equipo: externo",
+                    "prioridad: alta",
+                    COMPLETED,
+                    "tipo: infraestructura",
+                ],
+            }],
         )
 
     def test_workflow_contract_is_comment_scoped_and_minimal(self):
