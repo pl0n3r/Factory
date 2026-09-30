@@ -1,0 +1,37 @@
+name: Sonar Watch
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonar-watch-factory
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Vigilar Sonar
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Descargar Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Sincronizar evidencia Sonar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_WATCH_CONFIG_JSON: ${{ vars.SONAR_WATCH_CONFIG_JSON }}
+        run: |
+          set -euo pipefail
+          python3 scripts/sonar-watch.py
