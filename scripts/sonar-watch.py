@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from quality.contract import QualityContractError, validate_quality_contract
 from quality.sonar import factory_project_catalog, normalize_sonar_snapshot
 from quality.status import derive_quality_health
 
@@ -34,6 +35,19 @@ _SONAR_KEY = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
 _ORIGIN_URL = re.compile(
     r"^https://sonarcloud\.io/project/overview\?id=[A-Za-z0-9_.:-]{1,160}$"
 )
+CONFIG_PATH = ROOT / "quality" / "sonar-watch-config.json"
+_FACTORY_REPOS = {
+    "brvtal": "pl0n3r/brvtal",
+    "condor": "pl0n3r/Condor",
+    "controlbot": "pl0n3r/ControlBot",
+    "factory": "pl0n3r/Factory",
+    "factoryrunner": "pl0n3r/FactoryRunner",
+    "grindflow": "pl0n3r/GrindFlow",
+}
+_CONFIG_FIELDS = {"version", "provenance", "projects"}
+_PROVENANCE_FIELDS = {"issue", "observed_at", "policy"}
+_PROJECT_CONFIG_FIELDS = {"project", "sonar_key", "github_repo", "contract"}
+_ALLOWED_AUTOSCAN_VALUES = {"true": "automatic", "false": "ci"}
 
 
 class SonarWatchError(ValueError):
