@@ -454,5 +454,115 @@ class AcceptanceContractTests(unittest.TestCase):
                     parse_contract(body)
 
 
+class AcceptanceKitTests(unittest.TestCase):
+    def test_collects_all_check_run_pages(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "aceptacion.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --slurp',
+            workflow,
+        )
+        self.assertIn(
+            "jq '{check_runs: [.[].check_runs[]]}' /tmp/check-pages.json > /tmp/checks.json",
+            workflow,
+        )
+
+    def test_finds_target_after_first_hundred_checks(self):
+        checks = {
+            "check_runs": [
+                {
+                    "id": index,
+                    "name": f"metadata-{index}",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+                for index in range(1, 101)
+            ]
+            + [
+                {
+                    "id": 101,
+                    "name": "Contrato ControlBot",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ]
+        }
+        verify_check(Criterion("AC-02", "check", "Contrato ControlBot"), checks)
+
+    def test_uses_latest_applicable_check_attempt_and_requires_success(self):
+        criterion = Criterion("AC-03", "check", "Contrato ControlBot")
+        verify_check(
+            criterion,
+            {
+                "check_runs": [
+                    {
+                        "id": 10,
+                        "name": "Contrato ControlBot",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    },
+                    {
+                        "id": 11,
+                        "name": "Contrato ControlBot",
+                        "status": "completed",
+                        "conclusion": "success",
+                    },
+                ]
+            },
+        )
+        with self.assertRaisesRegex(AcceptanceError, "no terminó success"):
+            verify_check(
+                criterion,
+                {
+                    "check_runs": [
+                        {
+                            "id": 11,
+                            "name": "Contrato ControlBot",
+                            "status": "completed",
+                            "conclusion": "success",
+                        },
+                        {
+                            "id": 12,
+                            "name": "Contrato ControlBot",
+                            "status": "in_progress",
+                            "conclusion": None,
+                        },
+                    ]
+                },
+            )
+
+    def test_controlbot_552_regression(self):
+        checks = {
+            "check_runs": [
+                {
+                    "id": index,
+                    "name": f"sync-noise-{index}",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+                for index in range(1, 106)
+            ]
+            + [
+                {
+                    "id": 106,
+                    "name": "Contrato ControlBot",
+                    "status": "in_progress",
+                    "conclusion": None,
+                },
+                {
+                    "id": 111,
+                    "name": "Contrato ControlBot",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+            ]
+        }
+        verify_check(Criterion("AC-04", "check", "Contrato ControlBot"), checks)
+
+
 if __name__ == "__main__":
     unittest.main()
