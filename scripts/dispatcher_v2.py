@@ -83,6 +83,9 @@ class WorkItemReadinessContext:
     active_claims: frozenset[str] = frozenset()
     incompatible_reservation: bool = False
     active_idempotency_scopes: frozenset[str] = frozenset()
+    tranche_subject: bool = False
+    tranche: int | None = None
+    tranche_exception: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,6 +155,9 @@ def candidate_from_work_item(
         active_claims=context.active_claims,
         idempotency_active=scope in context.active_idempotency_scopes,
         external_readiness_reasons=tuple(reasons),
+        tranche_subject=context.tranche_subject,
+        tranche=context.tranche,
+        tranche_exception=context.tranche_exception,
         metadata={
             "work_fingerprint": work_fingerprint(payload),
             "idempotency_scope": scope,

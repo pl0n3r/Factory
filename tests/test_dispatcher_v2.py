@@ -189,6 +189,33 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertTrue(classify_readiness(legacy).ready)
         self.assertEqual(select_next([legacy]).key, "legacy")
 
+    def test_work_item_adapter_carries_explicit_tranche_evidence(self):
+        candidate = candidate_from_work_item(
+            work_item(
+                work_id="pl0n3r/Condor#375",
+                repository_ref="pl0n3r/Condor",
+            ),
+            ready_context(
+                tranche_subject=True,
+                tranche=3,
+            ),
+        )
+
+        record = dispatch_record([candidate], active_tranche=2)
+
+        self.assertIsNone(record["selected"])
+        self.assertEqual(
+            record["excluded"]["pl0n3r/Condor#375"],
+            ["future_tranche_blocked"],
+        )
+        self.assertTrue(
+            record["candidates"]["pl0n3r/Condor#375"]["tranche_subject"],
+        )
+        self.assertEqual(
+            record["candidates"]["pl0n3r/Condor#375"]["tranche"],
+            3,
+        )
+
     def test_active_fix_beats_parallel_equivalent_work(self):
         fix = Candidate(key="fix", active_fix=True, active_pr="#160", continuity=10)
         parallel = Candidate(
