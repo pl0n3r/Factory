@@ -67,14 +67,34 @@ jobs:
           path: .factory
           persist-credentials: false
 
-      - name: Validar política canónica con reviews observadas
+      - name: Validar política canónica con evidencia reviewer-bot observada
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PR: ${{ inputs.pr_number }}
           REQUIRED_REVIEW_BOT: ${{ inputs.required_review_bot }}
+          MAX_EVIDENCE_BYTES: "2000000"
         run: |
           set -euo pipefail
+          reviews_file="$(mktemp)"
+          comments_file="$(mktemp)"
+          trap 'rm -f "$reviews_file" "$comments_file"' EXIT
+
+          gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100"             --jq '.[] | @json' > "$reviews_file"
+          gh api --paginate "repos/$REPOSITORY/issues/$PR/comments?per_page=100"             --jq '.[] | @json' > "$comments_file"
+
+          reviews_bytes="$(wc -c < "$reviews_file")"
+          comments_bytes="$(wc -c < "$comments_file")"
+          (( reviews_bytes <= MAX_EVIDENCE_BYTES )) || {
+            echo "::error::Reviews exceden el tamaño permitido"
+            exit 1
+          }
+          (( comments_bytes <= MAX_EVIDENCE_BYTES )) || {
+            echo "::error::Comentarios exceden el tamaño permitido"
+            exit 1
+          }
+
           args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA")
           [[ -z "${BASE_POLICY_FILE:-}" ]] || args+=(--base-policy-file "$BASE_POLICY_FILE")
-          gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100" --jq '.[] | @json'             | python3 .factory/scripts/politica_kit.py "${args[@]}"
+          args+=(--comments-file "$comments_file")
+          python3 .factory/scripts/politica_kit.py "${args[@]}" < "$reviews_file"
