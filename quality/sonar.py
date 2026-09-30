@@ -362,7 +362,6 @@ def _historical_debt(value, sonar, source_at, now, max_age, refs):
 
     counts: dict[tuple[str, str], int] = {}
     oldest_by_group: dict[tuple[str, str], int] = {}
-    debt_refs = set(refs)
     oldest_age_days: int | None = None
     for raw in value:
         row = _closed(
@@ -380,7 +379,7 @@ def _historical_debt(value, sonar, source_at, now, max_age, refs):
         key = (debt_type, severity)
         counts[key] = counts.get(key, 0) + 1
         oldest_by_group[key] = max(oldest_by_group.get(key, 0), age_days)
-        debt_refs.add(_ref(row["evidence_ref"]))
+        _ref(row["evidence_ref"])
 
     totals = {
         debt_type: sum(
@@ -419,7 +418,7 @@ def _historical_debt(value, sonar, source_at, now, max_age, refs):
         source_at,
         now,
         max_age,
-        sorted(debt_refs),
+        refs,
         {
             "counts": grouped,
             "oldest_age_days": oldest_age_days,
