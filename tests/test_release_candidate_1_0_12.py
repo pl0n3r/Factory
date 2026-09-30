@@ -22,9 +22,16 @@ class ReleaseCandidate1012Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
-        cls.template = (
-            cls.root / "template/.github/workflows/coordinacion.yml"
-        ).read_text(encoding="utf-8")
+        cls.template_path = cls.root / bootstrap.CALLER_TEMPLATE
+        cls.template = cls.template_path.read_text(encoding="utf-8")
+
+    def test_candidate_uses_runtime_caller_template(self) -> None:
+        self.assertEqual(
+            bootstrap.CALLER_TEMPLATE,
+            Path("template/.github/workflows/coordinacion.yml"),
+        )
+        self.assertTrue(self.template_path.is_file())
+        self.assertFalse(self.template_path.is_symlink())
 
     def _fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
         tmp = tempfile.TemporaryDirectory()
