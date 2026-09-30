@@ -24,6 +24,20 @@ Regression Intelligence #346 se consume ya clasificada:
 
 Performance #304 y Recovery #305 son dimensiones externas. Quality consume sus estados canónicos y conserva razones/evidencia con `recalculated=false`.
 
+## Sonar
+
+Cuando Quality Contract declara `sonar`, Quality Health consume exclusivamente la evidencia normalizada por #490. No vuelve a interpretar payloads API ni recalcula Quality Gate, CE task, freshness, visibilidad, método, cobertura o deuda.
+
+- PASS no degrada por sí solo;
+- UNKNOWN y STALE proyectan Quality Health a UNKNOWN y nunca habilitan PASS;
+- FAIL de Quality Gate o CE task es bloqueante;
+- FAIL de line usage, configuración/cobertura o deuda degrada y emite una clase correctiva cerrada;
+- razones y `evidence_refs` del normalizador se preservan con validación fail-closed;
+- ausencia de evidencia Sonar cuando el contrato la exige produce UNKNOWN;
+- contratos legacy sin bloque `sonar` conservan exactamente el comportamiento anterior.
+
+La proyección vive en `external_dimensions.sonar` con `source=sonar_evidence_v1` y `recalculated=false`.
+
 - no se vuelven a ejecutar detectores;
 - no se copian budgets;
 - no se recalculan RPO/RTO;
@@ -34,7 +48,7 @@ Performance #304 y Recovery #305 son dimensiones externas. Quality consume sus e
 `BLOCKED > UNKNOWN > DEGRADED > PASS`.
 
 - fallo o regresión reproducida en superficie crítica → BLOCKED;
-- evidencia ausente/stale/unknown → UNKNOWN;
+- evidencia ausente/stale/unknown, incluida Sonar requerida, → UNKNOWN;
 - fallo conocido no crítico o dimensión externa degraded → DEGRADED;
 - solo evidencia current sin degradaciones → PASS.
 
@@ -54,7 +68,7 @@ Authority permanece `unchanged` y `execute_actions=false`.
 
 ## Boundary
 
-No hay Quality Engine, ranking, score, scheduler, backlog ni pipeline paralelo. Readiness #293, Factory Queue #269, Performance #304 y Recovery #305 siguen siendo contratos externos.
+No hay Quality Engine, ranking, score, scheduler, backlog ni pipeline paralelo. Readiness #293, Factory Queue #269, Performance #304, Recovery #305 y Sonar Evidence #490 siguen siendo contratos externos.
 
 
 ## Identidad y flags canónicos
