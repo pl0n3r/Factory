@@ -1,12 +1,49 @@
 # Sonar Watch v1
 
-Factory ejecuta una vigilancia Sonar centralizada para Condor, GrindFlow, BRVTAL, Factory, FactoryRunner y ControlBot. El watcher **lee** Sonar, normaliza la evidencia mediante `quality.sonar` (#490), la proyecta por Quality Health (#491) y mantiene Issues `[AUTO]` en el repositorio Factory.
+Factory ejecuta una vigilancia Sonar centralizada para Condor, GrindFlow, BRVTAL, Factory, FactoryRunner y ControlBot. El watcher **lee** Sonar, normaliza la evidencia mediante `quality.sonar`, la proyecta por Quality Health y mantiene Issues `[AUTO]` en el repositorio Factory.
 
-## Contrato operativo
+## Runtime versionado
 
-El workflow `.github/workflows/sonar-watch.yml` admite `schedule` y `workflow_dispatch`. Su token GitHub solo necesita `contents: read` e `issues: write`; no dispone de permisos de código, Actions, deployments ni administración. Sonar se consume exclusivamente mediante GET. Security Hotspots se leen desde su endpoint dedicado; no se infieren desde `/api/issues/search`.
+La fuente canónica de runtime es `quality/sonar-watch-config.json`. No existe dependencia funcional de `SONAR_WATCH_CONFIG_JSON`.
 
-La configuración runtime vive en `SONAR_WATCH_CONFIG_JSON` y debe cubrir exactamente estos seis identificadores: `brvtal`, `condor`, `controlbot`, `factory`, `factoryrunner`, `grindflow`. Cada entrada declara su `sonar_key`, `github_repo` y Quality Contract completo, incluidos los thresholds Sonar. El secreto `SONAR_TOKEN` es solo de lectura.
+La configuración cubre exactamente seis proyectos:
+
+| Proyecto | Sonar key | GitHub | Método observado |
+| --- | --- | --- | --- |
+| brvtal | `pl0n3r_brvtal` | `pl0n3r/brvtal` | automatic |
+| condor | `pl0n3r_Condor` | `pl0n3r/Condor` | automatic |
+| controlbot | `pl0n3r_factory-control` | `pl0n3r/ControlBot` | ci |
+| factory | `pl0n3r_factory` | `pl0n3r/Factory` | ci |
+| factoryrunner | `pl0n3r_FactoryRunner` | `pl0n3r/FactoryRunner` | automatic |
+| grindflow | `pl0n3r_GrindFlow` | `pl0n3r/GrindFlow` | automatic |
+
+Los métodos anteriores son estado observado mediante `GET /api/settings/values?keys=sonar.autoscan.enabled`; no se infieren a partir de coverage, scanner paths ni Quality Gate.
+
+El contrato versionado exige visibilidad pública y mantiene thresholds explícitos: análisis máximo 24 h, 80 % de líneas de organización, 0 vulnerabilidades, 10 bugs, 0 hotspots y 30 días de antigüedad máxima. Estos valores son política de observación de este runtime, no configuración remota de Sonar.
+
+## Autenticación y fail-closed
+
+`SONAR_TOKEN` es opcional. El watcher realiza primero un preflight de visibilidad mediante `GET /api/components/show` para los seis proyectos.
+
+- Si todos son públicos, continúa sin token.
+- Si cualquiera resulta privado y no existe `SONAR_TOKEN`, aborta antes de cualquier otra lectura Sonar.
+- Si existe token, se conserva como credencial de lectura y nunca se usa para mutar Sonar.
+
+El workflow mantiene `contents: read` e `issues: write`; no concede permisos de código, Actions, deployments ni administración.
+
+## Solo lectura de Sonar
+
+El cliente HTTP de Sonar está explícitamente marcado como read-only y rechaza cualquier método distinto de `GET`.
+
+El watcher ya no utiliza `/api/autoscan/activation`. El método de análisis se obtiene exclusivamente de:
+
+`GET /api/settings/values?component=<key>&keys=sonar.autoscan.enabled`
+
+El parser exige exactamente un setting con key `sonar.autoscan.enabled` y valor textual `true` o `false`, que se normaliza respectivamente a `automatic` o `ci`. Ausencia, duplicidad, key inesperada o valor ambiguo provocan fallo cerrado.
+
+## Workflow
+
+`.github/workflows/sonar-watch.yml` conserva `schedule` y `workflow_dispatch`. Ambos ejecutan exactamente `python3 scripts/sonar-watch.py` con la misma configuración versionada.
 
 ## Idempotencia
 
@@ -16,20 +53,18 @@ Cada señal usa un marker estable:
 
 Por eso existe como máximo un Issue administrado por cada proyecto y señal. Mientras el estado siga en `FAIL`, `UNKNOWN` o `STALE`, el mismo Issue se actualiza/reabre. Un `PASS` solo cierra el Issue de esa misma señal cuando su freshness es `CURRENT`.
 
-La concurrencia del workflow está serializada y el sincronizador falla cerrado si detecta más de un Issue con el mismo marker. La búsqueda de Issues pagina hasta encontrar una página terminal y falla cerrado si excede el límite seguro; no trunca silenciosamente repositorios grandes. Los reintentos no crean un segundo Issue.
-
 ## Evidencia y remediación
 
-El cuerpo del Issue conserva estado, razón, freshness, referencias opacas y un enlace de origen canónico `https://sonarcloud.io/project/overview?id=<sonar_key>`. La URL se valida contra ese único host/path y no acepta parámetros adicionales. Además:
+El cuerpo del Issue conserva estado, razón, freshness, referencias opacas y un enlace de origen canónico `https://sonarcloud.io/project/overview?id=<sonar_key>`. La URL se valida contra ese único host/path y no acepta parámetros adicionales.
 
-- Quality Gate incluye la condición fallida con actual/threshold;
-- CE task incluye `error_message` ya saneado por el normalizador, incluido un line-limit;
-- deuda histórica pagina `/api/issues/search` y `/api/hotspots/search?status=TO_REVIEW` hasta `paging.total` (máximo 10.000 por fuente), y agrupa bugs, vulnerabilidades y hotspots por `type/severity`, antigüedad y umbrales excedidos;
-- las clases correctivas provienen de la proyección Quality Health existente; el watcher no amplía WorkItem ni Dispatcher.
+Además:
 
-No se guardan URLs Sonar, credenciales, tokens ni payloads raw en los Issues. Las escrituras GitHub envían JSON explícito con `Content-Type: application/json`.
+- Quality Gate incluye la condición fallida con actual/threshold.
+- CE task incluye `error_message` saneado.
+- deuda histórica pagina issues y hotspots hasta el total declarado, con límite seguro.
+- las clases correctivas provienen de Quality Health; el watcher no crea un pipeline paralelo.
 
-`organization_line_usage` queda deliberadamente `UNKNOWN` en este watcher porque las lecturas Sonar usadas en v1 no aportan una fuente canónica de uso/límite de organización. El estado UNKNOWN es fail-closed: no se presenta como cobertura observada ni como PASS.
+`organization_line_usage` queda deliberadamente `UNKNOWN` porque las lecturas utilizadas no aportan una fuente canónica de uso/límite de organización.
 
 ## Límites
 
