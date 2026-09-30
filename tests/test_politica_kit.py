@@ -7,11 +7,14 @@ from scripts.politica_kit import (
     PolicyError,
     count_review_rounds,
     load_policy,
+    parse_reviewer_policy,
+    resolve_required_review_bot,
     validate_required_bot_review,
     validate_rounds,
 )
 
 HEAD = "a" * 40
+
 
 def review(*, review_id=1, login="coderabbitai[bot]", user_type="Bot",
            commit_id=HEAD, state="COMMENTED", body="Revisión sustantiva"):
@@ -22,6 +25,7 @@ def review(*, review_id=1, login="coderabbitai[bot]", user_type="Bot",
         "commit_id": commit_id,
         "user": {"type": user_type, "login": login},
     })
+
 
 class T(unittest.TestCase):
     def test_empty_commented_bot_reviews_do_not_count(self):
@@ -65,11 +69,49 @@ class T(unittest.TestCase):
                 with self.assertRaises(PolicyError):
                     validate_required_bot_review(lines, "coderabbitai[bot]", HEAD)
 
-    def test_optional_reviewer_preserves_existing_round_policy(self):
+    def test_base_required_reviewer_cannot_be_disabled_by_empty_caller(self):
+        base = parse_reviewer_policy(json.dumps({
+            "version": 1, "required_review_bot": "coderabbitai[bot]"
+        }))
+        self.assertEqual(
+            resolve_required_review_bot(base, ""),
+            "coderabbitai[bot]",
+        )
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review([], resolve_required_review_bot(base, ""), HEAD)
+
+    def test_base_required_reviewer_rejects_mismatch_or_candidate_downgrade(self):
+        base = parse_reviewer_policy(json.dumps({
+            "version": 1, "required_review_bot": "coderabbitai[bot]"
+        }))
+        with self.assertRaises(PolicyError):
+            resolve_required_review_bot(base, "other-bot")
+        self.assertEqual(resolve_required_review_bot(base, ""), "coderabbitai[bot]")
+
+    def test_optional_reviewer_preserves_backward_compatibility_without_base_requirement(self):
+        self.assertEqual(parse_reviewer_policy(None), "")
+        self.assertEqual(
+            parse_reviewer_policy(json.dumps({"version": 1, "required_review_bot": None})),
+            "",
+        )
+        self.assertEqual(resolve_required_review_bot("", ""), "")
+        self.assertEqual(resolve_required_review_bot("", "review-bot"), "review-bot")
         lines = [review(review_id=i, login="review-bot") for i in (1, 2, 3)]
         validate_required_bot_review(lines, "", "")
-        self.assertEqual(count_review_rounds(lines), 3)
-        validate_rounds(3, 3)
+        validate_rounds(count_review_rounds(lines), 3)
+
+    def test_invalid_base_policy_fails_closed(self):
+        invalid = (
+            "{}",
+            '{"version":2,"required_review_bot":null}',
+            '{"version":1,"required_review_bot":""}',
+            '{"version":1,"required_review_bot":"bad bot"}',
+            '{"version":1,"required_review_bot":null,"extra":true}',
+        )
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                with self.assertRaises(PolicyError):
+                    parse_reviewer_policy(payload)
 
     def test_green_checks_without_required_final_review_fail_closed(self):
         with self.assertRaises(PolicyError):
@@ -83,6 +125,7 @@ class T(unittest.TestCase):
             self.assertEqual(load_policy(Path("decisiones.yml"), root=root)["version"], 1)
             with self.assertRaises(PolicyError):
                 load_policy(Path("../decisiones.yml"), root=root)
+
 
 if __name__ == "__main__":
     unittest.main()
