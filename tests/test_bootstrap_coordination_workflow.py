@@ -160,5 +160,38 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertLess(text.index("Resolver solicitud y validar autoridad"),text.index("actions/checkout@"))
         self.assertEqual(text.count("FACTORY_PROVISION_TOKEN:"),1)
 
+    def test_non_bootstrap_issue_comments_are_skipped_before_resolve(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        guard=text.split("\n  resolve:",1)[1].split("\n    runs-on:",1)[0]
+        self.assertIn("if: >-",guard)
+        self.assertIn("github.event_name == 'workflow_dispatch'",guard)
+        self.assertIn("github.event_name == 'issue_comment'",guard)
+        self.assertIn("github.actor == github.repository_owner",guard)
+        self.assertIn("startsWith(github.event.comment.body, '/bootstrap-coordination ')",guard)
+        self.assertNotIn("contains(",guard)
+
+    def test_bootstrap_entry_guard_preserves_authorized_paths_and_fail_closed_validation(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        guard=text.split("\n  resolve:",1)[1].split("\n    runs-on:",1)[0]
+        resolve=text.split("\n  resolve:",1)[1].split("\n  prepare:",1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch'",guard)
+        self.assertIn("github.actor == github.repository_owner",guard)
+        self.assertIn("startsWith(github.event.comment.body, '/bootstrap-coordination ')",guard)
+        self.assertIn('[[ "$ACTOR" == "$OWNER" ]]',resolve)
+        self.assertIn('[[ -z "$COMMENT_PR_URL" ]]',resolve)
+        self.assertIn(r'^/bootstrap-coordination\ (pl0n3r/[A-Za-z0-9_.-]{1,100})\ ([1-9][0-9]*)\ ([0-9a-f]{40}),resolve)
+        self.assertIn("comando bootstrap inválido",resolve)
+
+    def test_bootstrap_entry_guard_does_not_expand_permissions_or_secrets(self):
+        text=WORKFLOW.read_text(encoding="utf-8")
+        guard=text.split("\n  resolve:",1)[1].split("\n    runs-on:",1)[0]
+        self.assertIn("permissions:\n  contents: read",text)
+        for forbidden in ("contents: write","pull-requests: write","issues: write"):
+            self.assertNotIn(forbidden,text)
+        for field in ("target_repository:","target_issue:","expected_main_sha:","governance_ref:","idempotency_key:"):
+            self.assertEqual(text.count(field),1)
+        self.assertEqual(text.count("FACTORY_PROVISION_TOKEN:"),1)
+        self.assertNotIn("secrets.",guard)
+
 if __name__=="__main__":
     unittest.main()
