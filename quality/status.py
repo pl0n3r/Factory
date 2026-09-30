@@ -108,11 +108,21 @@ def derive_quality_health(
     if sonar is not None:
         external["sonar"] = sonar
     state = _highest_state(states)
-    freshness_state = "DEGRADED" if any(
-        item.startswith(("gate_missing:", "gate_stale:", "gate_unknown:", "sonar:"))
-        or item in {"performance_missing", "recovery_missing", "sonar_missing",
-                    "performance_unknown", "recovery_unknown"}
-        for item in reasons
+    freshness_classes = {
+        "quality_evidence_missing",
+        "quality_evidence_stale",
+        "quality_evidence_unknown",
+    }
+    freshness_state = "DEGRADED" if (
+        any(
+            item.startswith(("gate_missing:", "gate_stale:", "gate_unknown:"))
+            or item in {
+                "performance_missing", "recovery_missing", "sonar_missing",
+                "performance_unknown", "recovery_unknown",
+            }
+            for item in reasons
+        )
+        or any(item in freshness_classes for item in classes)
     ) else "CURRENT"
     return {
         "version": 1,
@@ -284,6 +294,8 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
         "sonar.snapshot_freshness",
     )
     _freshness(snapshot, "sonar.snapshot_freshness")
+    if snapshot["state"] not in {"CURRENT", "STALE"}:
+        raise QualityStatusError("sonar snapshot freshness inválida.")
 
     raw_signals = row["signals"]
     if not isinstance(raw_signals, list) or len(raw_signals) != len(_SONAR_SIGNALS):
@@ -316,10 +328,23 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
             "sonar.signal.freshness",
         )
         age = _freshness(freshness, "sonar.signal.freshness")
-        if status == "STALE" and freshness["state"] != "STALE":
+        freshness_state = freshness["state"]
+        if (status == "STALE") != (freshness_state == "STALE"):
             raise QualityStatusError("sonar stale incoherente.")
-        if signal["observed_at"] is not None:
-            _time(signal["observed_at"], "sonar.signal.observed_at")
+        if freshness_state == "UNKNOWN" and status != "UNKNOWN":
+            raise QualityStatusError("sonar unknown incoherente.")
+        if status in {"PASS", "FAIL"} and freshness_state != "CURRENT":
+            raise QualityStatusError("sonar status/freshness incoherente.")
+        observed = signal["observed_at"]
+        if freshness_state == "UNKNOWN":
+            if observed is not None:
+                raise QualityStatusError("sonar observed_at incoherente.")
+        else:
+            if observed is None:
+                raise QualityStatusError("sonar observed_at faltante.")
+            _time(observed, "sonar.signal.observed_at")
+        if snapshot["state"] == "STALE" and status != "STALE":
+            raise QualityStatusError("sonar snapshot stale incoherente.")
         signal_refs = _refs(signal["evidence_refs"])
         refs.update(signal_refs)
         local_refs.update(signal_refs)
@@ -376,6 +401,10 @@ def _freshness(value: Mapping[str, Any], label: str) -> int | None:
         return None
     if type(age) is not int or age < 0:
         raise QualityStatusError(f"{label}.age_seconds inválido.")
+    if state == "CURRENT" and age > max_age:
+        raise QualityStatusError(f"{label} CURRENT excede max_age_seconds.")
+    if state == "STALE" and age <= max_age:
+        raise QualityStatusError(f"{label} STALE no excede max_age_seconds.")
     return age
 
 

@@ -314,6 +314,7 @@ class QualityStatusTests(unittest.TestCase):
         failed["signals"][0]["reason"] = "quality_gate_failed"
         blocked = health(sonar=True, sonar_ev=failed)
         self.assertEqual(blocked["state"], "BLOCKED")
+        self.assertEqual(blocked["freshness"]["state"], "CURRENT")
         self.assertIn(
             "quality_gate_failed",
             blocked["work_item_classes"],
@@ -330,10 +331,33 @@ class QualityStatusTests(unittest.TestCase):
         stale = sonar_evidence()
         stale["signals"][2]["status"] = "STALE"
         stale["signals"][2]["reason"] = "ce_task_stale"
-        stale["signals"][2]["freshness"]["state"] = "STALE"
+        stale["signals"][2]["freshness"] = {
+            "state": "STALE",
+            "age_seconds": 7200,
+            "max_age_seconds": 3600,
+        }
         stale_health = health(sonar=True, sonar_ev=stale)
         self.assertEqual(stale_health["state"], "UNKNOWN")
+        self.assertEqual(stale_health["freshness"]["state"], "DEGRADED")
         self.assertIn("quality_evidence_stale", stale_health["work_item_classes"])
+
+        pass_with_stale_freshness = sonar_evidence()
+        pass_with_stale_freshness["signals"][0]["freshness"] = {
+            "state": "STALE",
+            "age_seconds": 7200,
+            "max_age_seconds": 3600,
+        }
+        with self.assertRaises(QualityStatusError):
+            health(sonar=True, sonar_ev=pass_with_stale_freshness)
+
+        stale_snapshot_with_current_signals = sonar_evidence()
+        stale_snapshot_with_current_signals["snapshot_freshness"] = {
+            "state": "STALE",
+            "age_seconds": 7200,
+            "max_age_seconds": 3600,
+        }
+        with self.assertRaises(QualityStatusError):
+            health(sonar=True, sonar_ev=stale_snapshot_with_current_signals)
 
     def test_sonar_reasons_and_refs_are_preserved_safely(self):
         evidence = sonar_evidence()
