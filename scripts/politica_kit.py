@@ -16,7 +16,7 @@ else:
     from safe_io import SafeIOError, read_repo_text
 
 ID_RE = re.compile(r"^D-[0-9]{3,}$")
-BOT_LOGIN_RE = re.compile(r"^[A-Za-z0-9_.\\[\\]-]{1,100}$")
+BOT_LOGIN_RE = re.compile(r"^[A-Za-z0-9_.\[\]-]{1,100}$")
 HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 POLICY_FILE = Path("decisiones.yml")
 MAX_POLICY_BYTES = 256 * 1024
