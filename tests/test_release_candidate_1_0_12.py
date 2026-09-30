@@ -22,7 +22,7 @@ class ReleaseCandidate1012Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
-        cls.template = (cls.root / bootstrap.CALLER_TEMPLATE).read_text(encoding="utf-8")
+        cls.template = (\n            cls.root / "template/.github/workflows/coordinacion.yml"\n        ).read_text(encoding="utf-8")
 
     def _fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
         tmp = tempfile.TemporaryDirectory()
