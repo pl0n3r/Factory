@@ -349,6 +349,77 @@ class AcceptanceContractTests(unittest.TestCase):
         with self.assertRaisesRegex(AcceptanceError, "no existe check"):
             verify_check(criterion, {"check_runs": []})
 
+    def test_workflow_paginates_check_runs(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "aceptacion.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --slurp',
+            workflow,
+        )
+        self.assertIn(
+            "jq '{check_runs: [.[].check_runs[]]}' /tmp/check-pages.json > /tmp/checks.json",
+            workflow,
+        )
+
+    def test_check_after_first_api_page_is_verified(self):
+        criterion = Criterion("AC-01", "check", "SonarCloud Code Analysis")
+        checks = {
+            "check_runs": [
+                {
+                    "id": index,
+                    "name": f"metadata-{index}",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+                for index in range(1, 101)
+            ]
+            + [
+                {
+                    "id": 101,
+                    "name": "SonarCloud Code Analysis",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ]
+        }
+        verify_check(criterion, checks)
+
+    def test_check_collection_over_limit_fails_closed(self):
+        criterion = Criterion("AC-01", "check", "Tests de scripts")
+        checks = {
+            "check_runs": [
+                {
+                    "id": index,
+                    "name": f"check-{index}",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+                for index in range(1, 502)
+            ]
+        }
+        with self.assertRaisesRegex(AcceptanceError, "lista acotada"):
+            verify_check(criterion, checks)
+
+    def test_workflow_keeps_readonly_check_permissions(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "aceptacion.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "permissions:\n      contents: read\n      issues: read\n      checks: read",
+            workflow,
+        )
+        self.assertIn(
+            '[[ "$EVENT_NAME" == "pull_request" ]]',
+            workflow,
+        )
+
     def test_latest_check_run_wins(self):
         criterion = Criterion("AC-01", "check", "Tests de scripts")
         with self.assertRaisesRegex(AcceptanceError, "no terminó success"):
