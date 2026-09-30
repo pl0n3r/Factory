@@ -89,6 +89,106 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(selected.key, "health")
         self.assertEqual(authority_class(selected), "health")
 
+    def test_future_product_tranche_is_not_ready_while_previous_tranche_is_open(self):
+        candidate = Candidate(
+            key="product-t3",
+            priority="high",
+            tranche_subject=True,
+            tranche=3,
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        state = classify_readiness(candidate, active_tranche=2)
+        self.assertFalse(state.ready)
+        self.assertIn("future_tranche_blocked", state.reasons)
+        self.assertIsNone(select_next([candidate], active_tranche=2))
+
+    def test_preemptive_authority_classes_bypass_normal_tranche_gate(self):
+        candidates = [
+            Candidate(key="health", health=True, tranche_subject=True, tranche=3),
+            Candidate(key="incident", incident=True, tranche_subject=True, tranche=3),
+            Candidate(key="auto-incident", auto_class="AUTO_INCIDENT", tranche_subject=True, tranche=3),
+            Candidate(key="active", active_fix=True, tranche_subject=True, tranche=3),
+            Candidate(
+                key="decision",
+                owner_decision_resolved=True,
+                tranche_subject=True,
+                tranche=3,
+            ),
+        ]
+        for candidate in candidates:
+            with self.subTest(candidate=candidate.key):
+                state = classify_readiness(candidate, active_tranche=2)
+                self.assertTrue(state.ready)
+                self.assertNotIn("future_tranche_blocked", state.reasons)
+
+    def test_factory_maintenance_exception_remains_ready_during_open_tranche(self):
+        factory = Candidate(
+            key="factory-hardening",
+            priority="high",
+            tranche_subject=True,
+            tranche=3,
+            tranche_exception=True,
+            metadata={"repository_ref": "pl0n3r/Factory"},
+        )
+        product = Candidate(
+            key="product-hardening",
+            priority="high",
+            tranche_subject=True,
+            tranche=3,
+            tranche_exception=True,
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        self.assertTrue(classify_readiness(factory, active_tranche=2).ready)
+        self.assertFalse(classify_readiness(product, active_tranche=2).ready)
+
+    def test_condor_375_regression_is_excluded_with_structured_reason(self):
+        candidate = Candidate(
+            key="pl0n3r/Condor#375",
+            priority="high",
+            tranche_subject=True,
+            tranche=3,
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        record = dispatch_record([candidate], active_tranche=2)
+        self.assertIsNone(record["selected"])
+        self.assertEqual(
+            record["excluded"]["pl0n3r/Condor#375"],
+            ["future_tranche_blocked"],
+        )
+        self.assertEqual(record["active_tranche"], 2)
+        self.assertEqual(
+            parallel_ready([candidate], active_tranche=2),
+            [],
+        )
+
+    def test_tranche_subject_product_fails_closed_without_tranche_evidence(self):
+        missing_candidate_tranche = Candidate(
+            key="missing-candidate",
+            tranche_subject=True,
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        missing_global_tranche = Candidate(
+            key="missing-global",
+            tranche_subject=True,
+            tranche=3,
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        legacy = Candidate(key="legacy", priority="high")
+
+        self.assertIn(
+            "tranche_evidence_missing",
+            classify_readiness(
+                missing_candidate_tranche,
+                active_tranche=2,
+            ).reasons,
+        )
+        self.assertIn(
+            "tranche_evidence_missing",
+            classify_readiness(missing_global_tranche).reasons,
+        )
+        self.assertTrue(classify_readiness(legacy).ready)
+        self.assertEqual(select_next([legacy]).key, "legacy")
+
     def test_active_fix_beats_parallel_equivalent_work(self):
         fix = Candidate(key="fix", active_fix=True, active_pr="#160", continuity=10)
         parallel = Candidate(
@@ -570,6 +670,29 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(len(adaptive["event_fingerprint"]), 64)
         self.assertEqual(adaptive["generation"], 7)
         self.assertEqual(record["candidates"]["chosen"]["metadata"]["adaptive"], adaptive)
+
+    def test_adaptive_dispatch_propagates_tranche_gate(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        fencing = self.fenced()
+        candidate = Candidate(
+            key="adaptive-product-t3",
+            priority="high",
+            tranche_subject=True,
+            tranche=3,
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        record = adaptive_dispatch_record(
+            [candidate],
+            presence=presence,
+            fencing=fencing,
+            replan_action="replan",
+            active_tranche=2,
+        )
+        self.assertIsNone(record["selected"])
+        self.assertEqual(
+            record["excluded"]["adaptive-product-t3"],
+            ["future_tranche_blocked"],
+        )
 
     def test_presence_replan_fencing_e2e_uses_single_dispatcher_ranking(self):
         """AC-07: E2E termina en el único ranking de Dispatcher V2."""

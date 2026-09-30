@@ -85,6 +85,21 @@ class PlanContractTests(unittest.TestCase):
             PLAN,
         )
 
+    def test_tranche_gate_precedes_ready_reservation_and_cannot_be_overridden(self):
+        gate = "**Gate de tanda antes de prioridades:**"
+        priority = "5. El Issue ready de"
+        self.assertIn(gate, PLAN)
+        self.assertLess(PLAN.index(gate), PLAN.index(priority))
+        for value in (
+            "etiqueta `available` / `estado: disponible`",
+            "`/tomar`",
+            "reserva activa",
+            "no sobreescriben este gate",
+            "antes de aplicar las reglas 5–7",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
     def test_factory_is_not_blocked_by_phase_wait_rule(self):
         self.assertIn(
             "Esta regla de espera por tanda **no bloquea a Factory**",

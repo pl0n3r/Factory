@@ -15,6 +15,9 @@
 2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o clasificación AUTO equivalente) → su repo.
 3. Una reparación activa válida de HEALTH/INCIDENT → continuar ese frente antes de abrir trabajo paralelo.
 4. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
+
+**Gate de tanda antes de prioridades:** antes de aplicar las reglas 5–7, determina la primera tanda global no terminada según la sección 6. El trabajo normal de producto que dependa de una tanda posterior no es ready aunque tenga etiqueta `available` / `estado: disponible`, aunque `/tomar` haya sido solicitado o aunque exista una reserva activa: esos estados no sobreescriben este gate. HEALTH, incidentes, reparaciones activas y decisiones del dueño ya resueltas conservan su preempción. La excepción explícita de la sección 6 para mantenimiento, gobernanza y hardening transversal de Factory también se conserva.
+
 5. El Issue ready de `prioridad: crítica` / `priority: critical` mejor posicionado por el desempate de la regla 7 entre los siete repositorios.
 6. Lo mismo con `prioridad: alta` y después `media`, aplicando el mismo desempate.
 7. Dentro de la misma prioridad: desbloqueo → impacto transversal → continuidad → menor riesgo/esfuerzo → antigüedad.
