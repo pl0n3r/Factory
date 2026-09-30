@@ -20,6 +20,9 @@ WORK_ITEM_CLASSES = frozenset({
     "quality_performance_degraded", "quality_performance_unknown",
     "quality_performance_blocked", "quality_recovery_degraded",
     "quality_recovery_unknown", "quality_recovery_blocked",
+    "quality_sonar_quality_gate_failed", "quality_sonar_ce_task_failed",
+    "quality_sonar_line_usage_failed", "quality_sonar_config_drift",
+    "quality_sonar_debt_failed", "quality_sonar_unknown", "quality_sonar_stale",
 })
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _PROJECT_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -42,9 +45,10 @@ def derive_quality_health(
     project_ref: str,
     performance_status: Mapping[str, Any] | None = None,
     recovery_health: Mapping[str, Any] | None = None,
+    sonar_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deriva un único estado Quality sin ejecutar ni recalcular dimensiones externas."""
-    _safe((gate_evidence, regressions, performance_status, recovery_health))
+    _safe((gate_evidence, regressions, performance_status, recovery_health, sonar_evidence))
     quality = validate_quality_contract(contract)
     now = _time(observed_at, "observed_at")
     project_ref = _project_ref(project_ref)
@@ -101,10 +105,15 @@ def derive_quality_health(
     external = _external_dimensions(
         quality, performance_status, recovery_health, states, reasons, classes, refs
     )
+    sonar = _sonar_dimension(
+        quality, sonar_evidence, states, reasons, classes, refs, ages
+    )
+    if sonar is not None:
+        external["sonar"] = sonar
     state = _highest_state(states)
     freshness_state = "DEGRADED" if any(
-        item.startswith(("gate_missing:", "gate_stale:", "gate_unknown:"))
-        or item in {"performance_missing", "recovery_missing",
+        item.startswith(("gate_missing:", "gate_stale:", "gate_unknown:", "sonar:"))
+        or item in {"performance_missing", "recovery_missing", "sonar_missing",
                     "performance_unknown", "recovery_unknown"}
         for item in reasons
     ) else "CURRENT"
@@ -221,6 +230,155 @@ def _regressions(value: Any, project_ref: str, required):
             raise QualityStatusError("regression provenance inválida.")
         result.append({**row, "provenance": [_ref(item) for item in provenance]})
     return result
+
+
+
+_SONAR_SIGNALS = frozenset({
+    "quality_gate", "analysis_freshness", "ce_task", "organization_line_usage",
+    "visibility", "analysis_method", "coverage", "historical_debt",
+})
+_SONAR_FAIL_CLASSES = {
+    "quality_gate": ("BLOCKED", "quality_sonar_quality_gate_failed"),
+    "ce_task": ("BLOCKED", "quality_sonar_ce_task_failed"),
+    "organization_line_usage": ("DEGRADED", "quality_sonar_line_usage_failed"),
+    "visibility": ("DEGRADED", "quality_sonar_config_drift"),
+    "analysis_method": ("DEGRADED", "quality_sonar_config_drift"),
+    "coverage": ("DEGRADED", "quality_sonar_config_drift"),
+    "analysis_freshness": ("DEGRADED", "quality_sonar_config_drift"),
+    "historical_debt": ("DEGRADED", "quality_sonar_debt_failed"),
+}
+
+
+def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
+    configured = "sonar" in quality
+    if not configured:
+        if evidence is not None:
+            raise QualityStatusError("sonar evidence fuera del contrato.")
+        return None
+    if evidence is None:
+        states.append("UNKNOWN")
+        reasons.append("sonar_missing")
+        classes.append("quality_sonar_unknown")
+        return {
+            "status": "UNKNOWN", "source": "sonar_evidence_v1",
+            "reasons": ["sonar_missing"], "evidence_refs": [],
+            "work_item_classes": ["quality_sonar_unknown"],
+            "signals": [], "recalculated": False,
+        }
+
+    row = _closed(
+        evidence,
+        {
+            "version", "project", "observed_at", "snapshot_freshness",
+            "signals", "authority", "execute_actions",
+        },
+        "sonar",
+    )
+    if (
+        row["version"] != 1 or row["project"] != quality["project"]
+        or row["authority"] != "read_only" or row["execute_actions"] is not False
+    ):
+        raise QualityStatusError("sonar evidence contract inválido.")
+
+    _time(row["observed_at"], "sonar.observed_at")
+    snapshot = _closed(
+        row["snapshot_freshness"],
+        {"state", "age_seconds", "max_age_seconds"},
+        "sonar.snapshot_freshness",
+    )
+    _freshness(snapshot, "sonar.snapshot_freshness")
+
+    raw_signals = row["signals"]
+    if not isinstance(raw_signals, list) or len(raw_signals) != len(_SONAR_SIGNALS):
+        raise QualityStatusError("sonar signals inválidas.")
+
+    seen = set()
+    projected = []
+    local_states = []
+    local_reasons = []
+    local_classes = []
+    local_refs = set()
+    for raw in raw_signals:
+        signal = _closed(
+            raw,
+            {
+                "signal", "status", "reason", "observed_at", "freshness",
+                "evidence_refs", "details",
+            },
+            "sonar.signal",
+        )
+        name = signal["signal"]
+        status = signal["status"]
+        if name not in _SONAR_SIGNALS or name in seen or status not in GATE_STATES:
+            raise QualityStatusError("sonar signal fuera del contrato.")
+        seen.add(name)
+        reason = _ref(signal["reason"])
+        freshness = _closed(
+            signal["freshness"],
+            {"state", "age_seconds", "max_age_seconds"},
+            "sonar.signal.freshness",
+        )
+        age = _freshness(freshness, "sonar.signal.freshness")
+        if status == "STALE" and freshness["state"] != "STALE":
+            raise QualityStatusError("sonar stale incoherente.")
+        if signal["observed_at"] is not None:
+            _time(signal["observed_at"], "sonar.signal.observed_at")
+        signal_refs = _refs(signal["evidence_refs"])
+        refs.update(signal_refs)
+        local_refs.update(signal_refs)
+        if age is not None:
+            ages.append(age)
+
+        projected.append({
+            "signal": name, "status": status, "reason": reason,
+            "freshness": dict(freshness), "evidence_refs": signal_refs,
+        })
+        if status == "PASS":
+            continue
+        reason_key = f"sonar:{name}:{reason}"
+        reasons.append(reason_key)
+        local_reasons.append(reason_key)
+        if status == "STALE":
+            states.append("UNKNOWN"); local_states.append("UNKNOWN")
+            classes.append("quality_sonar_stale")
+            local_classes.append("quality_sonar_stale")
+        elif status == "UNKNOWN":
+            states.append("UNKNOWN"); local_states.append("UNKNOWN")
+            classes.append("quality_sonar_unknown")
+            local_classes.append("quality_sonar_unknown")
+        else:
+            health_state, work_class = _SONAR_FAIL_CLASSES[name]
+            states.append(health_state); local_states.append(health_state)
+            classes.append(work_class); local_classes.append(work_class)
+
+    if seen != _SONAR_SIGNALS:
+        raise QualityStatusError("sonar signals incompletas.")
+    return {
+        "status": _highest_state(local_states),
+        "source": "sonar_evidence_v1",
+        "reasons": sorted(set(local_reasons)),
+        "evidence_refs": sorted(local_refs),
+        "work_item_classes": sorted(set(local_classes)),
+        "signals": sorted(projected, key=lambda item: item["signal"]),
+        "recalculated": False,
+    }
+
+
+def _freshness(value: Mapping[str, Any], label: str) -> int | None:
+    state = value["state"]
+    age = value["age_seconds"]
+    max_age = value["max_age_seconds"]
+    if state not in {"CURRENT", "STALE", "UNKNOWN"}:
+        raise QualityStatusError(f"{label}.state inválido.")
+    if type(max_age) is not int or max_age <= 0:
+        raise QualityStatusError(f"{label}.max_age_seconds inválido.")
+    if state == "UNKNOWN":
+        if age is not None:
+            raise QualityStatusError(f"{label}.age_seconds incoherente.")
+        return None
+    if type(age) is not int or age < 0:
+        raise QualityStatusError(f"{label}.age_seconds inválido.")
+    return age
 
 
 def _external_dimensions(quality, performance_status, recovery_health, states, reasons, classes, refs):
