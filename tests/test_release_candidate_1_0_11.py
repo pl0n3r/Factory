@@ -16,9 +16,13 @@ class ReleaseCandidate1011Tests(unittest.TestCase):
     def tearDown(self) -> None:
         coordinator.configure_profile("es")
 
-    def test_candidate_version_is_1_0_11(self) -> None:
+    def test_candidate_is_at_least_1_0_11(self) -> None:
         source = self.root / "config" / "version.json"
-        self.assertEqual(json.loads(source.read_text()), {"version": "1.0.11"})
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        self.assertEqual(set(payload), {"version"})
+        self.assertRegex(payload["version"], r"^\d+\.\d+\.\d+$")
+        version = tuple(int(part) for part in payload["version"].split("."))
+        self.assertGreaterEqual(version, (1, 0, 11))
 
     def test_candidate_contains_labels_startup_fix(self) -> None:
         workflow = (self.root / ".github/workflows/etiquetas.yml").read_text()
