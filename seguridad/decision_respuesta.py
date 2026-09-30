@@ -108,8 +108,9 @@ def _evidence_body(option: str) -> str:
     )
     return (
         f"<!-- factory-human-decision {marker} -->\n"
-        f"✅ Decisión humana materializada: opción **{option}**. "
-        "Este registro no ejecuta el efecto de la opción ni amplía autoridad."
+        f"✅ Decisión humana registrada: opción **{option}**. "
+        "Este journal permite completar/reintentar la materialización sin "
+        "ejecutar el efecto de la opción ni ampliar autoridad."
     )
 
 
@@ -176,8 +177,6 @@ def materialize_decision(
         return False
 
     labels = _labels(issue)
-    if DECISION_LABEL not in labels:
-        return False
 
     body = issue.get("body")
     if not isinstance(body, str):
@@ -192,23 +191,51 @@ def materialize_decision(
     existing = _existing_evidence(api, base)
     if existing is not None and existing != option:
         return False
+
+    # Inicio normal: la cola canónica debe seguir presente. Recuperación:
+    # si un intento previo ya publicó el journal controlado para la MISMA
+    # opción, puede reanudar aunque el crash haya ocurrido tras retirar la cola.
+    if DECISION_LABEL not in labels and existing != option:
+        return False
     if existing is None:
         api("POST", f"{base}/comments", {"body": _evidence_body(option)})
+        existing = option
 
-    # Releer estado antes de mutar labels para fallar cerrado ante carreras.
+    # Releer Issue y marker antes de cualquier write de estado para evitar TOCTOU.
     issue = api("GET", base)
     if not isinstance(issue, dict) or issue.get("state") != "open":
         return False
-    labels = _labels(issue)
-    if DECISION_LABEL not in labels:
+    live_body = issue.get("body")
+    if not isinstance(live_body, str):
+        return False
+    try:
+        live_options = _gate_options(live_body)
+    except (DecisionError, ValueError):
+        return False
+    if option not in live_options:
         return False
 
-    _remove_label(api, base, DECISION_LABEL)
+    labels = _labels(issue)
+    if DECISION_LABEL not in labels and existing != option:
+        return False
+
+    # Transición recuperable: primero converger el estado, luego retirar la
+    # cola. Cualquier crash intermedio puede reanudarse por el journal de la
+    # misma opción sin duplicar evidencia.
     for label in sorted(labels):
         if label.startswith(STATUS_PREFIX) and label != COMPLETED:
             _remove_label(api, base, label)
     if COMPLETED not in labels:
         api("POST", f"{base}/labels", {"labels": [COMPLETED]})
+
+    issue = api("GET", base)
+    if not isinstance(issue, dict) or issue.get("state") != "open":
+        return False
+    labels = _labels(issue)
+    if DECISION_LABEL in labels:
+        _remove_label(api, base, DECISION_LABEL)
+    elif existing != option:
+        return False
 
     api(
         "PATCH",

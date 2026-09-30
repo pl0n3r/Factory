@@ -42,7 +42,10 @@ def event(command="/decidir B", association="OWNER", user_type="User"):
 
 
 class FakeAPI:
-    def __init__(self, *, body=None, labels=None, state="open"):
+    def __init__(
+        self, *, body=None, labels=None, state="open",
+        crash_after_decision_label_once=False,
+    ):
         self.issue = {
             "number": 519,
             "state": state,
@@ -63,6 +66,7 @@ class FakeAPI:
         self.comments = []
         self.calls = []
         self.next_id = 1000
+        self.crash_after_decision_label_once = crash_after_decision_label_once
 
     def label_names(self):
         return {item["name"] for item in self.issue["labels"]}
@@ -88,6 +92,12 @@ class FakeAPI:
                 item for item in self.issue["labels"]
                 if item["name"] != label
             ]
+            if (
+                label == DECISION_LABEL
+                and self.crash_after_decision_label_once
+            ):
+                self.crash_after_decision_label_once = False
+                raise RuntimeError("simulated crash after queue removal")
             return None
         if method == "POST" and path.endswith("/labels"):
             for label in payload["labels"]:
@@ -172,6 +182,36 @@ class DecisionRespuestaTests(unittest.TestCase):
             if call[0] == "PATCH" and call[1].endswith("/issues/519")
         ]
         self.assertEqual(len(closes), 1)
+
+        partial = FakeAPI(crash_after_decision_label_once=True)
+        with self.assertRaisesRegex(
+            RuntimeError, "simulated crash after queue removal"
+        ):
+            materialize_decision(event(), partial, "pl0n3r/Factory")
+
+        self.assertEqual(partial.issue["state"], "open")
+        self.assertNotIn(DECISION_LABEL, partial.label_names())
+        self.assertIn(COMPLETED, partial.label_names())
+        partial_evidence = [
+            item for item in partial.comments
+            if item["user"]["login"] == BOT
+            and item["body"].startswith("<!-- factory-human-decision ")
+        ]
+        self.assertEqual(len(partial_evidence), 1)
+
+        self.assertTrue(
+            materialize_decision(event(), partial, "pl0n3r/Factory")
+        )
+        self.assertEqual(partial.issue["state"], "closed")
+        self.assertEqual(partial.issue["state_reason"], "completed")
+        self.assertEqual(
+            len([
+                item for item in partial.comments
+                if item["user"]["login"] == BOT
+                and item["body"].startswith("<!-- factory-human-decision ")
+            ]),
+            1,
+        )
 
     def test_decision_materialization_has_no_parent_side_effects(self):
         api = FakeAPI()
