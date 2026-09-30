@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -15,6 +16,8 @@ else:
     from safe_io import SafeIOError, read_repo_text
 
 ID_RE = re.compile(r"^D-[0-9]{3,}$")
+BOT_LOGIN_RE = re.compile(r"^[A-Za-z0-9_.\\-\\[\\]]{1,100}$")
+HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 POLICY_FILE = Path("decisiones.yml")
 MAX_POLICY_BYTES = 256 * 1024
 MAX_REVIEWS_BYTES = 2_000_000
@@ -54,6 +57,50 @@ def review_counts_as_round(review: dict[str, Any]) -> bool:
         return True
     body = review.get("body")
     return isinstance(body, str) and bool(body.strip())
+
+
+def validate_required_bot_review(
+    lines: list[str],
+    required_login: str,
+    head_sha: str,
+) -> None:
+    """Exige review final del bot configurado sobre el HEAD exacto."""
+    if required_login == "":
+        return
+    if not BOT_LOGIN_RE.fullmatch(required_login):
+        raise PolicyError("Reviewer-bot requerido inválido.")
+    if not HEAD_SHA_RE.fullmatch(head_sha):
+        raise PolicyError("HEAD SHA inválido para reviewer-bot requerido.")
+
+    for line in lines:
+        if not line.strip():
+            continue
+        if len(line) > 100_000:
+            raise PolicyError("Review excede el tamaño permitido.")
+        try:
+            review = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise PolicyError("Reviews contienen NDJSON inválido.") from exc
+        if not isinstance(review, dict):
+            raise PolicyError("Review inválido.")
+        user = review.get("user")
+        if (
+            not isinstance(user, dict)
+            or user.get("type") != "Bot"
+            or user.get("login") != required_login
+            or review.get("commit_id") != head_sha
+        ):
+            continue
+        state = review.get("state")
+        body = review.get("body")
+        if state == "APPROVED" or (
+            state == "COMMENTED" and isinstance(body, str) and bool(body.strip())
+        ):
+            return
+
+    raise PolicyError(
+        f"Reviewer-bot requerido '{required_login}' no tiene review final sobre HEAD."
+    )
 
 
 def count_review_rounds(lines: list[str]) -> int:
@@ -99,8 +146,14 @@ def main() -> int:
         return 1
     try:
         policy = load_policy()
-        rounds = count_review_rounds(review_payload.splitlines())
+        lines = review_payload.splitlines()
+        rounds = count_review_rounds(lines)
         validate_rounds(rounds, policy["review_round_limit"])
+        validate_required_bot_review(
+            lines,
+            os.environ.get("REQUIRED_REVIEW_BOT", ""),
+            os.environ.get("HEAD_SHA", ""),
+        )
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
