@@ -269,8 +269,8 @@ class DecisionRespuestaTests(unittest.TestCase):
                 "labels": [
                     "equipo: externo",
                     "prioridad: alta",
-                    COMPLETED,
                     "tipo: infraestructura",
+                    COMPLETED,
                 ],
             }],
         )
