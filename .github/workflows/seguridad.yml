@@ -13,6 +13,8 @@ on:
       - '.github/workflows/seguridad.yml'
   issues:
     types: [opened, edited, reopened]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -66,6 +68,29 @@ jobs:
               -f color='B60205' \
               -f description='Decisión reservada explícitamente al dueño.'
           fi
+
+  materializar-respuesta:
+    name: Materializar decisión explícita
+    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Descargar política confiable
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Validar comando y materializar decisión
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=seguridad python3 seguridad/decision_respuesta.py < "$GITHUB_EVENT_PATH"
 
   sincronizar-decision:
     name: Validar y enrutar decisión

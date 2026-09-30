@@ -61,6 +61,18 @@ Solo Issues creados por actores con asociación `OWNER`, `MEMBER` o `COLLABORATO
 
 Esto usa asignación + mención como transporte dentro de GitHub. La recepción como push en el teléfono depende de GitHub Mobile y de las preferencias externas de la cuenta; la automatización no cambia preferencias ni inventa un canal alternativo.
 
+## Materializar una respuesta explícita
+
+Una puerta válida se resuelve de forma máquina únicamente con un comentario exacto del dueño o de un actor `OWNER|MEMBER|COLLABORATOR`:
+
+`/decidir A` · `/decidir B` · `/decidir C` · `/decidir D`
+
+La opción debe existir realmente en el marker `factory-human-gate`, el Issue debe seguir abierto y conservar `decisión: dueño`. Texto libre, variantes del comando, comentarios de bots, opciones inexistentes, markers inválidos o una puerta que ya salió de la cola no producen cambios.
+
+Aceptar `/decidir X` **solo materializa la elección**: publica una evidencia idempotente y controlada, retira `decisión: dueño`, sustituye únicamente la etiqueta `estado: …` por `estado: completado` y cierra el Issue como `completed`. No ejecuta el efecto de la opción, no toca padres ni rollouts y no concede permisos para dinero, legal, datos reales, go-live u otras puertas. Los flujos dependientes deben reconciliarse por su propio contrato.
+
+Respuestas históricas escritas como texto libre siguen requiriendo reconciliación manual; no se infieren retroactivamente como comandos. Repetir el mismo comando después de materializar la decisión es un no-op y no duplica evidencia.
+
 ## Regla operativa
 
 Si no hay respuesta, el agente puede seguir únicamente con la opción declarada como `safe_default` cuando esa opción sea realmente segura y reversible; acciones que por política requieren autorización explícita continúan bloqueadas.
