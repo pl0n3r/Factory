@@ -517,6 +517,7 @@ class SonarWatchTests(unittest.TestCase):
                 "title": "matching",
                 "body": marker,
                 "state": "open",
+                "user": {"login": "github-actions[bot]"},
             }]
 
         github.http.request = paged_request
