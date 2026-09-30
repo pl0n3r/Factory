@@ -2223,6 +2223,18 @@ class CoordinacionTests(unittest.TestCase):
         self.assertIn("<!-- condor-reserva ", marker)
         self.assertEqual(coordinator.STATUS_AVAILABLE, "estado: disponible")
 
+    def test_contract_renewal_command_is_profile_invariant(self) -> None:
+        """Renovación explícita conserva la misma semántica en ES y EN."""
+        for profile in ("es", "en"):
+            with self.subTest(profile=profile):
+                coordinator.configure_profile(profile)
+                self.assertEqual(
+                    coordinator.parse_comment_command(f"/renovar-contrato {SESSION_A}"),
+                    ("renovar-contrato", SESSION_A),
+                )
+                with self.assertRaises(CoordinationError):
+                    coordinator.parse_comment_command("/renovar-contrato no-es-uuid")
+
     def test_english_profile_supports_brvtal_coordination_contract(self) -> None:
         """Cubre reservas, comandos y estados del perfil EN de BRVTAL."""
         coordinator.configure_profile("en")
@@ -2245,6 +2257,10 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(
             coordinator.parse_comment_command(f"/recover {session}"),
             ("recuperar", session),
+        )
+        self.assertEqual(
+            coordinator.parse_comment_command(f"/renovar-contrato {session}"),
+            ("renovar-contrato", session),
         )
         coordinator.release_work(api, 12, "pl0n3r", "OWNER", session, False)
         self.assertNotIn("work/issue-12", api.branches)
