@@ -73,7 +73,7 @@ class ScheduledEntrypointTests(unittest.TestCase):
     def test_sonar_watch_path_entrypoint_is_import_safe(self) -> None:
         result = self._run("scripts/sonar-watch.py")
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
-        self.assertIn("configuración runtime incompleta", result.stderr)
+        self.assertIn("configuración GitHub incompleta", result.stderr)
         self.assertNotIn("ModuleNotFoundError", result.stderr)
 
     def test_feedback_path_entrypoint_is_import_safe(self) -> None:
@@ -91,7 +91,7 @@ class ScheduledEntrypointTests(unittest.TestCase):
             self.assertNotIn("ModuleNotFoundError", combined, script)
             if script == "scripts/sonar-watch.py":
                 self.assertEqual(2, result.returncode, combined)
-                self.assertIn("configuración runtime incompleta", result.stderr)
+                self.assertIn("configuración GitHub incompleta", result.stderr)
             else:
                 self.assertEqual(0, result.returncode, combined)
 
