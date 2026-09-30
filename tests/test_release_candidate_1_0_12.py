@@ -66,7 +66,7 @@ class ReleaseCandidate1012Tests(unittest.TestCase):
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
         self.assertEqual(set(payload), {"version"})
-        self.assertRegex(payload["version"], r"^\\d+\\.\\d+\\.\\d+$")
+        self.assertRegex(payload["version"], r"^\d+\.\d+\.\d+$")
         version = tuple(int(part) for part in payload["version"].split("."))
         self.assertGreaterEqual(version, (1, 0, 12))
 
