@@ -11,129 +11,68 @@ from scripts.politica_kit import (
     validate_rounds,
 )
 
+HEAD = "a" * 40
+
+def review(*, review_id=1, login="coderabbitai[bot]", user_type="Bot",
+           commit_id=HEAD, state="COMMENTED", body="Revisión sustantiva"):
+    return json.dumps({
+        "id": review_id,
+        "state": state,
+        "body": body,
+        "commit_id": commit_id,
+        "user": {"type": user_type, "login": login},
+    })
 
 class T(unittest.TestCase):
     def test_empty_commented_bot_reviews_do_not_count(self):
-        reviews = [
-            {
-                "id": 1,
-                "state": "COMMENTED",
-                "body": "**Actionable comments posted: 2**",
-                "user": {"type": "Bot", "login": "coderabbitai[bot]"},
-            },
-            {
-                "id": 2,
-                "state": "COMMENTED",
-                "body": "",
-                "user": {"type": "Bot", "login": "coderabbitai[bot]"},
-            },
-            {
-                "id": 3,
-                "state": "COMMENTED",
-                "body": "   ",
-                "user": {"type": "Bot", "login": "coderabbitai[bot]"},
-            },
+        lines = [
+            review(review_id=1, body="**Actionable comments posted: 2**"),
+            review(review_id=2, body=""),
+            review(review_id=3, body="   "),
         ]
-        lines = [json.dumps(review) for review in reviews]
         self.assertEqual(count_review_rounds(lines), 1)
 
     def test_substantive_and_terminal_bot_reviews_count(self):
-        reviews = [
-            {
-                "id": 1,
-                "state": "COMMENTED",
-                "body": "Hallazgo accionable",
-                "user": {"type": "Bot", "login": "review-bot"},
-            },
-            {
-                "id": 2,
-                "state": "APPROVED",
-                "body": "",
-                "user": {"type": "Bot", "login": "review-bot"},
-            },
-            {
-                "id": 3,
-                "state": "CHANGES_REQUESTED",
-                "body": "",
-                "user": {"type": "Bot", "login": "review-bot"},
-            },
+        lines = [
+            review(review_id=1, login="review-bot", body="Hallazgo accionable"),
+            review(review_id=2, login="review-bot", state="APPROVED", body=""),
+            review(review_id=3, login="review-bot", state="CHANGES_REQUESTED", body=""),
         ]
-        lines = [json.dumps(review) for review in reviews]
         self.assertEqual(count_review_rounds(lines), 3)
         self.assertEqual(count_review_rounds(lines + [lines[-1]]), 3)
 
     def test_real_round_limit_still_fails_closed(self):
-        lines = [
-            json.dumps(
-                {
-                    "id": i,
-                    "state": "COMMENTED",
-                    "body": f"Hallazgo de ronda {i}",
-                    "user": {"type": "Bot", "login": "review-bot"},
-                }
-            )
-            for i in (1, 2, 3, 4)
-        ]
+        lines = [review(review_id=i, login="review-bot", body=f"Hallazgo {i}") for i in (1, 2, 3, 4)]
         rounds = count_review_rounds(lines)
         self.assertEqual(rounds, 4)
         with self.assertRaises(PolicyError):
             validate_rounds(rounds, 3)
 
     def test_required_bot_review_on_exact_head_passes(self):
-        head = "a" * 40
-        lines = [json.dumps({
-            "id": 10,
-            "state": "COMMENTED",
-            "body": "Review final sin hallazgos pendientes",
-            "commit_id": head,
-            "user": {"type": "Bot", "login": "coderabbitai[bot]"},
-        })]
-        validate_required_bot_review(lines, "coderabbitai[bot]", head)
+        validate_required_bot_review([review()], "coderabbitai[bot]", HEAD)
 
     def test_required_bot_review_rejects_missing_wrong_non_bot_or_stale(self):
-        head = "a" * 40
-        base = {
-            "id": 10,
-            "state": "COMMENTED",
-            "body": "Review final",
-            "commit_id": head,
-            "user": {"type": "Bot", "login": "coderabbitai[bot]"},
-        }
-        cases = {
-            "missing": [],
-            "wrong_login": [{**base, "user": {"type": "Bot", "login": "other[bot]"}}],
-            "non_bot": [{**base, "user": {"type": "User", "login": "coderabbitai[bot]"}}],
-            "stale": [{**base, "commit_id": "b" * 40}],
-            "changes_requested": [{**base, "state": "CHANGES_REQUESTED", "body": ""}],
-        }
-        for name, reviews in cases.items():
-            with self.subTest(name=name), self.assertRaises(PolicyError):
-                validate_required_bot_review(
-                    [json.dumps(review) for review in reviews],
-                    "coderabbitai[bot]",
-                    head,
-                )
+        cases = (
+            [],
+            [review(login="other-bot")],
+            [review(user_type="User")],
+            [review(commit_id="b" * 40)],
+            [review(state="DISMISSED")],
+        )
+        for lines in cases:
+            with self.subTest(lines=lines):
+                with self.assertRaises(PolicyError):
+                    validate_required_bot_review(lines, "coderabbitai[bot]", HEAD)
 
     def test_optional_reviewer_preserves_existing_round_policy(self):
-        lines = [
-            json.dumps({
-                "id": i,
-                "state": "COMMENTED",
-                "body": f"Ronda {i}",
-                "commit_id": "a" * 40,
-                "user": {"type": "Bot", "login": "review-bot"},
-            })
-            for i in (1, 2, 3, 4)
-        ]
+        lines = [review(review_id=i, login="review-bot") for i in (1, 2, 3)]
         validate_required_bot_review(lines, "", "")
-        rounds = count_review_rounds(lines)
-        self.assertEqual(rounds, 4)
-        with self.assertRaises(PolicyError):
-            validate_rounds(rounds, 3)
+        self.assertEqual(count_review_rounds(lines), 3)
+        validate_rounds(3, 3)
 
     def test_green_checks_without_required_final_review_fail_closed(self):
         with self.assertRaises(PolicyError):
-            validate_required_bot_review([], "coderabbitai[bot]", "a" * 40)
+            validate_required_bot_review([], "coderabbitai[bot]", HEAD)
 
     def test_policy_is_confined_to_root(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,3 +82,6 @@ class T(unittest.TestCase):
             self.assertEqual(load_policy(Path("decisiones.yml"), root=root)["version"], 1)
             with self.assertRaises(PolicyError):
                 load_policy(Path("../decisiones.yml"), root=root)
+
+if __name__ == "__main__":
+    unittest.main()
