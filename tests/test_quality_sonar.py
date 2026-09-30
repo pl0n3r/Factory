@@ -228,6 +228,33 @@ class QualitySonarTests(unittest.TestCase):
         self.assertIn("vulnerability:2>0", debt["details"]["exceeded"])
         self.assertIn("age_days:60>30", debt["details"]["exceeded"])
 
+        many = snapshot()
+        many["debt"] = [
+            {
+                "type": "bug",
+                "severity": "MAJOR",
+                "opened_at": "2026-09-29T12:00:00Z",
+                "evidence_ref": f"sonar:factory:bug:{index}",
+            }
+            for index in range(33)
+        ]
+        aggregated = signal(
+            normalize_sonar_snapshot(contract(), many, observed_at=NOW),
+            "historical_debt",
+        )
+        self.assertEqual(aggregated["details"]["counts"], [
+            {
+                "type": "bug",
+                "severity": "MAJOR",
+                "count": 33,
+                "oldest_age_days": 1,
+            }
+        ])
+        self.assertEqual(
+            aggregated["evidence_refs"],
+            ["sonar:factory:snapshot:001"],
+        )
+
     def test_invalid_sensitive_or_incomplete_payload_fails_closed(self):
         cases = []
 

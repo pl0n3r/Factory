@@ -31,7 +31,7 @@ Cada señal contiene `status=PASS|FAIL|UNKNOWN|STALE`, `observed_at`, `freshness
 
 `analysis_method=ci` exige evidencia de cobertura: `coverage_available=false` es FAIL. Para Automatic Analysis sin cobertura publicada, la señal es UNKNOWN, no PASS.
 
-La deuda se agrupa por `type + severity`, conserva `oldest_age_days` por grupo y se compara contra los límites explícitos del Quality Contract; también falla si la antigüedad máxima global supera `max_debt_age_days`.
+La deuda se agrupa por `type + severity`, conserva `oldest_age_days` por grupo y se compara contra los límites explícitos del Quality Contract; también falla si la antigüedad máxima global supera `max_debt_age_days`. Los `evidence_ref` item-level se validan pero no se propagan al agregado; la autoridad del lote queda en `snapshot.evidence_refs`, evitando que un snapshot válido falle solo por cantidad de hallazgos.
 
 Los mensajes de CE task se compactan y sanea cualquier URL o forma de secreto antes de conservarlos. Las demás entradas sensibles fallan cerrado.
 
