@@ -32,12 +32,15 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
             raise AssertionError(f"No se encontró permissions en {job}")
         return {line.strip() for line in match.group("permissions").splitlines()}
 
-    def test_candidate_version_is_1_0_10(self) -> None:
-        """La fuente canónica declara exactamente 1.0.10."""
+    def test_candidate_is_at_least_1_0_10(self) -> None:
+        """Las versiones posteriores conservan como mínimo la capacidad de 1.0.10."""
         payload = json.loads(
             (self.root / "config" / "version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.10"})
+        self.assertEqual(set(payload), {"version"})
+        self.assertRegex(payload["version"], r"^\d+\.\d+\.\d+$")
+        version = tuple(int(part) for part in payload["version"].split("."))
+        self.assertGreaterEqual(version, (1, 0, 10))
 
     def test_candidate_contains_labels_metadata_permission_contract(self) -> None:
         """Reusable y template conservan el envelope metadata-only compatible."""
