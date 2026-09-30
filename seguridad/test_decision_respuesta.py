@@ -273,6 +273,13 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn("issues: write", section)
         self.assertIn("github.event.repository.default_branch", section)
         self.assertIn("persist-credentials: false", section)
+        self.assertIn("Autorizar evento antes de checkout", section)
+        self.assertIn("steps.preflight.outputs.trusted == 'true'", section)
+        self.assertIn('"$REF_NAME" == "$DEFAULT_BRANCH"', section)
+        self.assertLess(
+            section.index("Autorizar evento antes de checkout"),
+            section.index("actions/checkout@"),
+        )
         self.assertIn("seguridad/decision_respuesta.py", section)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("secrets:", section)
