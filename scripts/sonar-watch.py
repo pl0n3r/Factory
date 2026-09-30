@@ -243,10 +243,55 @@ class GitHubIssues:
 
 class SonarApi:
     def __init__(self, *, token: str):
-        self.http = HttpJson(token=token, base_url="https://sonarcloud.io")
+        self.http = HttpJson(
+            token=token,
+            base_url="https://sonarcloud.io",
+            read_only=True,
+        )
 
     def get(self, path: str, params: dict[str, Any]):
-        return self.http.request(path + "?" + urlencode(params))
+        return self.http.request(
+            path + "?" + urlencode(params),
+            method="GET",
+        )
+
+    def preflight_visibility(self, projects: list[dict[str, Any]]) -> dict[str, str]:
+        observed: dict[str, str] = {}
+        for cfg in projects:
+            component = self.get(
+                "/api/components/show",
+                {"component": cfg["sonar_key"]},
+            )
+            row = component.get("component")
+            if not isinstance(row, dict):
+                raise SonarWatchError("components/show devolvió shape inválido.")
+            visibility = row.get("visibility")
+            if visibility not in {"public", "private"}:
+                raise SonarWatchError("visibilidad Sonar ausente o ambigua.")
+            observed[cfg["project"]] = visibility
+        if any(value == "private" for value in observed.values()) and not self.token:
+            raise SonarWatchError(
+                "proyecto Sonar privado detectado sin SONAR_TOKEN; "
+                "se aborta antes de otras lecturas Sonar."
+            )
+        return observed
+
+    @staticmethod
+    def analysis_method_from_settings(payload: Any) -> str:
+        settings = payload.get("settings") if isinstance(payload, dict) else None
+        if not isinstance(settings, list) or len(settings) != 1:
+            raise SonarWatchError(
+                "sonar.autoscan.enabled debe devolver exactamente un setting."
+            )
+        row = settings[0]
+        if not isinstance(row, dict) or row.get("key") != "sonar.autoscan.enabled":
+            raise SonarWatchError("setting sonar.autoscan.enabled inválido.")
+        value = row.get("value")
+        if not isinstance(value, str) or value not in _ALLOWED_AUTOSCAN_VALUES:
+            raise SonarWatchError(
+                "sonar.autoscan.enabled debe ser exactamente true o false."
+            )
+        return _ALLOWED_AUTOSCAN_VALUES[value]
 
     def _paged(self, path, *, key_name, key, result_name, extra=None):
         rows, page, total = [], 1, None
