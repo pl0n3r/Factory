@@ -2437,8 +2437,9 @@ def parse_comment_command(body: str) -> tuple[str, str | None]:
     pairs = [(PROFILE.release, "liberar"), (PROFILE.transfer, "transferir")]
     if PROFILE.recover:
         pairs.append((PROFILE.recover, "recuperar"))
+    pairs.append(("/renovar-contrato ", "renovar-contrato"))
     if PROFILE.name == "es":
-        pairs += [("/migrar-contrato ", "migrar-contrato"), ("/renovar-contrato ", "renovar-contrato")]
+        pairs.append(("/migrar-contrato ", "migrar-contrato"))
     for prefix, command in pairs:
         if value.startswith(prefix):
             session = value[len(prefix):].strip().lower()
