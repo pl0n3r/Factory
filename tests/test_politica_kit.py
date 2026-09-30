@@ -27,6 +27,28 @@ def review(*, review_id=1, login="coderabbitai[bot]", user_type="Bot",
     })
 
 
+def comment(*, comment_id=1, login="coderabbitai[bot]", user_type="Bot",
+            source_commit=HEAD, covered_commit=HEAD, kind="reviewed",
+            body_prefix="", marker=True):
+    body = body_prefix
+    if marker:
+        payload = {
+            "sourceCommitId": source_commit,
+            "coveredCommitId": covered_commit,
+            "kind": kind,
+        }
+        body += (
+            "<!-- final_review_risk_coverage:"
+            + json.dumps(payload, separators=(",", ":"))
+            + " -->"
+        )
+    return json.dumps({
+        "id": comment_id,
+        "body": body,
+        "user": {"type": user_type, "login": login},
+    })
+
+
 class T(unittest.TestCase):
     def test_empty_commented_bot_reviews_do_not_count(self):
         lines = [
@@ -54,6 +76,42 @@ class T(unittest.TestCase):
 
     def test_required_bot_review_on_exact_head_passes(self):
         validate_required_bot_review([review()], "coderabbitai[bot]", HEAD)
+
+    def test_required_bot_comment_coverage_on_exact_head_passes(self):
+        validate_required_bot_review(
+            [],
+            "coderabbitai[bot]",
+            HEAD,
+            comment_lines=[comment()],
+        )
+
+    def test_required_bot_comment_rejects_stale_malformed_rate_limit_or_wrong_bot(self):
+        malformed = json.dumps({
+            "id": 7,
+            "body": (
+                '<!-- final_review_risk_coverage:'
+                '{"sourceCommitId":"bad","coveredCommitId":"' + HEAD + '","kind":"reviewed"} -->'
+            ),
+            "user": {"type": "Bot", "login": "coderabbitai[bot]"},
+        })
+        cases = (
+            [comment(covered_commit="b" * 40)],
+            [malformed],
+            [comment(login="other-bot")],
+            [comment(user_type="User")],
+            [comment(kind="summarized")],
+            [comment(marker=False, body_prefix="Full review finished.")],
+            [comment(marker=False, body_prefix="Review rate limited.")],
+        )
+        for comment_lines in cases:
+            with self.subTest(comment_lines=comment_lines):
+                with self.assertRaises(PolicyError):
+                    validate_required_bot_review(
+                        [],
+                        "coderabbitai[bot]",
+                        HEAD,
+                        comment_lines=comment_lines,
+                    )
 
     def test_required_bot_review_rejects_missing_wrong_non_bot_or_stale(self):
         cases = (
@@ -115,7 +173,64 @@ class T(unittest.TestCase):
 
     def test_green_checks_without_required_final_review_fail_closed(self):
         with self.assertRaises(PolicyError):
-            validate_required_bot_review([], "coderabbitai[bot]", HEAD)
+            validate_required_bot_review(
+                [],
+                "coderabbitai[bot]",
+                HEAD,
+                comment_lines=[
+                    comment(marker=False, body_prefix="CodeRabbit status: success")
+                ],
+            )
+
+    def test_coderabbit_grindflow_209_coverage_fixture_is_exact_head_only(self):
+        reviewed_sha = "43bcfaaed89a8679bf871e2dbe1c0f8cf64369f6"
+        next_head = "42a6908129ce2ba8a9c3fb2048a6425d5d8ce71e"
+        stale_comment = comment(
+            source_commit=reviewed_sha,
+            covered_commit=reviewed_sha,
+            body_prefix="Review limit reached. ",
+        )
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review(
+                [],
+                "coderabbitai[bot]",
+                next_head,
+                comment_lines=[stale_comment],
+            )
+        exact_comment = comment(
+            source_commit=reviewed_sha,
+            covered_commit=next_head,
+            body_prefix="Full review finished. ",
+        )
+        validate_required_bot_review(
+            [],
+            "coderabbitai[bot]",
+            next_head,
+            comment_lines=[exact_comment],
+        )
+
+    def test_comment_marker_schema_is_closed(self):
+        extra_field = json.dumps({
+            "id": 9,
+            "body": (
+                "<!-- final_review_risk_coverage:"
+                + json.dumps({
+                    "sourceCommitId": HEAD,
+                    "coveredCommitId": HEAD,
+                    "kind": "reviewed",
+                    "extra": True,
+                }, separators=(",", ":"))
+                + " -->"
+            ),
+            "user": {"type": "Bot", "login": "coderabbitai[bot]"},
+        })
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review(
+                [],
+                "coderabbitai[bot]",
+                HEAD,
+                comment_lines=[extra_field],
+            )
 
     def test_policy_is_confined_to_root(self):
         with tempfile.TemporaryDirectory() as tmp:
