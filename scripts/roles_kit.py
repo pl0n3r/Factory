@@ -275,10 +275,19 @@ def _roles_from_text(text: str) -> set[str]:
     text = _positive_role_text(text)
     keyword_rules = (
         (r"\bseo\b|sitemap|robots\.txt|canonical", {"seo", "contenido"}),
-        (r"marketing|campaña|campaign|conversi[oó]n|cta", {"marketing", "contenido"}),
+        (
+            r"\b(?:marketing|campañas?|campaigns?|conversión|conversion(?:es)?|cta)\b",
+            {"marketing", "contenido"},
+        ),
         (r"privacidad|privacy|datos personales|retenci[oó]n", {"legal-privacidad"}),
         (r"arquitectura|architecture|adr\b", {"arquitectura"}),
-        (r"migraci[oó]n|schema|índice|index\b|locking", {"dba"}),
+        (
+            r"\b(?:schema|índice|index|locking)\b|"
+            r"\b(?:database|db|bd)\s+migrations?\b|"
+            r"\bmigraci[oó]n(?:es)?(?:\s+de)?\s+"
+            r"(?:base(?:s)?\s+de\s+datos|database|db|bd)\b",
+            {"dba"},
+        ),
         (r"accesibilidad|wcag|usabilidad|ux\b", {"ux"}),
     )
     roles: set[str] = set()
