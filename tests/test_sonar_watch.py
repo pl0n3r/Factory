@@ -151,7 +151,10 @@ class SonarWatchTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, text)
         self.assertIn("SONAR_TOKEN", text)
-        self.assertIn("SONAR_WATCH_CONFIG_JSON", text)
+        self.assertNotIn("SONAR_WATCH_CONFIG_JSON", text)
+        self.assertIn("quality/sonar-watch-config.json", (
+            ROOT / "scripts" / "sonar-watch.py"
+        ).read_text(encoding="utf-8"))
         self.assertIn("python3 scripts/sonar-watch.py", text)
 
     def test_non_pass_signal_upserts_one_issue_by_project_and_signal(self):
@@ -282,7 +285,7 @@ class SonarWatchTests(unittest.TestCase):
                 "metric": "coverage",
                 "value": "80",
             }]}},
-            {"enable": False},
+            {"settings": [{"key": "sonar.autoscan.enabled", "value": "false"}]},
             {"component": {"visibility": "public"}},
             {"issues": []},
             {"hotspots": []},
@@ -424,7 +427,7 @@ class SonarWatchTests(unittest.TestCase):
                 "metric": "coverage",
                 "value": "80",
             }]}},
-            {"enable": False},
+            {"settings": [{"key": "sonar.autoscan.enabled", "value": "false"}]},
             {"component": {"visibility": "public"}},
             {"issues": []},
             hotspots,
@@ -589,6 +592,147 @@ class SonarWatchTests(unittest.TestCase):
             expected,
         )
 
+
+
+    def test_versioned_runtime_config_covers_exact_factory_catalog(self):
+        projects = sonar_watch.load_runtime_config()
+        expected = set(sonar_watch.factory_project_catalog())
+        self.assertEqual(len(projects), 6)
+        self.assertEqual({row["project"] for row in projects}, expected)
+        self.assertEqual(
+            {row["sonar_key"] for row in projects},
+            {
+                "pl0n3r_brvtal",
+                "pl0n3r_Condor",
+                "pl0n3r_factory-control",
+                "pl0n3r_factory",
+                "pl0n3r_FactoryRunner",
+                "pl0n3r_GrindFlow",
+            },
+        )
+        for row in projects:
+            self.assertEqual(row["contract"]["project"], row["project"])
+            self.assertIn("sonar", row["contract"])
+            self.assertEqual(row["contract"]["sonar"]["expected_visibility"], "public")
+
+    def test_public_projects_need_no_token_and_private_projects_fail_closed_without_one(self):
+        projects = sonar_watch.load_runtime_config()
+        api = sonar_watch.SonarApi(token="")
+        calls = []
+
+        def public_get(path, params):
+            calls.append((path, params))
+            return {"component": {"visibility": "public"}}
+
+        api.get = public_get
+        observed = api.preflight_visibility(projects)
+        self.assertEqual(set(observed), {row["project"] for row in projects})
+        self.assertEqual({row["visibility"] if "visibility" in row else None for row in []}, set())
+
+        calls.clear()
+
+        def private_get(path, params):
+            calls.append((path, params))
+            if path == "/api/components/show":
+                return {"component": {"visibility": "private"}}
+            return {}
+
+        api.get = private_get
+        with self.assertRaises(sonar_watch.SonarWatchError):
+            api.preflight_visibility(projects)
+        self.assertTrue(calls)
+        self.assertTrue(all(path == "/api/components/show" for path, _ in calls))
+
+    def test_analysis_method_uses_read_only_settings_get_only(self):
+        api = sonar_watch.SonarApi(token="")
+        calls = []
+
+        def fake_request(path, *, method="GET", payload=None):
+            calls.append((path, method, payload))
+            return {"settings": [{
+                "key": "sonar.autoscan.enabled",
+                "value": "true",
+            }]}
+
+        original = api.http.request
+        api.http.request = fake_request
+        try:
+            api.get(
+                "/api/settings/values",
+                {"component": "pl0n3r_factory", "keys": "sonar.autoscan.enabled"},
+            )
+            with self.assertRaises(sonar_watch.SonarWatchError):
+                api.http.request("/api/settings/values", method="POST", payload={})
+        finally:
+            api.http.request = original
+
+        self.assertEqual(calls[0][1], "GET")
+        self.assertNotIn("/api/autoscan/activation", calls[0][0])
+
+    def test_autoscan_setting_maps_strictly_to_analysis_method(self):
+        self.assertEqual(
+            sonar_watch.SonarApi.analysis_method_from_settings(
+                {"settings": [{"key": "sonar.autoscan.enabled", "value": "true"}]}
+            ),
+            "automatic",
+        )
+        self.assertEqual(
+            sonar_watch.SonarApi.analysis_method_from_settings(
+                {"settings": [{"key": "sonar.autoscan.enabled", "value": "false"}]}
+            ),
+            "ci",
+        )
+        invalid = [
+            {},
+            {"settings": []},
+            {"settings": [
+                {"key": "sonar.autoscan.enabled", "value": "true"},
+                {"key": "sonar.autoscan.enabled", "value": "false"},
+            ]},
+            {"settings": [{"key": "other", "value": "true"}]},
+            {"settings": [{"key": "sonar.autoscan.enabled", "value": "yes"}]},
+        ]
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                with self.assertRaises(sonar_watch.SonarWatchError):
+                    sonar_watch.SonarApi.analysis_method_from_settings(payload)
+
+    def test_workflow_loads_versioned_config_with_minimum_privilege(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "sonar-watch.yml"
+        ).read_text(encoding="utf-8")
+        script = (
+            ROOT / "scripts" / "sonar-watch.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("quality/sonar-watch-config.json", script)
+        self.assertNotIn("SONAR_WATCH_CONFIG_JSON", workflow)
+        self.assertIn("SONAR_TOKEN", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("issues: write", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("actions: write", workflow)
+        self.assertIn("python3 scripts/sonar-watch.py", workflow)
+
+    def test_runtime_auth_and_settings_scenarios_are_fail_closed_without_sonar_writes(self):
+        api = sonar_watch.SonarApi(token="")
+        with self.assertRaises(sonar_watch.SonarWatchError):
+            api.http.request("/api/settings/values", method="POST", payload={})
+        for payload in (
+            {"settings": [{"key": "sonar.autoscan.enabled", "value": None}]},
+            {"settings": [{"key": "sonar.autoscan.enabled"}]},
+            {"settings": [{"key": "sonar.autoscan.enabled", "value": "TRUE"}]},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(sonar_watch.SonarWatchError):
+                    sonar_watch.SonarApi.analysis_method_from_settings(payload)
+
+    def test_workflow_keeps_scheduled_and_manual_triggers(self):
+        text = (
+            ROOT / ".github" / "workflows" / "sonar-watch.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("  schedule:", text)
+        self.assertIn("  workflow_dispatch:", text)
+        self.assertEqual(text.count("python3 scripts/sonar-watch.py"), 1)
 
 if __name__ == "__main__":
     unittest.main()
