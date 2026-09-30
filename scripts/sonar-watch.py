@@ -25,6 +25,10 @@ SENSITIVE = re.compile(
     r"(?i)(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)"
     r"\s*[:=]|bearer\s+[A-Za-z0-9._~+/-]{8,}"
 )
+_SONAR_KEY = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
+_ORIGIN_URL = re.compile(
+    r"^https://sonarcloud\.io/project/overview\?id=[A-Za-z0-9_.:-]{1,160}$"
+)
 
 
 class SonarWatchError(ValueError):
@@ -71,7 +75,21 @@ def _detail_lines(signal: dict[str, Any]) -> list[str]:
     return ["- sin detalle adicional"]
 
 
-def render_issue_body(project: str, signal: dict[str, Any], health: dict[str, Any], origin: str) -> str:
+def _origin_url(sonar_key: str) -> str:
+    if not isinstance(sonar_key, str) or _SONAR_KEY.fullmatch(sonar_key) is None:
+        raise SonarWatchError("sonar_key inválido.")
+    return f"https://sonarcloud.io/project/overview?id={sonar_key}"
+
+
+def render_issue_body(
+    project: str,
+    signal: dict[str, Any],
+    health: dict[str, Any],
+    origin: str,
+    origin_url: str,
+) -> str:
+    if not isinstance(origin_url, str) or _ORIGIN_URL.fullmatch(origin_url) is None:
+        raise SonarWatchError("origin_url Sonar inválida.")
     _safe(signal, "signal")
     freshness = signal["freshness"]
     refs = "\n".join(f"- `{ref}`" for ref in signal["evidence_refs"]) or "- ninguna"
@@ -82,7 +100,8 @@ def render_issue_body(project: str, signal: dict[str, Any], health: dict[str, An
         f"Estado: `{signal['status']}`  \nRazón: `{signal['reason']}`  \n"
         f"Freshness: `{freshness['state']}` "
         f"(age={freshness['age_seconds']}, max={freshness['max_age_seconds']})  \n"
-        f"Origen: `{origin}`  \nClases correctivas Quality Health: {classes}\n\n"
+        f"Origen: [`{origin}`]({origin_url})  \n"
+        f"Clases correctivas Quality Health: {classes}\n\n"
         f"### Evidencia\n\n{refs}\n\n### Detalle\n\n"
         + "\n".join(_detail_lines(signal))
         + "\n\nEste Issue es administrado automáticamente por Factory Sonar Watch. "
@@ -90,7 +109,9 @@ def render_issue_body(project: str, signal: dict[str, Any], health: dict[str, An
     )
 
 
-def sync_project(*, contract, snapshot, observed_at, project_ref, origin_ref, issues):
+def sync_project(
+    *, contract, snapshot, observed_at, project_ref, origin_ref, origin_url, issues
+):
     evidence = normalize_sonar_snapshot(contract, snapshot, observed_at=observed_at)
     health = derive_quality_health(
         contract, [], [], observed_at=observed_at, project_ref=project_ref,
@@ -117,7 +138,9 @@ def sync_project(*, contract, snapshot, observed_at, project_ref, origin_ref, is
                 operations.append({"action": "closed", "signal": signal["signal"]})
             continue
         title = f"{AUTO_PREFIX} {evidence['project']}: {signal['signal']}"
-        body = render_issue_body(evidence["project"], signal, sonar, origin_ref)
+        body = render_issue_body(
+            evidence["project"], signal, sonar, origin_ref, origin_url
+        )
         if current is None:
             issues.create(title=title, body=body)
             action = "created"
@@ -336,7 +359,9 @@ def run_live() -> int:
         operations += sync_project(
             contract=cfg["contract"], snapshot=sonar.snapshot(cfg, observed_at=now),
             observed_at=now, project_ref=cfg["github_repo"],
-            origin_ref=f"sonar:{cfg['project']}", issues=github,
+            origin_ref=f"sonar:{cfg['project']}",
+            origin_url=_origin_url(cfg["sonar_key"]),
+            issues=github,
         )
     print(json.dumps({"operations": operations}, sort_keys=True))
     return 0
