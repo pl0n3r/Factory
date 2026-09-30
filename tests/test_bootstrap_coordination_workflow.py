@@ -179,7 +179,7 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
         self.assertIn("startsWith(github.event.comment.body, '/bootstrap-coordination ')",guard)
         self.assertIn('[[ "$ACTOR" == "$OWNER" ]]',resolve)
         self.assertIn('[[ -z "$COMMENT_PR_URL" ]]',resolve)
-        self.assertIn(r'^/bootstrap-coordination\ (pl0n3r/[A-Za-z0-9_.-]{1,100})\ ([1-9][0-9]*)\ ([0-9a-f]{40}),resolve)
+        self.assertIn(r'^/bootstrap-coordination\\ (pl0n3r/[A-Za-z0-9_.-]{1,100})\\ ([1-9][0-9]*)\\ ([0-9a-f]{40})$',resolve)
         self.assertIn("comando bootstrap inválido",resolve)
 
     def test_bootstrap_entry_guard_does_not_expand_permissions_or_secrets(self):
