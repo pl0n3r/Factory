@@ -123,6 +123,11 @@ def normalize_sonar_snapshot(
     ]
     if tuple(item["signal"] for item in signals) != _SIGNAL_ORDER:
         raise SonarEvidenceError("Orden de señales Sonar no canónico.")
+    if snapshot_age > snapshot_max_age:
+        signals = [
+            _snapshot_stale(item, snapshot_at, snapshot_age, snapshot_max_age)
+            for item in signals
+        ]
 
     return {
         "version": 1,
@@ -136,6 +141,22 @@ def normalize_sonar_snapshot(
         "signals": signals,
         "authority": "read_only",
         "execute_actions": False,
+    }
+
+
+def _snapshot_stale(item, snapshot_at, age, max_age):
+    if item["status"] == "STALE":
+        return item
+    return {
+        **item,
+        "status": "STALE",
+        "reason": f"{item['signal']}_snapshot_stale",
+        "observed_at": _iso(snapshot_at),
+        "freshness": {
+            "state": "STALE",
+            "age_seconds": age,
+            "max_age_seconds": max_age,
+        },
     }
 
 
