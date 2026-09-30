@@ -152,9 +152,10 @@ class SonarWatchTests(unittest.TestCase):
             self.assertNotIn(forbidden, text)
         self.assertIn("SONAR_TOKEN", text)
         self.assertNotIn("SONAR_WATCH_CONFIG_JSON", text)
-        self.assertIn("quality/sonar-watch-config.json", (
+        self.assertIn("CONFIG_PATH", (
             ROOT / "scripts" / "sonar-watch.py"
         ).read_text(encoding="utf-8"))
+        self.assertTrue((ROOT / "quality" / "sonar-watch-config.json").is_file())
         self.assertIn("python3 scripts/sonar-watch.py", text)
 
     def test_non_pass_signal_upserts_one_issue_by_project_and_signal(self):
@@ -661,11 +662,11 @@ class SonarWatchTests(unittest.TestCase):
                 "/api/settings/values",
                 {"component": "pl0n3r_factory", "keys": "sonar.autoscan.enabled"},
             )
-            with self.assertRaises(sonar_watch.SonarWatchError):
-                api.http.request("/api/settings/values", method="POST", payload={})
         finally:
             api.http.request = original
 
+        with self.assertRaises(sonar_watch.SonarWatchError):
+            api.http.request("/api/settings/values", method="POST", payload={})
         self.assertEqual(calls[0][1], "GET")
         self.assertNotIn("/api/autoscan/activation", calls[0][0])
 
