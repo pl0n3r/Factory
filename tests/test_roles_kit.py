@@ -220,7 +220,7 @@ class RolesKitTests(unittest.TestCase):
 
     def test_real_marketing_signals_still_trigger_marketing_and_content(self):
         roles, _ = classify(context(body="CTA de campaña y campaign tracking."))
-        self.assertTrue({"marketing", "contenido"} <= set(roles))
+        self.assertLessEqual({"marketing", "contenido"}, set(roles))
 
     def test_database_migration_signals_still_trigger_dba(self):
         for body in (
@@ -247,7 +247,7 @@ class RolesKitTests(unittest.TestCase):
             with self.subTest(body=body):
                 roles, _ = classify(context(body=body))
                 if present:
-                    self.assertTrue(expected <= set(roles))
+                    self.assertLessEqual(expected, set(roles))
                 else:
                     self.assertTrue(expected.isdisjoint(roles))
 
