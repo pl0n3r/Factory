@@ -44,6 +44,14 @@ _FACTORY_REPOS = {
     "factoryrunner": "pl0n3r/FactoryRunner",
     "grindflow": "pl0n3r/GrindFlow",
 }
+_FACTORY_SONAR_KEYS = {
+    "brvtal": "pl0n3r_brvtal",
+    "condor": "pl0n3r_Condor",
+    "controlbot": "pl0n3r_factory-control",
+    "factory": "pl0n3r_factory",
+    "factoryrunner": "pl0n3r_FactoryRunner",
+    "grindflow": "pl0n3r_GrindFlow",
+}
 _CONFIG_FIELDS = {"version", "provenance", "projects"}
 _PROVENANCE_FIELDS = {"issue", "observed_at", "policy"}
 _PROJECT_CONFIG_FIELDS = {"project", "sonar_key", "github_repo", "contract"}
@@ -449,8 +457,12 @@ def load_runtime_config(path: Path = CONFIG_PATH) -> list[dict[str, Any]]:
         seen.add(project)
         if cfg["github_repo"] != _FACTORY_REPOS[project]:
             raise SonarWatchError("github_repo no coincide con el catálogo Factory.")
-        if not isinstance(cfg["sonar_key"], str) or not _SONAR_KEY.fullmatch(cfg["sonar_key"]):
-            raise SonarWatchError("sonar_key inválido.")
+        if (
+            not isinstance(cfg["sonar_key"], str)
+            or cfg["sonar_key"] != _FACTORY_SONAR_KEYS[project]
+            or not _SONAR_KEY.fullmatch(cfg["sonar_key"])
+        ):
+            raise SonarWatchError("sonar_key no coincide con el catálogo Factory.")
         try:
             contract = validate_quality_contract(cfg["contract"])
         except QualityContractError as exc:
