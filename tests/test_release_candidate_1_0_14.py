@@ -35,6 +35,10 @@ class ReleaseCandidate1014Tests(unittest.TestCase):
         base = parse_reviewer_policy(
             '{"version":1,"required_review_bot":"coderabbitai[bot]"}'
         )
+        with self.assertRaises(PolicyError):
+            parse_reviewer_policy(
+                '{"version":1,"required_review_bot":null,"extra":true}'
+            )
         self.assertEqual(
             resolve_required_review_bot(base, ""),
             "coderabbitai[bot]",
