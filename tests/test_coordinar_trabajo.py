@@ -2466,5 +2466,137 @@ class CoordinacionTests(unittest.TestCase):
             6,
         )
 
+    @staticmethod
+    def _planned_issue_for_repair(
+        number: int,
+        paths: list[str],
+        *,
+        status: str = "estado: disponible",
+    ) -> dict:
+        marker = {
+            "version": 1,
+            "epic": 439,
+            "task_key": f"REPAIR_{number}",
+            "order": number,
+            "owner": "pl0n3r",
+            "roles": ["ingenieria-software"],
+            "depends_on": [],
+            "paths": paths,
+        }
+        return {
+            "number": number,
+            "state": "open",
+            "state_reason": None,
+            "labels": [{"name": status}],
+            "body": (
+                "<!-- factory-plan-task "
+                + json.dumps(marker, separators=(",", ":"))
+                + " -->"
+            ),
+        }
+
+    def test_untrusted_active_issue_without_reservation_snapshot_does_not_block_disjoint_take(self) -> None:
+        """AC-01: un estado activo sin reserva confiable no adquiere autoridad de claims."""
+        orphan = self._planned_issue_for_repair(
+            473,
+            ["tests/test_observability_fabric.py"],
+            status="estado: en revisión",
+        )
+        candidate = self._planned_issue_for_repair(
+            478,
+            ["src/DisasterRecoveryPolicy.php"],
+        )
+
+        blockers = coordinator.reservation_blockers(
+            candidate,
+            [orphan, candidate],
+            "pl0n3r",
+            {},
+            active_task_snapshots={},
+            active_dependency_states={},
+            active_reservation_numbers=set(),
+        )
+
+        self.assertEqual(blockers, [])
+
+    def test_partial_release_is_idempotent(self) -> None:
+        """AC-02: liberar forzado reconcilia dos veces un estado parcial sin reactivar trabajo."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_REVIEW}]
+        api.branches["trabajo/issue-12"] = "abc123"
+
+        release_work(api, 12, "pl0n3r", "OWNER", None, True)
+        release_work(api, 12, "pl0n3r", "OWNER", None, True)
+
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertIn(
+            STATUS_AVAILABLE,
+            {row["name"] for row in api.issue_data["labels"]},
+        )
+        self.assertTrue(
+            all("acceptance_sha256" not in row["body"] for row in api.comments)
+        )
+
+    def test_valid_overlapping_reservation_still_blocks(self) -> None:
+        """AC-03: una reserva válida con claims solapados conserva el bloqueo fail-closed."""
+        active = self._planned_issue_for_repair(
+            10,
+            ["scripts/"],
+            status=STATUS_RESERVED,
+        )
+        candidate = self._planned_issue_for_repair(11, ["scripts/orquestador_kit.py"])
+        marker = coordinator.parse_task_marker(active["body"])
+        self.assertIsNotNone(marker)
+
+        blockers = coordinator.reservation_blockers(
+            candidate,
+            [active, candidate],
+            "pl0n3r",
+            {},
+            active_task_snapshots={10: marker},
+            active_dependency_states={10: {}},
+            active_reservation_numbers={10},
+        )
+
+        self.assertTrue(any("colisión" in item for item in blockers))
+
+    def test_valid_disjoint_reservation_still_allows_parallel_take(self) -> None:
+        """AC-04: una reserva válida disjunta sigue permitiendo paralelismo."""
+        active = self._planned_issue_for_repair(
+            10,
+            ["docs/a.md"],
+            status=STATUS_RESERVED,
+        )
+        candidate = self._planned_issue_for_repair(11, ["scripts/orquestador_kit.py"])
+        marker = coordinator.parse_task_marker(active["body"])
+        self.assertIsNotNone(marker)
+
+        blockers = coordinator.reservation_blockers(
+            candidate,
+            [active, candidate],
+            "pl0n3r",
+            {},
+            active_task_snapshots={10: marker},
+            active_dependency_states={10: {}},
+            active_reservation_numbers={10},
+        )
+
+        self.assertEqual(blockers, [])
+
+    def test_recovery_never_fabricates_claims_or_acceptance(self) -> None:
+        """AC-05: reconciliar un huérfano no sintetiza aceptación ni task claims."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_REVIEW}]
+        api.branches["trabajo/issue-12"] = "abc123"
+
+        release_work(api, 12, "pl0n3r", "OWNER", None, True)
+
+        self.assertTrue(api.comments)
+        marker = api.comments[-1]["body"]
+        self.assertNotIn("acceptance_sha256", marker)
+        self.assertNotIn("task_paths", marker)
+        self.assertNotIn("task_marker_sha256", marker)
+
+
 if __name__ == "__main__":
     unittest.main()

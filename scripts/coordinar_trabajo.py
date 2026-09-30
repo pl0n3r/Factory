@@ -1284,9 +1284,11 @@ def reserve_work(
         open_issues = api.open_issues()
         active_task_snapshots: dict[int, dict[str, Any]] | None = None
         active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None
+        active_reservation_numbers: set[int] | None = None
         if hasattr(api, "issue_comments"):
             active_task_snapshots = {}
             active_dependency_states = {}
+            active_reservation_numbers = set()
             active_statuses = {
                 STATUS_RESERVED,
                 STATUS_REVIEW,
@@ -1304,6 +1306,9 @@ def reserve_work(
                 ):
                     continue
                 other_reservation = active_reservation(api, other_number)
+                if other_reservation is None:
+                    continue
+                active_reservation_numbers.add(other_number)
                 other_marker = reservation_task_marker(other_reservation)
                 if other_marker is not None:
                     active_task_snapshots[other_number] = other_marker
@@ -1319,6 +1324,7 @@ def reserve_work(
             dependency_states,
             active_task_snapshots,
             active_dependency_states,
+            active_reservation_numbers,
         )
     except PlanError as exc:
         raise CoordinationError(

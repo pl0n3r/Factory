@@ -293,5 +293,55 @@ class ParallelCoordinationTests(unittest.TestCase):
         )
 
 
+    def test_partial_active_issue_does_not_globally_block_next_disjoint_issue(self) -> None:
+        """AC-06: un label activo huérfano sin reserva confiable no bloquea el siguiente leaf."""
+        orphan = planned_issue(
+            473,
+            ["tests/test_observability_fabric.py"],
+            status="estado: en revisión",
+        )
+        candidate = planned_issue(478, ["scripts/disaster_recovery_policy.py"])
+
+        blockers = reservation_blockers(
+            candidate,
+            [orphan, candidate],
+            "pl0n3r",
+            {},
+            active_task_snapshots={},
+            active_dependency_states={},
+            active_reservation_numbers=set(),
+        )
+
+        self.assertEqual(blockers, [])
+
+    def test_repaired_dispatcher_re_evaluates_next_issue_without_internal_state_edits(self) -> None:
+        """AC-07: una reserva válida sigue siendo autoridad; el estado huérfano no requiere claims inventados."""
+        orphan = planned_issue(
+            473,
+            ["tests/test_observability_fabric.py"],
+            status="estado: en revisión",
+        )
+        active = planned_issue(
+            474,
+            ["config/recovery/brvtal.json"],
+            status="estado: reservado",
+        )
+        candidate = planned_issue(478, ["scripts/disaster_recovery_policy.py"])
+        active_marker = parse_task_marker(active["body"])
+        self.assertIsNotNone(active_marker)
+
+        blockers = reservation_blockers(
+            candidate,
+            [orphan, active, candidate],
+            "pl0n3r",
+            {},
+            active_task_snapshots={474: active_marker},
+            active_dependency_states={474: {}},
+            active_reservation_numbers={474},
+        )
+
+        self.assertEqual(blockers, [])
+
+
 if __name__ == "__main__":
     unittest.main()
