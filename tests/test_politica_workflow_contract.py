@@ -6,6 +6,9 @@ W = (ROOT / ".github/workflows/politica.yml").read_text()
 TEMPLATE = (ROOT / "template/.github/workflows/politica.yml").read_text()
 
 class T(unittest.TestCase):
+    def test_policy_script_remains_executable(self):
+        self.assertTrue((ROOT / "scripts/politica_kit.py").stat().st_mode & 0o111)
+
     def test_observed_reviews_and_canonical_policy(self):
         self.assertIn("pr_number:", W)
         self.assertNotIn("review_rounds:", W)
