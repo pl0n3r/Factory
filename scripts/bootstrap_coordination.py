@@ -19,6 +19,7 @@ VERSION_PATH = "config/version.php"
 PACKAGE_PATH = "package.json"
 LOCK_PATH = "package-lock.json"
 README_PATH = "README.md"
+README_METADATA_PATH = "readme/project.json"
 README_UPDATER_PATH = "scripts/readme-dashboard.py"
 GRINDFLOW_DELIVERY_PATHS = {CALLER_PATH, TEST_PATH, VERSION_PATH, PACKAGE_PATH, LOCK_PATH, README_PATH}
 STRICT_CONTRACT_MARKERS = {VERSION_PATH, PACKAGE_PATH, LOCK_PATH, README_UPDATER_PATH}
@@ -224,6 +225,23 @@ def _json_object(content: str,label: str) -> dict[str,Any]:
     if not isinstance(value,dict): raise BootstrapError(f"{label} inválido.")
     return value
 
+def _grindflow_readme_contract(root: Path, readme_text: str, current_str: str, next_str: str) -> tuple[str,bool]:
+    metadata_path=root/README_METADATA_PATH
+    if metadata_path.exists() or metadata_path.is_symlink():
+        _json_object(_regular_text(root,README_METADATA_PATH),README_METADATA_PATH)
+        if readme_text.count("<!-- factory:status:start -->")!=1 or readme_text.count("<!-- factory:status:end -->")!=1:
+            raise BootstrapError("README Contract v1 de GrindFlow inválido.")
+        return readme_text,True
+
+    visible_current=f"v{current_str}"
+    if visible_current not in readme_text:
+        raise BootstrapError("README GrindFlow no coincide con Contract v1 ni legacy.")
+
+    updater=_regular_text(root,README_UPDATER_PATH)
+    if "README dashboard" not in updater or "--update" not in updater:
+        raise BootstrapError("Updater README canónico de GrindFlow no reconocido.")
+    return readme_text.replace(visible_current,f"v{next_str}"),False
+
 def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_sha: str) -> dict[str,str]:
     root=consumer_root.resolve()
     try:
@@ -236,10 +254,6 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
     package_text=_regular_text(root,PACKAGE_PATH)
     lock_text=_regular_text(root,LOCK_PATH,GRINDFLOW_MAX_FILE)
     _regular_text(root,README_PATH)
-    updater=_regular_text(root,README_UPDATER_PATH)
-    if "README dashboard" not in updater or "--update" not in updater:
-        raise BootstrapError("Updater README canónico de GrindFlow no reconocido.")
-
     current=_grindflow_version(version_text)
     package=_json_object(package_text,"package.json")
     lock=_json_object(lock_text,"package-lock.json")
@@ -261,12 +275,10 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
     root_pkg["version"]=next_str
 
     base=build_patch(template)
-    readme_text=_regular_text(root,README_PATH)
-    visible_current=f"v{current_str}"
-    visible_next=f"v{next_str}"
-    if visible_current not in readme_text:
-        raise BootstrapError("README GrindFlow no expone la versión actual esperada.")
-    readme_text=readme_text.replace(visible_current,visible_next)
+    readme_text,contract_v1=_grindflow_readme_contract(
+        root,_regular_text(root,README_PATH),current_str,next_str
+    )
+
     prepared={
         **base,
         VERSION_PATH:updated_version,
@@ -275,15 +287,16 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
         "README.md":readme_text,
     }
     for path,content in prepared.items(): _write_regular(root,path,content)
-    try:
-        subprocess.run(
-            [sys.executable,"scripts/readme-dashboard.py","--update","--base",expected_main_sha,"--head",expected_main_sha],
-            cwd=root,check=True,text=True,capture_output=True,
-            env={k:v for k,v in os.environ.items() if k!="FACTORY_PROVISION_TOKEN"},
-        )
-    except (OSError,subprocess.CalledProcessError) as exc:
-        raise BootstrapError("Updater README canónico de GrindFlow falló.") from exc
-    prepared[README_PATH]=_regular_text(root,README_PATH)
+    if not contract_v1:
+        try:
+            subprocess.run(
+                [sys.executable,"scripts/readme-dashboard.py","--update","--base",expected_main_sha,"--head",expected_main_sha],
+                cwd=root,check=True,text=True,capture_output=True,
+                env={k:v for k,v in os.environ.items() if k!="FACTORY_PROVISION_TOKEN"},
+            )
+        except (OSError,subprocess.CalledProcessError) as exc:
+            raise BootstrapError("Updater README canónico de GrindFlow falló.") from exc
+        prepared[README_PATH]=_regular_text(root,README_PATH)
     validate_patch(prepared,GRINDFLOW_DELIVERY_PATHS)
     if set(prepared)!=GRINDFLOW_DELIVERY_PATHS:
         raise BootstrapError("Patch GrindFlow incompleto.")

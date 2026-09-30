@@ -457,6 +457,64 @@ class BootstrapCoordinationTests(unittest.TestCase):
             patch=b.grindflow_delivery_patch(CALLER,root,SHA)
         return tmp,root,patch
 
+    def _grindflow_contract_v1(self, root):
+        readme = (
+            "# GrindFlow\n\n"
+            "<!-- factory:status:start -->\n"
+            "| versión | UNKNOWN |\n"
+            "<!-- factory:status:end -->\n"
+        )
+        (root/"README.md").write_text(readme,encoding="utf-8")
+        (root/"readme").mkdir()
+        (root/"readme/project.json").write_text(
+            '{"name":"GrindFlow","phase":"construction"}\n',encoding="utf-8"
+        )
+        return readme
+
+    def test_grindflow_adapter_accepts_contract_v1_without_literal_version(self):
+        tmp,root=self._grindflow_fixture()
+        self.addCleanup(tmp.cleanup)
+        expected_readme=self._grindflow_contract_v1(root)
+        (root/b.README_UPDATER_PATH).unlink()
+        completed=lambda args,**kwargs: subprocess.CompletedProcess(
+            args,0,stdout=(SHA+"\n" if args[:3]==["git","rev-parse","HEAD"] else ""),stderr=""
+        )
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed) as run:
+            patch=b.grindflow_delivery_patch(CALLER,root,SHA)
+        self.assertIn("'number' => '0.1.145'",patch["config/version.php"])
+        self.assertEqual(json.loads(patch["package.json"])["version"],"0.1.145")
+        self.assertEqual(patch["README.md"],expected_readme)
+        updater_calls=[
+            call for call in run.call_args_list
+            if b.README_UPDATER_PATH in call.args[0]
+        ]
+        self.assertEqual(updater_calls,[])
+
+    def test_grindflow_adapter_separates_contract_v1_and_legacy_readme_paths(self):
+        current_tmp,current_root=self._grindflow_fixture()
+        legacy_tmp,legacy_root=self._grindflow_fixture()
+        unknown_tmp,unknown_root=self._grindflow_fixture()
+        for tmp in (current_tmp,legacy_tmp,unknown_tmp):
+            self.addCleanup(tmp.cleanup)
+        expected_current=self._grindflow_contract_v1(current_root)
+        (current_root/b.README_UPDATER_PATH).unlink()
+        (unknown_root/"README.md").write_text("# GrindFlow\n",encoding="utf-8")
+        completed=lambda args,**kwargs: subprocess.CompletedProcess(
+            args,0,stdout=(SHA+"\n" if args[:3]==["git","rev-parse","HEAD"] else ""),stderr=""
+        )
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed) as run:
+            current=b.grindflow_delivery_patch(CALLER,current_root,SHA)
+            self.assertEqual(current["README.md"],expected_current)
+            self.assertFalse(any(b.README_UPDATER_PATH in call.args[0] for call in run.call_args_list))
+            run.reset_mock()
+            legacy=b.grindflow_delivery_patch(CALLER,legacy_root,SHA)
+            self.assertTrue(any(b.README_UPDATER_PATH in call.args[0] for call in run.call_args_list))
+        self.assertNotIn("v0.1.144",legacy["README.md"])
+        self.assertIn("v0.1.145",legacy["README.md"])
+        with mock.patch("scripts.bootstrap_coordination.subprocess.run",side_effect=completed):
+            with self.assertRaisesRegex(b.BootstrapError,"Contract v1 ni legacy"):
+                b.grindflow_delivery_patch(CALLER,unknown_root,SHA)
+
     def test_grindflow_adapter_requires_exact_version_parity_and_patch_increment(self):
         tmp,root,patch=self._prepared_grindflow_patch()
         self.addCleanup(tmp.cleanup)
