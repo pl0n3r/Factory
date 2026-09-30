@@ -427,7 +427,7 @@ class BootstrapCoordinationTests(unittest.TestCase):
             self.assertIn(value,text)
         self.assertNotIn("factory-human-gate",text); self.assertNotIn("github.token",text)
         source=(ROOT/"scripts/bootstrap_coordination.py").read_text(encoding="utf-8")
-        self.assertIn('CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")',source)
+        self.assertIn('CALLER_TEMPLATE = Path("template/.github/workflows/coordinacion.yml")',source)
         self.assertNotIn("--caller-template",source)
 
 
