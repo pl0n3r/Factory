@@ -420,6 +420,7 @@ def reservation_blockers(
     dependency_states: dict[int, dict[str, Any]] | None = None,
     active_task_snapshots: dict[int, dict[str, Any]] | None = None,
     active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None,
+    active_reservation_numbers: set[int] | None = None,
 ) -> list[str]:
     marker = parse_task_marker(str(current_issue.get("body") or ""))
     active_others = _active_other_issues(current_issue, open_issues)
@@ -468,6 +469,16 @@ def reservation_blockers(
         other_number = other.get("number")
         if not isinstance(other_number, int):
             continue
+        if (
+            active_task_snapshots is not None
+            and active_reservation_numbers is not None
+            and other_number not in active_reservation_numbers
+        ):
+            # Un label activo sin una reserva confiable no constituye autoridad
+            # para bloquear claims de trabajo nuevo. La reconciliación del Issue
+            # puede ocurrir después sin convertir estado parcial en una reserva.
+            continue
+
         other_marker = (
             active_task_snapshots.get(other_number)
             if active_task_snapshots is not None
@@ -475,7 +486,7 @@ def reservation_blockers(
         )
         if other_marker is None:
             detail = (
-                "no tiene claims fijados"
+                "tiene reserva activa sin claims fijados"
                 if active_task_snapshots is not None
                 else "no está planificada"
             )
