@@ -1,8 +1,6 @@
 import json
 import unittest
 from pathlib import Path
-from urllib.parse import unquote
-
 from decision_respuesta import (
     BOT,
     COMPLETED,
@@ -42,7 +40,12 @@ def event(command="/decidir B", association="OWNER", user_type="User"):
 
 
 class FakeAPI:
-    def __init__(self, *, body=None, labels=None, state="open"):
+    def __init__(
+        self, *, body=None, labels=None, state="open",
+        crash_after_evidence_once=False,
+        mutate_body_on_issue_get=None,
+        replacement_body=None,
+    ):
         self.issue = {
             "number": 519,
             "state": state,
@@ -55,6 +58,7 @@ class FakeAPI:
                         "tipo: infraestructura",
                         "prioridad: alta",
                         "estado: bloqueado",
+                        "equipo: externo",
                         DECISION_LABEL,
                     }
                 )
@@ -63,6 +67,10 @@ class FakeAPI:
         self.comments = []
         self.calls = []
         self.next_id = 1000
+        self.crash_after_evidence_once = crash_after_evidence_once
+        self.mutate_body_on_issue_get = mutate_body_on_issue_get
+        self.replacement_body = replacement_body
+        self.issue_gets = 0
 
     def label_names(self):
         return {item["name"] for item in self.issue["labels"]}
@@ -70,6 +78,12 @@ class FakeAPI:
     def __call__(self, method, path, payload=None):
         self.calls.append((method, path, payload))
         if method == "GET" and path.endswith("/issues/519"):
+            self.issue_gets += 1
+            if (
+                self.mutate_body_on_issue_get == self.issue_gets
+                and self.replacement_body is not None
+            ):
+                self.issue["body"] = self.replacement_body
             return json.loads(json.dumps(self.issue))
         if method == "GET" and path.endswith("/comments?per_page=100"):
             return json.loads(json.dumps(self.comments))
@@ -81,14 +95,10 @@ class FakeAPI:
                 "user": {"login": BOT, "type": "Bot"},
             }
             self.comments.append(value)
+            if self.crash_after_evidence_once:
+                self.crash_after_evidence_once = False
+                raise RuntimeError("simulated crash after evidence")
             return value
-        if method == "DELETE" and "/labels/" in path:
-            label = unquote(path.rsplit("/", 1)[-1])
-            self.issue["labels"] = [
-                item for item in self.issue["labels"]
-                if item["name"] != label
-            ]
-            return None
         if method == "POST" and path.endswith("/labels"):
             for label in payload["labels"]:
                 if label not in self.label_names():
@@ -97,6 +107,10 @@ class FakeAPI:
         if method == "PATCH" and path.endswith("/issues/519"):
             self.issue["state"] = payload["state"]
             self.issue["state_reason"] = payload["state_reason"]
+            if "labels" in payload:
+                self.issue["labels"] = [
+                    {"name": name} for name in payload["labels"]
+                ]
             return self.issue
         raise AssertionError(f"Unexpected API call: {method} {path}")
 
@@ -114,9 +128,10 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn(COMPLETED, api.label_names())
         self.assertIn("prioridad: alta", api.label_names())
         self.assertIn("tipo: infraestructura", api.label_names())
+        self.assertIn("equipo: externo", api.label_names())
         self.assertEqual(len(api.comments), 1)
         self.assertIn('"option":"B"', api.comments[0]["body"])
-        self.assertIn("no ejecuta el efecto", api.comments[0]["body"])
+        self.assertIn("sin ejecutar el efecto", api.comments[0]["body"])
 
     def test_untrusted_bot_or_free_text_is_noop(self):
         cases = (
@@ -173,6 +188,63 @@ class DecisionRespuestaTests(unittest.TestCase):
         ]
         self.assertEqual(len(closes), 1)
 
+        partial = FakeAPI(crash_after_evidence_once=True)
+        with self.assertRaisesRegex(
+            RuntimeError, "simulated crash after evidence"
+        ):
+            materialize_decision(event(), partial, "pl0n3r/Factory")
+
+        self.assertEqual(partial.issue["state"], "open")
+        self.assertIn(DECISION_LABEL, partial.label_names())
+        self.assertIn("estado: bloqueado", partial.label_names())
+        self.assertNotIn(COMPLETED, partial.label_names())
+        partial_evidence = [
+            item for item in partial.comments
+            if item["user"]["login"] == BOT
+            and item["body"].startswith("<!-- factory-human-decision ")
+        ]
+        self.assertEqual(len(partial_evidence), 1)
+
+        self.assertTrue(
+            materialize_decision(event(), partial, "pl0n3r/Factory")
+        )
+        self.assertEqual(partial.issue["state"], "closed")
+        self.assertEqual(partial.issue["state_reason"], "completed")
+        self.assertEqual(
+            len([
+                item for item in partial.comments
+                if item["user"]["login"] == BOT
+                and item["body"].startswith("<!-- factory-human-decision ")
+            ]),
+            1,
+        )
+
+        stale = FakeAPI(
+            mutate_body_on_issue_get=2,
+            replacement_body=gate_body(("A", "C")),
+        )
+        self.assertFalse(
+            materialize_decision(event(), stale, "pl0n3r/Factory")
+        )
+        self.assertEqual(stale.issue["state"], "open")
+        self.assertIn(DECISION_LABEL, stale.label_names())
+        self.assertEqual(stale.comments, [])
+        self.assertFalse(any(call[0] != "GET" for call in stale.calls))
+
+        stale_final = FakeAPI(
+            mutate_body_on_issue_get=4,
+            replacement_body=gate_body(("A", "C")),
+        )
+        self.assertFalse(
+            materialize_decision(event(), stale_final, "pl0n3r/Factory")
+        )
+        self.assertEqual(stale_final.issue["state"], "open")
+        self.assertIn(DECISION_LABEL, stale_final.label_names())
+        self.assertEqual(len(stale_final.comments), 1)
+        self.assertFalse(any(
+            call[0] == "PATCH" for call in stale_final.calls
+        ))
+
     def test_decision_materialization_has_no_parent_side_effects(self):
         api = FakeAPI()
         self.assertTrue(materialize_decision(event(), api, "pl0n3r/Factory"))
@@ -191,7 +263,16 @@ class DecisionRespuestaTests(unittest.TestCase):
                 call[2] for call in api.calls
                 if call[0] == "PATCH" and call[1].endswith("/issues/519")
             ],
-            [{"state": "closed", "state_reason": "completed"}],
+            [{
+                "state": "closed",
+                "state_reason": "completed",
+                "labels": [
+                    "equipo: externo",
+                    "prioridad: alta",
+                    "tipo: infraestructura",
+                    COMPLETED,
+                ],
+            }],
         )
 
     def test_workflow_contract_is_comment_scoped_and_minimal(self):
@@ -210,6 +291,13 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn("issues: write", section)
         self.assertIn("github.event.repository.default_branch", section)
         self.assertIn("persist-credentials: false", section)
+        self.assertIn("Autorizar evento antes de checkout", section)
+        self.assertIn("steps.preflight.outputs.trusted == 'true'", section)
+        self.assertIn('"$REF_NAME" == "$DEFAULT_BRANCH"', section)
+        self.assertLess(
+            section.index("Autorizar evento antes de checkout"),
+            section.index("actions/checkout@"),
+        )
         self.assertIn("seguridad/decision_respuesta.py", section)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("secrets:", section)

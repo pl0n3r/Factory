@@ -8,8 +8,6 @@ import re
 import subprocess
 import sys
 from typing import Any
-from urllib.parse import quote
-
 from puertas_humanas import (
     MARKER_RE,
     classify_body,
@@ -108,8 +106,9 @@ def _evidence_body(option: str) -> str:
     )
     return (
         f"<!-- factory-human-decision {marker} -->\n"
-        f"✅ Decisión humana materializada: opción **{option}**. "
-        "Este registro no ejecuta el efecto de la opción ni amplía autoridad."
+        f"✅ Decisión humana registrada: opción **{option}**. "
+        "Este journal permite completar/reintentar la materialización sin "
+        "ejecutar el efecto de la opción ni ampliar autoridad."
     )
 
 
@@ -140,9 +139,6 @@ def _existing_evidence(api, base: str) -> str | None:
         raise DecisionError("Existen decisiones humanas contradictorias.")
     return next(iter(found), None)
 
-
-def _remove_label(api, base: str, label: str) -> None:
-    api("DELETE", f"{base}/labels/{quote(label, safe='')}")
 
 
 def materialize_decision(
@@ -176,8 +172,6 @@ def materialize_decision(
         return False
 
     labels = _labels(issue)
-    if DECISION_LABEL not in labels:
-        return False
 
     body = issue.get("body")
     if not isinstance(body, str):
@@ -192,28 +186,88 @@ def materialize_decision(
     existing = _existing_evidence(api, base)
     if existing is not None and existing != option:
         return False
-    if existing is None:
-        api("POST", f"{base}/comments", {"body": _evidence_body(option)})
 
-    # Releer estado antes de mutar labels para fallar cerrado ante carreras.
+    # Inicio normal: la cola canónica debe seguir presente. Recuperación:
+    # si un intento previo ya publicó el journal controlado para la MISMA
+    # opción, puede reanudar aunque el crash haya ocurrido tras retirar la cola.
+    if DECISION_LABEL not in labels and existing != option:
+        return False
+    if existing is None:
+        # Revalidar inmediatamente antes de publicar el journal: una edición
+        # concurrente no puede registrar una opción que ya salió del marker.
+        issue = api("GET", base)
+        if not isinstance(issue, dict) or issue.get("state") != "open":
+            return False
+        labels = _labels(issue)
+        if DECISION_LABEL not in labels:
+            return False
+        live_body = issue.get("body")
+        if not isinstance(live_body, str):
+            return False
+        try:
+            live_options = _gate_options(live_body)
+        except (DecisionError, ValueError):
+            return False
+        if option not in live_options:
+            return False
+        api("POST", f"{base}/comments", {"body": _evidence_body(option)})
+        existing = option
+
+    # Releer Issue y marker antes de cualquier write de estado para evitar TOCTOU.
     issue = api("GET", base)
     if not isinstance(issue, dict) or issue.get("state") != "open":
         return False
-    labels = _labels(issue)
-    if DECISION_LABEL not in labels:
+    live_body = issue.get("body")
+    if not isinstance(live_body, str):
+        return False
+    try:
+        live_options = _gate_options(live_body)
+    except (DecisionError, ValueError):
+        return False
+    if option not in live_options:
         return False
 
-    _remove_label(api, base, DECISION_LABEL)
-    for label in sorted(labels):
-        if label.startswith(STATUS_PREFIX) and label != COMPLETED:
-            _remove_label(api, base, label)
-    if COMPLETED not in labels:
-        api("POST", f"{base}/labels", {"labels": [COMPLETED]})
+    labels = _labels(issue)
+    if DECISION_LABEL not in labels and existing != option:
+        return False
 
+    # Última fotografía inmediatamente antes de la transición final.
+    # Revalidar marker/opción y calcular labels desde esta misma foto.
+    issue = api("GET", base)
+    if not isinstance(issue, dict) or issue.get("state") != "open":
+        return False
+    final_body = issue.get("body")
+    if not isinstance(final_body, str):
+        return False
+    try:
+        final_options = _gate_options(final_body)
+    except (DecisionError, ValueError):
+        return False
+    if option not in final_options:
+        return False
+
+    labels = _labels(issue)
+    if DECISION_LABEL not in labels and existing != option:
+        return False
+
+    final_labels = sorted(
+        label
+        for label in labels
+        if label != DECISION_LABEL and not label.startswith(STATUS_PREFIX)
+    )
+    final_labels.append(COMPLETED)
+
+    # Un único write final: estado + labels convergen juntos. Si el proceso
+    # cae tras publicar el journal pero antes de este PATCH, el retry encuentra
+    # la misma evidencia y vuelve a intentar esta transición sin duplicarla.
     api(
         "PATCH",
         base,
-        {"state": "closed", "state_reason": "completed"},
+        {
+            "state": "closed",
+            "state_reason": "completed",
+            "labels": final_labels,
+        },
     )
     return True
 
