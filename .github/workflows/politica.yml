@@ -3,6 +3,10 @@ on:
   workflow_call:
     inputs:
       pr_number: {required: true, type: number}
+      required_review_bot:
+        required: false
+        default: ""
+        type: string
 permissions:
   contents: read
   pull-requests: read
@@ -17,9 +21,15 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_PR: ${{ github.event.pull_request.number }}
           INPUT_PR: ${{ inputs.pr_number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          [[ "$EVENT_NAME" == "pull_request" && "$EVENT_PR" == "$INPUT_PR" ]] || { echo "::error::Contexto PR inválido"; exit 1; }
+          case "$EVENT_NAME" in
+            pull_request|pull_request_review) ;;
+            *) echo "::error::Evento no permitido: $EVENT_NAME"; exit 1 ;;
+          esac
+          [[ "$EVENT_PR" == "$INPUT_PR" ]] || { echo "::error::Contexto PR inválido"; exit 1; }
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD SHA inválido"; exit 1; }
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -37,6 +47,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PR: ${{ inputs.pr_number }}
+          REQUIRED_REVIEW_BOT: ${{ inputs.required_review_bot }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100" --jq '.[] | @json' \
