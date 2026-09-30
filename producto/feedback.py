@@ -13,6 +13,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 
 PROJECT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -40,7 +44,6 @@ MAX_SAMPLE_SIZE = 1_000_000_000
 MAX_MARKER_FILE_BYTES = 2_000_000
 REGRESSION_THRESHOLD_PCT = 5.0
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = REPO_ROOT / "producto" / "metricas.json"
 DATA_DIR = REPO_ROOT / "producto" / "datos"
 EPIC_MARKERS_PATH = DATA_DIR / "epic-markers.json"
