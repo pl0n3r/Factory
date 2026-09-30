@@ -109,6 +109,7 @@ def validate_required_bot_review(lines: list[str], required_review_bot: str = ""
             and user.get("type") == "Bot"
             and user.get("login") == required_review_bot
             and review.get("commit_id") == head_sha
+            and review.get("state") != "CHANGES_REQUESTED"
             and review_counts_as_round(review)
         ):
             return

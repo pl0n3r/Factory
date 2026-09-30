@@ -57,6 +57,7 @@ class T(unittest.TestCase):
             [review(login="other-bot")],
             [review(user_type="User")],
             [review(commit_id="b" * 40)],
+            [review(state="CHANGES_REQUESTED", body="Hallazgo pendiente")],
             [review(state="DISMISSED")],
         )
         for lines in cases:
