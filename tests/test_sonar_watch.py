@@ -122,6 +122,7 @@ def sync(raw, api):
         observed_at=NOW,
         project_ref=refs[project],
         origin_ref=f"sonar:{project}",
+        origin_url=f"https://sonarcloud.io/project/overview?id={project}",
         issues=api,
     )
 
@@ -165,6 +166,10 @@ class SonarWatchTests(unittest.TestCase):
         matches = api.find(marker)
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]["state"], "open")
+        self.assertIn(
+            "https://sonarcloud.io/project/overview?id=factory",
+            matches[0]["body"],
+        )
         self.assertEqual(
             [
                 item["action"]
@@ -219,6 +224,16 @@ class SonarWatchTests(unittest.TestCase):
             captured["content_type"],
             "application/json",
         )
+        with self.assertRaises(sonar_watch.SonarWatchError):
+            sonar_watch.sync_project(
+                contract=contract(),
+                snapshot=snapshot(),
+                observed_at=NOW,
+                project_ref="pl0n3r/Factory",
+                origin_ref="sonar:factory",
+                origin_url="https://evil.example/?token=secret",
+                issues=FakeIssues(),
+            )
 
     def test_issue_body_contains_concrete_quality_gate_and_ce_failure_evidence(self):
         api = FakeIssues()
