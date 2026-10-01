@@ -60,6 +60,13 @@ def _integer(value: Any, field: str, *, minimum: int = 0) -> int:
     return value
 
 
+def _javascript_safe_integer(value: int, field: str, *, multiplier: int = 1) -> int:
+    maximum = ((1 << 53) - 1) // multiplier
+    if value > maximum:
+        raise AccountCapacityPolicyError(f"{field} excede entero seguro JavaScript")
+    return value
+
+
 def _nullable_integer(value: Any, field: str) -> int | None:
     if value is None:
         return None
@@ -86,12 +93,27 @@ def _fingerprint(value: Any, field: str) -> str:
 
 def _budget(value: Any) -> dict[str, int]:
     row = _closed_mapping(value, BUDGET_FIELDS, "capacity.budget")
-    maximum = _integer(row["max_messages"], "capacity.budget.max_messages")
-    window = _integer(row["window_seconds"], "capacity.budget.window_seconds", minimum=1)
-    interval = _integer(
-        row["min_interval_seconds"],
+    maximum = _javascript_safe_integer(
+        _integer(row["max_messages"], "capacity.budget.max_messages"),
+        "capacity.budget.max_messages",
+    )
+    window = _javascript_safe_integer(
+        _integer(
+            row["window_seconds"],
+            "capacity.budget.window_seconds",
+            minimum=1,
+        ),
+        "capacity.budget.window_seconds",
+        multiplier=1000,
+    )
+    interval = _javascript_safe_integer(
+        _integer(
+            row["min_interval_seconds"],
+            "capacity.budget.min_interval_seconds",
+            minimum=1,
+        ),
         "capacity.budget.min_interval_seconds",
-        minimum=1,
+        multiplier=1000,
     )
     minimum_interval = window if maximum == 0 else (window + maximum - 1) // maximum
     if interval < minimum_interval:
@@ -122,6 +144,18 @@ def _capacity(value: Any, *, now: int) -> dict[str, Any]:
     )
     observed_at = _nullable_integer(row["observed_at"], "capacity.observed_at")
     expires_at = _nullable_integer(row["expires_at"], "capacity.expires_at")
+    if observed_at is not None:
+        _javascript_safe_integer(
+            observed_at,
+            "capacity.observed_at",
+            multiplier=1000,
+        )
+    if expires_at is not None:
+        _javascript_safe_integer(
+            expires_at,
+            "capacity.expires_at",
+            multiplier=1000,
+        )
     sample_count = _integer(row["sample_count"], "capacity.sample_count")
     limited_count = _integer(row["limited_count"], "capacity.limited_count")
     if limited_count > sample_count:
