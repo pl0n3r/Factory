@@ -70,11 +70,10 @@ jobs:
           path: .factory
           persist-credentials: false
 
-      - name: Construir evidencia del SHA
+      - name: Construir contexto de aceptación
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           gh api "repos/$REPOSITORY/issues/$ISSUE_NUMBER" > /tmp/issue.json
@@ -101,18 +100,51 @@ jobs:
           )
           print(json.dumps(pin))
           PY
-          gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --slurp > /tmp/check-pages.json
-          jq '{check_runs: [.[].check_runs[]]}' /tmp/check-pages.json > /tmp/checks.json
-          jq -n \
-            --slurpfile issue /tmp/issue.json \
-            --slurpfile checks /tmp/checks.json \
-            --slurpfile pin /tmp/acceptance-pin.json \
-            '{issue:$issue[0], checks:$checks[0], acceptance_sha256:$pin[0], require_pin:true}' \
-            > /tmp/acceptance.json
 
-      - name: Verificar criterios específicos
+      - name: Esperar checks requeridos y verificar criterios
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          max_attempts=12
+          wait_seconds=10
+
+          for attempt in $(seq 1 "$max_attempts"); do
+            gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --slurp > /tmp/check-pages.json
+            jq '{check_runs: [.[].check_runs[]]}' /tmp/check-pages.json > /tmp/checks.json
+            jq -n \
+              --slurpfile issue /tmp/issue.json \
+              --slurpfile checks /tmp/checks.json \
+              --slurpfile pin /tmp/acceptance-pin.json \
+              '{issue:$issue[0], checks:$checks[0], acceptance_sha256:$pin[0], require_pin:true}' \
+              > /tmp/acceptance.json
+
+            set +e
+            python3 .factory/scripts/aceptacion_kit.py --checks-only \
+              < /tmp/acceptance.json \
+              > /tmp/acceptance-readiness.json \
+              2> /tmp/acceptance-readiness.err
+            readiness_rc=$?
+            set -e
+
+            if [[ "$readiness_rc" == "0" ]]; then
+              break
+            fi
+            if [[ "$readiness_rc" != "3" ]]; then
+              cat /tmp/acceptance-readiness.err >&2
+              exit "$readiness_rc"
+            fi
+            if (( attempt == max_attempts )); then
+              cat /tmp/acceptance-readiness.err >&2
+              echo "::error::Checks requeridos no quedaron terminales dentro del límite."
+              exit 1
+            fi
+            echo "Checks requeridos pendientes (intento $attempt/$max_attempts); reintentando."
+            sleep "$wait_seconds"
+          done
+
           python3 .factory/scripts/aceptacion_kit.py < /tmp/acceptance.json | tee /tmp/acceptance-result.json
           {
             printf '### Criterios de aceptación\n\n```json\n'

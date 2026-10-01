@@ -5,12 +5,14 @@ from pathlib import Path
 
 from scripts.aceptacion_kit import (
     AcceptanceError,
+    CheckPending,
     Criterion,
     contract_fingerprint,
     parse_contract,
     run_named_test,
     validate_payload,
     verify_check,
+    verify_checks_only,
 )
 
 
@@ -332,7 +334,7 @@ class AcceptanceContractTests(unittest.TestCase):
             ]
         }
         verify_check(criterion, checks)
-        with self.assertRaisesRegex(AcceptanceError, "no terminó success"):
+        with self.assertRaisesRegex(AcceptanceError, "terminó sin success"):
             verify_check(
                 criterion,
                 {
@@ -346,7 +348,7 @@ class AcceptanceContractTests(unittest.TestCase):
                     ]
                 },
             )
-        with self.assertRaisesRegex(AcceptanceError, "no existe check"):
+        with self.assertRaisesRegex(CheckPending, "todavía no existe"):
             verify_check(criterion, {"check_runs": []})
 
     def test_workflow_paginates_check_runs(self):
@@ -422,7 +424,7 @@ class AcceptanceContractTests(unittest.TestCase):
 
     def test_latest_check_run_wins(self):
         criterion = Criterion("AC-01", "check", "Tests de scripts")
-        with self.assertRaisesRegex(AcceptanceError, "no terminó success"):
+        with self.assertRaisesRegex(CheckPending, "sigue in_progress"):
             verify_check(
                 criterion,
                 {
@@ -442,6 +444,36 @@ class AcceptanceContractTests(unittest.TestCase):
                     ]
                 },
             )
+
+    def test_nonterminal_check_is_retryable_but_terminal_failure_is_not(self):
+        criterion = Criterion("AC-01", "check", "Contrato ControlBot")
+        for checks in (
+            {"check_runs": []},
+            {"check_runs": [{"id": 10, "name": "Contrato ControlBot", "status": "queued", "conclusion": None}]},
+            {"check_runs": [{"id": 11, "name": "Contrato ControlBot", "status": "in_progress", "conclusion": None}]},
+        ):
+            with self.subTest(checks=checks):
+                with self.assertRaises(CheckPending):
+                    verify_check(criterion, checks)
+
+        with self.assertRaisesRegex(AcceptanceError, "terminó sin success"):
+            verify_check(
+                criterion,
+                {"check_runs": [{"id": 12, "name": "Contrato ControlBot", "status": "completed", "conclusion": "failure"}]},
+            )
+
+    def test_latest_check_run_still_wins_during_retry(self):
+        criterion = Criterion("AC-01", "check", "Contrato ControlBot")
+        checks = {
+            "check_runs": [
+                {"id": 20, "name": "Contrato ControlBot", "status": "completed", "conclusion": "success"},
+                {"id": 21, "name": "Contrato ControlBot", "status": "in_progress", "conclusion": None},
+            ]
+        }
+        with self.assertRaises(CheckPending):
+            verify_checks_only([criterion], checks)
+        checks["check_runs"][1].update(status="completed", conclusion="success")
+        self.assertEqual(verify_checks_only([criterion], checks), ["AC-01"])
 
     def test_self_referential_checks_are_rejected(self):
         for target in ("Validar", "Criterios de aceptación"):
