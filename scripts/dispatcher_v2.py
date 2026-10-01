@@ -624,7 +624,7 @@ def _direction_acceptance_contract(targets: list[str]) -> tuple[str, str]:
     for index, target in enumerate(targets, start=1):
         criterion_id = f"AC-{index:02d}"
         human_lines.append(
-            f"- [ ] [{criterion_id}] Evidencia ejecutable: \`{target}\`."
+            f"- [ ] [{criterion_id}] Evidencia ejecutable: `{target}`."
         )
         if target.startswith("check:"):
             machine_rows.append(
@@ -672,8 +672,8 @@ def _direction_leaf_body(
         roles=[str(role) for role in leaf["roles"]],
         dependency_issues=dependency_issues,
     )
-    paths = "\n".join(f"- \`{path}\`" for path in leaf["paths"])
-    return f"""Parent decision: #{gate_issue_number} · Leaf key: \`{leaf['key']}\`
+    paths = "\n".join(f"- `{path}`" for path in leaf["paths"])
+    return f"""Parent decision: #{gate_issue_number} · Leaf key: `{leaf['key']}`
 
 ### Contexto
 
