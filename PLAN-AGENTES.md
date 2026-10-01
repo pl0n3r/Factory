@@ -9,7 +9,7 @@
 
 ### Preflight de capacidades
 
-Antes de despachar, confirma que puedes **abrir URLs exactas**, **leer GitHub** y **comentar Issues** mediante el conector autenticado de GitHub o navegación/API equivalente. Si falta cualquiera de esas capacidades, responde una sola línea y detente:
+Antes de despachar, confirma que puedes **abrir URLs exactas**, **leer GitHub** y **comentar Issues** usando el conector autenticado de GitHub o navegación/API equivalente. Si falta cualquiera de esas capacidades, responde una sola línea y detente:
 
 `PARADO: falta acceso a GitHub para abrir URLs exactas, leer estado y comentar Issues.`
 
