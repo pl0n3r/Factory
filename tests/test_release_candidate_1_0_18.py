@@ -20,41 +20,28 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
         self.assertEqual(payload, {"version": "1.0.18"})
 
     def test_candidate_preserves_release_open_pull_feedback(self) -> None:
-        implementation = (
-            self.root / "scripts/coordinar_trabajo.py"
-        ).read_text(encoding="utf-8")
-        regressions = (
-            self.root / "tests/test_coordinar_trabajo.py"
-        ).read_text(encoding="utf-8")
+        import runpy
 
-        for token in (
-            'raise CoordinationError(',
-            '"No se puede liberar la reserva mientras existan PR abiertos "',
-            '"si eres el OWNER y corresponde cerrar esa línea de trabajo."',
-        ):
-            self.assertIn(token, implementation)
+        namespace = runpy.run_path(
+            str(self.root / "tests/test_coordinar_trabajo.py")
+        )
+        case_type = namespace["ReleaseOpenPullFeedbackTests"]
         for test_name in (
             "test_normal_release_with_open_pull_fails_closed_and_explains_blocker",
             "test_force_release_with_open_pull_preserves_existing_semantics",
             "test_normal_release_without_open_pull_still_releases",
         ):
-            self.assertIn(f"def {test_name}(", regressions)
+            case_type(methodName=test_name).debug()
 
-    def test_candidate_preserves_factory_release_authority_canonicalization(self) -> None:
-        implementation = (
-            self.root / "seguridad/puertas_humanas.py"
-        ).read_text(encoding="utf-8")
-        regressions = (
-            self.root / "seguridad/test_puertas_humanas.py"
-        ).read_text(encoding="utf-8")
+    def test_candidate_preserves_factory_release_authority_canonicalization(
+        self,
+    ) -> None:
+        import runpy
 
-        for token in (
-            'gate["category"] == "factory-release"',
-            'set(target) == {"version", "sha"}',
-            '"channel": "v1"',
-            '"safe_default": gate["safe_default"]',
-        ):
-            self.assertIn(token, implementation)
+        namespace = runpy.run_path(
+            str(self.root / "seguridad/test_puertas_humanas.py")
+        )
+        case_type = namespace["GateDedupTests"]
         for test_name in (
             "test_factory_release_authority_ignores_explanatory_copy",
             "test_release_1017_race_converges_without_body_edit",
@@ -62,7 +49,7 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
             "test_factory_release_incompatible_machine_contract_fails_closed",
             "test_non_release_authority_still_uses_effect",
         ):
-            self.assertIn(f"def {test_name}(", regressions)
+            case_type(methodName=test_name).debug()
 
     def test_previous_candidate_is_historical_and_keeps_1_0_17_guarantees(self) -> None:
         historical = (
