@@ -31,16 +31,8 @@
             "ref": "github:pl0n3r/factory#304",
             "observed_at": "2026-10-01T11:47:55Z"
           },
-          "allowed_actions": [
-            "benchmark",
-            "diagnose",
-            "measure_before_after",
-            "observe"
-          ],
-          "escalation_conditions": [
-            "architecture_change",
-            "capacity_budget"
-          ]
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
         },
         {
           "id": "lcp",
@@ -67,16 +59,8 @@
             "ref": "github:pl0n3r/factory#304",
             "observed_at": "2026-10-01T11:47:55Z"
           },
-          "allowed_actions": [
-            "benchmark",
-            "diagnose",
-            "measure_before_after",
-            "observe"
-          ],
-          "escalation_conditions": [
-            "architecture_change",
-            "capacity_budget"
-          ]
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
         },
         {
           "id": "cls",
@@ -103,16 +87,8 @@
             "ref": "github:pl0n3r/factory#304",
             "observed_at": "2026-10-01T11:47:55Z"
           },
-          "allowed_actions": [
-            "benchmark",
-            "diagnose",
-            "measure_before_after",
-            "observe"
-          ],
-          "escalation_conditions": [
-            "architecture_change",
-            "capacity_budget"
-          ]
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
         }
       ]
     },
@@ -145,16 +121,8 @@
             "ref": "github:pl0n3r/factory#304",
             "observed_at": "2026-10-01T11:47:55Z"
           },
-          "allowed_actions": [
-            "benchmark",
-            "diagnose",
-            "measure_before_after",
-            "observe"
-          ],
-          "escalation_conditions": [
-            "architecture_change",
-            "capacity_budget"
-          ]
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
         },
         {
           "id": "lcp",
@@ -181,16 +149,8 @@
             "ref": "github:pl0n3r/factory#304",
             "observed_at": "2026-10-01T11:47:55Z"
           },
-          "allowed_actions": [
-            "benchmark",
-            "diagnose",
-            "measure_before_after",
-            "observe"
-          ],
-          "escalation_conditions": [
-            "architecture_change",
-            "capacity_budget"
-          ]
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
         },
         {
           "id": "cls",
@@ -217,16 +177,8 @@
             "ref": "github:pl0n3r/factory#304",
             "observed_at": "2026-10-01T11:47:55Z"
           },
-          "allowed_actions": [
-            "benchmark",
-            "diagnose",
-            "measure_before_after",
-            "observe"
-          ],
-          "escalation_conditions": [
-            "architecture_change",
-            "capacity_budget"
-          ]
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
         }
       ]
     }
