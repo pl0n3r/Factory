@@ -47,11 +47,19 @@ class ReleaseCandidate1015Tests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
-    def test_candidate_version_is_1_0_15(self) -> None:
+    def test_candidate_is_at_least_1_0_15_and_keeps_1_0_15_guarantees(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.15"})
+        self.assertEqual(set(payload), {"version"})
+        parts = payload["version"].split(".")
+        self.assertEqual(len(parts), 3)
+        self.assertGreaterEqual(tuple(map(int, parts)), (1, 0, 15))
+
+        # Las garantías empaquetadas en 1.0.15 siguen siendo parte del canal.
+        self.test_candidate_contains_exact_head_reviewer_comment_transport()
+        self.test_candidate_contains_explicit_human_decision_materialization()
+        self.test_candidate_keeps_human_release_boundary()
 
     def test_candidate_contains_exact_head_reviewer_comment_transport(self) -> None:
         workflow = (
