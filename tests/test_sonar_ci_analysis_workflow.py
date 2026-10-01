@@ -59,8 +59,41 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
             "portfolio,producto,quality,readme,recovery,scripts,seguridad",
             text,
         )
-        self.assertIn("-Dsonar.tests=tests", text)
+        self.assertIn(
+            "-Dsonar.tests=tests,lecciones,metricas,producto,seguridad",
+            text,
+        )
         self.assertNotIn("-Dsonar.sources=tests", text)
+
+    def test_embedded_python_tests_are_classified_as_tests(self):
+        text = self.text
+        self.assertIn(
+            "-Dsonar.tests=tests,lecciones,metricas,producto,seguridad",
+            text,
+        )
+        self.assertIn(
+            "-Dsonar.test.inclusions="
+            "tests/**/*.py,lecciones/test_*.py,metricas/test_*.py,"
+            "producto/test_*.py,seguridad/test_*.py",
+            text,
+        )
+
+    def test_embedded_tests_are_excluded_from_sources_only(self):
+        text = self.text
+        self.assertIn(
+            "-Dsonar.exclusions="
+            "lecciones/test_*.py,metricas/test_*.py,"
+            "producto/test_*.py,seguridad/test_*.py",
+            text,
+        )
+        source_line = next(
+            line.strip()
+            for line in text.splitlines()
+            if line.strip().startswith("-Dsonar.sources=")
+        )
+        self.assertNotIn("test_", source_line)
+        self.assertNotIn("tests", source_line.split("=", 1)[1].split(","))
+        self.assertNotIn("-Dsonar.coverage.exclusions=", text)
 
     def test_coverage_published_gate_queries_sonar_fail_closed(self):
         text = self.text
