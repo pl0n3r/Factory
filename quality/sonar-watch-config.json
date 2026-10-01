@@ -61,7 +61,19 @@
           "max_open_vulnerabilities": 0,
           "max_open_bugs": 18,
           "max_open_hotspots": 0,
-          "max_debt_age_days": 30
+          "max_debt_age_days": 30,
+          "applicability": {
+            "coverage": {
+              "state": "not_applicable",
+              "reason": "coverage_not_applicable_automatic_analysis",
+              "source_ref": "pl0n3r/Factory#516"
+            },
+            "organization_line_usage": {
+              "state": "not_applicable",
+              "reason": "organization_line_usage_not_applicable_public",
+              "source_ref": "pl0n3r/Factory#516"
+            }
+          }
         }
       }
     },
@@ -120,7 +132,19 @@
           "max_open_vulnerabilities": 0,
           "max_open_bugs": 0,
           "max_open_hotspots": 0,
-          "max_debt_age_days": 30
+          "max_debt_age_days": 30,
+          "applicability": {
+            "coverage": {
+              "state": "not_applicable",
+              "reason": "coverage_not_applicable_automatic_analysis",
+              "source_ref": "pl0n3r/Factory#516"
+            },
+            "organization_line_usage": {
+              "state": "not_applicable",
+              "reason": "organization_line_usage_not_applicable_public",
+              "source_ref": "pl0n3r/Factory#516"
+            }
+          }
         }
       }
     },
@@ -179,7 +203,19 @@
           "max_open_vulnerabilities": 0,
           "max_open_bugs": 1,
           "max_open_hotspots": 0,
-          "max_debt_age_days": 30
+          "max_debt_age_days": 30,
+          "applicability": {
+            "coverage": {
+              "state": "required",
+              "reason": "coverage_required_ci_analysis",
+              "source_ref": "pl0n3r/Factory#516"
+            },
+            "organization_line_usage": {
+              "state": "not_applicable",
+              "reason": "organization_line_usage_not_applicable_public",
+              "source_ref": "pl0n3r/Factory#516"
+            }
+          }
         }
       }
     },
@@ -238,7 +274,19 @@
           "max_open_vulnerabilities": 0,
           "max_open_bugs": 0,
           "max_open_hotspots": 0,
-          "max_debt_age_days": 30
+          "max_debt_age_days": 30,
+          "applicability": {
+            "coverage": {
+              "state": "required",
+              "reason": "coverage_required_ci_analysis",
+              "source_ref": "pl0n3r/Factory#516"
+            },
+            "organization_line_usage": {
+              "state": "not_applicable",
+              "reason": "organization_line_usage_not_applicable_public",
+              "source_ref": "pl0n3r/Factory#516"
+            }
+          }
         }
       }
     },
@@ -297,7 +345,19 @@
           "max_open_vulnerabilities": 0,
           "max_open_bugs": 0,
           "max_open_hotspots": 0,
-          "max_debt_age_days": 30
+          "max_debt_age_days": 30,
+          "applicability": {
+            "coverage": {
+              "state": "not_applicable",
+              "reason": "coverage_not_applicable_automatic_analysis",
+              "source_ref": "pl0n3r/Factory#516"
+            },
+            "organization_line_usage": {
+              "state": "not_applicable",
+              "reason": "organization_line_usage_not_applicable_public",
+              "source_ref": "pl0n3r/Factory#516"
+            }
+          }
         }
       }
     },
@@ -356,7 +416,19 @@
           "max_open_vulnerabilities": 8,
           "max_open_bugs": 0,
           "max_open_hotspots": 0,
-          "max_debt_age_days": 30
+          "max_debt_age_days": 30,
+          "applicability": {
+            "coverage": {
+              "state": "not_applicable",
+              "reason": "coverage_not_applicable_automatic_analysis",
+              "source_ref": "pl0n3r/Factory#516"
+            },
+            "organization_line_usage": {
+              "state": "not_applicable",
+              "reason": "organization_line_usage_not_applicable_public",
+              "source_ref": "pl0n3r/Factory#516"
+            }
+          }
         }
       }
     }

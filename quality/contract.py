@@ -18,6 +18,7 @@ ACCESSIBILITY = {"NOT_APPLICABLE", "WCAG_AA", "WCAG_AAA"}
 MIGRATION = {"NOT_APPLICABLE", "FORWARD_ROLLBACK", "EXPAND_CONTRACT"}
 SONAR_VISIBILITY = {"public", "private"}
 SONAR_ANALYSIS_METHOD = {"automatic", "ci"}
+SONAR_APPLICABILITY = {"required", "not_applicable"}
 _ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _SENSITIVE = re.compile(
@@ -91,20 +92,17 @@ def quality_contract_fingerprint(payload: Any) -> str:
 
 
 def _sonar(value: Any) -> dict[str, Any]:
-    row = _exact(
-        value,
-        {
-            "expected_visibility",
-            "analysis_method",
-            "max_analysis_age_seconds",
-            "max_organization_line_usage_percent",
-            "max_open_vulnerabilities",
-            "max_open_bugs",
-            "max_open_hotspots",
-            "max_debt_age_days",
-        },
-        "sonar",
-    )
+    required = {
+        "expected_visibility",
+        "analysis_method",
+        "max_analysis_age_seconds",
+        "max_organization_line_usage_percent",
+        "max_open_vulnerabilities",
+        "max_open_bugs",
+        "max_open_hotspots",
+        "max_debt_age_days",
+    }
+    row = _closed_optional(value, required, {"applicability"}, "sonar")
     visibility = row["expected_visibility"]
     if not isinstance(visibility, str) or visibility not in SONAR_VISIBILITY:
         raise QualityContractError("sonar.expected_visibility fuera del catálogo.")
@@ -112,7 +110,7 @@ def _sonar(value: Any) -> dict[str, Any]:
     if not isinstance(method, str) or method not in SONAR_ANALYSIS_METHOD:
         raise QualityContractError("sonar.analysis_method fuera del catálogo.")
 
-    return {
+    normalized = {
         "expected_visibility": visibility,
         "analysis_method": method,
         "max_analysis_age_seconds": _bounded_int(
@@ -140,7 +138,60 @@ def _sonar(value: Any) -> dict[str, Any]:
             maximum=MAX_SONAR_DEBT_AGE_DAYS,
         ),
     }
+    if "applicability" in row:
+        normalized["applicability"] = _sonar_applicability(
+            row["applicability"],
+            visibility=visibility,
+            method=method,
+        )
+    return normalized
 
+
+def _sonar_applicability(
+    value: Any,
+    *,
+    visibility: str,
+    method: str,
+) -> dict[str, Any]:
+    row = _exact(
+        value,
+        {"coverage", "organization_line_usage"},
+        "sonar.applicability",
+    )
+    normalized = {
+        name: _sonar_applicability_entry(
+            row[name], f"sonar.applicability.{name}"
+        )
+        for name in ("coverage", "organization_line_usage")
+    }
+    expected = {
+        "coverage": "not_applicable" if method == "automatic" else "required",
+        "organization_line_usage": (
+            "not_applicable" if visibility == "public" else "required"
+        ),
+    }
+    for name, state in expected.items():
+        if normalized[name]["state"] != state:
+            raise QualityContractError(
+                f"sonar.applicability.{name}.state contradice la política Sonar."
+            )
+    return normalized
+
+
+def _sonar_applicability_entry(value: Any, label: str) -> dict[str, str]:
+    row = _exact(value, {"state", "reason", "source_ref"}, label)
+    state = row["state"]
+    if not isinstance(state, str) or state not in SONAR_APPLICABILITY:
+        raise QualityContractError(f"{label}.state fuera del catálogo.")
+    reason = _identifier(row["reason"], f"{label}.reason")
+    source_ref = row["source_ref"]
+    if not isinstance(source_ref, str) or _REF.fullmatch(source_ref) is None:
+        raise QualityContractError(f"{label}.source_ref inválida.")
+    return {
+        "state": state,
+        "reason": reason,
+        "source_ref": source_ref,
+    }
 
 def _surfaces(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or not value or len(value) > MAX_SURFACES:

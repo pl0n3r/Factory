@@ -319,5 +319,106 @@ class QualitySonarTests(unittest.TestCase):
             )
 
 
+class SonarEvidenceTests(unittest.TestCase):
+    @staticmethod
+    def _contract(*, method="ci", visibility="public"):
+        payload = contract()
+        payload["sonar"]["analysis_method"] = method
+        payload["sonar"]["expected_visibility"] = visibility
+        payload["sonar"]["applicability"] = {
+            "coverage": {
+                "state": "not_applicable" if method == "automatic" else "required",
+                "reason": (
+                    "coverage_not_applicable_automatic_analysis"
+                    if method == "automatic"
+                    else "coverage_required_ci_analysis"
+                ),
+                "source_ref": "pl0n3r/Factory#516",
+            },
+            "organization_line_usage": {
+                "state": "not_applicable" if visibility == "public" else "required",
+                "reason": (
+                    "organization_line_usage_not_applicable_public"
+                    if visibility == "public"
+                    else "organization_line_usage_required_private"
+                ),
+                "source_ref": "pl0n3r/Factory#516",
+            },
+        }
+        return payload
+
+    def test_automatic_missing_coverage_is_not_applicable(self):
+        raw = snapshot()
+        raw["analysis"]["method"] = "automatic"
+        raw["analysis"]["coverage_available"] = False
+        raw["organization"] = None
+        normalized = normalize_sonar_snapshot(
+            self._contract(method="automatic"),
+            raw,
+            observed_at=NOW,
+        )
+        coverage = signal(normalized, "coverage")
+        self.assertEqual(coverage["status"], "NOT_APPLICABLE")
+        self.assertEqual(
+            coverage["reason"],
+            "coverage_not_applicable_automatic_analysis",
+        )
+        self.assertIn("pl0n3r/Factory#516", coverage["evidence_refs"])
+        self.assertEqual(
+            signal(normalized, "organization_line_usage")["status"],
+            "NOT_APPLICABLE",
+        )
+
+    def test_organization_line_usage_applicability_follows_visibility_policy(self):
+        public = snapshot()
+        public["organization"] = None
+        normalized_public = normalize_sonar_snapshot(
+            self._contract(visibility="public"),
+            public,
+            observed_at=NOW,
+        )
+        self.assertEqual(
+            signal(normalized_public, "organization_line_usage")["status"],
+            "NOT_APPLICABLE",
+        )
+
+        private = snapshot()
+        private["visibility"] = "private"
+        private["organization"] = None
+        normalized_private = normalize_sonar_snapshot(
+            self._contract(visibility="private"),
+            private,
+            observed_at=NOW,
+        )
+        org = signal(normalized_private, "organization_line_usage")
+        self.assertEqual(org["status"], "UNKNOWN")
+        self.assertEqual(org["reason"], "organization_line_usage_missing")
+
+    def test_method_and_visibility_drift_remain_failures(self):
+        raw = snapshot()
+        raw["analysis"]["method"] = "ci"
+        raw["analysis"]["coverage_available"] = False
+        raw["visibility"] = "private"
+        raw["organization"] = None
+        normalized = normalize_sonar_snapshot(
+            self._contract(method="automatic", visibility="public"),
+            raw,
+            observed_at=NOW,
+        )
+        self.assertEqual(
+            signal(normalized, "analysis_method")["status"],
+            "FAIL",
+        )
+        self.assertEqual(signal(normalized, "visibility")["status"], "FAIL")
+        self.assertEqual(
+            signal(normalized, "coverage")["status"],
+            "NOT_APPLICABLE",
+        )
+        self.assertEqual(
+            signal(normalized, "organization_line_usage")["status"],
+            "NOT_APPLICABLE",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

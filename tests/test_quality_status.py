@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NOW = "2026-09-29T03:00:00Z"
 
 
-def contract(*, external=False, sonar=False):
+def contract(*, external=False, sonar=False, sonar_applicability=False):
     required = external
     result = {
         "version": 1,
@@ -58,6 +58,20 @@ def contract(*, external=False, sonar=False):
             "max_open_hotspots": 0,
             "max_debt_age_days": 30,
         }
+        if sonar_applicability:
+            result["sonar"]["analysis_method"] = "automatic"
+            result["sonar"]["applicability"] = {
+                "coverage": {
+                    "state": "not_applicable",
+                    "reason": "coverage_not_applicable_automatic_analysis",
+                    "source_ref": "pl0n3r/Factory#516",
+                },
+                "organization_line_usage": {
+                    "state": "not_applicable",
+                    "reason": "organization_line_usage_not_applicable_public",
+                    "source_ref": "pl0n3r/Factory#516",
+                },
+            }
     return result
 
 
@@ -149,10 +163,14 @@ def sonar_evidence():
 
 def health(
     gate_rows=None, regressions=None, *, external=False, perf=None, rec=None,
-    sonar=False, sonar_ev=None,
+    sonar=False, sonar_ev=None, sonar_applicability=False,
 ):
     return derive_quality_health(
-        contract(external=external, sonar=sonar),
+        contract(
+            external=external,
+            sonar=sonar,
+            sonar_applicability=sonar_applicability,
+        ),
         gates() if gate_rows is None else gate_rows,
         [] if regressions is None else regressions,
         observed_at=NOW,
@@ -299,7 +317,10 @@ class QualityStatusTests(unittest.TestCase):
 
     def test_sonar_evidence_is_consumed_without_recalculation(self):
         evidence = sonar_evidence()
-        result = health(sonar=True, sonar_ev=evidence)
+        result = health(
+            sonar=True,
+            sonar_ev=evidence,
+        )
 
         self.assertEqual(result["state"], "PASS")
         sonar = result["external_dimensions"]["sonar"]
@@ -435,6 +456,64 @@ class QualityStatusTests(unittest.TestCase):
             "sin scheduler", "sin recalcular",
         ):
             self.assertIn(marker, text)
+
+    def test_sonar_not_applicable_is_projected_without_corrective_class(self):
+        evidence = sonar_evidence()
+        for index, reason in (
+            (3, "organization_line_usage_not_applicable_public"),
+            (6, "coverage_not_applicable_automatic_analysis"),
+        ):
+            evidence["signals"][index]["status"] = "NOT_APPLICABLE"
+            evidence["signals"][index]["reason"] = reason
+            evidence["signals"][index]["evidence_refs"] = [
+                "pl0n3r/Factory#516"
+            ]
+
+        result = health(
+            sonar=True,
+            sonar_ev=evidence,
+            sonar_applicability=True,
+        )
+        sonar = result["external_dimensions"]["sonar"]
+        projected = {
+            row["signal"]: row for row in sonar["signals"]
+        }
+        self.assertEqual(result["state"], "PASS")
+        self.assertEqual(sonar["status"], "PASS")
+        self.assertEqual(
+            projected["coverage"]["status"],
+            "NOT_APPLICABLE",
+        )
+        self.assertEqual(
+            projected["organization_line_usage"]["status"],
+            "NOT_APPLICABLE",
+        )
+        self.assertNotIn(
+            "quality_evidence_unknown",
+            result["work_item_classes"],
+        )
+        self.assertNotEqual(projected["coverage"]["status"], "PASS")
+
+        forged = sonar_evidence()
+        forged["signals"][6]["status"] = "NOT_APPLICABLE"
+        forged["signals"][6]["reason"] = "coverage_not_applicable_automatic_analysis"
+        forged["signals"][6]["evidence_refs"] = ["pl0n3r/Factory#516"]
+        with self.assertRaises(QualityStatusError):
+            health(sonar=True, sonar_ev=forged)
+
+        wrong_reason = sonar_evidence()
+        wrong_reason["signals"][3]["status"] = "NOT_APPLICABLE"
+        wrong_reason["signals"][3]["reason"] = "forged_reason"
+        wrong_reason["signals"][3]["evidence_refs"] = ["pl0n3r/Factory#516"]
+        wrong_reason["signals"][6]["status"] = "NOT_APPLICABLE"
+        wrong_reason["signals"][6]["reason"] = "coverage_not_applicable_automatic_analysis"
+        wrong_reason["signals"][6]["evidence_refs"] = ["pl0n3r/Factory#516"]
+        with self.assertRaises(QualityStatusError):
+            health(
+                sonar=True,
+                sonar_ev=wrong_reason,
+                sonar_applicability=True,
+            )
 
 
 if __name__ == "__main__":

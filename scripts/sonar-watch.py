@@ -166,6 +166,26 @@ def sync_project(
         if len(matches) > 1:
             raise SonarWatchError("Issues AUTO duplicados para la misma señal.")
         current = matches[0] if matches else None
+        if signal["status"] == "NOT_APPLICABLE":
+            if current is not None and current["state"] != "closed":
+                source_ref = signal["details"].get("source_ref")
+                comment = (
+                    f"ℹ️ Sonar Watch: la señal `{signal['signal']}` pasa a "
+                    f"`NOT_APPLICABLE` por `{signal['reason']}` "
+                    f"según `{source_ref}`. Se cierra sin tratarla como PASS."
+                )
+                issues.comment(current["number"], body=comment)
+                issues.update(
+                    current["number"],
+                    title=current["title"],
+                    body=current["body"],
+                    state="closed",
+                )
+                operations.append({
+                    "action": "closed_not_applicable",
+                    "signal": signal["signal"],
+                })
+            continue
         fresh_pass = signal["status"] == "PASS" and signal["freshness"]["state"] == "CURRENT"
         if fresh_pass:
             if current is not None and current["state"] != "closed":
@@ -252,6 +272,12 @@ class GitHubIssues:
         self.http.request(
             f"/repos/{self.repository}/issues/{number}", method="PATCH",
             payload={"title": title, "body": body, "state": state},
+        )
+
+    def comment(self, number: int, *, body: str):
+        self.http.request(
+            f"/repos/{self.repository}/issues/{number}/comments", method="POST",
+            payload={"body": body},
         )
 
 
