@@ -139,9 +139,9 @@ class PlanContractTests(unittest.TestCase):
 
     def test_product_direction_requires_reservable_leaf_contract(self):
         for value in (
-            "mismo preflight de aceptación",
-            "usado por `/tomar`",
-            "no puede etiquetarse `available`",
+            "roles y claims de paths exactos",
+            "mismo preflight de aceptación y coordinación que `/tomar`",
+            "estructuralmente no reservable",
         ):
             with self.subTest(value=value):
                 self.assertIn(value, PLAN)

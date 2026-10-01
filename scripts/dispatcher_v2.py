@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from dataclasses import dataclass, field, replace
 from typing import Iterable
 
 from scripts.adaptive_fencing import FencingDecision
-from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET, parse_contract
+from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET
+from scripts.orquestador_kit import PlannedTask, build_task_marker
 from scripts.presence_contract import PresenceAssessment
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 from seguridad.puertas_humanas import validate_gate
@@ -111,6 +113,8 @@ class DirectionLeaf:
     key: str
     title: str
     acceptance_targets: tuple[str, ...]
+    paths: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
     depends_on: tuple[str, ...] = ()
 
 
@@ -131,6 +135,45 @@ class DirectionGateInstance:
     gate_key: str
 
 
+DIRECTION_KEY = re.compile(r"^[A-Z][A-Z0-9_-]{0,31}$")
+DIRECTION_ROLE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def _valid_direction_path(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 240
+        or value.startswith("/")
+        or value.startswith("./")
+        or "\\" in value
+        or any(
+            char in value
+            for char in ("\n", "\r", "\x00", "*", "?", "[", "]", "{", "}")
+        )
+    ):
+        raise ValueError("direction paths must be exact canonical repository paths")
+    is_dir = value.endswith("/")
+    base = value[:-1] if is_dir else value
+    parts = base.split("/")
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise ValueError("direction paths must be exact canonical repository paths")
+    return value
+
+
+def _valid_direction_owner(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 39
+        or not value.isascii()
+        or value.startswith("-")
+        or value.endswith("-")
+        or "--" in value
+        or any(not (char.isalnum() or char == "-") for char in value)
+    ):
+        raise ValueError("direction materialization owner must be a GitHub login")
+    return value
+
+
 def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, object]:
     if proposal.repository_ref not in PRODUCT_DIRECTION_REPOS:
         raise ValueError("product direction only applies to canonical product repos")
@@ -141,8 +184,13 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
         raise ValueError("direction proposal requires at least one leaf")
 
     keys = [leaf.key.strip() for leaf in proposal.leaves]
-    if any(not key for key in keys) or len(keys) != len(set(keys)):
-        raise ValueError("direction proposal leaf keys must be non-empty and unique")
+    if (
+        any(DIRECTION_KEY.fullmatch(key) is None for key in keys)
+        or len(keys) != len(set(keys))
+    ):
+        raise ValueError(
+            "direction proposal leaf keys must be unique canonical task identifiers"
+        )
     key_set = set(keys)
     normalized_leaves = []
     for leaf, key in zip(proposal.leaves, keys):
@@ -163,6 +211,16 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
                 raise ValueError(
                     "direction acceptance targets must match factory-acceptance"
                 )
+        paths = tuple(_valid_direction_path(path) for path in leaf.paths)
+        if not paths or len(paths) != len(set(paths)):
+            raise ValueError("direction leaves require unique exact path claims")
+        roles = tuple(role.strip() for role in leaf.roles)
+        if (
+            not roles
+            or len(roles) != len(set(roles))
+            or any(DIRECTION_ROLE.fullmatch(role) is None for role in roles)
+        ):
+            raise ValueError("direction leaves require unique canonical roles")
         dependencies = tuple(dep.strip() for dep in leaf.depends_on)
         if any(not dep or dep == key or dep not in key_set for dep in dependencies):
             raise ValueError("direction dependencies must reference another proposed leaf")
@@ -171,6 +229,8 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
                 "key": key,
                 "title": title,
                 "acceptance_targets": list(targets),
+                "paths": list(paths),
+                "roles": list(roles),
                 "depends_on": list(dependencies),
             }
         )
@@ -558,65 +618,104 @@ def direction_gate_trigger(
     return {"action": "open_gate", "materialize_leaves": False, **result}
 
 
+def _direction_acceptance_contract(targets: list[str]) -> tuple[str, str]:
+    human_lines: list[str] = []
+    machine_rows: list[dict[str, str]] = []
+    for index, target in enumerate(targets, start=1):
+        criterion_id = f"AC-{index:02d}"
+        human_lines.append(
+            f"- [ ] [{criterion_id}] Evidencia ejecutable: `{target}`."
+        )
+        if target.startswith("check:"):
+            machine_rows.append(
+                {
+                    "id": criterion_id,
+                    "kind": "check",
+                    "target": target.removeprefix("check:"),
+                }
+            )
+        else:
+            machine_rows.append(
+                {"id": criterion_id, "kind": "test", "target": target}
+            )
+    marker = json.dumps(
+        {"version": 1, "criteria": machine_rows},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return "\n".join(human_lines), f"<!-- factory-acceptance {marker} -->"
+
+
 def _direction_leaf_body(
     *,
     repository_ref: str,
     objective: str,
     leaf: dict[str, object],
+    gate_issue_number: int,
+    owner: str,
+    order: int,
+    dependency_issues: list[int],
 ) -> str:
-    """Construye un contrato de aceptación canónico antes de publicar el leaf."""
-    criteria = []
-    human_lines = []
-    for index, raw_target in enumerate(leaf["acceptance_targets"], start=1):
-        target = str(raw_target)
-        criterion_id = f"AC-{index:02d}"
-        if target.startswith("check:"):
-            kind = "check"
-            machine_target = target.removeprefix("check:")
-        else:
-            kind = "test"
-            machine_target = target
-        criteria.append(
-            {"id": criterion_id, "kind": kind, "target": machine_target}
-        )
-        human_lines.append(
-            f"- [ ] [{criterion_id}] Evidencia ejecutable: `{target}`."
-        )
+    targets = list(leaf["acceptance_targets"])
+    criteria, acceptance_marker = _direction_acceptance_contract(targets)
+    task = PlannedTask(
+        key=str(leaf["key"]),
+        title=str(leaf["title"]),
+        owner=owner,
+        paths=tuple(str(path) for path in leaf["paths"]),
+        depends_on=tuple(str(dep) for dep in leaf["depends_on"]),
+    )
+    task_marker = build_task_marker(
+        epic=gate_issue_number,
+        task=task,
+        order=order,
+        roles=[str(role) for role in leaf["roles"]],
+        dependency_issues=dependency_issues,
+    )
+    paths = "\n".join(f"- `{path}`" for path in leaf["paths"])
+    return f"""Parent decision: #{gate_issue_number} · Leaf key: `{leaf['key']}`
 
-    dependencies = leaf["depends_on"]
-    dependency_text = ", ".join(str(item) for item in dependencies) or "ninguna"
-    marker = json.dumps(
-        {"version": 1, "criteria": criteria},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return (
-        "### Contexto\n\n"
-        f"Leaf `{leaf['key']}` del tramo product-direction aprobado para "
-        f"`{repository_ref}`. Objetivo del tramo: {objective} "
-        f"Dependencias declaradas: {dependency_text}.\n\n"
-        "### Alcance\n\n"
-        f"Implementar exclusivamente `{leaf['title']}` conforme a la propuesta "
-        "aprobada y a sus criterios ejecutables.\n\n"
-        "### Fuera de alcance\n\n"
-        "Cualquier trabajo no descrito por este leaf, sus dependencias o sus "
-        "criterios de aceptación. La materialización no ejecuta producto ni "
-        "amplía autoridad.\n\n"
-        "### Criterios de aceptación\n\n"
-        + "\n".join(human_lines)
-        + "\n\n### Contrato ejecutable\n\n"
-        "El marker siguiente es la fuente ejecutable de aceptación usada por "
-        "coordinación antes de reservar el Issue.\n\n"
-        f"<!-- factory-acceptance {marker} -->"
-    )
+### Contexto
+
+La dirección de producto aprobó este leaf para {repository_ref}. Objetivo del tramo: {objective}
+
+### Alcance
+
+Implementar exclusivamente **{leaf['title']}** dentro de las rutas reclamadas y de los criterios ejecutables de este contrato.
+
+### Fuera de alcance
+
+Trabajo ajeno a este leaf, ampliaciones no aprobadas del tramo, autoridad adicional, gasto, datos reales o go-live.
+
+### Criterios de aceptación
+
+{criteria}
+
+### Contrato ejecutable
+
+{acceptance_marker}
+
+### Rutas reclamadas
+
+{paths}
+
+{task_marker}
+
+### Riesgo y reversión
+
+Riesgo acotado a las rutas reclamadas. La reversión es por revert del cambio; cualquier migración o efecto irreversible sigue sujeto a su autoridad específica.
+"""
 
 
 def materialize_direction_leaves(
     proposal: DirectionProposal,
     *,
     decision_evidence: dict[str, object] | None,
+    gate_issue_number: int | None = None,
+    owner: str | None = None,
+    dependency_issue_numbers: dict[str, int] | None = None,
 ) -> tuple[dict[str, object], ...]:
-    """Materializa solo con journal v2 y body prevalidado por aceptación."""
+    """Materializa leaves aprobados como contratos reservables y deterministas."""
     if decision_evidence is None:
         return ()
     if (
@@ -630,21 +729,43 @@ def materialize_direction_leaves(
         raise ValueError("direction decision evidence does not match proposal gate")
     if decision_evidence["option"] == "B":
         return ()
+    if (
+        isinstance(gate_issue_number, bool)
+        or not isinstance(gate_issue_number, int)
+        or gate_issue_number < 1
+    ):
+        raise ValueError("approved direction leaves require a valid gate issue")
+    materialization_owner = _valid_direction_owner(owner)
+    dependency_map = dependency_issue_numbers or {}
     normalized = expected["proposal"]
-    materialized = []
-    for leaf in normalized["leaves"]:
-        body = _direction_leaf_body(
-            repository_ref=str(normalized["repository_ref"]),
-            objective=str(normalized["objective"]),
-            leaf=leaf,
-        )
-        parse_contract(body)
+    materialized: list[dict[str, object]] = []
+    for order, leaf in enumerate(normalized["leaves"], start=1):
+        dependency_issues: list[int] = []
+        for dependency in leaf["depends_on"]:
+            issue_number = dependency_map.get(dependency)
+            if (
+                isinstance(issue_number, bool)
+                or not isinstance(issue_number, int)
+                or issue_number < 1
+            ):
+                raise ValueError(
+                    "approved direction leaves require numeric dependency issue mapping"
+                )
+            dependency_issues.append(issue_number)
         materialized.append(
             {
                 **leaf,
                 "repository_ref": normalized["repository_ref"],
-                "body": body,
                 "state": "available",
+                "body": _direction_leaf_body(
+                    repository_ref=str(normalized["repository_ref"]),
+                    objective=str(normalized["objective"]),
+                    leaf=leaf,
+                    gate_issue_number=gate_issue_number,
+                    owner=materialization_owner,
+                    order=order,
+                    dependency_issues=dependency_issues,
+                ),
             }
         )
     return tuple(materialized)
