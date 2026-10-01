@@ -5,14 +5,18 @@ from decision_respuesta import (
     BOT,
     COMPLETED,
     DECISION_LABEL,
+    DecisionError,
     materialize_decision,
 )
 
 
-def gate_body(options=("A", "B")):
+def gate_body(
+    options=("A", "B"),
+    context="La decisión requiere autorización explícita antes de cualquier efecto.",
+):
     gate = {
         "category": "money",
-        "context": "La decisión requiere autorización explícita antes de cualquier efecto.",
+        "context": context,
         "options": [
             {"id": option, "label": f"Opción {option}"}
             for option in options
@@ -133,6 +137,35 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn('"option":"B"', api.comments[0]["body"])
         self.assertIn("sin ejecutar el efecto", api.comments[0]["body"])
 
+    def test_evidence_v2_binds_gate_fingerprint_and_semantic_drift_fails_closed(self):
+        api = FakeAPI()
+        self.assertTrue(materialize_decision(event(), api, "pl0n3r/Factory"))
+        marker = api.comments[0]["body"].split("-->", 1)[0]
+        payload = json.loads(
+            marker.removeprefix("<!-- factory-human-decision ").strip()
+        )
+        self.assertEqual(payload["version"], 2)
+        self.assertEqual(payload["option"], "B")
+        self.assertRegex(payload["gate_sha256"], r"^[0-9a-f]{64}$")
+
+        semantic = FakeAPI(
+            mutate_body_on_issue_get=3,
+            replacement_body=gate_body(
+                ("A", "B"),
+                context="La decisión cambió semánticamente pero conserva las letras.",
+            ),
+        )
+        self.assertFalse(
+            materialize_decision(event(), semantic, "pl0n3r/Factory")
+        )
+        self.assertEqual(semantic.issue["state"], "open")
+        self.assertIn(DECISION_LABEL, semantic.label_names())
+        self.assertEqual(len(semantic.comments), 1)
+        self.assertFalse(any(
+            call[0] == "PATCH" for call in semantic.calls
+        ))
+
+
     def test_untrusted_bot_or_free_text_is_noop(self):
         cases = (
             event(association="NONE"),
@@ -245,6 +278,20 @@ class DecisionRespuestaTests(unittest.TestCase):
             call[0] == "PATCH" for call in stale_final.calls
         ))
 
+    def test_legacy_evidence_does_not_resume(self):
+        legacy = FakeAPI()
+        legacy.comments.append({
+            "id": 42,
+            "body": '<!-- factory-human-decision {"option":"B","version":1} -->',
+            "user": {"login": BOT, "type": "Bot"},
+        })
+        with self.assertRaises(DecisionError):
+            materialize_decision(event(), legacy, "pl0n3r/Factory")
+        self.assertEqual(legacy.issue["state"], "open")
+        self.assertFalse(any(
+            call[0] != "GET" for call in legacy.calls
+        ))
+
     def test_decision_materialization_has_no_parent_side_effects(self):
         api = FakeAPI()
         self.assertTrue(materialize_decision(event(), api, "pl0n3r/Factory"))
@@ -286,6 +333,10 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn("issues:\n    types: [opened, edited, reopened]", workflow)
         self.assertIn("issue_comment:\n    types: [created]", workflow)
         self.assertIn("materializar-respuesta:", workflow)
+        self.assertIn(
+            "if: github.event_name == 'issues' && github.event.issue.state == 'open'",
+            workflow,
+        )
         section = workflow.split("  materializar-respuesta:", 1)[1]
         self.assertIn("contents: read", section)
         self.assertIn("issues: write", section)
@@ -301,6 +352,19 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn("seguridad/decision_respuesta.py", section)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("secrets:", section)
+
+    def test_workflow_does_not_requeue_closed_issue(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "seguridad.yml"
+        ).read_text(encoding="utf-8")
+        sync = workflow.split("  sincronizar-decision:", 1)[1]
+        self.assertIn(
+            "if: github.event_name == 'issues' && github.event.issue.state == 'open'",
+            sync,
+        )
 
 
 if __name__ == "__main__":
