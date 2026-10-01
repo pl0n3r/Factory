@@ -101,6 +101,23 @@ def _normalized_gate_snapshot(body: str) -> tuple[dict[str, Any], str]:
     return gate, fingerprint
 
 
+def _v2_release_intent(gate: dict[str, Any]) -> bool:
+    if gate.get("closed_by") == DECISION_BOT:
+        return True
+    comments = gate.get("comments")
+    if not isinstance(comments, list):
+        return False
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        if DECISION_INTENT_RE.search(body) or DECISION_COMMAND_RE.fullmatch(body):
+            return True
+    return False
+
+
 def _validate_v2_maintenance_decision(
     *,
     body: str,
@@ -146,7 +163,11 @@ def _validate_v2_maintenance_decision(
         user = comment.get("user")
         login = user.get("login") if isinstance(user, dict) else None
         comment_body = comment.get("body")
-        if not isinstance(comment_body, str) or len(comment_body) > MAX_COMMENT_BODY:
+        if not isinstance(comment_body, str):
+            continue
+        if len(comment_body) > MAX_COMMENT_BODY:
+            if DECISION_INTENT_RE.search(comment_body):
+                raise ReleaseBootstrapError("Journal v2 excede el límite permitido.")
             continue
 
         command = DECISION_COMMAND_RE.fullmatch(comment_body)
@@ -182,9 +203,9 @@ def _validate_v2_maintenance_decision(
             raise ReleaseBootstrapError("Journal v2 incompatible.")
         journals.append((raw["option"], raw["gate_sha256"]))
 
-    if commands != ["A"]:
+    if not commands or any(option != "A" for option in commands):
         raise ReleaseBootstrapError(
-            "Decisión v2 requiere un único /decidir A explícito del OWNER."
+            "Decisión v2 requiere /decidir A explícito del OWNER sin opciones contradictorias."
         )
     if len(journals) != 1:
         raise ReleaseBootstrapError("Debe existir exactamente un journal v2 del bot.")
@@ -241,12 +262,9 @@ def validate_payload(payload: Any) -> dict[str, str]:
     if v1_0_0_exists:
         if category != "factory-release":
             raise ReleaseBootstrapError("Mantenimiento v1.x requiere puerta factory-release.")
-        if closed_by == owner:
-            if _latest_owner_approval(gate.get("comments"), owner) != expected:
-                raise ReleaseBootstrapError(
-                    "La aprobación legacy del dueño corresponde a otro SHA."
-                )
-        elif closed_by == DECISION_BOT:
+        if _v2_release_intent(gate):
+            if closed_by != DECISION_BOT:
+                raise ReleaseBootstrapError("Puerta v2 debe cerrar por el bot de decisión.")
             _validate_v2_maintenance_decision(
                 body=body if isinstance(body, str) else "",
                 comments=gate.get("comments"),
@@ -254,9 +272,12 @@ def validate_payload(payload: Any) -> dict[str, str]:
                 expected=expected,
             )
         else:
-            raise ReleaseBootstrapError(
-                "Puerta de mantenimiento debe cerrar por OWNER legacy o bot v2."
-            )
+            if closed_by != owner:
+                raise ReleaseBootstrapError("Puerta legacy debe ser cerrada por el dueño.")
+            if _latest_owner_approval(gate.get("comments"), owner) != expected:
+                raise ReleaseBootstrapError(
+                    "La aprobación legacy del dueño corresponde a otro SHA."
+                )
     else:
         if category != "release-1.0.0":
             raise ReleaseBootstrapError("Primer release requiere puerta release-1.0.0.")
