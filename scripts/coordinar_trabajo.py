@@ -2016,6 +2016,12 @@ def close_pr_reservation(
     merged = bool(pull.get("merged"))
 
     if current:
+        acceptance = (
+            current.get("acceptance_sha256")
+            if merged and isinstance(current.get("acceptance_sha256"), str)
+            else None
+        )
+        snapshot = reservation_task_snapshot(current) if merged else None
         api.comment(
             issue_number,
             reservation_marker(
@@ -2024,6 +2030,8 @@ def close_pr_reservation(
                 branch,
                 False,
                 "pr-merged" if merged else "pr-cerrado-sin-merge",
+                acceptance,
+                task_snapshot=snapshot,
             ),
         )
         api.try_unassign(issue_number, str(current["owner"]))
@@ -2033,7 +2041,6 @@ def close_pr_reservation(
         api.set_status(issue_number, STATUS_COMPLETED)
     elif STATUS_BLOCKED not in label_names(issue):
         api.set_status(issue_number, STATUS_AVAILABLE)
-
 
 def update_pr_state(api: GitHub, pr_number: int, action: str) -> None:
     """Sincroniza labels y reserva con eventos de un PR del mismo repositorio."""
