@@ -4,6 +4,7 @@ from pathlib import Path
 
 from scripts.work_inventory import (
     CANONICAL_REPOSITORIES,
+    WorkInventoryError,
     build_factory_inventory,
     controlbot_projection,
     project_inventory,
@@ -108,6 +109,66 @@ class WorkInventoryTests(unittest.TestCase):
             [snapshot(repo) for repo in CANONICAL_REPOSITORIES]
         )
         self.assertIs(controlbot_projection(inventory), inventory)
+
+    def test_fail_closed_validation_paths_are_covered(self):
+        bad_snapshots = [
+            {"repository_ref": "pl0n3r/Factory", "leaves": []},
+            snapshot("other/repo"),
+            snapshot("pl0n3r/Factory", leaves=[leaf("dup"), leaf("dup")]),
+            snapshot(
+                "pl0n3r/Factory",
+                narrative=[narrative("dup"), narrative("dup")],
+            ),
+        ]
+        for source in bad_snapshots:
+            with self.subTest(source=source), self.assertRaises(WorkInventoryError):
+                project_inventory(source)
+
+        incomplete = [snapshot(repo) for repo in CANONICAL_REPOSITORIES[:-1]]
+        with self.assertRaises(WorkInventoryError):
+            build_factory_inventory(incomplete)
+        with self.assertRaises(WorkInventoryError):
+            controlbot_projection({"version": 1, "projects": []})
+
+    def test_reserved_priority_and_future_idea_are_deterministic(self):
+        result = project_inventory(
+            snapshot(
+                "pl0n3r/Factory",
+                leaves=[
+                    leaf("Factory#medium", "reserved", priority="medium"),
+                    leaf("Factory#critical", "available", priority="critical"),
+                ],
+                narrative=[narrative("later", "future_idea")],
+            )
+        )
+        self.assertEqual(result["state"], "READY")
+        self.assertEqual(result["next_work"], "Factory#critical")
+        self.assertEqual(result["counts"]["future_idea"], 1)
+
+        future_only = project_inventory(
+            snapshot(
+                "pl0n3r/Factory",
+                narrative=[narrative("later-only", "future_idea")],
+            )
+        )
+        self.assertEqual(future_only["state"], "UNMATERIALIZED_WORK")
+
+    def test_initial_sweep_rejects_missing_sources_and_wrong_order(self):
+        payload = json.loads(
+            (ROOT / "config" / "work_inventory_initial.json").read_text(encoding="utf-8")
+        )
+        missing_source = json.loads(json.dumps(payload))
+        missing_source["projects"][0]["source_refs"] = []
+        with self.assertRaises(WorkInventoryError):
+            validate_initial_sweep(missing_source)
+
+        wrong_order = json.loads(json.dumps(payload))
+        wrong_order["projects"][0], wrong_order["projects"][1] = (
+            wrong_order["projects"][1],
+            wrong_order["projects"][0],
+        )
+        with self.assertRaises(WorkInventoryError):
+            validate_initial_sweep(wrong_order)
 
     def test_initial_sweep_evidence_covers_all_automatic_projects(self):
         payload = json.loads(
