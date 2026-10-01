@@ -13,6 +13,16 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
+    @staticmethod
+    def _acceptance_tools():
+        try:
+            from scripts.aceptacion_kit import Criterion, run_named_test
+        except ModuleNotFoundError as exc:
+            if exc.name != "scripts":
+                raise
+            from aceptacion_kit import Criterion, run_named_test
+        return Criterion, run_named_test
+
     def test_candidate_version_is_1_0_18(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
@@ -20,49 +30,36 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
         self.assertEqual(payload, {"version": "1.0.18"})
 
     def test_candidate_preserves_release_open_pull_feedback(self) -> None:
-        implementation = (
-            self.root / "scripts/coordinar_trabajo.py"
-        ).read_text(encoding="utf-8")
-        regressions = (
-            self.root / "tests/test_coordinar_trabajo.py"
-        ).read_text(encoding="utf-8")
+        Criterion, run_named_test = self._acceptance_tools()
 
-        for token in (
-            'raise CoordinationError(',
-            '"No se puede liberar la reserva mientras existan PR abiertos "',
-            '"si eres el OWNER y corresponde cerrar esa línea de trabajo."',
-        ):
-            self.assertIn(token, implementation)
-        for test_name in (
+        for target in (
+            "tests/test_coordinar_trabajo.py::ReleaseOpenPullFeedbackTests::"
             "test_normal_release_with_open_pull_fails_closed_and_explains_blocker",
+            "tests/test_coordinar_trabajo.py::ReleaseOpenPullFeedbackTests::"
             "test_force_release_with_open_pull_preserves_existing_semantics",
+            "tests/test_coordinar_trabajo.py::ReleaseOpenPullFeedbackTests::"
             "test_normal_release_without_open_pull_still_releases",
         ):
-            self.assertIn(f"def {test_name}(", regressions)
+            run_named_test(Criterion("AC-01", "test", target), self.root)
 
-    def test_candidate_preserves_factory_release_authority_canonicalization(self) -> None:
-        implementation = (
-            self.root / "seguridad/puertas_humanas.py"
-        ).read_text(encoding="utf-8")
-        regressions = (
-            self.root / "seguridad/test_puertas_humanas.py"
-        ).read_text(encoding="utf-8")
+    def test_candidate_preserves_factory_release_authority_canonicalization(
+        self,
+    ) -> None:
+        Criterion, run_named_test = self._acceptance_tools()
 
-        for token in (
-            'gate["category"] == "factory-release"',
-            'set(target) == {"version", "sha"}',
-            '"channel": "v1"',
-            '"safe_default": gate["safe_default"]',
-        ):
-            self.assertIn(token, implementation)
-        for test_name in (
+        for target in (
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_factory_release_authority_ignores_explanatory_copy",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_release_1017_race_converges_without_body_edit",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_factory_release_target_remains_part_of_identity",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_factory_release_incompatible_machine_contract_fails_closed",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_non_release_authority_still_uses_effect",
         ):
-            self.assertIn(f"def {test_name}(", regressions)
+            run_named_test(Criterion("AC-02", "test", target), self.root)
 
     def test_previous_candidate_is_historical_and_keeps_1_0_17_guarantees(self) -> None:
         historical = (
