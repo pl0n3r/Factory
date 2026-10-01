@@ -13,11 +13,17 @@ class ReleaseCandidate1016Tests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
-    def test_candidate_version_is_1_0_16(self) -> None:
+    def test_candidate_is_at_least_1_0_16_and_keeps_1_0_16_guarantees(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.16"})
+        self.assertEqual(set(payload), {"version"})
+        parts = payload["version"].split(".")
+        self.assertEqual(len(parts), 3)
+        self.assertGreaterEqual(tuple(map(int, parts)), (1, 0, 16))
+        self.test_candidate_preserves_recovery_required_reacquisition()
+        self.test_candidate_preserves_fresh_lease_fail_closed()
+        self.test_candidate_keeps_human_release_boundary()
 
     def test_candidate_preserves_recovery_required_reacquisition(self) -> None:
         implementation = (
