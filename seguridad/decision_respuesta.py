@@ -12,6 +12,7 @@ from typing import Any
 from puertas_humanas import (
     MARKER_RE,
     classify_body,
+    gate_identity_from_body,
     validate_gate,
 )
 
@@ -151,6 +152,45 @@ def _existing_evidence(api, base: str) -> tuple[str, str] | None:
     return next(iter(found), None)
 
 
+def _open_equivalent_gate_numbers(
+    api,
+    repository: str,
+    identity: str,
+) -> list[int]:
+    result: list[int] = []
+    for candidate in api(
+        "GET", f"repos/{repository}/issues?state=open&per_page=100"
+    ):
+        if not isinstance(candidate, dict) or "pull_request" in candidate:
+            continue
+        number = candidate.get("number")
+        body = candidate.get("body")
+        if (
+            not isinstance(number, int)
+            or isinstance(number, bool)
+            or not isinstance(body, str)
+        ):
+            continue
+        try:
+            candidate_identity = gate_identity_from_body(body)
+        except ValueError:
+            continue
+        if candidate_identity == identity:
+            result.append(number)
+    return sorted(set(result))
+
+
+def _gate_is_unambiguous(
+    api,
+    repository: str,
+    issue_number: int,
+    identity: str,
+) -> bool:
+    return _open_equivalent_gate_numbers(
+        api, repository, identity
+    ) == [issue_number]
+
+
 def materialize_decision(
     event: dict[str, Any],
     api,
@@ -178,6 +218,7 @@ def materialize_decision(
         return False
     try:
         event_options, event_gate_sha256 = _gate_snapshot(event_body)
+        event_identity = gate_identity_from_body(event_body)
     except (DecisionError, ValueError):
         return False
     if option not in event_options:
@@ -196,9 +237,15 @@ def materialize_decision(
         return False
     try:
         options, gate_sha256 = _gate_snapshot(body)
+        live_identity = gate_identity_from_body(body)
     except (DecisionError, ValueError):
         return False
-    if option not in options or gate_sha256 != event_gate_sha256:
+    if (
+        option not in options
+        or gate_sha256 != event_gate_sha256
+        or live_identity != event_identity
+        or not _gate_is_unambiguous(api, repository, number, event_identity)
+    ):
         return False
 
     existing = _existing_evidence(api, base)
@@ -223,9 +270,17 @@ def materialize_decision(
             return False
         try:
             live_options, live_gate_sha256 = _gate_snapshot(live_body)
+            live_identity = gate_identity_from_body(live_body)
         except (DecisionError, ValueError):
             return False
-        if option not in live_options or live_gate_sha256 != event_gate_sha256:
+        if (
+            option not in live_options
+            or live_gate_sha256 != event_gate_sha256
+            or live_identity != event_identity
+            or not _gate_is_unambiguous(
+                api, repository, number, event_identity
+            )
+        ):
             return False
         api(
             "POST",
@@ -265,12 +320,17 @@ def materialize_decision(
         return False
     try:
         final_options, final_gate_sha256 = _gate_snapshot(final_body)
+        final_identity = gate_identity_from_body(final_body)
     except (DecisionError, ValueError):
         return False
     if (
         option not in final_options
         or final_gate_sha256 != event_gate_sha256
+        or final_identity != event_identity
         or existing != expected_evidence
+        or not _gate_is_unambiguous(
+            api, repository, number, event_identity
+        )
     ):
         return False
 
