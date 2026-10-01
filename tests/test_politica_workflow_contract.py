@@ -84,14 +84,34 @@ class T(unittest.TestCase):
         self.assertNotIn("repository: ${{ github.repository }}", COMMENT_W)
         self.assertLess(COMMENT_W.index("Validar evento, PR, comentario y policy base antes de checkout"), COMMENT_W.index("actions/checkout@"))
 
+    def test_comment_revalidation_supports_bootstrap_reviewer_input(self):
+        self.assertIn('required_review_bot: {required: false, type: string, default: ""}', COMMENT_W)
+        self.assertIn('CALLER_REQUIRED_REVIEW_BOT: ${{ inputs.required_review_bot }}', COMMENT_W)
+        self.assertEqual(TEMPLATE.count('required_review_bot: ""'), 2)
+        self.assertIn('EFFECTIVE_REQUIRED="$CALLER_REQUIRED_REVIEW_BOT"', COMMENT_W)
+        self.assertIn('echo "BASE_POLICY_FILE="', COMMENT_W)
+
+    def test_comment_revalidation_preserves_monotonic_base_reviewer(self):
+        self.assertIn('BASE_REQUIRED="$(jq -r', COMMENT_W)
+        self.assertIn('if [[ -n "$BASE_REQUIRED" ]]', COMMENT_W)
+        self.assertIn('"$CALLER_REQUIRED_REVIEW_BOT" == "$BASE_REQUIRED"', COMMENT_W)
+        self.assertIn("Caller no puede cambiar reviewer-bot de BASE", COMMENT_W)
+        self.assertIn('EFFECTIVE_REQUIRED="$BASE_REQUIRED"', COMMENT_W)
+
     def test_comment_revalidation_filters_non_pr_and_wrong_actor(self):
         self.assertIn("github.event.issue.pull_request != null", TEMPLATE)
         self.assertIn('EVENT_IS_PR: ${{ github.event.issue.pull_request != null }}', COMMENT_W)
         self.assertIn('COMMENT_TYPE="$(jq -r', COMMENT_W)
         self.assertIn('COMMENT_LOGIN="$(jq -r', COMMENT_W)
         self.assertIn('if [[ "$COMMENT_TYPE" != "Bot" ]]', COMMENT_W)
-        self.assertIn('if [[ -z "$REQUIRED_REVIEW_BOT" || "$COMMENT_LOGIN" != "$REQUIRED_REVIEW_BOT" ]]', COMMENT_W)
+        self.assertIn('if [[ -z "$EFFECTIVE_REQUIRED" || "$COMMENT_LOGIN" != "$EFFECTIVE_REQUIRED" ]]', COMMENT_W)
         self.assertIn('echo "RELEVANT=false"', COMMENT_W)
+
+    def test_comment_revalidation_delegates_reviewer_resolution_to_policy_kit(self):
+        self.assertIn('args=(--required-review-bot "$CALLER_REQUIRED_REVIEW_BOT"', COMMENT_W)
+        self.assertIn('[[ -z "${BASE_POLICY_FILE:-}" ]] || args+=(--base-policy-file "$BASE_POLICY_FILE")', COMMENT_W)
+        self.assertIn('python3 .factory/scripts/politica_kit.py "${args[@]}"', COMMENT_W)
+        self.assertNotIn('--required-review-bot "$EFFECTIVE_REQUIRED"', COMMENT_W)
 
     def test_comment_revalidation_materializes_exact_head_success_check(self):
         self.assertIn("CHECK_NAME: Factory policy / Validar decisiones y límite de revisión", COMMENT_W)
@@ -110,6 +130,8 @@ class T(unittest.TestCase):
         self.assertIn('PR_JSON_FINAL="$(gh api "repos/$REPOSITORY/pulls/$PR")"', COMMENT_W)
         self.assertIn('"$FINAL_HEAD" != "$PR_HEAD_SHA"', COMMENT_W)
         self.assertIn('"$FINAL_BASE" != "$PR_BASE_SHA"', COMMENT_W)
+        self.assertIn('"$FINAL_HEAD_REPO" != "$PR_HEAD_REPO"', COMMENT_W)
+        self.assertIn('"$FINAL_BASE_REPO" != "$PR_BASE_REPO"', COMMENT_W)
         self.assertLess(COMMENT_W.index("PR_JSON_FINAL="), COMMENT_W.index("check-runs"))
 
     def test_comment_revalidation_permissions_are_minimal(self):

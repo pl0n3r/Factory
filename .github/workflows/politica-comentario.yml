@@ -4,6 +4,7 @@ on:
     inputs:
       pr_number: {required: true, type: number}
       comment_id: {required: true, type: number}
+      required_review_bot: {required: false, type: string, default: ""}
 
 permissions:
   contents: read
@@ -32,6 +33,7 @@ jobs:
           EVENT_IS_PR: ${{ github.event.issue.pull_request != null }}
           INPUT_PR: ${{ inputs.pr_number }}
           INPUT_COMMENT: ${{ inputs.comment_id }}
+          CALLER_REQUIRED_REVIEW_BOT: ${{ inputs.required_review_bot }}
           MAX_POLICY_BYTES: "4096"
           MAX_DECISIONS_BYTES: "262144"
           MAX_EVIDENCE_BYTES: "2000000"
@@ -71,6 +73,7 @@ jobs:
 
           POLICY_FILE="/tmp/factory-policy-base.json"
           POLICY_ERR="/tmp/factory-policy-base.err"
+          BASE_REQUIRED=""
           if gh api -H "Accept: application/vnd.github.raw+json"               "repos/$REPOSITORY/contents/.github/factory-policy.json?ref=$CURRENT_BASE"               > "$POLICY_FILE" 2> "$POLICY_ERR"; then
             POLICY_BYTES="$(wc -c < "$POLICY_FILE")"
             (( POLICY_BYTES <= MAX_POLICY_BYTES )) || { echo "::error::factory-policy.json excede el límite"; exit 1; }
@@ -80,17 +83,27 @@ jobs:
               .version == 1 and
               (.required_review_bot == null or (.required_review_bot | type == "string"))
             ' "$POLICY_FILE" >/dev/null || { echo "::error::factory-policy.json inválido"; exit 1; }
+            [[ "$(jq -r '.required_review_bot == ""' "$POLICY_FILE")" != "true" ]] || { echo "::error::Reviewer-bot base vacío es inválido"; exit 1; }
+            BASE_REQUIRED="$(jq -r '.required_review_bot // empty' "$POLICY_FILE")"
+            echo "BASE_POLICY_FILE=$POLICY_FILE" >> "$GITHUB_ENV"
           elif grep -q "HTTP 404" "$POLICY_ERR"; then
-            echo "RELEVANT=false" >> "$GITHUB_ENV"
-            exit 0
+            rm -f "$POLICY_FILE"
+            echo "BASE_POLICY_FILE=" >> "$GITHUB_ENV"
           else
             cat "$POLICY_ERR" >&2
             echo "::error::No se pudo leer policy desde BASE exacta"
             exit 1
           fi
 
-          REQUIRED_REVIEW_BOT="$(jq -r '.required_review_bot // empty' "$POLICY_FILE")"
-          if [[ -z "$REQUIRED_REVIEW_BOT" || "$COMMENT_LOGIN" != "$REQUIRED_REVIEW_BOT" ]]; then
+          BOT_RE='^[A-Za-z0-9][A-Za-z0-9-]{0,99}(\[bot\])?$'
+          [[ -z "$BASE_REQUIRED" || "$BASE_REQUIRED" =~ $BOT_RE ]] || { echo "::error::Reviewer-bot base inválido"; exit 1; }
+          [[ -z "$CALLER_REQUIRED_REVIEW_BOT" || "$CALLER_REQUIRED_REVIEW_BOT" =~ $BOT_RE ]] || { echo "::error::Reviewer-bot caller inválido"; exit 1; }
+          EFFECTIVE_REQUIRED="$CALLER_REQUIRED_REVIEW_BOT"
+          if [[ -n "$BASE_REQUIRED" ]]; then
+            [[ -z "$CALLER_REQUIRED_REVIEW_BOT" || "$CALLER_REQUIRED_REVIEW_BOT" == "$BASE_REQUIRED" ]] || { echo "::error::Caller no puede cambiar reviewer-bot de BASE"; exit 1; }
+            EFFECTIVE_REQUIRED="$BASE_REQUIRED"
+          fi
+          if [[ -z "$EFFECTIVE_REQUIRED" || "$COMMENT_LOGIN" != "$EFFECTIVE_REQUIRED" ]]; then
             echo "RELEVANT=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -111,7 +124,8 @@ jobs:
             echo "RELEVANT=true"
             echo "PR_HEAD_SHA=$CURRENT_HEAD"
             echo "PR_BASE_SHA=$CURRENT_BASE"
-            echo "BASE_POLICY_FILE=$POLICY_FILE"
+            echo "PR_HEAD_REPO=$HEAD_REPO"
+            echo "PR_BASE_REPO=$BASE_REPO"
             echo "REVIEWS_FILE=$REVIEWS_FILE"
             echo "COMMENTS_FILE=$COMMENTS_FILE"
           } >> "$GITHUB_ENV"
@@ -131,11 +145,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PR: ${{ inputs.pr_number }}
+          CALLER_REQUIRED_REVIEW_BOT: ${{ inputs.required_review_bot }}
           CHECK_NAME: Factory policy / Validar decisiones y límite de revisión
         run: |
           set -euo pipefail
+          args=(--required-review-bot "$CALLER_REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --comments-file "$COMMENTS_FILE")
+          [[ -z "${BASE_POLICY_FILE:-}" ]] || args+=(--base-policy-file "$BASE_POLICY_FILE")
+
           set +e
-          POLICY_OUTPUT="$(python3 .factory/scripts/politica_kit.py             --required-review-bot ""             --base-policy-file "$BASE_POLICY_FILE"             --head-sha "$PR_HEAD_SHA"             --comments-file "$COMMENTS_FILE" < "$REVIEWS_FILE" 2>&1)"
+          POLICY_OUTPUT="$(python3 .factory/scripts/politica_kit.py "${args[@]}" < "$REVIEWS_FILE" 2>&1)"
           POLICY_STATUS=$?
           set -e
 
@@ -143,7 +161,9 @@ jobs:
           FINAL_STATE="$(jq -r '.state' <<<"$PR_JSON_FINAL")"
           FINAL_HEAD="$(jq -r '.head.sha' <<<"$PR_JSON_FINAL")"
           FINAL_BASE="$(jq -r '.base.sha' <<<"$PR_JSON_FINAL")"
-          if [[ "$FINAL_STATE" != "open" || "$FINAL_HEAD" != "$PR_HEAD_SHA" || "$FINAL_BASE" != "$PR_BASE_SHA" ]]; then
+          FINAL_HEAD_REPO="$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON_FINAL")"
+          FINAL_BASE_REPO="$(jq -r '.base.repo.full_name // empty' <<<"$PR_JSON_FINAL")"
+          if [[ "$FINAL_STATE" != "open" || "$FINAL_HEAD" != "$PR_HEAD_SHA" || "$FINAL_BASE" != "$PR_BASE_SHA" ||                 "$FINAL_HEAD_REPO" != "$PR_HEAD_REPO" || "$FINAL_BASE_REPO" != "$PR_BASE_REPO" ]]; then
             echo "::warning::PR cambió durante la revalidación; no se publica check stale."
             exit 0
           fi
