@@ -5,6 +5,29 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AcceptanceWorkflowContractTests(unittest.TestCase):
+    def test_reusable_waits_boundedly_for_required_checks(self):
+        reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
+        self.assertIn("max_attempts=12", reusable)
+        self.assertIn("wait_seconds=10", reusable)
+        self.assertIn('commits/$SHA/check-runs?per_page=100', reusable)
+        self.assertIn('[[ "$readiness_rc" != "3" ]]', reusable)
+        self.assertIn("attempt == max_attempts", reusable)
+        self.assertIn('sleep "$wait_seconds"', reusable)
+        self.assertIn("Checks requeridos no quedaron terminales dentro del límite.", reusable)
+
+    def test_readiness_does_not_repeat_contract_tests(self):
+        reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
+        checks_only = "python3 .factory/scripts/aceptacion_kit.py --checks-only"
+        final = "python3 .factory/scripts/aceptacion_kit.py < /tmp/acceptance.json"
+        self.assertEqual(reusable.count(checks_only), 1)
+        self.assertEqual(reusable.count(final), 1)
+        self.assertLess(reusable.index(checks_only), reusable.index(final))
+        loop_start = reusable.index('for attempt in $(seq 1 "$max_attempts"); do')
+        loop_end = reusable.index("          done", loop_start)
+        self.assertLess(loop_start, reusable.index(checks_only))
+        self.assertLess(reusable.index(checks_only), loop_end)
+        self.assertGreater(reusable.index(final), loop_end)
+
     def test_issue_form_and_required_gate_are_wired(self):
         ci = (ROOT / ".github/workflows/factory-ci.yml").read_text(encoding="utf-8")
         form = (ROOT / ".github/ISSUE_TEMPLATE/trabajo.yml").read_text(encoding="utf-8")

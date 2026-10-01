@@ -46,7 +46,7 @@ La ruta debe vivir en un directorio de tests permitido (`tests/`, `metricas/`, `
 
 ### kind=check
 
-Exige un check run del mismo SHA con nombre exacto, `status=completed` y `conclusion=success`. Si existen varias ejecuciones con ese nombre, manda la de ID más reciente.
+Exige un check run del mismo SHA con nombre exacto y conserva la selección del ID más reciente por nombre. Un check ausente, `queued` o `in_progress` se considera evidencia pendiente reintentable; nunca cuenta como éxito. Un check `completed` solo satisface el criterio con `conclusion=success`; cualquier otra conclusión falla de forma terminal.
 
 `Validar` y `Criterios de aceptación` no pueden referenciarse como evidencia para evitar ciclos/autovalidación.
 
@@ -56,7 +56,9 @@ En Factory:
 
 `Lint + Tests + Coordinación → Criterios de aceptación → Validar`
 
-El job de aceptación consulta los check-runs **después** de que sus dependencias terminaron, por lo que un criterio `kind=check` no depende de polling.
+El job de aceptación consulta los check-runs después de que sus dependencias base terminaron. Para criterios `kind=check` externos que todavía no estén terminales, el reusable hace un preflight **checks-only** acotado sobre el SHA exacto: hasta 12 lecturas, separadas por 10 segundos. Un fallo terminal aborta de inmediato y el timeout falla cerrado.
+
+Los criterios `kind=test` no se ejecutan durante ese preflight. La aceptación completa corre exactamente una vez después de obtener un snapshot de checks listo, evitando multiplicar costo de tests.
 
 Para consumidores, `.github/workflows/aceptacion.yml` expone el mismo gate reusable. El template incluye un caller que deriva el Issue desde la rama `trabajo/issue-N`.
 

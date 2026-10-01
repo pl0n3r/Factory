@@ -40,10 +40,15 @@ TEST_TARGET = re.compile(
 )
 CHECK_NAME = re.compile(r"^[^\r\n]{1,120}$")
 FORBIDDEN_CHECKS = {"Validar", "Criterios de aceptación"}
+NONTERMINAL_CHECK_STATUSES = {"queued", "in_progress", "pending", "waiting", "requested"}
 
 
 class AcceptanceError(ValueError):
     pass
+
+
+class CheckPending(AcceptanceError):
+    """Evidencia externa todavía no terminal; puede reintentarse de forma acotada."""
 
 
 @dataclass(frozen=True)
@@ -251,13 +256,32 @@ def verify_check(criterion: Criterion, checks: Any) -> None:
     latest = _latest_checks(checks)
     run = latest.get(criterion.target)
     if run is None:
-        raise AcceptanceError(
-            f"{criterion.id}: no existe check '{criterion.target}'."
+        raise CheckPending(
+            f"{criterion.id}: check '{criterion.target}' todavía no existe."
         )
-    if run.get("status") != "completed" or run.get("conclusion") != "success":
-        raise AcceptanceError(
-            f"{criterion.id}: check '{criterion.target}' no terminó success."
+    status = run.get("status")
+    if status in NONTERMINAL_CHECK_STATUSES:
+        raise CheckPending(
+            f"{criterion.id}: check '{criterion.target}' sigue {status}."
         )
+    if status != "completed":
+        raise AcceptanceError(
+            f"{criterion.id}: check '{criterion.target}' tiene estado inválido."
+        )
+    if run.get("conclusion") != "success":
+        raise AcceptanceError(
+            f"{criterion.id}: check '{criterion.target}' terminó sin success."
+        )
+
+
+def verify_checks_only(criteria: list[Criterion], checks: Any) -> list[str]:
+    verified: list[str] = []
+    for criterion in criteria:
+        if criterion.kind != "check":
+            continue
+        verify_check(criterion, checks)
+        verified.append(criterion.id)
+    return verified
 
 
 def _load_test_module(path: Path, root: Path) -> Any:
@@ -329,7 +353,12 @@ def verify_evidence(
             verify_check(criterion, checks)
 
 
-def validate_payload(payload: Any, *, root: Path | None = None) -> dict[str, Any]:
+def validate_payload(
+    payload: Any,
+    *,
+    root: Path | None = None,
+    checks_only: bool = False,
+) -> dict[str, Any]:
     required = {"issue", "checks"}
     allowed = required | {"acceptance_sha256", "require_pin"}
     if (
@@ -368,6 +397,14 @@ def validate_payload(payload: Any, *, root: Path | None = None) -> dict[str, Any
             )
 
     criteria = parse_contract(body)
+    if checks_only:
+        verified = verify_checks_only(criteria, payload["checks"])
+        return {
+            "checks_only": True,
+            "criteria": len(criteria),
+            "verified": verified,
+        }
+
     verify_evidence(criteria, payload["checks"], root=root)
     return {
         "criteria": len(criteria),
@@ -376,13 +413,22 @@ def validate_payload(payload: Any, *, root: Path | None = None) -> dict[str, Any
 
 
 def main() -> int:
+    args = sys.argv[1:]
+    if args not in ([], ["--checks-only"]):
+        print("ERROR: argumentos de aceptación inválidos.", file=sys.stderr)
+        return 2
+    checks_only = args == ["--checks-only"]
+
     raw = sys.stdin.read(MAX_INPUT + 1)
     if len(raw) > MAX_INPUT:
         print("ERROR: payload de aceptación demasiado grande.", file=sys.stderr)
         return 2
     try:
         payload = json.loads(raw)
-        result = validate_payload(payload)
+        result = validate_payload(payload, checks_only=checks_only)
+    except CheckPending as exc:
+        print(f"PENDING: {exc}", file=sys.stderr)
+        return 3
     except (json.JSONDecodeError, AcceptanceError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
