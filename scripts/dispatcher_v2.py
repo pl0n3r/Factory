@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from dataclasses import dataclass, field, replace
 from typing import Iterable
 
@@ -118,6 +119,16 @@ class DirectionProposal:
     repository_ref: str
     objective: str
     leaves: tuple[DirectionLeaf, ...]
+
+
+@dataclass(frozen=True)
+class DirectionGateInstance:
+    issue_number: int
+    repository_ref: str
+    created_at: str
+    state: str
+    category: str
+    gate_key: str
 
 
 def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, object]:
@@ -467,6 +478,52 @@ def select_next(
         if AUTHORITY_ORDER[authority_class(candidate)] == best_rank
     ]
     return min(same_class, key=lambda item: _tiebreak(item, aging_threshold=aging_threshold))
+
+
+def reconcile_direction_gate_instances(
+    instances: Iterable[DirectionGateInstance],
+    repository_ref: str,
+) -> dict[str, object]:
+    """Converge snapshots concurrentes a una única puerta product-direction."""
+    if repository_ref not in PRODUCT_DIRECTION_REPOS:
+        raise ValueError("product direction only applies to canonical product repos")
+
+    gate_key = _direction_gate_key(repository_ref)
+    valid: list[tuple[datetime, int]] = []
+    for instance in instances:
+        if (
+            instance.repository_ref != repository_ref
+            or instance.state != "open"
+            or instance.category != "product-direction"
+            or instance.gate_key != gate_key
+            or instance.issue_number <= 0
+        ):
+            continue
+        try:
+            created_at = datetime.fromisoformat(
+                instance.created_at.replace("Z", "+00:00")
+            )
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if created_at.tzinfo is None:
+            continue
+        valid.append((created_at, instance.issue_number))
+
+    valid.sort(key=lambda item: (item[0], item[1]))
+    if not valid:
+        return {
+            "gate_key": gate_key,
+            "winner_issue_number": None,
+            "duplicate_issue_numbers": (),
+        }
+
+    winner = valid[0][1]
+    duplicates = tuple(issue_number for _, issue_number in valid[1:])
+    return {
+        "gate_key": gate_key,
+        "winner_issue_number": winner,
+        "duplicate_issue_numbers": duplicates,
+    }
 
 
 def direction_gate_trigger(

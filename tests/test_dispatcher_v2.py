@@ -3,6 +3,7 @@ import unittest
 
 from scripts.dispatcher_v2 import (
     Candidate,
+    DirectionGateInstance,
     DirectionLeaf,
     DirectionProposal,
     WorkItemReadinessContext,
@@ -14,6 +15,7 @@ from scripts.dispatcher_v2 import (
     direction_gate_trigger,
     dispatch_record,
     materialize_direction_leaves,
+    reconcile_direction_gate_instances,
     parallel_ready,
     select_next,
 )
@@ -832,6 +834,101 @@ class DispatcherV2Tests(unittest.TestCase):
             [],
         )
         self.assertEqual(trigger["action"], "open_gate")
+
+    def test_direction_gate_concurrent_creators_converge_to_oldest_valid_issue(self):
+        instances = (
+            DirectionGateInstance(
+                issue_number=408,
+                repository_ref="pl0n3r/Condor",
+                created_at="2026-10-01T16:31:28Z",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+            DirectionGateInstance(
+                issue_number=406,
+                repository_ref="pl0n3r/Condor",
+                created_at="2026-10-01T16:29:08Z",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+            DirectionGateInstance(
+                issue_number=407,
+                repository_ref="pl0n3r/Condor",
+                created_at="2026-10-01T16:30:33Z",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+        )
+        result = reconcile_direction_gate_instances(instances, "pl0n3r/Condor")
+        self.assertEqual(result["winner_issue_number"], 406)
+        self.assertEqual(result["duplicate_issue_numbers"], (407, 408))
+
+    def test_direction_gate_reconciliation_ignores_closed_invalid_and_other_product(self):
+        instances = (
+            DirectionGateInstance(
+                issue_number=405,
+                repository_ref="pl0n3r/Condor",
+                created_at="2026-10-01T16:28:00Z",
+                state="closed",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+            DirectionGateInstance(
+                issue_number=404,
+                repository_ref="pl0n3r/Condor",
+                created_at="not-a-date",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+            DirectionGateInstance(
+                issue_number=220,
+                repository_ref="pl0n3r/GrindFlow",
+                created_at="2026-10-01T16:20:00Z",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/GrindFlow",
+            ),
+            DirectionGateInstance(
+                issue_number=406,
+                repository_ref="pl0n3r/Condor",
+                created_at="2026-10-01T16:29:08Z",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+        )
+        result = reconcile_direction_gate_instances(instances, "pl0n3r/Condor")
+        self.assertEqual(result["winner_issue_number"], 406)
+        self.assertEqual(result["duplicate_issue_numbers"], ())
+
+    def test_direction_gate_reconciliation_is_idempotent(self):
+        instances = (
+            DirectionGateInstance(
+                issue_number=407,
+                repository_ref="pl0n3r/Condor",
+                created_at="2026-10-01T16:30:33Z",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+            DirectionGateInstance(
+                issue_number=406,
+                repository_ref="pl0n3r/Condor",
+                created_at="2026-10-01T16:29:08Z",
+                state="open",
+                category="product-direction",
+                gate_key="product-direction:pl0n3r/Condor",
+            ),
+        )
+        first = reconcile_direction_gate_instances(instances, "pl0n3r/Condor")
+        second = reconcile_direction_gate_instances(instances, "pl0n3r/Condor")
+        self.assertEqual(first, second)
+        self.assertEqual(first["winner_issue_number"], 406)
+        self.assertEqual(first["duplicate_issue_numbers"], (407,))
 
     def test_direction_gate_trigger_is_idempotent_for_empty_open_and_ready_states(self):
         proposal = self.direction_proposal()
