@@ -166,12 +166,7 @@ def _capacity(value: Any, *, now: int) -> dict[str, Any]:
         for key in CAPACITY_FIELDS
         if key != "fingerprint"
     }
-    try:
-        expected_fingerprint = _stable_hash(fingerprint_payload)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise AccountCapacityPolicyError(
-            "capacity.fingerprint no corresponde a la evidencia"
-        ) from exc
+    expected_fingerprint = _stable_hash(fingerprint_payload)
     if capacity_fingerprint != expected_fingerprint:
         raise AccountCapacityPolicyError(
             "capacity.fingerprint no corresponde a la evidencia"
