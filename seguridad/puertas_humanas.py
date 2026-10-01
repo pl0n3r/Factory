@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -218,6 +219,56 @@ def validate_gate(raw: Any) -> dict[str, Any]:
     }
     _validate_simple_root(raw, normalized)
     return normalized
+
+
+FACTORY_RELEASE_TARGET_RE = re.compile(
+    r"\\b(?:Factory\\s+)?v?(\\d+\\.\\d+\\.\\d+)\\b.*?\\bmain@([0-9a-f]{40})\\b",
+    re.IGNORECASE,
+)
+
+
+def gate_identity(raw: Any) -> str:
+    """Identidad estable para deduplicar puertas equivalentes sin ampliar autoridad."""
+    gate = validate_gate(raw)
+    category = gate["category"]
+    context = gate["context"]
+
+    target: dict[str, str]
+    if category == "factory-release":
+        match = FACTORY_RELEASE_TARGET_RE.search(context)
+        if match:
+            target = {
+                "version": match.group(1),
+                "sha": match.group(2).lower(),
+            }
+        else:
+            # Sin target exacto demostrable no se colapsan contextos distintos.
+            target = {"context": " ".join(context.split())}
+    else:
+        target = {"context": " ".join(context.split())}
+
+    canonical = json.dumps(
+        {"category": category, "target": target},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def gate_identity_from_body(body: str) -> str:
+    """Extrae la identidad solo desde un marker válido e inequívoco."""
+    classified = classify_body(body)
+    if classified.get("status") != "gate":
+        raise GateValidationError("El Issue no contiene una puerta humana válida.")
+    matches = MARKER_RE.findall(body)
+    if len(matches) != 1:
+        raise GateValidationError("La puerta humana no es inequívoca.")
+    try:
+        raw = json.loads(matches[0])
+    except json.JSONDecodeError as exc:
+        raise GateValidationError("El JSON del marker es inválido.") from exc
+    return gate_identity(raw)
 
 
 def classify_body(body: str, *, include_reason: bool = False) -> dict[str, Any]:
