@@ -19,7 +19,7 @@ BLOCKED = "estado: bloqueado"
 AVAILABLE = "estado: disponible"
 DECISION_LABEL = "decisión: dueño"
 DUPLICATE_MARKER = "<!-- factory-human-gate-duplicate"
-DECISION_RE = re.compile(r'^<!-- factory-human-decision (\\{[^\\n]*\\}) -->')
+DECISION_RE = re.compile(r'^<!-- factory-human-decision (\{[^\n]*\}) -->')
 
 
 class GateConflictError(ValueError):
