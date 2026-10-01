@@ -2,12 +2,18 @@
 """Fail-closed preflight for Factory v1.x publications."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
 from typing import Any
 
-from seguridad.puertas_humanas import classify_body
+from seguridad.puertas_humanas import (
+    GateValidationError,
+    MARKER_RE,
+    classify_body,
+    validate_gate,
+)
 
 REPOSITORY = "pl0n3r/factory"
 REQUIRED_ISSUES = tuple(str(n) for n in range(1, 15)) + ("54", "83")
@@ -68,6 +74,108 @@ def _latest_owner_approval(comments: Any, owner: str) -> str:
     return approvals[-1]
 
 
+def _normalized_gate_snapshot(body: str) -> tuple[dict[str, Any], str]:
+    matches = MARKER_RE.findall(body)
+    if len(matches) != 1:
+        raise ReleaseBootstrapError("Puerta humana ambigua o inválida.")
+    try:
+        raw = json.loads(matches[0])
+        gate = validate_gate(raw)
+    except (json.JSONDecodeError, GateValidationError) as exc:
+        raise ReleaseBootstrapError("Puerta humana inválida.") from exc
+    canonical = json.dumps(
+        gate,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return gate, fingerprint
+
+
+def _validate_v2_maintenance_decision(
+    *,
+    body: str,
+    comments: Any,
+    owner: str,
+    expected: str,
+) -> None:
+    gate, gate_sha256 = _normalized_gate_snapshot(body)
+    if gate.get("category") != "factory-release":
+        raise ReleaseBootstrapError("Decisión v2 solo válida para factory-release.")
+    if gate.get("safe_default") != "B":
+        raise ReleaseBootstrapError("Puerta v2 debe conservar safe_default B.")
+
+    option_a = next(
+        (item for item in gate.get("options", []) if item.get("id") == "A"),
+        None,
+    )
+    if (
+        not isinstance(option_a, dict)
+        or "publicar" not in str(option_a.get("label", "")).casefold()
+    ):
+        raise ReleaseBootstrapError("Opción A debe identificar inequívocamente publicación.")
+
+    targets = MAIN_TARGET_RE.findall(str(gate.get("context", "")))
+    if len(targets) != 1 or targets[0] != expected:
+        raise ReleaseBootstrapError(
+            "Puerta v2 debe ligar un único main@SHA al expected_sha."
+        )
+
+    if not isinstance(comments, list):
+        raise ReleaseBootstrapError("Comentarios de decisión inválidos.")
+
+    commands: list[str] = []
+    journals: list[tuple[str, str]] = []
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        user = comment.get("user")
+        login = user.get("login") if isinstance(user, dict) else None
+        comment_body = comment.get("body")
+        if not isinstance(comment_body, str) or len(comment_body) > MAX_COMMENT_BODY:
+            continue
+
+        command = DECISION_COMMAND_RE.fullmatch(comment_body)
+        if (
+            login == owner
+            and comment.get("author_association") == "OWNER"
+            and command is not None
+        ):
+            commands.append(command.group(1))
+
+        if DECISION_INTENT_RE.search(comment_body) is None:
+            continue
+        if login != DECISION_BOT:
+            raise ReleaseBootstrapError("Journal v2 no puede ser aportado por un actor humano.")
+        evidence = DECISION_EVIDENCE_RE.match(comment_body)
+        if evidence is None:
+            raise ReleaseBootstrapError("Journal v2 malformado.")
+        try:
+            raw = json.loads(evidence.group(1))
+        except json.JSONDecodeError as exc:
+            raise ReleaseBootstrapError("Journal v2 contiene JSON inválido.") from exc
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != {"gate_sha256", "option", "version"}
+            or raw.get("version") != 2
+            or raw.get("option") != "A"
+            or not isinstance(raw.get("gate_sha256"), str)
+            or SHA256_RE.fullmatch(raw["gate_sha256"]) is None
+        ):
+            raise ReleaseBootstrapError("Journal v2 incompatible.")
+        journals.append((raw["option"], raw["gate_sha256"]))
+
+    if commands != ["A"]:
+        raise ReleaseBootstrapError(
+            "Decisión v2 requiere un único /decidir A explícito del OWNER."
+        )
+    if len(journals) != 1:
+        raise ReleaseBootstrapError("Debe existir exactamente un journal v2 del bot.")
+    if journals[0] != ("A", gate_sha256):
+        raise ReleaseBootstrapError("Journal v2 no corresponde al gate vigente.")
+
+
 def validate_payload(payload: Any) -> dict[str, str]:
     if not isinstance(payload, dict):
         raise ReleaseBootstrapError("Payload inválido.")
@@ -107,19 +215,39 @@ def validate_payload(payload: Any) -> dict[str, str]:
         raise ReleaseBootstrapError("Puerta de release debe estar cerrada.")
     if gate.get("author_association") not in TRUSTED_ASSOCIATIONS:
         raise ReleaseBootstrapError("Puerta creada por actor no confiable.")
-    if gate.get("closed_by") != owner:
-        raise ReleaseBootstrapError("Puerta debe ser cerrada por el dueño.")
     body = gate.get("body")
     gate_result = classify_body(body if isinstance(body, str) else "")
     category = gate_result.get("category") if gate_result.get("status") == "gate" else None
     if category not in RELEASE_GATE_CATEGORIES:
         raise ReleaseBootstrapError("Issue indicado no es puerta de release válida.")
-    if v1_0_0_exists and category != "factory-release":
-        raise ReleaseBootstrapError("Mantenimiento v1.x requiere puerta factory-release.")
-    if not v1_0_0_exists and category != "release-1.0.0":
-        raise ReleaseBootstrapError("Primer release requiere puerta release-1.0.0.")
-    if _latest_owner_approval(gate.get("comments"), owner) != expected:
-        raise ReleaseBootstrapError("La aprobación del dueño corresponde a otro SHA.")
+
+    closed_by = gate.get("closed_by")
+    if v1_0_0_exists:
+        if category != "factory-release":
+            raise ReleaseBootstrapError("Mantenimiento v1.x requiere puerta factory-release.")
+        if closed_by == owner:
+            if _latest_owner_approval(gate.get("comments"), owner) != expected:
+                raise ReleaseBootstrapError(
+                    "La aprobación legacy del dueño corresponde a otro SHA."
+                )
+        elif closed_by == DECISION_BOT:
+            _validate_v2_maintenance_decision(
+                body=body if isinstance(body, str) else "",
+                comments=gate.get("comments"),
+                owner=owner,
+                expected=expected,
+            )
+        else:
+            raise ReleaseBootstrapError(
+                "Puerta de mantenimiento debe cerrar por OWNER legacy o bot v2."
+            )
+    else:
+        if category != "release-1.0.0":
+            raise ReleaseBootstrapError("Primer release requiere puerta release-1.0.0.")
+        if closed_by != owner:
+            raise ReleaseBootstrapError("Primer release debe ser cerrado por el dueño.")
+        if _latest_owner_approval(gate.get("comments"), owner) != expected:
+            raise ReleaseBootstrapError("La aprobación del dueño corresponde a otro SHA.")
     return {"status": "ready", "sha": expected}
 
 
