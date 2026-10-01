@@ -195,6 +195,14 @@ class FakeGitHub:
             if pull.get("state", "open") == "open"
         ]
 
+    def closed_pulls(self) -> list[dict]:
+        """Devuelve los PR falsos cerrados."""
+        return [
+            pull
+            for pull in self.pulls.values()
+            if pull.get("state", "open") == "closed"
+        ]
+
     def open_issues(self) -> list[dict]:
         """Devuelve los Issues abiertos configurados por cada prueba."""
         return [
@@ -2934,6 +2942,164 @@ class AcceptancePinIdentityBindingTests(unittest.TestCase):
         _api, missing = self._close(current_v2, reservation_id=None)
         self.assertEqual(missing["version"], 1)
         self.assertNotIn("acceptance_sha256", missing)
+
+
+class PostMergeEventOrderingTests(unittest.TestCase):
+    """Cubre la carrera entre cierre del PR fusionado y cierre automático del Issue."""
+
+    @staticmethod
+    def _activate_v3(api: FakeGitHub) -> dict:
+        branch = "trabajo/issue-12"
+        api.branches[branch] = "abc123"
+        api.set_status(12, STATUS_RESERVED)
+        current = {
+            "version": 3,
+            "owner": "pl0n3r",
+            "reservation_id": SESSION_A,
+            "branch": branch,
+            "active": True,
+            "reason": "tomar",
+            "acceptance_sha256": contract_fingerprint(VALID_ACCEPTANCE_BODY),
+            "task_marker_sha256": "e" * 64,
+            "task_paths": ["scripts/coordinar_trabajo.py"],
+            "task_depends_on": [],
+        }
+        api.comments.append(
+            {
+                "user": {"login": BOT},
+                "body": reservation_marker(
+                    current["owner"],
+                    current["reservation_id"],
+                    current["branch"],
+                    True,
+                    current["reason"],
+                    current["acceptance_sha256"],
+                    task_snapshot={
+                        "task_marker_sha256": current["task_marker_sha256"],
+                        "task_paths": current["task_paths"],
+                        "task_depends_on": current["task_depends_on"],
+                    },
+                ),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        return current
+
+    @staticmethod
+    def _merged_pull(
+        api: FakeGitHub,
+        *,
+        reservation_id: str = SESSION_A,
+        branch: str = "trabajo/issue-12",
+        closes_issue: int = 12,
+        number: int = 15,
+    ) -> dict:
+        pull = {
+            "number": number,
+            "state": "closed",
+            "merged": True,
+            "draft": False,
+            "body": (
+                f"Closes #{closes_issue}\n"
+                f"<!-- condor-reserva-id: {reservation_id} -->"
+            ),
+            "head": {"ref": branch, "sha": f"head-{number}"},
+            "base": {"ref": "main"},
+        }
+        api.pulls[number] = pull
+        return pull
+
+    @staticmethod
+    def _assert_v3_terminal(api: FakeGitHub, expected_pin: str) -> dict:
+        latest = latest_reservation(api.issue_comments(12))
+        assert latest is not None
+        if latest.get("version") != 3:
+            raise AssertionError(f"Se esperaba terminal v3, recibido: {latest}")
+        if latest.get("acceptance_sha256") != expected_pin:
+            raise AssertionError("El terminal no conservó el pin autenticado.")
+        if latest.get("task_marker_sha256") != "e" * 64:
+            raise AssertionError("El terminal no conservó el snapshot de task.")
+        if latest.get("active") is not False:
+            raise AssertionError("El terminal debe quedar inactivo.")
+        if active_reservation(api, 12) is not None:
+            raise AssertionError("El cierre no puede reactivar la lease.")
+        return latest
+
+    def test_pr_closed_then_issue_closed_preserves_same_identity_evidence(self) -> None:
+        """AC-01: PR merged primero conserva evidencia y el Issue closed no la degrada."""
+        api = FakeGitHub()
+        current = self._activate_v3(api)
+        self._merged_pull(api)
+
+        update_pr_state(api, 15, "closed")
+        api.issue_data["state"] = "closed"
+        update_issue_state(api, 12, "closed")
+
+        latest = self._assert_v3_terminal(api, current["acceptance_sha256"])
+        self.assertEqual(latest["reason"], "pr-merged")
+
+    def test_issue_closed_then_pr_closed_converges_to_merged_terminal_with_evidence(self) -> None:
+        """AC-02: Issue closed primero detecta el merge exacto y conserva evidencia."""
+        api = FakeGitHub()
+        current = self._activate_v3(api)
+        self._merged_pull(api)
+        api.issue_data["state"] = "closed"
+
+        update_issue_state(api, 12, "closed")
+        update_pr_state(api, 15, "closed")
+
+        latest = self._assert_v3_terminal(api, current["acceptance_sha256"])
+        self.assertEqual(latest["reason"], "pr-merged")
+
+    def test_manual_issue_close_remains_fail_closed_without_evidence(self) -> None:
+        """AC-03: cierre manual sin merge verificable no adquiere pin ni snapshot."""
+        api = FakeGitHub()
+        self._activate_v3(api)
+        api.issue_data["state"] = "closed"
+
+        update_issue_state(api, 12, "closed")
+
+        latest = latest_reservation(api.issue_comments(12))
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertEqual(latest["version"], 1)
+        self.assertEqual(latest["reason"], "issue-cerrado")
+        self.assertFalse(latest["active"])
+        self.assertNotIn("acceptance_sha256", latest)
+        self.assertNotIn("task_marker_sha256", latest)
+        self.assertIsNone(active_reservation(api, 12))
+
+    def test_cross_identity_merged_pr_cannot_rebind_evidence(self) -> None:
+        """AC-04: un merge con UUID distinto no puede prestar autoridad al Issue."""
+        api = FakeGitHub()
+        self._activate_v3(api)
+        self._merged_pull(api, reservation_id=SESSION_B)
+        api.issue_data["state"] = "closed"
+
+        update_issue_state(api, 12, "closed")
+
+        latest = latest_reservation(api.issue_comments(12))
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertEqual(latest["version"], 1)
+        self.assertEqual(latest["reason"], "issue-cerrado")
+        self.assertNotIn("acceptance_sha256", latest)
+        self.assertNotIn("task_marker_sha256", latest)
+
+    def test_terminal_visibility_keeps_latest_evidence_and_no_active_lease(self) -> None:
+        """AC-05: el terminal visible conserva autoridad solo para el merge exacto."""
+        api = FakeGitHub()
+        current = self._activate_v3(api)
+        self._merged_pull(api)
+        api.issue_data["state"] = "closed"
+
+        update_issue_state(api, 12, "closed")
+
+        latest = self._assert_v3_terminal(api, current["acceptance_sha256"])
+        self.assertEqual(latest["reservation_id"], SESSION_A)
+        self.assertEqual(latest["branch"], "trabajo/issue-12")
+        self.assertEqual(latest["owner"], "pl0n3r")
 
 
 if __name__ == "__main__":
