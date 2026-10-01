@@ -343,27 +343,37 @@ class SonarWatchTests(unittest.TestCase):
         def paged_get(path, params):
             calls.append((path, params["p"]))
             page = params["p"]
+            page_size = sonar_watch._SONAR_PAGE_SIZE
             if page == 1:
                 return {
-                    "issues": [{"key": f"i-{index}"} for index in range(500)],
+                    "issues": [
+                        {"key": f"i-{index}"}
+                        for index in range(page_size)
+                    ],
                     "paging": {
                         "pageIndex": 1,
-                        "pageSize": 500,
-                        "total": 502,
+                        "pageSize": page_size,
+                        "total": page_size + 2,
                     },
                 }
             return {
-                "issues": [{"key": "i-500"}, {"key": "i-501"}],
+                "issues": [
+                    {"key": f"i-{page_size}"},
+                    {"key": f"i-{page_size + 1}"},
+                ],
                 "paging": {
                     "pageIndex": 2,
-                    "pageSize": 500,
-                    "total": 502,
+                    "pageSize": page_size,
+                    "total": page_size + 2,
                 },
             }
 
         sonar.get = paged_get
         page = sonar._all_issues("project-key")
-        self.assertEqual(len(page["issues"]), 502)
+        self.assertEqual(
+            len(page["issues"]),
+            sonar_watch._SONAR_PAGE_SIZE + 2,
+        )
         self.assertEqual(
             calls,
             [
@@ -376,7 +386,7 @@ class SonarWatchTests(unittest.TestCase):
             "issues": [],
             "paging": {
                 "pageIndex": 1,
-                "pageSize": 500,
+                "pageSize": sonar_watch._SONAR_PAGE_SIZE,
                 "total": 10001,
             },
         }
@@ -396,7 +406,7 @@ class SonarWatchTests(unittest.TestCase):
                 }],
                 "paging": {
                     "pageIndex": 1,
-                    "pageSize": 500,
+                    "pageSize": sonar_watch._SONAR_PAGE_SIZE,
                     "total": 1,
                 },
             }
@@ -521,6 +531,7 @@ class SonarWatchTests(unittest.TestCase):
 
         def paged_request(path, **kwargs):
             page_calls.append(path)
+            page_size = sonar_watch._GITHUB_PAGE_SIZE
             if path.endswith("page=1"):
                 return [
                     {
@@ -529,10 +540,10 @@ class SonarWatchTests(unittest.TestCase):
                         "body": "",
                         "state": "open",
                     }
-                    for index in range(100)
+                    for index in range(page_size)
                 ]
             return [{
-                "number": 101,
+                "number": page_size + 1,
                 "title": "matching",
                 "body": marker,
                 "state": "open",
@@ -541,7 +552,10 @@ class SonarWatchTests(unittest.TestCase):
 
         github.http.request = paged_request
         found = github.find(marker)
-        self.assertEqual([item["number"] for item in found], [101])
+        self.assertEqual(
+            [item["number"] for item in found],
+            [sonar_watch._GITHUB_PAGE_SIZE + 1],
+        )
         self.assertEqual(len(page_calls), 2)
 
         original_limit = sonar_watch._MAX_GITHUB_ISSUE_PAGES
@@ -553,7 +567,7 @@ class SonarWatchTests(unittest.TestCase):
                 "body": "",
                 "state": "open",
             }
-            for index in range(100)
+            for index in range(sonar_watch._GITHUB_PAGE_SIZE)
         ]
         try:
             with self.assertRaises(sonar_watch.SonarWatchError):
@@ -752,6 +766,38 @@ class SonarWatchTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(sonar_watch.SonarWatchError):
                     sonar_watch.SonarApi.analysis_method_from_settings(payload)
+
+    def test_github_issue_pagination_bounds_each_remote_response(self):
+        self.assertEqual(sonar_watch._GITHUB_PAGE_SIZE, 50)
+        self.assertEqual(sonar_watch._MAX_GITHUB_ISSUES, 10_000)
+        self.assertEqual(
+            sonar_watch._MAX_GITHUB_ISSUE_PAGES,
+            sonar_watch._MAX_GITHUB_ISSUES // sonar_watch._GITHUB_PAGE_SIZE,
+        )
+        github = sonar_watch.GitHubIssues(
+            repository="pl0n3r/Factory",
+            token="token",
+        )
+        calls = []
+
+        def fake_request(path, **kwargs):
+            calls.append(path)
+            self.assertIn("per_page=50", path)
+            if path.endswith("page=1"):
+                return [
+                    {
+                        "number": index + 1,
+                        "title": f"issue-{index}",
+                        "body": "",
+                        "state": "open",
+                    }
+                    for index in range(sonar_watch._GITHUB_PAGE_SIZE)
+                ]
+            return []
+
+        github.http.request = fake_request
+        self.assertEqual(github.find("<!-- absent -->"), [])
+        self.assertEqual(len(calls), 2)
 
     def test_workflow_keeps_scheduled_and_manual_triggers(self):
         text = (
