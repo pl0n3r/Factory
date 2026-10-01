@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.dispatcher_v2 import (
+    BlockedWork,
     Candidate,
     DirectionGateInstance,
     DirectionLeaf,
@@ -14,11 +15,13 @@ from scripts.dispatcher_v2 import (
     candidate_from_work_item,
     classify_readiness,
     direction_gate_trigger,
+    idle_time_metric,
     dispatch_record,
     materialize_direction_leaves,
     reconcile_direction_gate_instances,
     parallel_ready,
     select_next,
+    work_ladder,
 )
 
 from scripts.adaptive_fencing import FencingContext, FencingDecision, evaluate_fencing
@@ -60,6 +63,154 @@ def ready_context(**overrides):
 
 
 class DispatcherV2Tests(unittest.TestCase):
+    def test_work_ladder_never_returns_none_when_all_repos_have_no_ready(self):
+        candidates = [
+            Candidate(
+                key=f"{repo}#blocked",
+                blocked=True,
+                metadata={"repository_ref": repo},
+            )
+            for repo in (
+                "pl0n3r/Factory",
+                "pl0n3r/Condor",
+                "pl0n3r/GrindFlow",
+                "pl0n3r/brvtal",
+                "pl0n3r/ControlBot",
+                "pl0n3r/AutoFactory",
+                "pl0n3r/FactoryRunner",
+            )
+        ]
+
+        result = work_ladder(candidates)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["step"], "declare_idle_reason")
+        self.assertEqual(result["work"]["kind"], "status")
+        self.assertTrue(result["reason"])
+        self.assertTrue(result["needs"])
+
+    def test_stale_block_sweeper_unblocks_satisfied_condition_once(self):
+        block = BlockedWork(
+            key="pl0n3r/Condor#425",
+            unlock_condition="V0.1.107 está VALIDATED_IN_PRODUCTION",
+            condition_satisfied=True,
+            evidence_refs=("run:36922566823", "sha:4ad0f7b"),
+        )
+
+        first = work_ladder([], blocked_work=[block])
+        second = work_ladder(
+            [],
+            blocked_work=[block],
+            reconciled_block_keys=("pl0n3r/Condor#425",),
+        )
+
+        self.assertEqual(first["step"], "reconcile_stale_blocks")
+        self.assertEqual(first["actions"][0]["action"], "unblock")
+        self.assertIn("run:36922566823", first["actions"][0]["evidence_refs"])
+        self.assertIn("Evidencia:", first["actions"][0]["comment"])
+        self.assertEqual(second["step"], "declare_idle_reason")
+
+    def test_work_ladder_never_preempts_higher_priority_work(self):
+        normal = Candidate(
+            key="normal-product",
+            priority="medium",
+            metadata={"work_ladder_lane": "normal"},
+        )
+        quality = Candidate(
+            key="quality-critical",
+            priority="critical",
+            metadata={"work_ladder_lane": "quality"},
+        )
+        filler = Candidate(
+            key="filler-critical",
+            priority="critical",
+            metadata={"work_ladder_lane": "filler"},
+        )
+
+        result = work_ladder([filler, quality, normal])
+
+        self.assertEqual(result["step"], "normal")
+        self.assertEqual(result["work"]["key"], "normal-product")
+
+    def test_work_ladder_declares_reason_when_no_safe_work_exists(self):
+        result = work_ladder(
+            [],
+            no_safe_work_reason=(
+                "Todos los candidatos requieren una puerta humana o evidencia nueva."
+            ),
+        )
+
+        self.assertEqual(result["step"], "declare_idle_reason")
+        self.assertEqual(
+            result["reason"],
+            "Todos los candidatos requieren una puerta humana o evidencia nueva.",
+        )
+        self.assertEqual(result["work"]["key"], "dispatcher:no-safe-work")
+
+    def test_idle_time_metric_alerts_over_threshold(self):
+        healthy = idle_time_metric(
+            agent_id="agent-1",
+            repository_ref="pl0n3r/Factory",
+            finished_at="2026-10-01T20:00:00Z",
+            next_dispatch_at="2026-10-01T20:10:00Z",
+            threshold_minutes=15,
+        )
+        degraded = idle_time_metric(
+            agent_id="agent-1",
+            repository_ref="pl0n3r/Factory",
+            finished_at="2026-10-01T20:00:00Z",
+            next_dispatch_at="2026-10-01T20:16:00Z",
+            threshold_minutes=15,
+        )
+
+        self.assertFalse(healthy["alert"])
+        self.assertEqual(healthy["quality_health"], "HEALTHY")
+        self.assertTrue(degraded["alert"])
+        self.assertEqual(degraded["quality_health"], "DEGRADED")
+        self.assertEqual(degraded["idle_seconds"], 960)
+
+    def test_product_direction_trigger_covers_all_repos_when_everything_is_blocked(self):
+        repositories = (
+            "pl0n3r/Factory",
+            "pl0n3r/Condor",
+            "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal",
+            "pl0n3r/ControlBot",
+            "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        )
+        for repo in repositories:
+            with self.subTest(repo=repo):
+                proposal = DirectionProposal(
+                    repository_ref=repo,
+                    objective="Mantener una cola útil y reversible.",
+                    leaves=(
+                        DirectionLeaf(
+                            key=f"{repo.rsplit('/', 1)[-1].lower()}-next",
+                            title="Siguiente trabajo seguro",
+                            acceptance_targets=(
+                                "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                            ),
+                        ),
+                    ),
+                )
+                blocked = Candidate(
+                    key=f"{repo}#blocked",
+                    blocked=True,
+                    metadata={"repository_ref": repo},
+                )
+
+                result = work_ladder(
+                    [blocked],
+                    direction_proposals=(proposal,),
+                )
+
+                self.assertEqual(result["step"], "product_direction")
+                self.assertEqual(
+                    result["work"]["key"],
+                    f"product-direction:{repo}",
+                )
+
     def test_readiness_excludes_blocked_candidates_with_structured_reasons(self):
         candidate = Candidate(
             key="blocked",
