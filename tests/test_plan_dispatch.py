@@ -127,6 +127,16 @@ class PlanContractTests(unittest.TestCase):
             self.assertIn(decision_id, active)
             self.assertIn("Factory#683", active[decision_id]["text"])
 
+    def test_direction_gate_creation_requires_post_create_reconciliation(self):
+        for value in (
+            "reconciliar post-create",
+            "created_at",
+            "número de Issue",
+            "cierra las posteriores como duplicadas",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
     def test_intentional_blocks_keep_documented_conditions(self):
         for reference in (
             "ControlBot#45",
