@@ -1,0 +1,165 @@
+name: Política reviewer-bot por comentario
+on:
+  workflow_call:
+    inputs:
+      pr_number: {required: true, type: number}
+      comment_id: {required: true, type: number}
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  revalidar:
+    name: Revalidar comentario reviewer-bot
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validar evento, PR, comentario y policy base antes de checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_PR: ${{ github.event.issue.number }}
+          EVENT_COMMENT: ${{ github.event.comment.id }}
+          EVENT_IS_PR: ${{ github.event.issue.pull_request != null }}
+          INPUT_PR: ${{ inputs.pr_number }}
+          INPUT_COMMENT: ${{ inputs.comment_id }}
+          MAX_POLICY_BYTES: "4096"
+          MAX_DECISIONS_BYTES: "262144"
+          MAX_EVIDENCE_BYTES: "2000000"
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == "issue_comment" ]] || { echo "::error::Evento no permitido"; exit 1; }
+          case "$EVENT_ACTION" in
+            created|edited) ;;
+            *) echo "::error::Acción de comentario no permitida"; exit 1 ;;
+          esac
+          [[ "$EVENT_IS_PR" == "true" ]] || { echo "RELEVANT=false" >> "$GITHUB_ENV"; exit 0; }
+          [[ "$EVENT_PR" == "$INPUT_PR" ]] || { echo "::error::PR de evento inválido"; exit 1; }
+          [[ "$EVENT_COMMENT" == "$INPUT_COMMENT" ]] || { echo "::error::Comentario de evento inválido"; exit 1; }
+
+          COMMENT_JSON="$(gh api "repos/$REPOSITORY/issues/comments/$INPUT_COMMENT")"
+          COMMENT_API_ID="$(jq -r '.id' <<<"$COMMENT_JSON")"
+          COMMENT_ISSUE_URL="$(jq -r '.issue_url // empty' <<<"$COMMENT_JSON")"
+          COMMENT_TYPE="$(jq -r '.user.type // empty' <<<"$COMMENT_JSON")"
+          COMMENT_LOGIN="$(jq -r '.user.login // empty' <<<"$COMMENT_JSON")"
+          [[ "$COMMENT_API_ID" == "$INPUT_COMMENT" ]] || { echo "::error::ID de comentario inválido"; exit 1; }
+          [[ "$COMMENT_ISSUE_URL" == */issues/"$INPUT_PR" ]] || { echo "::error::Comentario no pertenece al PR"; exit 1; }
+          if [[ "$COMMENT_TYPE" != "Bot" ]]; then
+            echo "RELEVANT=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          PR_JSON="$(gh api "repos/$REPOSITORY/pulls/$INPUT_PR")"
+          [[ "$(jq -r '.state' <<<"$PR_JSON")" == "open" ]] || { echo "RELEVANT=false" >> "$GITHUB_ENV"; exit 0; }
+          CURRENT_HEAD="$(jq -r '.head.sha' <<<"$PR_JSON")"
+          CURRENT_BASE="$(jq -r '.base.sha' <<<"$PR_JSON")"
+          HEAD_REPO="$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")"
+          BASE_REPO="$(jq -r '.base.repo.full_name // empty' <<<"$PR_JSON")"
+          [[ "$BASE_REPO" == "$REPOSITORY" ]] || { echo "::error::Repositorio base inesperado"; exit 1; }
+          [[ "$CURRENT_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD inválido"; exit 1; }
+          [[ "$CURRENT_BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::BASE inválida"; exit 1; }
+          [[ -n "$HEAD_REPO" ]] || { echo "::error::Repositorio HEAD inválido"; exit 1; }
+
+          POLICY_FILE="/tmp/factory-policy-base.json"
+          POLICY_ERR="/tmp/factory-policy-base.err"
+          if gh api -H "Accept: application/vnd.github.raw+json"               "repos/$REPOSITORY/contents/.github/factory-policy.json?ref=$CURRENT_BASE"               > "$POLICY_FILE" 2> "$POLICY_ERR"; then
+            POLICY_BYTES="$(wc -c < "$POLICY_FILE")"
+            (( POLICY_BYTES <= MAX_POLICY_BYTES )) || { echo "::error::factory-policy.json excede el límite"; exit 1; }
+            jq -e '
+              type == "object" and
+              (keys == ["required_review_bot","version"]) and
+              .version == 1 and
+              (.required_review_bot == null or (.required_review_bot | type == "string"))
+            ' "$POLICY_FILE" >/dev/null || { echo "::error::factory-policy.json inválido"; exit 1; }
+          elif grep -q "HTTP 404" "$POLICY_ERR"; then
+            echo "RELEVANT=false" >> "$GITHUB_ENV"
+            exit 0
+          else
+            cat "$POLICY_ERR" >&2
+            echo "::error::No se pudo leer policy desde BASE exacta"
+            exit 1
+          fi
+
+          REQUIRED_REVIEW_BOT="$(jq -r '.required_review_bot // empty' "$POLICY_FILE")"
+          if [[ -z "$REQUIRED_REVIEW_BOT" || "$COMMENT_LOGIN" != "$REQUIRED_REVIEW_BOT" ]]; then
+            echo "RELEVANT=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          DECISIONS_FILE="$GITHUB_WORKSPACE/decisiones.yml"
+          REVIEWS_FILE="/tmp/politica-reviews.ndjson"
+          COMMENTS_FILE="/tmp/politica-comments.ndjson"
+          gh api -H "Accept: application/vnd.github.raw+json"             "repos/$HEAD_REPO/contents/decisiones.yml?ref=$CURRENT_HEAD" > "$DECISIONS_FILE"
+          DECISIONS_BYTES="$(wc -c < "$DECISIONS_FILE")"
+          (( DECISIONS_BYTES <= MAX_DECISIONS_BYTES )) || { echo "::error::decisiones.yml excede el límite"; exit 1; }
+
+          gh api --paginate "repos/$REPOSITORY/pulls/$INPUT_PR/reviews?per_page=100"             --jq '.[] | @json' > "$REVIEWS_FILE"
+          gh api --paginate "repos/$REPOSITORY/issues/$INPUT_PR/comments?per_page=100"             --jq '.[] | @json' > "$COMMENTS_FILE"
+          (( $(wc -c < "$REVIEWS_FILE") <= MAX_EVIDENCE_BYTES )) || { echo "::error::Reviews exceden el límite"; exit 1; }
+          (( $(wc -c < "$COMMENTS_FILE") <= MAX_EVIDENCE_BYTES )) || { echo "::error::Comentarios exceden el límite"; exit 1; }
+
+          {
+            echo "RELEVANT=true"
+            echo "PR_HEAD_SHA=$CURRENT_HEAD"
+            echo "PR_BASE_SHA=$CURRENT_BASE"
+            echo "BASE_POLICY_FILE=$POLICY_FILE"
+            echo "REVIEWS_FILE=$REVIEWS_FILE"
+            echo "COMMENTS_FILE=$COMMENTS_FILE"
+          } >> "$GITHUB_ENV"
+
+      - name: Descargar únicamente Factory versionado
+        if: env.RELEVANT == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Evaluar y materializar check sobre HEAD exacto
+        if: env.RELEVANT == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR: ${{ inputs.pr_number }}
+          CHECK_NAME: Factory policy / Validar decisiones y límite de revisión
+        run: |
+          set -euo pipefail
+          set +e
+          POLICY_OUTPUT="$(python3 .factory/scripts/politica_kit.py             --required-review-bot ""             --base-policy-file "$BASE_POLICY_FILE"             --head-sha "$PR_HEAD_SHA"             --comments-file "$COMMENTS_FILE" < "$REVIEWS_FILE" 2>&1)"
+          POLICY_STATUS=$?
+          set -e
+
+          PR_JSON_FINAL="$(gh api "repos/$REPOSITORY/pulls/$PR")"
+          FINAL_STATE="$(jq -r '.state' <<<"$PR_JSON_FINAL")"
+          FINAL_HEAD="$(jq -r '.head.sha' <<<"$PR_JSON_FINAL")"
+          FINAL_BASE="$(jq -r '.base.sha' <<<"$PR_JSON_FINAL")"
+          if [[ "$FINAL_STATE" != "open" || "$FINAL_HEAD" != "$PR_HEAD_SHA" || "$FINAL_BASE" != "$PR_BASE_SHA" ]]; then
+            echo "::warning::PR cambió durante la revalidación; no se publica check stale."
+            exit 0
+          fi
+
+          if (( POLICY_STATUS == 0 )); then
+            CONCLUSION="success"
+            TITLE="Policy reviewer-bot satisfecha"
+          else
+            CONCLUSION="failure"
+            TITLE="Policy reviewer-bot no satisfecha"
+          fi
+          SUMMARY="$(printf '%s' "$POLICY_OUTPUT" | tail -c 12000)"
+          PAYLOAD="$(jq -n             --arg name "$CHECK_NAME"             --arg head_sha "$PR_HEAD_SHA"             --arg conclusion "$CONCLUSION"             --arg title "$TITLE"             --arg summary "$SUMMARY"             '{name:$name,head_sha:$head_sha,status:"completed",conclusion:$conclusion,output:{title:$title,summary:$summary}}')"
+          gh api --method POST "repos/$REPOSITORY/check-runs" --input - <<<"$PAYLOAD" >/dev/null
+
+          if (( POLICY_STATUS != 0 )); then
+            printf '%s\n' "$POLICY_OUTPUT" >&2
+            exit "$POLICY_STATUS"
+          fi
