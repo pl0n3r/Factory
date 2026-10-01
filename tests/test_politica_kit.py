@@ -1,8 +1,10 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
+from scripts import politica_kit as policy
 from scripts.politica_kit import (
     PolicyError,
     _read_bounded_lines,
@@ -250,6 +252,92 @@ class T(unittest.TestCase):
                 comment_lines=[extra_field],
             )
 
+
+    def test_path_boundary_exception_assertions_are_single_invocation(self):
+        outside = Path(__file__).resolve()
+        with self.assertRaises(PolicyError):
+            load_reviewer_policy(outside)
+        with self.assertRaises(PolicyError):
+            _read_bounded_lines(outside, max_bytes=1024, noun="comentarios")
+
+
+
+    def test_policy_parsers_and_main_cover_fail_closed_edges(self):
+        self.assertEqual(parse_reviewer_policy(None), "")
+        invalid_payloads = (
+            "x" * (policy.MAX_REVIEWER_POLICY_BYTES + 1),
+            "{",
+            "[]",
+            json.dumps({"version": 2, "required_review_bot": None}),
+            json.dumps({"version": 1, "required_review_bot": "not a bot!"}),
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload[:20]):
+                with self.assertRaises(PolicyError):
+                    parse_reviewer_policy(payload)
+        self.assertEqual(
+            parse_reviewer_policy(
+                json.dumps({"version": 1, "required_review_bot": None})
+            ),
+            "",
+        )
+
+        for base, caller in (("bad!", ""), ("", "bad!")):
+            with self.subTest(base=base, caller=caller):
+                with self.assertRaises(PolicyError):
+                    resolve_required_review_bot(base, caller)
+
+        with self.assertRaises(PolicyError):
+            policy._parse_ndjson(["{"], noun="Review")
+        with self.assertRaises(PolicyError):
+            policy._parse_ndjson([json.dumps([])], noun="Review")
+        too_long = json.dumps({"id": 1, "x": "y" * policy.MAX_EVIDENCE_ITEM_BYTES})
+        with self.assertRaises(PolicyError):
+            policy._parse_ndjson([too_long], noun="Review")
+        duplicate = json.dumps({"id": 7, "state": "COMMENTED"})
+        self.assertEqual(len(policy._parse_ndjson([duplicate, duplicate], noun="Review")), 1)
+
+        invalid_login = review(login="x" * 101)
+        with self.assertRaisesRegex(PolicyError, "Identidad"):
+            count_review_rounds([invalid_login])
+
+        with self.assertRaisesRegex(PolicyError, "Reviewer-bot"):
+            validate_required_bot_review([], "bad!", HEAD)
+        with self.assertRaisesRegex(PolicyError, "HEAD"):
+            validate_required_bot_review([], "coderabbitai[bot]", "bad")
+
+        class Options:
+            required_review_bot = ""
+            base_policy_file = ""
+            head_sha = ""
+            comments_file = ""
+
+        fake_policy = {"version": 1, "review_round_limit": 3, "decisions": []}
+        with (
+            patch.object(policy, "args", return_value=Options()),
+            patch.object(policy, "load_policy", return_value=fake_policy),
+            patch("sys.stdin", policy.io.StringIO("") if hasattr(policy, "io") else __import__("io").StringIO("")),
+            patch("sys.stdout", new_callable=__import__("io").StringIO),
+        ):
+            self.assertEqual(policy.main(), 0)
+
+        with (
+            patch.object(policy, "args", return_value=Options()),
+            patch.object(policy, "load_policy", side_effect=PolicyError("boom")),
+            patch("sys.stdin", __import__("io").StringIO("")),
+            patch("sys.stderr", new_callable=__import__("io").StringIO) as stderr,
+        ):
+            self.assertEqual(policy.main(), 1)
+            self.assertIn("ERROR: boom", stderr.getvalue())
+
+        oversized = "x" * (policy.MAX_REVIEWS_BYTES + 1)
+        with (
+            patch.object(policy, "args", return_value=Options()),
+            patch("sys.stdin", __import__("io").StringIO(oversized)),
+            patch("sys.stderr", new_callable=__import__("io").StringIO),
+        ):
+            self.assertEqual(policy.main(), 1)
+
     def test_policy_is_confined_to_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -273,8 +361,9 @@ class PolicyKitPathBoundaryTests(unittest.TestCase):
         return Path(handle.name)
 
     def test_reviewer_policy_rejects_non_temp_file(self):
+        outside = Path(__file__).resolve()
         with self.assertRaises(PolicyError):
-            load_reviewer_policy(Path(__file__).resolve())
+            load_reviewer_policy(outside)
 
         valid = self._temp_file(json.dumps({
             "version": 1,
@@ -286,9 +375,10 @@ class PolicyKitPathBoundaryTests(unittest.TestCase):
         )
 
     def test_comments_reader_rejects_non_temp_file(self):
+        outside = Path(__file__).resolve()
         with self.assertRaises(PolicyError):
             _read_bounded_lines(
-                Path(__file__).resolve(),
+                outside,
                 max_bytes=1024,
                 noun="comentarios",
             )
@@ -302,6 +392,13 @@ class PolicyKitPathBoundaryTests(unittest.TestCase):
             ),
             ["uno", "dos"],
         )
+
+    def test_exception_assertions_have_single_throwing_invocation(self):
+        outside = Path(__file__).resolve()
+        with self.assertRaises(PolicyError):
+            load_reviewer_policy(outside)
+        with self.assertRaises(PolicyError):
+            _read_bounded_lines(outside, max_bytes=1024, noun="comentarios")
 
     def test_temp_symlink_escape_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
