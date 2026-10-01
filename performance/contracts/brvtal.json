@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "project": "brvtal",
+  "surfaces": [
+    {
+      "id": "public.home.mobile",
+      "label": "BRVTAL public home mobile",
+      "metrics": [
+        {
+          "id": "fcp",
+          "label": "First Contentful Paint",
+          "baseline": {
+            "value": 380,
+            "unit": "ms",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 1800,
+            "unit": "ms"
+          },
+          "window": {
+            "duration_seconds": 1,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_issue",
+            "ref": "github:pl0n3r/factory#304",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
+        },
+        {
+          "id": "lcp",
+          "label": "Largest Contentful Paint",
+          "baseline": {
+            "value": 1624,
+            "unit": "ms",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 2500,
+            "unit": "ms"
+          },
+          "window": {
+            "duration_seconds": 1,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_issue",
+            "ref": "github:pl0n3r/factory#304",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
+        },
+        {
+          "id": "cls",
+          "label": "Cumulative Layout Shift",
+          "baseline": {
+            "value": 0,
+            "unit": "ratio",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 0.1,
+            "unit": "ratio"
+          },
+          "window": {
+            "duration_seconds": 1,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_issue",
+            "ref": "github:pl0n3r/factory#304",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
+        }
+      ]
+    },
+    {
+      "id": "public.home.desktop",
+      "label": "BRVTAL public home desktop",
+      "metrics": [
+        {
+          "id": "fcp",
+          "label": "First Contentful Paint",
+          "baseline": {
+            "value": 456,
+            "unit": "ms",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 1800,
+            "unit": "ms"
+          },
+          "window": {
+            "duration_seconds": 1,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_issue",
+            "ref": "github:pl0n3r/factory#304",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
+        },
+        {
+          "id": "lcp",
+          "label": "Largest Contentful Paint",
+          "baseline": {
+            "value": 1772,
+            "unit": "ms",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 2500,
+            "unit": "ms"
+          },
+          "window": {
+            "duration_seconds": 1,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_issue",
+            "ref": "github:pl0n3r/factory#304",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
+        },
+        {
+          "id": "cls",
+          "label": "Cumulative Layout Shift",
+          "baseline": {
+            "value": 0.005,
+            "unit": "ratio",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 0.1,
+            "unit": "ratio"
+          },
+          "window": {
+            "duration_seconds": 1,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_issue",
+            "ref": "github:pl0n3r/factory#304",
+            "observed_at": "2026-10-01T11:47:55Z"
+          },
+          "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
+          "escalation_conditions": ["architecture_change", "capacity_budget"]
+        }
+      ]
+    }
+  ]
+}
