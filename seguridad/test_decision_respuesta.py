@@ -415,6 +415,9 @@ class DecisionRespuestaTests(unittest.TestCase):
             section.index("actions/checkout@"),
         )
         self.assertIn("seguridad/decision_respuesta.py", section)
+        self.assertIn("Reconciliar puerta canónica antes de decidir", materializer)
+        self.assertIn("python3 seguridad/sincronizar_puerta.py valid", materializer)
+        self.assertIn("steps.gate_sync.outputs.canonical == 'true'", materializer)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("secrets:", section)
 
