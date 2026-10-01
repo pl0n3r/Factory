@@ -128,6 +128,49 @@ class WorkMaterializerTests(unittest.TestCase):
                 completed_dependencies=COMPLETED,
             )
 
+    def test_leaf_key_collision_with_other_identity_fails_closed(self):
+        first = materialize_leaf(candidate(), completed_dependencies=COMPLETED)
+        conflicting = candidate()
+        conflicting["identity"] = "roadmap:factory:other"
+        with self.assertRaises(WorkMaterializerError):
+            materialize_leaf(
+                conflicting,
+                existing_leaves=[first["leaf"]],
+                completed_dependencies=COMPLETED,
+            )
+
+        without_identity = copy.deepcopy(first["leaf"])
+        without_identity.pop("source_identity")
+        with self.assertRaises(WorkMaterializerError):
+            materialize_leaf(
+                candidate(),
+                existing_leaves=[without_identity],
+                completed_dependencies=COMPLETED,
+            )
+
+    def test_existing_leaf_must_satisfy_canonical_inventory_contract(self):
+        first = materialize_leaf(candidate(), completed_dependencies=COMPLETED)
+        invalid = copy.deepcopy(first["leaf"])
+        invalid.pop("source_refs")
+        with self.assertRaises(WorkMaterializerError):
+            materialize_leaf(
+                candidate(),
+                existing_leaves=[invalid],
+                completed_dependencies=COMPLETED,
+            )
+
+    def test_same_identity_other_key_remains_idempotent(self):
+        first = materialize_leaf(candidate(), completed_dependencies=COMPLETED)
+        retry = candidate()
+        retry["leaf_key"] = "Factory#999"
+        result = materialize_leaf(
+            retry,
+            existing_leaves=[first["leaf"]],
+            completed_dependencies=COMPLETED,
+        )
+        self.assertFalse(result["materialized"])
+        self.assertEqual(result["reason"], "already_materialized")
+
     def test_future_decision_and_live_gated_work_stays_fail_closed(self):
         for kind in ("future_idea", "decision_required", "live_only"):
             with self.subTest(kind=kind):
