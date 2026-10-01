@@ -6,14 +6,24 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 from urllib.parse import quote
+
+from puertas_humanas import GateValidationError, gate_identity_from_body
 
 MARKER = "<!-- factory-invalid-gate -->"
 OWNED = "<!-- factory-invalid-gate-owner:bot -->"
 BOT = "github-actions[bot]"
 BLOCKED = "estado: bloqueado"
 AVAILABLE = "estado: disponible"
+DECISION_LABEL = "decisión: dueño"
+DUPLICATE_MARKER = "<!-- factory-human-gate-duplicate"
+DECISION_RE = re.compile(r'^<!-- factory-human-decision (\\{[^\\n]*\\}) -->')
+
+
+class GateConflictError(ValueError):
+    """Estado ambiguo: la reconciliación no debe ejecutar mutaciones sensibles."""
 
 
 def gh_api(method: str, path: str, payload: dict | None = None):
@@ -109,7 +119,7 @@ def sync_invalid(api, repository: str, issue: int, reason: str) -> None:
         api("POST", f"{base}/comments", {"body": message})
 
 
-def sync_valid(api, repository: str, issue: int) -> None:
+def _restore_valid(api, repository: str, issue: int) -> None:
     base = f"repos/{repository}/issues/{issue}"
     comment = bot_comment(api, base)
     if not comment or OWNED not in comment["body"]:
@@ -127,6 +137,149 @@ def sync_valid(api, repository: str, issue: int) -> None:
         add_label(api, base, AVAILABLE)
 
 
+def _decision_evidence(api, base: str) -> tuple[str, str] | None:
+    found: set[tuple[str, str]] = set()
+    for comment in comments_for(api, base):
+        if comment.get("user", {}).get("login") != BOT:
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        match = DECISION_RE.match(body)
+        if not match:
+            continue
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError as exc:
+            raise GateConflictError(
+                "Existe evidencia de decisión inválida en una puerta equivalente."
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("version") != 2
+            or payload.get("option") not in {"A", "B", "C", "D"}
+            or not isinstance(payload.get("gate_sha256"), str)
+        ):
+            raise GateConflictError(
+                "Existe evidencia de decisión incompatible en una puerta equivalente."
+            )
+        found.add((payload["option"], payload["gate_sha256"]))
+    if len(found) > 1:
+        raise GateConflictError(
+            "Existen decisiones humanas contradictorias en una puerta equivalente."
+        )
+    return next(iter(found), None)
+
+
+def _equivalent_issues(api, repository: str, identity: str) -> list[dict]:
+    candidates = api(
+        "GET", f"repos/{repository}/issues?state=all&per_page=100"
+    )
+    equivalent: list[dict] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or "pull_request" in candidate:
+            continue
+        body = candidate.get("body")
+        if not isinstance(body, str):
+            continue
+        try:
+            candidate_identity = gate_identity_from_body(body)
+        except (GateValidationError, ValueError):
+            continue
+        if candidate_identity == identity:
+            equivalent.append(candidate)
+    return sorted(equivalent, key=lambda item: item.get("number", 0))
+
+
+def _mark_duplicate(api, repository: str, issue: dict, canonical: int) -> None:
+    number = issue["number"]
+    base = f"repos/{repository}/issues/{number}"
+    labels = issue_labels(api, base)
+    if DECISION_LABEL in labels:
+        remove_label(api, base, DECISION_LABEL)
+
+    marker = f"{DUPLICATE_MARKER} canonical={canonical} -->"
+    if not any(
+        comment.get("user", {}).get("login") == BOT
+        and isinstance(comment.get("body"), str)
+        and comment["body"].startswith(marker)
+        for comment in comments_for(api, base)
+    ):
+        api(
+            "POST",
+            f"{base}/comments",
+            {
+                "body": (
+                    f"{marker}\n"
+                    f"♻️ Puerta equivalente reconciliada hacia #{canonical}; "
+                    "no se materializó ninguna decisión."
+                )
+            },
+        )
+    api(
+        "PATCH",
+        base,
+        {"state": "closed", "state_reason": "duplicate"},
+    )
+
+
+def reconcile_gate(api, repository: str, issue: int) -> bool:
+    """Conserva una única puerta abierta por identidad y devuelve si es canónica."""
+    base = f"repos/{repository}/issues/{issue}"
+    current = api("GET", base)
+    if (
+        not isinstance(current, dict)
+        or current.get("state") != "open"
+        or "pull_request" in current
+        or not isinstance(current.get("body"), str)
+    ):
+        return False
+
+    try:
+        identity = gate_identity_from_body(current["body"])
+    except (GateValidationError, ValueError):
+        return False
+
+    equivalent = _equivalent_issues(api, repository, identity)
+    if issue not in {item.get("number") for item in equivalent}:
+        # Si GitHub todavía no refleja el Issue en el listado, no enrutar.
+        return False
+
+    open_equivalent = [
+        item for item in equivalent if item.get("state") == "open"
+    ]
+    if not open_equivalent:
+        return False
+    canonical = min(item["number"] for item in open_equivalent)
+
+    evidence: list[tuple[int, tuple[str, str]]] = []
+    for candidate in equivalent:
+        candidate_base = f"repos/{repository}/issues/{candidate['number']}"
+        found = _decision_evidence(api, candidate_base)
+        if found is not None:
+            evidence.append((candidate["number"], found))
+
+    if len({value for _, value in evidence}) > 1:
+        raise GateConflictError(
+            "Puertas equivalentes contienen decisiones incompatibles."
+        )
+    if any(number != canonical for number, _ in evidence):
+        raise GateConflictError(
+            "Una puerta duplicada ya contiene decisión; se requiere reconciliación manual."
+        )
+
+    for candidate in open_equivalent:
+        if candidate["number"] != canonical:
+            _mark_duplicate(api, repository, candidate, canonical)
+
+    return issue == canonical
+
+
+def sync_valid(api, repository: str, issue: int) -> bool:
+    _restore_valid(api, repository, issue)
+    return reconcile_gate(api, repository, issue)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("invalid", "valid"))
@@ -136,7 +289,8 @@ def main() -> None:
     if args.action == "invalid":
         sync_invalid(gh_api, repository, issue, os.environ["REASON"])
     else:
-        sync_valid(gh_api, repository, issue)
+        canonical = sync_valid(gh_api, repository, issue)
+        print(f"canonical={str(canonical).lower()}")
 
 
 if __name__ == "__main__":
