@@ -1,4 +1,5 @@
 import copy
+from collections import UserDict
 import inspect
 import unittest
 
@@ -130,6 +131,18 @@ class AccountCapacityPolicyTests(unittest.TestCase):
             now=1000,
         )
         self.assertEqual(projected["capacityFingerprint"], capacity["fingerprint"])
+
+        unserializable = copy.deepcopy(capacity)
+        unserializable["budget"] = UserDict(unserializable["budget"])
+        with self.assertRaisesRegex(
+            AccountCapacityPolicyError,
+            "fingerprint no corresponde",
+        ):
+            project_account_capacity_policy(
+                unserializable,
+                account_alias="primary",
+                now=1000,
+            )
 
     def test_tampered_capacity_with_stale_fingerprint_is_rejected(self):
         capacity = fresh_capacity()
