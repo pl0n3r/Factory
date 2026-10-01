@@ -694,8 +694,11 @@ def work_ladder(
         or isinstance(max_filler_parallel, bool)
         or not isinstance(max_filler_parallel, int)
         or max_filler_parallel < 0
+        or max_filler_parallel > 2
     ):
-        raise ValueError("filler parallel counts must be non-negative integers")
+        raise ValueError(
+            "filler parallel counts must be non-negative integers capped at 2"
+        )
 
     items = list(candidates)
     for step, lane in (
