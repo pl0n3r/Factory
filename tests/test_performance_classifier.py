@@ -96,8 +96,11 @@ class PerformanceClassifierTests(unittest.TestCase):
         cases = []
         wrong_project = envelope(); wrong_project["project"] = "other"; cases.append(wrong_project)
         wrong_sha = envelope(); wrong_sha["identity"]["sha"] = "b" * 40; cases.append(wrong_sha)
+        wrong_release = envelope(); wrong_release["identity"]["release"] = "0.1.999"; cases.append(wrong_release)
         wrong_ref = envelope(); wrong_ref["evidence_ref"] = "github:other"; cases.append(wrong_ref)
+        wrong_authority = envelope(); wrong_authority["classification_authority"] = "producer"; cases.append(wrong_authority)
         classified = envelope(); classified["classification"] = "PERF_INFO"; cases.append(classified)
+        bad_time = envelope(); bad_time["observed_at"] = "2026-10-01T11:47:49"; cases.append(bad_time)
         extra = envelope(); extra["secret_payload"] = "DO_NOT_ECHO"; cases.append(extra)
         duplicate = envelope(); duplicate["observations"].append(copy.deepcopy(duplicate["observations"][0])); cases.append(duplicate)
         for payload in cases:
@@ -144,11 +147,26 @@ class PerformanceClassifierTests(unittest.TestCase):
             ]
             first = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
             second = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
+
+            invalid = envelope()
+            invalid["secret_payload"] = "DO_NOT_ECHO"
+            envelope_path.write_text(json.dumps(invalid), encoding="utf-8")
+            rejected = subprocess.run(
+                cmd, cwd=ROOT, text=True, capture_output=True, check=False
+            )
+
         self.assertEqual(first.returncode, 0)
         self.assertEqual(second.returncode, 0)
         self.assertEqual(first.stdout, second.stdout)
         self.assertEqual(first.stderr, "")
         self.assertEqual(json.loads(first.stdout)["summary"]["total"], 10)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertEqual(rejected.stdout, "")
+        self.assertEqual(
+            rejected.stderr,
+            "performance-classify: invalid or unsafe input\n",
+        )
+        self.assertNotIn("DO_NOT_ECHO", rejected.stderr)
 
 
 if __name__ == "__main__":
