@@ -16,6 +16,14 @@
       "mode": "generated",
       "generator": "readme.generate_readme:generate_readme",
       "drift_check": "readme.validate_readme:validate_readme"
+    },
+    {
+      "view_id": "factory.estado.tandas",
+      "source": "GitHub Issues canónicos Condor#192 + GrindFlow#129 + brvtal#630 + FactoryRunner#1; snapshot normalizado por intelligence.factory_status",
+      "view": "ESTADO.md",
+      "mode": "generated",
+      "generator": "intelligence.factory_status:render_committed_estado",
+      "drift_check": "tests/test_plan_estado.py"
     }
   ]
 }
