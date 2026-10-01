@@ -1144,11 +1144,13 @@ def recover_existing_work_if_stale(
     branch: str,
     current: dict[str, Any] | None,
 ) -> str | None:
-    """Recupera trabajo stale o huérfano bajo un lock distribuido."""
-    if current is not None and not work_is_stale(
-        api,
-        issue_number,
-        branch,
+    """Recupera trabajo stale o marcado explícitamente para recuperación."""
+    issue = api.issue(issue_number)
+    recovery_required = STATUS_RECOVERY in label_names(issue)
+    if (
+        current is not None
+        and not recovery_required
+        and not work_is_stale(api, issue_number, branch)
     ):
         return None
     if not ensure_recovery_branch(api, branch):
@@ -1163,11 +1165,20 @@ def recover_existing_work_if_stale(
         return None
 
     try:
+        issue = api.issue(issue_number)
+        labels = label_names(issue)
+        if (
+            issue.get("state") != "open"
+            or STATUS_BLOCKED in labels
+        ):
+            return None
+
         latest = active_reservation(api, issue_number)
-        if latest is not None and not work_is_stale(
-            api,
-            issue_number,
-            branch,
+        recovery_required = STATUS_RECOVERY in labels
+        if (
+            latest is not None
+            and not recovery_required
+            and not work_is_stale(api, issue_number, branch)
         ):
             return None
         return recover_stale_work(
