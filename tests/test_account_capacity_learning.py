@@ -124,6 +124,61 @@ class AccountCapacityLearningTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source)
 
+    def test_compact_source_must_match_request_project(self):
+        accepted = learn_limit_events(
+            request([event(source="PL0N3R/FACTORY#584")]),
+            now=NOW,
+        )
+        self.assertEqual(accepted["lessons"][0]["source"], "PL0N3R/FACTORY#584")
+
+        foreign_request = request([event(source="other/repo#1")])
+        with self.assertRaisesRegex(
+            AccountCapacityLearningError,
+            "source no corresponde al project",
+        ):
+            learn_limit_events(foreign_request, now=NOW)
+
+    def test_github_url_source_must_match_request_project_case_insensitively(self):
+        for source in (
+            "https://github.com/PL0N3R/FACTORY/issues/584",
+            "https://github.com/Pl0n3r/Factory/pull/632",
+        ):
+            with self.subTest(source=source):
+                result = learn_limit_events(
+                    request([event(source=source)]),
+                    now=NOW,
+                )
+                self.assertEqual(result["lessons"][0]["source"], source)
+
+        foreign_request = request([
+            event(source="https://github.com/other/repo/issues/1")
+        ])
+        with self.assertRaisesRegex(
+            AccountCapacityLearningError,
+            "source no corresponde al project",
+        ):
+            learn_limit_events(foreign_request, now=NOW)
+
+    def test_source_project_mismatch_fails_without_echo_and_valid_output_stays_deterministic(self):
+        foreign = "other/repo#1"
+        project = "pl0n3r/factory"
+        foreign_request = {
+            "version": 1,
+            "project": project,
+            "events": [event(source=foreign)],
+        }
+        with self.assertRaises(AccountCapacityLearningError) as caught:
+            learn_limit_events(foreign_request, now=NOW)
+        message = str(caught.exception)
+        self.assertNotIn(foreign, message)
+        self.assertNotIn(project, message)
+
+        payload = request([event(source="pl0n3r/factory#584")])
+        self.assertEqual(
+            learn_limit_events(payload, now=NOW),
+            learn_limit_events(copy.deepcopy(payload), now=NOW),
+        )
+
     def test_fractional_timestamp_is_ordered_by_instant_not_text(self):
         rows = [
             event("primary", "2026-10-01T09:00:00Z", "a" * 64),
