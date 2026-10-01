@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -133,6 +133,47 @@ class CollectionTests(unittest.TestCase):
         self.assertIn("⏳", cabina._render_ci({"status": "queued", "url": "https://x"}))
         self.assertIn("❌", cabina._render_ci({"status": "completed", "conclusion": "failure", "url": "https://x"}))
         self.assertEqual(cabina._render_ci(None), "—")
+
+        self.assertIsNone(cabina.inicializar_sentry({"SENTRY_DSN": "dsn"}))
+        with patch.object(cabina.importlib, "import_module", side_effect=ImportError("missing")):
+            self.assertIsNone(
+                cabina.inicializar_sentry(
+                    {
+                        "SENTRY_DSN": "dsn",
+                        "SENTRY_RELEASE": "factory@test",
+                        "SENTRY_ENVIRONMENT": "test",
+                    }
+                )
+            )
+        sdk = MagicMock()
+        with patch.object(cabina.importlib, "import_module", return_value=sdk):
+            self.assertIs(
+                cabina.inicializar_sentry(
+                    {
+                        "SENTRY_DSN": "dsn",
+                        "SENTRY_RELEASE": "factory@test",
+                        "SENTRY_ENVIRONMENT": "test",
+                    }
+                ),
+                sdk,
+            )
+        sdk.init.assert_called_once()
+
+        with (
+            patch.object(cabina, "inicializar_sentry", return_value=None),
+            patch.object(cabina, "main", return_value=0),
+        ):
+            self.assertEqual(cabina.ejecutar_con_observabilidad(), 0)
+        failing_sdk = MagicMock()
+        failing_sdk.capture_exception.side_effect = RuntimeError("sentry down")
+        original = ValueError("cabina down")
+        with (
+            patch.object(cabina, "inicializar_sentry", return_value=failing_sdk),
+            patch.object(cabina, "main", side_effect=original),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                cabina.ejecutar_con_observabilidad()
+        self.assertIs(raised.exception, original)
 
 
 class CiTests(unittest.TestCase):
