@@ -644,7 +644,7 @@ def materialize_direction_leaves(
                 **leaf,
                 "repository_ref": normalized["repository_ref"],
                 "body": body,
-                "state": "available",
+                "state": "blocked" if leaf["depends_on"] else "available",
             }
         )
     return tuple(materialized)
