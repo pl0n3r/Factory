@@ -118,9 +118,14 @@ def _validate_v2_maintenance_decision(
         (item for item in gate.get("options", []) if item.get("id") == "A"),
         None,
     )
-    if (
-        not isinstance(option_a, dict)
-        or "publicar" not in str(option_a.get("label", "")).casefold()
+    option_a_label = (
+        str(option_a.get("label", "")).strip().casefold()
+        if isinstance(option_a, dict)
+        else ""
+    )
+    if not (
+        option_a_label == "publicar"
+        or option_a_label.startswith("publicar ")
     ):
         raise ReleaseBootstrapError("Opción A debe identificar inequívocamente publicación.")
 
