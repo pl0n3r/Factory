@@ -225,6 +225,155 @@ class AccountCapacityPolicyTests(unittest.TestCase):
             {"POLICY_VERSION": 1, "CAPACITY_VERSION": 1},
         )
 
+    def test_budget_limit_must_be_javascript_safe_integer(self):
+        maximum = (1 << 53) - 1
+        capacity = fresh_capacity()
+        capacity["budget"]["max_messages"] = maximum
+        capacity["observed_safe_max"] = maximum
+
+        projected = project_account_capacity_policy(
+            capacity,
+            account_alias="primary",
+            now=1000,
+        )
+        self.assertEqual(projected["budget"]["limit"], maximum)
+
+        unsafe = copy.deepcopy(capacity)
+        unsafe["budget"]["max_messages"] = maximum + 1
+        unsafe["observed_safe_max"] = maximum + 1
+        with self.assertRaisesRegex(AccountCapacityPolicyError, "entero seguro JavaScript"):
+            project_account_capacity_policy(
+                unsafe,
+                account_alias="primary",
+                now=1000,
+            )
+
+    def test_budget_seconds_must_project_to_javascript_safe_milliseconds(self):
+        maximum_seconds = ((1 << 53) - 1) // 1000
+        capacity = fresh_capacity(accepted=1)
+        capacity["budget"]["window_seconds"] = maximum_seconds
+        capacity["budget"]["min_interval_seconds"] = maximum_seconds
+
+        projected = project_account_capacity_policy(
+            capacity,
+            account_alias="primary",
+            now=1000,
+        )
+        self.assertEqual(projected["budget"]["windowMs"], maximum_seconds * 1000)
+        self.assertEqual(
+            projected["budget"]["minIntervalMs"],
+            maximum_seconds * 1000,
+        )
+
+        for field in ("window_seconds", "min_interval_seconds"):
+            unsafe = fresh_capacity(accepted=1)
+            if field == "window_seconds":
+                unsafe["budget"]["window_seconds"] = maximum_seconds + 1
+                unsafe["budget"]["min_interval_seconds"] = maximum_seconds + 1
+            else:
+                unsafe["budget"]["window_seconds"] = 1
+                unsafe["budget"]["min_interval_seconds"] = maximum_seconds + 1
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    AccountCapacityPolicyError,
+                    "entero seguro JavaScript",
+                ):
+                    project_account_capacity_policy(
+                        unsafe,
+                        account_alias="primary",
+                        now=1000,
+                    )
+
+    def test_evidence_timestamps_must_project_to_javascript_safe_milliseconds(self):
+        maximum_seconds = ((1 << 53) - 1) // 1000
+        capacity = fresh_capacity(accepted=1)
+        capacity["observed_at"] = maximum_seconds - 1
+        capacity["expires_at"] = maximum_seconds
+
+        projected = project_account_capacity_policy(
+            capacity,
+            account_alias="primary",
+            now=maximum_seconds,
+        )
+        self.assertEqual(projected["status"], "STALE")
+        self.assertIsNone(projected["budget"])
+        self.assertEqual(projected["observedAt"], (maximum_seconds - 1) * 1000)
+        self.assertEqual(projected["expiresAt"], maximum_seconds * 1000)
+
+        unsafe_observed = fresh_capacity(accepted=1)
+        unsafe_observed["observed_at"] = maximum_seconds + 1
+        unsafe_observed["expires_at"] = maximum_seconds + 2
+        with self.assertRaisesRegex(AccountCapacityPolicyError, "observed_at.*entero seguro"):
+            project_account_capacity_policy(
+                unsafe_observed,
+                account_alias="primary",
+                now=maximum_seconds + 2,
+            )
+
+        unsafe_expires = fresh_capacity(accepted=1)
+        unsafe_expires["observed_at"] = maximum_seconds
+        unsafe_expires["expires_at"] = maximum_seconds + 1
+        with self.assertRaisesRegex(AccountCapacityPolicyError, "expires_at.*entero seguro"):
+            project_account_capacity_policy(
+                unsafe_expires,
+                account_alias="primary",
+                now=maximum_seconds + 1,
+            )
+
+    def test_safe_integer_validation_preserves_v1_shape_and_freshness_semantics(self):
+        fresh = project_account_capacity_policy(
+            fresh_capacity(),
+            account_alias="primary",
+            now=1000,
+        )
+        repeated = project_account_capacity_policy(
+            fresh_capacity(),
+            account_alias="primary",
+            now=1000,
+        )
+        unknown = project_account_capacity_policy(
+            estimate_account_capacity(request([]), now=1000),
+            account_alias="primary",
+            now=1000,
+        )
+        stale = project_account_capacity_policy(
+            estimate_account_capacity(
+                request([observation(accepted=5, observed_at=500)], ttl_seconds=100),
+                now=1000,
+            ),
+            account_alias="primary",
+            now=1000,
+        )
+        expired = project_account_capacity_policy(
+            fresh_capacity(),
+            account_alias="primary",
+            now=1300,
+        )
+
+        self.assertEqual(
+            set(fresh),
+            {
+                "version",
+                "accountAlias",
+                "status",
+                "budget",
+                "observedAt",
+                "expiresAt",
+                "source",
+                "capacityFingerprint",
+                "fingerprint",
+            },
+        )
+        self.assertEqual(fresh["fingerprint"], repeated["fingerprint"])
+        self.assertEqual(fresh["status"], "FRESH")
+        self.assertIsNotNone(fresh["budget"])
+        self.assertEqual(unknown["status"], "UNKNOWN")
+        self.assertIsNone(unknown["budget"])
+        self.assertEqual(stale["status"], "STALE")
+        self.assertIsNone(stale["budget"])
+        self.assertEqual(expired["status"], "STALE")
+        self.assertIsNone(expired["budget"])
+
     def test_zero_safe_capacity_remains_an_authoritative_pause(self):
         capacity = estimate_account_capacity(
             request(
