@@ -265,10 +265,25 @@ def gate_target_identity(raw: Any) -> str:
 def gate_authority_contract(raw: Any) -> str:
     """Fingerprint de las opciones que realmente conceden autoridad."""
     gate = validate_gate(raw)
+    if gate["category"] == "factory-release":
+        options = []
+        for option in gate["options"]:
+            item: dict[str, Any] = {"id": option["id"]}
+            if "reversible" in option:
+                item["reversible"] = option["reversible"]
+            options.append(item)
+        return _digest({
+            "category": "factory-release",
+            "channel": "v1",
+            "target": _gate_target(gate)["target"],
+            "options": sorted(options, key=lambda item: item["id"]),
+            "safe_default": gate["safe_default"],
+        })
+
     options = []
     for option in gate["options"]:
         authority = option.get("effect", option["label"])
-        item: dict[str, Any] = {
+        item = {
             "id": option["id"],
             "authority": authority,
         }
