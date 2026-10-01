@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -89,6 +90,16 @@ POST_MERGE_INCIDENT_RE = re.compile(
     r"<!--\s*factory-issue-lifecycle\s+(\{[^{}]*\})\s*-->",
     re.IGNORECASE,
 )
+UNBLOCK_RE = re.compile(
+    r"<!--\s*factory-unblock\s+(\{[^{}]*\})\s*-->",
+    re.IGNORECASE,
+)
+UNBLOCK_EVIDENCE_RE = re.compile(
+    r"<!--\s*factory-unblock-evidence\s+(\{[^{}]*\})\s*-->",
+    re.IGNORECASE,
+)
+SHA_RE = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
+BRANCH_NAME_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 
 def configure_profile(name: str) -> CoordinationProfile:
     """Activa uno de los perfiles cerrados y recompone sus contratos derivados."""
@@ -391,6 +402,18 @@ class GitHub:
                 if parsed is not None:
                     return parsed
         return None
+
+    def workflow_run(self, run_id: int) -> dict[str, Any]:
+        """Obtiene un workflow run por ID para verificar evidencia exacta."""
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repo}/actions/runs/{run_id}",
+        )
+        if not isinstance(payload, dict):
+            raise CoordinationError(
+                f"No fue posible leer workflow run {run_id}."
+            )
+        return payload
 
     def try_assign(self, issue_number: int, login: str) -> None:
         """Intenta asignar el Issue sin convertir la asignación en requisito duro."""
@@ -745,6 +768,278 @@ def label_names(issue: dict[str, Any]) -> set[str]:
         if isinstance(label, dict) and isinstance(label.get("name"), str):
             result.add(label["name"])
     return result
+
+
+def _canonical_sha(value: Any, field: str) -> str:
+    """Normaliza un SHA declarado sin aceptar refs, prefijos ni texto libre."""
+    if not isinstance(value, str) or SHA_RE.fullmatch(value) is None:
+        raise CoordinationError(f"{field} debe ser un SHA hexadecimal completo.")
+    return value.lower()
+
+
+def _require_unblock_fields(
+    payload: dict[str, Any],
+    expected: set[str],
+    message: str,
+) -> None:
+    """Exige un shape exacto para una variante del marker."""
+    if set(payload) != expected:
+        raise CoordinationError(message)
+
+
+def _parse_issue_closed_unblock(payload: dict[str, Any]) -> dict[str, Any]:
+    """Valida la variante issue_closed."""
+    _require_unblock_fields(
+        payload,
+        {"version", "kind", "issue"},
+        "issue_closed solo admite version, kind e issue.",
+    )
+    issue = payload.get("issue")
+    if isinstance(issue, bool) or not isinstance(issue, int) or issue <= 0:
+        raise CoordinationError("issue_closed requiere issue positivo.")
+    return {"version": 1, "kind": "issue_closed", "issue": issue}
+
+
+def _parse_workflow_success_unblock(payload: dict[str, Any]) -> dict[str, Any]:
+    """Valida la variante workflow_success."""
+    _require_unblock_fields(
+        payload,
+        {"version", "kind", "run_id", "sha"},
+        "workflow_success solo admite version, kind, run_id y sha.",
+    )
+    run_id = payload.get("run_id")
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        raise CoordinationError("workflow_success requiere run_id positivo.")
+    return {
+        "version": 1,
+        "kind": "workflow_success",
+        "run_id": run_id,
+        "sha": _canonical_sha(payload.get("sha"), "sha"),
+    }
+
+
+def _parse_branch_sha_unblock(payload: dict[str, Any]) -> dict[str, Any]:
+    """Valida la variante branch_sha."""
+    _require_unblock_fields(
+        payload,
+        {"version", "kind", "branch", "sha"},
+        "branch_sha solo admite version, kind, branch y sha.",
+    )
+    branch = payload.get("branch")
+    invalid_branch = (
+        not isinstance(branch, str)
+        or BRANCH_NAME_RE.fullmatch(branch) is None
+        or branch.startswith("/")
+        or ".." in branch.split("/")
+    )
+    if invalid_branch:
+        raise CoordinationError("branch_sha requiere una rama canónica.")
+    return {
+        "version": 1,
+        "kind": "branch_sha",
+        "branch": branch,
+        "sha": _canonical_sha(payload.get("sha"), "sha"),
+    }
+
+
+UNBLOCK_PARSERS = {
+    "issue_closed": _parse_issue_closed_unblock,
+    "workflow_success": _parse_workflow_success_unblock,
+    "branch_sha": _parse_branch_sha_unblock,
+}
+
+
+def parse_unblock_marker(body: str) -> dict[str, Any] | None:
+    """Extrae una única condición cerrada factory-unblock desde el body."""
+    matches = UNBLOCK_RE.findall(body or "")
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise CoordinationError("Debe existir como máximo un marker factory-unblock.")
+    try:
+        payload = json.loads(matches[0])
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise CoordinationError("factory-unblock contiene JSON inválido.") from exc
+    if (
+        not isinstance(payload, dict)
+        or type(payload.get("version")) is not int
+        or payload.get("version") != 1
+    ):
+        raise CoordinationError("factory-unblock requiere version=1 entero.")
+
+    parser = UNBLOCK_PARSERS.get(payload.get("kind"))
+    if parser is None:
+        raise CoordinationError("factory-unblock usa una condición no permitida.")
+    return parser(payload)
+
+def unblock_fingerprint(marker: dict[str, Any]) -> str:
+    """Fingerprint estable usado para hacer idempotente la evidencia."""
+    encoded = json.dumps(
+        marker,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def verify_unblock_condition(
+    api: GitHub,
+    marker: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Evalúa únicamente evidencia máquina-verificable y fail-closed."""
+    kind = marker["kind"]
+    if kind == "issue_closed":
+        target = api.issue(int(marker["issue"]))
+        if target.get("state") == "closed":
+            return True, f"issue:{marker['issue']}:closed"
+        return False, None
+
+    if kind == "workflow_success":
+        run = api.workflow_run(int(marker["run_id"]))
+        expected_sha = str(marker["sha"])
+        if (
+            run.get("status") == "completed"
+            and run.get("conclusion") == "success"
+            and str(run.get("head_sha") or "").lower() == expected_sha
+        ):
+            return True, f"workflow_run:{marker['run_id']}@{expected_sha}"
+        return False, None
+
+    if kind == "branch_sha":
+        expected_sha = str(marker["sha"])
+        actual = api.branch_sha(str(marker["branch"]))
+        if isinstance(actual, str) and actual.lower() == expected_sha:
+            return True, f"branch:{marker['branch']}@{expected_sha}"
+        return False, None
+
+    return False, None
+
+
+def unblock_evidence_exists(
+    comments: list[dict[str, Any]],
+    fingerprint: str,
+    trusted_login: str = TRUSTED_MARKER_LOGIN,
+) -> bool:
+    """Solo confía en evidencia previa emitida por el bot canónico."""
+    for comment in comments:
+        user = comment.get("user")
+        if not isinstance(user, dict) or user.get("login") != trusted_login:
+            continue
+        for raw in UNBLOCK_EVIDENCE_RE.findall(str(comment.get("body") or "")):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(payload, dict)
+                and set(payload) == {"version", "fingerprint", "evidence"}
+                and payload.get("version") == 1
+                and payload.get("fingerprint") == fingerprint
+                and isinstance(payload.get("evidence"), str)
+                and payload["evidence"]
+            ):
+                return True
+    return False
+
+
+def _unblock_evidence_comment(fingerprint: str, evidence: str) -> str:
+    payload = json.dumps(
+        {
+            "version": 1,
+            "fingerprint": fingerprint,
+            "evidence": evidence,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return (
+        f"<!-- factory-unblock-evidence {payload} -->\n"
+        f"Bloqueo reconciliado automáticamente. Evidencia: {evidence}."
+    )
+
+
+def _initial_unblock_candidate(
+    api: GitHub,
+    issue: dict[str, Any],
+) -> tuple[int, dict[str, Any], str] | None:
+    """Filtra un Issue bloqueado cuya evidencia inicial ya es válida."""
+    number = issue.get("number")
+    if not isinstance(number, int) or STATUS_BLOCKED not in label_names(issue):
+        return None
+    try:
+        marker = parse_unblock_marker(str(issue.get("body") or ""))
+    except CoordinationError:
+        return None
+    if marker is None:
+        return None
+    satisfied, evidence = verify_unblock_condition(api, marker)
+    if not satisfied or not evidence:
+        return None
+    return number, marker, unblock_fingerprint(marker)
+
+
+def _revalidated_unblock_evidence(
+    api: GitHub,
+    number: int,
+    fingerprint: str,
+) -> str | None:
+    """Relee estado/marker y revalida evidencia justo antes de mutar."""
+    current = api.issue(number)
+    if current.get("state") != "open":
+        return None
+    if STATUS_BLOCKED not in label_names(current):
+        return None
+    try:
+        marker = parse_unblock_marker(str(current.get("body") or ""))
+    except CoordinationError:
+        return None
+    if marker is None or unblock_fingerprint(marker) != fingerprint:
+        return None
+    satisfied, evidence = verify_unblock_condition(api, marker)
+    return evidence if satisfied and evidence else None
+
+
+def _apply_verified_unblock(
+    api: GitHub,
+    number: int,
+    fingerprint: str,
+    evidence: str,
+) -> None:
+    """Publica evidencia una vez y cambia el Issue a disponible."""
+    comments = api.issue_comments(number)
+    if not unblock_evidence_exists(comments, fingerprint):
+        api.comment(
+            number,
+            _unblock_evidence_comment(fingerprint, evidence),
+        )
+    api.set_status(number, STATUS_AVAILABLE)
+
+
+def sweep_satisfied_blocks(api: GitHub) -> int:
+    """Desbloquea Issues solo cuando su marker cerrado ya tiene evidencia válida."""
+    changed = 0
+    for issue in api.open_issues():
+        candidate = _initial_unblock_candidate(api, issue)
+        if candidate is None:
+            continue
+        number, _marker, fingerprint = candidate
+        evidence = _revalidated_unblock_evidence(api, number, fingerprint)
+        if evidence is None:
+            continue
+        _apply_verified_unblock(api, number, fingerprint, evidence)
+        changed += 1
+
+    print(f"Bloqueos satisfechos reconciliados: {changed}")
+    return changed
+
+def run_scheduled_sweep(api: GitHub) -> dict[str, int]:
+    """Ejecuta el único sweep horario para reservas stale y bloqueos verificables."""
+    return {
+        "stale_reservations": mark_stale_reservations(api),
+        "satisfied_blocks": sweep_satisfied_blocks(api),
+    }
 
 
 def authorized(association: str) -> bool:
@@ -2693,7 +2988,7 @@ def main() -> int:
         elif args.command == "validar-pr":
             validate_pull(api, args.pr, args.require_reservation)
         elif args.command == "marcar-inactivas":
-            mark_stale_reservations(api)
+            run_scheduled_sweep(api)
         else:
             parser.error("Comando no soportado.")
     except (CoordinationError, GitHubError) as exc:

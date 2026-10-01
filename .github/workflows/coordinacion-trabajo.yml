@@ -168,11 +168,12 @@ jobs:
           python3 scripts/coordinar_trabajo.py issue-event             --repo "$REPOSITORIO"             --issue "$ISSUE"             --action "$ACCION"
 
   marcar-reservas-inactivas:
-    name: Marcar reservas recuperables
+    name: Barrer coordinación y bloqueos
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: write
       issues: write
     steps:
@@ -181,7 +182,7 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Marcar reservas sin progreso verificable
+      - name: Barrer reservas y bloqueos verificables
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}

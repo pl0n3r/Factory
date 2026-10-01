@@ -44,6 +44,7 @@ jobs:
     # GitHub valida el máximo permission envelope del reusable antes de
     # seleccionar el job interno. El reusable conserva mínimo privilegio por job.
     permissions:
+      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -62,6 +63,7 @@ jobs:
       github.event.action == 'labeled' &&
       github.event.label.name == 'estado: reservado'
     permissions:
+      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -79,6 +81,7 @@ jobs:
     # qué operación interna se ejecutará. La operación pr sigue estrechando
     # permisos dentro de Factory.
     permissions:
+      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -94,6 +97,7 @@ jobs:
     # Mismo sobre de carga; el job validar-pr del reusable conserva permisos
     # read-only (contents/issues/pull-requests: read).
     permissions:
+      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -107,6 +111,7 @@ jobs:
   issue:
     if: github.event_name == 'issues' && (github.event.action == 'closed' || github.event.action == 'reopened')
     permissions:
+      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -120,6 +125,7 @@ jobs:
   sweep:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
+      actions: read
       contents: write
       issues: write
       pull-requests: write
