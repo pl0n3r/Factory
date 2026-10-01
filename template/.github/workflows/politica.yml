@@ -4,12 +4,27 @@ on:
     types: [opened, synchronize, reopened, edited]
   pull_request_review:
     types: [submitted, dismissed]
+  issue_comment:
+    types: [created, edited]
 permissions:
   contents: read
   pull-requests: read
 jobs:
   politica:
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
     uses: pl0n3r/factory/.github/workflows/politica.yml@v1
     with:
       pr_number: ${{ github.event.pull_request.number }}
       required_review_bot: ""
+
+  politica-comentario:
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: write
+    uses: pl0n3r/factory/.github/workflows/politica-comentario.yml@v1
+    with:
+      pr_number: ${{ github.event.issue.number }}
+      comment_id: ${{ github.event.comment.id }}
