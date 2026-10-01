@@ -369,6 +369,20 @@ class QualityContractTests(unittest.TestCase):
         with self.assertRaises(QualityContractError):
             validate_quality_contract(malformed)
 
+        arbitrary_reason = copy.deepcopy(payload)
+        arbitrary_reason["sonar"]["applicability"]["coverage"]["reason"] = (
+            "arbitrary_reason"
+        )
+        with self.assertRaises(QualityContractError):
+            validate_quality_contract(arbitrary_reason)
+
+        arbitrary_org_reason = copy.deepcopy(payload)
+        arbitrary_org_reason["sonar"]["applicability"][
+            "organization_line_usage"
+        ]["reason"] = "another_arbitrary_reason"
+        with self.assertRaises(QualityContractError):
+            validate_quality_contract(arbitrary_org_reason)
+
 
 if __name__ == "__main__":
     unittest.main()
