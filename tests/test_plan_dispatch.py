@@ -147,6 +147,7 @@ class PlanContractTests(unittest.TestCase):
             if "**Carril 2 — dirección de producto:**" in line
         )
         for project in (
+            "Factory",
             "Condor",
             "GrindFlow",
             "BRVTAL",

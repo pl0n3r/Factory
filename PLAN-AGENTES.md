@@ -30,15 +30,27 @@ Reglas del despachador:
 - **ControlBot** (repositorio público, acceso al panel restringido; D-062) resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
 - Factory, ControlBot y AutoFactory compiten dentro de la misma cola automática con las mismas reglas de readiness y prioridad. Su naturaleza arquitectónica no les da prioridad artificial ni los excluye.
 
+### Escalera cuando no existe trabajo `ready`
+
+Que el ranking normal no encuentre candidato **no significa que el agente quede ocioso**. Aplica, en este orden y sin desplazar las reglas 1–7:
+
+1. reconciliar bloqueos cuya condición declarada ya esté satisfecha con evidencia verificable; el desbloqueo debe ser idempotente y citar la evidencia;
+2. tomar trabajo de calidad/seguridad/hardening/deuda/rendimiento ya materializado y seguro;
+3. tomar relleno curado, reversible y de bajo riesgo, sin gasto ni ampliación de autoridad;
+4. proponer un único tramo `product-direction` cuando corresponda, incluidos los casos de cola totalmente bloqueada en cualquiera de los siete repos;
+5. si no existe ninguna acción segura, publicar el motivo concreto y qué evidencia/decisión falta. La parada silenciosa queda prohibida.
+
+El dispatcher conserva `select_next` como ranking fail-closed y usa la escalera como envolvente: un fallback nunca convierte un candidato bloqueado en ejecutable ni preempte trabajo normal. El tiempo entre fin de trabajo y siguiente `Despacho:` se mide por agente/repo; superar el umbral operativo degrada Quality Health hasta que exista un siguiente despacho.
+
 ### Política de tres carriles hasta live — Factory#683
 
 - **Carril 1 — auto-alimentado:** calidad, seguridad, hardening, deuda técnica y rendimiento siguen entrando por señales verificables ([AUTO], vulnerabilidades, bugs, CI y Quality Health) y se despachan sin puerta de dirección de producto.
-- **Carril 2 — dirección de producto:** cuando Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory o FactoryRunner tengan **como máximo 1 leaf elegible**, el dispatcher propone anticipadamente un único siguiente tramo con objetivo, leaves, criterios de aceptación ejecutables y dependencias. La propuesta usa una puerta product-direction; mientras no exista aprobación explícita, no se materializa ningún leaf como estado: disponible.
+- **Carril 2 — dirección de producto:** cuando Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory o FactoryRunner tengan **como máximo 1 leaf elegible** —incluido el caso de cero leaves porque todo esté bloqueado—, el dispatcher propone anticipadamente un único siguiente tramo con objetivo, leaves, criterios de aceptación ejecutables y dependencias. La propuesta usa una puerta product-direction; mientras no exista aprobación explícita, no se materializa ningún leaf como estado: disponible.
 - Un leaf `product-direction` aprobado no puede etiquetarse `available` / `estado: disponible` hasta que su body materializado pase el mismo preflight de aceptación usado por `/tomar`; si el contrato generado falla, el dispatcher falla cerrado y no publica readiness.
 - **Carril 3 — preparación del live:** se puede mantener evidencia y checklist de readiness, pero ningún agente cambia la fase ni ejecuta go-live. El live sigue siendo una decisión exclusiva del dueño.
-- El trigger del carril 2 es idempotente por producto: si ya existe una puerta de dirección abierta, no crea otra; con **2 o más leaves elegibles** considera que existe trabajo suficiente y tampoco abre una puerta anticipada. No introduce scheduler ni backlog paralelo.
+- El trigger del carril 2 es idempotente por repositorio: si ya existe una puerta de dirección abierta, no crea otra; con **2 o más leaves elegibles** considera que existe trabajo suficiente y tampoco abre una puerta anticipada. No introduce scheduler ni backlog paralelo.
 - Tras crear una puerta product-direction, el despachador debe **releer las puertas abiertas y reconciliar post-create** antes de devolver control: si hubo creadores concurrentes, conserva la instancia válida más antigua por created_at (desempate por número de Issue) y cierra las posteriores como duplicadas sin concederles autoridad ni materializar leaves.
-- Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner pueden mantener dirección de producto en paralelo; el desempate global existente sigue mandando. En ControlBot, AutoFactory y FactoryRunner la puerta no salta bloqueos de autoridad, live, gasto ni proveedores: solo propone trabajo dentro de las decisiones vigentes. El paralelismo no inventa cuotas: CI/API/cuentas se observan mediante Factory#584 y AutoFactory#62 y conservan límites, claims, reservas y gates actuales.
+- Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner pueden mantener una puerta de dirección de siguiente tramo en paralelo; el desempate global existente sigue mandando. En ControlBot, AutoFactory y FactoryRunner la puerta no salta bloqueos de autoridad, live, gasto ni proveedores: solo propone trabajo dentro de las decisiones vigentes. El paralelismo no inventa cuotas: CI/API/cuentas se observan mediante Factory#584 y AutoFactory#62 y conservan límites, claims, reservas y gates actuales.
 - Backblaze B2 no se provisiona antes de live; la decisión queda registrada como código junto con la opción A vigente de AutoFactory#79.
 
 Bloqueos intencionales que el carril nuevo **no** puede saltar:
