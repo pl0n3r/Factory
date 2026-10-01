@@ -348,7 +348,7 @@ class AcceptanceContractTests(unittest.TestCase):
                     ]
                 },
             )
-        with self.assertRaisesRegex(AcceptanceError, "no existe check"):
+        with self.assertRaisesRegex(CheckPending, "todavía no existe"):
             verify_check(criterion, {"check_runs": []})
 
     def test_workflow_paginates_check_runs(self):
