@@ -29,6 +29,8 @@ _MAX_SONAR_ISSUES = 10_000
 _GITHUB_PAGE_SIZE = 50
 _MAX_GITHUB_ISSUES = 10_000
 _MAX_GITHUB_ISSUE_PAGES = (_MAX_GITHUB_ISSUES // _GITHUB_PAGE_SIZE) + 1
+_MAX_GITHUB_COMMENTS = 1_000
+_MAX_GITHUB_COMMENT_PAGES = (_MAX_GITHUB_COMMENTS // _GITHUB_PAGE_SIZE) + 1
 SENSITIVE = re.compile(
     r"(?i)(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)"
     r"\s*[:=]|bearer\s+[A-Za-z0-9._~+/-]{8,}"
@@ -169,12 +171,30 @@ def sync_project(
         if signal["status"] == "NOT_APPLICABLE":
             if current is not None and current["state"] != "closed":
                 source_ref = signal["details"].get("source_ref")
+                comment_marker = (
+                    "<!-- factory-sonar-watch-not-applicable "
+                    + json.dumps(
+                        {
+                            "project": evidence["project"],
+                            "signal": signal["signal"],
+                            "version": 1,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + " -->"
+                )
                 comment = (
+                    f"{comment_marker}\n"
                     f"ℹ️ Sonar Watch: la señal `{signal['signal']}` pasa a "
                     f"`NOT_APPLICABLE` por `{signal['reason']}` "
                     f"según `{source_ref}`. Se cierra sin tratarla como PASS."
                 )
-                issues.comment(current["number"], body=comment)
+                issues.comment_once(
+                    current["number"],
+                    marker=comment_marker,
+                    body=comment,
+                )
                 issues.update(
                     current["number"],
                     title=current["title"],
@@ -278,6 +298,35 @@ class GitHubIssues:
         self.http.request(
             f"/repos/{self.repository}/issues/{number}/comments", method="POST",
             payload={"body": body},
+        )
+
+    def comment_once(self, number: int, *, marker: str, body: str) -> bool:
+        scanned = 0
+        for page in range(1, _MAX_GITHUB_COMMENT_PAGES + 1):
+            rows = self.http.request(
+                f"/repos/{self.repository}/issues/{number}/comments?"
+                + urlencode({
+                    "per_page": _GITHUB_PAGE_SIZE,
+                    "page": page,
+                })
+            )
+            if not isinstance(rows, list) or len(rows) > _GITHUB_PAGE_SIZE:
+                raise SonarWatchError("respuesta GitHub Comments inválida.")
+            scanned += len(rows)
+            if scanned > _MAX_GITHUB_COMMENTS:
+                raise SonarWatchError(
+                    "paginación GitHub Comments excede límite seguro."
+                )
+            if any(
+                isinstance(row, dict) and marker in (row.get("body") or "")
+                for row in rows
+            ):
+                return False
+            if len(rows) < _GITHUB_PAGE_SIZE:
+                self.comment(number, body=body)
+                return True
+        raise SonarWatchError(
+            "paginación GitHub Comments excede límite seguro."
         )
 
 
