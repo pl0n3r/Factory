@@ -810,11 +810,21 @@ def matching_merged_pull_for_reservation(
         seen.add(number)
         pull = api.pull(number)
         pull_head = pull.get("head")
+        pull_base = pull.get("base")
+        head_repo = (
+            pull_head.get("repo")
+            if isinstance(pull_head, dict)
+            else None
+        )
         body = str(pull.get("body") or "")
         if (
             pull.get("merged") is True
             and isinstance(pull_head, dict)
             and pull_head.get("ref") == branch
+            and isinstance(head_repo, dict)
+            and head_repo.get("full_name") == api.repo
+            and isinstance(pull_base, dict)
+            and pull_base.get("ref") == "main"
             and reservation_from_pr_body(body) == reservation_id
             and issue_number in closing_issues(body)
         ):
