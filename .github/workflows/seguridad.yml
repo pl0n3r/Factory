@@ -109,8 +109,19 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Validar comando y materializar decisión
+      - name: Reconciliar puerta canónica antes de decidir
+        id: gate_sync
         if: steps.preflight.outputs.trusted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          python3 seguridad/sincronizar_puerta.py valid >> "$GITHUB_OUTPUT"
+
+      - name: Validar comando y materializar decisión
+        if: steps.preflight.outputs.trusted == 'true' && steps.gate_sync.outputs.canonical == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
