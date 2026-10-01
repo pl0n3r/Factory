@@ -30,6 +30,18 @@ Reglas del despachador:
 - **ControlBot** (repositorio público, acceso al panel restringido; D-062) resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
 - Factory, ControlBot y AutoFactory compiten dentro de la misma cola automática con las mismas reglas de readiness y prioridad. Su naturaleza arquitectónica no les da prioridad artificial ni los excluye.
 
+### Escalera cuando no existe trabajo `ready`
+
+Que el ranking normal no encuentre candidato **no significa que el agente quede ocioso**. Aplica, en este orden y sin desplazar las reglas 1–7:
+
+1. reconciliar bloqueos cuya condición declarada ya esté satisfecha con evidencia verificable; el desbloqueo debe ser idempotente y citar la evidencia;
+2. tomar trabajo de calidad/seguridad/hardening/deuda/rendimiento ya materializado y seguro;
+3. tomar relleno curado, reversible y de bajo riesgo, sin gasto ni ampliación de autoridad;
+4. proponer un único tramo `product-direction` cuando corresponda, incluidos los casos de cola totalmente bloqueada en cualquiera de los siete repos;
+5. si no existe ninguna acción segura, publicar el motivo concreto y qué evidencia/decisión falta. La parada silenciosa queda prohibida.
+
+El dispatcher conserva `select_next` como ranking fail-closed y usa la escalera como envolvente: un fallback nunca convierte un candidato bloqueado en ejecutable ni preempte trabajo normal. El tiempo entre fin de trabajo y siguiente `Despacho:` se mide por agente/repo; superar el umbral operativo degrada Quality Health hasta que exista un siguiente despacho.
+
 ### Política de tres carriles hasta live — Factory#683
 
 - **Carril 1 — auto-alimentado:** calidad, seguridad, hardening, deuda técnica y rendimiento siguen entrando por señales verificables ([AUTO], vulnerabilidades, bugs, CI y Quality Health) y se despachan sin puerta de dirección de producto.
