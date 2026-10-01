@@ -37,7 +37,7 @@ La API REST pública **sin autenticar** tiene un límite primario de **60 solici
 
 No redefine prioridades: aplica la sección 0 y la evidencia viva, en este orden resumido:
 
-`HEALTH degradado → incidente → reparación activa → decisión del dueño ya resuelta → gate de tanda → crítica → alta → media → desempate de regla 7`.
+`HEALTH degradado → incidente abierto → reparación activa válida → decisión del dueño ya respondida → gate de tanda → prioridad crítica → alta → media → desempate de regla 7`.
 
 Si no existe trabajo `ready`, aplica la **escalera no ociosa ya integrada por Factory#699/#702** en la sección 0; no conviertas un bloqueo en ejecutable ni inventes un backlog paralelo.
 
