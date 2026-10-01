@@ -28,7 +28,7 @@ _SONAR_PAGE_SIZE = 500
 _MAX_SONAR_ISSUES = 10_000
 _GITHUB_PAGE_SIZE = 50
 _MAX_GITHUB_ISSUES = 10_000
-_MAX_GITHUB_ISSUE_PAGES = (_MAX_GITHUB_ISSUES // _GITHUB_PAGE_SIZE) + 1
+_MAX_GITHUB_ISSUE_PAGES = _MAX_GITHUB_ISSUES // _GITHUB_PAGE_SIZE
 SENSITIVE = re.compile(
     r"(?i)(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)"
     r"\s*[:=]|bearer\s+[A-Za-z0-9._~+/-]{8,}"
