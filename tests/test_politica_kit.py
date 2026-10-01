@@ -5,8 +5,10 @@ from pathlib import Path
 
 from scripts.politica_kit import (
     PolicyError,
+    _read_bounded_lines,
     count_review_rounds,
     load_policy,
+    load_reviewer_policy,
     parse_reviewer_policy,
     resolve_required_review_bot,
     validate_required_bot_review,
@@ -256,6 +258,64 @@ class T(unittest.TestCase):
             self.assertEqual(load_policy(Path("decisiones.yml"), root=root)["version"], 1)
             with self.assertRaises(PolicyError):
                 load_policy(Path("../decisiones.yml"), root=root)
+
+
+class PolicyKitPathBoundaryTests(unittest.TestCase):
+    def _temp_file(self, payload: str) -> Path:
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            delete=False,
+        )
+        self.addCleanup(lambda: Path(handle.name).unlink(missing_ok=True))
+        with handle:
+            handle.write(payload)
+        return Path(handle.name)
+
+    def test_reviewer_policy_rejects_non_temp_file(self):
+        with self.assertRaises(PolicyError):
+            load_reviewer_policy(Path(__file__).resolve())
+
+        valid = self._temp_file(json.dumps({
+            "version": 1,
+            "required_review_bot": "coderabbitai[bot]",
+        }))
+        self.assertEqual(
+            load_reviewer_policy(valid),
+            "coderabbitai[bot]",
+        )
+
+    def test_comments_reader_rejects_non_temp_file(self):
+        with self.assertRaises(PolicyError):
+            _read_bounded_lines(
+                Path(__file__).resolve(),
+                max_bytes=1024,
+                noun="comentarios",
+            )
+
+        valid = self._temp_file("uno\ndos\n")
+        self.assertEqual(
+            _read_bounded_lines(
+                valid,
+                max_bytes=1024,
+                noun="comentarios",
+            ),
+            ["uno", "dos"],
+        )
+
+    def test_temp_symlink_escape_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            link = Path(tmp) / "evidencia"
+            try:
+                link.symlink_to(Path(__file__).resolve())
+            except OSError as exc:
+                self.skipTest(f"symlink no disponible: {exc}")
+            with self.assertRaises(PolicyError):
+                _read_bounded_lines(
+                    link,
+                    max_bytes=1024,
+                    noun="comentarios",
+                )
 
 
 if __name__ == "__main__":

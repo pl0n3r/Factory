@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,31 @@ MAX_EVIDENCE_ITEM_BYTES = 100_000
 
 class PolicyError(ValueError):
     pass
+
+
+def _resolve_temp_input(path: Path, *, noun: str) -> Path:
+    """Resuelve un input temporal sin permitir escapes ni symlinks."""
+    try:
+        temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
+        candidate = Path(path)
+        if candidate.is_symlink():
+            raise PolicyError(f"{noun} no puede ser un enlace simbólico.")
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(temp_root)
+    except PolicyError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise PolicyError(
+            f"{noun} debe pertenecer al directorio temporal."
+        ) from exc
+    if not resolved.is_file():
+        raise PolicyError(f"{noun} debe ser un archivo regular.")
+    try:
+        if resolved.stat().st_nlink != 1:
+            raise PolicyError(f"{noun} no puede tener enlaces adicionales.")
+    except OSError as exc:
+        raise PolicyError(f"No se pudo inspeccionar {noun}.") from exc
+    return resolved
 
 
 def load_policy(path: Path = POLICY_FILE, *, root: Path | None = None) -> dict[str, Any]:
@@ -84,8 +110,9 @@ def parse_reviewer_policy(payload: str | None) -> str:
 def load_reviewer_policy(path: Path | None) -> str:
     if path is None:
         return ""
+    resolved = _resolve_temp_input(path, noun="factory-policy.json base")
     try:
-        payload = path.read_text(encoding="utf-8")
+        payload = resolved.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise PolicyError("No se pudo leer factory-policy.json base.") from exc
     return parse_reviewer_policy(payload)
@@ -241,8 +268,9 @@ def validate_rounds(rounds: int, limit: int) -> None:
 
 
 def _read_bounded_lines(path: Path, *, max_bytes: int, noun: str) -> list[str]:
+    resolved = _resolve_temp_input(path, noun=noun)
     try:
-        with path.open("r", encoding="utf-8") as handle:
+        with resolved.open("r", encoding="utf-8") as handle:
             payload = handle.read(max_bytes + 1)
     except (OSError, UnicodeError) as exc:
         raise PolicyError(f"No se pudo leer {noun}.") from exc
