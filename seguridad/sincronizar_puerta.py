@@ -10,7 +10,11 @@ import re
 import subprocess
 from urllib.parse import quote
 
-from puertas_humanas import GateValidationError, gate_identity_from_body
+from puertas_humanas import (
+    GateValidationError,
+    gate_authority_contract_from_body,
+    gate_target_identity_from_body,
+)
 
 MARKER = "<!-- factory-invalid-gate -->"
 OWNED = "<!-- factory-invalid-gate-owner:bot -->"
@@ -171,7 +175,7 @@ def _decision_evidence(api, base: str) -> tuple[str, str] | None:
     return next(iter(found), None)
 
 
-def _equivalent_issues(api, repository: str, identity: str) -> list[dict]:
+def _target_issues(api, repository: str, target_identity: str) -> list[dict]:
     candidates = api(
         "GET", f"repos/{repository}/issues?state=all&per_page=100"
     )
@@ -183,10 +187,10 @@ def _equivalent_issues(api, repository: str, identity: str) -> list[dict]:
         if not isinstance(body, str):
             continue
         try:
-            candidate_identity = gate_identity_from_body(body)
+            candidate_identity = gate_target_identity_from_body(body)
         except (GateValidationError, ValueError):
             continue
-        if candidate_identity == identity:
+        if candidate_identity == target_identity:
             equivalent.append(candidate)
     return sorted(equivalent, key=lambda item: item.get("number", 0))
 
@@ -236,14 +240,32 @@ def reconcile_gate(api, repository: str, issue: int) -> bool:
         return False
 
     try:
-        identity = gate_identity_from_body(current["body"])
+        target_identity = gate_target_identity_from_body(current["body"])
+        authority_contract = gate_authority_contract_from_body(current["body"])
     except (GateValidationError, ValueError):
         return False
 
-    equivalent = _equivalent_issues(api, repository, identity)
+    equivalent = _target_issues(api, repository, target_identity)
     if issue not in {item.get("number") for item in equivalent}:
         # Si GitHub todavía no refleja el Issue en el listado, no enrutar.
         return False
+
+    for candidate in equivalent:
+        body = candidate.get("body")
+        if not isinstance(body, str):
+            raise GateConflictError(
+                "Una puerta equivalente perdió su contrato de autoridad."
+            )
+        try:
+            candidate_contract = gate_authority_contract_from_body(body)
+        except (GateValidationError, ValueError) as exc:
+            raise GateConflictError(
+                "Una puerta equivalente tiene contrato inválido."
+            ) from exc
+        if candidate_contract != authority_contract:
+            raise GateConflictError(
+                "Puertas del mismo target contienen contratos de autoridad distintos."
+            )
 
     open_equivalent = [
         item for item in equivalent if item.get("state") == "open"
