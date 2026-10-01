@@ -35,8 +35,8 @@ class PlanBootstrapCardTests(unittest.TestCase):
         return self.plan[start:end]
 
     def test_readme_dispatch_prompts_remain_exact(self) -> None:
-        self.assertIn(f"\`\`\`\n{DIRECTED_PROMPT}\n\`\`\`", self.readme)
-        self.assertIn(f"\`\`\`\n{DISPATCH_PROMPT}\n\`\`\`", self.readme)
+        self.assertIn(f"```\n{DIRECTED_PROMPT}\n```", self.readme)
+        self.assertIn(f"```\n{DISPATCH_PROMPT}\n```", self.readme)
         self.assertEqual(self.readme.count(DIRECTED_PROMPT), 1)
         self.assertEqual(self.readme.count(DISPATCH_PROMPT), 1)
 
