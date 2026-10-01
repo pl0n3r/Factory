@@ -772,7 +772,7 @@ class SonarWatchTests(unittest.TestCase):
         self.assertEqual(sonar_watch._MAX_GITHUB_ISSUES, 10_000)
         self.assertEqual(
             sonar_watch._MAX_GITHUB_ISSUE_PAGES,
-            sonar_watch._MAX_GITHUB_ISSUES // sonar_watch._GITHUB_PAGE_SIZE,
+            (sonar_watch._MAX_GITHUB_ISSUES // sonar_watch._GITHUB_PAGE_SIZE) + 1,
         )
         github = sonar_watch.GitHubIssues(
             repository="pl0n3r/Factory",
@@ -798,6 +798,69 @@ class SonarWatchTests(unittest.TestCase):
         github.http.request = fake_request
         self.assertEqual(github.find("<!-- absent -->"), [])
         self.assertEqual(len(calls), 2)
+
+        original = (
+            sonar_watch._GITHUB_PAGE_SIZE,
+            sonar_watch._MAX_GITHUB_ISSUES,
+            sonar_watch._MAX_GITHUB_ISSUE_PAGES,
+        )
+        sonar_watch._GITHUB_PAGE_SIZE = 2
+        sonar_watch._MAX_GITHUB_ISSUES = 4
+        sonar_watch._MAX_GITHUB_ISSUE_PAGES = 3
+        try:
+            exact = sonar_watch.GitHubIssues(
+                repository="pl0n3r/Factory",
+                token="token",
+            )
+            exact.http.request = lambda path, **kwargs: (
+                [
+                    {
+                        "number": 1,
+                        "title": "issue",
+                        "body": "",
+                        "state": "open",
+                    },
+                    {
+                        "number": 2,
+                        "title": "issue",
+                        "body": "",
+                        "state": "open",
+                    },
+                ]
+                if not path.endswith("page=3")
+                else []
+            )
+            self.assertEqual(exact.find("<!-- absent -->"), [])
+
+            overflow = sonar_watch.GitHubIssues(
+                repository="pl0n3r/Factory",
+                token="token",
+            )
+            overflow.http.request = lambda path, **kwargs: [
+                {
+                    "number": 1,
+                    "title": "issue",
+                    "body": "",
+                    "state": "open",
+                },
+                {
+                    "number": 2,
+                    "title": "issue",
+                    "body": "",
+                    "state": "open",
+                },
+            ]
+            with self.assertRaisesRegex(
+                sonar_watch.SonarWatchError,
+                "excede límite seguro",
+            ):
+                overflow.find("<!-- absent -->")
+        finally:
+            (
+                sonar_watch._GITHUB_PAGE_SIZE,
+                sonar_watch._MAX_GITHUB_ISSUES,
+                sonar_watch._MAX_GITHUB_ISSUE_PAGES,
+            ) = original
 
     def test_workflow_keeps_scheduled_and_manual_triggers(self):
         text = (
