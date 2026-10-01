@@ -20,36 +20,36 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
         self.assertEqual(payload, {"version": "1.0.18"})
 
     def test_candidate_preserves_release_open_pull_feedback(self) -> None:
-        import runpy
+        from scripts.aceptacion_kit import Criterion, run_named_test
 
-        namespace = runpy.run_path(
-            str(self.root / "tests/test_coordinar_trabajo.py")
-        )
-        case_type = namespace["ReleaseOpenPullFeedbackTests"]
-        for test_name in (
+        for target in (
+            "tests/test_coordinar_trabajo.py::ReleaseOpenPullFeedbackTests::"
             "test_normal_release_with_open_pull_fails_closed_and_explains_blocker",
+            "tests/test_coordinar_trabajo.py::ReleaseOpenPullFeedbackTests::"
             "test_force_release_with_open_pull_preserves_existing_semantics",
+            "tests/test_coordinar_trabajo.py::ReleaseOpenPullFeedbackTests::"
             "test_normal_release_without_open_pull_still_releases",
         ):
-            case_type(methodName=test_name).debug()
+            run_named_test(Criterion("AC-01", "test", target), self.root)
 
     def test_candidate_preserves_factory_release_authority_canonicalization(
         self,
     ) -> None:
-        import runpy
+        from scripts.aceptacion_kit import Criterion, run_named_test
 
-        namespace = runpy.run_path(
-            str(self.root / "seguridad/test_puertas_humanas.py")
-        )
-        case_type = namespace["GateDedupTests"]
-        for test_name in (
+        for target in (
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_factory_release_authority_ignores_explanatory_copy",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_release_1017_race_converges_without_body_edit",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_factory_release_target_remains_part_of_identity",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_factory_release_incompatible_machine_contract_fails_closed",
+            "seguridad/test_puertas_humanas.py::GateDedupTests::"
             "test_non_release_authority_still_uses_effect",
         ):
-            case_type(methodName=test_name).debug()
+            run_named_test(Criterion("AC-02", "test", target), self.root)
 
     def test_previous_candidate_is_historical_and_keeps_1_0_17_guarantees(self) -> None:
         historical = (
