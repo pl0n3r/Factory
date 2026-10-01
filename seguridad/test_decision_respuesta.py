@@ -148,6 +148,25 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertEqual(payload["option"], "B")
         self.assertRegex(payload["gate_sha256"], r"^[0-9a-f]{64}$")
 
+        semantic_before_journal = FakeAPI(
+            mutate_body_on_issue_get=2,
+            replacement_body=gate_body(
+                ("A", "B"),
+                context="La puerta cambió antes de publicar el journal.",
+            ),
+        )
+        self.assertFalse(
+            materialize_decision(
+                event(), semantic_before_journal, "pl0n3r/Factory"
+            )
+        )
+        self.assertEqual(semantic_before_journal.issue["state"], "open")
+        self.assertIn(DECISION_LABEL, semantic_before_journal.label_names())
+        self.assertEqual(semantic_before_journal.comments, [])
+        self.assertFalse(any(
+            call[0] == "PATCH" for call in semantic_before_journal.calls
+        ))
+
         semantic = FakeAPI(
             mutate_body_on_issue_get=3,
             replacement_body=gate_body(

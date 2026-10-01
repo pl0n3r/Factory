@@ -216,14 +216,14 @@ def materialize_decision(
             live_options, live_gate_sha256 = _gate_snapshot(live_body)
         except (DecisionError, ValueError):
             return False
-        if option not in live_options:
+        if option not in live_options or live_gate_sha256 != gate_sha256:
             return False
         api(
             "POST",
             f"{base}/comments",
-            {"body": _evidence_body(option, live_gate_sha256)},
+            {"body": _evidence_body(option, gate_sha256)},
         )
-        existing = (option, live_gate_sha256)
+        existing = expected_evidence
 
     # Revalidar la identidad completa del gate antes de la transición final.
     issue = api("GET", base)
