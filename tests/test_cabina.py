@@ -64,6 +64,77 @@ class CollectionTests(unittest.TestCase):
         )
 
 
+
+
+    def test_collection_covers_success_and_edge_payloads(self) -> None:
+        class Response:
+            def __init__(self, status, payload): self.status, self.payload = status, payload
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, _): return self.payload
+
+        with patch.object(cabina.urllib.request, "urlopen", return_value=Response(200, b'{"ok":true}')):
+            self.assertEqual(cabina.http_json(cabina.API + "/x", "token"), (200, {"ok": True}))
+        with patch.object(cabina.urllib.request, "urlopen", return_value=Response(200, b"not-json")):
+            self.assertEqual(cabina.http_json("https://example.com"), (200, None))
+        error = cabina.urllib.error.HTTPError("https://x", 429, "rate", {}, None)
+        with patch.object(cabina.urllib.request, "urlopen", side_effect=error):
+            self.assertEqual(cabina.http_json("https://x"), (429, None))
+        with patch.object(cabina.urllib.request, "urlopen", side_effect=OSError("down")):
+            self.assertEqual(cabina.http_json("https://x"), (0, None))
+
+        project = cabina.PROYECTOS[0]
+        encoded = cabina.base64.b64encode(b"<?php return ['version' => '9.8.7'];").decode()
+        with patch.object(cabina, "gh", return_value={"content": encoded}):
+            self.assertEqual(cabina.version_main(project, "t"), "9.8.7")
+        with patch.object(cabina, "gh", return_value=[]):
+            self.assertIsNone(cabina.version_main(project, "t"))
+
+        self.assertFalse(cabina._health_payload_valid([]))
+        self.assertTrue(cabina._health_payload_valid({"status": "healthy"}))
+        runner = cabina.PROYECTOS[-1]
+        self.assertEqual(cabina.salud(runner), {"estado": "na"})
+        with patch.object(cabina, "http_json", return_value=(503, None)):
+            self.assertEqual(cabina.salud(project)["estado"], "caido")
+        with patch.object(cabina, "http_json", return_value=(200, {"status": "ok", "deployment": {"version": "1.2.3", "commit": "abc"}, "schema_up_to_date": True})):
+            health = cabina.salud(project)
+        self.assertEqual((health["estado"], health["version"], health["sha"], health["esquema"]), ("ok", "1.2.3", "abc", True))
+
+        issue_payload = [{"number": 1, "title": "x"}, {"number": 2, "pull_request": {}}]
+        with patch.object(cabina, "gh", return_value=issue_payload):
+            self.assertEqual([x["number"] for x in cabina.issues(project, "t", "tipo: incidente")], [1])
+        with patch.object(cabina, "gh", return_value={"bad": True}):
+            self.assertEqual(cabina.auto_abiertos(project, "t"), [])
+        with patch.object(cabina, "gh", return_value=[
+            {"number": 3, "title": "[AUTO] broken"},
+            {"number": 4, "title": "normal"},
+            {"number": 5, "title": "[AUTO] pr", "pull_request": {}},
+        ]):
+            self.assertEqual([x["number"] for x in cabina.auto_abiertos(project, "t")], [3])
+
+        with patch.object(cabina, "gh", return_value={"workflow_runs": [{"name": "Docs", "status": "completed"}]}):
+            self.assertIsNone(cabina.ci_main(project, "t"))
+        with patch.object(cabina, "gh", side_effect=[{"total_count": 4}, {"total_count": 6}]):
+            self.assertEqual(cabina.contar_prs(project, "t", "2026-01-01"), (4, 6))
+
+        with patch.object(cabina, "salud", return_value={"estado": "ok", "version": "1"}),              patch.object(cabina, "gh", return_value={"sha": "a" * 40}),              patch.object(cabina, "issues", return_value=[]),              patch.object(cabina, "auto_abiertos", return_value=[]),              patch.object(cabina, "contar_prs", return_value=(1, 2)),              patch.object(cabina, "version_main", return_value="1"),              patch.object(cabina, "ci_main", return_value={"status": "completed", "conclusion": "success"}):
+            collected = cabina.recolectar("t")
+        self.assertEqual(len(collected["proyectos"]), len(cabina.PROYECTOS))
+        self.assertTrue(all(item["github_ok"] for item in collected["proyectos"]))
+
+        with patch.object(cabina, "salud", return_value={"estado": "na"}),              patch.object(cabina, "gh", side_effect=cabina.CollectionError("down")):
+            degraded = cabina.recolectar("t")
+        self.assertTrue(all(not item["github_ok"] for item in degraded["proyectos"]))
+
+        self.assertIn("y 1 más", cabina.lista([
+            {"html_url": f"https://x/{i}", "number": i, "title": str(i)} for i in range(7)
+        ], "vacío"))
+        self.assertIn("vacío", cabina.lista([], "vacío"))
+        self.assertIn("⏳", cabina._render_ci({"status": "queued", "url": "https://x"}))
+        self.assertIn("❌", cabina._render_ci({"status": "completed", "conclusion": "failure", "url": "https://x"}))
+        self.assertEqual(cabina._render_ci(None), "—")
+
+
 class CiTests(unittest.TestCase):
     def test_latest_ci_run_pending_is_not_replaced_by_old_success(self) -> None:
         payload = {
