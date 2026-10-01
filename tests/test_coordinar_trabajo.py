@@ -2700,7 +2700,13 @@ class AcceptancePinHistoryTests(unittest.TestCase):
             api,
             12,
             "trabajo/issue-12",
-            {"merged": merged},
+            {
+                "merged": merged,
+                "body": (
+                    f"Closes #12\n"
+                    f"<!-- condor-reserva-id: {current['reservation_id']} -->"
+                ),
+            },
             current,
         )
         latest = latest_reservation(api.issue_comments(12))
@@ -2781,6 +2787,153 @@ class AcceptancePinHistoryTests(unittest.TestCase):
         self.assertNotIn("task_marker_sha256", latest)
         self.assertNotIn("task_paths", latest)
         self.assertNotIn("task_depends_on", latest)
+
+
+class AcceptancePinIdentityBindingTests(unittest.TestCase):
+    """Liga evidencia terminal a la misma identidad declarada por el PR."""
+
+    @staticmethod
+    def _current_v2(
+        *,
+        branch: str = "trabajo/issue-12",
+        reservation_id: str = SESSION_A,
+    ) -> dict:
+        return {
+            "version": 2,
+            "owner": "pl0n3r",
+            "reservation_id": reservation_id,
+            "branch": branch,
+            "active": True,
+            "reason": "tomar",
+            "acceptance_sha256": contract_fingerprint(VALID_ACCEPTANCE_BODY),
+        }
+
+    def _close(
+        self,
+        current: dict,
+        *,
+        branch: str = "trabajo/issue-12",
+        reservation_id: str | None = SESSION_A,
+        merged: bool = True,
+    ) -> tuple[FakeGitHub, dict]:
+        api = FakeGitHub()
+        api.branches[branch] = "abc123"
+        body = "Closes #12"
+        if reservation_id is not None:
+            body += f"\n<!-- condor-reserva-id: {reservation_id} -->"
+        coordinator.close_pr_reservation(
+            api,
+            12,
+            branch,
+            {"merged": merged, "body": body},
+            current,
+        )
+        latest = latest_reservation(api.issue_comments(12))
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        return api, latest
+
+    def test_matching_branch_and_reservation_preserve_evidence(self) -> None:
+        """AC-01: branch + UUID exactos preservan pin y snapshot."""
+        current = self._current_v2()
+        current.update(
+            {
+                "version": 3,
+                "task_marker_sha256": "e" * 64,
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+        )
+        _api, latest = self._close(current)
+
+        self.assertEqual(
+            latest["acceptance_sha256"],
+            current["acceptance_sha256"],
+        )
+        self.assertEqual(latest["task_marker_sha256"], "e" * 64)
+        self.assertEqual(latest["task_paths"], ["scripts/coordinar_trabajo.py"])
+        self.assertEqual(latest["task_depends_on"], [])
+
+    def test_branch_mismatch_fails_closed_without_evidence(self) -> None:
+        """AC-02: una reserva de otra branch no puede prestar su evidencia."""
+        current = self._current_v2(branch="trabajo/issue-99")
+        current.update(
+            {
+                "version": 3,
+                "task_marker_sha256": "e" * 64,
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+        )
+        _api, latest = self._close(current)
+
+        self.assertEqual(latest["version"], 1)
+        self.assertFalse(latest["active"])
+        self.assertNotIn("acceptance_sha256", latest)
+        self.assertNotIn("task_marker_sha256", latest)
+
+    def test_reservation_id_mismatch_fails_closed_without_evidence(self) -> None:
+        """AC-03: UUID distinto en el PR no puede recibir el pin activo."""
+        current = self._current_v2()
+        _api, latest = self._close(current, reservation_id=SESSION_B)
+
+        self.assertEqual(latest["version"], 1)
+        self.assertFalse(latest["active"])
+        self.assertNotIn("acceptance_sha256", latest)
+        self.assertNotIn("task_marker_sha256", latest)
+
+    def test_terminal_remains_inactive_after_identity_check(self) -> None:
+        """AC-04: la validación de identidad nunca reactiva la lease."""
+        api, latest = self._close(self._current_v2())
+
+        self.assertFalse(latest["active"])
+        self.assertEqual(latest["reason"], "pr-merged")
+        self.assertIsNone(active_reservation(api, 12))
+
+    def test_existing_v2_v3_legacy_and_unmerged_semantics_are_preserved(self) -> None:
+        """AC-05: conserva casos válidos y cierres fail-closed de #655."""
+        current_v2 = self._current_v2()
+        _api, v2 = self._close(current_v2)
+        self.assertEqual(v2["version"], 2)
+        self.assertEqual(
+            v2["acceptance_sha256"],
+            current_v2["acceptance_sha256"],
+        )
+
+        current_v3 = self._current_v2()
+        current_v3.update(
+            {
+                "version": 3,
+                "task_marker_sha256": "e" * 64,
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+        )
+        _api, v3 = self._close(current_v3)
+        self.assertEqual(v3["version"], 3)
+        self.assertEqual(v3["task_marker_sha256"], "e" * 64)
+
+        legacy = {
+            "version": 1,
+            "owner": "pl0n3r",
+            "reservation_id": SESSION_A,
+            "branch": "trabajo/issue-12",
+            "active": True,
+            "reason": "tomar",
+        }
+        _api, legacy_terminal = self._close(legacy)
+        self.assertEqual(legacy_terminal["version"], 1)
+        self.assertNotIn("acceptance_sha256", legacy_terminal)
+
+        _api, unmerged = self._close(current_v3, merged=False)
+        self.assertEqual(unmerged["version"], 1)
+        self.assertEqual(unmerged["reason"], "pr-cerrado-sin-merge")
+        self.assertNotIn("acceptance_sha256", unmerged)
+        self.assertNotIn("task_marker_sha256", unmerged)
+
+        _api, missing = self._close(current_v2, reservation_id=None)
+        self.assertEqual(missing["version"], 1)
+        self.assertNotIn("acceptance_sha256", missing)
 
 
 if __name__ == "__main__":
