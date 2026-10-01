@@ -753,6 +753,38 @@ class SonarWatchTests(unittest.TestCase):
                 with self.assertRaises(sonar_watch.SonarWatchError):
                     sonar_watch.SonarApi.analysis_method_from_settings(payload)
 
+    def test_sonar_pagination_bounds_each_remote_response(self):
+        self.assertEqual(sonar_watch._SONAR_PAGE_SIZE, 100)
+        api = sonar_watch.SonarApi(token="")
+        calls = []
+
+        def paged_get(path, params):
+            calls.append((path, dict(params)))
+            self.assertEqual(params["ps"], 100)
+            page = params["p"]
+            if page == 1:
+                return {
+                    "issues": [{"key": f"i-{index}"} for index in range(100)],
+                    "paging": {
+                        "pageIndex": 1,
+                        "pageSize": 100,
+                        "total": 101,
+                    },
+                }
+            return {
+                "issues": [{"key": "i-100"}],
+                "paging": {
+                    "pageIndex": 2,
+                    "pageSize": 100,
+                    "total": 101,
+                },
+            }
+
+        api.get = paged_get
+        rows = api._all_issues("project-key")
+        self.assertEqual(len(rows["issues"]), 101)
+        self.assertEqual([params["p"] for _, params in calls], [1, 2])
+
     def test_workflow_keeps_scheduled_and_manual_triggers(self):
         text = (
             ROOT / ".github" / "workflows" / "sonar-watch.yml"
