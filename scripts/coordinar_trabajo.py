@@ -2016,12 +2016,23 @@ def close_pr_reservation(
     merged = bool(pull.get("merged"))
 
     if current:
+        pr_reservation = reservation_from_pr_body(str(pull.get("body") or ""))
+        same_reservation = (
+            merged
+            and current.get("branch") == branch
+            and pr_reservation == current.get("reservation_id")
+        )
         acceptance = (
             current.get("acceptance_sha256")
-            if merged and isinstance(current.get("acceptance_sha256"), str)
+            if same_reservation
+            and isinstance(current.get("acceptance_sha256"), str)
             else None
         )
-        snapshot = reservation_task_snapshot(current) if merged else None
+        snapshot = (
+            reservation_task_snapshot(current)
+            if same_reservation
+            else None
+        )
         api.comment(
             issue_number,
             reservation_marker(
