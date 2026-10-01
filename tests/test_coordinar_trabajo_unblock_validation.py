@@ -49,6 +49,92 @@ class UnblockValidationTests(unittest.TestCase):
         with self.assertRaises(coordinator.CoordinationError):
             coordinator.parse_unblock_marker("<!-- factory-unblock {not-json} -->")
 
+    def test_missing_targets_fail_closed_without_stopping_sweep(self) -> None:
+        missing = {
+            "number": 1,
+            "state": "open",
+            "labels": [{"name": coordinator.STATUS_BLOCKED}],
+            "body": marker(version=1, kind="issue_closed", issue=999),
+        }
+        valid = {
+            "number": 2,
+            "state": "open",
+            "labels": [{"name": coordinator.STATUS_BLOCKED}],
+            "body": marker(
+                version=1,
+                kind="branch_sha",
+                branch="main",
+                sha="a" * 40,
+            ),
+        }
+
+        class FakeGitHub:
+            def __init__(self) -> None:
+                self.issues = {1: missing, 2: valid}
+                self.comments: list[tuple[int, str]] = []
+
+            def open_issues(self) -> list[dict]:
+                return [missing, valid]
+
+            def issue(self, number: int) -> dict:
+                if number == 999:
+                    raise coordinator.GitHubError(404, "Not Found")
+                return self.issues[number]
+
+            def workflow_run(self, run_id: int) -> dict:
+                raise coordinator.GitHubError(404, "Not Found")
+
+            def branch_sha(self, branch: str) -> str | None:
+                return "a" * 40 if branch == "main" else None
+
+            def issue_comments(self, issue_number: int) -> list[dict]:
+                return []
+
+            def comment(self, issue_number: int, body: str) -> None:
+                self.comments.append((issue_number, body))
+
+            def set_status(self, issue_number: int, status: str | None) -> None:
+                self.issues[issue_number]["labels"] = (
+                    [] if status is None else [{"name": status}]
+                )
+
+        api = FakeGitHub()
+        changed = coordinator.sweep_satisfied_blocks(api)  # type: ignore[arg-type]
+
+        self.assertEqual(changed, 1)
+        self.assertIn(
+            coordinator.STATUS_BLOCKED,
+            coordinator.label_names(missing),
+        )
+        self.assertIn(
+            coordinator.STATUS_AVAILABLE,
+            coordinator.label_names(valid),
+        )
+        self.assertEqual([number for number, _ in api.comments], [2])
+
+        workflow = {
+            "version": 1,
+            "kind": "workflow_success",
+            "run_id": 404,
+            "sha": "b" * 40,
+        }
+        self.assertEqual(
+            coordinator.verify_unblock_condition(api, workflow),  # type: ignore[arg-type]
+            (False, None),
+        )
+
+    def test_non_404_evidence_errors_propagate(self) -> None:
+        class ForbiddenGitHub:
+            def issue(self, number: int) -> dict:
+                raise coordinator.GitHubError(403, "Forbidden")
+
+        condition = {"version": 1, "kind": "issue_closed", "issue": 9}
+        with self.assertRaisesRegex(coordinator.GitHubError, "403"):
+            coordinator.verify_unblock_condition(
+                ForbiddenGitHub(),  # type: ignore[arg-type]
+                condition,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
