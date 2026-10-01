@@ -127,12 +127,26 @@ class PlanContractTests(unittest.TestCase):
             self.assertIn(decision_id, active)
             self.assertIn("Factory#683", active[decision_id]["text"])
 
+    def test_product_direction_policy_matches_early_threshold(self):
+        self.assertIn("como máximo 1 leaf elegible", PLAN.replace("**", ""))
+        self.assertIn("2 o más leaves elegibles", PLAN.replace("**", ""))
+        self.assertNotIn(
+            "cuando Condor, GrindFlow o BRVTAL no tengan ningún leaf elegible",
+            PLAN,
+        )
+        self.assertNotIn("o reaparece un leaf elegible", PLAN)
+        self.assertIn(
+            "mientras no exista aprobación explícita, no se materializa ningún leaf",
+            PLAN,
+        )
+
     def test_direction_gate_creation_requires_post_create_reconciliation(self):
         for value in (
             "reconciliar post-create",
             "created_at",
             "número de Issue",
             "cierra las posteriores como duplicadas",
+            "mientras no exista aprobación explícita, no se materializa ningún leaf",
         ):
             with self.subTest(value=value):
                 self.assertIn(value, PLAN)
