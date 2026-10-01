@@ -13,6 +13,16 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
+    @staticmethod
+    def _acceptance_tools():
+        try:
+            from scripts.aceptacion_kit import Criterion, run_named_test
+        except ModuleNotFoundError as exc:
+            if exc.name != "scripts":
+                raise
+            from aceptacion_kit import Criterion, run_named_test
+        return Criterion, run_named_test
+
     def test_candidate_version_is_1_0_18(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
@@ -20,7 +30,7 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
         self.assertEqual(payload, {"version": "1.0.18"})
 
     def test_candidate_preserves_release_open_pull_feedback(self) -> None:
-        from scripts.aceptacion_kit import Criterion, run_named_test
+        Criterion, run_named_test = self._acceptance_tools()
 
         for target in (
             "tests/test_coordinar_trabajo.py::ReleaseOpenPullFeedbackTests::"
@@ -35,7 +45,7 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
     def test_candidate_preserves_factory_release_authority_canonicalization(
         self,
     ) -> None:
-        from scripts.aceptacion_kit import Criterion, run_named_test
+        Criterion, run_named_test = self._acceptance_tools()
 
         for target in (
             "seguridad/test_puertas_humanas.py::GateDedupTests::"
