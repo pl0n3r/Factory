@@ -37,6 +37,7 @@ Reglas del despachador:
 - **Carril 3 — preparación del live:** se puede mantener evidencia y checklist de readiness, pero ningún agente cambia la fase ni ejecuta go-live. El live sigue siendo una decisión exclusiva del dueño.
 - El trigger del carril 2 es idempotente por producto: si ya existe una puerta de dirección abierta o reaparece un leaf elegible, no crea otra. No introduce scheduler ni backlog paralelo.
 - Tras crear una puerta product-direction, el despachador debe **releer las puertas abiertas y reconciliar post-create** antes de devolver control: si hubo creadores concurrentes, conserva la instancia válida más antigua por created_at (desempate por número de Issue) y cierra las posteriores como duplicadas sin concederles autoridad ni materializar leaves.
+- Un leaf `product-direction` solo puede quedar `estado: disponible` / `status: available` si la propuesta aprobada fija **roles y claims de paths exactos** y su materialización produce un contrato que pasa el **mismo preflight de aceptación y coordinación que `/tomar`**; nunca se publica como disponible un leaf estructuralmente no reservable.
 - Condor, GrindFlow y BRVTAL mantienen prioridad de producto en paralelo; el desempate global existente sigue mandando. El paralelismo no inventa cuotas: CI/API/cuentas se observan mediante Factory#584 y AutoFactory#62 y conservan límites, claims, reservas y gates actuales.
 - Backblaze B2 no se provisiona antes de live; la decisión queda registrada como código junto con la opción A vigente de AutoFactory#79.
 
