@@ -97,7 +97,7 @@ jobs:
                 "$ISSUE_STATE" == "open" &&
                 "$USER_TYPE" != "Bot" ]]; then
             case "$AUTHOR_ASSOCIATION" in
-              OWNER|MEMBER|COLLABORATOR) trusted=true ;;
+              OWNER) trusted=true ;;
             esac
           fi
           echo "trusted=$trusted" >> "$GITHUB_OUTPUT"

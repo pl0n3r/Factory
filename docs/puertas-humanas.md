@@ -63,7 +63,7 @@ Esto usa asignación + mención como transporte dentro de GitHub. La recepción 
 
 ## Materializar una respuesta explícita
 
-Una puerta válida se resuelve de forma máquina únicamente con un comentario exacto del dueño o de un actor `OWNER|MEMBER|COLLABORATOR`:
+Una puerta válida se resuelve de forma máquina únicamente con un comentario exacto de un actor con asociación `OWNER`. `MEMBER|COLLABORATOR` pueden seguir creando/enrutando puertas cuando el contrato lo permite, pero no materializan una `decisión: dueño`:
 
 `/decidir A` · `/decidir B` · `/decidir C` · `/decidir D`
 
@@ -71,7 +71,7 @@ La opción debe existir realmente en el marker `factory-human-gate`, el Issue de
 
 Aceptar `/decidir X` **solo materializa la elección**: publica una evidencia idempotente y controlada, retira `decisión: dueño`, sustituye únicamente la etiqueta `estado: …` por `estado: completado` y cierra el Issue como `completed`. No ejecuta el efecto de la opción, no toca padres ni rollouts y no concede permisos para dinero, legal, datos reales, go-live u otras puertas. Los flujos dependientes deben reconciliarse por su propio contrato.
 
-La evidencia `factory-human-decision` usa journal **v2** y contiene únicamente la opción elegida y `gate_sha256`: un SHA-256 de la representación normalizada del `factory-human-gate` ya validado. Un retry solo puede reanudar la misma opción cuando ese fingerprint sigue coincidiendo con la puerta vigente. Si cambia cualquier parte semántica del gate —aunque conserve la misma letra de opción—, o aparece evidencia legacy/incompatible, el flujo falla cerrado y no completa la puerta nueva con una decisión anterior.
+La evidencia `factory-human-decision` usa journal **v2** y contiene únicamente la opción elegida y `gate_sha256`: un SHA-256 de la representación normalizada del `factory-human-gate` ya validado. El comando queda además ligado al snapshot `event.issue.body`: su fingerprint debe coincidir con el primer GET vivo y con cada revalidación posterior. Si la puerta se edita después del comentario, ese comentario antiguo no autoriza la puerta nueva; hace falta un nuevo `/decidir X`. Un retry solo puede reanudar la misma opción cuando ese fingerprint sigue coincidiendo con la puerta vigente. Si cambia cualquier parte semántica del gate —aunque conserve la misma letra de opción—, o aparece evidencia legacy/incompatible, el flujo falla cerrado y no completa la puerta nueva con una decisión anterior.
 
 Respuestas históricas escritas como texto libre siguen requiriendo reconciliación manual; no se infieren retroactivamente como comandos. Repetir el mismo comando después de materializar la decisión es un no-op y no duplica evidencia.
 
