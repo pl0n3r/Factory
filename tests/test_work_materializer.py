@@ -1,7 +1,6 @@
 import copy
 import json
 import unittest
-
 from scripts.work_inventory import project_inventory
 from scripts.work_materializer import (
     WorkMaterializerError,
@@ -9,7 +8,6 @@ from scripts.work_materializer import (
     materialize_leaf,
     validate_materialization_candidate,
 )
-
 COMPLETED = {"Factory#706"}
 
 
@@ -92,6 +90,10 @@ class WorkMaterializerTests(unittest.TestCase):
         mismatched_repository["leaf_key"] = "AutoFactory#707"
         with self.assertRaises(WorkMaterializerError):
             validate_materialization_candidate(mismatched_repository)
+        for field, value in (("priority", "urgent"), ("state", "reserved"), ("kind", "unknown")):
+            invalid = copy.deepcopy(valid); invalid[field] = value
+            with self.assertRaises(WorkMaterializerError):
+                validate_materialization_candidate(invalid)
 
     def test_materialization_is_idempotent(self):
         first = candidate()
