@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "observed_on": "2026-10-01",
+  "projects": [
+    {
+      "repository_ref": "pl0n3r/Factory",
+      "source_refs": ["issue:701"],
+      "leaf_refs": ["issue:706", "issue:707", "issue:708"]
+    },
+    {
+      "repository_ref": "pl0n3r/Condor",
+      "source_refs": ["issue:1", "issue:265", "issue:389"],
+      "leaf_refs": ["issue:425", "issue:426", "issue:427"]
+    },
+    {
+      "repository_ref": "pl0n3r/GrindFlow",
+      "source_refs": ["issue:2", "issue:6"],
+      "leaf_refs": ["issue:223", "issue:224", "issue:230", "issue:231", "issue:232"]
+    },
+    {
+      "repository_ref": "pl0n3r/brvtal",
+      "source_refs": ["issue:533"],
+      "leaf_refs": ["issue:844", "issue:845", "issue:846"]
+    },
+    {
+      "repository_ref": "pl0n3r/ControlBot",
+      "source_refs": ["issue:1", "issue:561"],
+      "leaf_refs": ["issue:45", "issue:182", "issue:567"]
+    },
+    {
+      "repository_ref": "pl0n3r/AutoFactory",
+      "source_refs": ["issue:1", "issue:70"],
+      "leaf_refs": ["issue:70"]
+    },
+    {
+      "repository_ref": "pl0n3r/FactoryRunner",
+      "source_refs": ["issue:1"],
+      "leaf_refs": []
+    }
+  ]
+}
