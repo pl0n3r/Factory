@@ -234,8 +234,46 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
         wrong_closer["gate"]["closed_by"] = "otro"
         cases["wrong-closer"] = wrong_closer
 
-        duplicate_command = valid_v2_payload()
-        duplicate_command["gate"]["comments"].insert(
+        for name, payload in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(ReleaseBootstrapError):
+                    validate_payload(payload)
+
+    def test_v2_oversized_or_spoofed_evidence_fails_closed(self):
+        oversized = valid_v2_payload()
+        oversized["gate"]["comments"].insert(
+            1,
+            {
+                "author_association": "OWNER",
+                "user": {"login": "pl0n3r"},
+                "body": "<!-- factory-human-decision " + ("x" * 21000),
+            },
+        )
+        spoof = valid_v2_payload()
+        spoof["gate"]["comments"][1]["user"]["login"] = "pl0n3r"
+        spoof["gate"]["comments"][1]["author_association"] = "OWNER"
+        for payload in (oversized, spoof):
+            with self.assertRaises(ReleaseBootstrapError):
+                validate_payload(payload)
+
+    def test_v2_intent_cannot_fallback_to_legacy(self):
+        payload = valid_payload(
+            gate_body=GATE_MAINTENANCE,
+            v1_0_0_exists=True,
+        )
+        payload["gate"]["comments"].append(
+            {
+                "author_association": "OWNER",
+                "user": {"login": "pl0n3r"},
+                "body": '<!-- factory-human-decision {"option":"A"} -->',
+            }
+        )
+        with self.assertRaises(ReleaseBootstrapError):
+            validate_payload(payload)
+
+    def test_v2_repeated_owner_a_is_idempotent(self):
+        payload = valid_v2_payload()
+        payload["gate"]["comments"].insert(
             1,
             {
                 "author_association": "OWNER",
@@ -243,12 +281,10 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
                 "body": "/decidir A",
             },
         )
-        cases["ambiguous-command"] = duplicate_command
-
-        for name, payload in cases.items():
-            with self.subTest(name=name):
-                with self.assertRaises(ReleaseBootstrapError):
-                    validate_payload(payload)
+        self.assertEqual(
+            validate_payload(payload),
+            {"status": "ready", "sha": SHA},
+        )
 
     def test_release_gate_lifecycle_is_fail_closed(self):
         with self.assertRaisesRegex(ReleaseBootstrapError, "factory-release"):
