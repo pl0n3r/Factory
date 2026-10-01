@@ -61,6 +61,14 @@ Solo Issues creados por actores con asociación `OWNER`, `MEMBER` o `COLLABORATO
 
 Esto usa asignación + mención como transporte dentro de GitHub. La recepción como push en el teléfono depende de GitHub Mobile y de las preferencias externas de la cuenta; la automatización no cambia preferencias ni inventa un canal alternativo.
 
+## Identidad y deduplicación de puertas
+
+La cola trata una puerta como una decisión activa identificable, no solo como un número de Issue. Para `factory-release`, la identidad se deriva de la categoría, la versión y el `main@<SHA>` exacto declarados en `context`. Así, retries que cambian texto explicativo pero apuntan al mismo release/SHA son equivalentes. Si un release no contiene un target exacto demostrable, el sistema conserva el contexto normalizado completo y **no** deduplica por aproximación. Para las demás categorías se usa categoría + contexto normalizado, evitando colapsar decisiones semánticamente distintas.
+
+Los eventos `issues` e `issue_comment` de puertas se serializan en una misma sección crítica del workflow. Al procesar una puerta válida, el reconciliador enumera las puertas equivalentes y conserva como canónica la de menor número entre las que siguen abiertas. Las demás se cierran como `duplicate`, se retiran de `decisión: dueño` y reciben un marker idempotente que referencia la canónica; este paso **nunca** materializa una opción.
+
+Si una puerta equivalente no canónica ya contiene un journal de decisión, o aparecen evidencias incompatibles entre equivalentes, la reconciliación falla cerrada y no cierra ni enruta nada. Del mismo modo, `/decidir X` comprueba que la puerta sea la única equivalente abierta antes de escribir el journal y vuelve a comprobarlo antes del cierre final. Un `sigue` genérico continúa sin ser una decisión.
+
 ## Materializar una respuesta explícita
 
 Una puerta válida se resuelve de forma máquina únicamente con un comentario exacto de un actor con asociación `OWNER`. `MEMBER|COLLABORATOR` pueden seguir creando/enrutando puertas cuando el contrato lo permite, pero no materializan una `decisión: dueño`:

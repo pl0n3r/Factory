@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -218,6 +219,104 @@ def validate_gate(raw: Any) -> dict[str, Any]:
     }
     _validate_simple_root(raw, normalized)
     return normalized
+
+
+FACTORY_RELEASE_TARGET_RE = re.compile(
+    r"\b(?:Factory\s+)?v?(\d+\.\d+\.\d+)\b.*?\bmain@([0-9a-f]{40})\b",
+    re.IGNORECASE,
+)
+
+
+def _digest(value: Any) -> str:
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _gate_target(gate: dict[str, Any]) -> dict[str, Any]:
+    category = gate["category"]
+    context = gate["context"]
+    if category == "factory-release":
+        match = FACTORY_RELEASE_TARGET_RE.search(context)
+        if match:
+            return {
+                "category": category,
+                "target": {
+                    "version": match.group(1),
+                    "sha": match.group(2).lower(),
+                },
+            }
+    # Sin target exacto demostrable no se colapsan contextos distintos.
+    return {
+        "category": category,
+        "target": {"context": " ".join(context.split())},
+    }
+
+
+def gate_target_identity(raw: Any) -> str:
+    """Identidad del objeto decidido, independiente del copy explicativo."""
+    return _digest(_gate_target(validate_gate(raw)))
+
+
+def gate_authority_contract(raw: Any) -> str:
+    """Fingerprint de las opciones que realmente conceden autoridad."""
+    gate = validate_gate(raw)
+    options = []
+    for option in gate["options"]:
+        authority = option.get("effect", option["label"])
+        item: dict[str, Any] = {
+            "id": option["id"],
+            "authority": authority,
+        }
+        if "reversible" in option:
+            item["reversible"] = option["reversible"]
+        options.append(item)
+    return _digest({
+        "options": sorted(options, key=lambda item: item["id"]),
+        "safe_default": gate["safe_default"],
+    })
+
+
+def gate_identity(raw: Any) -> str:
+    """Identidad completa: target exacto + contrato de autoridad."""
+    gate = validate_gate(raw)
+    return _digest({
+        "target": gate_target_identity(gate),
+        "authority": gate_authority_contract(gate),
+    })
+
+
+def _gate_raw_from_body(body: str) -> dict[str, Any]:
+    classified = classify_body(body)
+    if classified.get("status") != "gate":
+        raise GateValidationError("El Issue no contiene una puerta humana válida.")
+    matches = MARKER_RE.findall(body)
+    if len(matches) != 1:
+        raise GateValidationError("La puerta humana no es inequívoca.")
+    try:
+        raw = json.loads(matches[0])
+    except json.JSONDecodeError as exc:
+        raise GateValidationError("El JSON del marker es inválido.") from exc
+    if not isinstance(raw, dict):
+        raise GateValidationError("El marker de puerta debe contener un objeto.")
+    return raw
+
+
+def gate_target_identity_from_body(body: str) -> str:
+    return gate_target_identity(_gate_raw_from_body(body))
+
+
+def gate_authority_contract_from_body(body: str) -> str:
+    return gate_authority_contract(_gate_raw_from_body(body))
+
+
+def gate_identity_from_body(body: str) -> str:
+    """Extrae la identidad completa desde un marker válido e inequívoco."""
+    return gate_identity(_gate_raw_from_body(body))
 
 
 def classify_body(body: str, *, include_reason: bool = False) -> dict[str, Any]:
