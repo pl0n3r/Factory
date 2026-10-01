@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: seguridad-${{ github.event.issue.number || github.event.pull_request.number || github.ref }}
+  group: seguridad-${{ (github.event_name == 'issues' || github.event_name == 'issue_comment') && 'human-gates' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -161,16 +161,19 @@ jobs:
           REASON: ${{ steps.gate.outputs.reason }}
         run: python3 seguridad/sincronizar_puerta.py invalid
 
-      - name: Restaurar solo bloqueo propio al corregir marker
+      - name: Restaurar y reconciliar puerta válida
+        id: gate_sync
         if: steps.actor.outputs.trusted == 'true' && steps.gate.outputs.status == 'gate'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
-        run: python3 seguridad/sincronizar_puerta.py valid
+        run: |
+          set -euo pipefail
+          python3 seguridad/sincronizar_puerta.py valid >> "$GITHUB_OUTPUT"
 
       - name: Enrutar puerta válida
-        if: steps.actor.outputs.trusted == 'true' && steps.gate.outputs.status == 'gate'
+        if: steps.actor.outputs.trusted == 'true' && steps.gate.outputs.status == 'gate' && steps.gate_sync.outputs.canonical == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
