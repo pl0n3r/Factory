@@ -167,6 +167,25 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
         ):
             validate_payload(valid_v2_payload(gate_body=ambiguous_gate))
 
+    def test_v2_negated_publish_label_fails_closed(self):
+        for label in (
+            "No publicar",
+            "No publicar todavía",
+            "Esperar para publicar",
+            "No se debe publicar",
+            "Republicar",
+        ):
+            with self.subTest(label=label):
+                gate = GATE_MAINTENANCE.replace(
+                    '"label":"Publicar Factory 1.0.15"',
+                    f'"label":"{label}"',
+                )
+                with self.assertRaisesRegex(
+                    ReleaseBootstrapError,
+                    "inequívocamente publicación",
+                ):
+                    validate_payload(valid_v2_payload(gate_body=gate))
+
     def test_v2_release_decision_fails_closed(self):
         cases = {}
 
