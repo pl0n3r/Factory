@@ -24,7 +24,7 @@ from quality.status import derive_quality_health
 
 AUTO_PREFIX = "[AUTO] Sonar"
 MARKER_PREFIX = "<!-- factory-sonar-watch "
-_SONAR_PAGE_SIZE = 500
+_SONAR_PAGE_SIZE = 100
 _MAX_SONAR_ISSUES = 10_000
 _MAX_GITHUB_ISSUE_PAGES = 100
 SENSITIVE = re.compile(
