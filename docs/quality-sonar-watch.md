@@ -62,3 +62,5 @@ Quality Gate incluye condiciones fallidas; CE task conserva `error_message` sane
 ## Límites
 
 Sonar Watch no corrige findings, no modifica configuración Sonar, no relaja gates ni cambia planes. Si falta configuración, el contrato es ambiguo, una respuesta no respeta su shape o la proyección difiere de la evidencia normalizada, falla cerrado.
+
+El descubrimiento de Issues administrados usa 50 filas por página con un horizonte máximo de 10.000 Issues y una página centinela adicional. Las primeras 200 páginas pueden contener exactamente 10.000 filas; la página 201 debe venir vacía o parcial para terminar normalmente. Si agrega filas y el total supera 10.000, el watcher falla cerrado. El límite global de lectura remota permanece en 1 MB por respuesta.
