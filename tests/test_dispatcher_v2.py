@@ -132,6 +132,27 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(result["step"], "normal")
         self.assertEqual(result["work"]["key"], "normal-product")
 
+    def test_work_ladder_respects_filler_parallel_limit(self):
+        filler = Candidate(
+            key="filler",
+            priority="medium",
+            metadata={"work_ladder_lane": "filler"},
+        )
+
+        available = work_ladder(
+            [filler],
+            active_filler_count=0,
+            max_filler_parallel=1,
+        )
+        capped = work_ladder(
+            [filler],
+            active_filler_count=1,
+            max_filler_parallel=1,
+        )
+
+        self.assertEqual(available["step"], "filler")
+        self.assertEqual(capped["step"], "declare_idle_reason")
+
     def test_work_ladder_declares_reason_when_no_safe_work_exists(self):
         result = work_ladder(
             [],

@@ -660,6 +660,8 @@ def work_ladder(
     existing_gate_keys: Iterable[str] = (),
     known_proposal_sha256s: Iterable[str] = (),
     active_tranche: int | None = None,
+    active_filler_count: int = 0,
+    max_filler_parallel: int = 1,
     no_safe_work_reason: str = (
         "No hay trabajo seguro listo; se requiere nueva evidencia, "
         "desbloqueo o dirección explícita."
@@ -667,12 +669,24 @@ def work_ladder(
 ) -> dict[str, object]:
     """Escalera total: siempre devuelve un siguiente paso explicable."""
 
+    if (
+        isinstance(active_filler_count, bool)
+        or not isinstance(active_filler_count, int)
+        or active_filler_count < 0
+        or isinstance(max_filler_parallel, bool)
+        or not isinstance(max_filler_parallel, int)
+        or max_filler_parallel < 0
+    ):
+        raise ValueError("filler parallel counts must be non-negative integers")
+
     items = list(candidates)
     for step, lane in (
         ("normal", "normal"),
         ("quality", "quality"),
         ("filler", "filler"),
     ):
+        if step == "filler" and active_filler_count >= max_filler_parallel:
+            continue
         if step == "quality":
             actions = reconcile_stale_blocks(
                 blocked_work,
