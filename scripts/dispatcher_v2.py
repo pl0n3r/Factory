@@ -2,12 +2,15 @@
 """Dispatcher V2: selección determinista, explicable y auditable de trabajo Factory."""
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field, replace
 from typing import Iterable
 
 from scripts.adaptive_fencing import FencingDecision
 from scripts.presence_contract import PresenceAssessment
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
+from seguridad.puertas_humanas import validate_gate
 
 AUTHORITY_ORDER = {
     "health": 0,
@@ -92,6 +95,158 @@ class WorkItemReadinessContext:
 class Readiness:
     ready: bool
     reasons: tuple[str, ...]
+
+
+PRODUCT_DIRECTION_REPOS = {
+    "pl0n3r/Condor",
+    "pl0n3r/GrindFlow",
+    "pl0n3r/brvtal",
+}
+
+
+@dataclass(frozen=True)
+class DirectionLeaf:
+    key: str
+    title: str
+    acceptance_targets: tuple[str, ...]
+    depends_on: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DirectionProposal:
+    repository_ref: str
+    objective: str
+    leaves: tuple[DirectionLeaf, ...]
+
+
+def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, object]:
+    if proposal.repository_ref not in PRODUCT_DIRECTION_REPOS:
+        raise ValueError("product direction only applies to canonical product repos")
+    objective = proposal.objective.strip()
+    if not objective:
+        raise ValueError("direction proposal objective is required")
+    if not proposal.leaves:
+        raise ValueError("direction proposal requires at least one leaf")
+
+    keys = [leaf.key.strip() for leaf in proposal.leaves]
+    if any(not key for key in keys) or len(keys) != len(set(keys)):
+        raise ValueError("direction proposal leaf keys must be non-empty and unique")
+    key_set = set(keys)
+    normalized_leaves = []
+    for leaf, key in zip(proposal.leaves, keys):
+        title = leaf.title.strip()
+        if not title or not leaf.acceptance_targets:
+            raise ValueError("direction leaves require title and executable acceptance")
+        targets = tuple(target.strip() for target in leaf.acceptance_targets)
+        if any(
+            not target
+            or ("::" not in target and not target.startswith("check:"))
+            for target in targets
+        ):
+            raise ValueError("direction acceptance targets must name exact tests or checks")
+        dependencies = tuple(dep.strip() for dep in leaf.depends_on)
+        if any(not dep or dep == key or dep not in key_set for dep in dependencies):
+            raise ValueError("direction dependencies must reference another proposed leaf")
+        normalized_leaves.append(
+            {
+                "key": key,
+                "title": title,
+                "acceptance_targets": list(targets),
+                "depends_on": list(dependencies),
+            }
+        )
+    return {
+        "repository_ref": proposal.repository_ref,
+        "objective": objective,
+        "leaves": normalized_leaves,
+    }
+
+
+def _direction_gate_key(repository_ref: str) -> str:
+    return f"product-direction:{repository_ref}"
+
+
+def _direction_gate(proposal: DirectionProposal) -> dict[str, object]:
+    normalized = _normalize_direction_proposal(proposal)
+    repo = normalized["repository_ref"]
+    proposal_json = json.dumps(
+        normalized, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    proposal_sha256 = hashlib.sha256(proposal_json.encode("utf-8")).hexdigest()
+    gate = validate_gate(
+        {
+            "category": "product-direction",
+            "context": (
+                f"{repo} no tiene ningún leaf elegible; se propone el siguiente "
+                f"tramo de roadmap (proposal_sha256={proposal_sha256})."
+            ),
+            "title_simple": (
+                f"¿Aprobamos el siguiente tramo de {str(repo).split('/')[-1]}?"
+            ),
+            "summary_simple": (
+                "La cola del producto se quedó sin trabajo listo. Hay un tramo "
+                "nuevo propuesto con pruebas y dependencias explícitas."
+            ),
+            "explain_simple": (
+                "Es como terminar una lista de tareas y preparar la siguiente. "
+                "El agente propone qué hacer, pero no empieza esas tareas de "
+                "producto hasta que el dueño lo apruebe."
+            ),
+            "options": [
+                {
+                    "id": "A",
+                    "label": "Aprobar el tramo propuesto",
+                    "effect": (
+                        "Los leaves propuestos pueden materializarse como trabajo disponible."
+                    ),
+                    "pros": ["Evita que la cola de producto quede vacía"],
+                    "cons": ["Compromete el siguiente tramo funcional del roadmap"],
+                    "risk": "medium",
+                    "cost": "",
+                    "reversible": True,
+                    "explain_simple": (
+                        "Aceptamos esta siguiente lista de tareas y los agentes "
+                        "pueden empezar a ejecutarla."
+                    ),
+                },
+                {
+                    "id": "B",
+                    "label": "Mantener el roadmap actual",
+                    "effect": "No se materializa ningún leaf nuevo de producto.",
+                    "pros": ["No cambia la dirección del producto"],
+                    "cons": ["La cola funcional permanece sin trabajo nuevo"],
+                    "risk": "low",
+                    "cost": "",
+                    "reversible": True,
+                    "explain_simple": (
+                        "No añadimos tareas nuevas todavía. El producto se queda "
+                        "como está hasta otra decisión."
+                    ),
+                },
+            ],
+            "recommendation": "A",
+            "safe_default": "B",
+            "why_recommended": (
+                "A mantiene continuidad del producto sin saltarse la aprobación "
+                "humana de dirección."
+            ),
+            "blocks": (
+                "Bloquea únicamente la materialización del nuevo tramo funcional "
+                "del producto."
+            ),
+        }
+    )
+    gate_json = json.dumps(
+        gate, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    return {
+        "gate_key": _direction_gate_key(str(repo)),
+        "gate": gate,
+        "gate_sha256": hashlib.sha256(gate_json.encode("utf-8")).hexdigest(),
+        "marker": "<!-- factory-human-gate " + gate_json + " -->",
+        "proposal": normalized,
+        "proposal_sha256": proposal_sha256,
+    }
 
 
 def _gate_reason(name: str, value: bool | None) -> str | None:
@@ -304,6 +459,68 @@ def select_next(
         if AUTHORITY_ORDER[authority_class(candidate)] == best_rank
     ]
     return min(same_class, key=lambda item: _tiebreak(item, aging_threshold=aging_threshold))
+
+
+def direction_gate_trigger(
+    proposal: DirectionProposal,
+    candidates: Iterable[Candidate],
+    *,
+    existing_gate_keys: Iterable[str] = (),
+    active_tranche: int | None = None,
+) -> dict[str, object]:
+    """Propone una única puerta de dirección cuando un producto agotó sus leaves."""
+    normalized = _normalize_direction_proposal(proposal)
+    repo = str(normalized["repository_ref"])
+    key = _direction_gate_key(repo)
+    product_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.metadata.get("repository_ref") == repo and not candidate.is_epic
+    ]
+    if any(
+        classify_readiness(candidate, active_tranche=active_tranche).ready
+        for candidate in product_candidates
+    ):
+        return {"action": "noop", "reason": "eligible_leaf_exists", "gate_key": key}
+    if key in set(existing_gate_keys):
+        return {
+            "action": "noop",
+            "reason": "direction_gate_already_open",
+            "gate_key": key,
+        }
+
+    result = _direction_gate(proposal)
+    return {"action": "open_gate", "materialize_leaves": False, **result}
+
+
+def materialize_direction_leaves(
+    proposal: DirectionProposal,
+    *,
+    decision_evidence: dict[str, object] | None,
+) -> tuple[dict[str, object], ...]:
+    """Materializa solo con journal v2 ligado a la puerta exacta de la propuesta."""
+    if decision_evidence is None:
+        return ()
+    if (
+        set(decision_evidence) != {"gate_sha256", "option", "version"}
+        or decision_evidence.get("version") != 2
+        or decision_evidence.get("option") not in {"A", "B"}
+    ):
+        raise ValueError("direction decision evidence is invalid")
+    expected = _direction_gate(proposal)
+    if decision_evidence.get("gate_sha256") != expected["gate_sha256"]:
+        raise ValueError("direction decision evidence does not match proposal gate")
+    if decision_evidence["option"] == "B":
+        return ()
+    normalized = expected["proposal"]
+    return tuple(
+        {
+            **leaf,
+            "repository_ref": normalized["repository_ref"],
+            "state": "available",
+        }
+        for leaf in normalized["leaves"]
+    )
 
 
 def parallel_ready(
