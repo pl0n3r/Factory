@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from fractions import Fraction
 from typing import Any
 
 
@@ -178,6 +179,24 @@ def _effective_window(item: dict[str, Any]) -> int:
     return max(item["window_seconds"], reset or 0)
 
 
+def _select_conservative_observation(
+    rows: list[dict[str, Any]], *, use_reset_window: bool
+) -> tuple[dict[str, Any], int]:
+    def evidence_window(item: dict[str, Any]) -> int:
+        return _effective_window(item) if use_reset_window else item["window_seconds"]
+
+    selected = min(
+        rows,
+        key=lambda item: (
+            Fraction(item["accepted"], evidence_window(item)),
+            -item["observed_at"],
+            item["accepted"],
+            evidence_window(item),
+        ),
+    )
+    return selected, evidence_window(selected)
+
+
 def estimate_account_capacity(request: Any, *, now: int) -> dict[str, Any]:
     """Compila un presupuesto conservador desde telemetría agregada."""
     now = _integer(now, "now", minimum=0)
@@ -211,14 +230,17 @@ def estimate_account_capacity(request: Any, *, now: int) -> dict[str, Any]:
 
     limited = [item for item in fresh if item["limited"]]
     if limited:
-        safe_max = min(item["accepted"] for item in limited)
-        window = max(_effective_window(item) for item in limited)
+        evidence, window = _select_conservative_observation(
+            limited, use_reset_window=True
+        )
         source = "observed-limit"
     else:
-        safe_max = max(item["accepted"] for item in fresh)
-        window = max(item["window_seconds"] for item in fresh)
+        evidence, window = _select_conservative_observation(
+            fresh, use_reset_window=False
+        )
         source = "observed-success"
 
+    safe_max = evidence["accepted"]
     interval = window if safe_max == 0 else (window + safe_max - 1) // safe_max
     result = {
         "version": CAPACITY_VERSION,

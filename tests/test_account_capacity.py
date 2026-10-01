@@ -158,8 +158,54 @@ class AccountCapacityTests(unittest.TestCase):
             now=1000,
         )
         self.assertEqual(result["source"], "observed-success")
-        self.assertEqual(result["budget"]["max_messages"], 5)
+        self.assertEqual(result["budget"]["max_messages"], 3)
+        self.assertEqual(result["budget"]["window_seconds"], 600)
         self.assertEqual(result["confidence"], "medium")
+
+    def test_heterogeneous_windows_use_one_conservative_observation(self):
+        result = estimate_account_capacity(
+            request(
+                [
+                    observation(accepted=100, window_seconds=60, observed_at=900),
+                    observation(accepted=10, window_seconds=3600, observed_at=950),
+                ]
+            ),
+            now=1000,
+        )
+        self.assertEqual(
+            result["budget"],
+            {
+                "max_messages": 10,
+                "window_seconds": 3600,
+                "min_interval_seconds": 360,
+            },
+        )
+
+    def test_heterogeneous_limit_windows_use_one_conservative_observation(self):
+        result = estimate_account_capacity(
+            request(
+                [
+                    observation(
+                        accepted=2,
+                        limited=True,
+                        window_seconds=60,
+                        reset_after_seconds=60,
+                        observed_at=900,
+                    ),
+                    observation(
+                        accepted=5,
+                        limited=True,
+                        window_seconds=3600,
+                        reset_after_seconds=3600,
+                        observed_at=950,
+                    ),
+                ]
+            ),
+            now=1000,
+        )
+        self.assertEqual(result["budget"]["max_messages"], 5)
+        self.assertEqual(result["budget"]["window_seconds"], 3600)
+        self.assertEqual(result["budget"]["min_interval_seconds"], 720)
 
     def test_invalid_policy_or_future_observation_fails_closed(self):
         invalid = request([])
