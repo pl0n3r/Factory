@@ -352,7 +352,7 @@ class RolesKitTests(unittest.TestCase):
                     rk.parse_context(payload)
 
         roles, risks = rk._classify_file("security/auth.py")
-        self.assertTrue({"seguridad", "qa", "ingenieria-software"} <= roles)
+        self.assertLessEqual({"seguridad", "qa", "ingenieria-software"}, roles)
         self.assertIn("security", risks)
         roles, _ = rk._classify_file("analytics/report.py")
         self.assertIn("datos-analitica", roles)
@@ -366,7 +366,10 @@ class RolesKitTests(unittest.TestCase):
         self.assertEqual(rk.declared_roles(""), [])
         self.assertIsNone(rk.single_role("Rol primario: QA EXTRA", "Rol primario"))
         self.assertEqual(rk.checked_items("- [x] Uno\n- [X] Dos"), {"Uno", "Dos"})
-        self.assertTrue({"qa", "seguridad"} <= rk.cross_review_allowed({"deploy", "security"}))
+        self.assertLessEqual(
+            {"qa", "seguridad"},
+            rk.cross_review_allowed({"deploy", "security"}),
+        )
 
         bad_candidates = [
             {},
