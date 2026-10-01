@@ -22,6 +22,8 @@ from scripts.dispatcher_v2 import (
 
 from scripts.adaptive_fencing import FencingContext, FencingDecision, evaluate_fencing
 from scripts.adaptive_replan import decide_replan
+from scripts.aceptacion_kit import parse_contract
+from scripts.orquestador_kit import parse_task_marker
 from scripts.presence_contract import classify_presence
 
 
@@ -712,17 +714,21 @@ class DispatcherV2Tests(unittest.TestCase):
             ),
             leaves=(
                 DirectionLeaf(
-                    key="condor-next-1",
+                    key="CONDOR_NEXT_1",
                     title="Primer leaf del nuevo tramo",
                     acceptance_targets=(
                         "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
                     ),
+                    paths=("src/next_slice.py", "tests/test_next_slice.py"),
+                    roles=("ingenieria-software", "qa"),
                 ),
                 DirectionLeaf(
-                    key="condor-next-2",
+                    key="CONDOR_NEXT_2",
                     title="Segundo leaf dependiente",
                     acceptance_targets=("check:validate",),
-                    depends_on=("condor-next-1",),
+                    paths=("src/next_slice_followup.py",),
+                    roles=("ingenieria-software",),
+                    depends_on=("CONDOR_NEXT_1",),
                 ),
             ),
         )
@@ -745,16 +751,95 @@ class DispatcherV2Tests(unittest.TestCase):
         }
         self.assertEqual(materialize_direction_leaves(proposal, decision_evidence=declined), ())
         approved = {**declined, "option": "A"}
-        materialized = materialize_direction_leaves(proposal, decision_evidence=approved)
+        materialized = materialize_direction_leaves(
+            proposal,
+            decision_evidence=approved,
+            gate_issue_number=406,
+            owner="pl0n3r",
+            dependency_issue_numbers={"CONDOR_NEXT_1": 409},
+        )
         self.assertEqual(
             [leaf["key"] for leaf in materialized],
-            ["condor-next-1", "condor-next-2"],
+            ["CONDOR_NEXT_1", "CONDOR_NEXT_2"],
         )
         self.assertTrue(all(leaf["state"] == "available" for leaf in materialized))
-        self.assertEqual(materialized[1]["depends_on"], ["condor-next-1"])
+        self.assertEqual(materialized[1]["depends_on"], ["CONDOR_NEXT_1"])
         stale = {**approved, "gate_sha256": "0" * 64}
         with self.assertRaisesRegex(ValueError, "does not match"):
             materialize_direction_leaves(proposal, decision_evidence=stale)
+
+    def test_direction_leaf_requires_exact_paths_and_roles(self):
+        base = dict(
+            key="STRICT_LEAF",
+            title="Leaf con claims estrictos",
+            acceptance_targets=(
+                "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+            ),
+            paths=("src/strict.py",),
+            roles=("ingenieria-software",),
+        )
+        invalid = (
+            {**base, "paths": ()},
+            {**base, "paths": ("../secret",)},
+            {**base, "paths": ("src/*.py",)},
+            {**base, "paths": ("src/strict.py", "src/strict.py")},
+            {**base, "roles": ()},
+            {**base, "roles": ("qa", "qa")},
+        )
+        for leaf in invalid:
+            with self.subTest(leaf=leaf), self.assertRaises(ValueError):
+                direction_gate_trigger(
+                    DirectionProposal(
+                        repository_ref="pl0n3r/Condor",
+                        objective="Propuesta con contrato estricto.",
+                        leaves=(DirectionLeaf(**leaf),),
+                    ),
+                    [],
+                )
+
+    def test_materialized_direction_leaf_contains_reservable_contract(self):
+        proposal = DirectionProposal(
+            repository_ref="pl0n3r/Condor",
+            objective="Abrir CMS tenant-scoped.",
+            leaves=(
+                DirectionLeaf(
+                    key="CMS_DOMAIN_V1",
+                    title="Dominio CMS tenant-scoped",
+                    acceptance_targets=(
+                        "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                        "check:CI Condor",
+                    ),
+                    paths=("src/Domain/Content/", "tests/test_next_slice.py"),
+                    roles=("ingenieria-software", "qa"),
+                ),
+            ),
+        )
+        opened = direction_gate_trigger(proposal, [])
+        approved = {
+            "gate_sha256": opened["gate_sha256"],
+            "option": "A",
+            "version": 2,
+        }
+        materialized = materialize_direction_leaves(
+            proposal,
+            decision_evidence=approved,
+            gate_issue_number=406,
+            owner="pl0n3r",
+        )
+        self.assertEqual(len(materialized), 1)
+        body = materialized[0]["body"]
+        criteria = parse_contract(body)
+        self.assertEqual([criterion.kind for criterion in criteria], ["test", "check"])
+        task = parse_task_marker(body)
+        self.assertIsNotNone(task)
+        self.assertEqual(task["epic"], 406)
+        self.assertEqual(task["task_key"], "CMS_DOMAIN_V1")
+        self.assertEqual(task["owner"], "pl0n3r")
+        self.assertEqual(task["roles"], ["ingenieria-software", "qa"])
+        self.assertEqual(
+            task["paths"],
+            ["src/Domain/Content/", "tests/test_next_slice.py"],
+        )
 
     def test_auto_fed_lane_remains_dispatchable_without_owner_gate(self):
         auto = Candidate(
@@ -782,9 +867,11 @@ class DispatcherV2Tests(unittest.TestCase):
                         objective="Propuesta inválida por check genérico.",
                         leaves=(
                             DirectionLeaf(
-                                key="invalid-check",
+                                key="INVALID_CHECK",
                                 title="Leaf con check prohibido",
                                 acceptance_targets=(target,),
+                                paths=("src/invalid_check.py",),
+                                roles=("ingenieria-software",),
                             ),
                         ),
                     ),
@@ -799,11 +886,13 @@ class DispatcherV2Tests(unittest.TestCase):
                     objective="Propuesta inválida por target de test.",
                     leaves=(
                         DirectionLeaf(
-                            key="invalid-test",
+                            key="INVALID_TEST",
                             title="Leaf con test no canónico",
                             acceptance_targets=(
                                 "tests/test_next_slice.py::NextSliceTests::not_a_test",
                             ),
+                            paths=("src/invalid_test.py",),
+                            roles=("qa",),
                         ),
                     ),
                 ),
@@ -817,17 +906,21 @@ class DispatcherV2Tests(unittest.TestCase):
                 objective="Propuesta con evidencia ejecutable canónica.",
                 leaves=(
                     DirectionLeaf(
-                        key="canonical-test",
+                        key="CANONICAL_TEST",
                         title="Leaf con test exacto",
                         acceptance_targets=(
                             "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
                         ),
+                        paths=("src/canonical_test.py",),
+                        roles=("qa",),
                     ),
                     DirectionLeaf(
-                        key="canonical-check",
+                        key="CANONICAL_CHECK",
                         title="Leaf con check específico",
                         acceptance_targets=("check:validate",),
-                        depends_on=("canonical-test",),
+                        paths=("src/canonical_check.py",),
+                        roles=("ingenieria-software",),
+                        depends_on=("CANONICAL_TEST",),
                     ),
                 ),
             ),
