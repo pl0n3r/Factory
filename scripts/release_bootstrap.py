@@ -20,6 +20,14 @@ REQUIRED_ISSUES = tuple(str(n) for n in range(1, 15)) + ("54", "83")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 APPROVAL_NAME = "factory-release-approval"
 APPROVAL_RE = re.compile(r"<!--\s*factory-release-approval\s+(\{.*?\})\s*-->", re.DOTALL)
+DECISION_BOT = "github-actions[bot]"
+DECISION_COMMAND_RE = re.compile(r"^/decidir ([A-D])$")
+DECISION_INTENT_RE = re.compile(r"<!--\s*factory-human-decision\b")
+DECISION_EVIDENCE_RE = re.compile(
+    r'^<!--\s*factory-human-decision\s+(\{[^\n]*\})\s*-->'
+)
+MAIN_TARGET_RE = re.compile(r"\bmain@([0-9a-f]{40})\b")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 RELEASE_GATE_CATEGORIES = {"release-1.0.0", "factory-release"}
 MAX_INPUT = 1_000_000
