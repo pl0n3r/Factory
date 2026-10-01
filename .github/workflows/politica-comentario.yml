@@ -9,11 +9,15 @@ permissions:
   contents: read
   pull-requests: read
   issues: read
-  checks: write
 
 jobs:
   revalidar:
     name: Revalidar comentario reviewer-bot
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: write
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
