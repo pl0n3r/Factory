@@ -28,3 +28,4 @@ jobs:
     with:
       pr_number: ${{ github.event.issue.number }}
       comment_id: ${{ github.event.comment.id }}
+      required_review_bot: ""
