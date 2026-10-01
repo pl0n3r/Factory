@@ -140,6 +140,32 @@ class PlanContractTests(unittest.TestCase):
             PLAN,
         )
 
+    def test_product_direction_policy_covers_all_automatic_projects(self):
+        lane = next(
+            line
+            for line in PLAN.splitlines()
+            if "**Carril 2 — dirección de producto:**" in line
+        )
+        for project in (
+            "Condor",
+            "GrindFlow",
+            "BRVTAL",
+            "ControlBot",
+            "AutoFactory",
+            "FactoryRunner",
+        ):
+            with self.subTest(project=project):
+                self.assertIn(project, lane)
+
+        self.assertIn(
+            "la puerta no salta bloqueos de autoridad, live, gasto ni proveedores",
+            PLAN,
+        )
+        self.assertIn("ControlBot#45", PLAN)
+        self.assertIn("ControlBot#182", PLAN)
+        self.assertIn("AutoFactory#70", PLAN)
+        self.assertIn("Backblaze B2 no se provisiona antes de live", PLAN)
+
     def test_direction_gate_creation_requires_post_create_reconciliation(self):
         for value in (
             "reconciliar post-create",

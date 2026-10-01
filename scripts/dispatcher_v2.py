@@ -103,6 +103,9 @@ PRODUCT_DIRECTION_REPOS = {
     "pl0n3r/Condor",
     "pl0n3r/GrindFlow",
     "pl0n3r/brvtal",
+    "pl0n3r/ControlBot",
+    "pl0n3r/AutoFactory",
+    "pl0n3r/FactoryRunner",
 }
 PRODUCT_DIRECTION_ELIGIBLE_LEAF_THRESHOLD = 1
 
@@ -134,7 +137,7 @@ class DirectionGateInstance:
 
 def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, object]:
     if proposal.repository_ref not in PRODUCT_DIRECTION_REPOS:
-        raise ValueError("product direction only applies to canonical product repos")
+        raise ValueError("product direction only applies to canonical product-direction repos")
     objective = proposal.objective.strip()
     if not objective:
         raise ValueError("direction proposal objective is required")
