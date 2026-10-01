@@ -9,7 +9,12 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from scripts.aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
-from scripts.work_inventory import CANONICAL_REPOSITORIES, PRIORITY_ORDER
+from scripts.work_inventory import (
+    CANONICAL_REPOSITORIES,
+    PRIORITY_ORDER,
+    WorkInventoryError,
+    project_inventory,
+)
 
 MATERIALIZABLE_KIND = "executable"
 GATED_KINDS = frozenset({"future_idea", "decision_required", "live_only"})
@@ -146,33 +151,33 @@ def materialization_fingerprint(payload: Any) -> str:
 
 def _existing_identities(
     existing_leaves: Iterable[Mapping[str, Any]],
-) -> tuple[set[str], set[str]]:
-    keys: set[str] = set()
-    identities: set[str] = set()
-    for raw in existing_leaves:
-        if not isinstance(raw, Mapping):
-            raise WorkMaterializerError("existing_leaves contiene una fila inválida.")
-        key = raw.get("key")
-        if not isinstance(key, str) or not key.strip():
-            raise WorkMaterializerError("existing_leaves contiene key inválida.")
-        canonical_key = key.strip()
-        if canonical_key in keys:
-            raise WorkMaterializerError("existing_leaves contiene key duplicada.")
-        keys.add(canonical_key)
+    repository_ref: str,
+) -> tuple[dict[str, str | None], set[str]]:
+    rows = list(existing_leaves)
+    try:
+        project_inventory({
+            "repository_ref": repository_ref,
+            "leaves": rows,
+            "narrative": [],
+        })
+    except WorkInventoryError as exc:
+        raise WorkMaterializerError(
+            "existing_leaves viola el inventario canónico."
+        ) from exc
 
+    keys: dict[str, str | None] = {}
+    identities: set[str] = set()
+    for raw in rows:
+        key = raw["key"].strip()
         identity = raw.get("source_identity")
-        if identity is None:
-            continue
-        if not isinstance(identity, str) or not identity.strip():
-            raise WorkMaterializerError(
-                "existing_leaves contiene source_identity inválida."
-            )
-        canonical_identity = identity.strip()
+        canonical_identity = identity.strip() if identity else None
         if canonical_identity in identities:
             raise WorkMaterializerError(
                 "existing_leaves contiene source_identity duplicada."
             )
-        identities.add(canonical_identity)
+        keys[key] = canonical_identity
+        if canonical_identity:
+            identities.add(canonical_identity)
     return keys, identities
 
 
@@ -206,8 +211,21 @@ def materialize_leaf(
             "leaf": None,
         }
 
-    keys, identities = _existing_identities(existing_leaves)
-    if normalized["leaf_key"] in keys or normalized["identity"] in identities:
+    keys, identities = _existing_identities(
+        existing_leaves, normalized["repository_ref"]
+    )
+    if normalized["identity"] in identities:
+        return {
+            "materialized": False,
+            "reason": "already_materialized",
+            "fingerprint": fingerprint,
+            "leaf": None,
+        }
+    if normalized["leaf_key"] in keys:
+        if keys[normalized["leaf_key"]] != normalized["identity"]:
+            raise WorkMaterializerError(
+                "leaf_key existente colisiona con otra source_identity."
+            )
         return {
             "materialized": False,
             "reason": "already_materialized",
