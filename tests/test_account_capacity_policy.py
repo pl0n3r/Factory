@@ -1,4 +1,5 @@
 import copy
+from collections import UserDict
 import inspect
 import unittest
 
@@ -56,6 +57,16 @@ def fresh_capacity(*, accepted=4, observed_at=950, now=1000):
     )
 
 
+def resign_capacity(capacity):
+    payload = {
+        key: value
+        for key, value in capacity.items()
+        if key != "fingerprint"
+    }
+    capacity["fingerprint"] = policy_module._stable_hash(payload)
+    return capacity
+
+
 class AccountCapacityPolicyTests(unittest.TestCase):
     def test_fresh_capacity_projects_exact_versioned_budget_in_milliseconds(self):
         capacity = fresh_capacity()
@@ -94,6 +105,68 @@ class AccountCapacityPolicyTests(unittest.TestCase):
         self.assertEqual(projected["expiresAt"], 1250000)
         self.assertEqual(projected["capacityFingerprint"], capacity["fingerprint"])
         self.assertLessEqual(projected["budget"]["limit"], capacity["observed_safe_max"])
+
+    def test_core_fingerprint_is_verified_before_projection(self):
+        capacity = fresh_capacity()
+        projected = project_account_capacity_policy(
+            capacity,
+            account_alias="primary",
+            now=1000,
+        )
+        self.assertEqual(projected["capacityFingerprint"], capacity["fingerprint"])
+        self.assertEqual(projected["status"], "FRESH")
+        self.assertIsNotNone(projected["budget"])
+
+    def test_expected_capacity_fingerprint_matches_core_serialization(self):
+        capacity = fresh_capacity()
+        payload = {
+            key: value
+            for key, value in capacity.items()
+            if key != "fingerprint"
+        }
+        self.assertEqual(policy_module._stable_hash(payload), capacity["fingerprint"])
+        projected = project_account_capacity_policy(
+            capacity,
+            account_alias="primary",
+            now=1000,
+        )
+        self.assertEqual(projected["capacityFingerprint"], capacity["fingerprint"])
+
+        unserializable = copy.deepcopy(capacity)
+        unserializable["budget"] = UserDict(unserializable["budget"])
+        with self.assertRaisesRegex(
+            AccountCapacityPolicyError,
+            "fingerprint no corresponde",
+        ):
+            project_account_capacity_policy(
+                unserializable,
+                account_alias="primary",
+                now=1000,
+            )
+
+    def test_tampered_capacity_with_stale_fingerprint_is_rejected(self):
+        capacity = fresh_capacity()
+        tampered = copy.deepcopy(capacity)
+        tampered["budget"]["max_messages"] = 3
+        tampered["budget"]["min_interval_seconds"] = 300
+        tampered["observed_safe_max"] = 3
+
+        with self.assertRaisesRegex(
+            AccountCapacityPolicyError,
+            "fingerprint no corresponde",
+        ):
+            project_account_capacity_policy(
+                tampered,
+                account_alias="primary",
+                now=1000,
+            )
+
+        projected = project_account_capacity_policy(
+            capacity,
+            account_alias="primary",
+            now=1000,
+        )
+        self.assertEqual(projected["capacityFingerprint"], capacity["fingerprint"])
 
     def test_unknown_stale_and_expired_capacity_never_publish_authoritative_budget(self):
         unknown = estimate_account_capacity(request([]), now=1000)
@@ -161,6 +234,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
         future = copy.deepcopy(capacity)
         future["observed_at"] = 1001
         future["expires_at"] = 1301
+        resign_capacity(future)
         with self.assertRaisesRegex(AccountCapacityPolicyError, "futuro"):
             project_account_capacity_policy(
                 future,
@@ -170,6 +244,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
 
         incoherent = copy.deepcopy(capacity)
         incoherent["expires_at"] = incoherent["observed_at"]
+        resign_capacity(incoherent)
         with self.assertRaisesRegex(AccountCapacityPolicyError, "expires_at"):
             project_account_capacity_policy(
                 incoherent,
@@ -230,6 +305,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
         capacity = fresh_capacity()
         capacity["budget"]["max_messages"] = maximum
         capacity["observed_safe_max"] = maximum
+        resign_capacity(capacity)
 
         projected = project_account_capacity_policy(
             capacity,
@@ -241,6 +317,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
         unsafe = copy.deepcopy(capacity)
         unsafe["budget"]["max_messages"] = maximum + 1
         unsafe["observed_safe_max"] = maximum + 1
+        resign_capacity(unsafe)
         with self.assertRaisesRegex(AccountCapacityPolicyError, "entero seguro JavaScript"):
             project_account_capacity_policy(
                 unsafe,
@@ -248,11 +325,12 @@ class AccountCapacityPolicyTests(unittest.TestCase):
                 now=1000,
             )
 
-    def test_budget_seconds_must_project_to_javascript_safe_milliseconds(self):
+    def test_millisecond_projection_respects_js_safe_integer_boundary(self):
         maximum_seconds = ((1 << 53) - 1) // 1000
         capacity = fresh_capacity(accepted=1)
         capacity["budget"]["window_seconds"] = maximum_seconds
         capacity["budget"]["min_interval_seconds"] = maximum_seconds
+        resign_capacity(capacity)
 
         projected = project_account_capacity_policy(
             capacity,
@@ -273,6 +351,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
             else:
                 unsafe["budget"]["window_seconds"] = 1
                 unsafe["budget"]["min_interval_seconds"] = maximum_seconds + 1
+            resign_capacity(unsafe)
             with self.subTest(field=field):
                 with self.assertRaisesRegex(
                     AccountCapacityPolicyError,
@@ -289,6 +368,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
         capacity = fresh_capacity(accepted=1)
         capacity["observed_at"] = maximum_seconds - 1
         capacity["expires_at"] = maximum_seconds
+        resign_capacity(capacity)
 
         projected = project_account_capacity_policy(
             capacity,
@@ -303,6 +383,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
         unsafe_observed = fresh_capacity(accepted=1)
         unsafe_observed["observed_at"] = maximum_seconds + 1
         unsafe_observed["expires_at"] = maximum_seconds + 2
+        resign_capacity(unsafe_observed)
         with self.assertRaisesRegex(AccountCapacityPolicyError, "observed_at.*entero seguro"):
             project_account_capacity_policy(
                 unsafe_observed,
@@ -313,6 +394,7 @@ class AccountCapacityPolicyTests(unittest.TestCase):
         unsafe_expires = fresh_capacity(accepted=1)
         unsafe_expires["observed_at"] = maximum_seconds
         unsafe_expires["expires_at"] = maximum_seconds + 1
+        resign_capacity(unsafe_expires)
         with self.assertRaisesRegex(AccountCapacityPolicyError, "expires_at.*entero seguro"):
             project_account_capacity_policy(
                 unsafe_expires,
@@ -320,7 +402,19 @@ class AccountCapacityPolicyTests(unittest.TestCase):
                 now=maximum_seconds + 1,
             )
 
-    def test_safe_integer_validation_preserves_v1_shape_and_freshness_semantics(self):
+    def test_existing_js_safe_and_freshness_regressions_remain_compatible(self):
+        maximum_seconds = ((1 << 53) - 1) // 1000
+        safe = fresh_capacity(accepted=1)
+        safe["budget"]["window_seconds"] = maximum_seconds
+        safe["budget"]["min_interval_seconds"] = maximum_seconds
+        resign_capacity(safe)
+        safe_projected = project_account_capacity_policy(
+            safe,
+            account_alias="primary",
+            now=1000,
+        )
+        self.assertEqual(safe_projected["budget"]["windowMs"], maximum_seconds * 1000)
+
         fresh = project_account_capacity_policy(
             fresh_capacity(),
             account_alias="primary",

@@ -161,6 +161,21 @@ def _capacity(value: Any, *, now: int) -> dict[str, Any]:
     if limited_count > sample_count:
         raise AccountCapacityPolicyError("capacity.limited_count excede sample_count")
     capacity_fingerprint = _fingerprint(row["fingerprint"], "capacity.fingerprint")
+    fingerprint_payload = {
+        key: row[key]
+        for key in CAPACITY_FIELDS
+        if key != "fingerprint"
+    }
+    try:
+        expected_fingerprint = _stable_hash(fingerprint_payload)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise AccountCapacityPolicyError(
+            "capacity.fingerprint no corresponde a la evidencia"
+        ) from exc
+    if capacity_fingerprint != expected_fingerprint:
+        raise AccountCapacityPolicyError(
+            "capacity.fingerprint no corresponde a la evidencia"
+        )
 
     if observed_at is not None and observed_at > now:
         raise AccountCapacityPolicyError("capacity.observed_at no puede estar en el futuro")
