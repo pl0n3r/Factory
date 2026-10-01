@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import io
 import json
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts.labels_kit import (
@@ -13,6 +16,8 @@ from scripts.labels_kit import (
     validation_document_plan,
     validation_plan,
     warning_plan,
+    closing_issue_reference,
+    main,
     load_catalog,
     selected_names,
     sweep,
@@ -381,6 +386,116 @@ class LabelsKitTests(unittest.TestCase):
             root = Path(tmp)
             with self.assertRaises(LabelError):
                 load_catalog(Path("../bad.json"), root=root)
+
+
+    def test_invalid_inputs_and_cli_paths_are_covered(self):
+        self.assertEqual(closing_issue_reference("Closes #7"), 7)
+        self.assertIsNone(closing_issue_reference("Closes #7\nFixes #8"))
+        with self.assertRaises(LabelError):
+            closing_issue_reference("x" * 100_001)
+        with self.assertRaises(LabelError):
+            linked_issue_names("bad")
+
+        with self.assertRaises(LabelError):
+            upsert_plan(self.catalog, "bad")
+        with self.assertRaises(LabelError):
+            upsert_plan(self.catalog, [], aliases={"x": "x"})
+        with self.assertRaises(LabelError):
+            upsert_plan(
+                self.catalog,
+                [{"name": "a"}, {"name": "b"}],
+                aliases={"a": "prioridad: media", "b": "prioridad: media"},
+            )
+
+        self.assertEqual(warning_plan({"valid": True}, "es")["action"], "clear")
+        with self.assertRaises(LabelError):
+            warning_plan({"valid": False, "missing": "bad", "multiple": []}, "es")
+        with self.assertRaises(LabelError):
+            warning_plan({"valid": False, "missing": ["unknown"], "multiple": []}, "es")
+        with self.assertRaises(LabelError):
+            warning_plan({"valid": False}, "xx")
+
+        self.assertEqual(sweep_issue_plan(self.catalog, [], "es")["action"], "close")
+        self.assertEqual(sweep_issue_plan(self.catalog, [2, 1, 2], "es")["action"], "upsert")
+        with self.assertRaises(LabelError):
+            sweep_issue_plan(self.catalog, [True], "es")
+        with self.assertRaises(LabelError):
+            sweep_issue_plan(self.catalog, [], "xx")
+
+        bad_docs = [
+            {},
+            {"labels": [], "is_pull_request": 1, "body": "", "linked_issue": None},
+        ]
+        for doc in bad_docs:
+            with self.subTest(doc=doc):
+                with self.assertRaises(LabelError):
+                    validation_document_plan(self.catalog, doc, "es")
+
+        commands = [
+            ("validate-catalog", "", 0),
+            (
+                "validate-selection",
+                json.dumps(["tipo: mejora", "prioridad: media", "estado: disponible"]),
+                0,
+            ),
+            ("upsert-plan", "[]", 0),
+            ("closing-reference", "Closes #12", 0),
+            (
+                "plan-validation",
+                json.dumps(
+                    {
+                        "labels": [],
+                        "is_pull_request": False,
+                        "body": "",
+                        "linked_issue": None,
+                    }
+                ),
+                0,
+            ),
+            (
+                "sweep",
+                json.dumps({"number": 1, "labels": [{"name": "tipo: mejora"}]}) + "\n",
+                1,
+            ),
+            ("sweep-plan", "", 0),
+        ]
+        for command, stdin, expected in commands:
+            with (
+                self.subTest(command=command),
+                patch.object(
+                    sys,
+                    "argv",
+                    ["labels_kit.py", command, "--language", "es"],
+                ),
+                patch("sys.stdin", io.StringIO(stdin)),
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                self.assertEqual(main(), expected)
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["labels_kit.py", "validate-selection", "--language", "es"],
+            ),
+            patch("sys.stdin", io.StringIO("{")),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(main(), 2)
+
+    def test_catalog_loader_rejects_invalid_shapes_and_selected_names_edges(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            root = Path(tmp)
+            path = root / "labels.json"
+            for raw in ([], {}, [{"key": "x"}]):
+                path.write_text(json.dumps(raw), encoding="utf-8")
+                with self.subTest(raw=raw):
+                    with self.assertRaises(LabelError):
+                        load_catalog(path, root=root)
+        for raw in ("bad", [123], [{"name": 1}], ["x\n"]):
+            with self.subTest(raw=raw):
+                with self.assertRaises(LabelError):
+                    selected_names(raw)
 
 
 if __name__ == "__main__":
