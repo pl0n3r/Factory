@@ -51,7 +51,7 @@ def gh_api(method: str, path: str, payload: dict | None = None):
         check=True,
     )
     value = json.loads(result.stdout) if result.stdout.strip() else None
-    if method == "GET" and "?per_page=" in path:
+    if method == "GET" and "per_page=" in path:
         return [item for page in value for item in page]
     return value
 
@@ -187,13 +187,14 @@ def _open_target_gate_numbers(
         if candidate_contract != authority_contract:
             return None
 
-        candidate_base = f"repos/{repository}/issues/{number}"
-        try:
-            evidence = _existing_evidence(api, candidate_base)
-        except DecisionError:
-            return None
-        if number != issue_number and evidence is not None:
-            return None
+        if number != issue_number:
+            candidate_base = f"repos/{repository}/issues/{number}"
+            try:
+                evidence = _existing_evidence(api, candidate_base)
+            except DecisionError:
+                return None
+            if evidence is not None:
+                return None
 
         if candidate.get("state") == "open":
             result.append(number)
