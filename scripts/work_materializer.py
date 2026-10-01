@@ -139,18 +139,35 @@ def materialization_fingerprint(payload: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _existing_identities(existing_leaves: Iterable[Mapping[str, Any]]) -> tuple[set[str], set[str]]:
+def _existing_identities(
+    existing_leaves: Iterable[Mapping[str, Any]],
+) -> tuple[set[str], set[str]]:
     keys: set[str] = set()
     identities: set[str] = set()
     for raw in existing_leaves:
         if not isinstance(raw, Mapping):
             raise WorkMaterializerError("existing_leaves contiene una fila inválida.")
         key = raw.get("key")
+        if not isinstance(key, str) or not key.strip():
+            raise WorkMaterializerError("existing_leaves contiene key inválida.")
+        canonical_key = key.strip()
+        if canonical_key in keys:
+            raise WorkMaterializerError("existing_leaves contiene key duplicada.")
+        keys.add(canonical_key)
+
         identity = raw.get("source_identity")
-        if isinstance(key, str) and key.strip():
-            keys.add(key.strip())
-        if isinstance(identity, str) and identity.strip():
-            identities.add(identity.strip())
+        if identity is None:
+            continue
+        if not isinstance(identity, str) or not identity.strip():
+            raise WorkMaterializerError(
+                "existing_leaves contiene source_identity inválida."
+            )
+        canonical_identity = identity.strip()
+        if canonical_identity in identities:
+            raise WorkMaterializerError(
+                "existing_leaves contiene source_identity duplicada."
+            )
+        identities.add(canonical_identity)
     return keys, identities
 
 
@@ -158,6 +175,7 @@ def materialize_leaf(
     payload: Any,
     *,
     existing_leaves: Iterable[Mapping[str, Any]] = (),
+    completed_dependencies: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Devuelve una decisión pura; nunca publica ni muta GitHub."""
     normalized = validate_materialization_candidate(payload)
@@ -167,6 +185,18 @@ def materialize_leaf(
         return {
             "materialized": False,
             "reason": f"gated:{normalized['kind']}",
+            "fingerprint": fingerprint,
+            "leaf": None,
+        }
+
+    completed = {
+        _text(item, "completed_dependencies[]") for item in completed_dependencies
+    }
+    open_dependencies = sorted(set(normalized["depends_on"]) - completed)
+    if normalized["state"] == "available" and open_dependencies:
+        return {
+            "materialized": False,
+            "reason": "open_dependencies",
             "fingerprint": fingerprint,
             "leaf": None,
         }
