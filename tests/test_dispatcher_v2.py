@@ -225,6 +225,8 @@ class DispatcherV2Tests(unittest.TestCase):
                     work_ladder([candidate])["step"],
                     "declare_idle_reason",
                 )
+        with self.assertRaisesRegex(ValueError, "capped at 2"):
+            work_ladder([safe], max_filler_parallel=3)
 
     def test_work_ladder_declares_reason_when_no_safe_work_exists(self):
         result = work_ladder(
