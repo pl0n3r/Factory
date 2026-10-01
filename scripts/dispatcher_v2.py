@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Iterable
 
 from scripts.adaptive_fencing import FencingDecision
+from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET
 from scripts.presence_contract import PresenceAssessment
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 from seguridad.puertas_humanas import validate_gate
@@ -138,12 +139,19 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
         if not title or not leaf.acceptance_targets:
             raise ValueError("direction leaves require title and executable acceptance")
         targets = tuple(target.strip() for target in leaf.acceptance_targets)
-        if any(
-            not target
-            or ("::" not in target and not target.startswith("check:"))
-            for target in targets
-        ):
-            raise ValueError("direction acceptance targets must name exact tests or checks")
+        for target in targets:
+            if target.startswith("check:"):
+                check_name = target.removeprefix("check:")
+                valid = (
+                    CHECK_NAME.fullmatch(check_name) is not None
+                    and check_name not in FORBIDDEN_CHECKS
+                )
+            else:
+                valid = TEST_TARGET.fullmatch(target) is not None
+            if not valid:
+                raise ValueError(
+                    "direction acceptance targets must match factory-acceptance"
+                )
         dependencies = tuple(dep.strip() for dep in leaf.depends_on)
         if any(not dep or dep == key or dep not in key_set for dep in dependencies):
             raise ValueError("direction dependencies must reference another proposed leaf")

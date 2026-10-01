@@ -719,7 +719,7 @@ class DispatcherV2Tests(unittest.TestCase):
                 DirectionLeaf(
                     key="condor-next-2",
                     title="Segundo leaf dependiente",
-                    acceptance_targets=("check:Validar",),
+                    acceptance_targets=("check:validate",),
                     depends_on=("condor-next-1",),
                 ),
             ),
@@ -767,6 +767,71 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(trigger["action"], "noop")
         self.assertEqual(trigger["reason"], "eligible_leaf_exists")
         self.assertEqual(select_next([auto]).key, "quality-auto")
+
+    def test_direction_proposal_rejects_forbidden_acceptance_checks(self):
+        for target in ("check:Validar", "check:Criterios de aceptación"):
+            with self.subTest(target=target), self.assertRaisesRegex(
+                ValueError,
+                "factory-acceptance",
+            ):
+                direction_gate_trigger(
+                    DirectionProposal(
+                        repository_ref="pl0n3r/Condor",
+                        objective="Propuesta inválida por check genérico.",
+                        leaves=(
+                            DirectionLeaf(
+                                key="invalid-check",
+                                title="Leaf con check prohibido",
+                                acceptance_targets=(target,),
+                            ),
+                        ),
+                    ),
+                    [],
+                )
+
+    def test_direction_proposal_rejects_noncanonical_test_targets(self):
+        with self.assertRaisesRegex(ValueError, "factory-acceptance"):
+            direction_gate_trigger(
+                DirectionProposal(
+                    repository_ref="pl0n3r/Condor",
+                    objective="Propuesta inválida por target de test.",
+                    leaves=(
+                        DirectionLeaf(
+                            key="invalid-test",
+                            title="Leaf con test no canónico",
+                            acceptance_targets=(
+                                "tests/test_next_slice.py::NextSliceTests::not_a_test",
+                            ),
+                        ),
+                    ),
+                ),
+                [],
+            )
+
+    def test_direction_proposal_accepts_canonical_targets(self):
+        trigger = direction_gate_trigger(
+            DirectionProposal(
+                repository_ref="pl0n3r/Condor",
+                objective="Propuesta con evidencia ejecutable canónica.",
+                leaves=(
+                    DirectionLeaf(
+                        key="canonical-test",
+                        title="Leaf con test exacto",
+                        acceptance_targets=(
+                            "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                        ),
+                    ),
+                    DirectionLeaf(
+                        key="canonical-check",
+                        title="Leaf con check específico",
+                        acceptance_targets=("check:validate",),
+                        depends_on=("canonical-test",),
+                    ),
+                ),
+            ),
+            [],
+        )
+        self.assertEqual(trigger["action"], "open_gate")
 
     def test_direction_gate_trigger_is_idempotent_for_empty_open_and_ready_states(self):
         proposal = self.direction_proposal()
