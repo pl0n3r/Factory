@@ -171,25 +171,48 @@ class QualityContractTests(unittest.TestCase):
 
         sonar = schema["$defs"]["sonar"]
         self.assertFalse(sonar["additionalProperties"])
-        self.assertEqual(
-            set(sonar["required"]),
-            {
-                "expected_visibility",
-                "analysis_method",
-                "max_analysis_age_seconds",
-                "max_organization_line_usage_percent",
-                "max_open_vulnerabilities",
-                "max_open_bugs",
-                "max_open_hotspots",
-                "max_debt_age_days",
-            },
-        )
+        legacy_required = {
+            "expected_visibility",
+            "analysis_method",
+            "max_analysis_age_seconds",
+            "max_organization_line_usage_percent",
+            "max_open_vulnerabilities",
+            "max_open_bugs",
+            "max_open_hotspots",
+            "max_debt_age_days",
+        }
+        self.assertEqual(set(sonar["required"]), legacy_required)
         self.assertEqual(
             set(sonar["properties"]),
-            set(sonar["required"]) | {"applicability"},
+            legacy_required | {"applicability"},
         )
         self.assertNotIn("applicability", sonar["required"])
+        self.assertEqual(
+            sonar["properties"]["applicability"],
+            {"$ref": "#/$defs/sonarApplicability"},
+        )
 
+        applicability = schema["$defs"]["sonarApplicability"]
+        self.assertFalse(applicability["additionalProperties"])
+        self.assertEqual(
+            set(applicability["required"]),
+            {"coverage", "organization_line_usage"},
+        )
+        self.assertEqual(
+            set(applicability["properties"]),
+            {"coverage", "organization_line_usage"},
+        )
+
+        entry = schema["$defs"]["sonarApplicabilityEntry"]
+        self.assertFalse(entry["additionalProperties"])
+        self.assertEqual(
+            set(entry["required"]),
+            {"state", "reason", "source_ref"},
+        )
+        self.assertEqual(
+            set(entry["properties"]["state"]["enum"]),
+            {"required", "not_applicable"},
+        )
     def test_contract_supports_project_specific_surfaces_and_required_gates(self):
         factory = validate_quality_contract(sample("factory"))
         grindflow_raw = sample("grindflow")
