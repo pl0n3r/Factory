@@ -100,6 +100,15 @@ def _event(value: Any, *, now: datetime) -> dict[str, str]:
     }
 
 
+def _source_project(source: str) -> str:
+    if source.startswith("https://github.com/"):
+        owner, repo, _kind, _number = source.removeprefix(
+            "https://github.com/"
+        ).split("/")
+        return f"{owner}/{repo}"
+    return source.rsplit("#", 1)[0]
+
+
 def _validate_source(source: str, occurred_at: str) -> None:
     probe = {
         "id": "capacity-limit-source",
@@ -159,6 +168,10 @@ def learn_limit_events(payload: Any, *, now: str) -> dict[str, Any]:
     unique: dict[str, dict[str, str]] = {}
     for raw_event in events:
         normalized = _event(raw_event, now=now_value)
+        if _source_project(normalized["source"]).casefold() != project.casefold():
+            raise AccountCapacityLearningError(
+                "event.source no corresponde al project."
+            )
         unique.setdefault(_hash(normalized), normalized)
 
     ordered = sorted(
