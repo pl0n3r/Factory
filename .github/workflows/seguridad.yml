@@ -120,7 +120,7 @@ jobs:
 
   sincronizar-decision:
     name: Validar y enrutar decisión
-    if: github.event_name == 'issues'
+    if: github.event_name == 'issues' && github.event.issue.state == 'open'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
