@@ -625,6 +625,23 @@ class GateDedupTests(unittest.TestCase):
             gate_authority_contract(equivalent_raw),
         )
 
+        legacy_first = gate(
+            category="factory-release",
+            context="Release legacy sin target exacto",
+            options=[
+                {"id": "A", "label": "Publicar", "effect": "Efecto A"},
+                {"id": "B", "label": "No publicar", "effect": "Efecto B"},
+            ],
+            recommendation="A",
+            safe_default="B",
+        )
+        legacy_changed = json.loads(json.dumps(legacy_first))
+        legacy_changed["options"][0]["effect"] = "Efecto materialmente distinto"
+        self.assertNotEqual(
+            gate_authority_contract(legacy_first),
+            gate_authority_contract(legacy_changed),
+        )
+
     def test_release_1017_race_converges_without_body_edit(self):
         api = MultiGateAPI([
             gate_issue(
@@ -691,6 +708,42 @@ class GateDedupTests(unittest.TestCase):
                     method in {"POST", "PATCH", "DELETE"}
                     for method, _, _ in api.calls
                 ))
+
+        decision_a = (
+            '<!-- factory-human-decision '
+            '{"gate_sha256":"' + ("a" * 64)
+            + '","option":"A","version":2} -->'
+        )
+        decision_b = (
+            '<!-- factory-human-decision '
+            '{"gate_sha256":"' + ("b" * 64)
+            + '","option":"B","version":2} -->'
+        )
+        contradictory = MultiGateAPI(
+            [
+                gate_issue(665, body_value=rich_release_gate_body()),
+                gate_issue(666, body_value=rich_release_gate_body()),
+            ],
+            comments={
+                665: [{
+                    "id": 1,
+                    "body": decision_a,
+                    "user": {"login": BOT, "type": "Bot"},
+                }],
+                666: [{
+                    "id": 2,
+                    "body": decision_b,
+                    "user": {"login": BOT, "type": "Bot"},
+                }],
+            },
+        )
+        with self.assertRaises(GateConflictError):
+            reconcile_gate(contradictory, "pl0n3r/Factory", 665)
+        self.assertEqual(contradictory.open_numbers(), [665, 666])
+        self.assertFalse(any(
+            method in {"POST", "PATCH", "DELETE"}
+            for method, _, _ in contradictory.calls
+        ))
 
     def test_non_release_authority_still_uses_effect(self):
         first = simple_gate()
