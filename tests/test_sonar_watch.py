@@ -406,7 +406,7 @@ class SonarWatchTests(unittest.TestCase):
                 }],
                 "paging": {
                     "pageIndex": 1,
-                    "pageSize": 500,
+                    "pageSize": sonar_watch._SONAR_PAGE_SIZE,
                     "total": 1,
                 },
             }
@@ -531,6 +531,7 @@ class SonarWatchTests(unittest.TestCase):
 
         def paged_request(path, **kwargs):
             page_calls.append(path)
+            page_size = sonar_watch._GITHUB_PAGE_SIZE
             if path.endswith("page=1"):
                 return [
                     {
@@ -539,10 +540,10 @@ class SonarWatchTests(unittest.TestCase):
                         "body": "",
                         "state": "open",
                     }
-                    for index in range(100)
+                    for index in range(page_size)
                 ]
             return [{
-                "number": 101,
+                "number": page_size + 1,
                 "title": "matching",
                 "body": marker,
                 "state": "open",
@@ -551,7 +552,10 @@ class SonarWatchTests(unittest.TestCase):
 
         github.http.request = paged_request
         found = github.find(marker)
-        self.assertEqual([item["number"] for item in found], [101])
+        self.assertEqual(
+            [item["number"] for item in found],
+            [sonar_watch._GITHUB_PAGE_SIZE + 1],
+        )
         self.assertEqual(len(page_calls), 2)
 
         original_limit = sonar_watch._MAX_GITHUB_ISSUE_PAGES
@@ -563,7 +567,7 @@ class SonarWatchTests(unittest.TestCase):
                 "body": "",
                 "state": "open",
             }
-            for index in range(100)
+            for index in range(sonar_watch._GITHUB_PAGE_SIZE)
         ]
         try:
             with self.assertRaises(sonar_watch.SonarWatchError):
@@ -763,37 +767,37 @@ class SonarWatchTests(unittest.TestCase):
                 with self.assertRaises(sonar_watch.SonarWatchError):
                     sonar_watch.SonarApi.analysis_method_from_settings(payload)
 
-    def test_sonar_pagination_bounds_each_remote_response(self):
-        self.assertEqual(sonar_watch._SONAR_PAGE_SIZE, 100)
-        api = sonar_watch.SonarApi(token="")
+    def test_github_issue_pagination_bounds_each_remote_response(self):
+        self.assertEqual(sonar_watch._GITHUB_PAGE_SIZE, 50)
+        self.assertEqual(sonar_watch._MAX_GITHUB_ISSUES, 10_000)
+        self.assertEqual(
+            sonar_watch._MAX_GITHUB_ISSUE_PAGES,
+            sonar_watch._MAX_GITHUB_ISSUES // sonar_watch._GITHUB_PAGE_SIZE,
+        )
+        github = sonar_watch.GitHubIssues(
+            repository="pl0n3r/Factory",
+            token="token",
+        )
         calls = []
 
-        def paged_get(path, params):
-            calls.append((path, dict(params)))
-            self.assertEqual(params["ps"], 100)
-            page = params["p"]
-            if page == 1:
-                return {
-                    "issues": [{"key": f"i-{index}"} for index in range(100)],
-                    "paging": {
-                        "pageIndex": 1,
-                        "pageSize": 100,
-                        "total": 101,
-                    },
-                }
-            return {
-                "issues": [{"key": "i-100"}],
-                "paging": {
-                    "pageIndex": 2,
-                    "pageSize": 100,
-                    "total": 101,
-                },
-            }
+        def fake_request(path, **kwargs):
+            calls.append(path)
+            self.assertIn("per_page=50", path)
+            if path.endswith("page=1"):
+                return [
+                    {
+                        "number": index + 1,
+                        "title": f"issue-{index}",
+                        "body": "",
+                        "state": "open",
+                    }
+                    for index in range(sonar_watch._GITHUB_PAGE_SIZE)
+                ]
+            return []
 
-        api.get = paged_get
-        rows = api._all_issues("project-key")
-        self.assertEqual(len(rows["issues"]), 101)
-        self.assertEqual([params["p"] for _, params in calls], [1, 2])
+        github.http.request = fake_request
+        self.assertEqual(github.find("<!-- absent -->"), [])
+        self.assertEqual(len(calls), 2)
 
     def test_workflow_keeps_scheduled_and_manual_triggers(self):
         text = (
