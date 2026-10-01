@@ -14,10 +14,11 @@ if str(ROOT) not in sys.path:
 from performance.classifier import PerformanceClassifierError, classify_performance_envelope
 from performance.contract import PerformanceContractError
 from performance.detector import PerformanceDetectionError
+from scripts.safe_io import SafeIOError, read_repo_text, write_repo_text
 
 
 def _json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(read_repo_text(path, root=ROOT))
 
 
 def main() -> int:
@@ -35,7 +36,7 @@ def main() -> int:
         )
         payload = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
         if args.output:
-            args.output.write_text(payload, encoding="utf-8")
+            write_repo_text(args.output, payload, root=ROOT)
         else:
             sys.stdout.write(payload)
     except (
@@ -44,6 +45,7 @@ def main() -> int:
         PerformanceClassifierError,
         PerformanceContractError,
         PerformanceDetectionError,
+        SafeIOError,
     ):
         print("performance-classify: invalid or unsafe input", file=sys.stderr)
         return 2

@@ -87,33 +87,37 @@ def _envelope(raw: Any) -> dict[str, Any]:
         raise PerformanceClassifierError("Envelope version or authority is invalid.")
     if raw["classification"] is not None:
         raise PerformanceClassifierError("Producer classification must be null.")
-    if not isinstance(raw["project"], str) or not raw["project"]:
-        raise PerformanceClassifierError("Envelope project is invalid.")
-    identity = raw["identity"]
-    if not isinstance(identity, Mapping) or set(identity) != IDENTITY_FIELDS:
-        raise PerformanceClassifierError("Envelope identity is invalid.")
-    sha, release = identity["sha"], identity["release"]
-    if not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
-        raise PerformanceClassifierError("Envelope SHA is invalid.")
-    if not isinstance(release, str) or _RELEASE.fullmatch(release) is None:
-        raise PerformanceClassifierError("Envelope release is invalid.")
-    evidence_ref = raw["evidence_ref"]
-    if not isinstance(evidence_ref, str) or not evidence_ref or len(evidence_ref) > 240:
-        raise PerformanceClassifierError("Envelope evidence reference is invalid.")
-    observed_at = _timestamp(raw["observed_at"], "observed_at")
+    project = _nonempty(raw["project"], "project", 80)
+    sha, release = _identity(raw["identity"])
+    evidence_ref = _nonempty(raw["evidence_ref"], "evidence reference", 240)
     observations = raw["observations"]
     if not isinstance(observations, list) or not 1 <= len(observations) <= MAX_OBSERVATIONS:
         raise PerformanceClassifierError("Envelope observations are invalid.")
     return {
-        "version": 1,
-        "project": raw["project"],
-        "classification_authority": AUTHORITY,
-        "classification": None,
+        "version": 1, "project": project,
+        "classification_authority": AUTHORITY, "classification": None,
         "identity": {"sha": sha, "release": release},
         "evidence_ref": evidence_ref,
-        "observed_at": observed_at,
+        "observed_at": _timestamp(raw["observed_at"], "observed_at"),
         "observations": observations,
     }
+
+
+def _identity(raw: Any) -> tuple[str, str]:
+    if not isinstance(raw, Mapping) or set(raw) != IDENTITY_FIELDS:
+        raise PerformanceClassifierError("Envelope identity is invalid.")
+    sha, release = raw["sha"], raw["release"]
+    if not isinstance(sha, str) or _SHA.fullmatch(sha) is None:
+        raise PerformanceClassifierError("Envelope SHA is invalid.")
+    if not isinstance(release, str) or _RELEASE.fullmatch(release) is None:
+        raise PerformanceClassifierError("Envelope release is invalid.")
+    return sha, release
+
+
+def _nonempty(value: Any, label: str, maximum: int) -> str:
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise PerformanceClassifierError(f"Envelope {label} is invalid.")
+    return value
 
 
 def _timestamp(value: Any, label: str) -> str:

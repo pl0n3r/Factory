@@ -1,10 +1,14 @@
+import contextlib
 import copy
+import importlib.util
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from performance.classifier import PerformanceClassifierError, classify_performance_envelope
 
@@ -13,6 +17,13 @@ CONTRACT = json.loads((ROOT / "performance/contracts/brvtal.json").read_text(enc
 SHA = "7ac39afa8ad205cc3c3668906a6d1ffa873ac1cf"
 REF = "github:pl0n3r/brvtal/actions/runs/36853443439"
 NOW = "2026-10-01T12:00:00Z"
+
+
+def load_cli():
+    spec = importlib.util.spec_from_file_location("perf_cli", ROOT / "scripts/performance-classify.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def observation(surface, metric, value, unit):
@@ -133,33 +144,35 @@ class PerformanceClassifierTests(unittest.TestCase):
             "socket", "http.client",
         ):
             self.assertNotIn(forbidden, source.lower())
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
             root = Path(tmp)
-            contract_path = root / "contract.json"
-            envelope_path = root / "envelope.json"
+            contract_path, envelope_path = root / "contract.json", root / "envelope.json"
+            output_path = root / "result.json"
             contract_path.write_text(json.dumps(CONTRACT), encoding="utf-8")
             envelope_path.write_text(json.dumps(envelope()), encoding="utf-8")
-            cmd = [
-                sys.executable, str(ROOT / "scripts/performance-classify.py"),
-                "--contract", str(contract_path),
-                "--envelope", str(envelope_path),
-                "--evaluated-at", NOW,
-            ]
+            contract_arg, envelope_arg = str(contract_path.relative_to(ROOT)), str(envelope_path.relative_to(ROOT))
+            cmd = [sys.executable, str(ROOT / "scripts/performance-classify.py"),
+                   "--contract", contract_arg, "--envelope", envelope_arg, "--evaluated-at", NOW]
             first = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
             second = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
-
-            invalid = envelope()
-            invalid["secret_payload"] = "DO_NOT_ECHO"
+            cli, stdout, stderr = load_cli(), io.StringIO(), io.StringIO()
+            argv = ["performance-classify.py", "--contract", contract_arg, "--envelope", envelope_arg,
+                    "--evaluated-at", NOW, "--output", str(output_path.relative_to(ROOT))]
+            with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                in_process = cli.main()
+            invalid = envelope(); invalid["secret_payload"] = "DO_NOT_ECHO"
             envelope_path.write_text(json.dumps(invalid), encoding="utf-8")
-            rejected = subprocess.run(
-                cmd, cwd=ROOT, text=True, capture_output=True, check=False
-            )
+            rejected = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
+            output_payload = output_path.read_text(encoding="utf-8")
 
         self.assertEqual(first.returncode, 0)
         self.assertEqual(second.returncode, 0)
         self.assertEqual(first.stdout, second.stdout)
         self.assertEqual(first.stderr, "")
         self.assertEqual(json.loads(first.stdout)["summary"]["total"], 10)
+        self.assertEqual(in_process, 0)
+        self.assertEqual(stdout.getvalue(), stderr.getvalue(), "")
+        self.assertEqual(json.loads(output_payload), json.loads(first.stdout))
         self.assertNotEqual(rejected.returncode, 0)
         self.assertEqual(rejected.stdout, "")
         self.assertEqual(
@@ -167,6 +180,15 @@ class PerformanceClassifierTests(unittest.TestCase):
             "performance-classify: invalid or unsafe input\n",
         )
         self.assertNotIn("DO_NOT_ECHO", rejected.stderr)
+        for bad in ("../outside.json", "/tmp/out.json"):
+            with self.subTest(path=bad):
+                proc = subprocess.run(
+                    [sys.executable, str(ROOT / "scripts/performance-classify.py"),
+                     "--contract", bad, "--envelope", envelope_arg, "--evaluated-at", NOW],
+                    cwd=ROOT, text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(proc.returncode, 2)
+                self.assertEqual(proc.stdout, "")
 
 
 if __name__ == "__main__":
