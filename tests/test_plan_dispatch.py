@@ -137,6 +137,15 @@ class PlanContractTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(value, PLAN)
 
+    def test_product_direction_requires_reservable_leaf_contract(self):
+        for value in (
+            "mismo preflight de aceptación",
+            "usado por `/tomar`",
+            "no puede etiquetarse `available`",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
     def test_intentional_blocks_keep_documented_conditions(self):
         for reference in (
             "ControlBot#45",
