@@ -624,6 +624,31 @@ class GateDedupTests(unittest.TestCase):
             for method, _, _ in conflict.calls
         ))
 
+        historical_conflict = MultiGateAPI(
+            [
+                gate_issue(575),
+                gate_issue(
+                    578,
+                    state="closed",
+                    body_value=release_gate_body(suffix="duplicada histórica"),
+                ),
+            ],
+            comments={
+                578: [{
+                    "id": 10,
+                    "body": decision,
+                    "user": {"login": BOT, "type": "Bot"},
+                }],
+            },
+        )
+        with self.assertRaises(GateConflictError):
+            reconcile_gate(historical_conflict, "pl0n3r/Factory", 575)
+        self.assertEqual(historical_conflict.open_numbers(), [575])
+        self.assertFalse(any(
+            method in {"POST", "PATCH", "DELETE"}
+            for method, _, _ in historical_conflict.calls
+        ))
+
     def test_release_gate_race_regression_is_deterministic(self):
         api = MultiGateAPI([
             gate_issue(575, body_value=release_gate_body(suffix="original")),
