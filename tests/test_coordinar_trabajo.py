@@ -821,6 +821,54 @@ class CoordinacionTests(unittest.TestCase):
         assert reservation is not None
         self.assertEqual(reservation["reservation_id"], SESSION_A)
 
+    def test_recovery_required_can_be_reclaimed_after_recent_branch_activity(self) -> None:
+        """Un estado recovery explícito permite reacquirir aunque la rama reviva."""
+        api = FakeGitHub()
+        add_active_reservation(api, owner="agente-anterior")
+        api.set_status(12, STATUS_RECOVERY)
+        api.commit_times["abc123"] = datetime.now(timezone.utc)
+
+        session = reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        self.assertIsNotNone(session)
+        self.assertNotEqual(session, SESSION_A)
+        reservation = active_reservation(api, 12)
+        self.assertIsNotNone(reservation)
+        assert reservation is not None
+        self.assertEqual(reservation["reservation_id"], session)
+        self.assertEqual(reservation["owner"], "pl0n3r")
+        self.assertEqual(api.status_history[-1], STATUS_RESERVED)
+
+    def test_recovery_required_reuses_existing_branch_and_pr(self) -> None:
+        """La reacquisición explícita conserva rama/PR y renueva su metadata."""
+        api = FakeGitHub()
+        add_active_reservation(api, owner="agente-anterior")
+        api.set_status(12, STATUS_RECOVERY)
+        api.commit_times["abc123"] = datetime.now(timezone.utc)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\n\nReserva: {SESSION_A}\n\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {
+                "ref": "trabajo/issue-12",
+                "sha": "abc123",
+                "repo": {"full_name": api.repo},
+            },
+            "base": {"ref": "main"},
+        }
+
+        session = reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        self.assertIsNotNone(session)
+        self.assertIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.pulls[15]["state"], "open")
+        self.assertEqual(reservation_from_pr_body(api.pulls[15]["body"]), session)
+        self.assertEqual(api.status_history[-1], STATUS_REVIEW)
+
     def test_stale_reservation_reuses_existing_branch_and_pr(self) -> None:
         """Una reserva vieja cambia de sesión sin cerrar ni duplicar su PR."""
         api = FakeGitHub()
