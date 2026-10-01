@@ -146,6 +146,34 @@ class WorkflowEventGuardTests(unittest.TestCase):
         self.assertIn("merge_group", node)
         self.assertNotIn("github.event_name == 'push'", node)
 
+    def test_factory_ci_keeps_edited_for_open_pr_revalidation(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        self.assertIn(
+            "types: [opened, synchronize, reopened, edited]",
+            workflow,
+        )
+
+    def test_factory_coordination_skips_closed_or_merged_prs(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        self.assertIn(
+            "if: github.event_name == 'pull_request' && github.event.pull_request.state == 'open'",
+            workflow,
+        )
+
+    def test_factory_acceptance_skips_closed_or_merged_prs_but_keeps_always(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        self.assertIn(
+            "if: always() && github.event_name == 'pull_request' && github.event.pull_request.state == 'open'",
+            workflow,
+        )
+
+    def test_factory_aggregate_accepts_skipped_post_merge_jobs(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        validar = workflow[workflow.index("  validar:"):]
+        self.assertIn("if: always()", validar)
+        self.assertIn("success|skipped", validar)
+        self.assertIn("Gate con resultado $r", validar)
+
     def test_docs_define_event_contract(self) -> None:
         agents = (ROOT / "AGENTES.md").read_text(encoding="utf-8")
         architecture = (ROOT / "docs" / "arquitectura-tecnica.md").read_text(encoding="utf-8")
