@@ -1,10 +1,22 @@
+import io
 import os
+import stat
+import sys
+import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
 from scripts.deploy_kit import DeployError
-from scripts.preview_kit import PreviewError, run_preview
+from scripts import preview_kit as pk
+from scripts.preview_kit import (
+    PreviewError,
+    _adapter_path,
+    main,
+    preview_stage_runner,
+    run_preview,
+)
 
 
 class PreviewKitTests(unittest.TestCase):
@@ -172,6 +184,190 @@ class PreviewKitTests(unittest.TestCase):
                 "rollback",
             ],
         )
+
+    def test_adapter_and_main_error_paths_are_covered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = root / "ops" / "factory" / "preview-health"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            adapter.chmod(0o700)
+            self.assertEqual(_adapter_path("preview-health", root=root), adapter.resolve())
+
+            with self.assertRaises(PreviewError):
+                _adapter_path("unknown", root=root)
+
+            missing = root / "ops" / "factory" / "preview-smoke"
+            with self.assertRaises(PreviewError):
+                _adapter_path("preview-smoke", root=root)
+
+            outside = root.parent / (root.name + "-outside")
+            outside.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            outside.chmod(0o700)
+            symlink = root / "ops" / "factory" / "preview-e2e"
+            symlink.symlink_to(outside)
+            try:
+                with self.assertRaises(PreviewError):
+                    _adapter_path("preview-e2e", root=root)
+            finally:
+                outside.unlink(missing_ok=True)
+
+        with patch(
+            "scripts.preview_kit._adapter_path",
+            return_value=Path("/tmp/preview-health"),
+        ), patch(
+            "scripts.preview_kit.subprocess.run",
+            return_value=SimpleNamespace(returncode=9),
+        ) as execute:
+            self.assertEqual(preview_stage_runner("preview-health"), 9)
+        execute.assert_called_once()
+
+        for version, sha, migration_mode in (
+            ("1.2", "a" * 40, "none"),
+            ("1.2.3", "bad", "none"),
+            ("1.2.3", "a" * 40, "destructive"),
+        ):
+            with self.subTest(version=version, migration_mode=migration_mode):
+                with self.assertRaises(PreviewError):
+                    run_preview(
+                        version=version,
+                        sha=sha,
+                        migration_mode=migration_mode,
+                        runner=lambda _stage: 0,
+                        verification_runner=lambda _stage: 0,
+                    )
+
+        with patch(
+            "scripts.preview_kit.tempfile.TemporaryDirectory",
+            side_effect=OSError("disk unavailable"),
+        ):
+            with self.assertRaisesRegex(PreviewError, "crear o limpiar"):
+                run_preview(
+                    version="1.2.3",
+                    sha="a" * 40,
+                    migration_mode="none",
+                    runner=lambda _stage: 0,
+                    verification_runner=lambda _stage: 0,
+                )
+
+        with patch.object(sys, "argv", [
+            "preview_kit.py",
+            "--version",
+            "1.2.3",
+            "--sha",
+            "a" * 40,
+            "--migration-mode",
+            "none",
+        ]), patch("scripts.preview_kit.run_preview") as preview, patch(
+            "sys.stdout",
+            new_callable=io.StringIO,
+        ) as stdout:
+            self.assertEqual(main(), 0)
+        preview.assert_called_once()
+        self.assertIn("validado", stdout.getvalue())
+
+        with patch.object(sys, "argv", [
+            "preview_kit.py",
+            "--version",
+            "1.2.3",
+            "--sha",
+            "a" * 40,
+        ]), patch(
+            "scripts.preview_kit.run_preview",
+            side_effect=PreviewError("boom"),
+        ), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(main(), 1)
+        self.assertIn("boom", stderr.getvalue())
+
+
+    def test_adapter_release_environment_and_cli_edges(self):
+        with self.assertRaisesRegex(PreviewError, "Etapa"):
+            pk._adapter_path("missing")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = root / pk.PREVIEW_ADAPTERS["preview-health"]
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            adapter.chmod(adapter.stat().st_mode | stat.S_IXUSR)
+            self.assertEqual(pk._adapter_path("preview-health", root=root), adapter.resolve())
+
+            adapter.unlink()
+            adapter.write_text("echo x\n", encoding="utf-8")
+            with self.assertRaisesRegex(PreviewError, "ejecutable"):
+                pk._adapter_path("preview-health", root=root)
+
+            adapter.unlink()
+            outside = root / "outside"
+            outside.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            outside.chmod(outside.stat().st_mode | stat.S_IXUSR)
+            adapter.symlink_to(outside)
+            with self.assertRaisesRegex(PreviewError, "symlinks"):
+                pk._adapter_path("preview-health", root=root)
+
+        for version, sha in (("01.2.3", "a" * 40), ("1.2.3", "bad")):
+            with self.subTest(version=version, sha=sha):
+                with self.assertRaisesRegex(PreviewError, "Versión o SHA"):
+                    pk._validate_release(version, sha)
+
+        safe = pk._safe_environment(
+            {"PATH": "/bin", "IGNORED": "x"},
+            preview_root="/tmp/preview-x",
+            version="1.2.3",
+            sha="a" * 40,
+            migration_mode="additive",
+        )
+        self.assertEqual(safe["PATH"], "/bin")
+        self.assertNotIn("IGNORED", safe)
+        self.assertEqual(safe["FACTORY_REQUIRE_SCHEMA"], "1")
+
+        with self.assertRaisesRegex(PreviewError, "credenciales prohibidas"):
+            pk._safe_environment(
+                {"DATABASE_URL": "secret"},
+                preview_root="/tmp/x",
+                version="1.2.3",
+                sha="a" * 40,
+                migration_mode="none",
+            )
+
+        before = dict(os.environ)
+        with tempfile.TemporaryDirectory() as tmp:
+            with pk.preview_environment(
+                preview_root=tmp,
+                version="1.2.3",
+                sha="a" * 40,
+                migration_mode="none",
+            ):
+                self.assertEqual(os.environ["FACTORY_PREVIEW"], "1")
+                for name in ("home", "tmp", "composer", "cache", "config"):
+                    self.assertTrue((Path(tmp) / name).is_dir())
+        self.assertEqual(dict(os.environ), before)
+
+        with self.assertRaisesRegex(PreviewError, "migration_mode"):
+            run_preview(
+                version="1.2.3",
+                sha="a" * 40,
+                migration_mode="destructive",
+                runner=lambda _: 0,
+                verification_runner=lambda _: 0,
+            )
+
+        with patch.object(pk.tempfile, "TemporaryDirectory", side_effect=OSError("disk")):
+            with self.assertRaisesRegex(PreviewError, "crear o limpiar"):
+                run_preview(
+                    version="1.2.3",
+                    sha="a" * 40,
+                    migration_mode="none",
+                    runner=lambda _: 0,
+                    verification_runner=lambda _: 0,
+                )
+
+        with patch.object(sys, "argv", ["preview_kit.py", "--version", "1.2.3", "--sha", "a" * 40]),              patch.object(pk, "run_preview", return_value=None),              patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            self.assertEqual(pk.main(), 0)
+            self.assertIn("validado", stdout.getvalue())
+        with patch.object(sys, "argv", ["preview_kit.py", "--version", "1.2.3", "--sha", "a" * 40]),              patch.object(pk, "run_preview", side_effect=PreviewError("bad")),              patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(pk.main(), 1)
+            self.assertIn("::error::bad", stderr.getvalue())
 
 
 if __name__ == "__main__":

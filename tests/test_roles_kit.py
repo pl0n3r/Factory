@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
+import io
 import json
+import sys
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
+from scripts import roles_kit as rk
 from scripts.roles_kit import (
     MAX_CONTEXT,
     REQUIRED_ROLES,
     RoleError,
     classify,
+    compile_team,
     declared_roles,
+    labels_for,
     load_catalog,
+    main,
     parse_context,
+    propose_role_candidate,
+    register_role_candidate,
     validate_pr,
+    validate_role_candidate,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -323,6 +333,115 @@ class RolesKitTests(unittest.TestCase):
         self.assertEqual(parsed["labels"], ["tipo: producto"])
         with self.assertRaisesRegex(RoleError, "demasiado grande"):
             parse_context("x" * (MAX_CONTEXT + 1))
+
+
+    def test_validation_and_cli_boundaries_are_covered(self):
+        with self.assertRaises(RoleError):
+            rk._repo_relative(Path("/tmp/outside-factory"))
+        with self.assertRaisesRegex(RoleError, "Checklist"):
+            rk.parse_checklist("sin checklist")
+        for payload in (
+            "{",
+            "[]",
+            json.dumps({"body": 1, "title": "", "labels": [], "files": []}),
+            json.dumps({"body": "", "title": "", "labels": "bad", "files": []}),
+            json.dumps({"body": "", "title": "", "labels": [], "files": "bad"}),
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(RoleError):
+                    rk.parse_context(payload)
+
+        roles, risks = rk._classify_file("security/auth.py")
+        self.assertTrue({"seguridad", "qa", "ingenieria-software"} <= roles)
+        self.assertIn("security", risks)
+        roles, _ = rk._classify_file("analytics/report.py")
+        self.assertIn("datos-analitica", roles)
+        roles, _ = rk._classify_file("seo/robots.txt")
+        self.assertIn("seo", roles)
+        roles, _ = rk._classify_file("legal/privacy.md")
+        self.assertIn("legal-privacidad", roles)
+        roles, _ = rk._classify_file("architecture/adr.md")
+        self.assertIn("arquitectura", roles)
+
+        self.assertEqual(rk.declared_roles(""), [])
+        self.assertIsNone(rk.single_role("Rol primario: QA EXTRA", "Rol primario"))
+        self.assertEqual(rk.checked_items("- [x] Uno\n- [X] Dos"), {"Uno", "Dos"})
+        self.assertTrue({"qa", "seguridad"} <= rk.cross_review_allowed({"deploy", "security"}))
+
+        bad_candidates = [
+            {},
+            {
+                "slug": "X",
+                "title": "x",
+                "seniority": "x",
+                "domains": ["x"],
+                "stacks": ["x"],
+                "heuristics": ["x"],
+                "checklist": ["x"],
+                "evidence": ["x"],
+                "trigger": "x",
+            },
+        ]
+        for candidate in bad_candidates:
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(RoleError):
+                    rk.validate_role_candidate(candidate)
+
+        mobile = rk.propose_role_candidate(
+            context(body="Android Kotlin mobile app"),
+            self.catalog,
+        )
+        self.assertIsNotNone(mobile)
+        registry = rk.register_role_candidate({}, mobile)
+        self.assertIn("mobile-engineering", registry)
+        with self.assertRaisesRegex(RoleError, "ya existe"):
+            rk.register_role_candidate(registry, mobile)
+
+        team = rk.compile_team(
+            context(
+                body="Hostinger MariaDB deployment security",
+                files=[".github/workflows/deploy.yml", "migrations/x.sql"],
+            ),
+            self.catalog,
+        )
+        self.assertIn(team["primary"], team["roles"])
+        self.assertIn("github-actions", team["stacks"])
+        self.assertTrue(team["contextual_profiles"])
+
+        self.assertEqual(len(rk.labels_for(self.catalog, "es")), len(self.catalog))
+        self.assertEqual(len(rk.labels_for(self.catalog, "en")), len(self.catalog))
+
+        commands = [
+            ("validate-catalog", "", 0),
+            ("labels", "", 0),
+            (
+                "suggest",
+                json.dumps(
+                    {
+                        "body": "Android mobile",
+                        "title": "",
+                        "labels": [],
+                        "files": [],
+                    }
+                ),
+                0,
+            ),
+        ]
+        for command, stdin, expected in commands:
+            with (
+                self.subTest(command=command),
+                patch.object(sys, "argv", ["roles_kit.py", command, "--language", "es"]),
+                patch("sys.stdin", io.StringIO(stdin)),
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                self.assertEqual(rk.main(), expected)
+
+        with (
+            patch.object(sys, "argv", ["roles_kit.py", "suggest"]),
+            patch("sys.stdin", io.StringIO("{")),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(rk.main(), 1)
 
 
 if __name__ == "__main__":
