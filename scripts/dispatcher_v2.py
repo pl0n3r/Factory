@@ -104,6 +104,7 @@ PRODUCT_DIRECTION_REPOS = {
     "pl0n3r/GrindFlow",
     "pl0n3r/brvtal",
 }
+PRODUCT_DIRECTION_ELIGIBLE_LEAF_THRESHOLD = 1
 
 
 @dataclass(frozen=True)
@@ -196,15 +197,15 @@ def _direction_gate(proposal: DirectionProposal) -> dict[str, object]:
         {
             "category": "product-direction",
             "context": (
-                f"{repo} no tiene ningún leaf elegible; se propone el siguiente "
+                f"{repo} tiene pocas hojas elegibles; se propone el siguiente "
                 f"tramo de roadmap (proposal_sha256={proposal_sha256})."
             ),
             "title_simple": (
                 f"¿Aprobamos el siguiente tramo de {str(repo).split('/')[-1]}?"
             ),
             "summary_simple": (
-                "La cola del producto se quedó sin trabajo listo. Hay un tramo "
-                "nuevo propuesto con pruebas y dependencias explícitas."
+                "La cola del producto está cerca de quedarse sin trabajo listo. "
+                "Hay un tramo nuevo propuesto con pruebas y dependencias explícitas."
             ),
             "explain_simple": (
                 "Es como terminar una lista de tareas y preparar la siguiente. "
@@ -531,22 +532,21 @@ def direction_gate_trigger(
     candidates: Iterable[Candidate],
     *,
     existing_gate_keys: Iterable[str] = (),
+    known_proposal_sha256s: Iterable[str] = (),
+    eligible_leaf_threshold: int = PRODUCT_DIRECTION_ELIGIBLE_LEAF_THRESHOLD,
     active_tranche: int | None = None,
 ) -> dict[str, object]:
-    """Propone una única puerta de dirección cuando un producto agotó sus leaves."""
+    """Propone una puerta cuando quedan pocas hojas, sin repetir tramo conocido."""
     normalized = _normalize_direction_proposal(proposal)
+    if (
+        isinstance(eligible_leaf_threshold, bool)
+        or not isinstance(eligible_leaf_threshold, int)
+        or eligible_leaf_threshold < 0
+    ):
+        raise ValueError("eligible leaf threshold must be a non-negative integer")
+
     repo = str(normalized["repository_ref"])
     key = _direction_gate_key(repo)
-    product_candidates = [
-        candidate
-        for candidate in candidates
-        if candidate.metadata.get("repository_ref") == repo and not candidate.is_epic
-    ]
-    if any(
-        classify_readiness(candidate, active_tranche=active_tranche).ready
-        for candidate in product_candidates
-    ):
-        return {"action": "noop", "reason": "eligible_leaf_exists", "gate_key": key}
     if key in set(existing_gate_keys):
         return {
             "action": "noop",
@@ -554,8 +554,43 @@ def direction_gate_trigger(
             "gate_key": key,
         }
 
+    product_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.metadata.get("repository_ref") == repo and not candidate.is_epic
+    ]
+    eligible_leaf_count = sum(
+        1
+        for candidate in product_candidates
+        if classify_readiness(candidate, active_tranche=active_tranche).ready
+    )
+    if eligible_leaf_count > eligible_leaf_threshold:
+        return {
+            "action": "noop",
+            "reason": "sufficient_eligible_work",
+            "gate_key": key,
+            "eligible_leaf_count": eligible_leaf_count,
+            "eligible_leaf_threshold": eligible_leaf_threshold,
+        }
+
     result = _direction_gate(proposal)
-    return {"action": "open_gate", "materialize_leaves": False, **result}
+    if result["proposal_sha256"] in set(known_proposal_sha256s):
+        return {
+            "action": "noop",
+            "reason": "direction_proposal_already_known",
+            "gate_key": key,
+            "proposal_sha256": result["proposal_sha256"],
+            "eligible_leaf_count": eligible_leaf_count,
+            "eligible_leaf_threshold": eligible_leaf_threshold,
+        }
+
+    return {
+        "action": "open_gate",
+        "materialize_leaves": False,
+        "eligible_leaf_count": eligible_leaf_count,
+        "eligible_leaf_threshold": eligible_leaf_threshold,
+        **result,
+    }
 
 
 def _direction_leaf_body(
