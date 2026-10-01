@@ -1,11 +1,14 @@
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from decision_respuesta import (
     BOT,
     COMPLETED,
     DECISION_LABEL,
     DecisionError,
+    gh_api,
     materialize_decision,
 )
 
@@ -58,6 +61,8 @@ class FakeAPI:
         mutate_body_on_issue_get=None,
         replacement_body=None,
         equivalent_open=None,
+        equivalent_all=None,
+        comments_by_issue=None,
     ):
         self.issue = {
             "number": 519,
@@ -85,6 +90,15 @@ class FakeAPI:
         self.replacement_body = replacement_body
         self.issue_gets = 0
         self.equivalent_open = list(equivalent_open or [])
+        self.equivalent_all = list(
+            equivalent_all
+            if equivalent_all is not None
+            else self.equivalent_open
+        )
+        self.comments_by_issue = {
+            int(number): list(values)
+            for number, values in (comments_by_issue or {}).items()
+        }
 
     def label_names(self):
         return {item["name"] for item in self.issue["labels"]}
@@ -92,12 +106,10 @@ class FakeAPI:
     def __call__(self, method, path, payload=None):
         self.calls.append((method, path, payload))
         if method == "GET" and path.endswith(
-            "/issues?state=open&per_page=100"
+            "/issues?state=all&per_page=100"
         ):
-            values = []
-            if self.issue.get("state") == "open":
-                values.append(json.loads(json.dumps(self.issue)))
-            values.extend(json.loads(json.dumps(self.equivalent_open)))
+            values = [json.loads(json.dumps(self.issue))]
+            values.extend(json.loads(json.dumps(self.equivalent_all)))
             return values
         if method == "GET" and path.endswith("/issues/519"):
             self.issue_gets += 1
@@ -108,7 +120,13 @@ class FakeAPI:
                 self.issue["body"] = self.replacement_body
             return json.loads(json.dumps(self.issue))
         if method == "GET" and path.endswith("/comments?per_page=100"):
-            return json.loads(json.dumps(self.comments))
+            marker = "/issues/"
+            number = int(path.split(marker, 1)[1].split("/", 1)[0])
+            if number == 519:
+                return json.loads(json.dumps(self.comments))
+            return json.loads(json.dumps(
+                self.comments_by_issue.get(number, [])
+            ))
         if method == "POST" and path.endswith("/comments"):
             self.next_id += 1
             value = {
@@ -356,7 +374,7 @@ class DecisionRespuestaTests(unittest.TestCase):
         for method, path, payload in api.calls:
             if (
                 method == "GET"
-                and path.endswith("/issues?state=open&per_page=100")
+                and path.endswith("/issues?state=all&per_page=100")
             ):
                 continue
             self.assertIn("/issues/519", path)
@@ -435,6 +453,27 @@ class DecisionRespuestaTests(unittest.TestCase):
         )
 
 
+class DecisionPaginationTests(unittest.TestCase):
+    def test_decision_scan_pagination_slurps_every_issue_page(self):
+        def fake_run(command, **kwargs):
+            self.assertIn("--paginate", command)
+            self.assertIn("--slurp", command)
+            self.assertIn(
+                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
+                command,
+            )
+            return SimpleNamespace(
+                stdout='[[{"number":519}],[{"number":520}]]'
+            )
+
+        with patch("decision_respuesta.subprocess.run", side_effect=fake_run):
+            issues = gh_api(
+                "GET",
+                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
+            )
+        self.assertEqual([item["number"] for item in issues], [519, 520])
+
+
 class DecisionTests(unittest.TestCase):
     def test_decision_rejects_ambiguous_equivalent_open_gates(self):
         duplicate = {
@@ -453,6 +492,42 @@ class DecisionTests(unittest.TestCase):
         self.assertFalse(any(
             method != "GET" for method, _, _ in api.calls
         ))
+
+    def test_decision_rejects_historical_equivalent_journal(self):
+        historical = {
+            "number": 520,
+            "state": "closed",
+            "body": gate_body(),
+            "labels": [{"name": COMPLETED}],
+        }
+        journal = {
+            "id": 77,
+            "body": (
+                '<!-- factory-human-decision '
+                '{"gate_sha256":"'
+                + ("a" * 64)
+                + '","option":"A","version":2} -->'
+            ),
+            "user": {"login": BOT, "type": "Bot"},
+        }
+        api = FakeAPI(
+            equivalent_all=[historical],
+            comments_by_issue={520: [journal]},
+        )
+
+        self.assertFalse(
+            materialize_decision(event(), api, "pl0n3r/Factory")
+        )
+        self.assertEqual(api.issue["state"], "open")
+        self.assertEqual(api.comments, [])
+        self.assertFalse(any(
+            method != "GET" for method, _, _ in api.calls
+        ))
+
+        clean = FakeAPI(equivalent_all=[historical])
+        self.assertTrue(
+            materialize_decision(event(), clean, "pl0n3r/Factory")
+        )
 
 
 
