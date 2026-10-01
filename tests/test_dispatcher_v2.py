@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import unittest
+from unittest.mock import patch
 
 from scripts.dispatcher_v2 import (
     Candidate,
@@ -750,11 +751,88 @@ class DispatcherV2Tests(unittest.TestCase):
             [leaf["key"] for leaf in materialized],
             ["condor-next-1", "condor-next-2"],
         )
-        self.assertTrue(all(leaf["state"] == "available" for leaf in materialized))
+        self.assertEqual(
+            [leaf["state"] for leaf in materialized],
+            ["available", "blocked"],
+        )
         self.assertEqual(materialized[1]["depends_on"], ["condor-next-1"])
         stale = {**approved, "gate_sha256": "0" * 64}
         with self.assertRaisesRegex(ValueError, "does not match"):
             materialize_direction_leaves(proposal, decision_evidence=stale)
+
+    def test_materialized_direction_leaf_contains_reservable_contract(self):
+        proposal = self.direction_proposal()
+        opened = direction_gate_trigger(proposal, [])
+        approved = {
+            "gate_sha256": opened["gate_sha256"],
+            "option": "A",
+            "version": 2,
+        }
+
+        materialized = materialize_direction_leaves(
+            proposal,
+            decision_evidence=approved,
+        )
+
+        self.assertEqual(len(materialized), 2)
+        body = materialized[0]["body"]
+        for heading in (
+            "### Contexto",
+            "### Alcance",
+            "### Fuera de alcance",
+            "### Criterios de aceptación",
+            "### Contrato ejecutable",
+        ):
+            self.assertEqual(body.count(heading), 1)
+        self.assertIn("[AC-01]", body)
+        self.assertIn("factory-acceptance", body)
+
+        from scripts.aceptacion_kit import parse_contract
+
+        criteria = parse_contract(body)
+        self.assertEqual(
+            [(item.id, item.kind, item.target) for item in criteria],
+            [
+                (
+                    "AC-01",
+                    "test",
+                    "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                )
+            ],
+        )
+        second_criteria = parse_contract(materialized[1]["body"])
+        self.assertEqual(
+            [(item.id, item.kind, item.target) for item in second_criteria],
+            [("AC-01", "check", "validate")],
+        )
+
+    def test_direction_leaf_materialization_prevalidates_before_available(self):
+        proposal = self.direction_proposal()
+        opened = direction_gate_trigger(proposal, [])
+        approved = {
+            "gate_sha256": opened["gate_sha256"],
+            "option": "A",
+            "version": 2,
+        }
+
+        with patch(
+            "scripts.dispatcher_v2.parse_contract",
+            side_effect=ValueError("invalid generated contract"),
+        ) as preflight:
+            with self.assertRaisesRegex(ValueError, "invalid generated contract"):
+                materialize_direction_leaves(
+                    proposal,
+                    decision_evidence=approved,
+                )
+
+        preflight.assert_called_once()
+        self.assertEqual(
+            materialize_direction_leaves(
+                proposal,
+                decision_evidence={**approved, "option": "B"},
+            ),
+            (),
+        )
 
     def test_auto_fed_lane_remains_dispatchable_without_owner_gate(self):
         auto = Candidate(

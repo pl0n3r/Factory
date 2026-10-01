@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from typing import Iterable
 
 from scripts.adaptive_fencing import FencingDecision
-from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET
+from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET, parse_contract
 from scripts.presence_contract import PresenceAssessment
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 from seguridad.puertas_humanas import validate_gate
@@ -558,12 +558,65 @@ def direction_gate_trigger(
     return {"action": "open_gate", "materialize_leaves": False, **result}
 
 
+def _direction_leaf_body(
+    *,
+    repository_ref: str,
+    objective: str,
+    leaf: dict[str, object],
+) -> str:
+    """Construye un contrato de aceptación canónico antes de publicar el leaf."""
+    criteria = []
+    human_lines = []
+    for index, raw_target in enumerate(leaf["acceptance_targets"], start=1):
+        target = str(raw_target)
+        criterion_id = f"AC-{index:02d}"
+        if target.startswith("check:"):
+            kind = "check"
+            machine_target = target.removeprefix("check:")
+        else:
+            kind = "test"
+            machine_target = target
+        criteria.append(
+            {"id": criterion_id, "kind": kind, "target": machine_target}
+        )
+        human_lines.append(
+            f"- [ ] [{criterion_id}] Evidencia ejecutable: `{target}`."
+        )
+
+    dependencies = leaf["depends_on"]
+    dependency_text = ", ".join(str(item) for item in dependencies) or "ninguna"
+    marker = json.dumps(
+        {"version": 1, "criteria": criteria},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "### Contexto\n\n"
+        f"Leaf `{leaf['key']}` del tramo product-direction aprobado para "
+        f"`{repository_ref}`. Objetivo del tramo: {objective} "
+        f"Dependencias declaradas: {dependency_text}.\n\n"
+        "### Alcance\n\n"
+        f"Implementar exclusivamente `{leaf['title']}` conforme a la propuesta "
+        "aprobada y a sus criterios ejecutables.\n\n"
+        "### Fuera de alcance\n\n"
+        "Cualquier trabajo no descrito por este leaf, sus dependencias o sus "
+        "criterios de aceptación. La materialización no ejecuta producto ni "
+        "amplía autoridad.\n\n"
+        "### Criterios de aceptación\n\n"
+        + "\n".join(human_lines)
+        + "\n\n### Contrato ejecutable\n\n"
+        "El marker siguiente es la fuente ejecutable de aceptación usada por "
+        "coordinación antes de reservar el Issue.\n\n"
+        f"<!-- factory-acceptance {marker} -->"
+    )
+
+
 def materialize_direction_leaves(
     proposal: DirectionProposal,
     *,
     decision_evidence: dict[str, object] | None,
 ) -> tuple[dict[str, object], ...]:
-    """Materializa solo con journal v2 ligado a la puerta exacta de la propuesta."""
+    """Materializa solo con journal v2 y body prevalidado por aceptación."""
     if decision_evidence is None:
         return ()
     if (
@@ -578,14 +631,23 @@ def materialize_direction_leaves(
     if decision_evidence["option"] == "B":
         return ()
     normalized = expected["proposal"]
-    return tuple(
-        {
-            **leaf,
-            "repository_ref": normalized["repository_ref"],
-            "state": "available",
-        }
-        for leaf in normalized["leaves"]
-    )
+    materialized = []
+    for leaf in normalized["leaves"]:
+        body = _direction_leaf_body(
+            repository_ref=str(normalized["repository_ref"]),
+            objective=str(normalized["objective"]),
+            leaf=leaf,
+        )
+        parse_contract(body)
+        materialized.append(
+            {
+                **leaf,
+                "repository_ref": normalized["repository_ref"],
+                "body": body,
+                "state": "blocked" if leaf["depends_on"] else "available",
+            }
+        )
+    return tuple(materialized)
 
 
 def parallel_ready(
