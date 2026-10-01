@@ -2662,5 +2662,174 @@ class CoordinacionTests(unittest.TestCase):
         self.assertNotIn("task_marker_sha256", marker)
 
 
+class AcceptancePinHistoryTests(unittest.TestCase):
+    """Regresiones del pin de aceptación al cerrar una reserva fusionada."""
+
+    @staticmethod
+    def _current_v2(
+        *,
+        owner: str = "pl0n3r",
+        reservation_id: str = SESSION_A,
+        branch: str = "trabajo/issue-12",
+    ) -> dict:
+        return {
+            "version": 2,
+            "owner": owner,
+            "reservation_id": reservation_id,
+            "branch": branch,
+            "active": True,
+            "reason": "tomar",
+            "acceptance_sha256": contract_fingerprint(VALID_ACCEPTANCE_BODY),
+        }
+
+    @staticmethod
+    def _current_v1() -> dict:
+        return {
+            "version": 1,
+            "owner": "pl0n3r",
+            "reservation_id": SESSION_A,
+            "branch": "trabajo/issue-12",
+            "active": True,
+            "reason": "tomar",
+        }
+
+    def _close_merged(
+        self,
+        current: dict,
+        *,
+        prior_comments: list[dict] | None = None,
+    ) -> tuple[FakeGitHub, dict]:
+        api = FakeGitHub()
+        api.comments = list(prior_comments or [])
+        api.branches["trabajo/issue-12"] = "abc123"
+        coordinator.close_pr_reservation(
+            api,
+            12,
+            "trabajo/issue-12",
+            {"merged": True},
+            current,
+        )
+        latest = latest_reservation(api.issue_comments(12))
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        return api, latest
+
+    def test_inactive_pr_merged_preserves_trusted_v2_acceptance_pin(self) -> None:
+        """AC-01: el cierre fusionado conserva exactamente el pin autenticado."""
+        current = self._current_v2()
+        api, latest = self._close_merged(current)
+
+        self.assertEqual(latest["version"], 2)
+        self.assertFalse(latest["active"])
+        self.assertEqual(latest["reason"], "pr-merged")
+        self.assertEqual(
+            latest["acceptance_sha256"],
+            current["acceptance_sha256"],
+        )
+        self.assertEqual(latest["reservation_id"], SESSION_A)
+        self.assertEqual(latest["branch"], "trabajo/issue-12")
+        self.assertEqual(latest["owner"], "pl0n3r")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_inactive_close_does_not_reactivate_reservation(self) -> None:
+        """AC-02: conservar evidencia no revive la lease cerrada."""
+        api, latest = self._close_merged(self._current_v2())
+
+        self.assertFalse(latest["active"])
+        self.assertIsNone(active_reservation(api, 12))
+
+    def test_acceptance_pin_rejects_other_reservation_branch_or_actor(self) -> None:
+        """AC-03: pins de otra identidad histórica no contaminan el cierre actual."""
+        pin = contract_fingerprint(VALID_ACCEPTANCE_BODY)
+        mismatches = (
+            reservation_marker(
+                "pl0n3r",
+                SESSION_B,
+                "trabajo/issue-12",
+                True,
+                "tomar",
+                pin,
+            ),
+            reservation_marker(
+                "pl0n3r",
+                SESSION_A,
+                "trabajo/issue-99",
+                True,
+                "tomar",
+                pin,
+            ),
+            reservation_marker(
+                "otro",
+                SESSION_A,
+                "trabajo/issue-12",
+                True,
+                "tomar",
+                pin,
+            ),
+        )
+        for marker in mismatches:
+            with self.subTest(marker=marker):
+                prior = [{"user": {"login": BOT}, "body": marker}]
+                _api, latest = self._close_merged(
+                    self._current_v1(),
+                    prior_comments=prior,
+                )
+                self.assertEqual(latest["version"], 1)
+                self.assertNotIn("acceptance_sha256", latest)
+
+    def test_acceptance_pin_fails_closed_without_prior_v2(self) -> None:
+        """AC-04: una reserva legacy no adquiere un pin al fusionarse."""
+        _api, latest = self._close_merged(self._current_v1())
+
+        self.assertEqual(latest["version"], 1)
+        self.assertFalse(latest["active"])
+        self.assertNotIn("acceptance_sha256", latest)
+
+    def test_merged_v3_terminal_preserves_task_snapshot(self) -> None:
+        """Una reserva v3 conserva claims fijados junto con el pin autenticado."""
+        current = self._current_v2()
+        current.update(
+            {
+                "version": 3,
+                "task_marker_sha256": "e" * 64,
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+        )
+        _api, latest = self._close_merged(current)
+
+        self.assertEqual(latest["version"], 3)
+        self.assertEqual(latest["task_marker_sha256"], "e" * 64)
+        self.assertEqual(latest["task_paths"], ["scripts/coordinar_trabajo.py"])
+        self.assertEqual(latest["task_depends_on"], [])
+
+    def test_unmerged_close_does_not_preserve_acceptance_or_task_pin(self) -> None:
+        """Cerrar sin merge mantiene el comportamiento legacy fail-closed."""
+        api = FakeGitHub()
+        current = self._current_v2()
+        current.update(
+            {
+                "version": 3,
+                "task_marker_sha256": "e" * 64,
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+        )
+        coordinator.close_pr_reservation(
+            api,
+            12,
+            "trabajo/issue-12",
+            {"merged": False},
+            current,
+        )
+        latest = latest_reservation(api.issue_comments(12))
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertEqual(latest["version"], 1)
+        self.assertEqual(latest["reason"], "pr-cerrado-sin-merge")
+        self.assertNotIn("acceptance_sha256", latest)
+        self.assertNotIn("task_marker_sha256", latest)
+
+
 if __name__ == "__main__":
     unittest.main()
