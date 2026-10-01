@@ -21,9 +21,11 @@ OWNED = "<!-- factory-invalid-gate-owner:bot -->"
 BOT = "github-actions[bot]"
 BLOCKED = "estado: bloqueado"
 AVAILABLE = "estado: disponible"
+COMPLETED = "estado: completado"
 DECISION_LABEL = "decisión: dueño"
 DUPLICATE_MARKER = "<!-- factory-human-gate-duplicate"
 DECISION_RE = re.compile(r'^<!-- factory-human-decision (\{[^\n]*\}) -->')
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class GateConflictError(ValueError):
@@ -160,9 +162,11 @@ def _decision_evidence(api, base: str) -> tuple[str, str] | None:
             ) from exc
         if (
             not isinstance(payload, dict)
+            or set(payload) != {"gate_sha256", "option", "version"}
             or payload.get("version") != 2
             or payload.get("option") not in {"A", "B", "C", "D"}
             or not isinstance(payload.get("gate_sha256"), str)
+            or not SHA256_RE.fullmatch(payload["gate_sha256"])
         ):
             raise GateConflictError(
                 "Existe evidencia de decisión incompatible en una puerta equivalente."
@@ -201,6 +205,10 @@ def _mark_duplicate(api, repository: str, issue: dict, canonical: int) -> None:
     labels = issue_labels(api, base)
     if DECISION_LABEL in labels:
         remove_label(api, base, DECISION_LABEL)
+    for label in labels:
+        if label.startswith("estado: "):
+            remove_label(api, base, label)
+    add_label(api, base, COMPLETED)
 
     marker = f"{DUPLICATE_MARKER} canonical={canonical} -->"
     if not any(
