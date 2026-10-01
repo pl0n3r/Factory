@@ -343,27 +343,37 @@ class SonarWatchTests(unittest.TestCase):
         def paged_get(path, params):
             calls.append((path, params["p"]))
             page = params["p"]
+            page_size = sonar_watch._SONAR_PAGE_SIZE
             if page == 1:
                 return {
-                    "issues": [{"key": f"i-{index}"} for index in range(500)],
+                    "issues": [
+                        {"key": f"i-{index}"}
+                        for index in range(page_size)
+                    ],
                     "paging": {
                         "pageIndex": 1,
-                        "pageSize": 500,
-                        "total": 502,
+                        "pageSize": page_size,
+                        "total": page_size + 2,
                     },
                 }
             return {
-                "issues": [{"key": "i-500"}, {"key": "i-501"}],
+                "issues": [
+                    {"key": f"i-{page_size}"},
+                    {"key": f"i-{page_size + 1}"},
+                ],
                 "paging": {
                     "pageIndex": 2,
-                    "pageSize": 500,
-                    "total": 502,
+                    "pageSize": page_size,
+                    "total": page_size + 2,
                 },
             }
 
         sonar.get = paged_get
         page = sonar._all_issues("project-key")
-        self.assertEqual(len(page["issues"]), 502)
+        self.assertEqual(
+            len(page["issues"]),
+            sonar_watch._SONAR_PAGE_SIZE + 2,
+        )
         self.assertEqual(
             calls,
             [
@@ -376,7 +386,7 @@ class SonarWatchTests(unittest.TestCase):
             "issues": [],
             "paging": {
                 "pageIndex": 1,
-                "pageSize": 500,
+                "pageSize": sonar_watch._SONAR_PAGE_SIZE,
                 "total": 10001,
             },
         }
