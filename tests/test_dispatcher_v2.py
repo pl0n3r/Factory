@@ -1146,6 +1146,110 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(already_open["action"], "noop")
         self.assertEqual(already_open["reason"], "direction_gate_already_open")
 
+    def test_product_direction_early_trigger_covers_controlbot_autofactory_and_factoryrunner(self):
+        for repo in (
+            "pl0n3r/ControlBot",
+            "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        ):
+            with self.subTest(repo=repo):
+                proposal = DirectionProposal(
+                    repository_ref=repo,
+                    objective="Preparar el siguiente tramo sin ampliar autoridad.",
+                    leaves=(
+                        DirectionLeaf(
+                            key=f"{repo.rsplit('/', 1)[-1].lower()}-next",
+                            title="Siguiente leaf funcional",
+                            acceptance_targets=(
+                                "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                            ),
+                        ),
+                    ),
+                )
+                candidate = Candidate(
+                    key=f"{repo}#current",
+                    priority="high",
+                    metadata={"repository_ref": repo},
+                )
+
+                trigger = direction_gate_trigger(proposal, [candidate])
+
+                self.assertEqual(trigger["action"], "open_gate")
+                self.assertEqual(trigger["eligible_leaf_count"], 1)
+                self.assertEqual(trigger["eligible_leaf_threshold"], 1)
+                self.assertFalse(trigger["materialize_leaves"])
+
+    def test_product_direction_factoryrunner_without_open_issues_can_open_single_gate(self):
+        proposal = DirectionProposal(
+            repository_ref="pl0n3r/FactoryRunner",
+            objective="Preparar el siguiente tramo del execution plane.",
+            leaves=(
+                DirectionLeaf(
+                    key="factoryrunner-next",
+                    title="Siguiente leaf de FactoryRunner",
+                    acceptance_targets=(
+                        "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                    ),
+                ),
+            ),
+        )
+
+        first = direction_gate_trigger(proposal, [])
+        second = direction_gate_trigger(
+            proposal,
+            [],
+            existing_gate_keys=(first["gate_key"],),
+        )
+
+        self.assertEqual(first["action"], "open_gate")
+        self.assertEqual(first["eligible_leaf_count"], 0)
+        self.assertEqual(second["action"], "noop")
+        self.assertEqual(second["reason"], "direction_gate_already_open")
+
+    def test_product_direction_additional_projects_keep_live_spend_and_provider_blocks(self):
+        blocked = (
+            ("pl0n3r/ControlBot", "Provisionar Backblaze para recuperación real."),
+            ("pl0n3r/AutoFactory", "Cambiar plan de la cuenta para ampliar capacidad."),
+            ("pl0n3r/FactoryRunner", "Comprar un proveedor de pago para el go-live."),
+        )
+        for repo, objective in blocked:
+            with self.subTest(repo=repo):
+                proposal = DirectionProposal(
+                    repository_ref=repo,
+                    objective=objective,
+                    leaves=(
+                        DirectionLeaf(
+                            key=f"{repo.rsplit('/', 1)[-1].lower()}-blocked-next",
+                            title="Leaf fuera de la autoridad operativa vigente",
+                            acceptance_targets=(
+                                "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                            ),
+                        ),
+                    ),
+                )
+
+                with self.assertRaisesRegex(
+                    ValueError, "cannot cross human-only authority blocks"
+                ):
+                    direction_gate_trigger(proposal, [])
+
+        safe = DirectionProposal(
+            repository_ref="pl0n3r/FactoryRunner",
+            objective="Mejorar la trazabilidad local del execution plane.",
+            leaves=(
+                DirectionLeaf(
+                    key="factoryrunner-safe-next",
+                    title="Trazabilidad reversible del runner",
+                    acceptance_targets=(
+                        "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                    ),
+                ),
+            ),
+        )
+        opened = direction_gate_trigger(safe, [])
+        self.assertEqual(opened["gate"]["safe_default"], "B")
+        self.assertFalse(opened["materialize_leaves"])
+
     def test_adaptive_dispatch_propagates_tranche_gate(self):
         presence = classify_presence(self.adaptive_snapshot())
         fencing = self.fenced()
