@@ -13,6 +13,7 @@ from scripts.dispatcher_v2 import (
     WorkItemReadinessContext,
     candidate_from_work_item,
     classify_readiness,
+    idle_time_metric,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,7 +164,7 @@ def sonar_evidence():
 
 def health(
     gate_rows=None, regressions=None, *, external=False, perf=None, rec=None,
-    sonar=False, sonar_ev=None, sonar_applicability=False,
+    sonar=False, sonar_ev=None, sonar_applicability=False, dispatch_idle=None,
 ):
     return derive_quality_health(
         contract(
@@ -178,6 +179,7 @@ def health(
         performance_status=perf,
         recovery_health=rec,
         sonar_evidence=sonar_ev,
+        dispatch_idle=dispatch_idle,
     )
 
 
@@ -200,6 +202,82 @@ class QualityStatusTests(unittest.TestCase):
 
         blocked_rows = gates(); blocked_rows[0]["status"] = "FAIL"
         self.assertEqual(health(blocked_rows)["state"], "BLOCKED")
+
+    def test_dispatch_idle_metric_alerts_over_threshold(self):
+        over = idle_time_metric(
+            agent_id="dispatcher-705",
+            repository_ref="pl0n3r/Factory",
+            finished_at="2026-09-29T02:30:00Z",
+            next_dispatch_at="2026-09-29T03:00:01Z",
+            threshold_minutes=15,
+        )
+        within = idle_time_metric(
+            agent_id="dispatcher-705",
+            repository_ref="pl0n3r/Factory",
+            finished_at="2026-09-29T02:50:00Z",
+            next_dispatch_at="2026-09-29T03:00:00Z",
+            threshold_minutes=15,
+        )
+
+        degraded = health(dispatch_idle=over)
+        passed = health(dispatch_idle=within)
+
+        self.assertEqual(degraded["state"], "DEGRADED")
+        self.assertIn("dispatch_idle_threshold_exceeded", degraded["reasons"])
+        self.assertEqual(passed["state"], "PASS")
+        self.assertNotIn("dispatch_idle_threshold_exceeded", passed["reasons"])
+
+    def test_dispatch_idle_is_visible_in_quality_health(self):
+        metric = idle_time_metric(
+            agent_id="dispatcher-705",
+            repository_ref="pl0n3r/Factory",
+            finished_at="2026-09-29T02:30:00Z",
+            next_dispatch_at="2026-09-29T03:00:01Z",
+            threshold_minutes=15,
+        )
+        result = health(dispatch_idle=metric)
+        projected = result["external_dimensions"]["dispatch_idle"]
+
+        self.assertEqual(projected["source"], "dispatcher_v2.idle_time_metric")
+        self.assertEqual(projected["quality_health"], "DEGRADED")
+        self.assertEqual(projected["idle_seconds"], metric["idle_seconds"])
+        self.assertEqual(projected["threshold_seconds"], metric["threshold_seconds"])
+        self.assertTrue(projected["alert"])
+        self.assertFalse(projected["recalculated"])
+        self.assertIn("quality_dispatch_idle", result["work_item_classes"])
+        self.assertEqual(
+            projected["work_item_classes"],
+            ["quality_dispatch_idle"],
+        )
+
+    def test_dispatch_idle_rejects_incoherent_status(self):
+        metric = idle_time_metric(
+            agent_id="dispatcher-705",
+            repository_ref="pl0n3r/Factory",
+            finished_at="2026-09-29T02:50:00Z",
+            next_dispatch_at="2026-09-29T03:00:00Z",
+            threshold_minutes=15,
+        )
+
+        invalid_rows = (
+            {**metric, "repository_ref": "pl0n3r/Condor"},
+            {**metric, "idle_seconds": -1},
+            {**metric, "alert": True},
+            {**metric, "quality_health": "DEGRADED"},
+        )
+        for invalid in invalid_rows:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(QualityStatusError):
+                    health(dispatch_idle=invalid)
+
+    def test_quality_health_without_dispatch_idle_is_backward_compatible(self):
+        baseline = health()
+        explicit_none = health(dispatch_idle=None)
+
+        self.assertEqual(explicit_none, baseline)
+        self.assertEqual(baseline["state"], "PASS")
+        self.assertNotIn("dispatch_idle", baseline["external_dimensions"])
+        self.assertNotIn("quality_dispatch_idle", baseline["work_item_classes"])
 
     def test_required_gate_matrix_comes_only_from_quality_contract_without_hidden_defaults(self):
         result = health()

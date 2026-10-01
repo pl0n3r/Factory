@@ -21,6 +21,7 @@ WORK_ITEM_CLASSES = frozenset({
     "quality_performance_degraded", "quality_performance_unknown",
     "quality_performance_blocked", "quality_recovery_degraded",
     "quality_recovery_unknown", "quality_recovery_blocked",
+    "quality_dispatch_idle",
 })
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _PROJECT_REF = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -44,9 +45,13 @@ def derive_quality_health(
     performance_status: Mapping[str, Any] | None = None,
     recovery_health: Mapping[str, Any] | None = None,
     sonar_evidence: Mapping[str, Any] | None = None,
+    dispatch_idle: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deriva un único estado Quality sin ejecutar ni recalcular dimensiones externas."""
-    _safe((gate_evidence, regressions, performance_status, recovery_health, sonar_evidence))
+    _safe((
+        gate_evidence, regressions, performance_status, recovery_health,
+        sonar_evidence, dispatch_idle,
+    ))
     quality = validate_quality_contract(contract)
     now = _time(observed_at, "observed_at")
     project_ref = _project_ref(project_ref)
@@ -103,6 +108,11 @@ def derive_quality_health(
     external = _external_dimensions(
         quality, performance_status, recovery_health, states, reasons, classes, refs
     )
+    idle = _dispatch_idle_dimension(
+        dispatch_idle, project_ref, states, reasons, classes
+    )
+    if idle is not None:
+        external["dispatch_idle"] = idle
     sonar = _sonar_dimension(
         quality, sonar_evidence, states, reasons, classes, refs, ages
     )
@@ -482,6 +492,65 @@ def _external_dimensions(quality, performance_status, recovery_health, states, r
                 raise QualityStatusError("recovery health inválido.") from exc
             result["recovery"] = _external("recovery", projected["recovery_health"], projected, states, reasons, classes)
     return result
+
+
+def _dispatch_idle_dimension(evidence, project_ref, states, reasons, classes):
+    """Proyecta la métrica canónica del dispatcher sin recalcular timestamps."""
+    if evidence is None:
+        return None
+
+    row = _closed(
+        evidence,
+        {
+            "agent_id", "repository_ref", "idle_seconds", "threshold_seconds",
+            "alert", "quality_health",
+        },
+        "dispatch_idle",
+    )
+    agent_id = _ref(row["agent_id"])
+    repository_ref = _project_ref(row["repository_ref"])
+    idle_seconds = row["idle_seconds"]
+    threshold_seconds = row["threshold_seconds"]
+    alert = row["alert"]
+    quality_health = row["quality_health"]
+
+    if repository_ref != project_ref:
+        raise QualityStatusError("dispatch_idle project incoherente.")
+    if (
+        type(idle_seconds) is not int or idle_seconds < 0
+        or type(threshold_seconds) is not int or threshold_seconds <= 0
+        or type(alert) is not bool
+    ):
+        raise QualityStatusError("dispatch_idle metric inválida.")
+
+    expected_alert = idle_seconds > threshold_seconds
+    expected_health = "DEGRADED" if expected_alert else "HEALTHY"
+    if alert is not expected_alert or quality_health != expected_health:
+        raise QualityStatusError("dispatch_idle evidence incoherente.")
+
+    local_reasons = []
+    local_classes = []
+    if alert:
+        states.append("DEGRADED")
+        reasons.append("dispatch_idle_threshold_exceeded")
+        classes.append("quality_dispatch_idle")
+        local_reasons.append("dispatch_idle_threshold_exceeded")
+        local_classes.append("quality_dispatch_idle")
+
+    return {
+        "status": quality_health,
+        "quality_health": quality_health,
+        "source": "dispatcher_v2.idle_time_metric",
+        "agent_id": agent_id,
+        "repository_ref": repository_ref,
+        "idle_seconds": idle_seconds,
+        "threshold_seconds": threshold_seconds,
+        "alert": alert,
+        "reasons": local_reasons,
+        "evidence_refs": [],
+        "work_item_classes": local_classes,
+        "recalculated": False,
+    }
 
 
 def _external(name, status, payload, states, reasons, classes):
