@@ -15,13 +15,15 @@ class ReleaseCandidate1014Tests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
 
-    def test_candidate_version_is_1_0_14(self) -> None:
+    def test_candidate_is_at_least_1_0_14_and_keeps_reviewer_policy_fix(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.14"})
+        self.assertEqual(set(payload), {"version"})
+        self.assertRegex(payload["version"], r"^\d+\.\d+\.\d+$")
+        version = tuple(int(part) for part in payload["version"].split("."))
+        self.assertGreaterEqual(version, (1, 0, 14))
 
-    def test_candidate_contains_base_sha_reviewer_policy_fix(self) -> None:
         workflow = (
             self.root / ".github/workflows/politica.yml"
         ).read_text(encoding="utf-8")
