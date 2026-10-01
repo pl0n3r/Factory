@@ -443,6 +443,25 @@ class GateTests(unittest.TestCase):
             )
         self.assertEqual([item["id"] for item in comments], [1, 2])
 
+    def test_gate_scan_pagination_slurps_every_issue_page(self):
+        def fake_run(command, **kwargs):
+            self.assertIn("--paginate", command)
+            self.assertIn("--slurp", command)
+            self.assertIn(
+                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
+                command,
+            )
+            return SimpleNamespace(
+                stdout='[[{"number":575}],[{"number":581}]]'
+            )
+
+        with patch("sincronizar_puerta.subprocess.run", side_effect=fake_run):
+            issues = gh_api(
+                "GET",
+                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
+            )
+        self.assertEqual([item["number"] for item in issues], [575, 581])
+
     def test_unknown_category_is_invalid_gate(self):
         self.assertEqual(
             classify_body(body(gate(category="architecture"))),
