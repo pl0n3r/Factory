@@ -76,10 +76,11 @@ class AccountCapacityLearningTests(unittest.TestCase):
                 },
             ],
         )
-        self.assertEqual(
-            [row["id"] for row in result["lessons"]],
-            sorted(row["id"] for row in result["lessons"]),
+        reversed_result = learn_limit_events(
+            request(list(reversed(payload["events"]))),
+            now=NOW,
         )
+        self.assertEqual(result, reversed_result)
 
     def test_duplicate_delivery_is_idempotent_and_material_change_is_distinct(self):
         original = event()
