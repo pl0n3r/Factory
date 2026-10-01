@@ -124,6 +124,28 @@ class AccountCapacityLearningTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source)
 
+    def test_fractional_timestamp_is_ordered_by_instant_not_text(self):
+        rows = [
+            event("primary", "2026-10-01T09:00:00Z", "a" * 64),
+            event("primary", "2026-10-01T09:00:00.500000Z", "b" * 64),
+        ]
+        result = learn_limit_events(request(rows), now=NOW)
+        self.assertEqual(
+            result["recurrence"][0]["lastOccurredAt"],
+            "2026-10-01T09:00:00.500000Z",
+        )
+        self.assertEqual(
+            result,
+            learn_limit_events(request(list(reversed(rows))), now=NOW),
+        )
+
+    def test_parent_631_contract_remains_green(self):
+        self.test_valid_limit_event_produces_canonical_deterministic_lesson()
+        self.test_recurrence_is_account_scoped_exact_and_stably_ordered()
+        self.test_duplicate_delivery_is_idempotent_and_material_change_is_distinct()
+        self.test_closed_contract_rejects_identifying_unknown_future_and_invalid_evidence()
+        self.test_output_fingerprint_is_deterministic_pure_and_provider_limit_free()
+
     def test_empty_events_are_valid_zero_recurrence(self):
         result = learn_limit_events(request([]), now=NOW)
         self.assertEqual(result["lessons"], [])
