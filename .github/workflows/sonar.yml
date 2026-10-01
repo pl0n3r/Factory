@@ -69,7 +69,9 @@ jobs:
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=pl0n3r_factory
             -Dsonar.sources=evolution,intelligence,knowledge,lab,lecciones,metricas,performance,portfolio,producto,quality,readme,recovery,scripts,seguridad
-            -Dsonar.tests=tests
+            -Dsonar.tests=tests,lecciones,metricas,producto,seguridad
+            -Dsonar.test.inclusions=tests/**/*.py,lecciones/test_*.py,metricas/test_*.py,producto/test_*.py,seguridad/test_*.py
+            -Dsonar.exclusions=lecciones/test_*.py,metricas/test_*.py,producto/test_*.py,seguridad/test_*.py
             -Dsonar.python.coverage.reportPaths=build/coverage/python.xml
             -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=300
