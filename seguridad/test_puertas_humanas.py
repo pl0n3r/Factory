@@ -534,6 +534,10 @@ class GateDedupTests(unittest.TestCase):
         self.assertFalse(reconcile_gate(api, "pl0n3r/Factory", 578))
         self.assertEqual(api.open_numbers(), [575])
         self.assertEqual(api.issues[578]["state_reason"], "duplicate")
+        duplicate_labels = {item["name"] for item in api.issues[578]["labels"]}
+        self.assertIn("estado: completado", duplicate_labels)
+        self.assertNotIn("estado: requiere decisión", duplicate_labels)
+        self.assertNotIn("decisión: dueño", duplicate_labels)
         duplicate_comments = api.comments[578]
         self.assertEqual(len(duplicate_comments), 1)
         self.assertIn("canonical=575", duplicate_comments[0]["body"])
