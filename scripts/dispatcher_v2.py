@@ -99,7 +99,32 @@ class Readiness:
     reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class BlockedWork:
+    """Bloqueo con condición verificable ya evaluada por el adaptador de evidencia."""
+
+    key: str
+    unlock_condition: str
+    condition_satisfied: bool
+    evidence_refs: tuple[str, ...] = ()
+    already_reconciled: bool = False
+
+
+WORK_LADDER_LANES = {"normal", "quality", "filler"}
+
+
+CANONICAL_DISPATCH_REPOS = {
+    "pl0n3r/Factory",
+    "pl0n3r/Condor",
+    "pl0n3r/GrindFlow",
+    "pl0n3r/brvtal",
+    "pl0n3r/ControlBot",
+    "pl0n3r/AutoFactory",
+    "pl0n3r/FactoryRunner",
+}
+
 PRODUCT_DIRECTION_REPOS = {
+    "pl0n3r/Factory",
     "pl0n3r/Condor",
     "pl0n3r/GrindFlow",
     "pl0n3r/brvtal",
@@ -530,6 +555,188 @@ def select_next(
         if AUTHORITY_ORDER[authority_class(candidate)] == best_rank
     ]
     return min(same_class, key=lambda item: _tiebreak(item, aging_threshold=aging_threshold))
+
+
+def _work_lane(candidate: Candidate) -> str:
+    lane = candidate.metadata.get("work_ladder_lane", "normal")
+    return lane if lane in WORK_LADDER_LANES else "normal"
+
+
+def reconcile_stale_blocks(
+    blocked_work: Iterable[BlockedWork],
+    *,
+    reconciled_keys: Iterable[str] = (),
+) -> tuple[dict[str, object], ...]:
+    """Devuelve desbloqueos idempotentes solo con condición y evidencia verificadas."""
+
+    seen = set(reconciled_keys)
+    actions: list[dict[str, object]] = []
+    for item in sorted(blocked_work, key=lambda value: value.key):
+        condition = item.unlock_condition.strip()
+        if (
+            item.key in seen
+            or item.already_reconciled
+            or not condition
+            or not item.condition_satisfied
+            or not item.evidence_refs
+        ):
+            continue
+
+        evidence = tuple(
+            ref.strip()
+            for ref in item.evidence_refs
+            if isinstance(ref, str) and ref.strip()
+        )
+        if not evidence:
+            continue
+
+        actions.append(
+            {
+                "action": "unblock",
+                "key": item.key,
+                "unlock_condition": condition,
+                "evidence_refs": evidence,
+                "comment": (
+                    "Desbloqueo automático: la condición declarada ya se cumple. "
+                    "Evidencia: " + ", ".join(evidence)
+                ),
+            }
+        )
+        seen.add(item.key)
+
+    return tuple(actions)
+
+
+def idle_time_metric(
+    *,
+    agent_id: str,
+    repository_ref: str,
+    finished_at: str,
+    next_dispatch_at: str,
+    threshold_minutes: int = 15,
+) -> dict[str, object]:
+    """Mide tiempo ocioso con timestamps aware y expone estado para Quality Health."""
+
+    if repository_ref not in CANONICAL_DISPATCH_REPOS:
+        raise ValueError("idle metric requires a canonical dispatch repository")
+    if not agent_id.strip():
+        raise ValueError("idle metric requires agent_id")
+    if (
+        isinstance(threshold_minutes, bool)
+        or not isinstance(threshold_minutes, int)
+        or threshold_minutes <= 0
+    ):
+        raise ValueError("idle threshold must be a positive integer")
+
+    def parse(value: str) -> datetime:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("idle timestamps must include timezone")
+        return parsed
+
+    finished = parse(finished_at)
+    dispatched = parse(next_dispatch_at)
+    elapsed_seconds = (dispatched - finished).total_seconds()
+    if elapsed_seconds < 0:
+        raise ValueError("next dispatch cannot precede finished work")
+
+    alert = elapsed_seconds > threshold_minutes * 60
+    return {
+        "agent_id": agent_id.strip(),
+        "repository_ref": repository_ref,
+        "idle_seconds": int(elapsed_seconds),
+        "threshold_seconds": threshold_minutes * 60,
+        "alert": alert,
+        "quality_health": "DEGRADED" if alert else "HEALTHY",
+    }
+
+
+def work_ladder(
+    candidates: Iterable[Candidate],
+    *,
+    blocked_work: Iterable[BlockedWork] = (),
+    reconciled_block_keys: Iterable[str] = (),
+    direction_proposals: Iterable[DirectionProposal] = (),
+    existing_gate_keys: Iterable[str] = (),
+    known_proposal_sha256s: Iterable[str] = (),
+    active_tranche: int | None = None,
+    no_safe_work_reason: str = (
+        "No hay trabajo seguro listo; se requiere nueva evidencia, "
+        "desbloqueo o dirección explícita."
+    ),
+) -> dict[str, object]:
+    """Escalera total: siempre devuelve un siguiente paso explicable."""
+
+    items = list(candidates)
+    for step, lane in (
+        ("normal", "normal"),
+        ("quality", "quality"),
+        ("filler", "filler"),
+    ):
+        if step == "quality":
+            actions = reconcile_stale_blocks(
+                blocked_work,
+                reconciled_keys=reconciled_block_keys,
+            )
+            if actions:
+                return {
+                    "step": "reconcile_stale_blocks",
+                    "work": {
+                        "kind": "stale_block_reconciliation",
+                        "key": str(actions[0]["key"]),
+                    },
+                    "actions": actions,
+                }
+
+        selected = select_next(
+            [candidate for candidate in items if _work_lane(candidate) == lane],
+            active_tranche=active_tranche,
+        )
+        if selected is not None:
+            return {
+                "step": step,
+                "work": {"kind": "candidate", "key": selected.key},
+                "selected_class": authority_class(selected),
+            }
+
+    gate_keys = tuple(existing_gate_keys)
+    proposal_hashes = tuple(known_proposal_sha256s)
+    for proposal in sorted(
+        direction_proposals,
+        key=lambda value: value.repository_ref,
+    ):
+        trigger = direction_gate_trigger(
+            proposal,
+            items,
+            existing_gate_keys=gate_keys,
+            known_proposal_sha256s=proposal_hashes,
+            active_tranche=active_tranche,
+        )
+        if trigger["action"] == "open_gate":
+            return {
+                "step": "product_direction",
+                "work": {
+                    "kind": "product_direction",
+                    "key": str(trigger["gate_key"]),
+                },
+                "trigger": trigger,
+            }
+
+    reason = no_safe_work_reason.strip()
+    if not reason:
+        raise ValueError("work ladder requires a reason when no safe work exists")
+    return {
+        "step": "declare_idle_reason",
+        "work": {
+            "kind": "status",
+            "key": "dispatcher:no-safe-work",
+        },
+        "reason": reason,
+        "needs": (
+            "evidencia que satisfaga un bloqueo, un candidato safe/ready "
+            "o una decisión humana aplicable"
+        ),
+    }
 
 
 def reconcile_direction_gate_instances(
