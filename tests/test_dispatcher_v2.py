@@ -1207,46 +1207,48 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(second["reason"], "direction_gate_already_open")
 
     def test_product_direction_additional_projects_keep_live_spend_and_provider_blocks(self):
-        for repo in (
-            "pl0n3r/ControlBot",
-            "pl0n3r/AutoFactory",
-            "pl0n3r/FactoryRunner",
-        ):
+        blocked = (
+            ("pl0n3r/ControlBot", "Provisionar Backblaze para recuperación real."),
+            ("pl0n3r/AutoFactory", "Cambiar plan de la cuenta para ampliar capacidad."),
+            ("pl0n3r/FactoryRunner", "Comprar un proveedor de pago para el go-live."),
+        )
+        for repo, objective in blocked:
             with self.subTest(repo=repo):
                 proposal = DirectionProposal(
                     repository_ref=repo,
-                    objective=(
-                        "Preparar un tramo reversible sin go-live, gasto, "
-                        "proveedores de pago ni Backblaze."
-                    ),
+                    objective=objective,
                     leaves=(
                         DirectionLeaf(
-                            key=f"{repo.rsplit('/', 1)[-1].lower()}-safe-next",
-                            title="Leaf seguro dentro de autoridad vigente",
+                            key=f"{repo.rsplit('/', 1)[-1].lower()}-blocked-next",
+                            title="Leaf fuera de la autoridad operativa vigente",
                             acceptance_targets=(
                                 "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
                             ),
                         ),
                     ),
                 )
-                opened = direction_gate_trigger(proposal, [])
-                self.assertEqual(opened["gate"]["safe_default"], "B")
-                self.assertFalse(opened["materialize_leaves"])
-                self.assertEqual(
-                    materialize_direction_leaves(proposal, decision_evidence=None),
-                    (),
-                )
-                self.assertEqual(
-                    materialize_direction_leaves(
-                        proposal,
-                        decision_evidence={
-                            "gate_sha256": opened["gate_sha256"],
-                            "option": "B",
-                            "version": 2,
-                        },
+
+                with self.assertRaisesRegex(
+                    ValueError, "cannot cross human-only authority blocks"
+                ):
+                    direction_gate_trigger(proposal, [])
+
+        safe = DirectionProposal(
+            repository_ref="pl0n3r/FactoryRunner",
+            objective="Mejorar la trazabilidad local del execution plane.",
+            leaves=(
+                DirectionLeaf(
+                    key="factoryrunner-safe-next",
+                    title="Trazabilidad reversible del runner",
+                    acceptance_targets=(
+                        "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
                     ),
-                    (),
-                )
+                ),
+            ),
+        )
+        opened = direction_gate_trigger(safe, [])
+        self.assertEqual(opened["gate"]["safe_default"], "B")
+        self.assertFalse(opened["materialize_leaves"])
 
     def test_adaptive_dispatch_propagates_tranche_gate(self):
         presence = classify_presence(self.adaptive_snapshot())

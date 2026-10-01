@@ -108,6 +108,42 @@ PRODUCT_DIRECTION_REPOS = {
     "pl0n3r/FactoryRunner",
 }
 PRODUCT_DIRECTION_ELIGIBLE_LEAF_THRESHOLD = 1
+PRODUCT_DIRECTION_FORBIDDEN_AUTHORITY_MARKERS = {
+    "pl0n3r/ControlBot": (
+        "backblaze",
+        "go-live",
+        "go live",
+        "salir a live",
+        "production authority",
+        "autoridad de producción",
+        "recovery real",
+        "recuperación real",
+    ),
+    "pl0n3r/AutoFactory": (
+        "go-live",
+        "go live",
+        "salir a live",
+        "comprar",
+        "purchase",
+        "cambiar plan",
+        "change plan",
+        "cambiar cuenta",
+        "change account",
+        "dato sensible",
+        "datos sensibles",
+        "sensitive data",
+    ),
+    "pl0n3r/FactoryRunner": (
+        "go-live",
+        "go live",
+        "salir a live",
+        "comprar",
+        "purchase",
+        "proveedor de pago",
+        "paid provider",
+        "backblaze",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -143,6 +179,18 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
         raise ValueError("direction proposal objective is required")
     if not proposal.leaves:
         raise ValueError("direction proposal requires at least one leaf")
+
+    authority_text = " ".join(
+        [objective, *(leaf.title.strip() for leaf in proposal.leaves)]
+    ).casefold()
+    for marker in PRODUCT_DIRECTION_FORBIDDEN_AUTHORITY_MARKERS.get(
+        proposal.repository_ref, ()
+    ):
+        if marker in authority_text:
+            raise ValueError(
+                "product direction cannot cross human-only authority blocks "
+                f"for {proposal.repository_ref}: {marker}"
+            )
 
     keys = [leaf.key.strip() for leaf in proposal.leaves]
     if any(not key for key in keys) or len(keys) != len(set(keys)):
