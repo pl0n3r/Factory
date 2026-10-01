@@ -19,6 +19,16 @@ MIGRATION = {"NOT_APPLICABLE", "FORWARD_ROLLBACK", "EXPAND_CONTRACT"}
 SONAR_VISIBILITY = {"public", "private"}
 SONAR_ANALYSIS_METHOD = {"automatic", "ci"}
 SONAR_APPLICABILITY = {"required", "not_applicable"}
+SONAR_APPLICABILITY_REASONS = {
+    "coverage": {
+        "required": "coverage_required_ci_analysis",
+        "not_applicable": "coverage_not_applicable_automatic_analysis",
+    },
+    "organization_line_usage": {
+        "required": "organization_line_usage_required_private",
+        "not_applicable": "organization_line_usage_not_applicable_public",
+    },
+}
 _ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/#@-]{0,239}$")
 _SENSITIVE = re.compile(
@@ -174,6 +184,11 @@ def _sonar_applicability(
         if normalized[name]["state"] != state:
             raise QualityContractError(
                 f"sonar.applicability.{name}.state contradice la política Sonar."
+            )
+        expected_reason = SONAR_APPLICABILITY_REASONS[name][state]
+        if normalized[name]["reason"] != expected_reason:
+            raise QualityContractError(
+                f"sonar.applicability.{name}.reason contradice la política Sonar."
             )
     return normalized
 
