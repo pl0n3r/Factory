@@ -21,7 +21,7 @@ o:
 
     /decidir B
 
-`/decidir A` solo materializa la elección; no publica por sí mismo. Seguridad escribe un único journal `factory-human-decision` v2 ligado al fingerprint del gate normalizado y cierra el Issue mediante `github-actions[bot]`. El preflight de release recalcula ese fingerprint, exige que el contexto del gate contenga un único `main@<SHA>` igual a `expected_sha`, conserva `safe_default=B` y comprueba que la opción A sea inequívocamente de publicación.
+`/decidir A` solo materializa la elección; no publica por sí mismo. Seguridad escribe un único journal `factory-human-decision` v2 ligado al fingerprint del gate normalizado y cierra el Issue mediante `github-actions[bot]`. El preflight de release recalcula ese fingerprint, exige que el contexto del gate contenga un único `main@<SHA>` igual a `expected_sha`, conserva `safe_default=B` y exige que el label normalizado de la opción A empiece por `Publicar` como verbo positivo. Labels negados como `No publicar` o frases que solo contienen la palabra `publicar` fallan cerrado.
 
 Las puertas históricas siguen siendo compatibles con el transporte legacy: Issue cerrado por el dueño + comentario OWNER con exactamente:
 
