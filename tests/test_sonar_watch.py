@@ -471,6 +471,21 @@ class SonarWatchTests(unittest.TestCase):
             debt_signal["details"]["exceeded"],
         )
 
+    def test_coverage_pass_closes_matching_auto_issue(self):
+        api = FakeIssues()
+        failing = snapshot()
+        failing["analysis"]["coverage_available"] = False
+        sync(failing, api)
+
+        marker = sonar_watch.issue_marker("factory", "coverage")
+        coverage_issue = api.find(marker)[0]
+        self.assertEqual(coverage_issue["state"], "open")
+
+        sync(snapshot(), api)
+
+        coverage_issue = api.find(marker)[0]
+        self.assertEqual(coverage_issue["state"], "closed")
+
     def test_current_pass_closes_only_matching_auto_issue(self):
         api = FakeIssues()
         failing = snapshot()
