@@ -111,6 +111,8 @@ class BlockedWork:
 
 
 WORK_LADDER_LANES = {"normal", "quality", "filler"}
+FILLER_MAX_EFFORT = 2
+FILLER_MAX_RISK = 1
 
 
 CANONICAL_DISPATCH_REPOS = {
@@ -562,6 +564,22 @@ def _work_lane(candidate: Candidate) -> str:
     return lane if lane in WORK_LADDER_LANES else "normal"
 
 
+def _filler_is_safe(candidate: Candidate) -> bool:
+    """Acepta solo relleno curado, reversible, sin gasto y de riesgo/esfuerzo bajo."""
+
+    metadata = candidate.metadata
+    return (
+        _work_lane(candidate) == "filler"
+        and metadata.get("filler_curated") is True
+        and metadata.get("filler_reversible") is True
+        and metadata.get("filler_no_spend") is True
+        and candidate.risk <= FILLER_MAX_RISK
+        and candidate.effort <= FILLER_MAX_EFFORT
+        and not candidate.requires_extra_authority
+        and not candidate.pending_human_gate
+    )
+
+
 def reconcile_stale_blocks(
     blocked_work: Iterable[BlockedWork],
     *,
@@ -661,7 +679,7 @@ def work_ladder(
     known_proposal_sha256s: Iterable[str] = (),
     active_tranche: int | None = None,
     active_filler_count: int = 0,
-    max_filler_parallel: int = 1,
+    max_filler_parallel: int = 2,
     no_safe_work_reason: str = (
         "No hay trabajo seguro listo; se requiere nueva evidencia, "
         "desbloqueo o dirección explícita."
@@ -702,8 +720,15 @@ def work_ladder(
                     "actions": actions,
                 }
 
+        lane_candidates = [
+            candidate for candidate in items if _work_lane(candidate) == lane
+        ]
+        if step == "filler":
+            lane_candidates = [
+                candidate for candidate in lane_candidates if _filler_is_safe(candidate)
+            ]
         selected = select_next(
-            [candidate for candidate in items if _work_lane(candidate) == lane],
+            lane_candidates,
             active_tranche=active_tranche,
         )
         if selected is not None:
@@ -1011,6 +1036,10 @@ def dispatch_record(
         active_tranche=active_tranche,
     )
     ready = [candidate for candidate in items if states[candidate.key].ready]
+    next_action = work_ladder(
+        items,
+        active_tranche=active_tranche,
+    )
     excluded = {
         candidate.key: list(states[candidate.key].reasons)
         for candidate in items
@@ -1019,6 +1048,7 @@ def dispatch_record(
     return {
         "selected": selected.key if selected else None,
         "selected_class": authority_class(selected) if selected else None,
+        "next_action": next_action,
         "ready_not_selected": [
             candidate.key for candidate in ready if selected is None or candidate.key != selected.key
         ],
