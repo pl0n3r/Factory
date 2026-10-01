@@ -12,7 +12,7 @@
           "baseline": {
             "value": 380,
             "unit": "ms",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "budget": {
             "operator": "lte",
@@ -29,7 +29,7 @@
           "evidence": {
             "source": "github_issue",
             "ref": "github:pl0n3r/factory#304",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
           "escalation_conditions": ["architecture_change", "capacity_budget"]
@@ -40,7 +40,7 @@
           "baseline": {
             "value": 1624,
             "unit": "ms",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "budget": {
             "operator": "lte",
@@ -57,7 +57,7 @@
           "evidence": {
             "source": "github_issue",
             "ref": "github:pl0n3r/factory#304",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
           "escalation_conditions": ["architecture_change", "capacity_budget"]
@@ -68,7 +68,7 @@
           "baseline": {
             "value": 0,
             "unit": "ratio",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "budget": {
             "operator": "lte",
@@ -85,7 +85,7 @@
           "evidence": {
             "source": "github_issue",
             "ref": "github:pl0n3r/factory#304",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
           "escalation_conditions": ["architecture_change", "capacity_budget"]
@@ -102,7 +102,7 @@
           "baseline": {
             "value": 456,
             "unit": "ms",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "budget": {
             "operator": "lte",
@@ -119,7 +119,7 @@
           "evidence": {
             "source": "github_issue",
             "ref": "github:pl0n3r/factory#304",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
           "escalation_conditions": ["architecture_change", "capacity_budget"]
@@ -130,7 +130,7 @@
           "baseline": {
             "value": 1772,
             "unit": "ms",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "budget": {
             "operator": "lte",
@@ -147,7 +147,7 @@
           "evidence": {
             "source": "github_issue",
             "ref": "github:pl0n3r/factory#304",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
           "escalation_conditions": ["architecture_change", "capacity_budget"]
@@ -158,7 +158,7 @@
           "baseline": {
             "value": 0.005,
             "unit": "ratio",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "budget": {
             "operator": "lte",
@@ -175,7 +175,7 @@
           "evidence": {
             "source": "github_issue",
             "ref": "github:pl0n3r/factory#304",
-            "observed_at": "2026-10-01T11:47:55Z"
+            "observed_at": "2026-10-01T11:47:49Z"
           },
           "allowed_actions": ["benchmark", "diagnose", "measure_before_after", "observe"],
           "escalation_conditions": ["architecture_change", "capacity_budget"]
