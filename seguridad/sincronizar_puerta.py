@@ -34,7 +34,7 @@ class GateConflictError(ValueError):
 
 def gh_api(method: str, path: str, payload: dict | None = None):
     command = ["gh", "api"]
-    if method == "GET" and ("?per_page=" in path):
+    if method == "GET" and ("per_page=" in path):
         command += ["--paginate", "--slurp"]
     if method != "GET":
         command += ["--method", method]
@@ -49,7 +49,7 @@ def gh_api(method: str, path: str, payload: dict | None = None):
         check=True,
     )
     value = json.loads(result.stdout) if result.stdout.strip() else None
-    if method == "GET" and "?per_page=" in path:
+    if method == "GET" and "per_page=" in path:
         # --slurp devuelve una lista de páginas (cada página es una lista).
         return [item for page in value for item in page]
     return value
