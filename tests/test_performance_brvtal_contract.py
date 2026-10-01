@@ -31,7 +31,7 @@ SAMPLES = (
     {
         "sha": "7ac39afa8ad205cc3c3668906a6d1ffa873ac1cf",
         "release": "0.1.101",
-        "observed_at": "2026-10-01T11:47:55Z",
+        "observed_at": "2026-10-01T11:47:49Z",
         "evidence_ref": "github:pl0n3r/brvtal/actions/runs/36853443439@attempt2",
         "public.home.mobile": {"fcp": 380, "lcp": 1624, "cls": 0},
         "public.home.desktop": {"fcp": 440, "lcp": 1748, "cls": 0.005},
@@ -109,6 +109,16 @@ class BrvtalPerformanceContractTests(unittest.TestCase):
                 self.assertNotIn("create_work_item", metric["allowed_actions"])
                 self.assertNotIn("cost_change", metric["escalation_conditions"])
 
+    def test_contract_uses_artifact_backed_provenance_timestamp(self):
+        contract = validate_performance_contract(load_contract())
+        expected = "2026-10-01T11:47:49Z"
+        for surface in contract["surfaces"]:
+            for metric in surface["metrics"]:
+                with self.subTest(surface=surface["id"], metric=metric["id"]):
+                    self.assertEqual(metric["baseline"]["observed_at"], expected)
+                    self.assertEqual(metric["evidence"]["observed_at"], expected)
+        self.assertNotIn("2026-10-01T11:47:55Z", CONTRACT_PATH.read_text())
+
     def test_policy_documents_evidence_and_lab_limitations(self):
         docs = DOC_PATH.read_text()
         for expected in (
@@ -128,6 +138,19 @@ class BrvtalPerformanceContractTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, docs)
+
+    def test_policy_documents_artifact_timestamps_without_unverified_value(self):
+        docs = DOC_PATH.read_text()
+        for expected in (
+            "11160130127",
+            "2026-10-01T11:47:44Z",
+            "2026-10-01T11:47:49Z",
+            "envelope normalizado",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, docs)
+        self.assertNotIn("2026-10-01T11:47:55Z", docs)
+        self.assertEqual(SAMPLES[-1]["observed_at"], "2026-10-01T11:47:49Z")
 
     def test_three_historical_samples_are_info_without_breach(self):
         contract = load_contract()
