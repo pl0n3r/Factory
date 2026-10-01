@@ -844,8 +844,9 @@ class DispatcherV2Tests(unittest.TestCase):
             metadata={"repository_ref": "pl0n3r/Condor"},
         )
         trigger = direction_gate_trigger(self.direction_proposal(), [auto])
-        self.assertEqual(trigger["action"], "noop")
-        self.assertEqual(trigger["reason"], "eligible_leaf_exists")
+        self.assertEqual(trigger["action"], "open_gate")
+        self.assertFalse(trigger["materialize_leaves"])
+        self.assertEqual(trigger["eligible_leaf_count"], 1)
         self.assertEqual(select_next([auto]).key, "quality-auto")
 
     def test_direction_proposal_rejects_forbidden_acceptance_checks(self):
@@ -1016,15 +1017,134 @@ class DispatcherV2Tests(unittest.TestCase):
             [],
             existing_gate_keys=(opened["gate_key"],),
         )
-        ready = Candidate(
-            key="condor-ready",
+        ready = [
+            Candidate(
+                key="condor-ready-1",
+                priority="high",
+                metadata={"repository_ref": "pl0n3r/Condor"},
+            ),
+            Candidate(
+                key="condor-ready-2",
+                priority="high",
+                metadata={"repository_ref": "pl0n3r/Condor"},
+            ),
+        ]
+        has_work = direction_gate_trigger(proposal, ready)
+        self.assertEqual(duplicate["reason"], "direction_gate_already_open")
+        self.assertEqual(has_work["reason"], "sufficient_eligible_work")
+
+    def test_direction_gate_threshold_keeps_single_open_gate_per_product(self):
+        for repo in ("pl0n3r/Condor", "pl0n3r/GrindFlow", "pl0n3r/brvtal"):
+            with self.subTest(repo=repo):
+                proposal = DirectionProposal(
+                    repository_ref=repo,
+                    objective="Preparar el siguiente tramo antes de vaciar la cola.",
+                    leaves=(
+                        DirectionLeaf(
+                            key=f"{repo.rsplit('/', 1)[-1].lower()}-next",
+                            title="Siguiente leaf funcional",
+                            acceptance_targets=(
+                                "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
+                            ),
+                        ),
+                    ),
+                )
+                candidate = Candidate(
+                    key=f"{repo}#current",
+                    priority="high",
+                    metadata={"repository_ref": repo},
+                )
+                first = direction_gate_trigger(proposal, [candidate])
+                second = direction_gate_trigger(
+                    proposal,
+                    [candidate],
+                    existing_gate_keys=(first["gate_key"],),
+                )
+                self.assertEqual(first["action"], "open_gate")
+                self.assertEqual(second["action"], "noop")
+                self.assertEqual(second["reason"], "direction_gate_already_open")
+
+    def test_direction_gate_threshold_preserves_executable_proposal_contract(self):
+        proposal = self.direction_proposal()
+        candidate = Candidate(
+            key="condor-current",
             priority="high",
             metadata={"repository_ref": "pl0n3r/Condor"},
         )
-        has_work = direction_gate_trigger(proposal, [ready])
-        self.assertEqual(duplicate["reason"], "direction_gate_already_open")
-        self.assertEqual(has_work["reason"], "eligible_leaf_exists")
+        trigger = direction_gate_trigger(proposal, [candidate])
+        self.assertEqual(trigger["action"], "open_gate")
+        self.assertFalse(trigger["materialize_leaves"])
+        self.assertEqual(trigger["gate"]["category"], "product-direction")
+        self.assertEqual(trigger["gate"]["safe_default"], "B")
+        self.assertEqual(
+            [option["id"] for option in trigger["gate"]["options"]],
+            ["A", "B"],
+        )
+        self.assertEqual(
+            trigger["proposal"]["leaves"][1]["depends_on"],
+            ["condor-next-1"],
+        )
+        self.assertEqual(
+            materialize_direction_leaves(proposal, decision_evidence=None),
+            (),
+        )
 
+    def test_direction_gate_threshold_rejects_reproposal_of_active_segment(self):
+        proposal = self.direction_proposal()
+        candidate = Candidate(
+            key="condor-current",
+            priority="high",
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        first = direction_gate_trigger(proposal, [candidate])
+        repeated = direction_gate_trigger(
+            proposal,
+            [candidate],
+            known_proposal_sha256s=(first["proposal_sha256"],),
+        )
+        self.assertEqual(repeated["action"], "noop")
+        self.assertEqual(repeated["reason"], "direction_proposal_already_known")
+        self.assertEqual(repeated["proposal_sha256"], first["proposal_sha256"])
+
+    def test_direction_gate_threshold_opens_when_eligible_leaves_are_few(self):
+        candidate = Candidate(
+            key="condor-current",
+            priority="high",
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        trigger = direction_gate_trigger(self.direction_proposal(), [candidate])
+        self.assertEqual(trigger["action"], "open_gate")
+        self.assertEqual(trigger["eligible_leaf_count"], 1)
+        self.assertEqual(trigger["eligible_leaf_threshold"], 1)
+        self.assertFalse(trigger["materialize_leaves"])
+
+    def test_direction_gate_threshold_covers_sufficient_few_and_open_gate_states(self):
+        proposal = self.direction_proposal()
+        candidates = [
+            Candidate(
+                key="condor-current-1",
+                priority="high",
+                metadata={"repository_ref": "pl0n3r/Condor"},
+            ),
+            Candidate(
+                key="condor-current-2",
+                priority="high",
+                metadata={"repository_ref": "pl0n3r/Condor"},
+            ),
+        ]
+        sufficient = direction_gate_trigger(proposal, candidates)
+        few = direction_gate_trigger(proposal, candidates[:1])
+        already_open = direction_gate_trigger(
+            proposal,
+            candidates[:1],
+            existing_gate_keys=(few["gate_key"],),
+        )
+        self.assertEqual(sufficient["action"], "noop")
+        self.assertEqual(sufficient["reason"], "sufficient_eligible_work")
+        self.assertEqual(sufficient["eligible_leaf_count"], 2)
+        self.assertEqual(few["action"], "open_gate")
+        self.assertEqual(already_open["action"], "noop")
+        self.assertEqual(already_open["reason"], "direction_gate_already_open")
 
     def test_adaptive_dispatch_propagates_tranche_gate(self):
         presence = classify_presence(self.adaptive_snapshot())
