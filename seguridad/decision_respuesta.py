@@ -12,7 +12,8 @@ from typing import Any
 from puertas_humanas import (
     MARKER_RE,
     classify_body,
-    gate_identity_from_body,
+    gate_authority_contract_from_body,
+    gate_target_identity_from_body,
     validate_gate,
 )
 
@@ -152,11 +153,12 @@ def _existing_evidence(api, base: str) -> tuple[str, str] | None:
     return next(iter(found), None)
 
 
-def _open_equivalent_gate_numbers(
+def _open_target_gate_numbers(
     api,
     repository: str,
-    identity: str,
-) -> list[int]:
+    target_identity: str,
+    authority_contract: str,
+) -> list[int] | None:
     result: list[int] = []
     for candidate in api(
         "GET", f"repos/{repository}/issues?state=open&per_page=100"
@@ -172,11 +174,18 @@ def _open_equivalent_gate_numbers(
         ):
             continue
         try:
-            candidate_identity = gate_identity_from_body(body)
+            candidate_target = gate_target_identity_from_body(body)
         except ValueError:
             continue
-        if candidate_identity == identity:
-            result.append(number)
+        if candidate_target != target_identity:
+            continue
+        try:
+            candidate_contract = gate_authority_contract_from_body(body)
+        except ValueError:
+            return None
+        if candidate_contract != authority_contract:
+            return None
+        result.append(number)
     return sorted(set(result))
 
 
@@ -184,11 +193,13 @@ def _gate_is_unambiguous(
     api,
     repository: str,
     issue_number: int,
-    identity: str,
+    target_identity: str,
+    authority_contract: str,
 ) -> bool:
-    return _open_equivalent_gate_numbers(
-        api, repository, identity
-    ) == [issue_number]
+    numbers = _open_target_gate_numbers(
+        api, repository, target_identity, authority_contract
+    )
+    return numbers == [issue_number]
 
 
 def materialize_decision(
@@ -218,7 +229,8 @@ def materialize_decision(
         return False
     try:
         event_options, event_gate_sha256 = _gate_snapshot(event_body)
-        event_identity = gate_identity_from_body(event_body)
+        event_target = gate_target_identity_from_body(event_body)
+        event_contract = gate_authority_contract_from_body(event_body)
     except (DecisionError, ValueError):
         return False
     if option not in event_options:
@@ -237,14 +249,18 @@ def materialize_decision(
         return False
     try:
         options, gate_sha256 = _gate_snapshot(body)
-        live_identity = gate_identity_from_body(body)
+        live_target = gate_target_identity_from_body(body)
+        live_contract = gate_authority_contract_from_body(body)
     except (DecisionError, ValueError):
         return False
     if (
         option not in options
         or gate_sha256 != event_gate_sha256
-        or live_identity != event_identity
-        or not _gate_is_unambiguous(api, repository, number, event_identity)
+        or live_target != event_target
+        or live_contract != event_contract
+        or not _gate_is_unambiguous(
+            api, repository, number, event_target, event_contract
+        )
     ):
         return False
 
@@ -270,15 +286,17 @@ def materialize_decision(
             return False
         try:
             live_options, live_gate_sha256 = _gate_snapshot(live_body)
-            live_identity = gate_identity_from_body(live_body)
+            live_target = gate_target_identity_from_body(live_body)
+            live_contract = gate_authority_contract_from_body(live_body)
         except (DecisionError, ValueError):
             return False
         if (
             option not in live_options
             or live_gate_sha256 != event_gate_sha256
-            or live_identity != event_identity
+            or live_target != event_target
+            or live_contract != event_contract
             or not _gate_is_unambiguous(
-                api, repository, number, event_identity
+                api, repository, number, event_target, event_contract
             )
         ):
             return False
@@ -320,16 +338,18 @@ def materialize_decision(
         return False
     try:
         final_options, final_gate_sha256 = _gate_snapshot(final_body)
-        final_identity = gate_identity_from_body(final_body)
+        final_target = gate_target_identity_from_body(final_body)
+        final_contract = gate_authority_contract_from_body(final_body)
     except (DecisionError, ValueError):
         return False
     if (
         option not in final_options
         or final_gate_sha256 != event_gate_sha256
-        or final_identity != event_identity
+        or final_target != event_target
+        or final_contract != event_contract
         or existing != expected_evidence
         or not _gate_is_unambiguous(
-            api, repository, number, event_identity
+            api, repository, number, event_target, event_contract
         )
     ):
         return False
