@@ -1,4 +1,5 @@
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -90,6 +91,33 @@ class T(unittest.TestCase):
         self.assertEqual(TEMPLATE.count('required_review_bot: ""'), 2)
         self.assertIn('EFFECTIVE_REQUIRED="$CALLER_REQUIRED_REVIEW_BOT"', COMMENT_W)
         self.assertIn('echo "BASE_POLICY_FILE="', COMMENT_W)
+
+        bot_re = next(
+            line.strip()
+            for line in COMMENT_W.splitlines()
+            if line.strip().startswith("BOT_RE=")
+        )
+        probe = subprocess.run(
+            [
+                "bash",
+                "-c",
+                bot_re
+                + r'''
+[[ "coderabbitai[bot]" =~ $BOT_RE ]]
+[[ "review-bot" =~ $BOT_RE ]]
+! [[ "coderabbit ai[bot]" =~ $BOT_RE ]]
+! [[ " coderabbitai[bot]" =~ $BOT_RE ]]
+''',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            probe.returncode,
+            0,
+            msg=f"BOT_RE no representa el contrato real de login: {probe.stderr}",
+        )
 
     def test_comment_revalidation_preserves_monotonic_base_reviewer(self):
         self.assertIn('BASE_REQUIRED="$(jq -r', COMMENT_W)
