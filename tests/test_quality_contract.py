@@ -171,21 +171,48 @@ class QualityContractTests(unittest.TestCase):
 
         sonar = schema["$defs"]["sonar"]
         self.assertFalse(sonar["additionalProperties"])
+        legacy_required = {
+            "expected_visibility",
+            "analysis_method",
+            "max_analysis_age_seconds",
+            "max_organization_line_usage_percent",
+            "max_open_vulnerabilities",
+            "max_open_bugs",
+            "max_open_hotspots",
+            "max_debt_age_days",
+        }
+        self.assertEqual(set(sonar["required"]), legacy_required)
         self.assertEqual(
-            set(sonar["required"]),
-            {
-                "expected_visibility",
-                "analysis_method",
-                "max_analysis_age_seconds",
-                "max_organization_line_usage_percent",
-                "max_open_vulnerabilities",
-                "max_open_bugs",
-                "max_open_hotspots",
-                "max_debt_age_days",
-            },
+            set(sonar["properties"]),
+            legacy_required | {"applicability"},
         )
-        self.assertEqual(set(sonar["properties"]), set(sonar["required"]))
+        self.assertNotIn("applicability", sonar["required"])
+        self.assertEqual(
+            sonar["properties"]["applicability"],
+            {"$ref": "#/$defs/sonarApplicability"},
+        )
 
+        applicability = schema["$defs"]["sonarApplicability"]
+        self.assertFalse(applicability["additionalProperties"])
+        self.assertEqual(
+            set(applicability["required"]),
+            {"coverage", "organization_line_usage"},
+        )
+        self.assertEqual(
+            set(applicability["properties"]),
+            {"coverage", "organization_line_usage"},
+        )
+
+        entry = schema["$defs"]["sonarApplicabilityEntry"]
+        self.assertFalse(entry["additionalProperties"])
+        self.assertEqual(
+            set(entry["required"]),
+            {"state", "reason", "source_ref"},
+        )
+        self.assertEqual(
+            set(entry["properties"]["state"]["enum"]),
+            {"required", "not_applicable"},
+        )
     def test_contract_supports_project_specific_surfaces_and_required_gates(self):
         factory = validate_quality_contract(sample("factory"))
         grindflow_raw = sample("grindflow")
@@ -279,6 +306,68 @@ class QualityContractTests(unittest.TestCase):
             "max_organization_line_usage_percent",
         ):
             self.assertIn(marker, text)
+
+    def test_sonar_applicability_is_closed_and_consistent(self):
+        payload = sample()
+        payload["sonar"] = sonar_config()
+        payload["sonar"]["applicability"] = {
+            "coverage": {
+                "state": "required",
+                "reason": "coverage_required_ci_analysis",
+                "source_ref": "pl0n3r/Factory#516",
+            },
+            "organization_line_usage": {
+                "state": "not_applicable",
+                "reason": "organization_line_usage_not_applicable_public",
+                "source_ref": "pl0n3r/Factory#516",
+            },
+        }
+        normalized = validate_quality_contract(payload)
+        self.assertEqual(
+            normalized["sonar"]["applicability"],
+            payload["sonar"]["applicability"],
+        )
+
+        legacy = sample()
+        legacy["sonar"] = sonar_config()
+        self.assertNotIn(
+            "applicability",
+            validate_quality_contract(legacy)["sonar"],
+        )
+
+        inconsistent = copy.deepcopy(payload)
+        inconsistent["sonar"]["applicability"]["coverage"]["state"] = "not_applicable"
+        with self.assertRaises(QualityContractError):
+            validate_quality_contract(inconsistent)
+
+        automatic = copy.deepcopy(payload)
+        automatic["sonar"]["analysis_method"] = "automatic"
+        automatic["sonar"]["applicability"]["coverage"] = {
+            "state": "not_applicable",
+            "reason": "coverage_not_applicable_automatic_analysis",
+            "source_ref": "pl0n3r/Factory#516",
+        }
+        self.assertEqual(
+            validate_quality_contract(automatic)["sonar"]["applicability"]["coverage"]["state"],
+            "not_applicable",
+        )
+
+        private = copy.deepcopy(payload)
+        private["sonar"]["expected_visibility"] = "private"
+        private["sonar"]["applicability"]["organization_line_usage"] = {
+            "state": "required",
+            "reason": "organization_line_usage_required_private",
+            "source_ref": "pl0n3r/Factory#516",
+        }
+        self.assertEqual(
+            validate_quality_contract(private)["sonar"]["applicability"]["organization_line_usage"]["state"],
+            "required",
+        )
+
+        malformed = copy.deepcopy(payload)
+        malformed["sonar"]["applicability"]["coverage"]["extra"] = True
+        with self.assertRaises(QualityContractError):
+            validate_quality_contract(malformed)
 
 
 if __name__ == "__main__":

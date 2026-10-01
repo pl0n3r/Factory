@@ -51,13 +51,13 @@ Permisos GitHub: `contents: read` y `issues: write` únicamente en el job que si
 
 ## Idempotencia y evidencia
 
-Cada señal usa un marker estable `project + signal -> fingerprint`. Existe como máximo un Issue administrado por proyecto/señal. `FAIL`, `UNKNOWN` o `STALE` actualizan/reabren el mismo Issue; un `PASS` solo lo cierra con freshness `CURRENT`.
+Cada señal usa un marker estable `project + signal -> fingerprint`. Existe como máximo un Issue administrado por proyecto/señal. `FAIL`, `UNKNOWN` o `STALE` actualizan/reabren el mismo Issue; un `PASS` solo lo cierra con freshness `CURRENT`. Una señal `NOT_APPLICABLE` no abre Issue: si existe uno abierto del mismo marker, Sonar Watch añade una sola explicación con razón/source_ref y lo cierra; ejecuciones posteriores no vuelven a comentar ni reabrirlo.
 
 El cuerpo conserva estado, razón, freshness, referencias opacas y un origen validado `https://sonarcloud.io/project/overview?id=<sonar_key>`.
 
 Quality Gate incluye condiciones fallidas; CE task conserva `error_message` saneado; deuda histórica pagina issues y hotspots con límites seguros.
 
-`organization_line_usage` permanece `UNKNOWN` mientras no exista una lectura Sonar canónica para uso/límite organizacional. UNKNOWN es fail-closed y nunca se presenta como PASS.
+La política productiva #516 declara `organization_line_usage=not_applicable` para los seis proyectos públicos. También declara `coverage=not_applicable` para BRVTAL, Condor, FactoryRunner y GrindFlow por usar Automatic Analysis. ControlBot y Factory usan CI: cobertura ausente sigue siendo un FAIL real y sus Issues no se cierran como N/A. Cambiar método o visibilidad exige actualizar el contrato; el desvío observado frente a la política continúa siendo FAIL.
 
 ## Límites
 

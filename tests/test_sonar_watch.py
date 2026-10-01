@@ -74,6 +74,7 @@ class FakeIssues:
         self.rows = []
         self.next_number = 1
         self.calls = []
+        self.comments = {}
 
     def find(self, marker):
         return [
@@ -105,6 +106,16 @@ class FakeIssues:
         })
         self.calls.append(("update", number, state))
 
+    def comment(self, number, *, body):
+        self.comments.setdefault(number, []).append(body)
+        self.calls.append(("comment", number, body))
+
+    def comment_once(self, number, *, marker, body):
+        existing = self.comments.setdefault(number, [])
+        if any(marker in item for item in existing):
+            return False
+        self.comment(number, body=body)
+        return True
 
 def sync(raw, api):
     project = raw["project"]
@@ -869,6 +880,173 @@ class SonarWatchTests(unittest.TestCase):
         self.assertIn("  schedule:", text)
         self.assertIn("  workflow_dispatch:", text)
         self.assertEqual(text.count("python3 scripts/sonar-watch.py"), 1)
+    def test_ci_missing_coverage_remains_actionable(self):
+        configs = {
+            row["project"]: row
+            for row in sonar_watch.load_runtime_config()
+        }
+        cfg = configs["factory"]
+        raw = snapshot("factory")
+        raw["analysis"]["method"] = "ci"
+        raw["analysis"]["coverage_available"] = False
+        raw["organization"] = None
+        api = FakeIssues()
 
+        operations = sonar_watch.sync_project(
+            contract=cfg["contract"],
+            snapshot=raw,
+            observed_at=NOW,
+            project_ref=cfg["github_repo"],
+            origin_ref="sonar:factory",
+            origin_url=(
+                "https://sonarcloud.io/project/overview"
+                f"?id={cfg['sonar_key']}"
+            ),
+            issues=api,
+        )
+
+        marker = sonar_watch.issue_marker("factory", "coverage")
+        coverage = api.find(marker)
+        self.assertEqual(len(coverage), 1)
+        self.assertEqual(coverage[0]["state"], "open")
+        self.assertIn(
+            {"action": "created", "signal": "coverage"},
+            operations,
+        )
+        self.assertFalse(
+            any(
+                call[0] == "comment" and call[1] == coverage[0]["number"]
+                for call in api.calls
+            )
+        )
+
+    def test_not_applicable_closes_auto_issue_once_and_preserves_required_failures(self):
+        configs = {
+            row["project"]: row
+            for row in sonar_watch.load_runtime_config()
+        }
+
+        brvtal = configs["brvtal"]
+        raw = snapshot("brvtal")
+        raw["analysis"]["method"] = "automatic"
+        raw["analysis"]["coverage_available"] = False
+        raw["organization"] = None
+        api = FakeIssues()
+        for signal in ("coverage", "organization_line_usage"):
+            marker = sonar_watch.issue_marker("brvtal", signal)
+            api.rows.append({
+                "number": api.next_number,
+                "title": f"[AUTO] Sonar brvtal: {signal}",
+                "body": marker + "\nexisting",
+                "state": "open",
+            })
+            api.next_number += 1
+
+        original_update = api.update
+        failed_once = {"value": False}
+
+        def fail_first_close(number, *, title, body, state):
+            if state == "closed" and not failed_once["value"]:
+                failed_once["value"] = True
+                raise RuntimeError("simulated partial PATCH failure")
+            return original_update(
+                number,
+                title=title,
+                body=body,
+                state=state,
+            )
+
+        api.update = fail_first_close
+        with self.assertRaisesRegex(RuntimeError, "partial PATCH"):
+            sonar_watch.sync_project(
+                contract=brvtal["contract"],
+                snapshot=raw,
+                observed_at=NOW,
+                project_ref=brvtal["github_repo"],
+                origin_ref="sonar:brvtal",
+                origin_url=(
+                    "https://sonarcloud.io/project/overview"
+                    f"?id={brvtal['sonar_key']}"
+                ),
+                issues=api,
+            )
+        self.assertEqual(
+            len([call for call in api.calls if call[0] == "comment"]),
+            1,
+        )
+        api.update = original_update
+
+        first = sonar_watch.sync_project(
+            contract=brvtal["contract"],
+            snapshot=raw,
+            observed_at=NOW,
+            project_ref=brvtal["github_repo"],
+            origin_ref="sonar:brvtal",
+            origin_url=(
+                "https://sonarcloud.io/project/overview"
+                f"?id={brvtal['sonar_key']}"
+            ),
+            issues=api,
+        )
+        second = sonar_watch.sync_project(
+            contract=brvtal["contract"],
+            snapshot=raw,
+            observed_at=NOW,
+            project_ref=brvtal["github_repo"],
+            origin_ref="sonar:brvtal",
+            origin_url=(
+                "https://sonarcloud.io/project/overview"
+                f"?id={brvtal['sonar_key']}"
+            ),
+            issues=api,
+        )
+
+        for signal in ("coverage", "organization_line_usage"):
+            row = api.find(sonar_watch.issue_marker("brvtal", signal))[0]
+            self.assertEqual(row["state"], "closed")
+        comments = [call for call in api.calls if call[0] == "comment"]
+        self.assertEqual(len(comments), 2)
+        self.assertTrue(
+            all("NOT_APPLICABLE" in call[2] for call in comments)
+        )
+        self.assertEqual(
+            sorted(
+                item["signal"]
+                for item in first
+                if item["action"] == "closed_not_applicable"
+            ),
+            ["coverage", "organization_line_usage"],
+        )
+        self.assertEqual(
+            [
+                item for item in second
+                if item["action"] == "closed_not_applicable"
+            ],
+            [],
+        )
+
+        factory = configs["factory"]
+        required = snapshot("factory")
+        required["analysis"]["method"] = "ci"
+        required["analysis"]["coverage_available"] = False
+        required["organization"] = None
+        required_api = FakeIssues()
+        sonar_watch.sync_project(
+            contract=factory["contract"],
+            snapshot=required,
+            observed_at=NOW,
+            project_ref=factory["github_repo"],
+            origin_ref="sonar:factory",
+            origin_url=(
+                "https://sonarcloud.io/project/overview"
+                f"?id={factory['sonar_key']}"
+            ),
+            issues=required_api,
+        )
+        coverage = required_api.find(
+            sonar_watch.issue_marker("factory", "coverage")
+        )
+        self.assertEqual(len(coverage), 1)
+        self.assertEqual(coverage[0]["state"], "open")
 if __name__ == "__main__":
     unittest.main()

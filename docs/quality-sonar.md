@@ -27,9 +27,9 @@ Una clave faltante, un campo extra, una referencia URL/secreta, datos temporales
 7. `coverage`;
 8. `historical_debt`.
 
-Cada señal contiene `status=PASS|FAIL|UNKNOWN|STALE`, `observed_at`, `freshness`, `evidence_refs`, razón y detalles normalizados. Si el snapshot o análisis supera su freshness contractual, la señal se vuelve **STALE** incluso cuando el dato histórico era PASS/FAIL.
+Cada señal contiene `status=PASS|FAIL|UNKNOWN|STALE|NOT_APPLICABLE`, `observed_at`, `freshness`, `evidence_refs`, razón y detalles normalizados. `NOT_APPLICABLE` solo existe cuando el Quality Contract Sonar lo declara explícitamente con `state`, `reason` y `source_ref`; no es PASS, no es UNKNOWN y conserva su provenance. Si el snapshot o análisis supera su freshness contractual, las señales requeridas se vuelven **STALE**; una señal contractualmente `NOT_APPLICABLE` conserva ese estado.
 
-`analysis_method=ci` exige evidencia de cobertura: `coverage_available=false` es FAIL. Para Automatic Analysis sin cobertura publicada, la señal es UNKNOWN, no PASS.
+`analysis_method=ci` exige evidencia de cobertura: `coverage_available=false` es FAIL. Cuando `analysis_method=automatic`, el runtime productivo declara `coverage` como `not_applicable`; la señal se conserva como `NOT_APPLICABLE`, nunca como PASS. Contratos legacy sin `sonar.applicability` conservan el comportamiento anterior (Automatic sin cobertura → UNKNOWN). De forma equivalente, `organization_line_usage` es `NOT_APPLICABLE` solo cuando el contrato declara visibilidad pública; para visibilidad privada sigue siendo requerida.
 
 La deuda se agrupa por `type + severity`, conserva `oldest_age_days` por grupo y se compara contra los límites explícitos del Quality Contract; también falla si la antigüedad máxima global supera `max_debt_age_days`. Los `evidence_ref` item-level se validan pero no se propagan al agregado; la autoridad del lote queda en `snapshot.evidence_refs`, evitando que un snapshot válido falle solo por cantidad de hallazgos.
 

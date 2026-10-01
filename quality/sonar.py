@@ -10,7 +10,7 @@ from typing import Any
 
 from quality.contract import QualityContractError, validate_quality_contract
 
-STATUSES = frozenset({"PASS", "FAIL", "UNKNOWN", "STALE"})
+STATUSES = frozenset({"PASS", "FAIL", "UNKNOWN", "STALE", "NOT_APPLICABLE"})
 FACTORY_PROJECTS = (
     "brvtal",
     "condor",
@@ -145,7 +145,7 @@ def normalize_sonar_snapshot(
 
 
 def _snapshot_stale(item, snapshot_at, age, max_age):
-    if item["status"] == "STALE":
+    if item["status"] in {"STALE", "NOT_APPLICABLE"}:
         return item
     return {
         **item,
@@ -158,7 +158,6 @@ def _snapshot_stale(item, snapshot_at, age, max_age):
             "max_age_seconds": max_age,
         },
     }
-
 
 def _quality_gate(value, source_at, now, max_age, refs):
     if value is None:
@@ -258,7 +257,53 @@ def _ce_task(value, source_at, now, max_age, refs):
     )
 
 
+def _signal_applicability(sonar, signal):
+    applicability = sonar.get("applicability")
+    if applicability is None:
+        return None
+    if not isinstance(applicability, Mapping):
+        raise SonarEvidenceError("sonar.applicability inválida.")
+    row = applicability.get(signal)
+    if not isinstance(row, Mapping):
+        raise SonarEvidenceError("aplicabilidad Sonar incompleta.")
+    return row
+
+
+def _not_applicable_signal(
+    signal,
+    applicability,
+    now,
+    max_age,
+    refs,
+    details,
+):
+    source_ref = applicability["source_ref"]
+    return _signal(
+        signal,
+        "NOT_APPLICABLE",
+        applicability["reason"],
+        now,
+        now,
+        max_age,
+        [*refs, source_ref],
+        {
+            **details,
+            "applicability": "not_applicable",
+            "source_ref": source_ref,
+        },
+    )
+
 def _organization_lines(value, sonar, source_at, now, max_age, refs):
+    applicability = _signal_applicability(sonar, "organization_line_usage")
+    if applicability is not None and applicability["state"] == "not_applicable":
+        return _not_applicable_signal(
+            "organization_line_usage",
+            applicability,
+            now,
+            max_age,
+            refs,
+            {"line_usage_percent": None},
+        )
     if value is None:
         return _signal(
             "organization_line_usage", "UNKNOWN", "organization_line_usage_missing",
@@ -279,7 +324,6 @@ def _organization_lines(value, sonar, source_at, now, max_age, refs):
         refs,
         {"line_usage_percent": usage, "max_percent": threshold},
     )
-
 
 def _visibility(value, sonar, source_at, now, max_age, refs):
     if value is None:
@@ -326,6 +370,19 @@ def _analysis_method(value, sonar, now, refs):
 
 
 def _coverage(value, sonar, now, refs):
+    applicability = _signal_applicability(sonar, "coverage")
+    if applicability is not None and applicability["state"] == "not_applicable":
+        return _not_applicable_signal(
+            "coverage",
+            applicability,
+            now,
+            sonar["max_analysis_age_seconds"],
+            refs,
+            {
+                "available": None,
+                "analysis_method": sonar["analysis_method"],
+            },
+        )
     if value is None:
         return _signal(
             "coverage", "UNKNOWN", "coverage_missing",
@@ -354,7 +411,6 @@ def _coverage(value, sonar, now, refs):
         refs,
         {"available": available, "analysis_method": row["method"]},
     )
-
 
 def _historical_debt(value, sonar, source_at, now, max_age, refs):
     if not isinstance(value, list) or len(value) > _MAX_DEBT_ITEMS:

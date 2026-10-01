@@ -13,6 +13,7 @@ from recovery.status import RecoveryStatusError, project_recovery_readiness
 
 HEALTH_STATES = frozenset({"PASS", "DEGRADED", "UNKNOWN", "BLOCKED"})
 GATE_STATES = frozenset({"PASS", "FAIL", "UNKNOWN", "STALE"})
+SONAR_SIGNAL_STATES = GATE_STATES | {"NOT_APPLICABLE"}
 WORK_ITEM_CLASSES = frozenset({
     "quality_gate_failed", "quality_evidence_missing", "quality_evidence_stale",
     "quality_evidence_unknown", "quality_regression_flaky",
@@ -318,7 +319,7 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
         )
         name = signal["signal"]
         status = signal["status"]
-        if name not in _SONAR_SIGNALS or name in seen or status not in GATE_STATES:
+        if name not in _SONAR_SIGNALS or name in seen or status not in SONAR_SIGNAL_STATES:
             raise QualityStatusError("sonar signal fuera del contrato.")
         seen.add(name)
         reason = _ref(signal["reason"])
@@ -343,9 +344,12 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
             if observed is None:
                 raise QualityStatusError("sonar observed_at faltante.")
             _time(observed, "sonar.signal.observed_at")
-        if snapshot["state"] == "STALE" and status != "STALE":
+        if snapshot["state"] == "STALE" and status not in {"STALE", "NOT_APPLICABLE"}:
             raise QualityStatusError("sonar snapshot stale incoherente.")
         signal_refs = _refs(signal["evidence_refs"])
+        _validate_sonar_applicability(
+            quality, name, status, reason, signal_refs
+        )
         refs.update(signal_refs)
         local_refs.update(signal_refs)
         if age is not None:
@@ -355,7 +359,7 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
             "signal": name, "status": status, "reason": reason,
             "freshness": dict(freshness), "evidence_refs": signal_refs,
         })
-        if status == "PASS":
+        if status in {"PASS", "NOT_APPLICABLE"}:
             continue
         reason_key = f"sonar:{name}:{reason}"
         reasons.append(reason_key)
@@ -385,6 +389,37 @@ def _sonar_dimension(quality, evidence, states, reasons, classes, refs, ages):
         "signals": sorted(projected, key=lambda item: item["signal"]),
         "recalculated": False,
     }
+
+
+def _validate_sonar_applicability(
+    quality: Mapping[str, Any],
+    signal: str,
+    status: str,
+    reason: str,
+    evidence_refs: list[str],
+) -> None:
+    sonar = quality["sonar"]
+    applicability = sonar.get("applicability")
+    policy = (
+        applicability.get(signal)
+        if isinstance(applicability, Mapping)
+        and signal in {"coverage", "organization_line_usage"}
+        else None
+    )
+    if status == "NOT_APPLICABLE":
+        if not isinstance(policy, Mapping) or policy.get("state") != "not_applicable":
+            raise QualityStatusError(
+                "sonar NOT_APPLICABLE requiere autorización explícita del contrato."
+            )
+        if reason != policy.get("reason") or policy.get("source_ref") not in evidence_refs:
+            raise QualityStatusError(
+                "sonar NOT_APPLICABLE no coincide con razón/provenance del contrato."
+            )
+        return
+    if isinstance(policy, Mapping) and policy.get("state") == "not_applicable":
+        raise QualityStatusError(
+            "sonar evidence contradice aplicabilidad explícita del contrato."
+        )
 
 
 def _freshness(value: Mapping[str, Any], label: str) -> int | None:
