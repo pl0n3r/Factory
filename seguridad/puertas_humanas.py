@@ -222,7 +222,7 @@ def validate_gate(raw: Any) -> dict[str, Any]:
 
 
 FACTORY_RELEASE_TARGET_RE = re.compile(
-    r"\\b(?:Factory\\s+)?v?(\\d+\\.\\d+\\.\\d+)\\b.*?\\bmain@([0-9a-f]{40})\\b",
+    r"\b(?:Factory\s+)?v?(\d+\.\d+\.\d+)\b.*?\bmain@([0-9a-f]{40})\b",
     re.IGNORECASE,
 )
 
