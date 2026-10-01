@@ -1,3 +1,4 @@
+import ast
 import copy
 import json
 import unittest
@@ -213,6 +214,7 @@ class QualityContractTests(unittest.TestCase):
             set(entry["properties"]["state"]["enum"]),
             {"required", "not_applicable"},
         )
+
     def test_contract_supports_project_specific_surfaces_and_required_gates(self):
         factory = validate_quality_contract(sample("factory"))
         grindflow_raw = sample("grindflow")
@@ -382,6 +384,89 @@ class QualityContractTests(unittest.TestCase):
         ]["reason"] = "another_arbitrary_reason"
         with self.assertRaises(QualityContractError):
             validate_quality_contract(arbitrary_org_reason)
+
+    def test_quality_exact_mapping_helper_has_unambiguous_identity(self):
+        tree = ast.parse(
+            (ROOT / "quality" / "contract.py").read_text(encoding="utf-8")
+        )
+        names = {
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        }
+        self.assertIn("_quality_mapping", names)
+        self.assertNotIn("_exact", names)
+
+    def test_sonar_applicability_entry_rejects_invalid_shape_fail_closed(self):
+        base = sample()
+        base["sonar"] = sonar_config()
+        base["sonar"]["applicability"] = {
+            "coverage": {
+                "state": "required",
+                "reason": "coverage_required_ci_analysis",
+                "source_ref": "pl0n3r/Factory#516",
+            },
+            "organization_line_usage": {
+                "state": "not_applicable",
+                "reason": "organization_line_usage_not_applicable_public",
+                "source_ref": "pl0n3r/Factory#516",
+            },
+        }
+        invalid_entries = [
+            None,
+            {"state": "required", "reason": "coverage_required_ci_analysis"},
+            {
+                "state": "required",
+                "reason": "coverage_required_ci_analysis",
+                "source_ref": "pl0n3r/Factory#516",
+                "extra": True,
+            },
+            {
+                "state": "required",
+                "reason": "coverage_required_ci_analysis",
+                "source_ref": None,
+            },
+        ]
+        for entry in invalid_entries:
+            payload = copy.deepcopy(base)
+            payload["sonar"]["applicability"]["coverage"] = entry
+            with self.subTest(entry=entry):
+                with self.assertRaises(QualityContractError):
+                    validate_quality_contract(payload)
+
+    def test_external_ref_handles_nullable_source_ref_explicitly(self):
+        optional = sample()
+        optional["smoke"] = {"required": False, "source_ref": None}
+        self.assertEqual(
+            validate_quality_contract(optional)["smoke"],
+            {"required": False, "source_ref": None},
+        )
+
+        required_without_ref = sample()
+        required_without_ref["smoke"] = {"required": True, "source_ref": None}
+        with self.assertRaises(QualityContractError):
+            validate_quality_contract(required_without_ref)
+
+        optional_with_ref = sample()
+        optional_with_ref["smoke"] = {
+            "required": False,
+            "source_ref": "pl0n3r/Factory#306",
+        }
+        with self.assertRaises(QualityContractError):
+            validate_quality_contract(optional_with_ref)
+
+    def test_enum_object_rejects_invalid_shape_fail_closed(self):
+        invalid_values = [
+            None,
+            {},
+            {"target": "WCAG_AA", "extra": True},
+            {"target": None},
+            {"target": "WCAG_A"},
+        ]
+        for accessibility in invalid_values:
+            payload = sample()
+            payload["accessibility"] = accessibility
+            with self.subTest(accessibility=accessibility):
+                with self.assertRaises(QualityContractError):
+                    validate_quality_contract(payload)
 
 
 if __name__ == "__main__":
