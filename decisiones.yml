@@ -51,6 +51,26 @@
       "id": "D-063",
       "status": "active",
       "text": "Mientras un proyecto esté en fase construccion y no haya nada live ni datos reales de clientes, ninguna puerta legal ni de privacidad detiene el trabajo: el agente sigue con el default seguro (documented_not_legally_approved), documenta en datos.yml y no espera al dueño. La revisión jurídica y la puerta go-live se resuelven antes de salir a live; salir a live sigue exigiendo decisión explícita del dueño."
+    },
+    {
+      "id": "D-064",
+      "status": "active",
+      "text": "Factory#683: la cola hasta live opera en tres carriles; calidad, seguridad, hardening, deuda técnica y rendimiento se auto-alimentan, mientras la dirección funcional de producto requiere puerta humana antes de materializar leaves."
+    },
+    {
+      "id": "D-065",
+      "status": "active",
+      "text": "Factory#683: Condor, GrindFlow y BRVTAL avanzan en paralelo sin producto prioritario; readiness, reservas, claims, gates y el desempate global siguen mandando."
+    },
+    {
+      "id": "D-066",
+      "status": "active",
+      "text": "Factory#683: Backblaze B2 para backup real solo se provisiona cuando el dueño ordene live; ControlBot#45, ControlBot#182 y Factory#305 permanecen bloqueados para esa integración real mientras tanto."
+    },
+    {
+      "id": "D-067",
+      "status": "active",
+      "text": "Factory#683: AutoFactory#79 queda resuelta en opción A; AutoFactory#70 no recibe otro ciclo correctivo por inferencia y espera nueva evidencia SonarCloud directa/canónica o una nueva decisión explícita."
     }
   ]
 }

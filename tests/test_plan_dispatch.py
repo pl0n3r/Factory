@@ -106,6 +106,42 @@ class PlanContractTests(unittest.TestCase):
             PLAN,
         )
 
+
+    def test_three_lane_policy_and_owner_decisions_are_recorded(self):
+        for value in (
+            "Carril 1 — auto-alimentado",
+            "Carril 2 — dirección de producto",
+            "Carril 3 — preparación del live",
+            "Factory#683",
+            "Backblaze B2",
+            "AutoFactory#79",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+        active = {
+            d["id"]: d
+            for d in DECISIONS["decisions"]
+            if d["status"] == "active"
+        }
+        for decision_id in ("D-064", "D-065", "D-066", "D-067"):
+            self.assertIn(decision_id, active)
+            self.assertIn("Factory#683", active[decision_id]["text"])
+
+    def test_intentional_blocks_keep_documented_conditions(self):
+        for reference in (
+            "ControlBot#45",
+            "ControlBot#182",
+            "Factory#305",
+            "AutoFactory#70",
+            "Condor#389",
+        ):
+            with self.subTest(reference=reference):
+                self.assertIn(reference, PLAN)
+        self.assertIn("Condición de desbloqueo", PLAN)
+        self.assertIn("nueva evidencia SonarCloud directa/canónica", PLAN)
+        self.assertIn("orden explícita del dueño de salir a live", PLAN.lower())
+
+
     def test_readme_explains_launch_modes(self):
         required = (
             "### Los dos modos de lanzar un agente",

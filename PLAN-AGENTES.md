@@ -30,6 +30,25 @@ Reglas del despachador:
 - **ControlBot** (repositorio público, acceso al panel restringido; D-062) resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
 - Factory, ControlBot y AutoFactory compiten dentro de la misma cola automática con las mismas reglas de readiness y prioridad. Su naturaleza arquitectónica no les da prioridad artificial ni los excluye.
 
+### Política de tres carriles hasta live — Factory#683
+
+- **Carril 1 — auto-alimentado:** calidad, seguridad, hardening, deuda técnica y rendimiento siguen entrando por señales verificables ([AUTO], vulnerabilidades, bugs, CI y Quality Health) y se despachan sin puerta de dirección de producto.
+- **Carril 2 — dirección de producto:** cuando Condor, GrindFlow o BRVTAL no tengan ningún leaf elegible, el dispatcher propone un único siguiente tramo con objetivo, leaves, criterios de aceptación ejecutables y dependencias. La propuesta usa una puerta product-direction; mientras no exista aprobación explícita, no se materializa ningún leaf como estado: disponible.
+- **Carril 3 — preparación del live:** se puede mantener evidencia y checklist de readiness, pero ningún agente cambia la fase ni ejecuta go-live. El live sigue siendo una decisión exclusiva del dueño.
+- El trigger del carril 2 es idempotente por producto: si ya existe una puerta de dirección abierta o reaparece un leaf elegible, no crea otra. No introduce scheduler ni backlog paralelo.
+- Condor, GrindFlow y BRVTAL mantienen prioridad de producto en paralelo; el desempate global existente sigue mandando. El paralelismo no inventa cuotas: CI/API/cuentas se observan mediante Factory#584 y AutoFactory#62 y conservan límites, claims, reservas y gates actuales.
+- Backblaze B2 no se provisiona antes de live; la decisión queda registrada como código junto con la opción A vigente de AutoFactory#79.
+
+Bloqueos intencionales que el carril nuevo **no** puede saltar:
+
+| Frente | Causa | Condición de desbloqueo |
+| --- | --- | --- |
+| ControlBot#45 | Backup real aplazado hasta live. | Orden explícita del dueño de salir a live y autoridad correspondiente. |
+| ControlBot#182 | Recovery real depende del proveedor/credenciales de live. | Orden explícita del dueño de salir a live y provisión autorizada. |
+| Factory#305 | El contrato puro puede evolucionar, pero el backup real B2 sigue fuera de construcción. | Orden explícita del dueño de salir a live; sin gasto ni credenciales antes. |
+| AutoFactory#70 | SonarCloud mantiene Reliability C y AutoFactory#79 eligió A: no parchear por inferencia. | nueva evidencia SonarCloud directa/canónica sobre un SHA pertinente o nueva decisión explícita que sustituya A. |
+| Condor#389 | La preparación puede avanzar, pero el go-live permanece cerrado. | Orden explícita del dueño de salir a live. |
+
 ## Tu misión en una línea
 
 **Entregar cambios que funcionen en producción, con el mínimo de tiempo, tokens y ruido, sin romper nada y sin pedirle trabajo al dueño.**
