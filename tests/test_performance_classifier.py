@@ -16,6 +16,11 @@ NOW = "2026-10-01T12:00:00Z"
 
 
 def observation(surface, metric, value, unit):
+    observed_at = (
+        "2026-10-01T11:47:44Z"
+        if surface == "public.home.mobile"
+        else "2026-10-01T11:47:49Z"
+    )
     return {
         "version": 1,
         "project": "brvtal",
@@ -23,7 +28,7 @@ def observation(surface, metric, value, unit):
         "metric": metric,
         "value": value,
         "unit": unit,
-        "observed_at": "2026-10-01T11:47:49Z",
+        "observed_at": observed_at,
         "window_seconds": 1,
         "sample_count": 1,
         "severity": "info",
@@ -38,8 +43,20 @@ def observation(surface, metric, value, unit):
 def envelope():
     rows = []
     values = {
-        "public.home.mobile": {"fcp": (380, "ms"), "lcp": (1624, "ms"), "cls": (0, "ratio")},
-        "public.home.desktop": {"fcp": (440, "ms"), "lcp": (1748, "ms"), "cls": (0.005, "ratio")},
+        "public.home.mobile": {
+            "fcp": (380, "ms"),
+            "lcp": (1624, "ms"),
+            "cls": (0, "ratio"),
+            "dom_content_loaded": (419.3, "ms"),
+            "load_event_end": (1724.1, "ms"),
+        },
+        "public.home.desktop": {
+            "fcp": (440, "ms"),
+            "lcp": (1748, "ms"),
+            "cls": (0.005, "ratio"),
+            "dom_content_loaded": (492.9, "ms"),
+            "load_event_end": (1841.4, "ms"),
+        },
     }
     for surface, metrics in values.items():
         for metric, (value, unit) in metrics.items():
@@ -59,10 +76,21 @@ def envelope():
 class PerformanceClassifierTests(unittest.TestCase):
     def test_valid_brvtal_envelope_uses_canonical_detector(self):
         result = classify_performance_envelope(CONTRACT, envelope(), evaluated_at=NOW)
-        self.assertEqual(result["summary"]["total"], 6)
-        self.assertEqual(result["summary"]["classifications"], {"PERF_INFO": 6})
-        self.assertEqual(result["summary"]["evidence_states"], {"CURRENT": 6})
-        self.assertTrue(all(row["breach"] is False for row in result["results"]))
+        self.assertEqual(result["summary"]["total"], 10)
+        self.assertEqual(
+            result["summary"]["classifications"],
+            {"PERF_INFO": 6, "PERF_REVIEW": 4},
+        )
+        self.assertEqual(
+            result["summary"]["evidence_states"],
+            {"CURRENT": 6, "UNKNOWN": 4},
+        )
+        self.assertEqual(result["authority"], "unchanged")
+        self.assertFalse(result["execute_actions"])
+        self.assertFalse(result["create_work_item"])
+        contracted = [row for row in result["results"] if row["budget"] is not None]
+        self.assertEqual(len(contracted), 6)
+        self.assertTrue(all(row["breach"] is False for row in contracted))
 
     def test_identity_provenance_and_shape_fail_closed(self):
         cases = []
@@ -78,19 +106,29 @@ class PerformanceClassifierTests(unittest.TestCase):
             self.assertNotIn("DO_NOT_ECHO", str(caught.exception))
 
     def test_unbudgeted_metrics_remain_unknown_through_classifier(self):
-        payload = envelope()
-        payload["observations"] = [
-            observation("public.home.mobile", "dom_content_loaded", 419.3, "ms"),
-            observation("public.home.desktop", "load_event_end", 1841.4, "ms"),
+        result = classify_performance_envelope(CONTRACT, envelope(), evaluated_at=NOW)
+        unknown = [
+            row
+            for row in result["results"]
+            if row["metric"] in {"dom_content_loaded", "load_event_end"}
         ]
-        result = classify_performance_envelope(CONTRACT, payload, evaluated_at=NOW)
-        self.assertEqual(result["summary"]["classifications"], {"PERF_REVIEW": 2})
-        self.assertEqual(result["summary"]["evidence_states"], {"UNKNOWN": 2})
-        self.assertTrue(all(row["budget"] is None and row["breach"] is None for row in result["results"]))
+        self.assertEqual(len(unknown), 4)
+        self.assertTrue(
+            all(
+                row["classification"] == "PERF_REVIEW"
+                and row["evidence_state"] == "UNKNOWN"
+                and row["budget"] is None
+                and row["breach"] is None
+                for row in unknown
+            )
+        )
 
     def test_cli_is_deterministic_and_offline(self):
         source = (ROOT / "scripts/performance-classify.py").read_text(encoding="utf-8")
-        for forbidden in ("urllib", "requests", "http://", "https://", "github", "subprocess"):
+        for forbidden in (
+            "urllib", "requests", "http://", "https://", "github",
+            "socket", "http.client",
+        ):
             self.assertNotIn(forbidden, source.lower())
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -110,7 +148,7 @@ class PerformanceClassifierTests(unittest.TestCase):
         self.assertEqual(second.returncode, 0)
         self.assertEqual(first.stdout, second.stdout)
         self.assertEqual(first.stderr, "")
-        self.assertEqual(json.loads(first.stdout)["summary"]["total"], 6)
+        self.assertEqual(json.loads(first.stdout)["summary"]["total"], 10)
 
 
 if __name__ == "__main__":

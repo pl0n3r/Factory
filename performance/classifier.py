@@ -35,7 +35,7 @@ def classify_performance_envelope(
     env = _envelope(envelope)
     if env["project"] != canonical["project"]:
         raise PerformanceClassifierError("Envelope project does not match contract.")
-    results = []
+    evaluated = _timestamp(evaluated_at, "evaluated_at")
     seen: set[tuple[str, str]] = set()
     for raw in env["observations"]:
         if not isinstance(raw, Mapping):
@@ -52,8 +52,11 @@ def classify_performance_envelope(
         if identity in seen:
             raise PerformanceClassifierError("Duplicate surface/metric observation.")
         seen.add(identity)
-        results.append(detect_performance(canonical, raw, evaluated_at=evaluated_at))
 
+    results = [
+        detect_performance(canonical, raw, evaluated_at=evaluated)
+        for raw in env["observations"]
+    ]
     results.sort(key=lambda row: (row["surface"], row["metric"]))
     classifications = Counter(row["classification"] for row in results)
     states = Counter(row["evidence_state"] for row in results)
@@ -61,7 +64,10 @@ def classify_performance_envelope(
         "version": 1,
         "project": env["project"],
         "classification_authority": AUTHORITY,
-        "evaluated_at": _timestamp(evaluated_at, "evaluated_at"),
+        "evaluated_at": evaluated,
+        "authority": "unchanged",
+        "execute_actions": False,
+        "create_work_item": False,
         "identity": env["identity"],
         "evidence_ref": env["evidence_ref"],
         "source_observed_at": env["observed_at"],
