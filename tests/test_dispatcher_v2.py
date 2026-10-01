@@ -751,7 +751,7 @@ class DispatcherV2Tests(unittest.TestCase):
             [leaf["key"] for leaf in materialized],
             ["condor-next-1", "condor-next-2"],
         )
-        self.assertTrue(all(leaf["state"] == "available" for leaf in materialized))
+        self.assertEqual(\n            [leaf["state"] for leaf in materialized],\n            ["available", "blocked"],\n        )
         self.assertEqual(materialized[1]["depends_on"], ["condor-next-1"])
         stale = {**approved, "gate_sha256": "0" * 64}
         with self.assertRaisesRegex(ValueError, "does not match"):
