@@ -36,7 +36,7 @@ class DecisionError(ValueError):
 
 def gh_api(method: str, path: str, payload: dict | None = None):
     command = ["gh", "api"]
-    if method == "GET" and "?per_page=" in path:
+    if method == "GET" and "per_page=" in path:
         command += ["--paginate", "--slurp"]
     if method != "GET":
         command += ["--method", method]
@@ -51,7 +51,7 @@ def gh_api(method: str, path: str, payload: dict | None = None):
         check=True,
     )
     value = json.loads(result.stdout) if result.stdout.strip() else None
-    if method == "GET" and "?per_page=" in path:
+    if method == "GET" and "per_page=" in path:
         return [item for page in value for item in page]
     return value
 
@@ -156,12 +156,13 @@ def _existing_evidence(api, base: str) -> tuple[str, str] | None:
 def _open_target_gate_numbers(
     api,
     repository: str,
+    issue_number: int,
     target_identity: str,
     authority_contract: str,
 ) -> list[int] | None:
     result: list[int] = []
     for candidate in api(
-        "GET", f"repos/{repository}/issues?state=open&per_page=100"
+        "GET", f"repos/{repository}/issues?state=all&per_page=100"
     ):
         if not isinstance(candidate, dict) or "pull_request" in candidate:
             continue
@@ -185,7 +186,18 @@ def _open_target_gate_numbers(
             return None
         if candidate_contract != authority_contract:
             return None
-        result.append(number)
+
+        if number != issue_number:
+            candidate_base = f"repos/{repository}/issues/{number}"
+            try:
+                evidence = _existing_evidence(api, candidate_base)
+            except DecisionError:
+                return None
+            if evidence is not None:
+                return None
+
+        if candidate.get("state") == "open":
+            result.append(number)
     return sorted(set(result))
 
 
@@ -197,7 +209,11 @@ def _gate_is_unambiguous(
     authority_contract: str,
 ) -> bool:
     numbers = _open_target_gate_numbers(
-        api, repository, target_identity, authority_contract
+        api,
+        repository,
+        issue_number,
+        target_identity,
+        authority_contract,
     )
     return numbers == [issue_number]
 
