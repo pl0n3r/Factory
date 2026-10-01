@@ -165,7 +165,7 @@ def learn_limit_events(payload: Any, *, now: str) -> dict[str, Any]:
         unique.items(),
         key=lambda item: (
             item[1]["account_alias"],
-            item[1]["occurred_at"],
+            _timestamp(item[1]["occurred_at"], "event.occurred_at")[0],
             item[0],
         ),
     )
@@ -178,7 +178,12 @@ def learn_limit_events(payload: Any, *, now: str) -> dict[str, Any]:
         {
             "accountAlias": alias,
             "limitEvents": len(items),
-            "lastOccurredAt": max(item["occurred_at"] for item in items),
+            "lastOccurredAt": max(
+                items,
+                key=lambda item: _timestamp(
+                    item["occurred_at"], "event.occurred_at"
+                )[0],
+            )["occurred_at"],
         }
         for alias, items in sorted(grouped.items())
     ]
