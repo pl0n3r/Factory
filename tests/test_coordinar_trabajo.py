@@ -2994,6 +2994,8 @@ class PostMergeEventOrderingTests(unittest.TestCase):
         branch: str = "trabajo/issue-12",
         closes_issue: int = 12,
         number: int = 15,
+        head_repo: str | None = None,
+        base_ref: str = "main",
     ) -> dict:
         pull = {
             "number": number,
@@ -3004,8 +3006,12 @@ class PostMergeEventOrderingTests(unittest.TestCase):
                 f"Closes #{closes_issue}\n"
                 f"<!-- condor-reserva-id: {reservation_id} -->"
             ),
-            "head": {"ref": branch, "sha": f"head-{number}"},
-            "base": {"ref": "main"},
+            "head": {
+                "ref": branch,
+                "sha": f"head-{number}",
+                "repo": {"full_name": head_repo or api.repo},
+            },
+            "base": {"ref": base_ref},
         }
         api.pulls[number] = pull
         return pull
@@ -3071,21 +3077,28 @@ class PostMergeEventOrderingTests(unittest.TestCase):
         self.assertIsNone(active_reservation(api, 12))
 
     def test_cross_identity_merged_pr_cannot_rebind_evidence(self) -> None:
-        """AC-04: un merge con UUID distinto no puede prestar autoridad al Issue."""
-        api = FakeGitHub()
-        self._activate_v3(api)
-        self._merged_pull(api, reservation_id=SESSION_B)
-        api.issue_data["state"] = "closed"
+        """AC-04: UUID, repo o base distintos no pueden prestar autoridad."""
+        cases = (
+            {"reservation_id": SESSION_B},
+            {"head_repo": "fork/Factory"},
+            {"base_ref": "develop"},
+        )
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                api = FakeGitHub()
+                self._activate_v3(api)
+                self._merged_pull(api, **overrides)
+                api.issue_data["state"] = "closed"
 
-        update_issue_state(api, 12, "closed")
+                update_issue_state(api, 12, "closed")
 
-        latest = latest_reservation(api.issue_comments(12))
-        self.assertIsNotNone(latest)
-        assert latest is not None
-        self.assertEqual(latest["version"], 1)
-        self.assertEqual(latest["reason"], "issue-cerrado")
-        self.assertNotIn("acceptance_sha256", latest)
-        self.assertNotIn("task_marker_sha256", latest)
+                latest = latest_reservation(api.issue_comments(12))
+                self.assertIsNotNone(latest)
+                assert latest is not None
+                self.assertEqual(latest["version"], 1)
+                self.assertEqual(latest["reason"], "issue-cerrado")
+                self.assertNotIn("acceptance_sha256", latest)
+                self.assertNotIn("task_marker_sha256", latest)
 
     def test_terminal_visibility_keeps_latest_evidence_and_no_active_lease(self) -> None:
         """AC-05: el terminal visible conserva autoridad solo para el merge exacto."""
