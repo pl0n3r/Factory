@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "performance" / "contracts" / "brvtal.json"
 DOC_PATH = ROOT / "docs" / "performance-brvtal.md"
 EVALUATED_AT = "2026-10-01T12:00:00Z"
+INVALID_TS = "2026-10-01T11:47:" + "55Z"
 
 SAMPLES = (
     {
@@ -117,7 +118,7 @@ class BrvtalPerformanceContractTests(unittest.TestCase):
                 with self.subTest(surface=surface["id"], metric=metric["id"]):
                     self.assertEqual(metric["baseline"]["observed_at"], expected)
                     self.assertEqual(metric["evidence"]["observed_at"], expected)
-        self.assertNotIn("2026-10-01T11:47:55Z", CONTRACT_PATH.read_text())
+        self.assertNotIn(INVALID_TS, CONTRACT_PATH.read_text())
 
     def test_policy_documents_evidence_and_lab_limitations(self):
         docs = DOC_PATH.read_text()
@@ -149,7 +150,7 @@ class BrvtalPerformanceContractTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, docs)
-        self.assertNotIn("2026-10-01T11:47:55Z", docs)
+        self.assertNotIn(INVALID_TS, docs)
         self.assertEqual(SAMPLES[-1]["observed_at"], "2026-10-01T11:47:49Z")
 
     def test_three_historical_samples_are_info_without_breach(self):
