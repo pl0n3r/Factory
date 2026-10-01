@@ -51,6 +51,40 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         self.assertIn("-Dsonar.qualitygate.wait=true", text)
         self.assertIn("-Dsonar.qualitygate.timeout=300", text)
 
+    def test_product_sources_are_explicit_and_tests_are_separate(self):
+        text = self.text
+        self.assertIn(
+            "-Dsonar.sources="
+            "evolution,intelligence,knowledge,lab,lecciones,metricas,performance,"
+            "portfolio,producto,quality,readme,recovery,scripts,seguridad",
+            text,
+        )
+        self.assertIn("-Dsonar.tests=tests", text)
+        self.assertNotIn("-Dsonar.sources=tests", text)
+
+    def test_coverage_published_gate_queries_sonar_fail_closed(self):
+        text = self.text
+        self.assertIn("name: Sonar Coverage = published", text)
+        self.assertIn("/api/measures/component?", text)
+        self.assertIn('"metricKeys": "coverage,lines_to_cover,uncovered_lines"', text)
+        self.assertIn('params["pullRequest"] = pull_request', text)
+        self.assertIn('params["branch"] = "main"', text)
+        self.assertIn('"coverage" not in measures', text)
+        self.assertIn('"lines_to_cover" not in measures', text)
+        self.assertIn("if lines_to_cover <= 0:", text)
+        self.assertIn('"Authorization": f"Bearer {token}"', text)
+
+    def test_coverage_published_gate_is_required_after_scanner(self):
+        text = self.text
+        start = text.index("  coverage-published:")
+        end = text.index("  analysis-method:", start)
+        section = text[start:end]
+        self.assertIn("needs: sonar", section)
+        self.assertIn("needs.sonar.result == 'success'", section)
+        self.assertIn("vars.SONAR_CI_ENABLED == 'true'", section)
+        self.assertIn("secrets.SONAR_TOKEN", section)
+        self.assertIn("timeout-minutes: 2", section)
+
     def test_token_is_secret_only_and_analysis_method_depends_on_scanner(self):
         text = self.text
         self.assertGreaterEqual(text.count("secrets.SONAR_TOKEN"), 2)
