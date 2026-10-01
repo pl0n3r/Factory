@@ -339,6 +339,10 @@ class GitHub:
         """Obtiene todos los Pull Requests abiertos."""
         return self.paginate(f"/repos/{self.repo}/pulls?state=open")
 
+    def closed_pulls(self) -> list[dict[str, Any]]:
+        """Obtiene todos los Pull Requests cerrados para reconciliar merges."""
+        return self.paginate(f"/repos/{self.repo}/pulls?state=closed")
+
     def open_issues(self) -> list[dict[str, Any]]:
         """Obtiene Issues abiertos, sin incluir Pull Requests."""
         return [
@@ -776,6 +780,47 @@ def open_pulls_for_branch(api: GitHub, branch: str) -> list[int]:
         if isinstance(number, int):
             result.append(number)
     return result
+
+
+def matching_merged_pull_for_reservation(
+    api: GitHub,
+    issue_number: int,
+    branch: str,
+    current: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Encuentra un único merge cerrado ligado a la misma branch y reserva."""
+    if current is None or current.get("branch") != branch:
+        return None
+    reservation_id = current.get("reservation_id")
+    if not isinstance(reservation_id, str):
+        return None
+
+    matches: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for candidate in api.closed_pulls():
+        number = candidate.get("number")
+        head = candidate.get("head")
+        if (
+            not isinstance(number, int)
+            or number in seen
+            or not isinstance(head, dict)
+            or head.get("ref") != branch
+        ):
+            continue
+        seen.add(number)
+        pull = api.pull(number)
+        pull_head = pull.get("head")
+        body = str(pull.get("body") or "")
+        if (
+            pull.get("merged") is True
+            and isinstance(pull_head, dict)
+            and pull_head.get("ref") == branch
+            and reservation_from_pr_body(body) == reservation_id
+            and issue_number in closing_issues(body)
+        ):
+            matches.append(pull)
+
+    return matches[0] if len(matches) == 1 else None
 
 
 def work_activity_timestamp(
@@ -2242,11 +2287,34 @@ def update_issue_state(api: GitHub, issue_number: int, action: str) -> None:
     ):
         return
 
+    merged_pull = (
+        matching_merged_pull_for_reservation(
+            api,
+            issue_number,
+            branch,
+            current,
+        )
+        if current is not None
+        else None
+    )
+
     for pr_number in open_pulls_for_branch(api, branch):
         api.close_pull(pr_number)
     api.delete_branch(branch)
 
     if current:
+        merged_same_reservation = merged_pull is not None
+        acceptance = (
+            current.get("acceptance_sha256")
+            if merged_same_reservation
+            and isinstance(current.get("acceptance_sha256"), str)
+            else None
+        )
+        snapshot = (
+            reservation_task_snapshot(current)
+            if merged_same_reservation
+            else None
+        )
         api.comment(
             issue_number,
             reservation_marker(
@@ -2254,7 +2322,9 @@ def update_issue_state(api: GitHub, issue_number: int, action: str) -> None:
                 str(current["reservation_id"]),
                 branch,
                 False,
-                "issue-cerrado",
+                "pr-merged" if merged_same_reservation else "issue-cerrado",
+                acceptance,
+                task_snapshot=snapshot,
             ),
         )
         api.try_unassign(issue_number, str(current["owner"]))
