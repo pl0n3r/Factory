@@ -9,6 +9,7 @@ from intelligence.factory_status import (
     COMMITTED_TANDA2_EVIDENCE,
     derive_factory_status,
     render_committed_estado,
+    render_estado,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +59,31 @@ class PlanEstadoTests(unittest.TestCase):
         conflict["state"] = "open"
         duplicate.append(conflict)
         cases.append(duplicate)
+        bad_url = list(copy.deepcopy(COMMITTED_TANDA2_EVIDENCE))
+        bad_url[0]["url"] = "https://github.com/pl0n3r/Condor/issues/999"
+        cases.append(bad_url)
+        bad_timestamp = list(copy.deepcopy(COMMITTED_TANDA2_EVIDENCE))
+        bad_timestamp[0]["updated_at"] = "2026-09-26"
+        cases.append(bad_timestamp)
+        bad_issue = list(copy.deepcopy(COMMITTED_TANDA2_EVIDENCE))
+        bad_issue[0]["issue_number"] = True
+        cases.append(bad_issue)
+        bad_labels = list(copy.deepcopy(COMMITTED_TANDA2_EVIDENCE))
+        bad_labels[0]["labels"] = "estado: completado"
+        cases.append(bad_labels)
+        missing_field = list(copy.deepcopy(COMMITTED_TANDA2_EVIDENCE))
+        del missing_field[0]["state_reason"]
+        cases.append(missing_field)
+        non_object = list(copy.deepcopy(COMMITTED_TANDA2_EVIDENCE))
+        non_object[0] = "invalid"
+        cases.append(non_object)
+        unexpected = list(copy.deepcopy(COMMITTED_TANDA2_EVIDENCE))
+        extra = copy.deepcopy(unexpected[0])
+        extra["repository_ref"] = "pl0n3r/Factory"
+        extra["issue_number"] = 718
+        extra["url"] = "https://github.com/pl0n3r/Factory/issues/718"
+        unexpected.append(extra)
+        cases.append(unexpected)
 
         for evidence in cases:
             with self.subTest(evidence=evidence):
@@ -66,6 +92,9 @@ class PlanEstadoTests(unittest.TestCase):
                 self.assertEqual(status["tanda3"], "BLOQUEADA")
                 self.assertFalse(status["tanda3_active"])
                 self.assertTrue(status["reasons"])
+                rendered = render_estado(evidence)
+                self.assertIn("TANDA 2:** UNKNOWN", rendered)
+                self.assertIn("TANDA 3:** BLOQUEADA", rendered)
 
     def test_committed_estado_matches_canonical_render_and_sources(self):
         committed = ESTADO.read_text(encoding="utf-8")
@@ -88,6 +117,11 @@ class PlanEstadoTests(unittest.TestCase):
         plan = PLAN.read_text(encoding="utf-8")
         self.assertIn("[ESTADO.md](ESTADO.md)", plan)
         self.assertIn("vista rápida derivada", plan)
+        self.assertIn(
+            "reglas 1–4 de la sección 0 → gate de tanda → reglas 5–7 → "
+            "desempate de la regla 7",
+            plan,
+        )
 
         readme = README.read_text(encoding="utf-8")
         self.assertEqual(readme.count(DIRECTED_PROMPT), 1)
