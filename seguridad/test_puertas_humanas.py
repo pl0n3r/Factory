@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from sincronizar_puerta import (
     BOT, BLOCKED, AVAILABLE, MARKER, OWNED,
-    gh_api, sync_invalid, sync_valid,
+    GateConflictError, gh_api, reconcile_gate, sync_invalid, sync_valid,
 )
 
 from puertas_humanas import (
@@ -15,6 +15,8 @@ from puertas_humanas import (
     MAX_EVENT_CHARS,
     classify_body,
     classify_event_text,
+    gate_identity,
+    gate_identity_from_body,
     validate_gate,
 )
 
@@ -128,6 +130,115 @@ class FakeIssueAPI:
             })
             return None
         raise AssertionError(f"Unexpected GitHub API call: {method} {path}")
+
+
+def release_gate_body(
+    *,
+    version="1.0.16",
+    sha="e8ac89801449669436cb3f30e4ccd102898a9d71",
+    suffix="candidato validado",
+):
+    value = gate(
+        category="factory-release",
+        context=(
+            f"Autorizar Factory v{version} exclusivamente para main@{sha}. "
+            f"{suffix}"
+        ),
+    )
+    return body(value)
+
+
+class MultiGateAPI:
+    def __init__(self, issues, comments=None):
+        self.issues = {
+            item["number"]: json.loads(json.dumps(item))
+            for item in issues
+        }
+        self.comments = {
+            number: json.loads(json.dumps(values))
+            for number, values in (comments or {}).items()
+        }
+        self.calls = []
+        self.next_id = 2000
+
+    def open_numbers(self):
+        return sorted(
+            number for number, issue in self.issues.items()
+            if issue.get("state") == "open"
+        )
+
+    def __call__(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
+        if method == "GET" and path.endswith(
+            "/issues?state=all&per_page=100"
+        ):
+            return [
+                json.loads(json.dumps(self.issues[number]))
+                for number in sorted(self.issues)
+            ]
+        if "/issues/" in path:
+            tail = path.split("/issues/", 1)[1]
+            raw_number = tail.split("/", 1)[0]
+            if raw_number.isdigit():
+                number = int(raw_number)
+                issue = self.issues[number]
+                if method == "GET" and tail == raw_number:
+                    return json.loads(json.dumps(issue))
+                if method == "GET" and tail.endswith(
+                    "/comments?per_page=100"
+                ):
+                    return json.loads(json.dumps(
+                        self.comments.get(number, [])
+                    ))
+                if method == "GET" and tail.endswith(
+                    "/events?per_page=100"
+                ):
+                    return []
+                if method == "POST" and tail.endswith("/comments"):
+                    self.next_id += 1
+                    value = {
+                        "id": self.next_id,
+                        "body": payload["body"],
+                        "user": {"login": BOT, "type": "Bot"},
+                    }
+                    self.comments.setdefault(number, []).append(value)
+                    return value
+                if method == "POST" and tail.endswith("/labels"):
+                    names = {
+                        item["name"] for item in issue.get("labels", [])
+                    }
+                    for label in payload["labels"]:
+                        if label not in names:
+                            issue.setdefault("labels", []).append(
+                                {"name": label}
+                            )
+                    return issue["labels"]
+                if method == "DELETE" and "/labels/" in tail:
+                    label = unquote(tail.rsplit("/", 1)[-1])
+                    issue["labels"] = [
+                        item for item in issue.get("labels", [])
+                        if item["name"] != label
+                    ]
+                    return None
+                if method == "PATCH" and tail == raw_number:
+                    issue.update(payload)
+                    return json.loads(json.dumps(issue))
+        raise AssertionError(
+            f"Unexpected GitHub API call: {method} {path}"
+        )
+
+
+def gate_issue(number, *, state="open", body_value=None):
+    return {
+        "number": number,
+        "state": state,
+        "body": body_value or release_gate_body(),
+        "labels": [
+            {"name": "prioridad: crítica"},
+            {"name": "estado: requiere decisión"},
+            {"name": "decisión: dueño"},
+        ],
+    }
 
 
 class GateTests(unittest.TestCase):
@@ -411,6 +522,132 @@ class GateTests(unittest.TestCase):
         self.assertIn("steps.gate.outputs.status == 'gate'", workflow)
         self.assertIn("steps.gate.outputs.status != 'gate'", workflow)
         self.assertIn("issues/$ISSUE/assignees", workflow)
+
+
+class GateDedupTests(unittest.TestCase):
+    def test_equivalent_factory_release_gates_converge_to_oldest_issue(self):
+        api = MultiGateAPI([
+            gate_issue(575, body_value=release_gate_body(suffix="primera puerta")),
+            gate_issue(578, body_value=release_gate_body(suffix="retry concurrente")),
+        ])
+
+        self.assertFalse(reconcile_gate(api, "pl0n3r/Factory", 578))
+        self.assertEqual(api.open_numbers(), [575])
+        self.assertEqual(api.issues[578]["state_reason"], "duplicate")
+        duplicate_comments = api.comments[578]
+        self.assertEqual(len(duplicate_comments), 1)
+        self.assertIn("canonical=575", duplicate_comments[0]["body"])
+
+    def test_gate_identity_uses_category_and_exact_target(self):
+        first = release_gate_body(suffix="texto A")
+        equivalent = release_gate_body(suffix="texto B")
+        other_sha = release_gate_body(
+            sha="7ed31389ca9c7fa706edfcb23af68a20a9824e4b",
+            suffix="texto A",
+        )
+        other_version = release_gate_body(
+            version="1.0.17",
+            suffix="texto A",
+        )
+
+        self.assertEqual(
+            gate_identity_from_body(first),
+            gate_identity_from_body(equivalent),
+        )
+        self.assertNotEqual(
+            gate_identity_from_body(first),
+            gate_identity_from_body(other_sha),
+        )
+        self.assertNotEqual(
+            gate_identity_from_body(first),
+            gate_identity_from_body(other_version),
+        )
+        legal = gate(category="legal", context="Mismo target textual")
+        money = gate(category="money", context="Mismo target textual")
+        self.assertNotEqual(gate_identity(legal), gate_identity(money))
+
+    def test_concurrent_gate_sync_exposes_only_canonical_issue(self):
+        api = MultiGateAPI([
+            gate_issue(575, body_value=release_gate_body(suffix="sesión 1")),
+            gate_issue(581, body_value=release_gate_body(suffix="sesión 2")),
+        ])
+
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 575))
+        self.assertFalse(reconcile_gate(api, "pl0n3r/Factory", 581))
+        self.assertEqual(api.open_numbers(), [575])
+        self.assertIn(
+            "decisión: dueño",
+            {item["name"] for item in api.issues[575]["labels"]},
+        )
+        self.assertNotIn(
+            "decisión: dueño",
+            {item["name"] for item in api.issues[581]["labels"]},
+        )
+
+    def test_historical_duplicates_reconcile_and_conflicts_fail_closed(self):
+        historical = MultiGateAPI([
+            gate_issue(575),
+            gate_issue(578, state="closed"),
+            gate_issue(581, body_value=release_gate_body(suffix="nuevo retry")),
+        ])
+        self.assertTrue(reconcile_gate(historical, "pl0n3r/Factory", 575))
+        self.assertEqual(historical.open_numbers(), [575])
+
+        decision = (
+            '<!-- factory-human-decision '
+            '{"gate_sha256":"'
+            + ("a" * 64)
+            + '","option":"A","version":2} -->'
+        )
+        conflict = MultiGateAPI(
+            [
+                gate_issue(575),
+                gate_issue(581, body_value=release_gate_body(suffix="retry")),
+            ],
+            comments={
+                581: [{
+                    "id": 9,
+                    "body": decision,
+                    "user": {"login": BOT, "type": "Bot"},
+                }],
+            },
+        )
+        with self.assertRaises(GateConflictError):
+            reconcile_gate(conflict, "pl0n3r/Factory", 575)
+        self.assertEqual(conflict.open_numbers(), [575, 581])
+        self.assertFalse(any(
+            method in {"POST", "PATCH", "DELETE"}
+            for method, _, _ in conflict.calls
+        ))
+
+    def test_release_gate_race_regression_is_deterministic(self):
+        api = MultiGateAPI([
+            gate_issue(575, body_value=release_gate_body(suffix="original")),
+            gate_issue(576, body_value=release_gate_body(suffix="race uno")),
+            gate_issue(577, body_value=release_gate_body(suffix="race dos")),
+            gate_issue(578, body_value=release_gate_body(suffix="retry uno")),
+            gate_issue(581, body_value=release_gate_body(suffix="retry dos")),
+        ])
+
+        for number in (581, 577, 575, 578, 576):
+            reconcile_gate(api, "pl0n3r/Factory", number)
+
+        self.assertEqual(api.open_numbers(), [575])
+        self.assertTrue(all(
+            api.issues[number].get("state_reason") == "duplicate"
+            for number in (576, 577, 578, 581)
+        ))
+
+    def test_reconciliation_keeps_lowest_issue_number(self):
+        api = MultiGateAPI([
+            gate_issue(581),
+            gate_issue(578, body_value=release_gate_body(suffix="medio")),
+            gate_issue(575, body_value=release_gate_body(suffix="más antiguo")),
+        ])
+
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 575))
+        self.assertEqual(api.open_numbers(), [575])
+
 
 
 if __name__ == "__main__":
