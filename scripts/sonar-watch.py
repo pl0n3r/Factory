@@ -441,7 +441,7 @@ class SonarApi:
         self,
         cfg: dict[str, Any],
         *,
-        observed_at: str,
+        observed_at: str | None = None,
         component: dict[str, Any] | None = None,
     ):
         key = cfg["sonar_key"]
@@ -460,10 +460,21 @@ class SonarApi:
             "/api/settings/values",
             {"component": key, "keys": "sonar.autoscan.enabled"},
         )
+        issues = self._all_issues(key)
+        hotspots = self._all_hotspots(key)
+        completed_at = observed_at or _utc_now()
         return _snapshot_from_api(
-            cfg["project"], observed_at, qg, analyses, ce, measures, settings,
-            component, self._all_issues(key), self._all_hotspots(key),
+            cfg["project"], completed_at, qg, analyses, ce, measures, settings,
+            component, issues, hotspots,
         )
+
+
+def _utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, settings, component, issues, hotspots):
@@ -584,20 +595,19 @@ def run_live() -> int:
     if not gh_token or not repository:
         raise SonarWatchError("configuración runtime incompleta.")
     projects = load_runtime_config()
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     sonar = SonarApi(token=token)
     components = sonar.preflight_visibility(projects)
     github = GitHubIssues(repository=repository, token=gh_token)
     operations = []
     for cfg in projects:
+        snapshot = sonar.snapshot(
+            cfg,
+            component={"component": {"visibility": components[cfg["project"]]}},
+        )
         operations += sync_project(
             contract=cfg["contract"],
-            snapshot=sonar.snapshot(
-                cfg,
-                observed_at=now,
-                component={"component": {"visibility": components[cfg["project"]]}},
-            ),
-            observed_at=now,
+            snapshot=snapshot,
+            observed_at=snapshot["snapshot_at"],
             project_ref=cfg["github_repo"],
             origin_ref=f"sonar:{cfg['project']}",
             origin_url=_origin_url(cfg["sonar_key"]),

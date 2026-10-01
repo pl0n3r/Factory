@@ -58,10 +58,12 @@ def validate_quality_contract(payload: Any) -> dict[str, Any]:
     if data["version"] != VERSION:
         raise QualityContractError("version debe ser 1.")
 
-    compatibility = _exact(
+    compatibility = _quality_mapping(
         data["compatibility"], {"runtimes", "browsers", "devices"}, "compatibility"
     )
-    dimensions = _exact(data["dimensions"], {"performance", "recovery"}, "dimensions")
+    dimensions = _quality_mapping(
+        data["dimensions"], {"performance", "recovery"}, "dimensions"
+    )
 
     normalized = {
         "version": VERSION,
@@ -163,7 +165,7 @@ def _sonar_applicability(
     visibility: str,
     method: str,
 ) -> dict[str, Any]:
-    row = _exact(
+    row = _quality_mapping(
         value,
         {"coverage", "organization_line_usage"},
         "sonar.applicability",
@@ -194,7 +196,7 @@ def _sonar_applicability(
 
 
 def _sonar_applicability_entry(value: Any, label: str) -> dict[str, str]:
-    row = _exact(value, {"state", "reason", "source_ref"}, label)
+    row = _quality_mapping(value, {"state", "reason", "source_ref"}, label)
     state = row["state"]
     if not isinstance(state, str) or state not in SONAR_APPLICABILITY:
         raise QualityContractError(f"{label}.state fuera del catálogo.")
@@ -208,12 +210,13 @@ def _sonar_applicability_entry(value: Any, label: str) -> dict[str, str]:
         "source_ref": source_ref,
     }
 
+
 def _surfaces(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or not value or len(value) > MAX_SURFACES:
         raise QualityContractError("surfaces debe ser lista no vacía y acotada.")
     seen, result = set(), []
     for raw in value:
-        row = _exact(raw, {"id", "criticality", "required_gates"}, "surface")
+        row = _quality_mapping(raw, {"id", "criticality", "required_gates"}, "surface")
         surface_id = _identifier(row["id"], "surface.id")
         if surface_id in seen:
             raise QualityContractError("surface.id duplicado.")
@@ -232,7 +235,7 @@ def _surfaces(value: Any) -> list[dict[str, Any]]:
 
 
 def _external_ref(value: Any, label: str) -> dict[str, Any]:
-    row = _exact(value, {"required", "source_ref"}, label)
+    row = _quality_mapping(value, {"required", "source_ref"}, label)
     if type(row["required"]) is not bool:
         raise QualityContractError(f"{label}.required debe ser booleano.")
     ref = row["source_ref"]
@@ -245,7 +248,7 @@ def _external_ref(value: Any, label: str) -> dict[str, Any]:
 
 
 def _enum_object(value: Any, field: str, allowed: set[str], label: str) -> dict[str, str]:
-    row = _exact(value, {field}, label)
+    row = _quality_mapping(value, {field}, label)
     if row[field] not in allowed:
         raise QualityContractError(f"{label}.{field} fuera del catálogo.")
     return {field: row[field]}
@@ -315,7 +318,7 @@ def _closed_optional(
     return value
 
 
-def _exact(value: Any, expected: set[str], label: str) -> Mapping[str, Any]:
+def _quality_mapping(value: Any, expected: set[str], label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or set(value) != expected:
         raise QualityContractError(f"{label} contiene campos faltantes o no permitidos.")
     return value

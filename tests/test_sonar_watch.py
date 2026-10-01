@@ -471,6 +471,21 @@ class SonarWatchTests(unittest.TestCase):
             debt_signal["details"]["exceeded"],
         )
 
+    def test_coverage_pass_closes_matching_auto_issue(self):
+        api = FakeIssues()
+        failing = snapshot()
+        failing["analysis"]["coverage_available"] = False
+        sync(failing, api)
+
+        marker = sonar_watch.issue_marker("factory", "coverage")
+        coverage_issue = api.find(marker)[0]
+        self.assertEqual(coverage_issue["state"], "open")
+
+        sync(snapshot(), api)
+
+        coverage_issue = api.find(marker)[0]
+        self.assertEqual(coverage_issue["state"], "closed")
+
     def test_current_pass_closes_only_matching_auto_issue(self):
         api = FakeIssues()
         failing = snapshot()
@@ -619,6 +634,199 @@ class SonarWatchTests(unittest.TestCase):
         )
 
 
+
+    def test_live_snapshot_observation_is_taken_after_remote_reads(self):
+        api = sonar_watch.SonarApi(token="read-only")
+        events = []
+
+        def fake_get(path, params):
+            events.append(path)
+            payloads = {
+                "/api/components/show": {
+                    "component": {"visibility": "public"},
+                },
+                "/api/qualitygates/project_status": {
+                    "projectStatus": {"status": "OK", "conditions": []},
+                },
+                "/api/project_analyses/search": {
+                    "analyses": [{"date": "2026-09-30T12:00:05Z"}],
+                },
+                "/api/ce/component": {
+                    "current": {"status": "SUCCESS", "errorMessage": None},
+                },
+                "/api/measures/component": {
+                    "component": {
+                        "measures": [{"metric": "coverage", "value": "80"}],
+                    },
+                },
+                "/api/settings/values": {
+                    "settings": [{
+                        "key": "sonar.autoscan.enabled",
+                        "value": "false",
+                    }],
+                },
+            }
+            return payloads[path]
+
+        original_now = sonar_watch._utc_now
+        api.get = fake_get
+        api._all_issues = lambda key: (
+            events.append("issues") or {"issues": []}
+        )
+        api._all_hotspots = lambda key: (
+            events.append("hotspots") or {"hotspots": []}
+        )
+        sonar_watch._utc_now = lambda: (
+            events.append("clock") or "2026-09-30T12:00:10Z"
+        )
+        try:
+            result = api.snapshot({
+                "project": "factory",
+                "sonar_key": "pl0n3r_factory",
+            })
+        finally:
+            sonar_watch._utc_now = original_now
+
+        self.assertEqual(events[-1], "clock")
+        self.assertIn("issues", events[:-1])
+        self.assertIn("hotspots", events[:-1])
+        self.assertEqual(result["snapshot_at"], "2026-09-30T12:00:10Z")
+
+    def test_run_live_uses_each_snapshot_timestamp(self):
+        projects = [
+            {
+                "project": "factory",
+                "sonar_key": "pl0n3r_factory",
+                "github_repo": "pl0n3r/Factory",
+                "contract": contract("factory"),
+            },
+            {
+                "project": "condor",
+                "sonar_key": "pl0n3r_Condor",
+                "github_repo": "pl0n3r/Condor",
+                "contract": contract("condor"),
+            },
+        ]
+        snapshots = {
+            "factory": {
+                **snapshot("factory"),
+                "snapshot_at": "2026-09-30T12:00:10Z",
+            },
+            "condor": {
+                **snapshot("condor"),
+                "snapshot_at": "2026-09-30T12:00:20Z",
+            },
+        }
+        observed = []
+
+        class FakeSonar:
+            def __init__(self, *, token):
+                self.token = token
+
+            def preflight_visibility(self, rows):
+                return {row["project"]: "public" for row in rows}
+
+            def snapshot(self, cfg, *, component=None):
+                return snapshots[cfg["project"]]
+
+        def fake_sync_project(**kwargs):
+            observed.append((
+                kwargs["snapshot"]["project"],
+                kwargs["observed_at"],
+            ))
+            return []
+
+        originals = (
+            sonar_watch.load_runtime_config,
+            sonar_watch.SonarApi,
+            sonar_watch.GitHubIssues,
+            sonar_watch.sync_project,
+        )
+        old_env = {
+            key: sonar_watch.os.environ.get(key)
+            for key in ("SONAR_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORY")
+        }
+        sonar_watch.load_runtime_config = lambda: projects
+        sonar_watch.SonarApi = FakeSonar
+        sonar_watch.GitHubIssues = lambda **kwargs: object()
+        sonar_watch.sync_project = fake_sync_project
+        sonar_watch.os.environ["SONAR_TOKEN"] = "token"
+        sonar_watch.os.environ["GH_TOKEN"] = "gh-token"
+        sonar_watch.os.environ["GITHUB_REPOSITORY"] = "pl0n3r/Factory"
+        try:
+            self.assertEqual(sonar_watch.run_live(), 0)
+        finally:
+            (
+                sonar_watch.load_runtime_config,
+                sonar_watch.SonarApi,
+                sonar_watch.GitHubIssues,
+                sonar_watch.sync_project,
+            ) = originals
+            for key, value in old_env.items():
+                if value is None:
+                    sonar_watch.os.environ.pop(key, None)
+                else:
+                    sonar_watch.os.environ[key] = value
+
+        self.assertEqual(observed, [
+            ("factory", "2026-09-30T12:00:10Z"),
+            ("condor", "2026-09-30T12:00:20Z"),
+        ])
+
+    def test_analysis_completed_during_snapshot_is_not_false_future(self):
+        api = sonar_watch.SonarApi(token="read-only")
+
+        def fake_get(path, params):
+            payloads = {
+                "/api/components/show": {
+                    "component": {"visibility": "public"},
+                },
+                "/api/qualitygates/project_status": {
+                    "projectStatus": {"status": "OK", "conditions": []},
+                },
+                "/api/project_analyses/search": {
+                    "analyses": [{"date": "2026-09-30T12:00:05Z"}],
+                },
+                "/api/ce/component": {
+                    "current": {"status": "SUCCESS", "errorMessage": None},
+                },
+                "/api/measures/component": {
+                    "component": {
+                        "measures": [{"metric": "coverage", "value": "80"}],
+                    },
+                },
+                "/api/settings/values": {
+                    "settings": [{
+                        "key": "sonar.autoscan.enabled",
+                        "value": "false",
+                    }],
+                },
+            }
+            return payloads[path]
+
+        original_now = sonar_watch._utc_now
+        api.get = fake_get
+        api._all_issues = lambda key: {"issues": []}
+        api._all_hotspots = lambda key: {"hotspots": []}
+        sonar_watch._utc_now = lambda: "2026-09-30T12:00:10Z"
+        try:
+            raw = api.snapshot({
+                "project": "factory",
+                "sonar_key": "pl0n3r_factory",
+            })
+        finally:
+            sonar_watch._utc_now = original_now
+
+        normalized = sonar_watch.normalize_sonar_snapshot(
+            contract(),
+            raw,
+            observed_at=raw["snapshot_at"],
+        )
+        freshness = next(
+            item for item in normalized["signals"]
+            if item["signal"] == "analysis_freshness"
+        )
+        self.assertEqual(freshness["status"], "PASS")
 
     def test_versioned_runtime_config_covers_exact_factory_catalog(self):
         projects = sonar_watch.load_runtime_config()
