@@ -501,7 +501,7 @@ def run_live() -> int:
     token, gh_token = os.getenv("SONAR_TOKEN", ""), os.getenv("GH_TOKEN", "")
     repository = os.getenv("GITHUB_REPOSITORY", "")
     if not gh_token or not repository:
-        raise SonarWatchError("configuración GitHub incompleta.")
+        raise SonarWatchError("configuración runtime incompleta.")
     projects = load_runtime_config()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     sonar = SonarApi(token=token)
