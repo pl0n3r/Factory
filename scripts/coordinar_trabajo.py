@@ -689,15 +689,43 @@ def latest_reservation(
     comments: list[dict[str, Any]],
     trusted_login: str = TRUSTED_MARKER_LOGIN,
 ) -> dict[str, Any] | None:
-    """Devuelve solo el último marcador publicado por la identidad confiable."""
-    latest: dict[str, Any] | None = None
+    """Devuelve el último estado confiable y conserva evidencia v2 de su misma cadena."""
+    trusted: list[dict[str, Any]] = []
     for comment in comments:
         user = comment.get("user")
         if not isinstance(user, dict) or user.get("login") != trusted_login:
             continue
         parsed = reservation_from_text(str(comment.get("body") or ""))
         if parsed is not None:
-            latest = parsed
+            trusted.append(parsed)
+
+    if not trusted:
+        return None
+
+    latest = dict(trusted[-1])
+    if (
+        latest.get("active") is False
+        and latest.get("reason") in {"pr-merged", "issue-cerrado"}
+        and "acceptance_sha256" not in latest
+    ):
+        identity = (
+            latest.get("reservation_id"),
+            latest.get("branch"),
+            latest.get("owner"),
+        )
+        pins = {
+            candidate["acceptance_sha256"]
+            for candidate in trusted[:-1]
+            if (
+                candidate.get("reservation_id"),
+                candidate.get("branch"),
+                candidate.get("owner"),
+            ) == identity
+            and isinstance(candidate.get("acceptance_sha256"), str)
+        }
+        if len(pins) == 1:
+            latest["acceptance_sha256"] = pins.pop()
+
     return latest
 
 
