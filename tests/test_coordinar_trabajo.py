@@ -450,6 +450,74 @@ class WorkflowCoordinacionTests(unittest.TestCase):
 
 
 
+class ReleaseOpenPullFeedbackTests(unittest.TestCase):
+    """Cubre feedback y semántica de liberación cuando existe un PR abierto."""
+
+    @staticmethod
+    def _open_pull(api: FakeGitHub) -> None:
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12", "sha": "abc123"},
+            "base": {"ref": "main"},
+        }
+
+    def test_normal_release_with_open_pull_fails_closed_and_explains_blocker(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api)
+        self._open_pull(api)
+        comments_before = list(api.comments)
+        status_before = list(api.status_history)
+
+        with self.assertRaisesRegex(CoordinationError, r"PR abiertos.*#15"):
+            release_work(api, 12, "pl0n3r", "OWNER", SESSION_A, False)
+
+        self.assertEqual(api.pulls[15]["state"], "open")
+        self.assertIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, comments_before)
+        self.assertEqual(api.status_history, status_before)
+        active = active_reservation(api, 12)
+        self.assertIsNotNone(active)
+        assert active is not None
+        self.assertTrue(active["active"])
+        self.assertEqual(active["reservation_id"], SESSION_A)
+
+    def test_force_release_with_open_pull_preserves_existing_semantics(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api)
+        self._open_pull(api)
+
+        release_work(api, 12, "pl0n3r", "OWNER", None, True)
+
+        self.assertEqual(api.pulls[15]["state"], "closed")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        latest = latest_reservation(api.comments)
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertFalse(latest["active"])
+        self.assertEqual(latest["reason"], "liberacion-forzada")
+        self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
+
+    def test_normal_release_without_open_pull_still_releases(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api)
+
+        release_work(api, 12, "pl0n3r", "OWNER", SESSION_A, False)
+
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        latest = latest_reservation(api.comments)
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertFalse(latest["active"])
+        self.assertEqual(latest["reason"], "liberar")
+        self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
+
+
 class EstadoCoordinacionTests(unittest.TestCase):
     """Cubre transiciones de estado visibles sin ventanas intermedias inválidas."""
 

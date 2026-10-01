@@ -1958,10 +1958,15 @@ def close_pulls_before_release(
     branch: str,
     force: bool,
 ) -> bool:
-    """Cierra PR al forzar o rechaza la liberación normal si siguen abiertos."""
+    """Cierra PR al forzar o explica el bloqueo de la liberación normal."""
     open_pulls = open_pulls_for_branch(api, branch)
     if open_pulls and not force:
-        return False
+        blockers = ", ".join(f"#{number}" for number in open_pulls)
+        raise CoordinationError(
+            "No se puede liberar la reserva mientras existan PR abiertos "
+            f"para {branch}: {blockers}. Cierra el PR o usa /liberar-forzado "
+            "si eres el OWNER y corresponde cerrar esa línea de trabajo."
+        )
     for pr_number in open_pulls:
         api.close_pull(pr_number)
     return True
