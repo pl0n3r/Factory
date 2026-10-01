@@ -28,7 +28,7 @@ _SONAR_PAGE_SIZE = 500
 _MAX_SONAR_ISSUES = 10_000
 _GITHUB_PAGE_SIZE = 50
 _MAX_GITHUB_ISSUES = 10_000
-_MAX_GITHUB_ISSUE_PAGES = _MAX_GITHUB_ISSUES // _GITHUB_PAGE_SIZE
+_MAX_GITHUB_ISSUE_PAGES = (_MAX_GITHUB_ISSUES // _GITHUB_PAGE_SIZE) + 1
 SENSITIVE = re.compile(
     r"(?i)(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)"
     r"\s*[:=]|bearer\s+[A-Za-z0-9._~+/-]{8,}"
@@ -221,13 +221,17 @@ class GitHubIssues:
 
     def find(self, marker: str):
         found = []
+        scanned = 0
         for page in range(1, _MAX_GITHUB_ISSUE_PAGES + 1):
             rows = self.http.request(
                 f"/repos/{self.repository}/issues?"
                 + urlencode({"state": "all", "per_page": _GITHUB_PAGE_SIZE, "page": page})
             )
-            if not isinstance(rows, list):
+            if not isinstance(rows, list) or len(rows) > _GITHUB_PAGE_SIZE:
                 raise SonarWatchError("respuesta GitHub Issues inválida.")
+            scanned += len(rows)
+            if scanned > _MAX_GITHUB_ISSUES:
+                raise SonarWatchError("paginación GitHub Issues excede límite seguro.")
             for row in rows:
                 if "pull_request" not in row and marker in (row.get("body") or ""):
                     found.append({
