@@ -82,12 +82,16 @@ class DispatcherV2Tests(unittest.TestCase):
         ]
 
         result = work_ladder(candidates)
+        record = dispatch_record(candidates)
 
         self.assertIsNotNone(result)
         self.assertEqual(result["step"], "declare_idle_reason")
         self.assertEqual(result["work"]["kind"], "status")
         self.assertTrue(result["reason"])
         self.assertTrue(result["needs"])
+        self.assertIsNone(record["selected"])
+        self.assertIsNotNone(record["next_action"])
+        self.assertEqual(record["next_action"]["step"], "declare_idle_reason")
 
     def test_stale_block_sweeper_unblocks_satisfied_condition_once(self):
         block = BlockedWork(
@@ -136,7 +140,12 @@ class DispatcherV2Tests(unittest.TestCase):
         filler = Candidate(
             key="filler",
             priority="medium",
-            metadata={"work_ladder_lane": "filler"},
+            metadata={
+                "work_ladder_lane": "filler",
+                "filler_curated": True,
+                "filler_reversible": True,
+                "filler_no_spend": True,
+            },
         )
 
         available = work_ladder(
@@ -152,6 +161,70 @@ class DispatcherV2Tests(unittest.TestCase):
 
         self.assertEqual(available["step"], "filler")
         self.assertEqual(capped["step"], "declare_idle_reason")
+
+    def test_work_ladder_caps_parallel_fillers_and_rejects_expensive_work(self):
+        safe = Candidate(
+            key="safe-filler",
+            priority="medium",
+            effort=2,
+            risk=1,
+            metadata={
+                "work_ladder_lane": "filler",
+                "filler_curated": True,
+                "filler_reversible": True,
+                "filler_no_spend": True,
+            },
+        )
+        uncurated = Candidate(
+            key="uncurated",
+            metadata={"work_ladder_lane": "filler"},
+        )
+        expensive = Candidate(
+            key="expensive",
+            effort=3,
+            risk=1,
+            metadata={
+                "work_ladder_lane": "filler",
+                "filler_curated": True,
+                "filler_reversible": True,
+                "filler_no_spend": True,
+            },
+        )
+        risky = Candidate(
+            key="risky",
+            effort=1,
+            risk=2,
+            metadata={
+                "work_ladder_lane": "filler",
+                "filler_curated": True,
+                "filler_reversible": True,
+                "filler_no_spend": True,
+            },
+        )
+        paid = Candidate(
+            key="paid",
+            metadata={
+                "work_ladder_lane": "filler",
+                "filler_curated": True,
+                "filler_reversible": True,
+                "filler_no_spend": False,
+            },
+        )
+
+        self.assertEqual(
+            work_ladder([safe], active_filler_count=1)["step"],
+            "filler",
+        )
+        self.assertEqual(
+            work_ladder([safe], active_filler_count=2)["step"],
+            "declare_idle_reason",
+        )
+        for candidate in (uncurated, expensive, risky, paid):
+            with self.subTest(candidate=candidate.key):
+                self.assertEqual(
+                    work_ladder([candidate])["step"],
+                    "declare_idle_reason",
+                )
 
     def test_work_ladder_declares_reason_when_no_safe_work_exists(self):
         result = work_ladder(
