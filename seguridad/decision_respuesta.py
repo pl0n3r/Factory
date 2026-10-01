@@ -15,7 +15,7 @@ from puertas_humanas import (
     validate_gate,
 )
 
-AUTHORIZED = {"OWNER", "MEMBER", "COLLABORATOR"}
+AUTHORIZED = {"OWNER"}
 COMMAND_RE = re.compile(r"^/decidir ([A-D])$")
 DECISION_LABEL = "decisión: dueño"
 COMPLETED = "estado: completado"
@@ -173,6 +173,15 @@ def materialize_decision(
     number = event_issue.get("number") if isinstance(event_issue, dict) else None
     if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
         return False
+    event_body = event_issue.get("body")
+    if not isinstance(event_body, str):
+        return False
+    try:
+        event_options, event_gate_sha256 = _gate_snapshot(event_body)
+    except (DecisionError, ValueError):
+        return False
+    if option not in event_options:
+        return False
 
     base = f"repos/{repository}/issues/{number}"
     issue = api("GET", base)
@@ -189,11 +198,11 @@ def materialize_decision(
         options, gate_sha256 = _gate_snapshot(body)
     except (DecisionError, ValueError):
         return False
-    if option not in options:
+    if option not in options or gate_sha256 != event_gate_sha256:
         return False
 
     existing = _existing_evidence(api, base)
-    expected_evidence = (option, gate_sha256)
+    expected_evidence = (option, event_gate_sha256)
     if existing is not None and existing != expected_evidence:
         return False
 
@@ -216,12 +225,12 @@ def materialize_decision(
             live_options, live_gate_sha256 = _gate_snapshot(live_body)
         except (DecisionError, ValueError):
             return False
-        if option not in live_options or live_gate_sha256 != gate_sha256:
+        if option not in live_options or live_gate_sha256 != event_gate_sha256:
             return False
         api(
             "POST",
             f"{base}/comments",
-            {"body": _evidence_body(option, gate_sha256)},
+            {"body": _evidence_body(option, event_gate_sha256)},
         )
         existing = expected_evidence
 
@@ -236,11 +245,15 @@ def materialize_decision(
         live_options, live_gate_sha256 = _gate_snapshot(live_body)
     except (DecisionError, ValueError):
         return False
-    if option not in live_options or existing != (option, live_gate_sha256):
+    if (
+        option not in live_options
+        or live_gate_sha256 != event_gate_sha256
+        or existing != expected_evidence
+    ):
         return False
 
     labels = _labels(issue)
-    if DECISION_LABEL not in labels and existing != (option, live_gate_sha256):
+    if DECISION_LABEL not in labels and existing != expected_evidence:
         return False
 
     # Última fotografía inmediatamente antes del único write final.
@@ -254,11 +267,15 @@ def materialize_decision(
         final_options, final_gate_sha256 = _gate_snapshot(final_body)
     except (DecisionError, ValueError):
         return False
-    if option not in final_options or existing != (option, final_gate_sha256):
+    if (
+        option not in final_options
+        or final_gate_sha256 != event_gate_sha256
+        or existing != expected_evidence
+    ):
         return False
 
     labels = _labels(issue)
-    if DECISION_LABEL not in labels and existing != (option, final_gate_sha256):
+    if DECISION_LABEL not in labels and existing != expected_evidence:
         return False
 
     final_labels = sorted(

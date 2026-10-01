@@ -31,10 +31,18 @@ def gate_body(
     )
 
 
-def event(command="/decidir B", association="OWNER", user_type="User"):
+def event(
+    command="/decidir B",
+    association="OWNER",
+    user_type="User",
+    issue_body=None,
+):
     return {
         "repository": {"full_name": "pl0n3r/Factory"},
-        "issue": {"number": 519},
+        "issue": {
+            "number": 519,
+            "body": gate_body() if issue_body is None else issue_body,
+        },
         "comment": {
             "body": command,
             "author_association": association,
@@ -188,6 +196,8 @@ class DecisionRespuestaTests(unittest.TestCase):
     def test_untrusted_bot_or_free_text_is_noop(self):
         cases = (
             event(association="NONE"),
+            event(association="MEMBER"),
+            event(association="COLLABORATOR"),
             event(user_type="Bot"),
             event(command="/decidir B "),
             event(command="Decisión del dueño: B"),
@@ -239,6 +249,24 @@ class DecisionRespuestaTests(unittest.TestCase):
             if call[0] == "PATCH" and call[1].endswith("/issues/519")
         ]
         self.assertEqual(len(closes), 1)
+
+        old_gate = gate_body()
+        current_gate = gate_body(
+            context="La puerta cambió después del comentario original."
+        )
+        delayed = FakeAPI(body=current_gate)
+        self.assertFalse(
+            materialize_decision(
+                event(issue_body=old_gate),
+                delayed,
+                "pl0n3r/Factory",
+            )
+        )
+        self.assertEqual(delayed.issue["state"], "open")
+        self.assertEqual(delayed.comments, [])
+        self.assertFalse(any(
+            call[0] != "GET" for call in delayed.calls
+        ))
 
         partial = FakeAPI(crash_after_evidence_once=True)
         with self.assertRaisesRegex(
@@ -363,6 +391,9 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", section)
         self.assertIn("Autorizar evento antes de checkout", section)
         self.assertIn("steps.preflight.outputs.trusted == 'true'", section)
+        materializer = section.split("  sincronizar-decision:", 1)[0]
+        self.assertIn("OWNER) trusted=true", materializer)
+        self.assertNotIn("OWNER|MEMBER|COLLABORATOR) trusted=true", materializer)
         self.assertIn('"$REF_NAME" == "$DEFAULT_BRANCH"', section)
         self.assertLess(
             section.index("Autorizar evento antes de checkout"),
