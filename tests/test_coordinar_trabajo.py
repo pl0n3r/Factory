@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
@@ -33,6 +34,8 @@ from scripts.coordinar_trabajo import (
     latest_reservation,
     mark_stale_reservations,
     migrate_legacy_reservation,
+    run_scheduled_sweep,
+    sweep_satisfied_blocks,
     parse_comment_command,
     release_work,
     renew_pinned_acceptance,
@@ -101,14 +104,19 @@ class FakeGitHub:
         self.fail_comment = False
         self.pull_update_failures_remaining = 0
         self.check_runs: list[dict] = []
+        self.workflow_runs: dict[int, dict] = {}
+        self.related_issues: dict[int, dict] = {}
         self.commit_times = {
             "abc123": datetime.now(timezone.utc),
         }
 
     def issue(self, number: int) -> dict:
-        """Devuelve el Issue falso."""
-        assert number == 12
-        return self.issue_data
+        """Devuelve el Issue falso o una dependencia configurada."""
+        if number == 12:
+            return self.issue_data
+        if number in self.related_issues:
+            return self.related_issues[number]
+        raise AssertionError(f"Issue falso desconocido: {number}")
 
     def pull(self, number: int) -> dict:
         """Devuelve un PR falso."""
@@ -230,6 +238,10 @@ class FakeGitHub:
         """Devuelve actividad conocida de un commit falso."""
         return self.commit_times.get(sha)
 
+    def workflow_run(self, run_id: int) -> dict:
+        """Devuelve evidencia de workflow configurada por la prueba."""
+        return self.workflow_runs[run_id]
+
     def try_assign(self, issue_number: int, login: str) -> None:
         """Asigna el Issue."""
         assert issue_number == 12
@@ -239,6 +251,15 @@ class FakeGitHub:
         """Retira la asignación del Issue."""
         assert issue_number == 12
         self.assignees.discard(login)
+
+
+def unblock_marker(*, version=1, **payload) -> str:
+    """Construye el marker cerrado usado por los tests de unblock."""
+    encoded = json.dumps(
+        {"version": version, **payload},
+        separators=(",", ":"),
+    )
+    return f"<!-- factory-unblock {encoded} -->"
 
 
 def add_active_reservation(
@@ -1162,6 +1183,256 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(marked, 1)
         self.assertEqual(api.status_history[-1], STATUS_RECOVERY)
         self.assertNotIn("coordinacion/lock-issue-12", api.branches)
+
+    def test_block_sweep_unblocks_verified_workflow_once(self) -> None:
+        api = FakeGitHub()
+        sha = "a" * 40
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY
+            + "\n"
+            + unblock_marker(kind="workflow_success", run_id=9001, sha=sha)
+        )
+        api.workflow_runs[9001] = {
+            "id": 9001,
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": sha,
+        }
+
+        first = sweep_satisfied_blocks(api)
+        second = sweep_satisfied_blocks(api)
+
+        self.assertEqual(first, 1)
+        self.assertEqual(second, 0)
+        self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
+        evidence = [
+            row for row in api.comments
+            if "factory-unblock-evidence" in row["body"]
+        ]
+        self.assertEqual(len(evidence), 1)
+        self.assertIn("workflow_run:9001@", evidence[0]["body"])
+
+    def test_block_sweep_fails_closed_on_unverified_or_invalid_condition(self) -> None:
+        sha = "b" * 40
+        mismatch = FakeGitHub()
+        mismatch.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        mismatch.issue_data["body"] = unblock_marker(
+            kind="workflow_success",
+            run_id=17,
+            sha=sha,
+        )
+        mismatch.workflow_runs[17] = {
+            "id": 17,
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": "c" * 40,
+        }
+
+        invalid = FakeGitHub()
+        invalid.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        invalid.issue_data["body"] = unblock_marker(kind="human_approval")
+        boolean_version = FakeGitHub()
+        boolean_version.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        boolean_version.issue_data["body"] = unblock_marker(
+            version=True,
+            kind="issue_closed",
+            issue=99,
+        )
+
+        self.assertEqual(sweep_satisfied_blocks(mismatch), 0)
+        self.assertEqual(sweep_satisfied_blocks(invalid), 0)
+        self.assertEqual(sweep_satisfied_blocks(boolean_version), 0)
+        self.assertIn(STATUS_BLOCKED, coordinator.label_names(mismatch.issue_data))
+        self.assertIn(STATUS_BLOCKED, coordinator.label_names(invalid.issue_data))
+        self.assertIn(
+            STATUS_BLOCKED,
+            coordinator.label_names(boolean_version.issue_data),
+        )
+        self.assertFalse(mismatch.comments)
+        self.assertFalse(invalid.comments)
+        self.assertFalse(boolean_version.comments)
+
+    def test_unblock_fail_closed_edges_and_actions_lookup(self) -> None:
+        self.assertIsNone(coordinator.parse_unblock_marker("sin marker"))
+        duplicate = unblock_marker(kind="issue_closed", issue=99)
+        invalid = (
+            duplicate + "\n" + duplicate,
+            '<!-- factory-unblock {"version":1,} -->',
+            unblock_marker(kind="issue_closed", issue=0),
+            unblock_marker(kind="issue_closed", issue=99, extra=True),
+            unblock_marker(kind="workflow_success", run_id=0, sha="a" * 40),
+            unblock_marker(kind="workflow_success", run_id=1, sha="short"),
+            unblock_marker(
+                kind="workflow_success", run_id=1, sha="a" * 40, extra=True
+            ),
+            unblock_marker(kind="branch_sha", branch="../main", sha="a" * 40),
+            unblock_marker(
+                kind="branch_sha", branch="main", sha="a" * 40, extra=True
+            ),
+        )
+        for body in invalid:
+            with self.assertRaises(CoordinationError):
+                coordinator.parse_unblock_marker(body)
+
+        api = FakeGitHub()
+        api.related_issues[99] = {"number": 99, "state": "open", "labels": []}
+        self.assertEqual(
+            coordinator.verify_unblock_condition(
+                api, {"version": 1, "kind": "issue_closed", "issue": 99}
+            ),
+            (False, None),
+        )
+        api.branches["main"] = "b" * 40
+        self.assertEqual(
+            coordinator.verify_unblock_condition(
+                api,
+                {
+                    "version": 1,
+                    "kind": "branch_sha",
+                    "branch": "main",
+                    "sha": "a" * 40,
+                },
+            ),
+            (False, None),
+        )
+        self.assertEqual(
+            coordinator.verify_unblock_condition(
+                api, {"version": 1, "kind": "unknown"}
+            ),
+            (False, None),
+        )
+
+        fingerprint = "f" * 64
+        payload = json.dumps(
+            {"version": 1, "fingerprint": fingerprint, "evidence": "ok"},
+            separators=(",", ":"),
+        )
+        comments = [
+            {"user": {"login": "otro"}, "body": f"<!-- factory-unblock-evidence {payload} -->"},
+            {"user": {"login": BOT}, "body": "<!-- factory-unblock-evidence {bad-json} -->"},
+        ]
+        self.assertFalse(coordinator.unblock_evidence_exists(comments, fingerprint))
+        comments.append(
+            {"user": {"login": BOT}, "body": f"<!-- factory-unblock-evidence {payload} -->"}
+        )
+        self.assertTrue(coordinator.unblock_evidence_exists(comments, fingerprint))
+
+        marker = coordinator.parse_unblock_marker(
+            unblock_marker(kind="branch_sha", branch="main", sha="b" * 40)
+        )
+        assert marker is not None
+        fp = coordinator.unblock_fingerprint(marker)
+        api.issue_data.update({"state": "closed", "labels": [{"name": STATUS_BLOCKED}]})
+        self.assertIsNone(coordinator._revalidated_unblock_evidence(api, 12, fp))
+        api.issue_data.update({"state": "open", "labels": [{"name": STATUS_AVAILABLE}]})
+        self.assertIsNone(coordinator._revalidated_unblock_evidence(api, 12, fp))
+        api.issue_data.update(
+            {
+                "labels": [{"name": STATUS_BLOCKED}],
+                "body": unblock_marker(kind="human_approval"),
+            }
+        )
+        self.assertIsNone(coordinator._revalidated_unblock_evidence(api, 12, fp))
+
+        real = GitHub("pl0n3r/Factory", token="test-token")
+        with patch.object(real, "request", return_value={"id": 77}) as request:
+            self.assertEqual(real.workflow_run(77)["id"], 77)
+        request.assert_called_once_with("GET", "/repos/pl0n3r/Factory/actions/runs/77")
+        with patch.object(real, "request", return_value=[]):
+            with self.assertRaises(CoordinationError):
+                real.workflow_run(78)
+
+    def test_block_sweep_revalidates_marker_before_mutation(self) -> None:
+        api = FakeGitHub()
+        sha = "e" * 40
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = unblock_marker(
+            kind="workflow_success",
+            run_id=27,
+            sha=sha,
+        )
+        api.workflow_runs[27] = {
+            "id": 27,
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": sha,
+        }
+        original_issue = api.issue
+
+        def issue(number: int) -> dict:
+            current = original_issue(number)
+            if number == 12:
+                current["body"] = unblock_marker(
+                    kind="branch_sha",
+                    branch="main",
+                    sha="f" * 40,
+                )
+            return current
+
+        api.issue = issue  # type: ignore[method-assign]
+
+        self.assertEqual(sweep_satisfied_blocks(api), 0)
+        self.assertIn(STATUS_BLOCKED, coordinator.label_names(api.issue_data))
+        self.assertFalse(
+            [row for row in api.comments if "factory-unblock-evidence" in row["body"]]
+        )
+
+    def test_scheduled_sweep_runs_reservations_and_blockers(self) -> None:
+        api = FakeGitHub()
+        with (
+            patch.object(
+                coordinator,
+                "mark_stale_reservations",
+                return_value=2,
+            ) as stale,
+            patch.object(
+                coordinator,
+                "sweep_satisfied_blocks",
+                return_value=3,
+            ) as blockers,
+        ):
+            result = run_scheduled_sweep(api)
+
+        stale.assert_called_once_with(api)
+        blockers.assert_called_once_with(api)
+        self.assertEqual(
+            result,
+            {"stale_reservations": 2, "satisfied_blocks": 3},
+        )
+
+    def test_block_sweep_retry_does_not_duplicate_evidence_comment(self) -> None:
+        api = FakeGitHub()
+        sha = "d" * 40
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = unblock_marker(
+            kind="branch_sha",
+            branch="main",
+            sha=sha,
+        )
+        api.branches["main"] = sha
+
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+
+        evidence = [
+            row for row in api.comments
+            if "factory-unblock-evidence" in row["body"]
+        ]
+        self.assertEqual(len(evidence), 1)
+
+    def test_block_sweep_supports_closed_issue_condition(self) -> None:
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = unblock_marker(
+            kind="issue_closed",
+            issue=99,
+        )
+        api.related_issues[99] = {"number": 99, "state": "closed", "labels": []}
+
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+        self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
 
     def test_sweep_skips_blocked_and_recent_reservations(self) -> None:
         """Bloqueadas y reservas con commits recientes permanecen intactas."""

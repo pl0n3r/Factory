@@ -209,12 +209,13 @@ jobs:
           python3 .factory/scripts/coordinar_trabajo.py validar-pr --repo "$REPOSITORIO" --pr "$PR" "${args[@]}"
 
   sweep:
-    name: Marcar reservas recuperables
+    name: Barrer coordinación y bloqueos
     if: inputs.operation == 'sweep'
     needs: validar-input
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: write
       issues: write
     steps:
