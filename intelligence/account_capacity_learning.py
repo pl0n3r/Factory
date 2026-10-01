@@ -1,7 +1,6 @@
-"""Aprendizaje puro de recurrencia a partir de eventos agregados de límite."""
+"""Compila eventos agregados de límite en memoria operativa determinista."""
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -11,12 +10,13 @@ from typing import Any
 from lecciones.memoria import LessonValidationError, validate_lesson
 
 
-VERSION = 1
-MAX_EVENTS = 200
-REQUEST_FIELDS = frozenset({"version", "project", "events"})
+LEARNING_VERSION = 1
+REQUEST_FIELDS = frozenset({"version", "project", "accountAlias", "events"})
 EVENT_FIELDS = frozenset({
-    "account_alias",
     "occurred_at",
+    "accepted_before_limit",
+    "window_seconds",
+    "reset_after_seconds",
     "capacity_fingerprint",
     "source",
 })
@@ -26,244 +26,186 @@ _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
 
 class AccountCapacityLearningError(ValueError):
-    """La telemetría agregada no cumple el contrato de aprendizaje v1."""
+    """La evidencia agregada no puede compilarse de forma segura."""
 
 
 def _stable_hash(value: Any) -> str:
-    try:
-        payload = json.dumps(
-            value,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise AccountCapacityLearningError(
-            "La evidencia debe ser JSON finito y serializable."
-        ) from exc
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    raw = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
-def _closed_mapping(
-    value: Any,
-    expected: frozenset[str],
-    label: str,
-) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != expected:
-        raise AccountCapacityLearningError(
-            f"{label} debe usar esquema cerrado."
-        )
+def _closed(value: Any, fields: frozenset[str], label: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise AccountCapacityLearningError(f"{label} debe usar esquema cerrado")
     return value
 
 
-def _timestamp(value: Any, label: str) -> tuple[datetime, str]:
-    if not isinstance(value, str):
-        raise AccountCapacityLearningError(f"{label} debe ser ISO-8601.")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise AccountCapacityLearningError(
-            f"{label} debe ser ISO-8601."
-        ) from exc
-    if parsed.tzinfo is None:
-        raise AccountCapacityLearningError(
-            f"{label} debe incluir zona horaria."
-        )
-    utc = parsed.astimezone(timezone.utc)
-    canonical = utc.isoformat().replace("+00:00", "Z")
-    return utc, canonical
+def _integer(value: Any, label: str, *, minimum: int) -> int:
+    if type(value) is not int or value < minimum:
+        raise AccountCapacityLearningError(f"{label} inválido")
+    return value
+
+
+def _opaque_alias(value: Any) -> str:
+    if not isinstance(value, str) or not _ALIAS.fullmatch(value) or "@" in value:
+        raise AccountCapacityLearningError("accountAlias debe ser un alias local opaco")
+    return value
 
 
 def _project(value: Any) -> str:
-    if not isinstance(value, str) or _PROJECT.fullmatch(value) is None:
-        raise AccountCapacityLearningError(
-            "project debe usar owner/repo."
-        )
-    return value
-
-
-def _alias(value: Any) -> str:
-    if (
-        not isinstance(value, str)
-        or _ALIAS.fullmatch(value) is None
-        or "@" in value
-    ):
-        raise AccountCapacityLearningError(
-            "account_alias debe ser un alias local opaco."
-        )
+    if not isinstance(value, str) or not _PROJECT.fullmatch(value):
+        raise AccountCapacityLearningError("project debe usar owner/repo")
     return value
 
 
 def _fingerprint(value: Any) -> str:
-    if (
-        not isinstance(value, str)
-        or _FINGERPRINT.fullmatch(value) is None
-    ):
-        raise AccountCapacityLearningError(
-            "capacity_fingerprint inválido."
-        )
+    if not isinstance(value, str) or not _FINGERPRINT.fullmatch(value):
+        raise AccountCapacityLearningError("capacity_fingerprint inválido")
     return value
 
 
-def _normalize_event(
-    value: Any,
-    *,
-    now: datetime,
-) -> dict[str, str]:
-    row = _closed_mapping(value, EVENT_FIELDS, "event")
-    alias = _alias(row["account_alias"])
-    occurred, occurred_at = _timestamp(
-        row["occurred_at"],
-        "event.occurred_at",
-    )
-    if occurred > now:
-        raise AccountCapacityLearningError(
-            "event.occurred_at no puede estar en el futuro."
-        )
-    fingerprint = _fingerprint(row["capacity_fingerprint"])
-    source = row["source"]
-    if not isinstance(source, str):
-        raise AccountCapacityLearningError("event.source inválido.")
+def _timestamp(value: Any, *, now: datetime | None) -> str:
+    if not isinstance(value, str):
+        raise AccountCapacityLearningError("occurred_at debe ser ISO-8601")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AccountCapacityLearningError("occurred_at debe ser ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise AccountCapacityLearningError("occurred_at debe incluir zona horaria")
+    utc = parsed.astimezone(timezone.utc)
+    if now is not None and utc > now:
+        raise AccountCapacityLearningError("occurred_at no puede estar en el futuro")
+    return utc.isoformat().replace("+00:00", "Z")
 
-    # validate_lesson es la autoridad del formato de source del repositorio.
-    probe = {
-        "id": "limit-source-probe",
-        "project": "pl0n3r/factory",
-        "kind": "process",
+
+def _source(value: Any, *, project: str, occurred_at: str) -> str:
+    lesson = {
+        "id": "source-check",
+        "project": project,
+        "kind": "incident",
         "occurred_at": occurred_at,
-        "what": "Evento agregado de límite observado.",
-        "why": "La capacidad observada alcanzó el límite disponible.",
-        "prevention": "Aplicar presupuesto conservador antes del siguiente envío.",
-        "source": source,
+        "what": "Se observó un límite agregado.",
+        "why": "La capacidad disponible fue alcanzada.",
+        "prevention": "Aplicar el presupuesto conservador.",
+        "source": value,
     }
     try:
-        validate_lesson(probe, "event.source")
+        validate_lesson(lesson, "account-capacity-learning")
     except LessonValidationError as exc:
-        raise AccountCapacityLearningError(
-            "event.source debe enlazar Issue/PR de GitHub."
-        ) from exc
+        raise AccountCapacityLearningError("source debe ser Issue/PR de GitHub") from exc
+    return value
 
+
+def _event(value: Any, *, project: str, now: datetime | None) -> dict[str, Any]:
+    row = _closed(value, EVENT_FIELDS, "event")
+    occurred_at = _timestamp(row["occurred_at"], now=now)
+    accepted = _integer(
+        row["accepted_before_limit"],
+        "accepted_before_limit",
+        minimum=0,
+    )
+    window = _integer(row["window_seconds"], "window_seconds", minimum=1)
+    reset = _integer(
+        row["reset_after_seconds"],
+        "reset_after_seconds",
+        minimum=1,
+    )
+    capacity_fingerprint = _fingerprint(row["capacity_fingerprint"])
+    source = _source(row["source"], project=project, occurred_at=occurred_at)
     return {
-        "account_alias": alias,
         "occurred_at": occurred_at,
-        "capacity_fingerprint": fingerprint,
+        "accepted_before_limit": accepted,
+        "window_seconds": window,
+        "reset_after_seconds": reset,
+        "capacity_fingerprint": capacity_fingerprint,
         "source": source,
     }
 
 
-def _lesson(
-    project: str,
-    event: dict[str, str],
-    event_fingerprint: str,
-) -> dict[str, str]:
-    short = event_fingerprint[:20]
+def _lesson(project: str, event: dict[str, Any]) -> dict[str, str]:
+    evidence_hash = _stable_hash(event)
     lesson = {
-        "id": f"capacity-limit-{short}",
+        "id": f"account-cap-limit-{evidence_hash[:24]}",
         "project": project,
-        "kind": "process",
+        "kind": "incident",
         "occurred_at": event["occurred_at"],
         "what": (
-            f"El alias opaco {event['account_alias']} registró un evento "
-            "agregado de límite de capacidad."
+            "Se alcanzó un límite tras "
+            f"{event['accepted_before_limit']} envíos agregados "
+            f"en una ventana de {event['window_seconds']} s."
         ),
         "why": (
-            "La evidencia agregada alcanzó el límite observado ligado a "
-            f"capacity fingerprint {event['capacity_fingerprint'][:12]}."
+            "La evidencia agregada registró un evento de límite "
+            "para la capacidad observada."
         ),
         "prevention": (
-            "Aplicar el presupuesto conservador vigente y reestimar "
-            "capacidad antes de aumentar el ritmo."
+            "Aplicar el presupuesto conservador y respetar "
+            f"al menos {event['reset_after_seconds']} s de recuperación."
         ),
         "source": event["source"],
     }
     try:
-        validated = validate_lesson(lesson, lesson["id"])
+        validate_lesson(lesson, f"account-capacity-learning:{evidence_hash[:12]}")
     except LessonValidationError as exc:
-        raise AccountCapacityLearningError(
-            "No fue posible producir una lección canónica."
-        ) from exc
-    return {
-        key: validated[key]
-        for key in (
-            "id",
-            "project",
-            "kind",
-            "occurred_at",
-            "what",
-            "why",
-            "prevention",
-            "source",
-        )
-    }
+        raise AccountCapacityLearningError("lección generada inválida") from exc
+    return lesson
 
 
-def learn_limit_events(payload: Any, *, now: str) -> dict[str, Any]:
-    """Convierte telemetría minimizada en lecciones y recurrencia deterministas."""
-    row = _closed_mapping(payload, REQUEST_FIELDS, "request")
-    if type(row["version"]) is not int or row["version"] != VERSION:
-        raise AccountCapacityLearningError(
-            "request.version no soportada."
-        )
-    project = _project(row["project"])
-    now_value, _ = _timestamp(now, "now")
-    events = row["events"]
-    if (
-        not isinstance(events, list)
-        or len(events) > MAX_EVENTS
-    ):
-        raise AccountCapacityLearningError(
-            "events debe ser una lista acotada."
-        )
+def compile_limit_learning(
+    request: Any,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Compila lecciones y recurrencia sin leer ni escribir estado externo."""
+    data = _closed(request, REQUEST_FIELDS, "request")
+    if type(data["version"]) is not int or data["version"] != LEARNING_VERSION:
+        raise AccountCapacityLearningError("version no soportada")
+    project = _project(data["project"])
+    alias = _opaque_alias(data["accountAlias"])
+    events = data["events"]
+    if not isinstance(events, list):
+        raise AccountCapacityLearningError("events debe ser una lista")
+    if now is not None:
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise AccountCapacityLearningError("now debe incluir zona horaria")
+        now = now.astimezone(timezone.utc)
 
-    unique: dict[str, dict[str, str]] = {}
-    for raw_event in events:
-        event = _normalize_event(raw_event, now=now_value)
-        event_fingerprint = _stable_hash(event)
-        unique.setdefault(event_fingerprint, event)
-
-    normalized = sorted(
-        (
-            {
-                **event,
-                "_event_fingerprint": event_fingerprint,
-            }
-            for event_fingerprint, event in unique.items()
-        ),
+    normalized = [_event(item, project=project, now=now) for item in events]
+    unique_by_hash = {_stable_hash(item): item for item in normalized}
+    ordered = sorted(
+        unique_by_hash.values(),
         key=lambda item: (
-            item["account_alias"],
             item["occurred_at"],
-            item["_event_fingerprint"],
+            item["source"],
+            item["capacity_fingerprint"],
+            item["accepted_before_limit"],
+            item["window_seconds"],
+            item["reset_after_seconds"],
         ),
     )
-
-    lessons = [
-        _lesson(project, event, event["_event_fingerprint"])
-        for event in normalized
-    ]
-
-    by_account: dict[str, list[dict[str, str]]] = {}
-    for event in normalized:
-        by_account.setdefault(event["account_alias"], []).append(event)
-
-    recurrence = [
-        {
-            "accountAlias": alias,
-            "limitEvents": len(account_events),
-            "lastOccurredAt": max(
-                item["occurred_at"] for item in account_events
-            ),
-        }
-        for alias, account_events in sorted(by_account.items())
-    ]
-
+    lessons = [_lesson(project, item) for item in ordered]
+    occurred = [item["occurred_at"] for item in ordered]
+    recurrence = {
+        "limitEvents": len(ordered),
+        "firstOccurredAt": occurred[0] if occurred else None,
+        "lastOccurredAt": occurred[-1] if occurred else None,
+        "repeated": len(ordered) > 1,
+        "sourceFingerprints": sorted(
+            {item["capacity_fingerprint"] for item in ordered}
+        ),
+    }
     material = {
-        "version": VERSION,
+        "version": LEARNING_VERSION,
         "project": project,
+        "accountAlias": alias,
         "lessons": lessons,
         "recurrence": recurrence,
     }
-    return {
-        **material,
-        "fingerprint": _stable_hash(material),
-    }
+    return {**material, "fingerprint": _stable_hash(material)}

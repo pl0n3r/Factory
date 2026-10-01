@@ -1,30 +1,34 @@
-import copy
-import hashlib
 import inspect
-import json
 import unittest
+from datetime import datetime, timezone
 
-import intelligence.account_capacity_learning as learning_module
+import intelligence.account_capacity_learning as learning
 from intelligence.account_capacity_learning import (
     AccountCapacityLearningError,
-    learn_limit_events,
+    compile_limit_learning,
 )
 from lecciones.memoria import validate_lesson
 
 
-NOW = "2026-10-01T10:00:00Z"
+NOW = datetime(2026, 10, 1, 14, 0, tzinfo=timezone.utc)
+FP_A = "a" * 64
+FP_B = "b" * 64
 
 
 def event(
     *,
-    alias="primary",
-    occurred_at="2026-10-01T09:00:00Z",
-    fingerprint="a" * 64,
-    source="pl0n3r/factory#584",
+    occurred_at="2026-10-01T12:00:00Z",
+    accepted=4,
+    window=600,
+    reset=900,
+    fingerprint=FP_A,
+    source="pl0n3r/Factory#584",
 ):
     return {
-        "account_alias": alias,
         "occurred_at": occurred_at,
+        "accepted_before_limit": accepted,
+        "window_seconds": window,
+        "reset_after_seconds": reset,
         "capacity_fingerprint": fingerprint,
         "source": source,
     }
@@ -33,150 +37,128 @@ def event(
 def request(events):
     return {
         "version": 1,
-        "project": "pl0n3r/factory",
+        "project": "pl0n3r/Factory",
+        "accountAlias": "primary",
         "events": events,
     }
 
 
 class AccountCapacityLearningTests(unittest.TestCase):
-    def test_valid_limit_event_produces_canonical_deterministic_lesson(self):
-        payload = request([event()])
-        first = learn_limit_events(payload, now=NOW)
-        second = learn_limit_events(copy.deepcopy(payload), now=NOW)
+    def test_limit_event_emits_one_canonical_lesson(self):
+        output = compile_limit_learning(request([event()]), now=NOW)
 
-        self.assertEqual(first, second)
-        self.assertEqual(len(first["lessons"]), 1)
-        lesson = first["lessons"][0]
+        self.assertEqual(output["version"], 1)
+        self.assertEqual(output["project"], "pl0n3r/Factory")
+        self.assertEqual(output["accountAlias"], "primary")
+        self.assertEqual(len(output["lessons"]), 1)
+        lesson = output["lessons"][0]
         validated = validate_lesson(lesson, "test")
-        self.assertEqual(validated["source"], "pl0n3r/factory#584")
-        self.assertEqual(lesson["kind"], "process")
-        self.assertRegex(lesson["id"], r"^capacity-limit-[0-9a-f]{20}$")
-        self.assertEqual(lesson["occurred_at"], "2026-10-01T09:00:00Z")
+        self.assertEqual(validated["kind"], "incident")
+        self.assertEqual(validated["source"], "pl0n3r/Factory#584")
+        self.assertRegex(lesson["id"], r"^account-cap-limit-[0-9a-f]{24}$")
 
-    def test_recurrence_is_account_scoped_exact_and_stably_ordered(self):
-        payload = request([
-            event(alias="beta", occurred_at="2026-10-01T08:00:00Z", fingerprint="b" * 64),
-            event(alias="alpha", occurred_at="2026-10-01T07:00:00Z", fingerprint="c" * 64),
-            event(alias="alpha", occurred_at="2026-10-01T09:30:00Z", fingerprint="d" * 64),
-        ])
-        result = learn_limit_events(payload, now=NOW)
+        repeated = compile_limit_learning(request([event()]), now=NOW)
+        self.assertEqual(output, repeated)
 
+    def test_recurrence_is_deterministic_deduplicated_and_evidence_bound(self):
+        first = event(
+            occurred_at="2026-10-01T12:00:00Z",
+            fingerprint=FP_A,
+            source="pl0n3r/Factory#584",
+        )
+        second = event(
+            occurred_at="2026-10-01T13:00:00+00:00",
+            accepted=3,
+            fingerprint=FP_B,
+            source="https://github.com/pl0n3r/AutoFactory/issues/62",
+        )
+        output = compile_limit_learning(
+            request([second, first, first]),
+            now=NOW,
+        )
+        permuted = compile_limit_learning(
+            request([first, second, first]),
+            now=NOW,
+        )
+
+        self.assertEqual(output, permuted)
+        self.assertEqual(len(output["lessons"]), 2)
         self.assertEqual(
-            result["recurrence"],
-            [
-                {
-                    "accountAlias": "alpha",
-                    "limitEvents": 2,
-                    "lastOccurredAt": "2026-10-01T09:30:00Z",
-                },
-                {
-                    "accountAlias": "beta",
-                    "limitEvents": 1,
-                    "lastOccurredAt": "2026-10-01T08:00:00Z",
-                },
-            ],
+            output["recurrence"],
+            {
+                "limitEvents": 2,
+                "firstOccurredAt": "2026-10-01T12:00:00Z",
+                "lastOccurredAt": "2026-10-01T13:00:00Z",
+                "repeated": True,
+                "sourceFingerprints": [FP_A, FP_B],
+            },
         )
-        reversed_result = learn_limit_events(
-            request(list(reversed(payload["events"]))),
-            now=NOW,
-        )
-        self.assertEqual(result, reversed_result)
+        self.assertRegex(output["fingerprint"], r"^[0-9a-f]{64}$")
 
-    def test_duplicate_delivery_is_idempotent_and_material_change_is_distinct(self):
-        original = event()
-        duplicate = copy.deepcopy(original)
-        changed = event(fingerprint="b" * 64)
-
-        deduplicated = learn_limit_events(
-            request([original, duplicate]),
-            now=NOW,
-        )
-        distinct = learn_limit_events(
-            request([original, duplicate, changed]),
-            now=NOW,
-        )
-
-        self.assertEqual(len(deduplicated["lessons"]), 1)
-        self.assertEqual(deduplicated["recurrence"][0]["limitEvents"], 1)
-        self.assertEqual(len(distinct["lessons"]), 2)
-        self.assertEqual(distinct["recurrence"][0]["limitEvents"], 2)
-        self.assertNotEqual(
-            deduplicated["fingerprint"],
-            distinct["fingerprint"],
-        )
-
-    def test_closed_contract_rejects_identifying_unknown_future_and_invalid_evidence(self):
+    def test_closed_schema_rejects_sensitive_and_incoherent_evidence(self):
         cases = []
 
-        extra_request = request([event()])
-        extra_request["chat_content"] = "secret"
+        extra_request = request([])
+        extra_request["extra"] = True
         cases.append(extra_request)
 
-        extra_event = request([event()])
-        extra_event["events"][0]["model"] = "hidden"
-        cases.append(extra_event)
+        identifying_alias = request([])
+        identifying_alias["accountAlias"] = "person@example.com"
+        cases.append(identifying_alias)
 
-        cases.append(request([event(alias="person@example.com")]))
-        cases.append(request([event(occurred_at="2026-10-01T10:00:01Z")]))
-        cases.append(request([event(fingerprint="BAD")]))
-        cases.append(request([event(source="https://example.com/not-github")]))
+        extra_event = event()
+        extra_event["message"] = "not accepted"
+        cases.append(request([extra_event]))
 
-        for payload in cases:
-            with self.subTest(payload=payload):
-                with self.assertRaises(AccountCapacityLearningError) as caught:
-                    learn_limit_events(payload, now=NOW)
-                self.assertNotIn("secret", str(caught.exception))
-                self.assertNotIn("person@example.com", str(caught.exception))
-
-    def test_output_fingerprint_is_deterministic_pure_and_provider_limit_free(self):
-        payload = request([
-            event(alias="primary", fingerprint="a" * 64),
-            event(alias="secondary", fingerprint="b" * 64),
+        cases.extend([
+            request([{**event(), "occurred_at": "2026-10-01T12:00:00"}]),
+            request([{**event(), "occurred_at": "2026-10-01T15:00:00Z"}]),
+            request([{**event(), "accepted_before_limit": -1}]),
+            request([{**event(), "window_seconds": 0}]),
+            request([{**event(), "reset_after_seconds": 0}]),
+            request([{**event(), "capacity_fingerprint": "bad"}]),
+            request([{**event(), "source": "not-a-github-source"}]),
         ])
-        first = learn_limit_events(payload, now=NOW)
-        second = learn_limit_events(copy.deepcopy(payload), now=NOW)
-        self.assertEqual(first, second)
 
-        material = {
-            key: value
-            for key, value in first.items()
-            if key != "fingerprint"
-        }
-        encoded = json.dumps(
-            material,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        self.assertEqual(
-            first["fingerprint"],
-            hashlib.sha256(encoded).hexdigest(),
-        )
+        for bad in cases:
+            with self.subTest(bad=bad):
+                with self.assertRaises(AccountCapacityLearningError):
+                    compile_limit_learning(bad, now=NOW)
 
-        source = inspect.getsource(learning_module)
+    def test_module_is_pure_and_secret_free(self):
+        source = inspect.getsource(learning).lower()
         for forbidden in (
-            "requests",
-            "urllib",
-            "subprocess",
+            "requests.",
+            "urllib.",
             "socket.",
+            "subprocess.",
+            "pathlib",
             "open(",
-            "gpt-",
-            "messages_per_hour",
-            "chat_content",
-            "conversation_id",
-            "email",
-            "token",
-            "cookie",
+            "write_text",
+            "read_text",
         ):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, source.lower())
+            self.assertNotIn(forbidden, source)
+
+        output = compile_limit_learning(request([event()]), now=NOW)
+        encoded = str(output).lower()
+        for forbidden in ("@", "cookie", "token", "conversation"):
+            self.assertNotIn(forbidden, encoded)
 
     def test_empty_events_are_valid_zero_recurrence(self):
-        result = learn_limit_events(request([]), now=NOW)
-        self.assertEqual(result["lessons"], [])
-        self.assertEqual(result["recurrence"], [])
-        self.assertRegex(result["fingerprint"], r"^[0-9a-f]{64}$")
+        output = compile_limit_learning(request([]), now=NOW)
+
+        self.assertEqual(output["lessons"], [])
+        self.assertEqual(
+            output["recurrence"],
+            {
+                "limitEvents": 0,
+                "firstOccurredAt": None,
+                "lastOccurredAt": None,
+                "repeated": False,
+                "sourceFingerprints": [],
+            },
+        )
+        self.assertRegex(output["fingerprint"], r"^[0-9a-f]{64}$")
 
 
 if __name__ == "__main__":
