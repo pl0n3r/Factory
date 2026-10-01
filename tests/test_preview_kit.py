@@ -1,8 +1,13 @@
+import io
 import os
+import tempfile
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
+from scripts import preview_kit as preview
 from scripts.deploy_kit import DeployError
 from scripts.preview_kit import PreviewError, run_preview
 
@@ -121,6 +126,112 @@ class PreviewKitTests(unittest.TestCase):
             self.assertFalse(runtime_token)
             self.assertTrue(home_is_private)
             self.assertTrue(temp_is_private)
+
+    def test_adapter_and_cli_cover_fail_closed_edges(self):
+        with self.assertRaises(PreviewError):
+            preview._adapter_path("unknown")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative = preview.PREVIEW_ADAPTERS["preview-health"]
+            adapter = root / relative
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            adapter.chmod(0o700)
+            self.assertEqual(
+                preview._adapter_path("preview-health", root=root),
+                adapter.resolve(),
+            )
+            adapter.unlink()
+            outside = root.parent / "outside-preview-adapter"
+            outside.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            self.addCleanup(lambda: outside.unlink(missing_ok=True))
+            try:
+                adapter.symlink_to(outside)
+            except OSError:
+                pass
+            else:
+                with self.assertRaises(PreviewError):
+                    preview._adapter_path("preview-health", root=root)
+
+        with (
+            patch.object(preview, "_adapter_path", return_value=Path("/tmp/fake")),
+            patch.object(
+                preview.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=7),
+            ) as run,
+        ):
+            self.assertEqual(preview.preview_stage_runner("preview-health"), 7)
+        run.assert_called_once()
+
+        with self.assertRaises(PreviewError):
+            run_preview(
+                version="bad",
+                sha="x",
+                migration_mode="none",
+                runner=lambda _stage: 0,
+                verification_runner=lambda _stage: 0,
+            )
+        with self.assertRaises(PreviewError):
+            run_preview(
+                version="1.2.3",
+                sha="a" * 40,
+                migration_mode="destructive",
+                runner=lambda _stage: 0,
+                verification_runner=lambda _stage: 0,
+            )
+        with patch.object(
+            preview.tempfile,
+            "TemporaryDirectory",
+            side_effect=OSError("disk"),
+        ):
+            with self.assertRaises(PreviewError):
+                run_preview(
+                    version="1.2.3",
+                    sha="a" * 40,
+                    migration_mode="none",
+                    runner=lambda _stage: 0,
+                    verification_runner=lambda _stage: 0,
+                )
+
+        with (
+            patch.object(
+                preview.sys,
+                "argv",
+                [
+                    "preview_kit.py",
+                    "--version",
+                    "1.2.3",
+                    "--sha",
+                    "a" * 40,
+                    "--migration-mode",
+                    "none",
+                ],
+            ),
+            patch.object(preview, "run_preview"),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(preview.main(), 0)
+        self.assertIn("Preview sintético validado", output.getvalue())
+
+        with (
+            patch.object(
+                preview.sys,
+                "argv",
+                [
+                    "preview_kit.py",
+                    "--version",
+                    "1.2.3",
+                    "--sha",
+                    "a" * 40,
+                ],
+            ),
+            patch.object(preview, "run_preview", side_effect=PreviewError("bad")),
+            redirect_stderr(io.StringIO()) as error,
+        ):
+            self.assertEqual(preview.main(), 1)
+        self.assertIn("::error::bad", error.getvalue())
 
     def test_post_deploy_failure_fails_preview(self):
         events = []

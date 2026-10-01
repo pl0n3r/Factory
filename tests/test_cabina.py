@@ -63,6 +63,112 @@ class CollectionTests(unittest.TestCase):
             ("gris", "Datos GitHub no disponibles"),
         )
 
+    def test_collection_covers_success_and_edge_payloads(self) -> None:
+        project = cabina.PROYECTOS[0]
+        encoded = cabina.base64.b64encode(
+            b"<?php return ['version' => '1.2.3'];"
+        ).decode()
+        with patch.object(cabina, "gh", return_value={"content": encoded}):
+            self.assertEqual(cabina.version_main(project, "token"), "1.2.3")
+        with patch.object(cabina, "gh", return_value={}):
+            self.assertIsNone(cabina.version_main(project, "token"))
+
+        runner = cabina.PROYECTOS[-1]
+        self.assertEqual(cabina.salud(runner), {"estado": "na"})
+        with patch.object(cabina, "http_json", return_value=(503, None)):
+            self.assertEqual(cabina.salud(project)["estado"], "caido")
+        with patch.object(
+            cabina,
+            "http_json",
+            return_value=(
+                200,
+                {
+                    "status": "healthy",
+                    "deployment": {
+                        "version": "1.2.3",
+                        "commit": "abc1234",
+                    },
+                    "schema_up_to_date": True,
+                },
+            ),
+        ):
+            health = cabina.salud(project)
+        self.assertEqual(health["estado"], "ok")
+        self.assertEqual(health["version"], "1.2.3")
+        self.assertEqual(health["sha"], "abc1234")
+        self.assertIs(health["esquema"], True)
+
+        issue = {"number": 1, "title": "x"}
+        pull = {"number": 2, "title": "pr", "pull_request": {}}
+        with patch.object(cabina, "gh", return_value=[issue, pull]):
+            self.assertEqual(cabina.issues(project, "token", "x"), [issue])
+        auto = {"number": 3, "title": "[AUTO] señal"}
+        normal = {"number": 4, "title": "normal"}
+        with patch.object(cabina, "gh", return_value=[auto, normal, pull]):
+            self.assertEqual(cabina.auto_abiertos(project, "token"), [auto])
+
+        with patch.object(
+            cabina,
+            "gh",
+            return_value={"workflow_runs": [{"name": "Deploy", "status": "completed"}]},
+        ):
+            self.assertIsNone(cabina.ci_main(project, "token"))
+        with patch.object(
+            cabina,
+            "gh",
+            side_effect=[{"total_count": 2}, {"total_count": 7}],
+        ):
+            self.assertEqual(cabina.contar_prs(project, "token", "2026-09-01"), (2, 7))
+
+        with (
+            patch.object(cabina, "PROYECTOS", [project]),
+            patch.object(cabina, "salud", return_value={"estado": "ok"}),
+            patch.object(cabina, "gh", side_effect=cabina.CollectionError("offline")),
+        ):
+            collected = cabina.recolectar("token")
+        self.assertFalse(collected["proyectos"][0]["github_ok"])
+        self.assertEqual(collected["proyectos"][0]["incidentes"], [])
+
+
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self, _limit): return b'{"ok":true}'
+
+        with patch.object(cabina.urllib.request, "urlopen", return_value=Response()):
+            status, payload = cabina.http_json("https://api.github.com/x", "token")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, {"ok": True})
+
+        class BadJsonResponse(Response):
+            def read(self, _limit): return b"not-json"
+
+        with patch.object(cabina.urllib.request, "urlopen", return_value=BadJsonResponse()):
+            self.assertEqual(cabina.http_json("https://example.com")[1], None)
+
+        error = cabina.urllib.error.HTTPError(
+            "https://example.com", 404, "not found", {}, None
+        )
+        with patch.object(cabina.urllib.request, "urlopen", side_effect=error):
+            self.assertEqual(cabina.http_json("https://example.com"), (404, None))
+        with patch.object(cabina.urllib.request, "urlopen", side_effect=OSError("offline")):
+            self.assertEqual(cabina.http_json("https://example.com"), (0, None))
+
+        with patch.object(cabina, "http_json", return_value=(200, {"ok": True})):
+            self.assertEqual(cabina.gh("/repos/x/y", "token"), {"ok": True})
+        no_version = cabina.Proyecto(
+            "NoVersion", "pl0n3r/NoVersion", "x", None, None, "", "", None
+        )
+        self.assertIsNone(cabina.version_main(no_version, "token"))
+        self.assertIn("Health no verificable", cabina.semaforo(datos({"estado": "desconocido"}))[1])
+        self.assertIn("⏳", cabina._render_ci({
+            "status": "queued", "url": "https://x", "conclusion": None
+        }))
+        self.assertIn("❌", cabina._render_ci({
+            "status": "completed", "url": "https://x", "conclusion": "failure"
+        }))
+
 
 class CiTests(unittest.TestCase):
     def test_latest_ci_run_pending_is_not_replaced_by_old_success(self) -> None:

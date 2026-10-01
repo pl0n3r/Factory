@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
+
+from scripts import labels_kit as labels_module
 
 from scripts.labels_kit import (
     LabelError,
@@ -375,6 +380,165 @@ class LabelsKitTests(unittest.TestCase):
 
         with self.assertRaises(LabelError):
             sweep_issue_plan(catalog, [True], "en")
+
+    def test_cli_and_error_contract_cover_remaining_branches(self):
+        valid_names = [
+            next(item["name"] for item in self.catalog if item["key"].startswith(prefix))
+            for prefix in ("type_", "priority_", "state_")
+        ]
+
+        cases = (
+            ("validate-catalog", "", 0),
+            ("validate-selection", json.dumps(valid_names), 0),
+            ("upsert-plan", "[]", 0),
+            ("closing-reference", "Closes #123", 0),
+            (
+                "plan-validation",
+                json.dumps({
+                    "labels": valid_names,
+                    "is_pull_request": False,
+                    "body": "",
+                    "linked_issue": None,
+                }),
+                0,
+            ),
+            (
+                "sweep",
+                json.dumps({"number": 1, "labels": valid_names}) + "\n",
+                0,
+            ),
+            (
+                "sweep-plan",
+                json.dumps({"number": 2, "labels": []}) + "\n",
+                0,
+            ),
+            ("validate-selection", "{", 2),
+        )
+        for command, payload, expected in cases:
+            with self.subTest(command=command, expected=expected):
+                output, error = io.StringIO(), io.StringIO()
+                with (
+                    patch.object(
+                        labels_module.sys,
+                        "argv",
+                        ["labels_kit.py", command, "--language", "es"],
+                    ),
+                    patch.object(labels_module.sys, "stdin", io.StringIO(payload)),
+                    redirect_stdout(output),
+                    redirect_stderr(error),
+                ):
+                    self.assertEqual(labels_module.main(), expected)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "catalog.json"
+            base = [dict(item) for item in self.catalog]
+
+            invalid_catalogs = [
+                [],
+                [{**base[0], "extra": "x"}],
+                [{**base[0], "key": "BAD KEY"}, *base[1:]],
+                [base[0], dict(base[0]), *base[2:]],
+                [item for item in base if not item["key"].startswith("priority_")],
+            ]
+            for raw in invalid_catalogs:
+                target.write_text(json.dumps(raw), encoding="utf-8")
+                with self.assertRaises(LabelError):
+                    load_catalog(Path("catalog.json"), root=root)
+
+        for raw in (None, [1], ["x\ny"]):
+            with self.subTest(raw=raw):
+                with self.assertRaises(LabelError):
+                    selected_names(raw)
+
+        with self.assertRaises(LabelError):
+            upsert_plan(self.catalog, None)
+        with self.assertRaises(LabelError):
+            upsert_plan(
+                self.catalog,
+                [],
+                aliases={"alias": "missing-target"},
+            )
+        with self.assertRaises(LabelError):
+            warning_plan({"valid": False, "missing": "bad", "multiple": []}, "es")
+        with self.assertRaises(LabelError):
+            warning_plan({"valid": False, "missing": ["other"], "multiple": []}, "es")
+        warning = warning_plan(
+            {"valid": False, "missing": ["type"], "multiple": ["state"]},
+            "en",
+        )
+        self.assertIn("missing: type", warning["body"])
+        self.assertIn("multiple: state", warning["body"])
+
+        with self.assertRaises(LabelError):
+            sweep(self.catalog, ["{"])
+        with self.assertRaises(LabelError):
+            sweep(self.catalog, [json.dumps({"number": 0, "labels": []})])
+        self.assertEqual(
+            sweep(self.catalog, ["", json.dumps({"number": 7, "labels": valid_names})]),
+            [],
+        )
+
+        target_name = next(
+            item["name"] for item in self.catalog
+            if item["key"].startswith("type_")
+        )
+        with self.assertRaises(LabelError):
+            upsert_plan(
+                self.catalog,
+                [{"name": "legacy-a"}, {"name": "legacy-b"}],
+                aliases={
+                    "legacy-a": target_name,
+                    "legacy-b": target_name,
+                },
+            )
+        with self.assertRaises(LabelError):
+            labels_module._catalog_name(self.catalog, "missing-key")
+        with self.assertRaises(LabelError):
+            labels_module.closing_issue_reference(123)  # type: ignore[arg-type]
+        with self.assertRaises(LabelError):
+            linked_issue_names([])
+        with self.assertRaises(LabelError):
+            warning_plan({"valid": False, "missing": [], "multiple": []}, "fr")
+        spanish = warning_plan(
+            {"valid": False, "missing": ["type"], "multiple": ["priority"]},
+            "es",
+        )
+        self.assertIn("faltan: type", spanish["body"])
+        self.assertIn("duplicadas: priority", spanish["body"])
+        with self.assertRaises(LabelError):
+            sweep_issue_plan(self.catalog, [], "fr")
+        with self.assertRaises(LabelError):
+            sweep(self.catalog, [""] * 10001)
+        with self.assertRaises(LabelError):
+            sweep(self.catalog, ["x" * 100001])
+        with self.assertRaises(LabelError):
+            validation_document_plan(self.catalog, {}, "es")
+        with self.assertRaises(LabelError):
+            validation_document_plan(
+                self.catalog,
+                {
+                    "labels": [],
+                    "is_pull_request": "yes",
+                    "body": "",
+                    "linked_issue": None,
+                },
+                "es",
+            )
+
+        duplicate_type = valid_names + [
+            next(
+                item["name"] for item in self.catalog
+                if item["key"].startswith("type_")
+                and item["name"] != valid_names[0]
+            )
+        ]
+        plan = validation_plan(
+            self.catalog,
+            set(duplicate_type),
+            is_pull_request=False,
+        )
+        self.assertIn("type", plan["multiple"])
 
     def test_low_level_loader_still_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:

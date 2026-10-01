@@ -1,6 +1,9 @@
+import io
 import json
 import subprocess
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -93,6 +96,117 @@ class ProvisionProjectTests(unittest.TestCase):
         other = request("a" * 63 + "b")
         self.assertNotEqual(p.description_for(req, SHA), p.description_for(other, SHA))
         self.assertIn(p.identity(req, SHA), p.description_for(req, SHA))
+
+    def test_gateway_and_main_cover_fail_closed_edges(self):
+        for bad in (
+            {**request(), "project_id": "bad"},
+            {**request(), "target_repository": "other/repo"},
+            {**request(), "governance_ref": "main"},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(p.ProvisionError):
+                    p.validate_request(bad)
+
+        gateway = p.GitHubGateway("token")
+        with self.assertRaises(p.ProvisionError):
+            gateway._request("GET", "repos/no-leading-slash")
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def read(self): return b'{"ok":true}'
+
+        with mock.patch.object(p, "urlopen", return_value=Response()):
+            self.assertEqual(gateway._request("GET", "/user"), {"ok": True})
+
+        allowed = p.HTTPError("https://x", 404, "not found", {}, None)
+        with mock.patch.object(p, "urlopen", side_effect=allowed):
+            self.assertIsNone(gateway._request("GET", "/missing", allow=(404,)))
+        denied = p.HTTPError("https://x", 500, "bad", {}, None)
+        with mock.patch.object(p, "urlopen", side_effect=denied):
+            with self.assertRaises(p.ProvisionError):
+                gateway._request("GET", "/broken")
+
+        failed = subprocess.CompletedProcess([], 1, "", "boom")
+        with mock.patch.object(p.subprocess, "run", return_value=failed):
+            with self.assertRaises(p.ProvisionError):
+                gateway._git(ROOT, "status")
+
+        with mock.patch.object(gateway, "_request", return_value=[]):
+            with self.assertRaises(p.ProvisionError):
+                gateway.repository("pl0n3r/NewProduct")
+        with mock.patch.object(gateway, "_request", return_value=None):
+            with self.assertRaises(p.ProvisionError):
+                gateway.create(request(), SHA)
+        with mock.patch.object(gateway, "_request", return_value=None):
+            self.assertTrue(gateway.empty("pl0n3r/NewProduct"))
+        with mock.patch.object(gateway, "_request", return_value={}):
+            with self.assertRaises(p.ProvisionError):
+                gateway.empty("pl0n3r/NewProduct")
+        with mock.patch.object(
+            gateway,
+            "_request",
+            return_value={"encoding": "base64", "content": "%%%"},
+        ):
+            with self.assertRaises(p.ProvisionError):
+                gateway.marker("pl0n3r/NewProduct")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(p.ProvisionError):
+                p.load_template(root)
+            (root / "AGENTES.md").write_text("x", encoding="utf-8")
+            link = root / "link"
+            try:
+                link.symlink_to(root / "AGENTES.md")
+            except OSError:
+                pass
+            else:
+                with self.assertRaises(p.ProvisionError):
+                    p.load_template(root)
+
+        req = request()
+        bad_created = FakeGateway()
+        bad_created.create = lambda req, sha: {
+            **repo(req),
+            "full_name": "pl0n3r/Wrong",
+        }
+        with self.assertRaises(p.ProvisionError):
+            p.provision(req, bad_created, {}, SHA)
+
+        success = {"status": "confirmed"}
+        with (
+            mock.patch.object(p, "GitHubGateway", return_value=object()),
+            mock.patch.object(p, "load_template", return_value={}),
+            mock.patch.object(p, "provision", return_value=success),
+            mock.patch.object(
+                p.sys,
+                "argv",
+                ["provision_project.py", "--governance-sha", SHA],
+            ),
+            mock.patch.dict(
+                p.os.environ,
+                {
+                    "FACTORY_PROVISION_TOKEN": "token",
+                    **{name.upper(): value for name, value in request().items()},
+                },
+                clear=True,
+            ),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(p.main(), 0)
+        self.assertIn("confirmed", output.getvalue())
+
+        with (
+            mock.patch.object(p, "GitHubGateway", side_effect=p.ProvisionError("bad")),
+            mock.patch.object(
+                p.sys,
+                "argv",
+                ["provision_project.py", "--governance-sha", SHA],
+            ),
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(p.main(), 2)
 
     def test_workflow_documents_minimum_credential(self):
         workflow = (ROOT / ".github/workflows/provision-project.yml").read_text()

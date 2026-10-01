@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
+import io
 import json
 import shutil
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
+
+from scripts import roles_kit as roles_module
 
 from scripts.roles_kit import (
     MAX_CONTEXT,
@@ -309,6 +314,129 @@ class RolesKitTests(unittest.TestCase):
                 ROLES_DIR,
                 "es",
             )
+
+    def test_cli_and_validation_cover_remaining_branches(self):
+        simple = json.dumps({
+            "body": "",
+            "labels": [],
+            "files": [],
+            "title": "",
+        })
+        for command in ("validate-catalog", "labels", "suggest"):
+            with self.subTest(command=command):
+                out, err = io.StringIO(), io.StringIO()
+                with (
+                    patch.object(
+                        roles_module.sys,
+                        "argv",
+                        ["roles_kit.py", command, "--language", "es"],
+                    ),
+                    patch.object(roles_module.sys, "stdin", io.StringIO(simple)),
+                    redirect_stdout(out),
+                    redirect_stderr(err),
+                ):
+                    self.assertEqual(roles_module.main(), 0)
+
+        out = io.StringIO()
+        with (
+            patch.object(
+                roles_module.sys,
+                "argv",
+                ["roles_kit.py", "validate-pr", "--language", "es"],
+            ),
+            patch.object(roles_module.sys, "stdin", io.StringIO(simple)),
+            patch.object(
+                roles_module,
+                "validate_pr",
+                return_value={"declared": [], "required": [], "risks": []},
+            ),
+            redirect_stdout(out),
+        ):
+            self.assertEqual(roles_module.main(), 0)
+
+        with (
+            patch.object(
+                roles_module.sys,
+                "argv",
+                ["roles_kit.py", "validate-catalog"],
+            ),
+            patch.object(roles_module, "load_catalog", side_effect=RoleError("bad")),
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(roles_module.main(), 1)
+
+        invalid_contexts = (
+            "[]",
+            "{",
+            json.dumps({"body": [1], "labels": [], "files": [], "title": ""}),
+            json.dumps({"body": "", "labels": "bad", "files": [], "title": ""}),
+            json.dumps({"body": "", "labels": [], "files": "bad", "title": ""}),
+        )
+        for payload in invalid_contexts:
+            with self.subTest(payload=payload[:20]):
+                with self.assertRaises(RoleError):
+                    parse_context(payload)
+
+        with self.assertRaises(RoleError):
+            roles_module._repo_relative(Path("/tmp/outside-factory"))
+        with self.assertRaises(RoleError):
+            roles_module.parse_checklist("sin secciones")
+
+        expected_roles = {
+            "seo",
+            "contenido",
+            "datos-analitica",
+            "qa",
+            "marketing",
+            "legal-privacidad",
+            "arquitectura",
+        }
+        roles = set()
+        for filename in (
+            "seo/sitemap.xml",
+            "analytics/report.py",
+            "marketing/campaign.md",
+            "legal/privacy.md",
+            "docs/architecture/adr.md",
+        ):
+            selected, _ = roles_module._classify_file(filename)
+            roles.update(selected)
+        self.assertTrue(expected_roles <= roles)
+
+        candidate = {
+            "slug": "mobile-engineering",
+            "title": "Staff Mobile Engineer",
+            "seniority": "Staff",
+            "domains": ["mobile"],
+            "stacks": ["Swift"],
+            "heuristics": ["safe"],
+            "checklist": ["test"],
+            "evidence": ["proof"],
+            "trigger": "mobile",
+        }
+        self.assertEqual(
+            roles_module.validate_role_candidate(candidate)["slug"],
+            "mobile-engineering",
+        )
+        for mutation in (
+            {**candidate, "extra": "x"},
+            {**candidate, "slug": "!"},
+            {**candidate, "title": ""},
+            {**candidate, "domains": []},
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(RoleError):
+                    roles_module.validate_role_candidate(mutation)
+        with self.assertRaises(RoleError):
+            roles_module.register_role_candidate(
+                {"mobile-engineering": candidate},
+                candidate,
+            )
+
+        self.assertEqual(declared_roles("sin roles"), [])
+        basic = context(body="", labels=[], files=[], title="")
+        with self.assertRaises(RoleError):
+            validate_pr(basic, self.catalog, ROLES_DIR, "es")
 
     def test_context_is_bounded_and_closed(self):
         payload = json.dumps(

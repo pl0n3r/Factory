@@ -259,6 +259,17 @@ class T(unittest.TestCase):
             with self.assertRaises(PolicyError):
                 load_policy(Path("../decisiones.yml"), root=root)
 
+    def test_path_boundary_exception_assertions_are_single_invocation(self):
+        non_temp = Path(__file__).resolve()
+        with self.assertRaises(PolicyError):
+            load_reviewer_policy(non_temp)
+        with self.assertRaises(PolicyError):
+            _read_bounded_lines(
+                non_temp,
+                max_bytes=1024,
+                noun="comentarios",
+            )
+
 
 class PolicyKitPathBoundaryTests(unittest.TestCase):
     def _temp_file(self, payload: str) -> Path:
@@ -273,8 +284,9 @@ class PolicyKitPathBoundaryTests(unittest.TestCase):
         return Path(handle.name)
 
     def test_reviewer_policy_rejects_non_temp_file(self):
+        non_temp = Path(__file__).resolve()
         with self.assertRaises(PolicyError):
-            load_reviewer_policy(Path(__file__).resolve())
+            load_reviewer_policy(non_temp)
 
         valid = self._temp_file(json.dumps({
             "version": 1,
@@ -286,9 +298,10 @@ class PolicyKitPathBoundaryTests(unittest.TestCase):
         )
 
     def test_comments_reader_rejects_non_temp_file(self):
+        non_temp = Path(__file__).resolve()
         with self.assertRaises(PolicyError):
             _read_bounded_lines(
-                Path(__file__).resolve(),
+                non_temp,
                 max_bytes=1024,
                 noun="comentarios",
             )
