@@ -74,6 +74,7 @@ class FakeIssues:
         self.rows = []
         self.next_number = 1
         self.calls = []
+        self.comments = {}
 
     def find(self, marker):
         return [
@@ -106,8 +107,15 @@ class FakeIssues:
         self.calls.append(("update", number, state))
 
     def comment(self, number, *, body):
+        self.comments.setdefault(number, []).append(body)
         self.calls.append(("comment", number, body))
 
+    def comment_once(self, number, *, marker, body):
+        existing = self.comments.setdefault(number, [])
+        if any(marker in item for item in existing):
+            return False
+        self.comment(number, body=body)
+        return True
 
 def sync(raw, api):
     project = raw["project"]
@@ -934,6 +942,40 @@ class SonarWatchTests(unittest.TestCase):
             })
             api.next_number += 1
 
+        original_update = api.update
+        failed_once = {"value": False}
+
+        def fail_first_close(number, *, title, body, state):
+            if state == "closed" and not failed_once["value"]:
+                failed_once["value"] = True
+                raise RuntimeError("simulated partial PATCH failure")
+            return original_update(
+                number,
+                title=title,
+                body=body,
+                state=state,
+            )
+
+        api.update = fail_first_close
+        with self.assertRaisesRegex(RuntimeError, "partial PATCH"):
+            sonar_watch.sync_project(
+                contract=brvtal["contract"],
+                snapshot=raw,
+                observed_at=NOW,
+                project_ref=brvtal["github_repo"],
+                origin_ref="sonar:brvtal",
+                origin_url=(
+                    "https://sonarcloud.io/project/overview"
+                    f"?id={brvtal['sonar_key']}"
+                ),
+                issues=api,
+            )
+        self.assertEqual(
+            len([call for call in api.calls if call[0] == "comment"]),
+            1,
+        )
+        api.update = original_update
+
         first = sonar_watch.sync_project(
             contract=brvtal["contract"],
             snapshot=raw,
@@ -1006,7 +1048,5 @@ class SonarWatchTests(unittest.TestCase):
         )
         self.assertEqual(len(coverage), 1)
         self.assertEqual(coverage[0]["state"], "open")
-
-
 if __name__ == "__main__":
     unittest.main()
