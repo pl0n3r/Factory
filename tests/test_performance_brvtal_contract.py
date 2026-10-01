@@ -98,6 +98,16 @@ class BrvtalPerformanceContractTests(unittest.TestCase):
                 self.assertEqual(metric["budget"]["value"], BUDGETS[metric_id])
                 self.assertEqual(metric["window"], {"duration_seconds": 1, "min_samples": 1})
                 self.assertEqual(metric["freshness"], {"max_age_seconds": 604800})
+                self.assertEqual(
+                    set(metric["allowed_actions"]),
+                    {"benchmark", "diagnose", "measure_before_after", "observe"},
+                )
+                self.assertEqual(
+                    set(metric["escalation_conditions"]),
+                    {"architecture_change", "capacity_budget"},
+                )
+                self.assertNotIn("create_work_item", metric["allowed_actions"])
+                self.assertNotIn("cost_change", metric["escalation_conditions"])
 
     def test_policy_documents_evidence_and_lab_limitations(self):
         docs = DOC_PATH.read_text()
