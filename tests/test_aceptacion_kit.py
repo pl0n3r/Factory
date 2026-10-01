@@ -334,7 +334,7 @@ class AcceptanceContractTests(unittest.TestCase):
             ]
         }
         verify_check(criterion, checks)
-        with self.assertRaisesRegex(AcceptanceError, "no terminó success"):
+        with self.assertRaisesRegex(AcceptanceError, "terminó sin success"):
             verify_check(
                 criterion,
                 {
