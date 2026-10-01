@@ -7,6 +7,8 @@
 
 > **Misión:** ejecutar el trabajo correcto con evidencia real de GitHub/producción, sin pedirle al dueño que reconstruya el estado y sin inventar readiness.
 
+Consulta [ESTADO.md](ESTADO.md) como **vista rápida derivada** del estado vigente. Es una vista generada/fail-closed; GitHub, los `/health` y los smoke/observer reales conservan la autoridad operativa.
+
 ### Preflight de capacidades
 
 Antes de despachar, confirma que puedes **abrir URLs exactas**, **leer GitHub** y **comentar Issues** usando el conector autenticado de GitHub o navegación/API equivalente. Si falta cualquiera de esas capacidades, responde una sola línea y detente:
