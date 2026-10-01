@@ -36,7 +36,7 @@ Que el ranking normal no encuentre candidato **no significa que el agente quede 
 
 1. reconciliar bloqueos cuya condición declarada ya esté satisfecha con evidencia verificable; el desbloqueo debe ser idempotente y citar la evidencia;
 2. tomar trabajo de calidad/seguridad/hardening/deuda/rendimiento ya materializado y seguro;
-3. tomar relleno curado, reversible y de bajo riesgo, sin gasto ni ampliación de autoridad;
+3. tomar relleno **curado**, reversible, de riesgo/esfuerzo bajos, sin gasto ni ampliación de autoridad; cada filler debe declarar esas propiedades de forma explícita y el tope absoluto es **2 en paralelo**; metadata ausente, gasto, riesgo/esfuerzo alto o un límite mayor a 2 fallan cerrado;
 4. proponer un único tramo `product-direction` cuando corresponda, incluidos los casos de cola totalmente bloqueada en cualquiera de los siete repos;
 5. si no existe ninguna acción segura, publicar el motivo concreto y qué evidencia/decisión falta. La parada silenciosa queda prohibida.
 
