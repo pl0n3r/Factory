@@ -28,6 +28,14 @@ DECISION_EVIDENCE_RE = re.compile(
 )
 MAIN_TARGET_RE = re.compile(r"\bmain@([0-9a-f]{40})\b")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+DECISION_EVIDENCE_RE = re.compile(
+    r'^<!-- factory-human-decision (\{[^\n]*\}) -->'
+)
+DECISION_INTENT_RE = re.compile(r"<!--\s*factory-human-decision\b")
+DECISION_COMMAND_RE = re.compile(r"^/decidir ([A-D])$")
+MAIN_TARGET_RE = re.compile(r"\bmain@([0-9a-f]{40})\b")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+DECISION_BOT = "github-actions[bot]"
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 RELEASE_GATE_CATEGORIES = {"release-1.0.0", "factory-release"}
 MAX_INPUT = 1_000_000
@@ -152,8 +160,11 @@ def _validate_v2_maintenance_decision(
         ):
             commands.append(command.group(1))
 
-        if DECISION_INTENT_RE.search(comment_body) is None:
+        journal_intents = DECISION_INTENT_RE.findall(comment_body)
+        if not journal_intents:
             continue
+        if len(journal_intents) != 1:
+            raise ReleaseBootstrapError("Journal v2 ambiguo.")
         if login != DECISION_BOT:
             raise ReleaseBootstrapError("Journal v2 no puede ser aportado por un actor humano.")
         evidence = DECISION_EVIDENCE_RE.match(comment_body)
