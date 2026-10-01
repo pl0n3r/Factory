@@ -889,22 +889,27 @@ def verify_unblock_condition(
 ) -> tuple[bool, str | None]:
     """Evalúa únicamente evidencia máquina-verificable y fail-closed."""
     kind = marker["kind"]
-    if kind == "issue_closed":
-        target = api.issue(int(marker["issue"]))
-        if target.get("state") == "closed":
-            return True, f"issue:{marker['issue']}:closed"
-        return False, None
+    try:
+        if kind == "issue_closed":
+            target = api.issue(int(marker["issue"]))
+            if target.get("state") == "closed":
+                return True, f"issue:{marker['issue']}:closed"
+            return False, None
 
-    if kind == "workflow_success":
-        run = api.workflow_run(int(marker["run_id"]))
-        expected_sha = str(marker["sha"])
-        if (
-            run.get("status") == "completed"
-            and run.get("conclusion") == "success"
-            and str(run.get("head_sha") or "").lower() == expected_sha
-        ):
-            return True, f"workflow_run:{marker['run_id']}@{expected_sha}"
-        return False, None
+        if kind == "workflow_success":
+            run = api.workflow_run(int(marker["run_id"]))
+            expected_sha = str(marker["sha"])
+            if (
+                run.get("status") == "completed"
+                and run.get("conclusion") == "success"
+                and str(run.get("head_sha") or "").lower() == expected_sha
+            ):
+                return True, f"workflow_run:{marker['run_id']}@{expected_sha}"
+            return False, None
+    except GitHubError as exc:
+        if exc.status == 404:
+            return False, None
+        raise
 
     if kind == "branch_sha":
         expected_sha = str(marker["sha"])
