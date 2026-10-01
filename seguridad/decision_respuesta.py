@@ -2,6 +2,7 @@
 """Materializa una decisión humana explícita sin ejecutar su efecto."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,7 @@ BOT = "github-actions[bot]"
 EVIDENCE_RE = re.compile(
     r'^<!-- factory-human-decision (\{[^\n]*\}) -->'
 )
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_EVENT_CHARS = 200_000
 
 
@@ -72,7 +74,7 @@ def _comment_command(event: dict[str, Any]) -> str | None:
     return match.group(1) if match else None
 
 
-def _gate_options(body: str) -> set[str]:
+def _gate_snapshot(body: str) -> tuple[set[str], str]:
     classified = classify_body(body)
     if classified.get("status") != "gate":
         raise DecisionError("El Issue no contiene una puerta humana válida.")
@@ -84,7 +86,14 @@ def _gate_options(body: str) -> set[str]:
     except json.JSONDecodeError as exc:
         raise DecisionError("El marker de puerta es inválido.") from exc
     gate = validate_gate(raw)
-    return {item["id"] for item in gate["options"]}
+    canonical = json.dumps(
+        gate,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    gate_sha256 = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return {item["id"] for item in gate["options"]}, gate_sha256
 
 
 def _labels(issue: dict[str, Any]) -> set[str]:
@@ -97,9 +106,9 @@ def _labels(issue: dict[str, Any]) -> set[str]:
     return result
 
 
-def _evidence_body(option: str) -> str:
+def _evidence_body(option: str, gate_sha256: str) -> str:
     marker = json.dumps(
-        {"option": option, "version": 1},
+        {"gate_sha256": gate_sha256, "option": option, "version": 2},
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -112,8 +121,8 @@ def _evidence_body(option: str) -> str:
     )
 
 
-def _existing_evidence(api, base: str) -> str | None:
-    found: set[str] = set()
+def _existing_evidence(api, base: str) -> tuple[str, str] | None:
+    found: set[tuple[str, str]] = set()
     for comment in api("GET", f"{base}/comments?per_page=100"):
         if comment.get("user", {}).get("login") != BOT:
             continue
@@ -129,16 +138,17 @@ def _existing_evidence(api, base: str) -> str | None:
             raise DecisionError("Existe evidencia de decisión inválida.") from exc
         if (
             not isinstance(payload, dict)
-            or set(payload) != {"option", "version"}
-            or payload.get("version") != 1
+            or set(payload) != {"gate_sha256", "option", "version"}
+            or payload.get("version") != 2
             or payload.get("option") not in {"A", "B", "C", "D"}
+            or not isinstance(payload.get("gate_sha256"), str)
+            or not SHA256_RE.fullmatch(payload["gate_sha256"])
         ):
-            raise DecisionError("Existe evidencia de decisión inválida.")
-        found.add(payload["option"])
+            raise DecisionError("Existe evidencia de decisión incompatible o inválida.")
+        found.add((payload["option"], payload["gate_sha256"]))
     if len(found) > 1:
         raise DecisionError("Existen decisiones humanas contradictorias.")
     return next(iter(found), None)
-
 
 
 def materialize_decision(
@@ -172,29 +182,27 @@ def materialize_decision(
         return False
 
     labels = _labels(issue)
-
     body = issue.get("body")
     if not isinstance(body, str):
         return False
     try:
-        options = _gate_options(body)
+        options, gate_sha256 = _gate_snapshot(body)
     except (DecisionError, ValueError):
         return False
     if option not in options:
         return False
 
     existing = _existing_evidence(api, base)
-    if existing is not None and existing != option:
+    expected_evidence = (option, gate_sha256)
+    if existing is not None and existing != expected_evidence:
         return False
 
-    # Inicio normal: la cola canónica debe seguir presente. Recuperación:
-    # si un intento previo ya publicó el journal controlado para la MISMA
-    # opción, puede reanudar aunque el crash haya ocurrido tras retirar la cola.
-    if DECISION_LABEL not in labels and existing != option:
+    # Inicio normal: la cola canónica debe seguir presente. Recovery solo
+    # puede reanudar un journal v2 ligado a ESTA MISMA puerta y opción.
+    if DECISION_LABEL not in labels and existing != expected_evidence:
         return False
+
     if existing is None:
-        # Revalidar inmediatamente antes de publicar el journal: una edición
-        # concurrente no puede registrar una opción que ya salió del marker.
         issue = api("GET", base)
         if not isinstance(issue, dict) or issue.get("state") != "open":
             return False
@@ -205,15 +213,19 @@ def materialize_decision(
         if not isinstance(live_body, str):
             return False
         try:
-            live_options = _gate_options(live_body)
+            live_options, live_gate_sha256 = _gate_snapshot(live_body)
         except (DecisionError, ValueError):
             return False
-        if option not in live_options:
+        if option not in live_options or live_gate_sha256 != gate_sha256:
             return False
-        api("POST", f"{base}/comments", {"body": _evidence_body(option)})
-        existing = option
+        api(
+            "POST",
+            f"{base}/comments",
+            {"body": _evidence_body(option, gate_sha256)},
+        )
+        existing = expected_evidence
 
-    # Releer Issue y marker antes de cualquier write de estado para evitar TOCTOU.
+    # Revalidar la identidad completa del gate antes de la transición final.
     issue = api("GET", base)
     if not isinstance(issue, dict) or issue.get("state") != "open":
         return False
@@ -221,18 +233,17 @@ def materialize_decision(
     if not isinstance(live_body, str):
         return False
     try:
-        live_options = _gate_options(live_body)
+        live_options, live_gate_sha256 = _gate_snapshot(live_body)
     except (DecisionError, ValueError):
         return False
-    if option not in live_options:
+    if option not in live_options or existing != (option, live_gate_sha256):
         return False
 
     labels = _labels(issue)
-    if DECISION_LABEL not in labels and existing != option:
+    if DECISION_LABEL not in labels and existing != (option, live_gate_sha256):
         return False
 
-    # Última fotografía inmediatamente antes de la transición final.
-    # Revalidar marker/opción y calcular labels desde esta misma foto.
+    # Última fotografía inmediatamente antes del único write final.
     issue = api("GET", base)
     if not isinstance(issue, dict) or issue.get("state") != "open":
         return False
@@ -240,14 +251,14 @@ def materialize_decision(
     if not isinstance(final_body, str):
         return False
     try:
-        final_options = _gate_options(final_body)
+        final_options, final_gate_sha256 = _gate_snapshot(final_body)
     except (DecisionError, ValueError):
         return False
-    if option not in final_options:
+    if option not in final_options or existing != (option, final_gate_sha256):
         return False
 
     labels = _labels(issue)
-    if DECISION_LABEL not in labels and existing != option:
+    if DECISION_LABEL not in labels and existing != (option, final_gate_sha256):
         return False
 
     final_labels = sorted(
@@ -257,9 +268,6 @@ def materialize_decision(
     )
     final_labels.append(COMPLETED)
 
-    # Un único write final: estado + labels convergen juntos. Si el proceso
-    # cae tras publicar el journal pero antes de este PATCH, el retry encuentra
-    # la misma evidencia y vuelve a intentar esta transición sin duplicarla.
     api(
         "PATCH",
         base,

@@ -71,6 +71,8 @@ La opción debe existir realmente en el marker `factory-human-gate`, el Issue de
 
 Aceptar `/decidir X` **solo materializa la elección**: publica una evidencia idempotente y controlada, retira `decisión: dueño`, sustituye únicamente la etiqueta `estado: …` por `estado: completado` y cierra el Issue como `completed`. No ejecuta el efecto de la opción, no toca padres ni rollouts y no concede permisos para dinero, legal, datos reales, go-live u otras puertas. Los flujos dependientes deben reconciliarse por su propio contrato.
 
+La evidencia `factory-human-decision` usa journal **v2** y contiene únicamente la opción elegida y `gate_sha256`: un SHA-256 de la representación normalizada del `factory-human-gate` ya validado. Un retry solo puede reanudar la misma opción cuando ese fingerprint sigue coincidiendo con la puerta vigente. Si cambia cualquier parte semántica del gate —aunque conserve la misma letra de opción—, o aparece evidencia legacy/incompatible, el flujo falla cerrado y no completa la puerta nueva con una decisión anterior.
+
 Respuestas históricas escritas como texto libre siguen requiriendo reconciliación manual; no se infieren retroactivamente como comandos. Repetir el mismo comando después de materializar la decisión es un no-op y no duplica evidencia.
 
 ## Regla operativa
@@ -83,7 +85,7 @@ El clasificador no acepta rutas de archivos por CLI. El workflow confiable alime
 
 ## Sincronización fail-closed
 
-En eventos `opened|edited|reopened`, el workflow verifica primero la asociación del autor del Issue. Si el origen no es confiable, el marker es inválido o deja de existir, el flujo no menciona al dueño y retira `decisión: dueño` si había quedado de un estado anterior. Un error estructural del marker no puede degradarse silenciosamente a trabajo autónomo.
+En eventos `opened|edited|reopened`, el workflow procesa la cola únicamente mientras el Issue siga **abierto** y verifica primero la asociación del autor. Un Issue cerrado/completado no puede reingresar a `decisión: dueño` por una edición posterior. Si el origen no es confiable, el marker es inválido o deja de existir, el flujo no menciona al dueño y retira `decisión: dueño` si había quedado de un estado anterior. Un error estructural del marker no puede degradarse silenciosamente a trabajo autónomo.
 
 ## Puertas automáticas de privacidad
 
