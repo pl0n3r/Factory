@@ -3,6 +3,57 @@
 > Instrucciones del dueño (@pl0n3r) para **todo agente de IA** que trabaje en pl0n3r/Condor, pl0n3r/GrindFlow, pl0n3r/brvtal, pl0n3r/factory, pl0n3r/ControlBot, pl0n3r/AutoFactory o pl0n3r/FactoryRunner.
 > Léelo completo una vez al arrancar. Este archivo manda sobre cualquier costumbre tuya; AGENTES.md/AGENTS.md de cada repo manda en lo técnico de ese repo.
 
+## Tarjeta de arranque del agente
+
+> **Misión:** ejecutar el trabajo correcto con evidencia real de GitHub/producción, sin pedirle al dueño que reconstruya el estado y sin inventar readiness.
+
+### Preflight de capacidades
+
+Antes de despachar, confirma que puedes **abrir URLs exactas**, **leer GitHub** y **comentar Issues** mediante el conector autenticado de GitHub o navegación/API equivalente. Si falta cualquiera de esas capacidades, responde una sola línea y detente:
+
+`PARADO: falta acceso a GitHub para abrir URLs exactas, leer estado y comentar Issues.`
+
+No pidas al dueño el estado del repo, no sustituyas una URL exacta por búsqueda general y no entres en un bucle de disculpas/reintentos.
+
+### Fuentes exactas para obtener estado
+
+**Preferida:** conector autenticado de GitHub. Si solo existe acceso HTTP público, usa las rutas canónicas siguientes y conserva sus mayúsculas/minúsculas:
+
+| Repo | Issues abiertos | PRs abiertos |
+| --- | --- | --- |
+| Factory | `https://api.github.com/repos/pl0n3r/Factory/issues?state=open` | `https://api.github.com/repos/pl0n3r/Factory/pulls?state=open` |
+| Condor | `https://api.github.com/repos/pl0n3r/Condor/issues?state=open` | `https://api.github.com/repos/pl0n3r/Condor/pulls?state=open` |
+| GrindFlow | `https://api.github.com/repos/pl0n3r/GrindFlow/issues?state=open` | `https://api.github.com/repos/pl0n3r/GrindFlow/pulls?state=open` |
+| BRVTAL | `https://api.github.com/repos/pl0n3r/brvtal/issues?state=open` | `https://api.github.com/repos/pl0n3r/brvtal/pulls?state=open` |
+| ControlBot | `https://api.github.com/repos/pl0n3r/ControlBot/issues?state=open` | `https://api.github.com/repos/pl0n3r/ControlBot/pulls?state=open` |
+| AutoFactory | `https://api.github.com/repos/pl0n3r/AutoFactory/issues?state=open` | `https://api.github.com/repos/pl0n3r/AutoFactory/pulls?state=open` |
+| FactoryRunner | `https://api.github.com/repos/pl0n3r/FactoryRunner/issues?state=open` | `https://api.github.com/repos/pl0n3r/FactoryRunner/pulls?state=open` |
+
+Para CI usa `https://api.github.com/repos/<owner>/<repo>/actions/runs?per_page=20`; para archivos abre la ruta exacta del repositorio o su equivalente raw/API. HEALTH y smoke se verifican contra el contrato real de cada producto; una etiqueta o un tag nunca sustituyen la observación productiva.
+
+La API REST pública **sin autenticar** tiene un límite primario de **60 solicitudes por hora por IP**. Con varios agentes, usa el conector autenticado para evitar compartir ese presupuesto público y reducir carreras.
+
+### Árbol de despacho vigente
+
+No redefine prioridades: aplica la sección 0 y la evidencia viva, en este orden resumido:
+
+`HEALTH degradado → incidente → reparación activa → decisión del dueño ya resuelta → gate de tanda → crítica → alta → media → desempate de regla 7`.
+
+Si no existe trabajo `ready`, aplica la **escalera no ociosa ya integrada por Factory#699/#702** en la sección 0; no conviertas un bloqueo en ejecutable ni inventes un backlog paralelo.
+
+**Firma de ciclo:** `Despacho (<id>)`. Usa un identificador trazable del frente/ciclo; el primer comentario del Issue conserva el formato canónico de la sección 0.
+
+### Prohibiciones esenciales
+
+- No inventar estado, HEALTH, checks, reservas, decisiones ni producción.
+- No escribir en una línea con reserva ajena ni saltar claims/dependencias.
+- No tratar `available` como autoridad para saltar tandas, puertas humanas o go-live.
+- No gastar, publicar/live, usar datos reales ni tomar decisiones reservadas al dueño.
+- No hacer polling de CI; una lectura terminal al final del cambio.
+- Tras cerrar/liberar un frente, volver a ejecutar el árbol de despacho.
+
+---
+
 ## 0. Dónde trabajar: modo dirigido o modo despachador
 
 **Modo dirigido:** si el prompt del dueño nombra un repositorio ("trabaja en pl0n3r/Condor"), trabajas **solo ahí** hasta terminar o detenerte. No saltas a otro proyecto.
