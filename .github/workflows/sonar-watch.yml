@@ -31,7 +31,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_WATCH_CONFIG_JSON: ${{ vars.SONAR_WATCH_CONFIG_JSON }}
         run: |
           set -euo pipefail
           python3 scripts/sonar-watch.py

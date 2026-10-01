@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from quality.contract import QualityContractError, validate_quality_contract
 from quality.sonar import factory_project_catalog, normalize_sonar_snapshot
 from quality.status import derive_quality_health
 
@@ -34,6 +35,27 @@ _SONAR_KEY = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
 _ORIGIN_URL = re.compile(
     r"^https://sonarcloud\.io/project/overview\?id=[A-Za-z0-9_.:-]{1,160}$"
 )
+CONFIG_PATH = ROOT / "quality/sonar-watch-config.json"
+_FACTORY_REPOS = {
+    "brvtal": "pl0n3r/brvtal",
+    "condor": "pl0n3r/Condor",
+    "controlbot": "pl0n3r/ControlBot",
+    "factory": "pl0n3r/Factory",
+    "factoryrunner": "pl0n3r/FactoryRunner",
+    "grindflow": "pl0n3r/GrindFlow",
+}
+_FACTORY_SONAR_KEYS = {
+    "brvtal": "pl0n3r_brvtal",
+    "condor": "pl0n3r_Condor",
+    "controlbot": "pl0n3r_factory-control",
+    "factory": "pl0n3r_factory",
+    "factoryrunner": "pl0n3r_FactoryRunner",
+    "grindflow": "pl0n3r_GrindFlow",
+}
+_CONFIG_FIELDS = {"version", "provenance", "projects"}
+_PROVENANCE_FIELDS = {"issue", "observed_at", "policy"}
+_PROJECT_CONFIG_FIELDS = {"project", "sonar_key", "github_repo", "contract"}
+_ALLOWED_AUTOSCAN_VALUES = {"true": "automatic", "false": "ci"}
 
 
 class SonarWatchError(ValueError):
@@ -163,10 +185,12 @@ def sync_project(
 
 
 class HttpJson:
-    def __init__(self, *, token: str, base_url: str):
-        self.token, self.base_url = token, base_url.rstrip("/")
+    def __init__(self, *, token: str, base_url: str, read_only: bool = False):
+        self.token, self.base_url, self.read_only = token, base_url.rstrip("/"), read_only
 
     def request(self, path: str, *, method: str = "GET", payload: Any = None) -> Any:
+        if self.read_only and method != "GET":
+            raise SonarWatchError("Sonar Watch solo permite GET contra Sonar.")
         headers = {"Accept": "application/json", "User-Agent": "factory-sonar-watch/1"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -227,10 +251,72 @@ class GitHubIssues:
 
 class SonarApi:
     def __init__(self, *, token: str):
-        self.http = HttpJson(token=token, base_url="https://sonarcloud.io")
+        self.token = token
+        self.http = HttpJson(
+            token=token,
+            base_url="https://sonarcloud.io",
+            read_only=True,
+        )
 
     def get(self, path: str, params: dict[str, Any]):
-        return self.http.request(path + "?" + urlencode(params))
+        return self.http.request(
+            path + "?" + urlencode(params),
+            method="GET",
+        )
+
+    def preflight_visibility(self, projects: list[dict[str, Any]]) -> dict[str, str]:
+        expected: dict[str, str] = {}
+        for cfg in projects:
+            contract = cfg.get("contract")
+            sonar = contract.get("sonar") if isinstance(contract, dict) else None
+            visibility = (
+                sonar.get("expected_visibility")
+                if isinstance(sonar, dict)
+                else None
+            )
+            if visibility not in {"public", "private"}:
+                raise SonarWatchError(
+                    "expected_visibility Sonar ausente o ambiguo."
+                )
+            expected[cfg["project"]] = visibility
+
+        if any(value == "private" for value in expected.values()) and not self.token:
+            raise SonarWatchError(
+                "contrato Sonar privado sin SONAR_TOKEN; "
+                "se aborta antes de cualquier request Sonar."
+            )
+
+        observed: dict[str, str] = {}
+        for cfg in projects:
+            component = self.get(
+                "/api/components/show",
+                {"component": cfg["sonar_key"]},
+            )
+            row = component.get("component")
+            if not isinstance(row, dict):
+                raise SonarWatchError("components/show devolvió shape inválido.")
+            visibility = row.get("visibility")
+            if visibility not in {"public", "private"}:
+                raise SonarWatchError("visibilidad Sonar ausente o ambigua.")
+            observed[cfg["project"]] = visibility
+        return observed
+
+    @staticmethod
+    def analysis_method_from_settings(payload: Any) -> str:
+        settings = payload.get("settings") if isinstance(payload, dict) else None
+        if not isinstance(settings, list) or len(settings) != 1:
+            raise SonarWatchError(
+                "sonar.autoscan.enabled debe devolver exactamente un setting."
+            )
+        row = settings[0]
+        if not isinstance(row, dict) or row.get("key") != "sonar.autoscan.enabled":
+            raise SonarWatchError("setting sonar.autoscan.enabled inválido.")
+        value = row.get("value")
+        if not isinstance(value, str) or value not in _ALLOWED_AUTOSCAN_VALUES:
+            raise SonarWatchError(
+                "sonar.autoscan.enabled debe ser exactamente true o false."
+            )
+        return _ALLOWED_AUTOSCAN_VALUES[value]
 
     def _paged(self, path, *, key_name, key, result_name, extra=None):
         rows, page, total = [], 1, None
@@ -270,21 +356,36 @@ class SonarApi:
             result_name="hotspots", extra={"status": "TO_REVIEW"},
         )}
 
-    def snapshot(self, cfg: dict[str, Any], *, observed_at: str):
+    def snapshot(
+        self,
+        cfg: dict[str, Any],
+        *,
+        observed_at: str,
+        component: dict[str, Any] | None = None,
+    ):
         key = cfg["sonar_key"]
+        component = component or self.get(
+            "/api/components/show",
+            {"component": key},
+        )
         qg = self.get("/api/qualitygates/project_status", {"projectKey": key})
         analyses = self.get("/api/project_analyses/search", {"project": key, "ps": 1})
         ce = self.get("/api/ce/component", {"component": key})
-        measures = self.get("/api/measures/component", {"component": key, "metricKeys": "coverage,ncloc"})
-        autoscan = self.get("/api/autoscan/activation", {"projectKey": key})
-        component = self.get("/api/components/show", {"component": key})
+        measures = self.get(
+            "/api/measures/component",
+            {"component": key, "metricKeys": "coverage,ncloc"},
+        )
+        settings = self.get(
+            "/api/settings/values",
+            {"component": key, "keys": "sonar.autoscan.enabled"},
+        )
         return _snapshot_from_api(
-            cfg["project"], observed_at, qg, analyses, ce, measures, autoscan,
+            cfg["project"], observed_at, qg, analyses, ce, measures, settings,
             component, self._all_issues(key), self._all_hotspots(key),
         )
 
 
-def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, autoscan, component, issues, hotspots):
+def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, settings, component, issues, hotspots):
     status = qg.get("projectStatus", {})
     conditions = [{
         "metric": row.get("metricKey"), "status": row.get("status"),
@@ -318,12 +419,13 @@ def _snapshot_from_api(project, observed_at, qg, analyses, ce, measures, autosca
             "evidence_ref": f"sonar:{project}:hotspot:{row['key']}",
         })
     current = ce.get("current")
+    method = None if not analysis_rows else SonarApi.analysis_method_from_settings(settings)
     return {
         "project": project, "snapshot_at": observed_at,
         "quality_gate": {"status": status.get("status"), "conditions": conditions},
         "analysis": None if not analysis_rows else {
             "analyzed_at": analysis_rows[0].get("date"),
-            "method": "automatic" if autoscan.get("enable") is True else "ci",
+            "method": method,
             "coverage_available": coverage,
         },
         "ce_task": None if not current else {
@@ -344,32 +446,78 @@ def _compact_time(value: str) -> str:
     return parsed.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def load_runtime_config(path: Path = CONFIG_PATH) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SonarWatchError("configuración Sonar versionada ilegible o inválida.") from exc
+    if not isinstance(payload, dict) or set(payload) != _CONFIG_FIELDS or payload.get("version") != 1:
+        raise SonarWatchError("configuración Sonar versionada fuera de contrato.")
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict) or set(provenance) != _PROVENANCE_FIELDS:
+        raise SonarWatchError("provenance Sonar inválida.")
+    for field in _PROVENANCE_FIELDS:
+        if not isinstance(provenance[field], str) or not provenance[field].strip():
+            raise SonarWatchError("provenance Sonar incompleta.")
+    projects = payload.get("projects")
+    expected = set(factory_project_catalog())
+    if not isinstance(projects, list) or len(projects) != len(expected):
+        raise SonarWatchError("config debe cubrir exactamente los seis proyectos Factory.")
+    seen: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for cfg in projects:
+        if not isinstance(cfg, dict) or set(cfg) != _PROJECT_CONFIG_FIELDS:
+            raise SonarWatchError("config de proyecto incompleta.")
+        project = cfg["project"]
+        if project not in expected or project in seen:
+            raise SonarWatchError("config contiene proyecto duplicado o fuera del catálogo.")
+        seen.add(project)
+        if cfg["github_repo"] != _FACTORY_REPOS[project]:
+            raise SonarWatchError("github_repo no coincide con el catálogo Factory.")
+        if (
+            not isinstance(cfg["sonar_key"], str)
+            or cfg["sonar_key"] != _FACTORY_SONAR_KEYS[project]
+            or not _SONAR_KEY.fullmatch(cfg["sonar_key"])
+        ):
+            raise SonarWatchError("sonar_key no coincide con el catálogo Factory.")
+        try:
+            contract = validate_quality_contract(cfg["contract"])
+        except QualityContractError as exc:
+            raise SonarWatchError("Quality Contract Sonar inválido.") from exc
+        if contract["project"] != project or "sonar" not in contract:
+            raise SonarWatchError("Quality Contract no corresponde al proyecto o carece de Sonar.")
+        normalized.append({
+            "project": project,
+            "sonar_key": cfg["sonar_key"],
+            "github_repo": cfg["github_repo"],
+            "contract": contract,
+        })
+    if seen != expected or len({cfg["sonar_key"] for cfg in normalized}) != len(normalized):
+        raise SonarWatchError("config Sonar no cubre el catálogo de forma única.")
+    return normalized
+
+
 def run_live() -> int:
     token, gh_token = os.getenv("SONAR_TOKEN", ""), os.getenv("GH_TOKEN", "")
-    repository, raw = os.getenv("GITHUB_REPOSITORY", ""), os.getenv("SONAR_WATCH_CONFIG_JSON", "")
-    if not token or not gh_token or not repository or not raw:
+    repository = os.getenv("GITHUB_REPOSITORY", "")
+    if not gh_token or not repository:
         raise SonarWatchError("configuración runtime incompleta.")
-    try:
-        projects = json.loads(raw).get("projects")
-    except (json.JSONDecodeError, AttributeError) as exc:
-        raise SonarWatchError("SONAR_WATCH_CONFIG_JSON inválido.") from exc
-    expected = set(factory_project_catalog())
-    if (
-        not isinstance(projects, list) or len(projects) != len(expected)
-        or {row.get("project") for row in projects if isinstance(row, dict)} != expected
-    ):
-        raise SonarWatchError("config debe cubrir exactamente los seis proyectos Factory.")
+    projects = load_runtime_config()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    sonar, github, operations = SonarApi(token=token), GitHubIssues(repository=repository, token=gh_token), []
+    sonar = SonarApi(token=token)
+    components = sonar.preflight_visibility(projects)
+    github = GitHubIssues(repository=repository, token=gh_token)
+    operations = []
     for cfg in projects:
-        if not isinstance(cfg, dict) or not all(
-            isinstance(cfg.get(key), expected_type)
-            for key, expected_type in (("contract", dict), ("github_repo", str), ("sonar_key", str))
-        ):
-            raise SonarWatchError("config de proyecto incompleta.")
         operations += sync_project(
-            contract=cfg["contract"], snapshot=sonar.snapshot(cfg, observed_at=now),
-            observed_at=now, project_ref=cfg["github_repo"],
+            contract=cfg["contract"],
+            snapshot=sonar.snapshot(
+                cfg,
+                observed_at=now,
+                component={"component": {"visibility": components[cfg["project"]]}},
+            ),
+            observed_at=now,
+            project_ref=cfg["github_repo"],
             origin_ref=f"sonar:{cfg['project']}",
             origin_url=_origin_url(cfg["sonar_key"]),
             issues=github,
