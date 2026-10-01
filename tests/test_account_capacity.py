@@ -101,8 +101,9 @@ class AccountCapacityTests(unittest.TestCase):
 
         bad_observation = observation(accepted=2, observed_at=900)
         bad_observation["chat_id"] = "conversation-123"
+        bad_observation_request = request([bad_observation])
         with self.assertRaisesRegex(AccountCapacityError, "esquema cerrado"):
-            estimate_account_capacity(request([bad_observation]), now=1000)
+            estimate_account_capacity(bad_observation_request, now=1000)
 
         wrong_version = request([])
         wrong_version["version"] = 2
