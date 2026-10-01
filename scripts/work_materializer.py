@@ -97,6 +97,11 @@ def validate_materialization_candidate(payload: Any) -> dict[str, Any]:
     leaf_key = _text(payload["leaf_key"], "leaf_key")
     if _LEAF_KEY.fullmatch(leaf_key) is None:
         raise WorkMaterializerError("leaf_key debe usar Repo#N canónico.")
+    repository_name = repository_ref.split("/", 1)[1]
+    if leaf_key.split("#", 1)[0] != repository_name:
+        raise WorkMaterializerError(
+            "leaf_key no pertenece al repository_ref declarado."
+        )
     priority = _text(payload["priority"], "priority")
     if priority not in PRIORITY_ORDER:
         raise WorkMaterializerError("priority fuera del catálogo.")

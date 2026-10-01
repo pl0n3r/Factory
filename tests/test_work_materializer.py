@@ -88,6 +88,10 @@ class WorkMaterializerTests(unittest.TestCase):
         invalid_acceptance["acceptance_body"] = "sin contrato ejecutable"
         with self.assertRaises(WorkMaterializerError):
             validate_materialization_candidate(invalid_acceptance)
+        mismatched_repository = copy.deepcopy(valid)
+        mismatched_repository["leaf_key"] = "AutoFactory#707"
+        with self.assertRaises(WorkMaterializerError):
+            validate_materialization_candidate(mismatched_repository)
 
     def test_materialization_is_idempotent(self):
         first = candidate()
