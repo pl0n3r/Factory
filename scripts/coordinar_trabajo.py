@@ -689,43 +689,15 @@ def latest_reservation(
     comments: list[dict[str, Any]],
     trusted_login: str = TRUSTED_MARKER_LOGIN,
 ) -> dict[str, Any] | None:
-    """Devuelve el último estado confiable y conserva evidencia v2 de su misma cadena."""
-    trusted: list[dict[str, Any]] = []
+    """Devuelve solo el último marcador publicado por la identidad confiable."""
+    latest: dict[str, Any] | None = None
     for comment in comments:
         user = comment.get("user")
         if not isinstance(user, dict) or user.get("login") != trusted_login:
             continue
         parsed = reservation_from_text(str(comment.get("body") or ""))
         if parsed is not None:
-            trusted.append(parsed)
-
-    if not trusted:
-        return None
-
-    latest = dict(trusted[-1])
-    if (
-        latest.get("active") is False
-        and latest.get("reason") in {"pr-merged", "issue-cerrado"}
-        and "acceptance_sha256" not in latest
-    ):
-        identity = (
-            latest.get("reservation_id"),
-            latest.get("branch"),
-            latest.get("owner"),
-        )
-        pins = {
-            candidate["acceptance_sha256"]
-            for candidate in trusted[:-1]
-            if (
-                candidate.get("reservation_id"),
-                candidate.get("branch"),
-                candidate.get("owner"),
-            ) == identity
-            and isinstance(candidate.get("acceptance_sha256"), str)
-        }
-        if len(pins) == 1:
-            latest["acceptance_sha256"] = pins.pop()
-
+            latest = parsed
     return latest
 
 
@@ -2044,6 +2016,12 @@ def close_pr_reservation(
     merged = bool(pull.get("merged"))
 
     if current:
+        acceptance = (
+            current.get("acceptance_sha256")
+            if merged and isinstance(current.get("acceptance_sha256"), str)
+            else None
+        )
+        snapshot = reservation_task_snapshot(current) if merged else None
         api.comment(
             issue_number,
             reservation_marker(
@@ -2052,6 +2030,8 @@ def close_pr_reservation(
                 branch,
                 False,
                 "pr-merged" if merged else "pr-cerrado-sin-merge",
+                acceptance,
+                task_snapshot=snapshot,
             ),
         )
         api.try_unassign(issue_number, str(current["owner"]))
@@ -2061,7 +2041,6 @@ def close_pr_reservation(
         api.set_status(issue_number, STATUS_COMPLETED)
     elif STATUS_BLOCKED not in label_names(issue):
         api.set_status(issue_number, STATUS_AVAILABLE)
-
 
 def update_pr_state(api: GitHub, pr_number: int, action: str) -> None:
     """Sincroniza labels y reserva con eventos de un PR del mismo repositorio."""

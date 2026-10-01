@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regresiones para preservar el pin v2 tras cerrar una reserva."""
+"""Regresiones del pin de aceptación al cerrar reservas de PR."""
 
 from __future__ import annotations
 
@@ -12,101 +12,119 @@ OWNER = "pl0n3r"
 BRANCH = "trabajo/issue-655"
 RID = "72210439-1337-4656-99cf-51b465d1c45d"
 PIN = "d" * 64
+TASK_PIN = "e" * 64
 
 
-def trusted(body: str) -> dict:
-    return {"user": {"login": coordinator.TRUSTED_MARKER_LOGIN}, "body": body}
+class FakeApi:
+    def __init__(self) -> None:
+        self.comments: list[dict] = []
+        self.statuses: list[str] = []
+
+    def comment(self, _issue_number: int, body: str) -> None:
+        self.comments.append({
+            "user": {"login": coordinator.TRUSTED_MARKER_LOGIN},
+            "body": body,
+        })
+
+    def issue_comments(self, _issue_number: int) -> list[dict]:
+        return list(self.comments)
+
+    def delete_branch(self, _branch: str) -> None:
+        pass
+
+    def try_unassign(self, _issue_number: int, _owner: str) -> None:
+        pass
+
+    def issue(self, _issue_number: int) -> dict:
+        return {"state": "open", "labels": []}
+
+    def set_status(self, _issue_number: int, status: str) -> None:
+        self.statuses.append(status)
 
 
-def marker(
-    *,
-    owner: str = OWNER,
-    reservation_id: str = RID,
-    branch: str = BRANCH,
-    active: bool,
-    reason: str,
-    pin: str | None = None,
-) -> dict:
-    return trusted(
-        coordinator.reservation_marker(
-            owner,
-            reservation_id,
-            branch,
-            active,
-            reason,
-            pin,
-        )
-    )
+def current_v2() -> dict:
+    return {
+        "version": 2,
+        "owner": OWNER,
+        "reservation_id": RID,
+        "branch": BRANCH,
+        "active": True,
+        "reason": "tomar",
+        "acceptance_sha256": PIN,
+    }
 
 
-class _CommentsApi:
-    def __init__(self, comments):
-        self.comments = comments
-
-    def issue_comments(self, _issue_number):
-        return self.comments
+def current_v3() -> dict:
+    value = current_v2()
+    value.update({
+        "version": 3,
+        "task_marker_sha256": TASK_PIN,
+        "task_paths": ["scripts/coordinar_trabajo.py"],
+        "task_depends_on": [],
+    })
+    return value
 
 
 class AcceptancePinHistoryTests(unittest.TestCase):
-    def test_inactive_pr_merged_preserves_same_chain_v2_pin(self) -> None:
-        comments = [
-            marker(active=True, reason="tomar", pin=PIN),
-            marker(active=False, reason="pr-merged"),
-        ]
-        latest = coordinator.latest_reservation(comments)
+    def _close(self, current: dict, *, merged: bool) -> tuple[FakeApi, dict]:
+        api = FakeApi()
+        coordinator.close_pr_reservation(
+            api,
+            655,
+            BRANCH,
+            {"merged": merged},
+            current,
+        )
+        latest = coordinator.latest_reservation(api.comments)
         self.assertIsNotNone(latest)
+        return api, latest
+
+    def test_merged_v2_terminal_preserves_acceptance_pin(self) -> None:
+        _api, latest = self._close(current_v2(), merged=True)
+        self.assertEqual(latest["version"], 2)
         self.assertFalse(latest["active"])
         self.assertEqual(latest["reason"], "pr-merged")
         self.assertEqual(latest["acceptance_sha256"], PIN)
+        self.assertEqual(latest["reservation_id"], RID)
+        self.assertEqual(latest["branch"], BRANCH)
+        self.assertEqual(latest["owner"], OWNER)
 
-        for path in (
-            ".github/workflows/factory-ci.yml",
-            ".github/workflows/aceptacion.yml",
-        ):
-            text = open(path, encoding="utf-8").read()
-            self.assertIn("latest_reservation", text)
-            self.assertIn('reservation.get("acceptance_sha256")', text)
-
-    def test_closed_chain_does_not_reactivate_lease(self) -> None:
-        comments = [
-            marker(active=True, reason="tomar", pin=PIN),
-            marker(active=False, reason="pr-merged"),
-        ]
-        latest = coordinator.latest_reservation(comments)
+    def test_merged_terminal_remains_inactive(self) -> None:
+        api, latest = self._close(current_v2(), merged=True)
         self.assertFalse(latest["active"])
-        self.assertIsNone(coordinator.active_reservation(_CommentsApi(comments), 655))
+        self.assertIsNone(coordinator.active_reservation(api, 655))
 
-    def test_cross_chain_pin_is_rejected(self) -> None:
-        other_rid = "11111111-1111-4111-8111-111111111111"
-        cases = [
-            [marker(active=True, reason="tomar", pin=PIN, reservation_id=other_rid),
-             marker(active=False, reason="pr-merged")],
-            [marker(active=True, reason="tomar", pin=PIN, branch="trabajo/issue-999"),
-             marker(active=False, reason="pr-merged")],
-            [marker(active=True, reason="tomar", pin=PIN, owner="otro"),
-             marker(active=False, reason="pr-merged")],
-        ]
-        for comments in cases:
-            with self.subTest(comments=comments):
-                latest = coordinator.latest_reservation(comments)
-                self.assertNotIn("acceptance_sha256", latest)
+    def test_merged_v3_terminal_preserves_task_snapshot(self) -> None:
+        _api, latest = self._close(current_v3(), merged=True)
+        self.assertEqual(latest["version"], 3)
+        self.assertEqual(latest["acceptance_sha256"], PIN)
+        self.assertEqual(latest["task_marker_sha256"], TASK_PIN)
+        self.assertEqual(
+            latest["task_paths"],
+            ["scripts/coordinar_trabajo.py"],
+        )
+        self.assertEqual(latest["task_depends_on"], [])
 
-    def test_missing_v2_pin_fails_closed(self) -> None:
-        comments = [
-            marker(active=True, reason="tomar"),
-            marker(active=False, reason="pr-merged"),
-        ]
-        latest = coordinator.latest_reservation(comments)
+    def test_legacy_terminal_remains_unpinned(self) -> None:
+        legacy = {
+            "version": 1,
+            "owner": OWNER,
+            "reservation_id": RID,
+            "branch": BRANCH,
+            "active": True,
+            "reason": "tomar",
+        }
+        _api, latest = self._close(legacy, merged=True)
+        self.assertEqual(latest["version"], 1)
         self.assertNotIn("acceptance_sha256", latest)
 
-        released = [
-            marker(active=True, reason="tomar", pin=PIN),
-            marker(active=False, reason="liberar"),
-        ]
-        self.assertNotIn(
-            "acceptance_sha256",
-            coordinator.latest_reservation(released),
-        )
+    def test_unmerged_close_does_not_preserve_pin(self) -> None:
+        _api, latest = self._close(current_v3(), merged=False)
+        self.assertEqual(latest["version"], 1)
+        self.assertFalse(latest["active"])
+        self.assertEqual(latest["reason"], "pr-cerrado-sin-merge")
+        self.assertNotIn("acceptance_sha256", latest)
+        self.assertNotIn("task_marker_sha256", latest)
 
 
 if __name__ == "__main__":
