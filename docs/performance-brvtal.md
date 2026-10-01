@@ -17,7 +17,7 @@ La baseline bootstrap es la **mediana por superficie y métrica** de esas tres m
 - mobile: FCP 380 ms, LCP 1624 ms, CLS 0;
 - desktop: FCP 456 ms, LCP 1772 ms, CLS 0.005.
 
-El contrato usa `observed_at=2026-10-01T11:47:55Z`, cierre del attempt 2 más reciente, como timestamp de materialización de esa baseline derivada. La provenance canónica apunta a Factory #304; esta página conserva los runs/attempts que permiten reproducir la derivación.
+El artifact real `production-performance-36853443439` (id `11160130127`) registra el attempt 2 con timestamps verificables: las observaciones mobile usan `2026-10-01T11:47:44Z`; las observaciones desktop usan `2026-10-01T11:47:49Z`; el envelope normalizado también usa `2026-10-01T11:47:49Z`. Como Performance Contract v1 necesita un único `observed_at` por baseline/evidence derivada, el contrato usa el timestamp verificable del envelope, `2026-10-01T11:47:49Z`. La provenance canónica apunta a Factory #304; esta página conserva los runs/attempts y timestamps por superficie que permiten reproducir la derivación.
 
 ## Budgets web explícitos
 
