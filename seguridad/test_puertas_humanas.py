@@ -15,6 +15,7 @@ from puertas_humanas import (
     MAX_EVENT_CHARS,
     classify_body,
     classify_event_text,
+    gate_authority_contract,
     gate_identity,
     gate_identity_from_body,
     validate_gate,
@@ -144,6 +145,63 @@ def release_gate_body(
             f"Autorizar Factory v{version} exclusivamente para main@{sha}. "
             f"{suffix}"
         ),
+    )
+    return body(value)
+
+
+def rich_release_gate_body(
+    *,
+    version="1.0.17",
+    sha="65b649773f53c80880c10f166bdf0928d34f308e",
+    publish_label="Publicar Factory 1.0.17",
+    publish_effect="Ejecutar el release protegido.",
+    hold_label="No publicar todavía",
+    hold_effect="Mantener Factory@v1 sin cambios.",
+    safe_default="B",
+    publish_reversible=True,
+    extra_option=False,
+):
+    options = [
+        {
+            "id": "A",
+            "label": publish_label,
+            "effect": publish_effect,
+            "pros": ["Publicación controlada"],
+            "cons": ["Cambia el canal estable"],
+            "risk": "low",
+            "cost": "",
+            "reversible": publish_reversible,
+        },
+        {
+            "id": "B",
+            "label": hold_label,
+            "effect": hold_effect,
+            "pros": ["No cambia el canal estable"],
+            "cons": ["Demora la publicación"],
+            "risk": "low",
+            "cost": "",
+            "reversible": True,
+        },
+    ]
+    if extra_option:
+        options.append({
+            "id": "C",
+            "label": "Publicar en otro canal",
+            "effect": "Usar un canal distinto de v1.",
+            "pros": ["Aísla el cambio"],
+            "cons": ["Amplía la superficie"],
+            "risk": "medium",
+            "cost": "",
+            "reversible": True,
+        })
+    value = simple_gate(
+        category="factory-release",
+        context=(
+            f"Autorizar Factory v{version} exclusivamente para main@{sha}."
+        ),
+        options=options,
+        recommendation="A",
+        safe_default=safe_default,
     )
     return body(value)
 
@@ -544,6 +602,160 @@ class GateTests(unittest.TestCase):
 
 
 class GateDedupTests(unittest.TestCase):
+    def test_factory_release_authority_ignores_explanatory_copy(self):
+        first = rich_release_gate_body(
+            publish_label="Publicar Factory 1.0.17",
+            publish_effect="Ejecutar el release protegido.",
+        )
+        equivalent = rich_release_gate_body(
+            publish_label="Mover Factory@v1 a 1.0.17",
+            publish_effect="Mover v1 y ejecutar el release protegido.",
+            hold_label="Conservar 1.0.16",
+            hold_effect="Mantener el alias estable en 1.0.16.",
+        )
+
+        first_raw = json.loads(
+            first.split("<!-- factory-human-gate ", 1)[1].split(" -->", 1)[0]
+        )
+        equivalent_raw = json.loads(
+            equivalent.split("<!-- factory-human-gate ", 1)[1].split(" -->", 1)[0]
+        )
+        self.assertEqual(
+            gate_authority_contract(first_raw),
+            gate_authority_contract(equivalent_raw),
+        )
+
+        legacy_first = gate(
+            category="factory-release",
+            context="Release legacy sin target exacto",
+            options=[
+                {"id": "A", "label": "Publicar", "effect": "Efecto A"},
+                {"id": "B", "label": "No publicar", "effect": "Efecto B"},
+            ],
+            recommendation="A",
+            safe_default="B",
+        )
+        legacy_changed = json.loads(json.dumps(legacy_first))
+        legacy_changed["options"][0]["effect"] = "Efecto materialmente distinto"
+        self.assertNotEqual(
+            gate_authority_contract(legacy_first),
+            gate_authority_contract(legacy_changed),
+        )
+
+    def test_release_1017_race_converges_without_body_edit(self):
+        api = MultiGateAPI([
+            gate_issue(
+                665,
+                body_value=rich_release_gate_body(
+                    publish_effect="Ejecutar el release protegido.",
+                ),
+            ),
+            gate_issue(
+                666,
+                body_value=rich_release_gate_body(
+                    publish_label="Mover v1 y publicar",
+                    publish_effect="Mover v1 y ejecutar release.",
+                ),
+            ),
+            gate_issue(
+                667,
+                body_value=rich_release_gate_body(
+                    publish_label="Publicar Factory",
+                    publish_effect="Actualizar el canal protegido v1.",
+                ),
+            ),
+        ])
+
+        self.assertFalse(reconcile_gate(api, "pl0n3r/Factory", 667))
+        self.assertEqual(api.open_numbers(), [665])
+        self.assertEqual(api.issues[666]["state_reason"], "duplicate")
+        self.assertEqual(api.issues[667]["state_reason"], "duplicate")
+
+    def test_factory_release_target_remains_part_of_identity(self):
+        current = rich_release_gate_body()
+        other_sha = rich_release_gate_body(
+            sha="7ed31389ca9c7fa706edfcb23af68a20a9824e4b",
+        )
+        other_version = rich_release_gate_body(version="1.0.18")
+
+        api = MultiGateAPI([
+            gate_issue(665, body_value=current),
+            gate_issue(671, body_value=other_sha),
+            gate_issue(672, body_value=other_version),
+        ])
+
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 665))
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 671))
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 672))
+        self.assertEqual(api.open_numbers(), [665, 671, 672])
+
+    def test_factory_release_incompatible_machine_contract_fails_closed(self):
+        variants = (
+            rich_release_gate_body(safe_default="A"),
+            rich_release_gate_body(publish_reversible=False),
+            rich_release_gate_body(extra_option=True),
+        )
+        for incompatible in variants:
+            with self.subTest(incompatible=incompatible):
+                api = MultiGateAPI([
+                    gate_issue(665, body_value=rich_release_gate_body()),
+                    gate_issue(666, body_value=incompatible),
+                ])
+                with self.assertRaises(GateConflictError):
+                    reconcile_gate(api, "pl0n3r/Factory", 665)
+                self.assertEqual(api.open_numbers(), [665, 666])
+                self.assertFalse(any(
+                    method in {"POST", "PATCH", "DELETE"}
+                    for method, _, _ in api.calls
+                ))
+
+        decision_a = (
+            '<!-- factory-human-decision '
+            '{"gate_sha256":"' + ("a" * 64)
+            + '","option":"A","version":2} -->'
+        )
+        decision_b = (
+            '<!-- factory-human-decision '
+            '{"gate_sha256":"' + ("b" * 64)
+            + '","option":"B","version":2} -->'
+        )
+        contradictory = MultiGateAPI(
+            [
+                gate_issue(665, body_value=rich_release_gate_body()),
+                gate_issue(666, body_value=rich_release_gate_body()),
+            ],
+            comments={
+                665: [{
+                    "id": 1,
+                    "body": decision_a,
+                    "user": {"login": BOT, "type": "Bot"},
+                }],
+                666: [{
+                    "id": 2,
+                    "body": decision_b,
+                    "user": {"login": BOT, "type": "Bot"},
+                }],
+            },
+        )
+        with self.assertRaises(GateConflictError):
+            reconcile_gate(contradictory, "pl0n3r/Factory", 665)
+        self.assertEqual(contradictory.open_numbers(), [665, 666])
+        self.assertFalse(any(
+            method in {"POST", "PATCH", "DELETE"}
+            for method, _, _ in contradictory.calls
+        ))
+
+    def test_non_release_authority_still_uses_effect(self):
+        first = simple_gate()
+        changed = simple_gate()
+        changed["options"][0]["label"] = "Retención mínima"
+        changed["options"][0]["effect"] = "El dato se elimina inmediatamente."
+
+        self.assertNotEqual(
+            gate_authority_contract(first),
+            gate_authority_contract(changed),
+        )
+
     def test_equivalent_factory_release_gates_converge_to_oldest_issue(self):
         api = MultiGateAPI([
             gate_issue(575, body_value=release_gate_body(suffix="primera puerta")),
