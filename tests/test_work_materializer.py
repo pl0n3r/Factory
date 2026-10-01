@@ -73,21 +73,17 @@ class WorkMaterializerTests(unittest.TestCase):
         self.assertEqual(normalized["kind"], "executable")
         self.assertEqual(normalized["state"], "available")
         self.assertEqual(len(normalized["acceptance_sha256"]), 64)
-
         blocked_by_dependency = materialize_leaf(valid)
         self.assertFalse(blocked_by_dependency["materialized"])
         self.assertEqual(blocked_by_dependency["reason"], "open_dependencies")
-
         decision = materialize_leaf(valid, completed_dependencies=COMPLETED)
         self.assertTrue(decision["materialized"])
         self.assertEqual(decision["leaf"]["key"], "Factory#707")
         self.assertEqual(decision["leaf"]["source_identity"], valid["identity"])
-
         missing_scope = copy.deepcopy(valid)
         del missing_scope["scope"]
         with self.assertRaises(WorkMaterializerError):
             validate_materialization_candidate(missing_scope)
-
         invalid_acceptance = copy.deepcopy(valid)
         invalid_acceptance["acceptance_body"] = "sin contrato ejecutable"
         with self.assertRaises(WorkMaterializerError):
@@ -98,12 +94,10 @@ class WorkMaterializerTests(unittest.TestCase):
         reordered = copy.deepcopy(first)
         reordered["roles"] = list(reversed(reordered["roles"]))
         reordered["depends_on"] = list(reversed(reordered["depends_on"]))
-
         self.assertEqual(
             materialization_fingerprint(first),
             materialization_fingerprint(reordered),
         )
-
         materialized = materialize_leaf(first, completed_dependencies=COMPLETED)
         self.assertTrue(materialized["materialized"])
         retry = materialize_leaf(
@@ -114,7 +108,6 @@ class WorkMaterializerTests(unittest.TestCase):
         self.assertFalse(retry["materialized"])
         self.assertEqual(retry["reason"], "already_materialized")
         self.assertEqual(retry["fingerprint"], materialized["fingerprint"])
-
         same_identity_other_key = candidate()
         same_identity_other_key["leaf_key"] = "Factory#999"
         duplicate_identity = materialize_leaf(
@@ -124,7 +117,6 @@ class WorkMaterializerTests(unittest.TestCase):
         )
         self.assertFalse(duplicate_identity["materialized"])
         self.assertEqual(duplicate_identity["reason"], "already_materialized")
-
         with self.assertRaises(WorkMaterializerError):
             materialize_leaf(
                 first,
@@ -155,15 +147,12 @@ class WorkMaterializerTests(unittest.TestCase):
                 }
             ],
         }
-
         before = project_inventory(snapshot)
         self.assertEqual(before["state"], "UNMATERIALIZED_WORK")
         self.assertEqual(before["counts"]["unmaterialized"], 1)
-
         result = materialize_leaf(payload, completed_dependencies=COMPLETED)
         self.assertTrue(result["materialized"])
         snapshot["leaves"].append(result["leaf"])
-
         after = project_inventory(snapshot)
         self.assertEqual(after["state"], "READY")
         self.assertEqual(after["next_work"], "Factory#707")
