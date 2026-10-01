@@ -2662,5 +2662,126 @@ class CoordinacionTests(unittest.TestCase):
         self.assertNotIn("task_marker_sha256", marker)
 
 
+class AcceptancePinHistoryTests(unittest.TestCase):
+    """Regresiones del pin de aceptación al cerrar reservas de PR."""
+
+    @staticmethod
+    def _current_v2() -> dict:
+        return {
+            "version": 2,
+            "owner": "pl0n3r",
+            "reservation_id": SESSION_A,
+            "branch": "trabajo/issue-12",
+            "active": True,
+            "reason": "tomar",
+            "acceptance_sha256": contract_fingerprint(VALID_ACCEPTANCE_BODY),
+        }
+
+    @staticmethod
+    def _current_v1() -> dict:
+        return {
+            "version": 1,
+            "owner": "pl0n3r",
+            "reservation_id": SESSION_A,
+            "branch": "trabajo/issue-12",
+            "active": True,
+            "reason": "tomar",
+        }
+
+    def _close(
+        self,
+        current: dict,
+        *,
+        merged: bool,
+    ) -> tuple[FakeGitHub, dict]:
+        api = FakeGitHub()
+        api.branches["trabajo/issue-12"] = "abc123"
+        coordinator.close_pr_reservation(
+            api,
+            12,
+            "trabajo/issue-12",
+            {"merged": merged},
+            current,
+        )
+        latest = latest_reservation(api.issue_comments(12))
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        return api, latest
+
+    def test_inactive_pr_merged_preserves_trusted_v2_acceptance_pin(self) -> None:
+        """AC-01: el terminal fusionado conserva exactamente el pin v2 autenticado."""
+        current = self._current_v2()
+        _api, latest = self._close(current, merged=True)
+
+        self.assertEqual(latest["version"], 2)
+        self.assertFalse(latest["active"])
+        self.assertEqual(latest["reason"], "pr-merged")
+        self.assertEqual(
+            latest["acceptance_sha256"],
+            current["acceptance_sha256"],
+        )
+        self.assertEqual(latest["reservation_id"], SESSION_A)
+        self.assertEqual(latest["branch"], "trabajo/issue-12")
+        self.assertEqual(latest["owner"], "pl0n3r")
+
+    def test_inactive_close_does_not_reactivate_reservation(self) -> None:
+        """AC-02: conservar la evidencia no revive la lease cerrada."""
+        api, latest = self._close(self._current_v2(), merged=True)
+
+        self.assertFalse(latest["active"])
+        self.assertIsNone(active_reservation(api, 12))
+
+    def test_merged_v3_terminal_preserves_task_snapshot(self) -> None:
+        """AC-03: v3 conserva el snapshot fijado junto con el pin autenticado."""
+        current = self._current_v2()
+        current.update(
+            {
+                "version": 3,
+                "task_marker_sha256": "e" * 64,
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+        )
+        _api, latest = self._close(current, merged=True)
+
+        self.assertEqual(latest["version"], 3)
+        self.assertEqual(
+            latest["acceptance_sha256"],
+            current["acceptance_sha256"],
+        )
+        self.assertEqual(latest["task_marker_sha256"], "e" * 64)
+        self.assertEqual(latest["task_paths"], ["scripts/coordinar_trabajo.py"])
+        self.assertEqual(latest["task_depends_on"], [])
+
+    def test_acceptance_pin_fails_closed_without_prior_v2(self) -> None:
+        """AC-04: una reserva legacy fusionada permanece terminal v1 sin pin."""
+        _api, latest = self._close(self._current_v1(), merged=True)
+
+        self.assertEqual(latest["version"], 1)
+        self.assertFalse(latest["active"])
+        self.assertNotIn("acceptance_sha256", latest)
+
+    def test_unmerged_close_does_not_preserve_acceptance_or_task_pin(self) -> None:
+        """AC-05: cerrar sin merge no conserva pin de aceptación ni snapshot."""
+        current = self._current_v2()
+        current.update(
+            {
+                "version": 3,
+                "task_marker_sha256": "e" * 64,
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+        )
+        _api, latest = self._close(current, merged=False)
+
+        self.assertEqual(latest["version"], 1)
+        self.assertFalse(latest["active"])
+        self.assertEqual(latest["reason"], "pr-cerrado-sin-merge")
+        self.assertNotIn("acceptance_sha256", latest)
+        self.assertNotIn("task_marker_sha256", latest)
+        self.assertNotIn("task_paths", latest)
+        self.assertNotIn("task_depends_on", latest)
+
+
 if __name__ == "__main__":
     unittest.main()
