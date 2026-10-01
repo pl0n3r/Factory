@@ -3,24 +3,15 @@
 
 from __future__ import annotations
 
-import io
 import json
 import unittest
 from pathlib import Path
-
-from tests.test_coordinar_trabajo import CoordinacionTests
 
 
 class ReleaseCandidate1016Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
-
-    def _run_coordination_regressions(self, *names: str) -> None:
-        suite = unittest.TestSuite(CoordinacionTests(name) for name in names)
-        stream = io.StringIO()
-        result = unittest.TextTestRunner(stream=stream, verbosity=0).run(suite)
-        self.assertTrue(result.wasSuccessful(), stream.getvalue())
 
     def test_candidate_version_is_1_0_16(self) -> None:
         payload = json.loads(
@@ -32,6 +23,10 @@ class ReleaseCandidate1016Tests(unittest.TestCase):
         implementation = (
             self.root / "scripts/coordinar_trabajo.py"
         ).read_text(encoding="utf-8")
+        regressions = (
+            self.root / "tests/test_coordinar_trabajo.py"
+        ).read_text(encoding="utf-8")
+
         for token in (
             "recovery_required = STATUS_RECOVERY in label_names(issue)",
             "lock_branch = recovery_lock_branch(issue_number)",
@@ -40,15 +35,31 @@ class ReleaseCandidate1016Tests(unittest.TestCase):
         ):
             self.assertIn(token, implementation)
 
-        self._run_coordination_regressions(
+        for test_name in (
             "test_recovery_required_can_be_reclaimed_after_recent_branch_activity",
             "test_recovery_required_reuses_existing_branch_and_pr",
+        ):
+            self.assertIn(f"def {test_name}(", regressions)
+
+        self.assertIn(
+            "reservation_from_pr_body(api.pulls[15][\"body\"])", regressions
         )
 
     def test_candidate_preserves_fresh_lease_fail_closed(self) -> None:
-        self._run_coordination_regressions(
-            "test_fresh_reservation_cannot_be_recovered",
+        regressions = (
+            self.root / "tests/test_coordinar_trabajo.py"
+        ).read_text(encoding="utf-8")
+        start = regressions.index(
+            "def test_fresh_reservation_cannot_be_recovered"
         )
+        end = regressions.index(
+            "def test_recovery_required_can_be_reclaimed_after_recent_branch_activity",
+            start,
+        )
+        block = regressions[start:end]
+        self.assertIn('reserve_work(api, 12, "otra-sesion", "MEMBER")', block)
+        self.assertIn("self.assertIsNone(result)", block)
+        self.assertIn('reservation["reservation_id"], SESSION_A', block)
 
     def test_candidate_keeps_human_release_boundary(self) -> None:
         workflow = (
