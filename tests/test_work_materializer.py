@@ -1,6 +1,7 @@
 import copy
 import json
 import unittest
+
 from scripts.work_inventory import project_inventory
 from scripts.work_materializer import (
     WorkMaterializerError,
@@ -30,16 +31,12 @@ def acceptance_body() -> str:
     )
     return f"""### Contexto
 Trabajo narrativo detectado por inventario.
-
 ### Alcance
 Materializar un leaf puro y verificable.
-
 ### Fuera de alcance
 No publicar en GitHub.
-
 ### Criterios de aceptación
 - [ ] [AC-01] El contrato ejecutable es válido.
-
 ### Contrato ejecutable
 <!-- factory-acceptance {marker} -->
 """
@@ -91,7 +88,8 @@ class WorkMaterializerTests(unittest.TestCase):
         with self.assertRaises(WorkMaterializerError):
             validate_materialization_candidate(mismatched_repository)
         for field, value in (("priority", "urgent"), ("state", "reserved"), ("kind", "unknown")):
-            invalid = copy.deepcopy(valid); invalid[field] = value
+            invalid = copy.deepcopy(valid)
+            invalid[field] = value
             with self.assertRaises(WorkMaterializerError):
                 validate_materialization_candidate(invalid)
 
