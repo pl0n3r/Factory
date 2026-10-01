@@ -37,8 +37,9 @@ Que el ranking normal no encuentre candidato **no significa que el agente quede 
 1. reconciliar bloqueos cuya condición declarada ya esté satisfecha con evidencia verificable; el desbloqueo debe ser idempotente y citar la evidencia;
 2. tomar trabajo de calidad/seguridad/hardening/deuda/rendimiento ya materializado y seguro;
 3. tomar relleno curado, reversible y de bajo riesgo, sin gasto ni ampliación de autoridad;
-4. proponer un único tramo `product-direction` cuando corresponda, incluidos los casos de cola totalmente bloqueada en cualquiera de los siete repos;
-5. si no existe ninguna acción segura, publicar el motivo concreto y qué evidencia/decisión falta. La parada silenciosa queda prohibida.
+4. consultar el inventario canónico de Issues leaf + roadmaps/EPICs y distinguir `READY | ALL_BLOCKED | UNMATERIALIZED_WORK | WAITING_DECISION | LIVE_GATED | NO_WORK`; trabajo narrativo ejecutable se materializa como leaf validado y deduplicado antes de declarar vacío;
+5. proponer un único tramo `product-direction` cuando corresponda, incluidos los casos de cola totalmente bloqueada en cualquiera de los siete repos;
+6. si no existe ninguna acción segura, publicar el motivo concreto y qué evidencia/decisión falta. La parada silenciosa queda prohibida.
 
 El dispatcher conserva `select_next` como ranking fail-closed y usa la escalera como envolvente: un fallback nunca convierte un candidato bloqueado en ejecutable ni preempte trabajo normal. El tiempo entre fin de trabajo y siguiente `Despacho:` se mide por agente/repo; superar el umbral operativo degrada Quality Health hasta que exista un siguiente despacho.
 

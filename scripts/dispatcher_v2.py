@@ -12,6 +12,7 @@ from scripts.adaptive_fencing import FencingDecision
 from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET, parse_contract
 from scripts.presence_contract import PresenceAssessment
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
+from scripts.work_inventory import PROJECT_STATES
 from seguridad.puertas_humanas import validate_gate
 
 AUTHORITY_ORDER = {
@@ -662,6 +663,7 @@ def work_ladder(
     active_tranche: int | None = None,
     active_filler_count: int = 0,
     max_filler_parallel: int = 1,
+    inventory_state: str | None = None,
     no_safe_work_reason: str = (
         "No hay trabajo seguro listo; se requiere nueva evidencia, "
         "desbloqueo o dirección explícita."
@@ -713,6 +715,18 @@ def work_ladder(
                 "selected_class": authority_class(selected),
             }
 
+    if inventory_state is not None:
+        if inventory_state not in PROJECT_STATES:
+            raise ValueError("inventory_state is not canonical")
+        if inventory_state == "READY":
+            raise ValueError("READY inventory requires a dispatchable or active candidate")
+        if inventory_state in {"UNMATERIALIZED_WORK", "WAITING_DECISION", "LIVE_GATED"}:
+            return {
+                "step": "materialize_inventory" if inventory_state == "UNMATERIALIZED_WORK" else "inventory_state",
+                "work": {"kind": "inventory", "key": f"inventory:{inventory_state.lower()}"},
+                "reason": inventory_state,
+            }
+
     gate_keys = tuple(existing_gate_keys)
     proposal_hashes = tuple(known_proposal_sha256s)
     for proposal in sorted(
@@ -735,6 +749,13 @@ def work_ladder(
                 },
                 "trigger": trigger,
             }
+
+    if inventory_state in {"ALL_BLOCKED", "NO_WORK"}:
+        return {
+            "step": "inventory_state",
+            "work": {"kind": "inventory", "key": f"inventory:{inventory_state.lower()}"},
+            "reason": inventory_state,
+        }
 
     reason = no_safe_work_reason.strip()
     if not reason:

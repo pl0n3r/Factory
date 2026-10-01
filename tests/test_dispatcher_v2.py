@@ -510,6 +510,18 @@ class DispatcherV2Tests(unittest.TestCase):
                 Candidate(key="same", priority="medium"),
             ])
 
+    def test_dispatch_distinguishes_blocked_unmaterialized_and_no_work(self):
+        blocked = work_ladder([], inventory_state="ALL_BLOCKED")
+        hidden = work_ladder([], inventory_state="UNMATERIALIZED_WORK")
+        empty = work_ladder([], inventory_state="NO_WORK")
+
+        self.assertEqual(blocked["reason"], "ALL_BLOCKED")
+        self.assertEqual(blocked["step"], "inventory_state")
+        self.assertEqual(hidden["reason"], "UNMATERIALIZED_WORK")
+        self.assertEqual(hidden["step"], "materialize_inventory")
+        self.assertEqual(empty["reason"], "NO_WORK")
+        self.assertEqual(empty["step"], "inventory_state")
+
     def test_regression_scenarios_match_known_factory_cases(self):
         brvtal_681 = Candidate(
             key="brvtal#681",
