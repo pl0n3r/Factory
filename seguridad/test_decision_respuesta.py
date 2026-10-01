@@ -57,6 +57,7 @@ class FakeAPI:
         crash_after_evidence_once=False,
         mutate_body_on_issue_get=None,
         replacement_body=None,
+        equivalent_open=None,
     ):
         self.issue = {
             "number": 519,
@@ -83,12 +84,21 @@ class FakeAPI:
         self.mutate_body_on_issue_get = mutate_body_on_issue_get
         self.replacement_body = replacement_body
         self.issue_gets = 0
+        self.equivalent_open = list(equivalent_open or [])
 
     def label_names(self):
         return {item["name"] for item in self.issue["labels"]}
 
     def __call__(self, method, path, payload=None):
         self.calls.append((method, path, payload))
+        if method == "GET" and path.endswith(
+            "/issues?state=open&per_page=100"
+        ):
+            values = []
+            if self.issue.get("state") == "open":
+                values.append(json.loads(json.dumps(self.issue)))
+            values.extend(json.loads(json.dumps(self.equivalent_open)))
+            return values
         if method == "GET" and path.endswith("/issues/519"):
             self.issue_gets += 1
             if (
@@ -344,6 +354,11 @@ class DecisionRespuestaTests(unittest.TestCase):
         self.assertTrue(materialize_decision(event(), api, "pl0n3r/Factory"))
 
         for method, path, payload in api.calls:
+            if (
+                method == "GET"
+                and path.endswith("/issues?state=open&per_page=100")
+            ):
+                continue
             self.assertIn("/issues/519", path)
             self.assertNotIn("/issues/577", path)
             self.assertNotIn("/issues/384", path)
@@ -415,6 +430,27 @@ class DecisionRespuestaTests(unittest.TestCase):
             "if: github.event_name == 'issues' && github.event.issue.state == 'open'",
             sync,
         )
+
+
+class DecisionTests(unittest.TestCase):
+    def test_decision_rejects_ambiguous_equivalent_open_gates(self):
+        duplicate = {
+            "number": 520,
+            "state": "open",
+            "body": gate_body(),
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        api = FakeAPI(equivalent_open=[duplicate])
+
+        self.assertFalse(
+            materialize_decision(event(), api, "pl0n3r/Factory")
+        )
+        self.assertEqual(api.issue["state"], "open")
+        self.assertEqual(api.comments, [])
+        self.assertFalse(any(
+            method != "GET" for method, _, _ in api.calls
+        ))
+
 
 
 if __name__ == "__main__":
