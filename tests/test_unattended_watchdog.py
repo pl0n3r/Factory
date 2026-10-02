@@ -211,6 +211,91 @@ class UnattendedWatchdogTests(unittest.TestCase):
             {item.code for item in active.incidents},
         )
 
+    def test_global_idle_exception_requires_every_safety_condition(self):
+        forged = {
+            "version": 1,
+            "idle_global": True,
+            "reasons": [],
+            "provenance": [f"fake/repo-{index}:source:fresh" for index in range(7)],
+        }
+        invalid = evaluate_unattended_watchdog(
+            guard(),
+            config(),
+            evidence(
+                presence=idle_presence(),
+                reservation=None,
+                state=idle_state(),
+                active_fronts=[],
+                next_dispatch_planned=False,
+                global_idle=forged,
+            ),
+        )
+        self.assertEqual(invalid.action, "BLOCKED")
+        self.assertIn("invalid_global_idle", invalid.daily_summary.blockers)
+
+        proof = proven_global_idle()
+        reported = {
+            "incident_id": "idle-check",
+            "severity": "S3",
+            "source": "health",
+            "updated_at": "2026-10-02T00:59:00Z",
+            "freshness": "fresh",
+        }
+        nonempty_presence = idle_presence()
+        nonempty_presence["capacity"]["known_slots"] = 1
+
+        cases = {
+            "work_ready": {
+                "work_ready": True,
+                "ready_since": "2026-10-02T00:59:00Z",
+            },
+            "next_dispatch_planned": {"next_dispatch_planned": True},
+            "reservation": {
+                "reservation": {
+                    "active": False,
+                    "work_identity": "pl0n3r/Factory#idle",
+                    "updated_at": "2026-10-02T00:59:00Z",
+                    "freshness": "fresh",
+                }
+            },
+            "active_front": {"active_fronts": ["pl0n3r/Factory#823"]},
+            "reported_incident": {"incidents": [reported]},
+            "non_idle_identity": {
+                "state": idle_state() | {"work_identity": "pl0n3r/Factory#823"}
+            },
+            "non_idle_state": {
+                "state": idle_state() | {"last_state": "reviewing"}
+            },
+            "stale_state": {
+                "state": idle_state() | {"updated_at": "2026-10-02T00:30:00Z"}
+            },
+            "state_blocker": {
+                "state": idle_state() | {"blockers": ["blocked"]}
+            },
+            "nonempty_presence": {"presence": nonempty_presence},
+        }
+        base = {
+            "presence": idle_presence(),
+            "reservation": None,
+            "state": idle_state(),
+            "active_fronts": [],
+            "next_dispatch_planned": False,
+            "global_idle": proof,
+        }
+        for name, changes in cases.items():
+            with self.subTest(name=name):
+                payload = {**base, **changes}
+                result = evaluate_unattended_watchdog(
+                    guard(),
+                    config(),
+                    evidence(**payload),
+                )
+                self.assertEqual(result.action, "BLOCKED")
+                self.assertIn(
+                    "presence_insufficient",
+                    {item.code for item in result.incidents},
+                )
+
     def test_presence_unknown_stale_or_missing_heartbeat_never_counts_as_healthy_progress(self):
         cases = []
         stale = presence()
