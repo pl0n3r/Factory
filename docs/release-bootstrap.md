@@ -52,6 +52,10 @@ Para publicar un patch/minor posterior dentro de la major `v1`:
 
 Cambiar `main`, mover `v1` a otro SHA, usar una puerta de otra categoría o reutilizar una aprobación para un SHA distinto hace fallar cerrado el preflight.
 
+## Rollback tras startup_failure
+
+Si una publicación de `Factory@v1` provoca `startup_failure` en consumidores, aplica el runbook fail-closed [`docs/reusable-release-rollback.md`](reusable-release-rollback.md). Detectar o recomendar rollback no autoriza a mover `v1`; la acción sigue siendo humana/administrativa y exige evidencia nueva de recuperación en un consumidor real.
+
 ## Estado actual
 
 - `v1.0.0`: publicado y validado.
