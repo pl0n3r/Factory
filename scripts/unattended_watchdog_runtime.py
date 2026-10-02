@@ -6,14 +6,14 @@ import argparse
 import copy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import http.client
 import json
 import os
 from pathlib import Path
 import re
 import sys
-from urllib.error import HTTPError, URLError
+from typing import Callable
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
 
 from scripts.unattended_guards import GuardDecision, evaluate_unattended_guards
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
@@ -248,8 +248,9 @@ def parse_owned_alert(issue: object) -> tuple[str, int, str] | None:
         or user.get("login") != "github-actions[bot]"
     ):
         return None
+    starts = ALERT_MARKER_START_RE.findall(body)
     markers = ALERT_MARKER_RE.findall(body)
-    if len(markers) != 1:
+    if len(starts) != 1 or len(markers) != 1:
         return None
     try:
         marker = json.loads(markers[0], object_pairs_hook=_unique_json_object)
@@ -267,39 +268,65 @@ def parse_owned_alert(issue: object) -> tuple[str, int, str] | None:
     return marker["fingerprint"], number, state
 
 
+RequestJson = Callable[[str, str, object | None], object]
+
+
+def _https_json_request(
+    token: str,
+    method: str,
+    path: str,
+    payload: object | None,
+) -> object:
+    """Transport fijo a api.github.com; nunca acepta host dinámico."""
+    body = None if payload is None else json.dumps(payload, separators=(",", ":"))
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Factory-Unattended-Watchdog/1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    connection = http.client.HTTPSConnection(API_HOST, timeout=15)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise RuntimeValidationError("github_response_too_large")
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeValidationError("github_request_failed")
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeValidationError("github_response_invalid_json") from exc
+    finally:
+        connection.close()
+
+
 class GitHubIssueClient:
     """Cliente mínimo; solo lista Issues y muta alertas con marker propio."""
 
-    def __init__(self, token: str, repository: str):
+    def __init__(
+        self,
+        token: str,
+        repository: str,
+        request_json: RequestJson | None = None,
+    ):
         if not isinstance(token, str) or not token:
             raise RuntimeValidationError("missing_github_token")
         if not isinstance(repository, str) or REPOSITORY_RE.fullmatch(repository) is None:
             raise RuntimeValidationError("invalid_repository")
         self.token = token
         self.repository = repository
+        self._transport = request_json
 
     def _request(self, method: str, path: str, payload: object | None = None) -> object:
         if not path.startswith(f"/repos/{self.repository}/"):
             raise RuntimeValidationError("github_path_outside_repository")
-        body = None
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {self.token}",
-            "User-Agent": "Factory-Unattended-Watchdog/1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        if payload is not None:
-            body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = Request(API_ORIGIN + path, data=body, headers=headers, method=method)
-        try:
-            with urlopen(request, timeout=15) as response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_RESPONSE_BYTES:
-                    raise RuntimeValidationError("github_response_too_large")
-                return json.loads(raw.decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeValidationError("github_request_failed") from exc
+        if self._transport is not None:
+            return self._transport(method, path, payload)
+        return _https_json_request(self.token, method, path, payload)
 
     def get_issue(self, issue_number: int) -> dict[str, object]:
         if isinstance(issue_number, bool) or not isinstance(issue_number, int) or issue_number <= 0:
