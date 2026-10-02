@@ -105,7 +105,125 @@ class UnattendedCycleTests(TestCase):
         self.assertEqual(result["components"]["dispatch"]["action"], "ALLOW")
 
     def test_invalid_stale_unknown_or_contradictory_inputs_fail_closed(self):
+        bad_head = provenance()
+        bad_head["head_sha"] = "not-a-sha"
+        bad_dispatch_ref = provenance()
+        bad_dispatch_ref["dispatch_ref"] = " has-space "
+        bad_guard_ref = provenance()
+        bad_guard_ref["guard_ref"] = "a" * 63
+        bad_watchdog_ref = provenance()
+        bad_watchdog_ref["watchdog_ref"] = "b" * 63
+        bad_freshness = provenance()
+        bad_freshness["freshness"] = "future"
+
+        invalid_authority_guard = GuardDecision(
+            action="ALLOW",
+            authority="expanded",
+            pause_allowed=False,
+            reasons=("guards_satisfied",),
+            evidence_fingerprint="a" * 64,
+        )
+
+        missing_unattended_key = dispatch()
+        missing_unattended_key["unattended"] = {
+            "enabled": True,
+            "action": "ALLOW",
+            "authority": "unchanged",
+        }
+        invalid_unattended_value = dispatch()
+        invalid_unattended_value["unattended"] = {
+            "enabled": False,
+            "action": "ALLOW",
+            "authority": "unchanged",
+            "reasons": (),
+        }
+        suppression_incoherent = dispatch("PAUSE")
+        suppression_incoherent["selected"] = "Factory#772"
+
+        evidence_ref_mismatch = provenance()
+        evidence_ref_mismatch["guard_ref"] = "d" * 64
+
         cases: list[tuple[str, object, object, object, object, str]] = [
+            (
+                "invalid provenance shape",
+                dispatch(),
+                guard(),
+                watchdog(),
+                {},
+                "cycle_provenance_invalid",
+            ),
+            (
+                "invalid head sha",
+                dispatch(),
+                guard(),
+                watchdog(),
+                bad_head,
+                "cycle_provenance_invalid",
+            ),
+            (
+                "invalid dispatch ref",
+                dispatch(),
+                guard(),
+                watchdog(),
+                bad_dispatch_ref,
+                "cycle_provenance_invalid",
+            ),
+            (
+                "invalid guard ref",
+                dispatch(),
+                guard(),
+                watchdog(),
+                bad_guard_ref,
+                "cycle_provenance_invalid",
+            ),
+            (
+                "invalid watchdog ref",
+                dispatch(),
+                guard(),
+                watchdog(),
+                bad_watchdog_ref,
+                "cycle_provenance_invalid",
+            ),
+            (
+                "invalid freshness token",
+                dispatch(),
+                guard(),
+                watchdog(),
+                bad_freshness,
+                "cycle_provenance_invalid",
+            ),
+            (
+                "invalid guard type",
+                dispatch(),
+                object(),
+                watchdog(),
+                provenance(),
+                "cycle_guard_invalid",
+            ),
+            (
+                "invalid watchdog type",
+                dispatch(),
+                guard(),
+                object(),
+                provenance(),
+                "cycle_watchdog_invalid",
+            ),
+            (
+                "invalid component authority",
+                dispatch(),
+                invalid_authority_guard,
+                watchdog(),
+                provenance(),
+                "cycle_component_contract_invalid",
+            ),
+            (
+                "evidence ref mismatch",
+                dispatch(),
+                guard(),
+                watchdog(),
+                evidence_ref_mismatch,
+                "cycle_evidence_ref_mismatch",
+            ),
             (
                 "invalid dispatch",
                 {"selected": "Factory#772"},
@@ -113,6 +231,46 @@ class UnattendedCycleTests(TestCase):
                 watchdog(),
                 provenance(),
                 "cycle_dispatch_shape_invalid",
+            ),
+            (
+                "missing unattended key",
+                missing_unattended_key,
+                guard(),
+                watchdog(),
+                provenance(),
+                "cycle_dispatch_unattended_invalid",
+            ),
+            (
+                "invalid unattended value",
+                invalid_unattended_value,
+                guard(),
+                watchdog(),
+                provenance(),
+                "cycle_dispatch_unattended_invalid",
+            ),
+            (
+                "incoherent 4B/4C pair",
+                dispatch("ALLOW"),
+                guard("PAUSE"),
+                watchdog("ALLOW"),
+                provenance(),
+                "cycle_component_pair_incoherent",
+            ),
+            (
+                "contradictory actions",
+                dispatch("ALLOW"),
+                guard("ALLOW"),
+                watchdog("BLOCKED"),
+                provenance(),
+                "cycle_component_action_mismatch",
+            ),
+            (
+                "suppression incoherent",
+                suppression_incoherent,
+                guard("PAUSE"),
+                watchdog("PAUSE"),
+                provenance(),
+                "cycle_suppression_incoherent",
             ),
             (
                 "stale evidence",
@@ -138,14 +296,6 @@ class UnattendedCycleTests(TestCase):
                 provenance(),
                 "cycle_watchdog_state_not_fresh",
             ),
-            (
-                "contradictory actions",
-                dispatch("ALLOW"),
-                guard("ALLOW"),
-                watchdog("BLOCKED"),
-                provenance(),
-                "cycle_component_action_mismatch",
-            ),
         ]
 
         for name, dispatch_input, guard_input, watchdog_input, refs, reason in cases:
@@ -160,6 +310,7 @@ class UnattendedCycleTests(TestCase):
                 self.assertEqual(result["authority"], "unchanged")
                 self.assertIsNone(result["selected"])
                 self.assertEqual(result["reasons"], (reason,))
+
 
 
 if __name__ == "__main__":
