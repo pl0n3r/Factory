@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regresiones del contrato de ciclo desatendido Factory#772."""
+"""Regresiones del contrato de ciclo desatendido Factory#772/#779."""
 
 from __future__ import annotations
 
@@ -19,7 +19,11 @@ def dispatch(action: str = "ALLOW") -> dict[str, object]:
         "next_action": {"step": "normal"},
         "ready_not_selected": [],
         "excluded": {},
-        "candidates": {},
+        "candidates": {
+            "Factory#772": {
+                "authority_class": "high",
+            }
+        },
         "aging_threshold": 3,
         "active_tranche": None,
         "unattended": {
@@ -73,6 +77,18 @@ def provenance(freshness: str = "fresh") -> dict[str, object]:
 
 
 class UnattendedCycleTests(TestCase):
+    def _assert_selection_blocked(self, dispatch_input: dict[str, object]) -> None:
+        result = compose_unattended_cycle(
+            dispatch_input,
+            guard(),
+            watchdog(),
+            provenance=provenance(),
+        )
+        self.assertEqual(result["action"], "BLOCKED")
+        self.assertEqual(result["authority"], "unchanged")
+        self.assertIsNone(result["selected"])
+        self.assertEqual(result["reasons"], ("cycle_dispatch_selection_invalid",))
+
     def test_cycle_consumes_canonical_dispatch_guard_and_watchdog_without_recalculation(self):
         with (
             patch(
@@ -98,11 +114,53 @@ class UnattendedCycleTests(TestCase):
         self.assertEqual(result["action"], "ALLOW")
         self.assertEqual(result["authority"], "unchanged")
         self.assertEqual(result["selected"], "Factory#772")
+        self.assertEqual(result["selected_class"], "high")
         self.assertEqual(result["freshness"], "fresh")
         self.assertEqual(result["provenance"], provenance())
         self.assertEqual(result["components"]["guard"]["action"], "ALLOW")
         self.assertEqual(result["components"]["watchdog"]["action"], "ALLOW")
         self.assertEqual(result["components"]["dispatch"]["action"], "ALLOW")
+        self.assertEqual(
+            dispatch()["candidates"][result["selected"]]["authority_class"],
+            result["selected_class"],
+        )
+
+    def test_selected_must_exist_in_candidates(self):
+        invalid = dispatch()
+        invalid["candidates"] = {}
+        self._assert_selection_blocked(invalid)
+
+    def test_selected_and_selected_class_nullability_is_coherent(self):
+        selected_missing = dispatch()
+        selected_missing["selected"] = None
+        class_missing = dispatch()
+        class_missing["selected_class"] = None
+
+        for invalid in (selected_missing, class_missing):
+            with self.subTest(selected=invalid["selected"], selected_class=invalid["selected_class"]):
+                self._assert_selection_blocked(invalid)
+
+    def test_selected_class_matches_candidate_authority_class(self):
+        invalid = dispatch()
+        invalid["candidates"] = {
+            "Factory#772": {
+                "authority_class": "medium",
+            }
+        }
+        self._assert_selection_blocked(invalid)
+
+    def test_malformed_candidate_identity_fails_closed_without_exception(self):
+        malformed_candidates: tuple[object, ...] = (
+            [],
+            {"Factory#772": None},
+            {"Factory#772": {}},
+            {"Factory#772": {"authority_class": None}},
+        )
+        for candidates in malformed_candidates:
+            with self.subTest(candidates=candidates):
+                invalid = dispatch()
+                invalid["candidates"] = candidates
+                self._assert_selection_blocked(invalid)
 
     def test_invalid_stale_unknown_or_contradictory_inputs_fail_closed(self):
         bad_head = provenance()
@@ -147,7 +205,6 @@ class UnattendedCycleTests(TestCase):
             daily_summary=watchdog().daily_summary,
             evidence_fingerprint="b" * 64,
         )
-
         malformed_incident_watchdog = WatchdogDecision(
             action="BLOCKED",
             authority="unchanged",
@@ -182,6 +239,7 @@ class UnattendedCycleTests(TestCase):
         }
         suppression_incoherent = dispatch("PAUSE")
         suppression_incoherent["selected"] = "Factory#772"
+        suppression_incoherent["selected_class"] = "high"
 
         evidence_ref_mismatch = provenance()
         evidence_ref_mismatch["guard_ref"] = "d" * 64
@@ -385,7 +443,6 @@ class UnattendedCycleTests(TestCase):
                 self.assertEqual(result["authority"], "unchanged")
                 self.assertIsNone(result["selected"])
                 self.assertEqual(result["reasons"], (reason,))
-
 
 
 if __name__ == "__main__":
