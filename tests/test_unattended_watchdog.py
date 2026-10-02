@@ -175,6 +175,26 @@ class UnattendedWatchdogTests(unittest.TestCase):
         )
         self.assertFalse(result.daily_summary.incidents)
 
+    def test_idle_unknown_capacity_does_not_emit_presence_incident_without_capacity_demand(self):
+        result = evaluate_unattended_watchdog(
+            guard(),
+            config(),
+            evidence(
+                presence=idle_presence(),
+                reservation=None,
+                state=idle_state(),
+                active_fronts=[],
+                next_dispatch_planned=False,
+                global_idle=proven_global_idle(),
+            ),
+        )
+        self.assertEqual(result.action, "ALLOW")
+        self.assertNotIn(
+            "presence_insufficient",
+            {item.code for item in result.incidents},
+        )
+        self.assertFalse(any(item.severity == "UNKNOWN" for item in result.incidents))
+
     def test_unknown_presence_still_blocks_when_global_idle_is_unproven_or_work_is_active(self):
         base = dict(
             presence=idle_presence(),
@@ -210,6 +230,45 @@ class UnattendedWatchdogTests(unittest.TestCase):
             "presence_insufficient",
             {item.code for item in active.incidents},
         )
+
+    def test_unknown_presence_still_blocks_when_ready_reserved_active_or_non_idle(self):
+        proof = proven_global_idle()
+        base = {
+            "presence": idle_presence(),
+            "reservation": None,
+            "state": idle_state(),
+            "active_fronts": [],
+            "next_dispatch_planned": False,
+            "global_idle": proof,
+        }
+        cases = {
+            "ready": {
+                "work_ready": True,
+                "ready_since": "2026-10-02T00:59:00Z",
+            },
+            "reserved": {
+                "reservation": {
+                    "active": True,
+                    "work_identity": "pl0n3r/Factory#idle",
+                    "updated_at": "2026-10-02T00:59:00Z",
+                    "freshness": "fresh",
+                },
+            },
+            "active": {"active_fronts": ["pl0n3r/Factory#824"]},
+            "non_idle": {"state": idle_state() | {"last_state": "reviewing"}},
+        }
+        for name, changes in cases.items():
+            with self.subTest(name=name):
+                result = evaluate_unattended_watchdog(
+                    guard(),
+                    config(),
+                    evidence(**{**base, **changes}),
+                )
+                self.assertEqual(result.action, "BLOCKED")
+                self.assertIn(
+                    "presence_insufficient",
+                    {item.code for item in result.incidents},
+                )
 
     def test_global_idle_exception_requires_every_safety_condition(self):
         forged = {
