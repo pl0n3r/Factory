@@ -14,13 +14,28 @@ from scripts.unattended_watchdog import DailySummary, WatchdogDecision, Watchdog
 
 def dispatch(action: str) -> dict[str, object]:
     suppressed = action != "ALLOW"
+    candidates = {}
+    if not suppressed:
+        candidates["Factory#774"] = {
+            "authority_class": "high",
+            "ready_age": 0,
+            "displaced_cycles": 0,
+            "active_pr": False,
+            "unlock_impact": 0,
+            "transversal_impact": 0,
+            "claims": [],
+            "tranche_subject": None,
+            "tranche": None,
+            "tranche_exception": False,
+            "metadata": {},
+        }
     return {
         "selected": None if suppressed else "Factory#774",
         "selected_class": None if suppressed else "high",
         "next_action": {"step": "normal"},
         "ready_not_selected": [],
         "excluded": {},
-        "candidates": {},
+        "candidates": candidates,
         "aging_threshold": 3,
         "active_tranche": None,
         "unattended": {
@@ -162,6 +177,78 @@ class UnattendedCycleHandoffTests(TestCase):
             malformed_result["reasons"],
             ("handoff_cycle_invalid",),
         )
+
+
+    def test_invalid_shapes_fail_closed_and_empty_components_stay_read_only(self):
+        invalid_cases = []
+
+        payload = cycle("ALLOW")
+        payload["version"] = 2
+        invalid_cases.append(("version", payload, "handoff_cycle_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["selected"] = " Factory#774 "
+        invalid_cases.append(("selected", payload, "handoff_cycle_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["selected_class"] = ""
+        invalid_cases.append(("selected_class", payload, "handoff_cycle_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["reasons"] = ["not-a-tuple"]
+        invalid_cases.append(("reasons", payload, "handoff_cycle_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["provenance"] = {"head_sha": "c" * 40}
+        invalid_cases.append(("provenance_shape", payload, "handoff_provenance_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["provenance"] = None
+        invalid_cases.append(("provenance_missing", payload, "handoff_provenance_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["components"] = None
+        invalid_cases.append(("components_type", payload, "handoff_components_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["components"] = {"watchdog": {}}
+        invalid_cases.append(("watchdog_shape", payload, "handoff_components_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["components"]["watchdog"]["action"] = "UNKNOWN"
+        invalid_cases.append(("watchdog_action", payload, "handoff_components_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["components"]["watchdog"]["incident_codes"] = []
+        invalid_cases.append(("incident_codes", payload, "handoff_components_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["components"]["watchdog"]["interrupt_owner"] = None
+        invalid_cases.append(("interrupt_owner", payload, "handoff_components_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["components"]["watchdog"]["state_freshness"] = "invalid"
+        invalid_cases.append(("state_freshness", payload, "handoff_components_invalid"))
+
+        payload = cycle("ALLOW")
+        payload["components"]["watchdog"]["evidence_ref"] = ""
+        invalid_cases.append(("evidence_ref", payload, "handoff_components_invalid"))
+
+        for name, payload, reason in invalid_cases:
+            with self.subTest(name=name):
+                result = project_unattended_cycle_handoff(payload)
+                self.assertEqual(result["action"], "BLOCKED")
+                self.assertEqual(result["authority"], "unchanged")
+                self.assertEqual(result["reasons"], (reason,))
+                self.assertFalse(any(result["permissions"].values()))
+
+        payload = cycle("ALLOW")
+        payload["components"] = {}
+        result = project_unattended_cycle_handoff(payload)
+        self.assertEqual(result["action"], "ALLOW")
+        self.assertEqual(result["incidents"], ())
+        self.assertIsNone(result["interrupt_owner"])
+        self.assertFalse(any(result["permissions"].values()))
 
 
 if __name__ == "__main__":
