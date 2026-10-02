@@ -141,6 +141,7 @@ jobs:
             echo "::error::Labels incompletas o duplicadas después de las reparaciones seguras"
             exit 1
           }
+
       - name: Barrer trabajo abierto
         if: inputs.mode == 'sweep'
         env:
@@ -174,3 +175,38 @@ jobs:
             jq '{body:.body,labels:.labels} + {state:"closed",state_reason:"completed"}' /tmp/sweep-plan.json > /tmp/auto-close.json
             gh api --method PATCH "repos/$REPOSITORIO/issues/$auto_issue" --input /tmp/auto-close.json >/dev/null
           fi
+
+      - name: Detectar merges con Etiquetas no verde
+        if: inputs.mode == 'sweep'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORIO/pulls?state=closed&sort=updated&direction=desc&per_page=100" \
+            | jq '[.[] | select(.merged_at != null)] | .[:25]' > /tmp/merged-prs.json
+
+          while IFS= read -r pr; do
+            number="$(jq -r '.number' <<<"$pr")"
+            head_sha="$(jq -r '.head.sha' <<<"$pr")"
+            if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::HEAD de PR inválido para auditoría de Etiquetas"
+              exit 1
+            fi
+            curl --fail --silent --show-error --location --max-time 20 \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$REPOSITORIO/commits/$head_sha/check-runs?per_page=100" \
+              > /tmp/check-runs.json
+            gh api --paginate "repos/$REPOSITORIO/issues/$number/comments?per_page=100" --slurp \
+              | jq 'add // []' > /tmp/pr-comments.json
+            jq -n --argjson pr "$pr" --slurpfile checks /tmp/check-runs.json --slurpfile comments /tmp/pr-comments.json \
+              '{pr:$pr,check_runs:($checks[0].check_runs // []),comments:$comments[0]}' \
+              | python3 .factory/scripts/pr_label_governance.py alert-plan > /tmp/label-alert.json
+            if [[ "$(jq -r '.action' /tmp/label-alert.json)" == "create" ]]; then
+              jq '{body:.body}' /tmp/label-alert.json > /tmp/label-alert-comment.json
+              gh api --method POST "repos/$REPOSITORIO/issues/$number/comments" \
+                --input /tmp/label-alert-comment.json >/dev/null
+              echo "::warning::PR #$number fue fusionado sin un check de Etiquetas verde posterior."
+            fi
+          done < <(jq -c '.[]' /tmp/merged-prs.json)
