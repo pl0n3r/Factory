@@ -352,6 +352,39 @@ Elige siempre el siguiente trabajo así: **incidente de producción > prioridad 
 
 ---
 
+
+## Modo desatendido seguro — contrato aprobado (Tramo 4)
+
+El dueño aprobó el **modo desatendido seguro** como contrato operativo. El detalle
+canónico vive en
+[docs/unattended-safe-mode.md](docs/unattended-safe-mode.md). Este contrato
+**no amplía autoridad**: clasificar riesgo/severidad o cumplir un SLO nunca
+autoriza go-live, gasto, acciones irreversibles, uso de credenciales/datos reales
+ni producción sin backup previo cuando ya aplica esa puerta.
+
+Resumen obligatorio:
+
+- riesgo **bajo / medio / alto**; todo cambio de riesgo alto requiere **segunda
+  pasada de revisión por otro rol** antes de entregar;
+- severidad **S1 / S2 / S3**; solo **S1 y S2 interrumpen al dueño**; S3 entra por
+  la cola normal con evidencia;
+- cada handoff usa un bloque **`STATE`** mínimo, trazable y sin secretos,
+  credenciales, PII ni payloads sensibles;
+- los **SLOs son objetivos configurables y ajustables con evidencia**; ausencia,
+  stale/UNKNOWN o incumplimiento nunca se convierten en GREEN ni saltan gates;
+- pausa global, circuit breakers, techos configurados de uso/gasto/paralelismo,
+  blast radius, rollback seguro ante smoke rojo sostenido, watchdog de actividad,
+  resumen diario y simulacro controlado están aprobados como contrato, pero su
+  runtime se implementa únicamente por slices materializados y seriales;
+- orden posterior: **guardas runtime de pausa/disyuntor/techos → watchdog +
+  resumen → simulacro E2E controlado**. No materialices ni ejecutes un slice
+  posterior antes de completar el anterior.
+
+Ante duda de autoridad, configuración ausente o evidencia inconsistente, falla
+cerrado y conserva las puertas humanas existentes.
+
+---
+
 ## 9. Living Software: ciclo operativo canónico
 
 Factory integra **Living Software a nivel de arquitectura y protocolo**. La
