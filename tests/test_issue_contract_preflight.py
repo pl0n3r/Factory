@@ -96,6 +96,25 @@ class IssueContractPreflightTests(unittest.TestCase):
         self.assertEqual(first.getvalue(), second.getvalue())
         self.assertTrue(json.loads(first.getvalue())["valid"])
 
+        rejected = io.StringIO()
+        self.assertEqual(
+            preflight.main(
+                ["issue-body.md"],
+                stdin=io.StringIO(VALID_BODY),
+                stdout=rejected,
+            ),
+            2,
+        )
+        self.assertEqual(
+            json.loads(rejected.getvalue()),
+            {
+                "version": 1,
+                "valid": False,
+                "code": "usage_error",
+                "reason": "El body se recibe únicamente por stdin.",
+            },
+        )
+
         source = inspect.getsource(preflight)
         for forbidden in (
             "urllib",
