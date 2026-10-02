@@ -390,6 +390,8 @@ Resumen obligatorio:
   la cola normal con evidencia;
 - cada handoff usa un bloque **`STATE`** mínimo, trazable y sin secretos,
   credenciales, PII ni payloads sensibles;
+- cuando exista trabajo activo con reserva canónica, cada handoff/checkpoint material publica además en el Issue de trabajo exactamente un marker cerrado `factory-state` con `version=1` y el objeto STATE v4A; repo/work_identity/reservation/branch deben coincidir con la evidencia GitHub vigente;
+- el marker `factory-state` es **evidencia derivada**, no autoridad: no sustituye HEALTH, checks, smoke, la reserva confiable ni el kill switch; si un campo no puede demostrarse, usa UNKNOWN/null donde el schema lo permita y nunca inventes heartbeat/capacidad para hacer GREEN;
 - los **SLOs son objetivos configurables y ajustables con evidencia**; ausencia,
   stale/UNKNOWN o incumplimiento nunca se convierten en GREEN ni saltan gates;
 - pausa global, circuit breakers, techos configurados de uso/gasto/paralelismo,
