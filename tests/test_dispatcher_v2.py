@@ -562,6 +562,65 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(select_next([product, s1]).key, "watchdog-s1")
         self.assertEqual(select_next([product, s2]).key, "watchdog-s2")
 
+    def test_watchdog_auto_classification_does_not_relax_unattended_unknown_fail_closed(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        product = Candidate(key="product", priority="critical")
+        watchdog_candidate = Candidate(
+            key="watchdog-unknown",
+            title="[AUTO][WATCHDOG] UNKNOWN abc123",
+            priority="high",
+            incident=True,
+            auto_class="AUTO_INCIDENT",
+            watchdog_severity="UNKNOWN",
+        )
+        incident = WatchdogIncident(
+            code="presence_insufficient",
+            severity="UNKNOWN",
+            fingerprint="a" * 64,
+            repeated=False,
+            reasons=("capacity:unknown",),
+        )
+        watchdog_decision = WatchdogDecision(
+            action="BLOCKED",
+            authority="unchanged",
+            incidents=(incident,),
+            new_alert_fingerprints=("a" * 64,),
+            interrupt_owner=False,
+            daily_summary=DailySummary(
+                active_fronts=(),
+                state_freshness="fresh",
+                incidents=("UNKNOWN:presence_insufficient",),
+                blockers=("capacity:unknown",),
+                human_gates=(),
+                integrated=(),
+                reverted=(),
+                next_actions=(),
+            ),
+            evidence_fingerprint="b" * 64,
+        )
+
+        self.assertEqual(authority_class(watchdog_candidate), "high")
+        self.assertEqual(select_next([watchdog_candidate, product]).key, "product")
+
+        record = adaptive_dispatch_record(
+            [watchdog_candidate, product],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("ALLOW"),
+            unattended_watchdog=watchdog_decision,
+        )
+
+        self.assertIsNone(record["selected"])
+        self.assertEqual(record["next_action"]["step"], "unattended_gate")
+        self.assertEqual(record["next_action"]["action"], "BLOCKED")
+        self.assertEqual(record["unattended"]["action"], "BLOCKED")
+        self.assertIn(
+            "watchdog:presence_insufficient",
+            record["next_action"]["reasons"],
+        )
+
     def test_watchdog_s3_uses_normal_priority_instead_of_incident_authority(self):
         watchdog = Candidate(
             key="watchdog-s3",
