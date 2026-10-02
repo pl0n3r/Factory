@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from scripts.unattended_guards import GuardDecision
+from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
 from scripts.unattended_watchdog import WatchdogDecision, evaluate_unattended_watchdog
 
 CONFIG_FIELDS = frozenset(
@@ -68,6 +69,7 @@ class AlertPlan:
     action: str
     authority: str
     create: tuple[AlertSpec, ...]
+    reopen: tuple[tuple[int, AlertSpec], ...]
     close: tuple[int, ...]
     evidence_fingerprint: str
 
@@ -106,20 +108,27 @@ def guard_from_payload(payload: object) -> GuardDecision | None:
     )
 
 
-def _normalize_open_alerts(value: object) -> dict[str, int]:
+def _normalize_open_alerts(value: object) -> dict[str, tuple[int, str]]:
     if not isinstance(value, dict):
         raise RuntimeValidationError("invalid_open_alerts")
-    result: dict[str, int] = {}
-    for fingerprint, issue_number in value.items():
+    result: dict[str, tuple[int, str]] = {}
+    for fingerprint, raw in value.items():
+        if not isinstance(fingerprint, str) or FINGERPRINT_RE.fullmatch(fingerprint) is None:
+            raise RuntimeValidationError("invalid_open_alert")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            number, state = raw, "open"
+        elif isinstance(raw, dict) and set(raw) == {"number", "state"}:
+            number, state = raw["number"], raw["state"]
+        else:
+            raise RuntimeValidationError("invalid_open_alert")
         if (
-            not isinstance(fingerprint, str)
-            or FINGERPRINT_RE.fullmatch(fingerprint) is None
-            or isinstance(issue_number, bool)
-            or not isinstance(issue_number, int)
-            or issue_number <= 0
+            isinstance(number, bool)
+            or not isinstance(number, int)
+            or number <= 0
+            or state not in {"open", "closed"}
         ):
             raise RuntimeValidationError("invalid_open_alert")
-        result[fingerprint] = issue_number
+        result[fingerprint] = (number, state)
     return result
 
 
@@ -156,9 +165,28 @@ def evaluate_runtime(
         if incident.fingerprint in decision.new_alert_fingerprints
         and incident.fingerprint not in current
     )
+    reopen = tuple(
+        (
+            current[incident.fingerprint][0],
+            AlertSpec(
+                fingerprint=incident.fingerprint,
+                severity=incident.severity,
+                code=incident.code,
+                reasons=incident.reasons,
+                evidence_fingerprint=decision.evidence_fingerprint,
+            ),
+        )
+        for incident in decision.incidents
+        if incident.fingerprint in current
+        and current[incident.fingerprint][1] == "closed"
+    )
 
     close = (
-        tuple(sorted(number for fp, number in current.items() if fp not in active))
+        tuple(sorted(
+            alert[0]
+            for fp, alert in current.items()
+            if alert[1] == "open" and fp not in active
+        ))
         if decision.action == "ALLOW"
         else ()
     )
@@ -166,6 +194,7 @@ def evaluate_runtime(
         action=decision.action,
         authority=decision.authority,
         create=create,
+        reopen=reopen,
         close=close,
         evidence_fingerprint=decision.evidence_fingerprint,
     )
@@ -195,13 +224,14 @@ def alert_body(spec: AlertSpec) -> str:
     )
 
 
-def parse_owned_alert(issue: object) -> tuple[str, int] | None:
+def parse_owned_alert(issue: object) -> tuple[str, int, str] | None:
     """Reconoce solo alertas creadas por este workflow; nunca Issues ajenos."""
     if not isinstance(issue, dict) or "pull_request" in issue:
         return None
     body = issue.get("body")
     title = issue.get("title")
     number = issue.get("number")
+    state = issue.get("state", "open")
     user = issue.get("user")
     if (
         not isinstance(body, str)
@@ -210,6 +240,7 @@ def parse_owned_alert(issue: object) -> tuple[str, int] | None:
         or isinstance(number, bool)
         or not isinstance(number, int)
         or number <= 0
+        or state not in {"open", "closed"}
         or not isinstance(user, dict)
         or user.get("login") != "github-actions[bot]"
     ):
@@ -230,7 +261,7 @@ def parse_owned_alert(issue: object) -> tuple[str, int] | None:
         or FINGERPRINT_RE.fullmatch(marker["fingerprint"]) is None
     ):
         return None
-    return marker["fingerprint"], number
+    return marker["fingerprint"], number, state
 
 
 class GitHubIssueClient:
@@ -267,10 +298,18 @@ class GitHubIssueClient:
         except (HTTPError, URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeValidationError("github_request_failed") from exc
 
-    def list_owned_alerts(self) -> dict[str, int]:
-        result: dict[str, int] = {}
+    def get_issue(self, issue_number: int) -> dict[str, object]:
+        if isinstance(issue_number, bool) or not isinstance(issue_number, int) or issue_number <= 0:
+            raise RuntimeValidationError("invalid_issue_number")
+        payload = self._request("GET", f"/repos/{self.repository}/issues/{issue_number}")
+        if not isinstance(payload, dict):
+            raise RuntimeValidationError("github_issue_invalid")
+        return payload
+
+    def list_owned_alerts(self) -> dict[str, dict[str, object]]:
+        result: dict[str, dict[str, object]] = {}
         for page in range(1, MAX_PAGES + 1):
-            query = urlencode({"state": "open", "per_page": 100, "page": page})
+            query = urlencode({"state": "all", "per_page": 100, "page": page})
             payload = self._request(
                 "GET", f"/repos/{self.repository}/issues?{query}"
             )
@@ -280,13 +319,19 @@ class GitHubIssueClient:
                 owned = parse_owned_alert(issue)
                 if owned is None:
                     continue
-                fingerprint, number = owned
-                if fingerprint in result and result[fingerprint] != number:
+                fingerprint, number, state = owned
+                if fingerprint in result and result[fingerprint]["number"] != number:
                     raise RuntimeValidationError("duplicate_owned_alert_fingerprint")
-                result[fingerprint] = number
+                result[fingerprint] = {"number": number, "state": state}
             if len(payload) < 100:
                 return result
         raise RuntimeValidationError("github_issue_listing_truncated")
+
+    @staticmethod
+    def _labels(spec: AlertSpec) -> list[str]:
+        if spec.severity in {"S1", "S2"}:
+            return ["tipo: incidente", "prioridad: crítica", "estado: disponible", "rol: sre"]
+        return ["tipo: calidad", "prioridad: alta", "estado: bloqueado", "rol: sre"]
 
     def create_alert(self, spec: AlertSpec) -> None:
         self._request(
@@ -295,6 +340,19 @@ class GitHubIssueClient:
             {
                 "title": f"{ALERT_TITLE} {spec.severity} {spec.fingerprint[:12]}",
                 "body": alert_body(spec),
+                "labels": self._labels(spec),
+            },
+        )
+
+    def reopen_alert(self, issue_number: int, spec: AlertSpec) -> None:
+        self._request(
+            "PATCH",
+            f"/repos/{self.repository}/issues/{issue_number}",
+            {
+                "state": "open",
+                "title": f"{ALERT_TITLE} {spec.severity} {spec.fingerprint[:12]}",
+                "body": alert_body(spec),
+                "labels": self._labels(spec),
             },
         )
 
@@ -309,6 +367,8 @@ class GitHubIssueClient:
 def apply_plan(client: GitHubIssueClient, plan: AlertPlan) -> None:
     for spec in plan.create:
         client.create_alert(spec)
+    for issue_number, spec in plan.reopen:
+        client.reopen_alert(issue_number, spec)
     for issue_number in plan.close:
         client.close_alert(issue_number)
 
@@ -327,6 +387,7 @@ def _plan_json(decision: WatchdogDecision, plan: AlertPlan) -> dict[str, object]
         "action": plan.action,
         "authority": plan.authority,
         "create": [asdict(item) for item in plan.create],
+        "reopen": [number for number, _ in plan.reopen],
         "close": list(plan.close),
         "interrupt_owner": decision.interrupt_owner,
         "evidence_fingerprint": plan.evidence_fingerprint,
@@ -356,9 +417,20 @@ def main(argv: list[str] | None = None) -> int:
             runtime_input.get("evidence"),
             open_alerts,
         )
-        print(json.dumps(_plan_json(decision, plan), sort_keys=True))
         if not args.dry_run:
+            switch = evaluate_unattended_kill_switch(client.get_issue(767))
+            if switch.global_pause:
+                print(json.dumps({
+                    "action": "BLOCKED",
+                    "authority": "unchanged",
+                    "reason": f"kill_switch:{switch.reason}",
+                    "create": [],
+                    "reopen": [],
+                    "close": [],
+                }, sort_keys=True))
+                return 1
             apply_plan(client, plan)
+        print(json.dumps(_plan_json(decision, plan), sort_keys=True))
         return 0
     except RuntimeValidationError as exc:
         print(json.dumps({"action": "BLOCKED", "reason": str(exc)}, sort_keys=True))

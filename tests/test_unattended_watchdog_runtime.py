@@ -118,6 +118,10 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertNotIn("secrets.", workflow)
         self.assertNotIn("pull_request_target", workflow)
         self.assertNotIn("workflow_run", workflow)
+        runtime = (ROOT / "scripts" / "unattended_watchdog_runtime.py").read_text(encoding="utf-8")
+        self.assertIn("evaluate_unattended_kill_switch(client.get_issue(767))", runtime)
+        self.assertIn('"state": "all"', runtime)
+        self.assertIn('"labels": self._labels(spec)', runtime)
 
     def test_versioned_thresholds_are_closed_and_explicit(self):
         path = ROOT / "config" / "unattended-watchdog.json"
@@ -149,7 +153,21 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(repeated_decision.action, "BLOCKED")
         self.assertEqual(repeated.create, ())
+        self.assertEqual(repeated.reopen, ())
         self.assertEqual(repeated.close, ())
+
+        closed_decision, closed_repeat = evaluate_runtime(
+            config(),
+            guard(),
+            incident_evidence,
+            {fingerprint: {"number": 123, "state": "closed"}},
+        )
+        self.assertEqual(closed_decision.action, "BLOCKED")
+        self.assertEqual(closed_repeat.create, ())
+        self.assertEqual(
+            tuple(number for number, _ in closed_repeat.reopen),
+            (123,),
+        )
 
         resolved_decision, resolved = evaluate_runtime(
             config(), guard(), evidence(), {fingerprint: 123}
@@ -180,6 +198,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                 self.assertEqual(decision.action, "BLOCKED")
                 self.assertEqual(plan.authority, "unchanged")
                 self.assertGreaterEqual(len(plan.create), 1)
+                self.assertEqual(plan.reopen, ())
                 self.assertEqual(plan.close, ())
 
     def test_runtime_cases_cover_valid_missing_invalid_repeat_and_resolution(self):
@@ -193,7 +212,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             ),
             "user": {"login": "github-actions[bot]"},
         }
-        self.assertEqual(parse_owned_alert(owned), (fingerprint, 9))
+        self.assertEqual(parse_owned_alert(owned), (fingerprint, 9, "open"))
         self.assertIsNone(parse_owned_alert({**owned, "user": {"login": "other"}}))
         self.assertIsNone(
             parse_owned_alert({**owned, "body": owned["body"] + "\n" + owned["body"]})
@@ -214,7 +233,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             config(), guard(), evidence(), {}
         )
         self.assertEqual(valid_decision.action, "ALLOW")
-        self.assertEqual((valid.create, valid.close), ((), ()))
+        self.assertEqual((valid.create, valid.reopen, valid.close), ((), (), ()))
 
         invalid_decision, invalid = evaluate_runtime(
             {"ready_without_dispatch_minutes": 0},

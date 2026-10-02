@@ -38,7 +38,9 @@ El runtime solo considera propia una Issue abierta con título `[AUTO][WATCHDOG]
 
 Por seguridad, las alertas previas solo se cierran cuando 4C devuelve `ALLOW`; una lectura inválida o BLOCKED nunca se usa para cerrar evidencia anterior.
 
-El runtime no edita/cierra Issues ajenos, PRs, releases ni reservas.
+El runtime no edita/cierra Issues ajenos, PRs, releases ni reservas. La búsqueda incluye alertas propias abiertas y cerradas: si un fingerprint resuelto reaparece, se reabre la misma Issue en vez de crear un duplicado histórico.
+
+Antes de la primera escritura, el runtime relee Factory#767 con el parser canónico del kill switch. Cualquier estado distinto de `RUNNING`, lectura inválida o marker ambiguo produce cero mutaciones.
 
 ## Reversión
 
