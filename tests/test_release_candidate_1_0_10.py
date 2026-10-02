@@ -32,15 +32,12 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
             raise AssertionError(f"No se encontró permissions en {job}")
         return {line.strip() for line in match.group("permissions").splitlines()}
 
-    def test_candidate_is_at_least_1_0_10(self) -> None:
-        """Las versiones posteriores conservan como mínimo la capacidad de 1.0.10."""
+    def test_candidate_version_is_1_0_10(self) -> None:
+        """La fuente canónica declara exactamente 1.0.10."""
         payload = json.loads(
             (self.root / "config" / "version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(set(payload), {"version"})
-        self.assertRegex(payload["version"], r"^\d+\.\d+\.\d+$")
-        version = tuple(int(part) for part in payload["version"].split("."))
-        self.assertGreaterEqual(version, (1, 0, 10))
+        self.assertEqual(payload, {"version": "1.0.10"})
 
     def test_candidate_contains_labels_metadata_permission_contract(self) -> None:
         """Reusable y template conservan el envelope metadata-only compatible."""
@@ -54,19 +51,19 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
         reusable_permissions = self._job_permissions(reusable, "etiquetas")
         self.assertEqual(
             reusable_permissions,
-            {"contents: read", "issues: write", "pull-requests: write"},
+            {"contents: read", "issues: write", "pull-requests: read"},
         )
 
         self.assertEqual(
             self._job_permissions(template, "validar-pr"),
-            {"contents: read", "issues: write", "pull-requests: write"},
+            {"contents: read", "issues: write", "pull-requests: read"},
         )
         read_only = {"contents: read", "issues: write", "pull-requests: read"}
-        for job in ("sync", "validar-issue", "sweep"):
+        for job in ("sync", "validar-issue", "validar-pr", "sweep"):
             self.assertEqual(self._job_permissions(template, job), read_only)
 
-        self.assertEqual(template.count("pull-requests: write"), 1)
-        self.assertEqual(template.count("pull-requests: read"), 3)
+        self.assertEqual(template.count("pull-requests: write"), 0)
+        self.assertEqual(template.count("pull-requests: read"), 4)
         self.assertEqual(
             template.count("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"),
             4,
