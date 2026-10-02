@@ -45,13 +45,15 @@ def _text(value: object, field: str) -> str:
     return value
 
 
-def _text_list(value: object, field: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+def _text_list(value: object, field: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or any(not isinstance(item, str) or not REF_RE.fullmatch(item) for item in value)
+    ):
         raise GlobalIdleValidationError(f"invalid_{field}")
-    normalized = tuple(value)
-    if len(normalized) != len(set(normalized)):
+    if len(value) != len(set(value)):
         raise GlobalIdleValidationError(f"duplicate_{field}")
-    return tuple(sorted(normalized))
+    return sorted(value)
 
 
 def validate_global_idle_proof(value: object) -> dict[str, object]:
