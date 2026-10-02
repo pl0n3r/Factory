@@ -648,6 +648,121 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         )
         self.assertIsNone(ambiguous["evidence"])
 
+    def test_idle_factory_projects_do_not_replace_invalid_evidence_with_presence_insufficient(self):
+        class FakeClient:
+            repository = "pl0n3r/Factory"
+
+            def list_open_work_items(self):
+                return []
+
+            def global_idle_proof(self, now):
+                return GitHubIssueClient(
+                    "token",
+                    "pl0n3r/Factory",
+                    lambda method, path, payload: [],
+                ).global_idle_proof(now)
+
+        runtime_input = collect_github_input(
+            FakeClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        _, invalid_plan = evaluate_runtime(
+            config(),
+            runtime_input["guard"],
+            None,
+            {},
+        )
+        invalid_alert = next(
+            item for item in invalid_plan.create if item.code == "invalid_evidence"
+        )
+
+        decision, plan = evaluate_runtime(
+            config(),
+            runtime_input["guard"],
+            runtime_input["evidence"],
+            {
+                invalid_alert.fingerprint: {
+                    "number": 818,
+                    "state": "open",
+                }
+            },
+        )
+        codes = {item.code for item in decision.incidents}
+        self.assertEqual(decision.action, "ALLOW")
+        self.assertNotIn("invalid_evidence", codes)
+        self.assertNotIn("presence_insufficient", codes)
+        self.assertFalse(any(item.severity == "UNKNOWN" for item in decision.incidents))
+        self.assertEqual(plan.create, ())
+        self.assertEqual(plan.reopen, ())
+        self.assertEqual(plan.close, (818,))
+
+    def test_idle_fresh_cycle_reconciles_prior_presence_insufficient_alert_without_new_unknown_alert(self):
+        class ProvenIdleClient:
+            repository = "pl0n3r/Factory"
+
+            def list_open_work_items(self):
+                return []
+
+            def global_idle_proof(self, now):
+                return GitHubIssueClient(
+                    "token",
+                    "pl0n3r/Factory",
+                    lambda method, path, payload: [],
+                ).global_idle_proof(now)
+
+        class UnprovenIdleClient(ProvenIdleClient):
+            def global_idle_proof(self, now):
+                return {
+                    "version": 1,
+                    "idle_global": False,
+                    "reasons": ["repository_ready:pl0n3r/Condor"],
+                    "provenance": [],
+                }
+
+        unproven = collect_github_input(
+            UnprovenIdleClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        unproven_decision, unproven_plan = evaluate_runtime(
+            config(),
+            unproven["guard"],
+            unproven["evidence"],
+            {},
+        )
+        self.assertEqual(unproven_decision.action, "BLOCKED")
+        presence_alert = next(
+            item for item in unproven_plan.create if item.code == "presence_insufficient"
+        )
+
+        clean = collect_github_input(
+            ProvenIdleClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        decision, plan = evaluate_runtime(
+            config(),
+            clean["guard"],
+            clean["evidence"],
+            {
+                presence_alert.fingerprint: {
+                    "number": 821,
+                    "state": "open",
+                }
+            },
+        )
+        self.assertEqual(decision.action, "ALLOW")
+        self.assertEqual(decision.daily_summary.state_freshness, "fresh")
+        self.assertNotIn(
+            "presence_insufficient",
+            {item.code for item in decision.incidents},
+        )
+        self.assertFalse(any(item.severity == "UNKNOWN" for item in decision.incidents))
+        self.assertEqual(plan.create, ())
+        self.assertEqual(plan.reopen, ())
+        self.assertEqual(plan.close, (821,))
+
     def test_idle_projection_keeps_prior_alert_while_unknown_remains(self):
         class FakeClient:
             repository = "pl0n3r/Factory"
