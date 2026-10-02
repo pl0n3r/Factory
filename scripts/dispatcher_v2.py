@@ -12,7 +12,14 @@ from scripts.adaptive_fencing import FencingDecision
 from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET, parse_contract
 from scripts.presence_contract import PresenceAssessment
 from scripts.unattended_guards import GuardDecision
-from scripts.unattended_watchdog import WatchdogDecision
+from scripts.unattended_watchdog import (
+    DailySummary,
+    EMAIL_RE as WATCHDOG_EMAIL_RE,
+    SEVERITIES as WATCHDOG_SEVERITIES,
+    SENSITIVE_VALUE_FRAGMENTS as WATCHDOG_SENSITIVE_VALUE_FRAGMENTS,
+    WatchdogDecision,
+    WatchdogIncident,
+)
 from scripts.work_origin import idempotency_scope, validate_work_item, work_fingerprint
 from seguridad.puertas_humanas import validate_gate
 
@@ -1179,6 +1186,75 @@ def _valid_unattended_reason(value: object) -> bool:
     return all(char.isalnum() or char in "._:-" for char in value)
 
 
+def _valid_unattended_incident_code(value: object) -> bool:
+    """Compatibilidad estructural con el texto seguro que 4C ya acepta."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.strip() != value
+        or len(value) > 521
+    ):
+        return False
+    lowered = value.lower()
+    if any(fragment in lowered for fragment in WATCHDOG_SENSITIVE_VALUE_FRAGMENTS):
+        return False
+    return WATCHDOG_EMAIL_RE.search(value) is None
+
+
+def _valid_unattended_incident(incident: object) -> bool:
+    return (
+        isinstance(incident, WatchdogIncident)
+        and _valid_unattended_incident_code(incident.code)
+        and incident.severity in WATCHDOG_SEVERITIES
+        and _valid_unattended_fingerprint(incident.fingerprint)
+        and isinstance(incident.repeated, bool)
+        and isinstance(incident.reasons, tuple)
+        and all(
+            isinstance(reason, str) and 0 < len(reason) <= 521
+            for reason in incident.reasons
+        )
+    )
+
+
+def _valid_unattended_watchdog_contract(watchdog: WatchdogDecision) -> bool:
+    if not isinstance(watchdog.daily_summary, DailySummary):
+        return False
+    if not isinstance(watchdog.incidents, tuple) or any(
+        not _valid_unattended_incident(incident)
+        for incident in watchdog.incidents
+    ):
+        return False
+    if not isinstance(watchdog.new_alert_fingerprints, tuple) or any(
+        not _valid_unattended_fingerprint(fingerprint)
+        for fingerprint in watchdog.new_alert_fingerprints
+    ):
+        return False
+    expected_alerts = tuple(
+        sorted(
+            incident.fingerprint
+            for incident in watchdog.incidents
+            if not incident.repeated
+        )
+    )
+    if tuple(sorted(watchdog.new_alert_fingerprints)) != expected_alerts:
+        return False
+    if not isinstance(watchdog.interrupt_owner, bool):
+        return False
+    expected_interrupt = any(
+        incident.severity in {"S1", "S2"} and not incident.repeated
+        for incident in watchdog.incidents
+    )
+    if watchdog.interrupt_owner is not expected_interrupt:
+        return False
+    if watchdog.action == "ALLOW" and (
+        watchdog.incidents
+        or watchdog.new_alert_fingerprints
+        or watchdog.interrupt_owner
+    ):
+        return False
+    return _valid_unattended_fingerprint(watchdog.evidence_fingerprint)
+
+
 def _unattended_dispatch_gate(
     guard: GuardDecision | None,
     watchdog: WatchdogDecision | None,
@@ -1207,21 +1283,8 @@ def _unattended_dispatch_gate(
         or not _valid_unattended_fingerprint(guard.evidence_fingerprint)
     ):
         return "BLOCKED", ("unattended_guard_evidence_invalid",)
-    if (
-        not isinstance(watchdog.incidents, tuple)
-        or any(
-            not _valid_unattended_reason(getattr(incident, "code", None))
-            for incident in watchdog.incidents
-        )
-        or not isinstance(watchdog.new_alert_fingerprints, tuple)
-        or any(
-            not _valid_unattended_fingerprint(fingerprint)
-            for fingerprint in watchdog.new_alert_fingerprints
-        )
-        or not isinstance(watchdog.interrupt_owner, bool)
-        or not _valid_unattended_fingerprint(watchdog.evidence_fingerprint)
-    ):
-        return "BLOCKED", ("unattended_watchdog_evidence_invalid",)
+    if not _valid_unattended_watchdog_contract(watchdog):
+        return "BLOCKED", ("unattended_watchdog_contract_incoherent",)
     if (guard.action, watchdog.action) not in UNATTENDED_CANONICAL_PAIRS:
         return "BLOCKED", ("unattended_decisions_incoherent",)
 
