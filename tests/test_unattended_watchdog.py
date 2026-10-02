@@ -132,6 +132,14 @@ class UnattendedWatchdogTests(unittest.TestCase):
                     result.daily_summary.incidents,
                 )
 
+        malformed = presence()
+        malformed[7] = "invalid-key"
+        malformed_result = evaluate_unattended_watchdog(
+            guard(), config(), evidence(presence=malformed)
+        )
+        self.assertEqual(malformed_result.action, "BLOCKED")
+        self.assertIn("invalid_presence", malformed_result.daily_summary.blockers)
+
     def test_ready_without_dispatch_and_stale_reservation_require_explicit_thresholds(self):
         invalid = config()
         del invalid["ready_without_dispatch_minutes"]
@@ -469,6 +477,19 @@ class UnattendedWatchdogTests(unittest.TestCase):
         )
         self.assertTrue(state_s2.interrupt_owner)
         self.assertIn("S2:state_severity", state_s2.daily_summary.incidents)
+
+        stale_s1 = evaluate_unattended_watchdog(
+            guard(),
+            config(),
+            evidence(
+                reservation=None,
+                state=state(severity="S1", updated_at="2026-10-02T00:30:00Z"),
+            ),
+        )
+        self.assertFalse(stale_s1.interrupt_owner)
+        self.assertIn("S3:state_stale", stale_s1.daily_summary.incidents)
+        self.assertIn("UNKNOWN:state_severity", stale_s1.daily_summary.incidents)
+        self.assertEqual(stale_s1.action, "BLOCKED")
 
         source = Path("scripts/unattended_watchdog.py").read_text(encoding="utf-8")
         for forbidden in (

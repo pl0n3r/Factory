@@ -34,7 +34,9 @@ segunda definición de presencia.
 
 La reserva usa identidad de trabajo, timestamp y freshness. Una reserva activa
 que no coincide con `STATE.work_identity` falla cerrado. Stale/unknown o edad
-por encima del umbral nunca se presenta como progreso.
+por encima del umbral nunca se presenta como progreso. Una severidad S1/S2 del
+STATE solo interrumpe mientras ese STATE sea fresh; si está stale se degrada a
+UNKNOWN y conserva fail-closed.
 
 `STATE` conserva los campos mínimos de 4A: identidad, repo, riesgo/severidad,
 evidencia, last state, next action, blockers y timestamp. `branch`, `head_sha` y

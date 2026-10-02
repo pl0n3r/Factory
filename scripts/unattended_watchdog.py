@@ -367,7 +367,10 @@ def evaluate_unattended_watchdog(
         presence_payload = evidence["presence"]
         if not isinstance(presence_payload, dict):
             raise WatchdogValidationError("invalid_presence")
-        presence = classify_presence(presence_payload)
+        try:
+            presence = classify_presence(presence_payload)
+        except (PresenceValidationError, AttributeError, TypeError) as exc:
+            raise WatchdogValidationError("invalid_presence") from exc
 
         if not isinstance(evidence["work_ready"], bool):
             raise WatchdogValidationError("invalid_work_ready")
@@ -508,14 +511,23 @@ def evaluate_unattended_watchdog(
         ))
 
     if state["severity"] in {"S1", "S2", "UNKNOWN"}:
+        effective_severity = (
+            str(state["severity"])
+            if state["freshness"] == "fresh"
+            else "UNKNOWN"
+        )
         incidents.append(_incident(
             "state_severity",
-            str(state["severity"]),
-            (f"state_severity:{state['severity']}",),
+            effective_severity,
+            (
+                f"state_severity:{state['severity']}",
+                f"freshness:{state['freshness']}",
+            ),
             {
                 "work_identity": state["work_identity"],
                 "updated_at": state["updated_at"],
                 "severity": state["severity"],
+                "freshness": state["freshness"],
             },
             already_alerted,
         ))
