@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import copy
+import io
+import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from scripts.reusable_release_watchdog import (
     ReusableReleaseWatchdogError,
     evaluate_release_watchdog,
+    main as watchdog_main,
 )
 
 
@@ -122,6 +126,132 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ReusableReleaseWatchdogError):
                     evaluate_release_watchdog(value)
+
+    def test_empty_observations_produce_clear_without_rollback_authority(self):
+        result = evaluate_release_watchdog(payload())
+
+        self.assertEqual(result["status"], "CLEAR")
+        self.assertEqual(result["affected_repository_count"], 0)
+        self.assertEqual(result["affected_repositories"], [])
+        self.assertFalse(result["rollback_recommended"])
+        self.assertEqual(
+            result["recommendation"],
+            "observe_without_rollback_recommendation",
+        )
+        self.assertEqual(result["authority"], "unchanged")
+        self.assertFalse(result["execute_rollback"])
+
+    def test_root_and_observation_contract_errors_fail_closed(self):
+        base = payload(observation())
+        invalid_cases = []
+
+        invalid_cases.append(None)
+
+        extra_root = copy.deepcopy(base)
+        extra_root["extra"] = True
+        invalid_cases.append(extra_root)
+
+        bad_factory_sha = copy.deepcopy(base)
+        bad_factory_sha["factory_sha"] = "bad"
+        invalid_cases.append(bad_factory_sha)
+
+        bad_channel = copy.deepcopy(base)
+        bad_channel["factory_channel"] = "latest"
+        invalid_cases.append(bad_channel)
+
+        bad_timestamp_shape = copy.deepcopy(base)
+        bad_timestamp_shape["release_started_at"] = "2026-10-02T16:50:55+00:00"
+        invalid_cases.append(bad_timestamp_shape)
+
+        bad_timestamp_value = copy.deepcopy(base)
+        bad_timestamp_value["release_started_at"] = "not-a-dateZ"
+        invalid_cases.append(bad_timestamp_value)
+
+        bad_observations_type = copy.deepcopy(base)
+        bad_observations_type["observations"] = {}
+        invalid_cases.append(bad_observations_type)
+
+        too_many = payload()
+        too_many["observations"] = [observation()] * 201
+        invalid_cases.append(too_many)
+
+        missing_field = copy.deepcopy(base)
+        missing_field["observations"][0].pop("run_id")
+        invalid_cases.append(missing_field)
+
+        unknown_reusable = copy.deepcopy(base)
+        unknown_reusable["observations"][0]["reusable_ref"] = (
+            "pl0n3r/factory/.github/workflows/unknown.yml@v1"
+        )
+        invalid_cases.append(unknown_reusable)
+
+        invalid_run_id = copy.deepcopy(base)
+        invalid_run_id["observations"][0]["run_id"] = True
+        invalid_cases.append(invalid_run_id)
+
+        before_release = copy.deepcopy(base)
+        before_release["observations"][0]["observed_at"] = (
+            "2026-10-02T16:00:00Z"
+        )
+        invalid_cases.append(before_release)
+
+        mismatched_factory_sha = copy.deepcopy(base)
+        mismatched_factory_sha["observations"][0]["factory_sha"] = "c" * 40
+        invalid_cases.append(mismatched_factory_sha)
+
+        mismatched_channel = copy.deepcopy(base)
+        mismatched_channel["observations"][0]["factory_channel"] = "main"
+        invalid_cases.append(mismatched_channel)
+
+        invalid_caller_sha = copy.deepcopy(base)
+        invalid_caller_sha["observations"][0]["caller_sha"] = "bad"
+        invalid_cases.append(invalid_caller_sha)
+
+        invalid_caller_path = copy.deepcopy(base)
+        invalid_caller_path["observations"][0]["caller_path"] = "../caller.yml"
+        invalid_cases.append(invalid_caller_path)
+
+        for value in invalid_cases:
+            with self.subTest(value=value):
+                with self.assertRaises(ReusableReleaseWatchdogError):
+                    evaluate_release_watchdog(value)
+
+    def test_cli_success_invalid_json_and_input_limit_are_explicit(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch(
+                "sys.stdin",
+                io.StringIO(json.dumps(payload())),
+            ),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            self.assertEqual(watchdog_main(), 0)
+
+        parsed = json.loads(stdout.getvalue())
+        self.assertEqual(parsed["status"], "CLEAR")
+        self.assertEqual(stderr.getvalue(), "")
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("sys.stdin", io.StringIO("{not-json")),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            self.assertEqual(watchdog_main(), 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("ERROR:", stderr.getvalue())
+
+        stderr = io.StringIO()
+        with (
+            patch("scripts.reusable_release_watchdog.MAX_INPUT", 5),
+            patch("sys.stdin", io.StringIO("123456")),
+            patch("sys.stderr", stderr),
+        ):
+            self.assertEqual(watchdog_main(), 2)
+        self.assertIn("payload demasiado grande", stderr.getvalue())
 
     def test_workflow_never_moves_tags_and_keeps_rollback_advisory_only(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
