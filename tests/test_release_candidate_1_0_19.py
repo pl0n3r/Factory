@@ -9,6 +9,19 @@ from pathlib import Path
 
 
 class ReleaseCandidate1019Tests(unittest.TestCase):
+    UNBLOCK_REGRESSION_TARGETS = (
+        "tests/test_coordinar_trabajo.py::CoordinacionTests::"
+        "test_block_sweep_unblocks_verified_workflow_once",
+        "tests/test_coordinar_trabajo.py::CoordinacionTests::"
+        "test_block_sweep_fails_closed_on_unverified_or_invalid_condition",
+        "tests/test_coordinar_trabajo_unblock_validation.py::"
+        "UnblockValidationTests::test_missing_targets_fail_closed_without_stopping_sweep",
+        "tests/test_coordinar_trabajo.py::CoordinacionTests::"
+        "test_block_sweep_retry_does_not_duplicate_evidence_comment",
+        "tests/test_coordinar_trabajo.py::CoordinacionTests::"
+        "test_block_sweep_supports_closed_issue_condition",
+    )
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.root = Path(__file__).resolve().parents[1]
@@ -44,20 +57,16 @@ class ReleaseCandidate1019Tests(unittest.TestCase):
 
     def test_candidate_executes_verified_unblock_regressions(self) -> None:
         self._run_canonical_targets(
-            "AC-02",
-            (
-                "tests/test_coordinar_trabajo.py::CoordinacionTests::"
-                "test_block_sweep_unblocks_verified_workflow_once",
-                "tests/test_coordinar_trabajo.py::CoordinacionTests::"
-                "test_block_sweep_fails_closed_on_unverified_or_invalid_condition",
-                "tests/test_coordinar_trabajo_unblock_validation.py::"
-                "UnblockValidationTests::test_missing_targets_fail_closed_without_stopping_sweep",
-                "tests/test_coordinar_trabajo.py::CoordinacionTests::"
-                "test_block_sweep_retry_does_not_duplicate_evidence_comment",
-                "tests/test_coordinar_trabajo.py::CoordinacionTests::"
-                "test_block_sweep_supports_closed_issue_condition",
-            ),
+            "AC-01",
+            self.UNBLOCK_REGRESSION_TARGETS,
         )
+
+    def test_candidate_requires_missing_evidence_fail_closed_regression(self) -> None:
+        required = (
+            "tests/test_coordinar_trabajo_unblock_validation.py::"
+            "UnblockValidationTests::test_missing_targets_fail_closed_without_stopping_sweep"
+        )
+        self.assertIn(required, self.UNBLOCK_REGRESSION_TARGETS)
 
     def test_candidate_executes_dispatch_inventory_regressions(self) -> None:
         self._run_canonical_targets(
