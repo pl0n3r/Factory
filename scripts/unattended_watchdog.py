@@ -345,6 +345,17 @@ def evaluate_unattended_watchdog(
         return _blocked("invalid_guard_decision")
     if guard.authority != "unchanged" or guard.action not in {"ALLOW", "PAUSE", "BLOCKED"}:
         return _blocked("invalid_guard_contract", guard)
+    expected_pause = guard.action == "PAUSE"
+    if not isinstance(guard.pause_allowed, bool) or guard.pause_allowed is not expected_pause:
+        return _blocked("invalid_guard_pause_contract", guard)
+    if (
+        not isinstance(guard.reasons, tuple)
+        or not guard.reasons
+        or any(not isinstance(reason, str) or not reason for reason in guard.reasons)
+        or not isinstance(guard.evidence_fingerprint, str)
+        or not FINGERPRINT_RE.fullmatch(guard.evidence_fingerprint)
+    ):
+        return _blocked("invalid_guard_evidence_contract", guard)
     if not isinstance(evidence, dict):
         return _blocked("invalid_evidence", guard)
 
