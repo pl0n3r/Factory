@@ -136,6 +136,28 @@ class PlanContractTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(value, PLAN)
 
+    def test_d043_requires_validated_in_production_not_workflow_success(self):
+        for value in (
+            "Puertas D-043/release: evidencia terminal, no color del workflow",
+            "`workflow conclusion=success` por sí solo **no satisface D-043**",
+            "`VALIDATED_IN_PRODUCTION`",
+            "identidad/SHA coincidentes",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
+    def test_deploy_observed_keeps_dependent_leaf_blocked_even_when_workflow_succeeds(self):
+        for value in (
+            "`DEPLOY_OBSERVED`",
+            "`NO_OBSERVADO`",
+            "`pending` no vacío",
+            "mantienen el leaf bloqueado",
+            "aunque GitHub Actions muestre `success`",
+            "lease creada por inferir readiness desde `success` no amplía autoridad",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
     def test_tranche_gate_precedes_ready_reservation_and_cannot_be_overridden(self):
         gate = "**Gate de tanda antes de prioridades:**"
         priority = "5. El Issue ready de"
