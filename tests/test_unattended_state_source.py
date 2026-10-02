@@ -19,7 +19,7 @@ def comment(user, body, at="2026-10-02T04:09:00Z"):
     return {"user": {"login": user}, "body": body, "created_at": at, "updated_at": at}
 
 
-def reservation(active=True, at="2026-10-02T04:09:00Z"):
+def reservation(active=True, at="2026-10-02T04:09:00Z", **changes):
     payload = {
         "version": 3,
         "owner": "pl0n3r",
@@ -32,6 +32,7 @@ def reservation(active=True, at="2026-10-02T04:09:00Z"):
         "task_paths": ["scripts/unattended_state_source.py"],
         "task_depends_on": [745, 767],
     }
+    payload.update(changes)
     return comment(
         "github-actions[bot]",
         f"<!-- condor-reserva {json.dumps(payload, separators=(',', ':'))} -->",
@@ -123,6 +124,12 @@ class UnattendedStateSourceTests(unittest.TestCase):
         cases.append([reservation(), state_comment(state_payload(blockers=["contact user@example.com"]))])
         cases.append([reservation(), state_comment(state_payload(updated_at="2026-10-02T04:11:00Z"))])
         cases.append([reservation(), state_comment(user="someone-else")])
+        cases.append([reservation(version=2), state_comment()])
+        cases.append([reservation(acceptance_sha256="bad"), state_comment()])
+        cases.append([reservation(task_marker_sha256="bad"), state_comment()])
+        cases.append([reservation(task_paths=["x", "x"]), state_comment()])
+        cases.append([reservation(task_depends_on=[745, 745]), state_comment()])
+        cases.append([reservation(surprise="x"), state_comment()])
 
         for payload in cases:
             with self.subTest(payload=payload):

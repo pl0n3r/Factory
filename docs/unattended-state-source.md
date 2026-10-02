@@ -14,7 +14,8 @@ Con una reserva activa, esta fuente exige binding de `work_identity`, `repositor
 
 ## Provenance
 
-- La lease autoritativa es el **último** marker `condor-reserva` publicado por `github-actions[bot]`.
+- La lease autoritativa es el **último** marker **v3** `condor-reserva` publicado por `github-actions[bot]`; versiones históricas o shapes parciales fallan cerrado.
+- La lease v3 usa shape cerrado, hashes SHA-256 válidos y listas de paths/dependencias sin duplicados.
 - El STATE aceptado debe ser publicado por el `owner` de esa lease.
 - Campos desconocidos, secretos, PII, UUID/SHA/repo incoherentes o timestamps futuros fallan cerrado.
 - STATE no sustituye GitHub, HEALTH, checks, smoke, decisiones humanas ni el kill switch.

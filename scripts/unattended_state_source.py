@@ -15,7 +15,20 @@ STATE_START_RE = re.compile(r"<!--\s*factory-state\b")
 STATE_RE = re.compile(r"<!--\s*factory-state\s+(\{.*?\})\s*-->", re.DOTALL)
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+RESERVATION_V3_FIELDS = frozenset({
+    "version",
+    "owner",
+    "reservation_id",
+    "branch",
+    "active",
+    "reason",
+    "acceptance_sha256",
+    "task_marker_sha256",
+    "task_paths",
+    "task_depends_on",
+})
 
 
 class StateSourceValidationError(ValueError):
@@ -94,10 +107,9 @@ def _comments(value: object, now: datetime) -> list[dict[str, object]]:
 
 
 def _reservation(value: dict[str, object], issue_number: int) -> dict[str, object]:
-    required = {"version", "owner", "reservation_id", "branch", "active", "reason"}
-    if not required.issubset(value):
+    if set(value) != RESERVATION_V3_FIELDS:
         raise StateSourceValidationError("invalid_reservation_shape")
-    if type(value["version"]) is not int or value["version"] not in {1, 2, 3}:
+    if type(value["version"]) is not int or value["version"] != 3:
         raise StateSourceValidationError("invalid_reservation_version")
     if not isinstance(value["owner"], str) or not value["owner"]:
         raise StateSourceValidationError("invalid_reservation_owner")
@@ -110,13 +122,31 @@ def _reservation(value: dict[str, object], issue_number: int) -> dict[str, objec
         raise StateSourceValidationError("invalid_reservation_active")
     if not isinstance(value["reason"], str) or not value["reason"]:
         raise StateSourceValidationError("invalid_reservation_reason")
-    if value["version"] == 3:
-        paths = value.get("task_paths")
-        deps = value.get("task_depends_on")
-        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
-            raise StateSourceValidationError("invalid_reservation_paths")
-        if not isinstance(deps, list) or not all(type(n) is int and n > 0 for n in deps):
-            raise StateSourceValidationError("invalid_reservation_dependencies")
+    if (
+        not isinstance(value["acceptance_sha256"], str)
+        or not SHA256_RE.fullmatch(value["acceptance_sha256"])
+    ):
+        raise StateSourceValidationError("invalid_acceptance_sha256")
+    if (
+        not isinstance(value["task_marker_sha256"], str)
+        or not SHA256_RE.fullmatch(value["task_marker_sha256"])
+    ):
+        raise StateSourceValidationError("invalid_task_marker_sha256")
+    paths = value["task_paths"]
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or any(not isinstance(path, str) or not path for path in paths)
+        or len(paths) != len(set(paths))
+    ):
+        raise StateSourceValidationError("invalid_reservation_paths")
+    dependencies = value["task_depends_on"]
+    if (
+        not isinstance(dependencies, list)
+        or any(type(number) is not int or number <= 0 for number in dependencies)
+        or len(dependencies) != len(set(dependencies))
+    ):
+        raise StateSourceValidationError("invalid_reservation_dependencies")
     return value
 
 
