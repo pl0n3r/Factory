@@ -181,7 +181,12 @@ jobs:
 
   validar-pr:
     name: Validar coordinación
-    if: inputs.operation == 'validate'
+    if: >-
+      inputs.operation == 'validate' &&
+      !(
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true
+      )
     needs: validar-input
     runs-on: ubuntu-latest
     timeout-minutes: 5

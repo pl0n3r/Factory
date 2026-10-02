@@ -92,6 +92,15 @@ jobs:
       pr_number: ${{ github.event.pull_request.number }}
       action: ${{ github.event.action }}
 
+  validar-pr-evento:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: 'true'
+
   validar-pr:
     if: github.event_name == 'pull_request'
     # Mismo sobre de carga; el job validar-pr del reusable conserva permisos
@@ -103,6 +112,7 @@ jobs:
       pull-requests: write
       checks: write
     uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1
+    needs: validar-pr-evento
     with:
       operation: validate
       pr_number: ${{ github.event.pull_request.number }}

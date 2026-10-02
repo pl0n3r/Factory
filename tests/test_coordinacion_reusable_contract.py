@@ -79,6 +79,18 @@ class T(unittest.TestCase):
         )
         self.assertIn('("/renovar-contrato ", "renovar-contrato")', SCRIPT)
 
+    def test_merged_pr_validation_is_neutral(self):
+        """AC-01: el reusable neutraliza únicamente un PR ya fusionado."""
+        block = job_blocks(W)["validar-pr"]
+        self.assertIn("inputs.operation == 'validate'", block)
+        self.assertIn("github.event_name == 'pull_request'", block)
+        self.assertIn("github.event.pull_request.merged == true", block)
+        self.assertIn("!(", block)
+        self.assertIn(
+            "python3 .factory/scripts/coordinar_trabajo.py validar-pr",
+            block,
+        )
+
     def test_release_candidate_keeps_downstream_coordination_contract(self):
         """El artefacto publicable conserva el caller @v1 y la capacidad fail-closed."""
         callers = [
