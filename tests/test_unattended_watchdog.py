@@ -160,7 +160,7 @@ class UnattendedWatchdogTests(unittest.TestCase):
         self.assertEqual(result.action, "BLOCKED")
         self.assertEqual(result.authority, "unchanged")
 
-        pausable = evaluate_unattended_watchdog(
+        inconsistent = evaluate_unattended_watchdog(
             guard("ALLOW", True),
             config(),
             evidence(
@@ -170,7 +170,14 @@ class UnattendedWatchdogTests(unittest.TestCase):
                 reservation=None,
             ),
         )
-        self.assertEqual((pausable.action, pausable.authority), ("PAUSE", "unchanged"))
+        self.assertEqual(
+            (inconsistent.action, inconsistent.authority),
+            ("BLOCKED", "unchanged"),
+        )
+        self.assertIn(
+            "invalid_guard_pause_contract",
+            inconsistent.daily_summary.blockers,
+        )
 
     def test_incident_fingerprint_is_idempotent_and_changes_with_material_evidence(self):
         payload = evidence(
