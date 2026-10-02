@@ -4,7 +4,8 @@ from pathlib import Path
 import unittest
 
 from scripts.adaptive_fencing import FencingDecision
-from scripts.unattended_guards import evaluate_unattended_guards
+from scripts.unattended_global_idle import CANONICAL_REPOSITORIES, evaluate_global_idle_snapshot
+from scripts.unattended_guards import evaluate_global_idle_guard, evaluate_unattended_guards
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -43,7 +44,54 @@ def metrics(**changes):
     return value
 
 
+def global_idle_proof():
+    return evaluate_global_idle_snapshot(
+        {
+            "version": 1,
+            "repositories": [
+                {
+                    "repository": repository,
+                    "freshness": "fresh",
+                    "ready": False,
+                    "reserved": False,
+                    "reviewing": False,
+                    "ambiguous": False,
+                    "source_ref": f"github:{repository}#inventory",
+                }
+                for repository in CANONICAL_REPOSITORIES
+            ],
+        }
+    )
+
+
 class UnattendedGuardsTests(unittest.TestCase):
+    def test_global_idle_guard_allows_only_valid_proven_idle(self):
+        allowed = evaluate_global_idle_guard(global_idle_proof())
+        self.assertEqual((allowed.action, allowed.authority), ("ALLOW", "unchanged"))
+        self.assertFalse(allowed.pause_allowed)
+
+        invalid = evaluate_global_idle_guard({"version": 1})
+        self.assertEqual((invalid.action, invalid.authority), ("BLOCKED", "unchanged"))
+        self.assertFalse(invalid.pause_allowed)
+
+        non_idle = global_idle_proof()
+        non_idle = {
+            **non_idle,
+            "idle_global": False,
+            "reasons": ["repository_ready:pl0n3r/Factory"],
+        }
+        blocked = evaluate_global_idle_guard(non_idle)
+        self.assertEqual((blocked.action, blocked.authority), ("BLOCKED", "unchanged"))
+
+    def test_global_idle_guard_never_grants_sensitive_authority_or_pause(self):
+        result = evaluate_global_idle_guard(global_idle_proof())
+        self.assertEqual(result.authority, "unchanged")
+        self.assertFalse(result.pause_allowed)
+        self.assertNotIn("global_pause_active", result.reasons)
+        self.assertNotIn("sensitive_authority_not_granted", result.reasons)
+        self.assertEqual(result.action, "ALLOW")
+        self.assertEqual(len(result.evidence_fingerprint), 64)
+
     def test_global_pause_and_missing_configuration_fail_closed(self):
         paused = evaluate_unattended_guards(fence(), cfg(global_pause=True), ev(), metrics())
         self.assertEqual((paused.action, paused.pause_allowed, paused.authority), ("PAUSE", True, "unchanged"))

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import unittest
 
-from scripts.adaptive_fencing import FencingContext, evaluate_fencing
+from scripts.adaptive_fencing import FencingContext, evaluate_fencing, fence_global_idle
+from scripts.unattended_global_idle import CANONICAL_REPOSITORIES, evaluate_global_idle_snapshot
 
 
 def base_snapshot():
@@ -82,7 +83,55 @@ def evaluate(events, **overrides):
     return evaluate_fencing(base_snapshot(), events, FencingContext(**kwargs))
 
 
+def global_idle_proof():
+    return evaluate_global_idle_snapshot(
+        {
+            "version": 1,
+            "repositories": [
+                {
+                    "repository": repository,
+                    "freshness": "fresh",
+                    "ready": False,
+                    "reserved": False,
+                    "reviewing": False,
+                    "ambiguous": False,
+                    "source_ref": f"github:{repository}#inventory",
+                }
+                for repository in CANONICAL_REPOSITORIES
+            ],
+        }
+    )
+
+
 class AdaptiveFencingTests(unittest.TestCase):
+    def test_global_idle_proof_produces_keep_without_pause_or_authority_expansion(self):
+        first = fence_global_idle(global_idle_proof())
+        second = fence_global_idle(global_idle_proof())
+        self.assertEqual(first, second)
+        self.assertEqual(first.action, "keep")
+        self.assertFalse(first.pause_allowed)
+        self.assertEqual((first.generation, first.attempt, first.coalesced_events), (0, 0, 0))
+        self.assertEqual(first.reasons, ("global_idle_proven",))
+        self.assertEqual(len(first.snapshot_fingerprint), 64)
+        self.assertEqual(len(first.event_fingerprint), 64)
+
+    def test_invalid_or_non_idle_global_proof_fails_closed(self):
+        invalid = fence_global_idle({"version": 1})
+        self.assertEqual(invalid.action, "fail_closed")
+        self.assertFalse(invalid.pause_allowed)
+        self.assertIn("global_idle_invalid", invalid.reasons)
+
+        non_idle = global_idle_proof()
+        non_idle = {
+            **non_idle,
+            "idle_global": False,
+            "reasons": ["repository_ready:pl0n3r/Factory"],
+        }
+        blocked = fence_global_idle(non_idle)
+        self.assertEqual(blocked.action, "fail_closed")
+        self.assertFalse(blocked.pause_allowed)
+        self.assertIn("global_idle_not_proven", blocked.reasons)
+
     def test_stale_generation_fails_closed(self):
         """AC-01: generaciones anteriores no alteran el intento vigente."""
         decision = evaluate([envelope(generation=3)])
