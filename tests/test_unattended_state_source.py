@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
 import copy
 import json
 import unittest
@@ -31,6 +32,23 @@ def reservation(active=True, at="2026-10-02T04:09:00Z", **changes):
         "task_marker_sha256": "c" * 64,
         "task_paths": ["scripts/unattended_state_source.py"],
         "task_depends_on": [745, 767],
+    }
+    payload.update(changes)
+    return comment(
+        "github-actions[bot]",
+        f"<!-- condor-reserva {json.dumps(payload, separators=(',', ':'))} -->",
+        at,
+    )
+
+
+def release_v1(at="2026-10-02T04:09:30Z", **changes):
+    payload = {
+        "active": False,
+        "branch": "trabajo/issue-775",
+        "owner": "pl0n3r",
+        "reason": "liberar",
+        "reservation_id": RID,
+        "version": 1,
     }
     payload.update(changes)
     return comment(
@@ -91,7 +109,17 @@ class UnattendedStateSourceTests(unittest.TestCase):
         self.assertEqual(result.state["work_identity"], "pl0n3r/Factory#775")
         self.assertEqual(result.state["reservation_id"], RID)
         self.assertEqual(result.state["head_sha"], HEAD)
-        self.assertEqual(result.state["freshness"], "fresh")
+        self.assertNotIn("freshness", result.state)
+        round_trip = __import__(
+            "scripts.unattended_watchdog",
+            fromlist=["validate_state"],
+        ).validate_state(
+            result.state,
+            now=datetime.fromisoformat(NOW.replace("Z", "+00:00")),
+            stale_after_minutes=20,
+        )
+        self.assertEqual(round_trip["work_identity"], "pl0n3r/Factory#775")
+        self.assertEqual(round_trip["freshness"], "fresh")
 
     def test_presence_never_invents_heartbeat_or_capacity(self):
         result = project([reservation(), state_comment()])
@@ -165,19 +193,27 @@ class UnattendedStateSourceTests(unittest.TestCase):
             state_comment(state_payload(updated_at="2026-10-02T03:30:00Z")),
         ])
         self.assertEqual(stale_state.status, "READY")
-        self.assertEqual(stale_state.state["freshness"], "stale")
+        self.assertNotIn("freshness", stale_state.state)
         self.assertIn("state_stale", stale_state.reasons)
 
-        released = project([reservation(), state_comment(), reservation(active=False)])
+        released = project([reservation(), state_comment(), release_v1()])
         self.assertEqual(released.status, "UNKNOWN")
         self.assertIsNone(released.state)
+        self.assertEqual(released.reservation_id, None)
+
+        bad_release = project([
+            reservation(),
+            state_comment(),
+            release_v1(active=True),
+        ])
+        self.assertEqual(bad_release.status, "BLOCKED")
+        self.assertIsNone(bad_release.state)
 
         changed = copy.deepcopy(state_payload())
         changed["updated_at"] = "2026-10-02T03:30:00Z"
-        self.assertNotEqual(
-            valid.state["freshness"],
-            project([reservation(), state_comment(changed)]).state["freshness"],
-        )
+        changed_projection = project([reservation(), state_comment(changed)])
+        self.assertIn("state_stale", changed_projection.reasons)
+        self.assertNotIn("freshness", changed_projection.state)
 
 
 if __name__ == "__main__":

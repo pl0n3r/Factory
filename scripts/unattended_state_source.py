@@ -17,6 +17,14 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+RESERVATION_V1_RELEASE_FIELDS = frozenset({
+    "active",
+    "branch",
+    "owner",
+    "reason",
+    "reservation_id",
+    "version",
+})
 RESERVATION_V3_FIELDS = frozenset({
     "version",
     "owner",
@@ -107,10 +115,18 @@ def _comments(value: object, now: datetime) -> list[dict[str, object]]:
 
 
 def _reservation(value: dict[str, object], issue_number: int) -> dict[str, object]:
-    if set(value) != RESERVATION_V3_FIELDS:
-        raise StateSourceValidationError("invalid_reservation_shape")
-    if type(value["version"]) is not int or value["version"] != 3:
+    version = value.get("version")
+    if type(version) is not int:
         raise StateSourceValidationError("invalid_reservation_version")
+    if version == 1:
+        if set(value) != RESERVATION_V1_RELEASE_FIELDS:
+            raise StateSourceValidationError("invalid_reservation_shape")
+    elif version == 3:
+        if set(value) != RESERVATION_V3_FIELDS:
+            raise StateSourceValidationError("invalid_reservation_shape")
+    else:
+        raise StateSourceValidationError("invalid_reservation_version")
+
     if not isinstance(value["owner"], str) or not value["owner"]:
         raise StateSourceValidationError("invalid_reservation_owner")
     rid = value["reservation_id"]
@@ -122,6 +138,14 @@ def _reservation(value: dict[str, object], issue_number: int) -> dict[str, objec
         raise StateSourceValidationError("invalid_reservation_active")
     if not isinstance(value["reason"], str) or not value["reason"]:
         raise StateSourceValidationError("invalid_reservation_reason")
+
+    if version == 1:
+        if value["active"] is not False:
+            raise StateSourceValidationError("invalid_reservation_v1_active")
+        return value
+
+    if value["active"] is not True:
+        raise StateSourceValidationError("invalid_reservation_v3_active")
     if (
         not isinstance(value["acceptance_sha256"], str)
         or not SHA256_RE.fullmatch(value["acceptance_sha256"])
@@ -297,11 +321,12 @@ def project_state_presence(
         if normalized["freshness"] == "stale":
             reasons.append("state_stale")
         status = "UNKNOWN" if "reservation_stale" in reasons else "READY"
+        canonical_state = dict(raw_state)
         return StatePresenceProjection(
             status,
             "unchanged",
             tuple(sorted(set(reasons))),
-            normalized,
+            canonical_state,
             presence,
             str(reservation["reservation_id"]),
         )
