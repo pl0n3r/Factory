@@ -135,8 +135,12 @@ def evaluate_unattended_guards(
     """Compone fencing + guardas explícitas sin ampliar autoridad."""
     if not isinstance(fencing, FencingDecision):
         return _blocked("invalid_fencing_decision")
+    if fencing.action not in {"keep", "replan", "fail_closed"}:
+        return _blocked("invalid_fencing_action")
     if fencing.action == "fail_closed":
         return _blocked("adaptive_fencing_fail_closed")
+    if fencing.action == "replan" and not fencing.pause_allowed:
+        return _blocked("adaptive_pause_not_allowed")
     try:
         cfg, ev, metrics = _normalize(config, evidence, measurements)
     except GuardValidationError as exc:
