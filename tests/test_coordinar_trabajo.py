@@ -2519,6 +2519,28 @@ class CoordinacionTests(unittest.TestCase):
         with self.assertRaises(CoordinationError):
             validate_pull(api, 15, False)
 
+    def test_validate_pull_rejects_open_pr_with_closed_issue(self) -> None:
+        """AC-02: un PR abierto conserva el fail-closed si su Issue ya cerró."""
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.issue_data["state"] = "closed"
+        api.issue_data["state_reason"] = "completed"
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": f"Closes #12\n<!-- condor-reserva-id: {SESSION_A} -->",
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+        api.pull_files_map[15] = {"src/a.php"}
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            r"Issue #12 debe estar abierto durante el PR",
+        ):
+            validate_pull(api, 15, True)
+
     def test_validate_pull_checks_active_session(self) -> None:
         """Valida que el PR declare exactamente la sesión activa."""
         api = FakeGitHub()

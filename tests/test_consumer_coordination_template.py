@@ -30,6 +30,19 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
         self.assertIn("github.event_name == 'pull_request'", validate)
         self.assertIn("operation: validate", validate)
 
+    def test_merged_pr_does_not_revalidate(self):
+        """AC-03: merge se salta; cierre sin merge conserva la ruta de validación."""
+        value = text()
+        validate = job_block(value, "validar-pr", "issue")
+        self.assertIn("github.event_name == 'pull_request'", validate)
+        self.assertIn("github.event.pull_request.merged != true", validate)
+        self.assertNotIn("github.event.action != 'closed'", validate)
+        self.assertIn("operation: validate", validate)
+        self.assertIn(
+            "types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]",
+            value,
+        )
+
     def test_consumer_coordination_is_repository_serialized_without_dropping_pending_runs(self):
         value = text()
         concurrency = value.split("concurrency:", 1)[1].split("jobs:", 1)[0]
