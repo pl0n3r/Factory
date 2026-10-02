@@ -34,25 +34,6 @@ jobs:
       kit_ref: ${{ github.sha }}
       factory_release_bootstrap: true
 
-  consumer-compat:
-    name: Compatibilidad de consumidores
-    needs: candidate-template
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Verificar permission envelope de consumidores públicos
-        env:
-          FACTORY_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$FACTORY_SHA" ]]
-          python3 -m scripts.reusable_release_preflight --factory-sha "$FACTORY_SHA"
-
   preflight:
     name: Validar gates de release v1.x
     needs: [candidate-template, consumer-compat]
@@ -152,6 +133,25 @@ jobs:
           python3 -m scripts.release_bootstrap < /tmp/release-bootstrap.json             | tee /tmp/release-bootstrap-result.json
           approved_sha="$(jq -r '.sha' /tmp/release-bootstrap-result.json)"
           echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"
+
+  consumer-compat:
+    name: Compatibilidad de consumidores
+    needs: candidate-template
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verificar permission envelope de consumidores públicos
+        env:
+          FACTORY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$FACTORY_SHA" ]]
+          python3 -m scripts.reusable_release_preflight --factory-sha "$FACTORY_SHA"
 
   release:
     name: Publicar release semántico desde v1
