@@ -329,7 +329,7 @@ class UnattendedCycleTests(TestCase):
                 guard("PAUSE"),
                 watchdog("ALLOW"),
                 provenance(),
-                "cycle_component_pair_incoherent",
+                "cycle_component_contract_invalid",
             ),
             (
                 "contradictory actions",
