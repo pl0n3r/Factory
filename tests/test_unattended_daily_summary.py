@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 
 from scripts.unattended_daily_summary import (
     DailySummaryError,
     Fact,
+    collect_issue_context,
     immediate_incidents,
+    main as daily_main,
     parse_daily_marker,
     publish_once,
     render_summary,
@@ -248,6 +253,147 @@ class UnattendedDailySummaryTests(unittest.TestCase):
         self.assertIn("UNKNOWN:invalid_evidence", missing)
         self.assertIn("source=4C:UNKNOWN · age=UNKNOWN · unknown", missing)
         self.assertIn("### Cuotas", missing)
+
+
+    def test_live_issue_context_and_entrypoint_are_fail_closed_and_publish_once(self):
+        now = datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc)
+
+        class ContextClient:
+            def _request(self, method, path, payload=None):
+                self.last = (method, path, payload)
+                if "state=open" in path:
+                    return [
+                        {
+                            "number": 900,
+                            "title": "decidir canal",
+                            "updated_at": "2026-10-02T12:55:00Z",
+                            "labels": [{"name": "decisión: dueño"}],
+                            "body": (
+                                '<!-- factory-human-gate '
+                                '{"recommendation":"A","safe_default":"B"} -->'
+                            ),
+                        },
+                        {
+                            "number": 901,
+                            "title": "dependencia externa",
+                            "updated_at": None,
+                            "labels": [{"name": "estado: bloqueado"}],
+                            "body": "",
+                        },
+                    ]
+                if "state=closed" in path:
+                    return [
+                        {
+                            "number": 899,
+                            "title": "trabajo integrado",
+                            "updated_at": "2026-10-02T12:50:00Z",
+                            "closed_at": "2026-10-02T12:50:00Z",
+                            "labels": [{"name": "estado: completado"}],
+                            "body": "",
+                        }
+                    ]
+                raise AssertionError(path)
+
+        context = collect_issue_context(ContextClient(), now)
+        self.assertIn("recomendación=A · seguro=B", context["decisions"][0].text)
+        self.assertEqual(context["decisions"][0].age_minutes, 5)
+        self.assertTrue(context["blockers"][0].text.startswith("causa: #901"))
+        self.assertEqual(context["blockers"][0].freshness, "unknown")
+        self.assertEqual(context["advances"][0].text, "#899 trabajo integrado")
+
+        class MainClient:
+            def __init__(self, token, repository):
+                self.token = token
+                self.repository = repository
+                self.comments = []
+                self.writes = []
+
+            def list_owned_alerts(self):
+                return {}
+
+            def list_issue_comments(self, issue_number):
+                return list(self.comments)
+
+            def get_issue(self, issue_number):
+                return {"number": issue_number}
+
+            def _request(self, method, path, payload=None):
+                self.writes.append((method, path, payload))
+                return {"ok": True}
+
+        clients = []
+
+        def client_factory(token, repository):
+            client = MainClient(token, repository)
+            clients.append(client)
+            return client
+
+        patches = (
+            patch(
+                "scripts.unattended_daily_summary.GitHubIssueClient",
+                side_effect=client_factory,
+            ),
+            patch(
+                "scripts.unattended_daily_summary.load_config",
+                return_value={
+                    "ready_without_dispatch_minutes": 10,
+                    "reservation_stale_minutes": 15,
+                    "state_stale_minutes": 20,
+                },
+            ),
+            patch(
+                "scripts.unattended_daily_summary.collect_github_input",
+                return_value=runtime_input(),
+            ),
+            patch(
+                "scripts.unattended_daily_summary.evaluate_runtime",
+                return_value=(decision(), SimpleNamespace()),
+            ),
+            patch(
+                "scripts.unattended_daily_summary.collect_issue_context",
+                return_value={"decisions": (), "blockers": (), "advances": ()},
+            ),
+            patch(
+                "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
+                return_value=SimpleNamespace(global_pause=False, reason="running"),
+            ),
+        )
+        with patch.dict(
+            os.environ,
+            {"GH_TOKEN": "token", "GITHUB_REPOSITORY": "pl0n3r/Factory"},
+            clear=False,
+        ), patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            self.assertEqual(daily_main(), 0)
+        self.assertEqual(len(clients[-1].writes), 1)
+        self.assertIn("/issues/768/comments", clients[-1].writes[0][1])
+
+        paused = MainClient("token", "pl0n3r/Factory")
+        with patch.dict(
+            os.environ,
+            {"GH_TOKEN": "token", "GITHUB_REPOSITORY": "pl0n3r/Factory"},
+            clear=False,
+        ), patch(
+            "scripts.unattended_daily_summary.GitHubIssueClient",
+            return_value=paused,
+        ), patch(
+            "scripts.unattended_daily_summary.load_config",
+            return_value={},
+        ), patch(
+            "scripts.unattended_daily_summary.collect_github_input",
+            return_value=runtime_input(),
+        ), patch(
+            "scripts.unattended_daily_summary.evaluate_runtime",
+            return_value=(decision(), SimpleNamespace()),
+        ), patch(
+            "scripts.unattended_daily_summary.collect_issue_context",
+            return_value={"decisions": (), "blockers": (), "advances": ()},
+        ), patch(
+            "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
+            return_value=SimpleNamespace(global_pause=True, reason="paused"),
+        ):
+            self.assertEqual(daily_main(), 1)
+        self.assertEqual(paused.writes, [])
+
 
 
 if __name__ == "__main__":
