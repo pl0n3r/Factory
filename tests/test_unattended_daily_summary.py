@@ -16,7 +16,10 @@ from scripts.unattended_daily_summary import (
     immediate_incidents,
     main as daily_main,
     parse_daily_marker,
+    parse_night_marker,
+    publish_night_report_once,
     publish_once,
+    render_night_report,
     render_summary,
 )
 from scripts.unattended_watchdog import DailySummary, WatchdogDecision
@@ -125,6 +128,35 @@ class UnattendedDailySummaryTests(unittest.TestCase):
                     ),
                 }
             )
+
+
+        night = render_night_report(
+            decision(integrated=("PR #1 fusionado",)),
+            {"decisions": (), "blockers": (), "advances": ()},
+            datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc),
+        )
+        self.assertIn("Informe de la noche Factory", night)
+        self.assertTrue(
+            publish_night_report_once(
+                client,
+                local_date="2026-10-02",
+                body=night,
+            )
+        )
+        client.comments.append(
+            {
+                "user": {"login": "github-actions[bot]"},
+                "body": night,
+            }
+        )
+        self.assertFalse(
+            publish_night_report_once(
+                client,
+                local_date="2026-10-02",
+                body=night,
+            )
+        )
+        self.assertEqual(parse_night_marker(client.comments[-1]), "2026-10-02")
 
     def test_summary_reports_source_age_and_unknown_or_stale_without_invention(self):
         now = datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc)
@@ -364,8 +396,13 @@ class UnattendedDailySummaryTests(unittest.TestCase):
             clear=False,
         ), patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             self.assertEqual(daily_main(), 0)
-        self.assertEqual(len(clients[-1].writes), 1)
-        self.assertIn("/issues/768/comments", clients[-1].writes[0][1])
+        self.assertEqual(len(clients[-1].writes), 2)
+        self.assertTrue(
+            all("/issues/768/comments" in write[1] for write in clients[-1].writes)
+        )
+        bodies = [write[2]["body"] for write in clients[-1].writes]
+        self.assertTrue(any("factory-unattended-night-report" in body for body in bodies))
+        self.assertTrue(any("factory-unattended-daily-summary" in body for body in bodies))
 
         paused = MainClient("token", "pl0n3r/Factory")
         with patch.dict(

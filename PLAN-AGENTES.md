@@ -399,8 +399,8 @@ Resumen obligatorio:
   stale/UNKNOWN o incumplimiento nunca se convierten en GREEN ni saltan gates;
 - pausa global, circuit breakers, techos configurados de uso/gasto/paralelismo,
   blast radius, rollback seguro ante smoke rojo sostenido, watchdog de actividad,
-  resumen diario y simulacro controlado están aprobados como contrato, pero su
-  runtime se implementa únicamente por slices materializados y seriales;
+  resumen diario, **Informe de la noche** idempotente y simulacro controlado están aprobados como contrato, pero su
+  runtime se implementa únicamente por slices materializados y seriales; el Informe de la noche usa marker propio, se publica una sola vez por fecha local y no sustituye el resumen diario;
 - orden posterior: **guardas runtime de pausa/disyuntor/techos → watchdog +
   resumen → simulacro E2E controlado**. No materialices ni ejecutes un slice
   posterior antes de completar el anterior.
