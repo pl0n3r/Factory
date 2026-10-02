@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import re
 
-from scripts.dispatcher_v2 import (\n    UNATTENDED_ACTIONS,\n    UNATTENDED_CANONICAL_PAIRS,\n    _unattended_dispatch_gate,\n)
+from scripts.dispatcher_v2 import (
+    UNATTENDED_ACTIONS,
+    UNATTENDED_CANONICAL_PAIRS,
+    _unattended_dispatch_gate,
+)
 from scripts.unattended_guards import GuardDecision
 from scripts.unattended_watchdog import WatchdogDecision
 
