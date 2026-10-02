@@ -10,6 +10,7 @@ from typing import Iterable
 
 from scripts.adaptive_fencing import FencingDecision
 from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET, parse_contract
+from scripts.orquestador_kit import validate_task_key
 from scripts.presence_contract import PresenceAssessment
 from scripts.unattended_guards import GuardDecision
 from scripts.unattended_watchdog import (
@@ -258,6 +259,18 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
     keys = [leaf.key.strip() for leaf in proposal.leaves]
     if any(not key for key in keys) or len(keys) != len(set(keys)):
         raise ValueError("direction proposal leaf keys must be non-empty and unique")
+    canonical_by_key: dict[str, str] = {}
+    for key in keys:
+        # DirectionLeaf puede conservar identidad legacy en la entrada, pero el
+        # contrato materializado usa siempre el task_key canónico.
+        if not key.isascii():
+            validate_task_key(key)
+        canonical = validate_task_key(key.upper())
+        if canonical in canonical_by_key.values():
+            raise ValueError(
+                "direction proposal leaf keys collide after task_key canonicalization"
+            )
+        canonical_by_key[key] = canonical
     key_set = set(keys)
     normalized_leaves = []
     for leaf, key in zip(proposal.leaves, keys):
@@ -283,10 +296,10 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
             raise ValueError("direction dependencies must reference another proposed leaf")
         normalized_leaves.append(
             {
-                "key": key,
+                "key": canonical_by_key[key],
                 "title": title,
                 "acceptance_targets": list(targets),
-                "depends_on": list(dependencies),
+                "depends_on": [canonical_by_key[dep] for dep in dependencies],
             }
         )
     return {

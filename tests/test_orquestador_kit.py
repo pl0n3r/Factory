@@ -11,6 +11,7 @@ from scripts.orquestador_kit import (
     reservation_blockers,
     task_marker_fingerprint,
     topological_order,
+    validate_task_key,
 )
 
 
@@ -44,6 +45,33 @@ def task(key, *, paths, depends_on=None, owner="pl0n3r"):
 
 
 class OrchestratorKitTests(unittest.TestCase):
+    def test_public_task_key_validator_matches_factory_plan_task_contract(self):
+        valid = "A" * 32
+        self.assertEqual(validate_task_key(valid), valid)
+
+        for invalid in ("a", "A" * 33, "A.key", ""):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(PlanError, "task.key"):
+                    validate_task_key(invalid)
+
+                payload = {
+                    "version": 1,
+                    "epic": 3,
+                    "task_key": invalid,
+                    "order": 1,
+                    "owner": "pl0n3r",
+                    "roles": ["qa"],
+                    "depends_on": [],
+                    "paths": ["scripts/a.py"],
+                }
+                marker = (
+                    "<!-- factory-plan-task "
+                    + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                    + " -->"
+                )
+                with self.assertRaisesRegex(PlanError, "task.key"):
+                    parse_task_marker(marker)
+
     def test_marker_name_in_prose_is_not_malformed_marker(self):
         """AC-01: nombres textuales no crean marker ni error de marker."""
         prose = (
