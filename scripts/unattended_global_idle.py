@@ -67,8 +67,24 @@ def validate_global_idle_proof(value: object) -> dict[str, object]:
     provenance = _text_list(value.get("provenance"), "global_idle_provenance")
     if idle_global and reasons:
         raise GlobalIdleValidationError("idle_global_with_reasons")
-    if idle_global and len(provenance) != len(CANONICAL_REPOSITORIES):
-        raise GlobalIdleValidationError("idle_global_incomplete_provenance")
+    if idle_global:
+        provenance_by_repo: dict[str, str] = {}
+        for item in provenance:
+            matches = [
+                repository
+                for repository in CANONICAL_REPOSITORIES
+                if item.startswith(f"{repository}:")
+            ]
+            if len(matches) != 1:
+                raise GlobalIdleValidationError("idle_global_invalid_provenance")
+            repository = matches[0]
+            if repository in provenance_by_repo:
+                raise GlobalIdleValidationError("idle_global_duplicate_provenance")
+            if not item.endswith(":fresh"):
+                raise GlobalIdleValidationError("idle_global_non_fresh_provenance")
+            provenance_by_repo[repository] = item
+        if set(provenance_by_repo) != set(CANONICAL_REPOSITORIES):
+            raise GlobalIdleValidationError("idle_global_incomplete_provenance")
     if not idle_global and not reasons:
         raise GlobalIdleValidationError("non_idle_without_reason")
     return {
