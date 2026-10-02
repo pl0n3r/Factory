@@ -59,13 +59,21 @@ class IssueContractPreflightTests(unittest.TestCase):
         )
 
     def test_invalid_acceptance_headings_or_criteria_fail_before_task_processing(self):
-        invalid = VALID_BODY.replace("### Contexto", "### Context")
-        with mock.patch.object(preflight, "parse_task_marker") as task_parser:
-            with self.assertRaises(preflight.IssueContractPreflightError) as ctx:
-                preflight.evaluate_issue_body(invalid)
+        invalid_bodies = [
+            VALID_BODY.replace("### Contexto", "### Context"),
+            VALID_BODY.replace("[AC-01] criterio de prueba.", "[AC-XX] criterio de prueba."),
+            "",
+            "x" * (preflight.MAX_INPUT_CHARS + 1),
+            None,
+        ]
+        for invalid in invalid_bodies:
+            with self.subTest(invalid_type=type(invalid).__name__):
+                with mock.patch.object(preflight, "parse_task_marker") as task_parser:
+                    with self.assertRaises(preflight.IssueContractPreflightError) as ctx:
+                        preflight.evaluate_issue_body(invalid)
 
-        self.assertEqual(ctx.exception.code, "acceptance_invalid")
-        task_parser.assert_not_called()
+                self.assertEqual(ctx.exception.code, "acceptance_invalid")
+                task_parser.assert_not_called()
 
     def test_missing_or_invalid_factory_plan_task_fails_closed(self):
         missing = VALID_BODY.split("<!-- factory-plan-task", 1)[0]
@@ -80,6 +88,11 @@ class IssueContractPreflightTests(unittest.TestCase):
         with self.assertRaises(preflight.IssueContractPreflightError) as invalid_ctx:
             preflight.evaluate_issue_body(invalid)
         self.assertEqual(invalid_ctx.exception.code, "task_invalid")
+
+        with mock.patch.object(preflight, "task_marker_fingerprint", return_value=None):
+            with self.assertRaises(preflight.IssueContractPreflightError) as fingerprint_ctx:
+                preflight.evaluate_issue_body(VALID_BODY)
+        self.assertEqual(fingerprint_ctx.exception.code, "task_invalid")
 
     def test_cli_is_deterministic_offline_and_never_needs_github_credentials(self):
         first = io.StringIO()
@@ -114,6 +127,13 @@ class IssueContractPreflightTests(unittest.TestCase):
                 "reason": "El body se recibe únicamente por stdin.",
             },
         )
+
+        invalid = io.StringIO()
+        self.assertEqual(
+            preflight.main([], stdin=io.StringIO(""), stdout=invalid),
+            2,
+        )
+        self.assertEqual(json.loads(invalid.getvalue())["code"], "acceptance_invalid")
 
         source = inspect.getsource(preflight)
         for forbidden in (
