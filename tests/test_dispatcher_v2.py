@@ -328,7 +328,7 @@ class DispatcherV2Tests(unittest.TestCase):
 
     def test_dispatch_signature_rejects_missing_agent_id_without_inference(self):
         with patch.dict("os.environ", {"FACTORY_AGENT_ID": "A9"}, clear=False):
-            for agent_id in ("", " ", "A 1", "A1)"):
+            for agent_id in (None, 7, "", " ", "A 1", "A1)", "(A1"):
                 with self.subTest(agent_id=agent_id):
                     with self.assertRaisesRegex(
                         ValueError,
@@ -338,6 +338,37 @@ class DispatcherV2Tests(unittest.TestCase):
                             agent_id=agent_id,
                             repository_ref="pl0n3r/Factory",
                         )
+
+        record = dispatch_signature(
+            agent_id="A3",
+            repository_ref="pl0n3r/FactoryRunner",
+        )
+        self.assertEqual(record["signature"], "Despacho (A3)")
+        self.assertIsNone(record["idle_metric"])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "dispatch signature requires a canonical dispatch repository",
+        ):
+            dispatch_signature(
+                agent_id="A3",
+                repository_ref="pl0n3r/not-canonical",
+            )
+
+        for timestamps in (
+            {"finished_at": "2026-10-01T20:00:00Z"},
+            {"next_dispatch_at": "2026-10-01T20:10:00Z"},
+        ):
+            with self.subTest(timestamps=timestamps):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "idle metric timestamps must be provided together",
+                ):
+                    dispatch_signature(
+                        agent_id="A3",
+                        repository_ref="pl0n3r/Factory",
+                        **timestamps,
+                    )
 
     def test_dispatch_signature_reuses_idle_time_metric_contract(self):
         with patch(
