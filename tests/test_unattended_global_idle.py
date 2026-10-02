@@ -97,6 +97,81 @@ class UnattendedGlobalIdleTests(unittest.TestCase):
         canonical = evaluate_global_idle_snapshot(snapshot())
         self.assertTrue(validate_global_idle_proof(canonical)["idle_global"])
 
+    def test_global_idle_contract_rejects_invalid_shapes_and_provenance(self):
+        canonical = evaluate_global_idle_snapshot(snapshot())
+        canonical_provenance = list(canonical["provenance"])
+
+        invalid_proofs = [
+            {},
+            {"version": 2, "idle_global": True, "reasons": [], "provenance": canonical_provenance},
+            {"version": 1, "idle_global": "yes", "reasons": [], "provenance": canonical_provenance},
+            {"version": 1, "idle_global": True, "reasons": ["unexpected"], "provenance": canonical_provenance},
+            {"version": 1, "idle_global": False, "reasons": [], "provenance": []},
+            {
+                "version": 1,
+                "idle_global": True,
+                "reasons": [],
+                "provenance": [
+                    "pl0n3r/Factory:a:fresh",
+                    "pl0n3r/Factory:b:fresh",
+                    *[
+                        item
+                        for item in canonical_provenance
+                        if not item.startswith("pl0n3r/Factory:")
+                    ],
+                ],
+            },
+            {
+                "version": 1,
+                "idle_global": True,
+                "reasons": [],
+                "provenance": [
+                    (
+                        item[:-len(":fresh")] + ":stale"
+                        if item.startswith("pl0n3r/Factory:")
+                        else item
+                    )
+                    for item in canonical_provenance
+                ],
+            },
+            {
+                "version": 1,
+                "idle_global": True,
+                "reasons": [],
+                "provenance": canonical_provenance[:-1],
+            },
+        ]
+        for proof in invalid_proofs:
+            with self.subTest(proof=proof):
+                with self.assertRaises(GlobalIdleValidationError):
+                    validate_global_idle_proof(proof)
+
+        invalid_snapshots = [
+            [],
+            {"version": 2, "repositories": []},
+            {"version": 1, "repositories": "not-a-list"},
+            {"version": 1, "repositories": [{"repository": "pl0n3r/Factory"}]},
+            snapshot([
+                row(repository) for repository in CANONICAL_REPOSITORIES[:-1]
+            ] + [row(CANONICAL_REPOSITORIES[-1], freshness="future")]),
+            snapshot([
+                row(repository) for repository in CANONICAL_REPOSITORIES[:-1]
+            ] + [row(CANONICAL_REPOSITORIES[-1], ready="yes")]),
+            snapshot([
+                row(repository) for repository in CANONICAL_REPOSITORIES[:-1]
+            ] + [row(CANONICAL_REPOSITORIES[-1], source_ref="bad source")]),
+        ]
+        for bad_snapshot in invalid_snapshots:
+            with self.subTest(snapshot=bad_snapshot):
+                with self.assertRaises(GlobalIdleValidationError):
+                    evaluate_global_idle_snapshot(bad_snapshot)
+
+        rows = [row(repository) for repository in CANONICAL_REPOSITORIES]
+        rows.append(row("pl0n3r/Unexpected"))
+        unexpected = evaluate_global_idle_snapshot(snapshot(rows))
+        self.assertFalse(unexpected["idle_global"])
+        self.assertIn("unexpected_repository:pl0n3r/Unexpected", unexpected["reasons"])
+
     def test_global_idle_never_fabricates_presence_capacity_heartbeat_or_sessions(self):
         proof = evaluate_global_idle_snapshot(snapshot())
         self.assertEqual(
