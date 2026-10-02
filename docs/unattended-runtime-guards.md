@@ -95,17 +95,27 @@ Las combinaciones válidas son las que 4C puede emitir sin ser más permisivo qu
 Cualquier combinación más permisiva, evidencia inválida, decisión ausente o
 autoridad distinta de `unchanged` falla cerrado.
 
+La frontera canónica de aplicación es `work_ladder()`. Cuando
+`unattended_mode=true`, la escalera consume las decisiones 4B/4C **antes** de
+normal, reconciliación quality, filler o product-direction.
+
 Cuando el resultado efectivo es `PAUSE` o `BLOCKED`:
 
-- se añaden razones de readiness antes de selección;
-- el dispatcher no invoca `dispatch_record()` ni `work_ladder()`;
-- `selected=null`;
-- `next_action.step=unattended_gate` es solo un status auditable con
-  `mutates=false`;
+- `work_ladder()` retorna inmediatamente
+  `next_action.step=unattended_gate`;
+- la salida es status-only, `mutates=false` y `authority=unchanged`;
+- `dispatch_record()` no invoca `select_next()` y conserva
+  `selected=null`;
+- no se ejecuta reconciliación stale, no se selecciona quality/filler y no se
+  abre una puerta product-direction;
 - las razones conservan causas canónicas secret-free como
   `guard:<reason>` y `watchdog:<incident-code>`;
-- no se crea filler, reconciliación, WorkItem ni puerta de dirección de
-  producto.
+- no se crea WorkItem ni una jerarquía paralela de supresión.
+
+`dispatch_record()` propaga el modo y las decisiones a `work_ladder()`.
+`adaptive_dispatch_record()` adapta Presence/Fencing y delega después en
+`dispatch_record()`; ya no mantiene una segunda ruta de supresión. Con
+`ALLOW → ALLOW` el pipeline/ranking previo se conserva.
 
 `unattended_mode=false` mantiene compatibilidad legacy y no exige decisiones
 4B/4C.
