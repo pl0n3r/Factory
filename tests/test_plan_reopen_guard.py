@@ -40,12 +40,25 @@ class PlanReopenGuardTests(unittest.TestCase):
             PLAN,
         )
 
+    def test_plan_forbids_stale_terminal_reconciliation_when_main_missing_contract(self):
+        required = (
+            "Preflight exact-main antes de cierre/reconciliación terminal",
+            "marcar `completed`/`duplicate`/`not_planned`",
+            "Si `main` **no** satisface el contrato",
+            "no cierres ni canceles el Issue/PR",
+            "no liberes la lease por “ya satisfecho”",
+            "Conserva la línea activa",
+        )
+        for value in required:
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
     def test_plan_requires_reread_after_concurrent_change(self):
         required = (
             "otra línea cambia el Issue, la rama, `main` o un PR relevante",
             "descarta el snapshot previo",
             "relee el estado actual antes de cualquier mutación",
-            "Una lectura stale nunca autoriza reapertura, reserva, branch ni PR.",
+            "cierre/cancelación terminal ni liberación por reconciliación",
         )
         for value in required:
             with self.subTest(value=value):
@@ -53,10 +66,13 @@ class PlanReopenGuardTests(unittest.TestCase):
 
     def test_regression_mentions_observed_stale_snapshot_pattern(self):
         self.assertIn("#699 → #703/#704/#705", PLAN)
-        self.assertIn("#762 → #741/#763", PLAN)
+        self.assertIn("#741/#763", PLAN)
+        self.assertIn("atribuyó a `#762` un contrato que exact-main todavía no contenía", PLAN)
         preflight = PLAN.index("Preflight exact-main antes de reapertura o repair")
+        terminal = PLAN.index("Preflight exact-main antes de cierre/reconciliación terminal")
         announcement = PLAN.index("Antes de bajar, **anuncia tu elección**")
-        self.assertLess(preflight, announcement)
+        self.assertLess(preflight, terminal)
+        self.assertLess(terminal, announcement)
 
 
 if __name__ == "__main__":
