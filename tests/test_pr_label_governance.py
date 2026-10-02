@@ -213,16 +213,16 @@ class PrLabelGovernanceTests(unittest.TestCase):
                 rulesets=[],
                 branch_protection={"required_status_checks": []},
             )
-        with self.assertRaises(GovernanceError):
-            audit_repository(
-                "Factory",
-                rulesets=[{
-                    "target": "branch",
-                    "enforcement": "active",
-                    "rules": [None],
-                }],
-                branch_protection={},
-            )
+        ignored_rule = audit_repository(
+            "Factory",
+            rulesets=[{
+                "target": "branch",
+                "enforcement": "active",
+                "rules": [None],
+            }],
+            branch_protection={},
+        )
+        self.assertEqual(ignored_rule["status"], "missing")
         with self.assertRaises(GovernanceError):
             audit_repository(
                 "Factory",
