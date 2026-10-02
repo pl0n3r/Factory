@@ -12,7 +12,9 @@ import unittest
 from scripts.unattended_watchdog_runtime import (
     ALERT_TITLE,
     AlertSpec,
+    COLLECTION_PAGE_SIZE,
     GitHubIssueClient,
+    MAX_PAGES,
     MAX_STDIN_BYTES,
     RuntimeValidationError,
     _https_json_request,
@@ -565,6 +567,151 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             GitHubIssueClient("token", "bad repo")
         with self.assertRaises(RuntimeValidationError):
             GitHubIssueClient("token", "pl0n3r/other")
+
+    def test_owned_alert_scan_uses_canonical_creator_and_bounded_pages(self):
+        calls = []
+        fingerprint = "1" * 64
+        owned = {
+            "number": 7,
+            "state": "open",
+            "title": f"{ALERT_TITLE} S3 {fingerprint[:12]}",
+            "body": (
+                '<!-- factory-unattended-watchdog-alert '
+                f'{{"version":1,"fingerprint":"{fingerprint}"}} -->'
+            ),
+            "user": {"login": "github-actions[bot]"},
+        }
+
+        def transport(method, path, payload):
+            calls.append((method, path, payload))
+            if "state=all" in path:
+                return [owned]
+            raise AssertionError(f"unexpected request: {path}")
+
+        client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
+        self.assertEqual(
+            client.list_owned_alerts(),
+            {fingerprint: {"number": 7, "state": "open"}},
+        )
+        self.assertEqual(len(calls), 1)
+        path = calls[0][1]
+        self.assertIn("state=all", path)
+        self.assertIn("creator=github-actions%5Bbot%5D", path)
+        self.assertIn(f"per_page={COLLECTION_PAGE_SIZE}", path)
+        self.assertNotIn("per_page=100", path)
+
+    def test_bounded_pagination_preserves_thousand_item_budget(self):
+        self.assertEqual(COLLECTION_PAGE_SIZE, 50)
+        self.assertEqual(MAX_PAGES, 20)
+        self.assertEqual(COLLECTION_PAGE_SIZE * MAX_PAGES, 1000)
+        calls = []
+
+        def page_number(path):
+            return int(path.rsplit("page=", 1)[1])
+
+        def transport(method, path, payload):
+            calls.append(path)
+            page = page_number(path)
+            count = COLLECTION_PAGE_SIZE if page < MAX_PAGES else COLLECTION_PAGE_SIZE - 1
+            return [
+                {
+                    "number": page * 1000 + index,
+                    "state": "open",
+                    "title": "not-owned",
+                    "body": "",
+                    "user": {"login": "github-actions[bot]"},
+                }
+                for index in range(count)
+            ]
+
+        client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
+        self.assertEqual(client.list_owned_alerts(), {})
+        self.assertEqual(len(calls), MAX_PAGES)
+        self.assertTrue(
+            all(f"per_page={COLLECTION_PAGE_SIZE}" in path for path in calls)
+        )
+
+        def saturated(method, path, payload):
+            page = page_number(path)
+            return [
+                {
+                    "number": page * 1000 + index,
+                    "state": "open",
+                    "title": "not-owned",
+                    "body": "",
+                    "user": {"login": "github-actions[bot]"},
+                }
+                for index in range(COLLECTION_PAGE_SIZE)
+            ]
+
+        with self.assertRaisesRegex(
+            RuntimeValidationError,
+            "github_issue_listing_truncated",
+        ):
+            GitHubIssueClient(
+                "token",
+                "pl0n3r/Factory",
+                saturated,
+            ).list_owned_alerts()
+
+    def test_large_issue_inventory_does_not_require_unfiltered_hundred_item_page(self):
+        fingerprint = "2" * 64
+        owned = {
+            "number": 8,
+            "state": "closed",
+            "title": f"{ALERT_TITLE} S3 {fingerprint[:12]}",
+            "body": (
+                '<!-- factory-unattended-watchdog-alert '
+                f'{{"version":1,"fingerprint":"{fingerprint}"}} -->'
+            ),
+            "user": {"login": "github-actions[bot]"},
+        }
+
+        def transport(method, path, payload):
+            if "state=all" not in path:
+                raise AssertionError(f"unexpected request: {path}")
+            if "creator=github-actions%5Bbot%5D" not in path or "per_page=100" in path:
+                raise RuntimeValidationError("github_response_too_large")
+            return [owned]
+
+        client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
+        self.assertEqual(
+            client.list_owned_alerts(),
+            {fingerprint: {"number": 8, "state": "closed"}},
+        )
+
+    def test_oversized_github_response_remains_fail_closed(self):
+        class Response:
+            status = 200
+
+            def read(self, size):
+                return b"x" * (1024 * 1024 + 1)
+
+        class Connection:
+            def __init__(self, host, timeout):
+                self.host = host
+                self.timeout = timeout
+
+            def request(self, method, path, body=None, headers=None):
+                self.path = path
+
+            def getresponse(self):
+                return Response()
+
+            def close(self):
+                self.closed = True
+
+        target = "scripts.unattended_watchdog_runtime.http.client.HTTPSConnection"
+        with patch(target, Connection), self.assertRaisesRegex(
+            RuntimeValidationError,
+            "github_response_too_large",
+        ):
+            _https_json_request(
+                "token",
+                "GET",
+                "/repos/pl0n3r/Factory/issues/1",
+                None,
+            )
 
     def test_fixed_host_transport_success_and_failures(self):
         class Response:
