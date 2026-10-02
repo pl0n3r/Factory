@@ -846,6 +846,48 @@ def idle_time_metric(
     }
 
 
+def dispatch_signature(
+    *,
+    agent_id: str,
+    repository_ref: str,
+    finished_at: str | None = None,
+    next_dispatch_at: str | None = None,
+    threshold_minutes: int = 15,
+) -> dict[str, object]:
+    """Construye una firma estable y, opcionalmente, su métrica de ociosidad."""
+
+    if not isinstance(agent_id, str):
+        raise ValueError("dispatch signature requires stable agent_id")
+    normalized_agent_id = agent_id.strip()
+    if (
+        not normalized_agent_id
+        or normalized_agent_id != agent_id
+        or any(char.isspace() or char in "()" for char in agent_id)
+    ):
+        raise ValueError("dispatch signature requires stable agent_id")
+    if repository_ref not in CANONICAL_DISPATCH_REPOS:
+        raise ValueError("dispatch signature requires a canonical dispatch repository")
+    if (finished_at is None) != (next_dispatch_at is None):
+        raise ValueError("idle metric timestamps must be provided together")
+
+    idle_metric = None
+    if finished_at is not None and next_dispatch_at is not None:
+        idle_metric = idle_time_metric(
+            agent_id=normalized_agent_id,
+            repository_ref=repository_ref,
+            finished_at=finished_at,
+            next_dispatch_at=next_dispatch_at,
+            threshold_minutes=threshold_minutes,
+        )
+
+    return {
+        "agent_id": normalized_agent_id,
+        "signature": f"Despacho ({normalized_agent_id})",
+        "repository_ref": repository_ref,
+        "idle_metric": idle_metric,
+    }
+
+
 def work_ladder(
     candidates: Iterable[Candidate],
     *,
