@@ -182,6 +182,7 @@ class UnattendedStateSourceTests(unittest.TestCase):
         cases.append([reservation(), state_comment(state_payload(blockers=["contact user@example.com"]))])
         cases.append([reservation(), state_comment(state_payload(updated_at="2026-10-02T04:11:00Z"))])
         cases.append([reservation(), state_comment(user="someone-else")])
+        cases.append([release_v1(active=True), state_comment()])
         cases.append([reservation(version=2), state_comment()])
         cases.append([reservation(acceptance_sha256="bad"), state_comment()])
         cases.append([reservation(task_marker_sha256="bad"), state_comment()])
