@@ -189,6 +189,7 @@ class UnattendedStateSourceTests(unittest.TestCase):
         cases.append([reservation(task_paths=["x", "x"]), state_comment()])
         cases.append([reservation(task_depends_on=[745, 745]), state_comment()])
         cases.append([reservation(surprise="x"), state_comment()])
+        cases.append([reservation(active=False, reason="tomar"), state_comment()])
 
         for payload in cases:
             with self.subTest(payload=payload):
