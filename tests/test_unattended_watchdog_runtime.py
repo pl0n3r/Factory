@@ -127,7 +127,10 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("schedule:", workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("cron: '*/15 * * * *'", workflow)
+        self.assertIn("cron: '7,22,37,52 * * * *'", workflow)
+        self.assertIn("push:", workflow)
+        self.assertIn("branches:", workflow)
+        self.assertIn("- main", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn("contents: read", workflow)
         self.assertIn("issues: write", workflow)
@@ -143,6 +146,80 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertIn("project_state_presence(", runtime)
         self.assertIn('"state": "all"', runtime)
         self.assertIn('"labels": self._labels(spec)', runtime)
+
+    def test_workflow_runs_watchdog_on_main_push_schedule_and_manual_only(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
+        ).read_text(encoding="utf-8")
+        watchdog = workflow.split("  watchdog:", 1)[1].split("  daily-summary:", 1)[0]
+        self.assertIn("push:", workflow)
+        self.assertIn("branches:", workflow)
+        self.assertIn("- main", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", watchdog)
+        self.assertIn("github.event_name == 'push'", watchdog)
+        self.assertIn("github.event_name == 'workflow_dispatch'", watchdog)
+        self.assertIn("github.event_name == 'schedule'", watchdog)
+        self.assertNotIn("pull_request_target", workflow)
+        self.assertNotIn("workflow_run", workflow)
+
+    def test_watchdog_schedule_keeps_four_offset_quarter_hour_slots(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("cron: '7,22,37,52 * * * *'", workflow)
+        self.assertNotIn("cron: '*/15 * * * *'", workflow)
+        minutes = (7, 22, 37, 52)
+        gaps = tuple(
+            (minutes[(index + 1) % len(minutes)] - minute) % 60
+            for index, minute in enumerate(minutes)
+        )
+        self.assertEqual(gaps, (15, 15, 15, 15))
+        self.assertTrue(set(minutes).isdisjoint({0, 15, 30, 45}))
+
+    def test_main_push_never_runs_daily_summary(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
+        ).read_text(encoding="utf-8")
+        daily = workflow.split("  daily-summary:", 1)[1]
+        self.assertIn("github.event_name == 'schedule'", daily)
+        self.assertIn("github.event.schedule == '0 13 * * *'", daily)
+        self.assertNotIn("github.event_name == 'push'", daily)
+
+    def test_workflow_preserves_concurrency_permissions_and_fail_closed_contract(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
+        ).read_text(encoding="utf-8")
+        runtime = (
+            ROOT / "scripts" / "unattended_watchdog_runtime.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("group: unattended-watchdog-${{ github.repository_id }}", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("issues: write", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn(
+            "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            workflow,
+        )
+        self.assertNotIn("secrets.", workflow)
+        self.assertIn(
+            "evaluate_unattended_kill_switch(client.get_issue(767))",
+            runtime,
+        )
+        self.assertIn("if switch.global_pause:", runtime)
+        self.assertIn('"action": "BLOCKED"', runtime)
+
+    def test_runtime_runbook_documents_push_schedule_and_rollback(self):
+        runbook = (
+            ROOT / "docs" / "unattended-watchdog-runtime.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("push a `main`", runbook)
+        self.assertIn("07/22/37/52", runbook)
+        self.assertIn("post-merge", runbook)
+        self.assertIn("## Reversión", runbook)
+        self.assertIn("Factory#815", runbook)
 
     def test_versioned_thresholds_are_closed_and_explicit(self):
         path = ROOT / "config" / "unattended-watchdog.json"
