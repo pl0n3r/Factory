@@ -139,7 +139,8 @@ class OwnerAutonomyAuthorizationTests(unittest.TestCase):
             existing_gate_keys=(trigger["gate_key"],),
             owner_autonomy_context=context,
         )
-        self.assertEqual(mismatched["action"], "noop")
+        self.assertEqual(mismatched["action"], "blocked")
+        self.assertFalse(mismatched["materialize_leaves"])
         self.assertEqual(
             mismatched["reason"],
             "direction_gate_open_without_matching_proposal",
@@ -189,6 +190,11 @@ class OwnerAutonomyAuthorizationTests(unittest.TestCase):
         self.assertEqual(sufficient["reason"], "sufficient_eligible_work")
         self.assertEqual(sufficient["eligible_leaf_count"], 3)
         self.assertEqual(sufficient["eligible_leaf_threshold"], 2)
+
+        legacy = direction_gate_trigger(self.proposal(), two_ready)
+        self.assertEqual(legacy["action"], "noop")
+        self.assertEqual(legacy["reason"], "sufficient_eligible_work")
+        self.assertEqual(legacy["eligible_leaf_threshold"], 1)
 
     def test_runway_topics_remain_bounded_and_executable(self):
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")

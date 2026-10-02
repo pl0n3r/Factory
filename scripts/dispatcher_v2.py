@@ -1054,7 +1054,8 @@ def direction_gate_trigger(
     if gate_is_open:
         if result["proposal_sha256"] not in known_hashes:
             return {
-                "action": "noop",
+                "action": "blocked",
+                "materialize_leaves": False,
                 "reason": "direction_gate_open_without_matching_proposal",
                 "gate_key": key,
                 "proposal_sha256": result["proposal_sha256"],
