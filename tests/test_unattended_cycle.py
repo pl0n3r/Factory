@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from scripts.unattended_cycle import compose_unattended_cycle
 from scripts.unattended_guards import GuardDecision
-from scripts.unattended_watchdog import DailySummary, WatchdogDecision
+from scripts.unattended_watchdog import DailySummary, WatchdogDecision, WatchdogIncident
 
 
 def dispatch(action: str = "ALLOW") -> dict[str, object]:
@@ -123,6 +123,30 @@ class UnattendedCycleTests(TestCase):
             reasons=("guards_satisfied",),
             evidence_fingerprint="a" * 64,
         )
+        forged_pause_guard = GuardDecision(
+            action="PAUSE",
+            authority="unchanged",
+            pause_allowed=False,
+            reasons=("global_pause_active",),
+            evidence_fingerprint="a" * 64,
+        )
+        incoherent_allow_watchdog = WatchdogDecision(
+            action="ALLOW",
+            authority="unchanged",
+            incidents=(
+                WatchdogIncident(
+                    code="synthetic_incoherent",
+                    severity="S3",
+                    fingerprint="c" * 64,
+                    repeated=False,
+                    reasons=("synthetic",),
+                ),
+            ),
+            new_alert_fingerprints=(),
+            interrupt_owner=False,
+            daily_summary=summary(),
+            evidence_fingerprint="b" * 64,
+        )
 
         missing_unattended_key = dispatch()
         missing_unattended_key["unattended"] = {
@@ -213,6 +237,22 @@ class UnattendedCycleTests(TestCase):
                 dispatch(),
                 invalid_authority_guard,
                 watchdog(),
+                provenance(),
+                "cycle_component_contract_invalid",
+            ),
+            (
+                "forged pause contract",
+                dispatch("PAUSE"),
+                forged_pause_guard,
+                watchdog("PAUSE"),
+                provenance(),
+                "cycle_component_contract_invalid",
+            ),
+            (
+                "incoherent allow watchdog",
+                dispatch(),
+                guard(),
+                incoherent_allow_watchdog,
                 provenance(),
                 "cycle_component_contract_invalid",
             ),

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 
-from scripts.dispatcher_v2 import UNATTENDED_ACTIONS, UNATTENDED_CANONICAL_PAIRS
+from scripts.dispatcher_v2 import (\n    UNATTENDED_ACTIONS,\n    UNATTENDED_CANONICAL_PAIRS,\n    _unattended_dispatch_gate,\n)
 from scripts.unattended_guards import GuardDecision
 from scripts.unattended_watchdog import WatchdogDecision
 
@@ -112,6 +112,17 @@ def compose_unattended_cycle(
         or clean_provenance["watchdog_ref"] != watchdog.evidence_fingerprint
     ):
         return _blocked("cycle_evidence_ref_mismatch", provenance=clean_provenance)
+
+    canonical_action, canonical_reasons = _unattended_dispatch_gate(guard, watchdog)
+    expected_watchdog_reason = f"unattended_watchdog_{watchdog.action.lower()}"
+    canonical_contract = (
+        canonical_action == "ALLOW" and canonical_reasons == ()
+        if watchdog.action == "ALLOW"
+        else canonical_action == watchdog.action
+        and expected_watchdog_reason in canonical_reasons
+    )
+    if not canonical_contract:
+        return _blocked("cycle_component_contract_invalid", provenance=clean_provenance)
 
     if not isinstance(dispatch, dict) or set(dispatch) != DISPATCH_KEYS:
         return _blocked("cycle_dispatch_shape_invalid", provenance=clean_provenance)
