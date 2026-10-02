@@ -41,7 +41,7 @@ class UnattendedGlobalIdleTests(unittest.TestCase):
     def test_global_idle_requires_complete_fresh_snapshot_of_all_canonical_repositories(self):
         proof = evaluate_global_idle_snapshot(snapshot())
         self.assertTrue(proof["idle_global"])
-        self.assertEqual(proof["reasons"], ())
+        self.assertEqual(proof["reasons"], [])
         self.assertEqual(len(proof["provenance"]), len(CANONICAL_REPOSITORIES))
 
         missing = evaluate_global_idle_snapshot(
