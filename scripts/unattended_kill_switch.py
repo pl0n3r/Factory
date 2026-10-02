@@ -31,7 +31,7 @@ class KillSwitchDecision:
 
 
 class DuplicateMarkerKeyError(ValueError):
-    """El marker contiene una clave JSON repetida y por tanto es ambiguo."""
+    """El JSON del marker no puede depender de semántica last-key-wins."""
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -45,19 +45,6 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _paused(reason: str) -> KillSwitchDecision:
     return KillSwitchDecision("UNKNOWN", True, reason)
-
-
-class DuplicateMarkerKeyError(ValueError):
-    """El JSON del marker no puede depender de semántica last-key-wins."""
-
-
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise DuplicateMarkerKeyError(key)
-        result[key] = value
-    return result
 
 
 def evaluate_unattended_kill_switch(issue_payload: object) -> KillSwitchDecision:
