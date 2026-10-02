@@ -689,6 +689,9 @@ def work_ladder(
     active_tranche: int | None = None,
     active_filler_count: int = 0,
     max_filler_parallel: int = 2,
+    unattended_mode: bool = False,
+    unattended_guard: GuardDecision | None = None,
+    unattended_watchdog: WatchdogDecision | None = None,
     no_safe_work_reason: str = (
         "No hay trabajo seguro listo; se requiere nueva evidencia, "
         "desbloqueo o dirección explícita."
@@ -708,6 +711,30 @@ def work_ladder(
         raise ValueError(
             "filler parallel counts must be non-negative integers capped at 2"
         )
+
+    unattended_action = "ALLOW"
+    unattended_reasons: tuple[str, ...] = ()
+    if not isinstance(unattended_mode, bool):
+        unattended_action = "BLOCKED"
+        unattended_reasons = ("unattended_mode_invalid",)
+    elif unattended_mode:
+        unattended_action, unattended_reasons = _unattended_dispatch_gate(
+            unattended_guard,
+            unattended_watchdog,
+        )
+
+    if unattended_action != "ALLOW":
+        return {
+            "step": "unattended_gate",
+            "work": {
+                "kind": "status",
+                "key": "dispatcher:unattended-safe-mode",
+            },
+            "action": unattended_action,
+            "authority": "unchanged",
+            "reasons": unattended_reasons,
+            "mutates": False,
+        }
 
     items = list(candidates)
     for step, lane in (
@@ -1030,6 +1057,9 @@ def dispatch_record(
     *,
     aging_threshold: int = 3,
     active_tranche: int | None = None,
+    unattended_mode: bool = False,
+    unattended_guard: GuardDecision | None = None,
+    unattended_watchdog: WatchdogDecision | None = None,
 ) -> dict[str, object]:
     items = list(candidates)
     keys = [candidate.key for candidate in items]
@@ -1042,16 +1072,22 @@ def dispatch_record(
         )
         for candidate in items
     }
-    selected = select_next(
+    next_action = work_ladder(
+        items,
+        active_tranche=active_tranche,
+        unattended_mode=unattended_mode,
+        unattended_guard=unattended_guard,
+        unattended_watchdog=unattended_watchdog,
+    )
+    suppressed = next_action["step"] == "unattended_gate"
+    selected = None if suppressed else select_next(
         items,
         aging_threshold=aging_threshold,
         active_tranche=active_tranche,
     )
-    ready = [candidate for candidate in items if states[candidate.key].ready]
-    next_action = work_ladder(
-        items,
-        active_tranche=active_tranche,
-    )
+    ready = [] if suppressed else [
+        candidate for candidate in items if states[candidate.key].ready
+    ]
     excluded = {
         candidate.key: list(states[candidate.key].reasons)
         for candidate in items
@@ -1083,6 +1119,26 @@ def dispatch_record(
         },
         "aging_threshold": aging_threshold,
         "active_tranche": active_tranche,
+        **(
+            {
+                "unattended": {
+                    "enabled": unattended_mode is True,
+                    "action": (
+                        str(next_action["action"])
+                        if next_action["step"] == "unattended_gate"
+                        else "ALLOW"
+                    ),
+                    "authority": "unchanged",
+                    "reasons": (
+                        tuple(next_action["reasons"])
+                        if next_action["step"] == "unattended_gate"
+                        else ()
+                    ),
+                }
+            }
+            if unattended_mode is True or not isinstance(unattended_mode, bool)
+            else {}
+        ),
     }
 
 
@@ -1303,61 +1359,6 @@ def _unattended_dispatch_gate(
     return action, tuple(sorted(set(reasons)))
 
 
-def _suppressed_adaptive_dispatch_record(
-    candidates: list[Candidate],
-    *,
-    action: str,
-    reasons: tuple[str, ...],
-    aging_threshold: int,
-    active_tranche: int | None,
-) -> dict[str, object]:
-    """Proyecta bloqueo desatendido sin invocar select_next/work_ladder."""
-    states = {
-        candidate.key: classify_readiness(candidate, active_tranche=active_tranche)
-        for candidate in candidates
-    }
-    return {
-        "selected": None,
-        "selected_class": None,
-        "next_action": {
-            "step": "unattended_gate",
-            "work": {
-                "kind": "status",
-                "key": "dispatcher:unattended-safe-mode",
-            },
-            "action": action,
-            "authority": "unchanged",
-            "reasons": reasons,
-            "mutates": False,
-        },
-        "ready_not_selected": [],
-        "excluded": {
-            candidate.key: list(states[candidate.key].reasons)
-            for candidate in candidates
-        },
-        "candidates": {
-            candidate.key: {
-                "authority_class": authority_class(candidate),
-                "ready_age": candidate.ready_age,
-                "displaced_cycles": candidate.displaced_cycles,
-                "active_pr": candidate.active_pr,
-                "unlock_impact": candidate.unlock_impact,
-                "transversal_impact": candidate.transversal_impact,
-                "claims": sorted(candidate.claims),
-                "tranche_subject": candidate.tranche_subject,
-                "tranche": candidate.tranche,
-                "tranche_exception": candidate.tranche_exception,
-                "metadata": dict(candidate.metadata),
-            }
-            for candidate in candidates
-        },
-        "aging_threshold": aging_threshold,
-        "active_tranche": active_tranche,
-        "suppressed_by": "unattended",
-        "suppression_reasons": reasons,
-    }
-
-
 def adaptive_dispatch_record(
     candidates: Iterable[Candidate],
     *,
@@ -1371,7 +1372,7 @@ def adaptive_dispatch_record(
     unattended_guard: GuardDecision | None = None,
     unattended_watchdog: WatchdogDecision | None = None,
 ) -> dict[str, object]:
-    """Compone Adaptive Orchestration con Dispatcher V2 y aplica 4B/4C opt-in."""
+    """Compone Adaptive Orchestration y delega el gate 4B/4C a Dispatcher V2."""
     adapted = adapt_candidates_for_adaptive(
         candidates,
         presence=presence,
@@ -1379,50 +1380,14 @@ def adaptive_dispatch_record(
         replan_action=replan_action,
         replan_reasons=replan_reasons,
     )
-
-    unattended_action = "ALLOW"
-    unattended_reasons: tuple[str, ...] = ()
-    if not isinstance(unattended_mode, bool):
-        unattended_action = "BLOCKED"
-        unattended_reasons = ("unattended_mode_invalid",)
-    elif unattended_mode:
-        unattended_action, unattended_reasons = _unattended_dispatch_gate(
-            unattended_guard,
-            unattended_watchdog,
-        )
-
-    if unattended_action != "ALLOW":
-        adapted = [
-            replace(
-                candidate,
-                external_readiness_reasons=tuple(
-                    sorted(
-                        set(
-                            (
-                                *candidate.external_readiness_reasons,
-                                *unattended_reasons,
-                            )
-                        )
-                    )
-                ),
-            )
-            for candidate in adapted
-        ]
-
-    if unattended_action == "ALLOW":
-        record = dispatch_record(
-            adapted,
-            aging_threshold=aging_threshold,
-            active_tranche=active_tranche,
-        )
-    else:
-        record = _suppressed_adaptive_dispatch_record(
-            adapted,
-            action=unattended_action,
-            reasons=unattended_reasons,
-            aging_threshold=aging_threshold,
-            active_tranche=active_tranche,
-        )
+    record = dispatch_record(
+        adapted,
+        aging_threshold=aging_threshold,
+        active_tranche=active_tranche,
+        unattended_mode=unattended_mode,
+        unattended_guard=unattended_guard,
+        unattended_watchdog=unattended_watchdog,
+    )
     record["adaptive"] = {
         "snapshot_fingerprint": fencing.snapshot_fingerprint,
         "event_fingerprint": fencing.event_fingerprint,
@@ -1432,13 +1397,4 @@ def adaptive_dispatch_record(
         "fencing_action": fencing.action,
         "reasons": tuple(sorted(set((*replan_reasons, *fencing.reasons)))),
     }
-
-    if unattended_mode is True or not isinstance(unattended_mode, bool):
-        record["unattended"] = {
-            "enabled": unattended_mode is True,
-            "action": unattended_action,
-            "authority": "unchanged",
-            "reasons": unattended_reasons,
-        }
     return record
-

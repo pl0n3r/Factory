@@ -1247,7 +1247,8 @@ class DispatcherV2Tests(unittest.TestCase):
 
         source = (
             inspect.getsource(dispatcher_module._unattended_dispatch_gate)
-            + inspect.getsource(dispatcher_module._suppressed_adaptive_dispatch_record)
+            + inspect.getsource(work_ladder)
+            + inspect.getsource(dispatch_record)
             + inspect.getsource(adaptive_dispatch_record)
         )
 
@@ -1255,6 +1256,7 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertIn("WatchdogDecision", source)
         self.assertNotIn("evaluate_unattended_guards", source)
         self.assertNotIn("evaluate_unattended_watchdog", source)
+        self.assertNotIn("_suppressed_adaptive_dispatch_record", source)
         for forbidden in (
             "requests.",
             "subprocess.",
@@ -1266,21 +1268,209 @@ class DispatcherV2Tests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
 
         presence = classify_presence(self.adaptive_snapshot())
-        with patch(
-            "scripts.dispatcher_v2.work_ladder",
-            side_effect=AssertionError("blocked unattended path must not invoke work_ladder"),
+        blocked = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("BLOCKED"),
+            unattended_watchdog=unattended_watchdog_decision("BLOCKED"),
+        )
+        self.assertIsNone(blocked["selected"])
+        self.assertEqual(blocked["next_action"]["step"], "unattended_gate")
+        self.assertFalse(blocked["next_action"]["mutates"])
+
+    def test_work_ladder_unattended_requires_canonical_decisions_before_all_lanes(self):
+        candidates = [
+            Candidate(
+                key="normal",
+                priority="critical",
+                metadata={"work_ladder_lane": "normal"},
+            ),
+            Candidate(
+                key="quality",
+                priority="critical",
+                metadata={"work_ladder_lane": "quality"},
+            ),
+            Candidate(
+                key="filler",
+                priority="critical",
+                metadata={
+                    "work_ladder_lane": "filler",
+                    "filler_curated": True,
+                    "filler_reversible": True,
+                    "filler_no_spend": True,
+                },
+            ),
+        ]
+
+        result = work_ladder(candidates, unattended_mode=True)
+
+        self.assertEqual(result["step"], "unattended_gate")
+        self.assertEqual(result["action"], "BLOCKED")
+        self.assertEqual(result["authority"], "unchanged")
+        self.assertFalse(result["mutates"])
+        self.assertEqual(
+            result["reasons"],
+            ("unattended_guard_decision_invalid",),
+        )
+
+    def test_work_ladder_unattended_pause_or_blocked_returns_auditable_non_mutating_gate(self):
+        for action in ("PAUSE", "BLOCKED"):
+            with self.subTest(action=action):
+                result = work_ladder(
+                    [Candidate(key="candidate", priority="critical")],
+                    unattended_mode=True,
+                    unattended_guard=unattended_guard_decision(action),
+                    unattended_watchdog=unattended_watchdog_decision(action),
+                )
+
+                self.assertEqual(result["step"], "unattended_gate")
+                self.assertEqual(result["work"]["kind"], "status")
+                self.assertEqual(result["action"], action)
+                self.assertEqual(result["authority"], "unchanged")
+                self.assertFalse(result["mutates"])
+                self.assertIn(
+                    f"unattended_watchdog_{action.lower()}",
+                    result["reasons"],
+                )
+                self.assertIn("guard:synthetic-guard", result["reasons"])
+
+    def test_work_ladder_unattended_gate_preempts_reconciliation_filler_and_product_direction(self):
+        block = BlockedWork(
+            key="pl0n3r/Condor#425",
+            unlock_condition="synthetic satisfied dependency",
+            condition_satisfied=True,
+            evidence_refs=("synthetic:evidence",),
+        )
+        filler = Candidate(
+            key="filler",
+            priority="critical",
+            metadata={
+                "work_ladder_lane": "filler",
+                "filler_curated": True,
+                "filler_reversible": True,
+                "filler_no_spend": True,
+            },
+        )
+
+        with (
+            patch(
+                "scripts.dispatcher_v2.reconcile_stale_blocks",
+                side_effect=AssertionError("unattended gate must preempt reconciliation"),
+            ),
+            patch(
+                "scripts.dispatcher_v2.select_next",
+                side_effect=AssertionError("unattended gate must preempt lane selection"),
+            ),
+            patch(
+                "scripts.dispatcher_v2.direction_gate_trigger",
+                side_effect=AssertionError("unattended gate must preempt product direction"),
+            ),
         ):
-            blocked = adaptive_dispatch_record(
-                [Candidate(key="candidate", priority="critical")],
-                presence=presence,
-                fencing=self.fenced(),
-                replan_action="keep",
+            result = work_ladder(
+                [filler],
+                blocked_work=[block],
+                direction_proposals=(self.direction_proposal(),),
                 unattended_mode=True,
                 unattended_guard=unattended_guard_decision("BLOCKED"),
                 unattended_watchdog=unattended_watchdog_decision("BLOCKED"),
             )
-        self.assertEqual(blocked["next_action"]["step"], "unattended_gate")
-        self.assertFalse(blocked["next_action"]["mutates"])
+
+        self.assertEqual(result["step"], "unattended_gate")
+        self.assertEqual(result["action"], "BLOCKED")
+
+    def test_work_ladder_unattended_allow_preserves_existing_ladder(self):
+        candidates = [
+            Candidate(
+                key="normal",
+                priority="medium",
+                metadata={"work_ladder_lane": "normal"},
+            ),
+            Candidate(
+                key="quality",
+                priority="critical",
+                metadata={"work_ladder_lane": "quality"},
+            ),
+        ]
+
+        legacy = work_ladder(candidates)
+        unattended = work_ladder(
+            candidates,
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("ALLOW"),
+            unattended_watchdog=unattended_watchdog_decision("ALLOW"),
+        )
+
+        self.assertEqual(unattended, legacy)
+        self.assertEqual(unattended["step"], "normal")
+        self.assertEqual(unattended["work"]["key"], "normal")
+
+    def test_dispatch_record_and_adaptive_dispatch_share_unattended_ladder_gate(self):
+        guard = unattended_guard_decision("BLOCKED")
+        watchdog = unattended_watchdog_decision("BLOCKED")
+        direct = dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            unattended_mode=True,
+            unattended_guard=guard,
+            unattended_watchdog=watchdog,
+        )
+        presence = classify_presence(self.adaptive_snapshot())
+        adaptive = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+            unattended_guard=guard,
+            unattended_watchdog=watchdog,
+        )
+
+        self.assertIsNone(direct["selected"])
+        self.assertIsNone(adaptive["selected"])
+        self.assertEqual(direct["next_action"], adaptive["next_action"])
+        self.assertEqual(direct["unattended"], adaptive["unattended"])
+
+        import scripts.dispatcher_v2 as dispatcher_module
+
+        adaptive_source = inspect.getsource(adaptive_dispatch_record)
+        dispatch_source = inspect.getsource(dispatch_record)
+        self.assertIn("dispatch_record(", adaptive_source)
+        self.assertIn("work_ladder(", dispatch_source)
+        self.assertFalse(
+            hasattr(dispatcher_module, "_suppressed_adaptive_dispatch_record")
+        )
+
+    def test_work_ladder_legacy_mode_remains_pure_and_compatible(self):
+        candidates = [
+            Candidate(
+                key="legacy",
+                priority="high",
+                metadata={"work_ladder_lane": "normal"},
+            )
+        ]
+        legacy = work_ladder(candidates)
+        explicit_off = work_ladder(
+            candidates,
+            unattended_mode=False,
+            unattended_guard=object(),
+            unattended_watchdog=object(),
+        )
+
+        self.assertEqual(explicit_off, legacy)
+        source = inspect.getsource(work_ladder) + inspect.getsource(dispatch_record)
+        self.assertNotIn("evaluate_unattended_guards", source)
+        self.assertNotIn("evaluate_unattended_watchdog", source)
+        for forbidden in (
+            "requests.",
+            "subprocess.",
+            "socket.",
+            "urllib.",
+            "httpx.",
+            "github.",
+        ):
+            self.assertNotIn(forbidden, source)
 
     def test_unattended_validation_helpers_cover_fail_closed_edges(self):
         import scripts.dispatcher_v2 as dispatcher_module
