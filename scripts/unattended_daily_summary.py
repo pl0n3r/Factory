@@ -146,7 +146,35 @@ def _fact_from_issue(issue: dict[str, object], now: datetime) -> Fact | None:
         text=f"#{number} {title.strip()}",
         source="GitHub Issues",
         age_minutes=age,
-        freshness="fresh" if age is not None and age < 1440 else "stale",
+        freshness=(
+            "unknown"
+            if age is None
+            else ("fresh" if age < 1440 else "stale")
+        ),
+    )
+
+
+def _decision_options(body: object) -> tuple[str, str]:
+    if not isinstance(body, str):
+        return "UNKNOWN", "UNKNOWN"
+    prefix = "<!-- factory-human-gate "
+    if body.count(prefix) != 1:
+        return "UNKNOWN", "UNKNOWN"
+    start = body.index(prefix) + len(prefix)
+    end = body.find(" -->", start)
+    if end < 0:
+        return "UNKNOWN", "UNKNOWN"
+    try:
+        payload = json.loads(body[start:end], object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, DailySummaryError):
+        return "UNKNOWN", "UNKNOWN"
+    if not isinstance(payload, dict):
+        return "UNKNOWN", "UNKNOWN"
+    recommendation = payload.get("recommendation")
+    safe_default = payload.get("safe_default")
+    return (
+        recommendation if isinstance(recommendation, str) else "UNKNOWN",
+        safe_default if isinstance(safe_default, str) else "UNKNOWN",
     )
 
 
@@ -202,9 +230,23 @@ def collect_issue_context(
             continue
         names = _labels(issue)
         if names & DECISION_LABELS:
-            decisions.append(fact)
+            recommendation, safe_default = _decision_options(issue.get("body"))
+            decisions.append(Fact(
+                text=(
+                    f"{fact.text} · recomendación={recommendation} "
+                    f"· seguro={safe_default}"
+                ),
+                source=fact.source,
+                age_minutes=fact.age_minutes,
+                freshness=fact.freshness,
+            ))
         if names & BLOCKED_LABELS:
-            blockers.append(fact)
+            blockers.append(Fact(
+                text=f"causa: {fact.text}",
+                source=fact.source,
+                age_minutes=fact.age_minutes,
+                freshness=fact.freshness,
+            ))
     for issue in closed_issues:
         if not (_labels(issue) & COMPLETED_LABELS):
             continue
