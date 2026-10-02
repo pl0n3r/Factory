@@ -59,7 +59,9 @@ def _status_contexts_from_rulesets(rulesets: Any) -> set[str]:
                 continue
         rules = ruleset.get("rules") or []
         for rule in _bounded_list(rules, "ruleset.rules"):
-            if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            if not isinstance(rule, dict):
+                raise GovernanceError("ruleset rule inválida.")
+            if rule.get("type") != "required_status_checks":
                 continue
             parameters = rule.get("parameters") or {}
             checks = parameters.get("required_status_checks") if isinstance(parameters, dict) else None
