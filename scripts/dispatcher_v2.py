@@ -1371,7 +1371,7 @@ def adaptive_dispatch_record(
     unattended_mode: bool = False,
     unattended_guard: GuardDecision | None = None,
     unattended_watchdog: WatchdogDecision | None = None,
-) -> dict[str, objec
+) -> dict[str, object]:
     """Compone Adaptive Orchestration y delega el gate 4B/4C a Dispatcher V2."""
     adapted = adapt_candidates_for_adaptive(
         candidates,
