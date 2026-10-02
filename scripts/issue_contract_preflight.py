@@ -96,14 +96,22 @@ def main(
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
 ) -> int:
-    if argv:
-        raise IssueContractPreflightError(
-            "usage_error",
-            "El body se recibe únicamente por stdin.",
-        )
-
+    args = sys.argv[1:] if argv is None else argv
     input_stream = sys.stdin if stdin is None else stdin
     output_stream = sys.stdout if stdout is None else stdout
+
+    if args:
+        _emit(
+            output_stream,
+            {
+                "version": 1,
+                "valid": False,
+                "code": "usage_error",
+                "reason": "El body se recibe únicamente por stdin.",
+            },
+        )
+        return 2
+
     body = input_stream.read(MAX_INPUT_CHARS + 1)
 
     try:
