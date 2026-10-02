@@ -43,7 +43,9 @@ API_HOST = "api.github.com"
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "unattended-watchdog.json"
 MAX_STDIN_BYTES = 256 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
-MAX_PAGES = 10
+COLLECTION_PAGE_SIZE = 50
+MAX_PAGES = 20
+OWNED_ALERT_CREATOR = "github-actions[bot]"
 ACTIVE_WORK_LABELS = frozenset({"estado: disponible", "estado: reservado", "estado: en revisión"})
 
 
@@ -349,7 +351,7 @@ class GitHubIssueClient:
         """Lista Issues abiertos que representan frentes activos observables."""
         result: list[dict[str, object]] = []
         for page in range(1, MAX_PAGES + 1):
-            query = urlencode({"state": "open", "per_page": 100, "page": page})
+            query = urlencode({"state": "open", "per_page": COLLECTION_PAGE_SIZE, "page": page})
             payload = self._request(
                 "GET", f"{REPOSITORY_API_PREFIX}issues?{query}"
             )
@@ -370,7 +372,7 @@ class GitHubIssueClient:
                 }
                 if names & ACTIVE_WORK_LABELS:
                     result.append(issue)
-            if len(payload) < 100:
+            if len(payload) < COLLECTION_PAGE_SIZE:
                 return result
         raise RuntimeValidationError("github_issue_listing_truncated")
 
@@ -380,14 +382,14 @@ class GitHubIssueClient:
             raise RuntimeValidationError("invalid_issue_number")
         result: list[dict[str, object]] = []
         for page in range(1, MAX_PAGES + 1):
-            query = urlencode({"per_page": 100, "page": page})
+            query = urlencode({"per_page": COLLECTION_PAGE_SIZE, "page": page})
             payload = self._request(
                 "GET", f"{REPOSITORY_API_PREFIX}issues/{issue_number}/comments?{query}"
             )
             if not isinstance(payload, list):
                 raise RuntimeValidationError("github_comments_invalid")
             result.extend(item for item in payload if isinstance(item, dict))
-            if len(payload) < 100:
+            if len(payload) < COLLECTION_PAGE_SIZE:
                 return result
         raise RuntimeValidationError("github_comment_listing_truncated")
 
@@ -409,7 +411,14 @@ class GitHubIssueClient:
     def list_owned_alerts(self) -> dict[str, dict[str, object]]:
         result: dict[str, dict[str, object]] = {}
         for page in range(1, MAX_PAGES + 1):
-            query = urlencode({"state": "all", "per_page": 100, "page": page})
+            query = urlencode(
+                {
+                    "state": "all",
+                    "creator": OWNED_ALERT_CREATOR,
+                    "per_page": COLLECTION_PAGE_SIZE,
+                    "page": page,
+                }
+            )
             payload = self._request(
                 "GET", f"{REPOSITORY_API_PREFIX}issues?{query}"
             )
@@ -423,7 +432,7 @@ class GitHubIssueClient:
                 if fingerprint in result and result[fingerprint]["number"] != number:
                     raise RuntimeValidationError("duplicate_owned_alert_fingerprint")
                 result[fingerprint] = {"number": number, "state": state}
-            if len(payload) < 100:
+            if len(payload) < COLLECTION_PAGE_SIZE:
                 return result
         raise RuntimeValidationError("github_issue_listing_truncated")
 
