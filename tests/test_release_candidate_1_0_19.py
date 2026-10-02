@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regresiones del candidato Factory 1.0.19."""
+"""Regresiones históricas del candidato Factory 1.0.19."""
 
 from __future__ import annotations
 
@@ -46,7 +46,10 @@ class ReleaseCandidate1019Tests(unittest.TestCase):
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.19"})
+        self.assertEqual(set(payload), {"version"})
+        parts = payload["version"].split(".")
+        self.assertEqual(len(parts), 3)
+        self.assertGreaterEqual(tuple(map(int, parts)), (1, 0, 19))
         self._run_canonical_targets(
             "AC-01",
             (
