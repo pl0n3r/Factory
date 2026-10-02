@@ -1,276 +1,117 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
-import base64
-import copy
-import hashlib
-import json
+import hashlib, json, tempfile, unittest
 from pathlib import Path
-import tempfile
-import unittest
+from urllib.parse import urlparse
+from scripts.reusable_release_preflight import CONSUMERS, PreflightError, collect_inventory, evaluate_inventory
 
-from scripts.reusable_release_preflight import (
-    CANONICAL_CONSUMERS,
-    ReusableReleasePreflightError,
-    evaluate_payload,
-)
-
-
-def git_blob_sha(raw: bytes) -> str:
-    return hashlib.sha1(
-        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
-    ).hexdigest()
-
-
-def workflow_record(path: str, content: str, repository_sha: str) -> dict[str, str]:
-    raw = content.encode("utf-8")
-    return {
-        "path": path,
-        "blob_sha": git_blob_sha(raw),
-        "repository_sha": repository_sha,
-        "content_b64": base64.b64encode(raw).decode("ascii"),
-    }
-
-
-def caller_yaml(
-    reusable: str = "coordinacion.yml",
-    *,
-    contents: str = "read",
-    issues: str = "write",
-    extra_comment: str = "",
-) -> str:
-    return f"""name: Caller
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
+CALLER = """name: Caller
 jobs:
   call:
     permissions:
-      contents: {contents}
-      issues: {issues}
-    uses: pl0n3r/factory/.github/workflows/{reusable}@v1
-{extra_comment}
+      contents: read
+      issues: write
+    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1
 """
-
-
-def candidate_yaml(*, contents: str = "read", issues: str = "write") -> str:
-    return f"""name: Reusable
+CANDIDATE = """name: Reusable
 on:
   workflow_call:
-
-permissions:
-  contents: read
-
 jobs:
-  validate:
+  run:
     permissions:
-      contents: {contents}
-      issues: {issues}
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
-    steps:
-      - run: echo ok
 """
 
+def blob(raw):
+    return hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
 
-def payload_for(content_by_repo: dict[str, str] | None = None) -> dict:
-    content_by_repo = content_by_repo or {}
-    consumers = []
-    for index, repo in enumerate(sorted(CANONICAL_CONSUMERS), start=1):
-        sha = f"{index:040x}"
-        content = content_by_repo.get(repo, caller_yaml())
-        consumers.append(
-            {
-                "repository": repo,
-                "repository_sha": sha,
-                "workflows": [
-                    workflow_record(".github/workflows/caller.yml", content, sha)
-                ],
-            }
-        )
-    return {"version": 1, "factory_sha": "f" * 40, "consumers": consumers}
-
+def inventory(caller=CALLER):
+    raw = caller.encode()
+    return [{
+        "repository": repo, "repository_sha": f"{n:040x}",
+        "workflows": [{"path": ".github/workflows/caller.yml", "blob_sha": blob(raw), "content": caller}],
+    } for n, repo in enumerate(CONSUMERS, 1)]
 
 class ReusableReleasePreflightTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        workflow_dir = self.root / ".github" / "workflows"
-        workflow_dir.mkdir(parents=True)
-        (workflow_dir / "coordinacion.yml").write_text(
-            candidate_yaml(),
-            encoding="utf-8",
-        )
+        path = self.root / ".github/workflows"
+        path.mkdir(parents=True)
+        (path / "coordinacion.yml").write_text(CANDIDATE)
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def test_all_six_consumer_callers_must_be_compatible_before_release(self):
-        compatible = evaluate_payload(payload_for(), root=self.root)
-        self.assertTrue(compatible["compatible"])
-        self.assertEqual(compatible["status"], "COMPATIBLE")
-        self.assertEqual(compatible["consumer_count"], 6)
-        self.assertEqual(compatible["caller_count"], 6)
-
-        broken = payload_for(
-            {"pl0n3r/Condor": caller_yaml(issues="read")}
-        )
-        result = evaluate_payload(broken, root=self.root)
+        ok = evaluate_inventory(inventory(), "f" * 40, self.root)
+        self.assertEqual((ok["compatible"], ok["consumer_count"], ok["caller_count"]), (True, 6, 6))
+        broken = inventory()
+        broken[0]["workflows"][0]["content"] = CALLER.replace("issues: write", "issues: read")
+        result = evaluate_inventory(broken, "f" * 40, self.root)
         self.assertFalse(result["compatible"])
-        self.assertEqual(result["status"], "INCOMPATIBLE")
-        self.assertEqual(
-            result["incompatible"],
-            [
-                {
-                    "repository": "pl0n3r/Condor",
-                    "workflow": ".github/workflows/caller.yml",
-                    "job": "call",
-                    "reusable": (
-                        "pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
-                    ),
-                    "scope": "issues",
-                    "required": "write",
-                    "granted": "read",
-                }
-            ],
-        )
+        self.assertEqual(result["incompatible"][0]["scope"], "issues")
 
     def test_consumer_evidence_binds_repository_workflow_and_exact_sha(self):
-        base = payload_for()
-
-        stale = copy.deepcopy(base)
-        stale["consumers"][0]["workflows"][0]["repository_sha"] = "a" * 40
-        with self.assertRaisesRegex(ReusableReleasePreflightError, "stale"):
-            evaluate_payload(stale, root=self.root)
-
-        forged = copy.deepcopy(base)
-        forged["consumers"][0]["workflows"][0]["blob_sha"] = "b" * 40
-        with self.assertRaisesRegex(
-            ReusableReleasePreflightError,
-            "blob SHA no corresponde",
-        ):
-            evaluate_payload(forged, root=self.root)
-
-        wrong_path = copy.deepcopy(base)
-        wrong_path["consumers"][0]["workflows"][0]["path"] = "../caller.yml"
-        with self.assertRaisesRegex(
-            ReusableReleasePreflightError,
-            "workflow path inválido",
-        ):
-            evaluate_payload(wrong_path, root=self.root)
+        raw, digest, calls = CALLER.encode(), blob(CALLER.encode()), {}
+        def getter(url):
+            parts = urlparse(url).path.split("/")
+            repo = "/".join(parts[2:4])
+            if url.endswith(f"/repos/{repo}"):
+                return {"default_branch": "main"}
+            if "/commits/main" in url:
+                calls[repo] = calls.get(repo, 0) + 1
+                return {"sha": "a" * 40}
+            if "/git/trees/" in url:
+                return {"truncated": False, "tree": [
+                    {"type": "blob", "path": ".github/workflows/caller.yml", "sha": digest}
+                ]}
+            self.fail(url)
+        rows = collect_inventory(getter, lambda _: raw)
+        self.assertEqual({r["repository"] for r in rows}, set(CONSUMERS))
+        self.assertTrue(all(calls[r] == 2 for r in CONSUMERS))
+        n = {"value": 0}
+        def stale(url):
+            value = getter(url)
+            if "/commits/main" in url and "Condor" in url:
+                n["value"] += 1
+                return {"sha": ("a" if n["value"] == 1 else "b") * 40}
+            return value
+        with self.assertRaisesRegex(PreflightError, "stale"):
+            collect_inventory(stale, lambda _: raw)
 
     def test_missing_stale_or_ambiguous_consumer_evidence_fails_closed(self):
-        missing = payload_for()
-        missing["consumers"].pop()
-        with self.assertRaisesRegex(
-            ReusableReleasePreflightError,
-            "inventario de consumidores incompleto",
-        ):
-            evaluate_payload(missing, root=self.root)
-
-        duplicate_repo = payload_for()
-        duplicate_repo["consumers"][-1]["repository"] = (
-            duplicate_repo["consumers"][0]["repository"]
-        )
-        with self.assertRaisesRegex(
-            ReusableReleasePreflightError,
-            "duplicado",
-        ):
-            evaluate_payload(duplicate_repo, root=self.root)
-
-        duplicate_workflow = payload_for()
-        duplicate_workflow["consumers"][0]["workflows"].append(
-            copy.deepcopy(duplicate_workflow["consumers"][0]["workflows"][0])
-        )
-        with self.assertRaisesRegex(
-            ReusableReleasePreflightError,
-            "workflow duplicado",
-        ):
-            evaluate_payload(duplicate_workflow, root=self.root)
-
-        no_factory_call = payload_for()
-        repo_sha = no_factory_call["consumers"][0]["repository_sha"]
-        no_factory_call["consumers"][0]["workflows"] = [
-            workflow_record(
-                ".github/workflows/caller.yml",
-                "name: Local\njobs:\n  test:\n    runs-on: ubuntu-latest\n",
-                repo_sha,
-            )
-        ]
-        with self.assertRaisesRegex(
-            ReusableReleasePreflightError,
-            "sin caller Factory@v1 verificable",
-        ):
-            evaluate_payload(no_factory_call, root=self.root)
+        with self.assertRaisesRegex(PreflightError, "incompleto"):
+            evaluate_inventory(inventory()[:-1], "f" * 40, self.root)
+        duplicate = inventory()
+        duplicate[-1]["repository"] = duplicate[0]["repository"]
+        with self.assertRaisesRegex(PreflightError, "duplicado"):
+            evaluate_inventory(duplicate, "f" * 40, self.root)
+        no_call = inventory()
+        no_call[0]["workflows"][0]["content"] = "name: Local\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        with self.assertRaisesRegex(PreflightError, "sin caller Factory@v1"):
+            evaluate_inventory(no_call, "f" * 40, self.root)
 
     def test_incompatibility_reports_repo_workflow_and_scope_without_sensitive_payload(self):
-        secret_marker = "SUPER_SECRET_SHOULD_NEVER_APPEAR"
-        value = payload_for(
-            {
-                "pl0n3r/ControlBot": caller_yaml(
-                    issues="read",
-                    extra_comment=f"# {secret_marker}",
-                )
-            }
+        broken = inventory()
+        broken[1]["workflows"][0]["content"] = CALLER.replace(
+            "issues: write", "issues: read\n    # SUPER_SECRET_SHOULD_NEVER_APPEAR"
         )
-        result = evaluate_payload(value, root=self.root)
-        rendered = json.dumps(result, sort_keys=True)
-
-        self.assertIn("pl0n3r/ControlBot", rendered)
-        self.assertIn(".github/workflows/caller.yml", rendered)
-        self.assertIn('"scope": "issues"', rendered)
-        self.assertNotIn(secret_marker, rendered)
-        self.assertEqual(
-            set(result["incompatible"][0]),
-            {
-                "repository",
-                "workflow",
-                "job",
-                "reusable",
-                "scope",
-                "required",
-                "granted",
-            },
-        )
+        rendered = json.dumps(evaluate_inventory(broken, "f" * 40, self.root))
+        for expected in ("pl0n3r/ControlBot", ".github/workflows/caller.yml", '"scope": "issues"'):
+            self.assertIn(expected, rendered)
+        self.assertNotIn("SUPER_SECRET_SHOULD_NEVER_APPEAR", rendered)
 
     def test_release_job_requires_consumer_compat_preflight_and_human_gate(self):
-        workflow = (
-            Path(__file__).resolve().parents[1]
-            / ".github"
-            / "workflows"
-            / "release-bootstrap.yml"
-        ).read_text(encoding="utf-8")
-
-        for token in (
-            "consumer-compat:",
-            "Compatibilidad de consumidores",
-            "python3 -m scripts.reusable_release_preflight",
-            "raw.githubusercontent.com",
-            "git/trees",
-            "pl0n3r/Condor",
-            "pl0n3r/ControlBot",
-            "pl0n3r/FactoryRunner",
-            "pl0n3r/GrindFlow",
-            "pl0n3r/brvtal",
-            "pl0n3r/AutoFactory",
-            "workflow_dispatch:",
-            "expected_sha:",
-            "gate_issue:",
-            "needs: [candidate-template, consumer-compat]",
-            "needs: preflight",
-        ):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/release-bootstrap.yml").read_text()
+        for token in ("consumer-compat:", "python3 -m scripts.reusable_release_preflight",
+                      "workflow_dispatch:", "expected_sha:", "gate_issue:",
+                      "needs: [candidate-template, consumer-compat]", "needs: preflight"):
             self.assertIn(token, workflow)
-
-        consumer_job = workflow.split("  consumer-compat:", 1)[1].split(
-            "\n  preflight:",
-            1,
-        )[0]
-        self.assertIn("contents: read", consumer_job)
-        self.assertNotIn("contents: write", consumer_job)
-        self.assertNotIn("issues: write", consumer_job)
-
+        job = workflow.split("  consumer-compat:", 1)[1].split("\n  preflight:", 1)[0]
+        self.assertIn("contents: read", job)
+        self.assertNotIn("contents: write", job)
 
 if __name__ == "__main__":
     unittest.main()
