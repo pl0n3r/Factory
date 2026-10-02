@@ -134,14 +134,15 @@ class UnattendedGuardsTests(unittest.TestCase):
         for field, value in (("usage", 101), ("cost", 50.1), ("parallelism", 3)):
             with self.subTest(field=field):
                 decision = evaluate_unattended_guards(
-                    fencing(), config(), measurements(**{field: value}) and evidence(), measurements(**{field: value})
+                    fencing(),
+                    config(),
+                    evidence(),
+                    measurements(**{field: value}),
                 )
                 self.assertEqual(decision.action, "PAUSE")
                 self.assertIn(f"{field}_ceiling_exceeded", decision.reasons)
 
-        missing_limit = config(
-            ceilings={"usage": 100, "parallelism": 2}
-        )
+        missing_limit = config(ceilings={"usage": 100, "parallelism": 2})
         blocked = evaluate_unattended_guards(
             fencing(), missing_limit, evidence(), measurements()
         )
