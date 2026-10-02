@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 import unittest
 
 from scripts.unattended_watchdog_runtime import (
+    ALERT_TITLE,
+    AlertSpec,
+    GitHubIssueClient,
+    RuntimeValidationError,
+    _https_json_request,
     collect_github_input,
     evaluate_runtime,
+    main as runtime_main,
     parse_owned_alert,
+    read_json,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -373,6 +382,215 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             any(item.code == "presence_insufficient" for item in decision.incidents)
         )
         self.assertGreaterEqual(len(plan.create), 1)
+
+
+    def test_owned_alert_rejects_malformed_duplicate_marker(self):
+        fingerprint = "c" * 64
+        body = (
+            '<!-- factory-unattended-watchdog-alert '
+            f'{{"version":1,"fingerprint":"{fingerprint}"}} -->'
+            "\n<!-- factory-unattended-watchdog-alert broken -->"
+        )
+        self.assertIsNone(
+            parse_owned_alert(
+                {
+                    "number": 11,
+                    "state": "open",
+                    "title": f"{ALERT_TITLE} UNKNOWN {fingerprint[:12]}",
+                    "body": body,
+                    "user": {"login": "github-actions[bot]"},
+                }
+            )
+        )
+
+    def test_github_client_transport_paths_and_mutations(self):
+        calls = []
+        fingerprint = "d" * 64
+        owned = {
+            "number": 7,
+            "state": "open",
+            "title": f"{ALERT_TITLE} UNKNOWN {fingerprint[:12]}",
+            "body": (
+                '<!-- factory-unattended-watchdog-alert '
+                f'{{"version":1,"fingerprint":"{fingerprint}"}} -->'
+            ),
+            "user": {"login": "github-actions[bot]"},
+            "labels": [],
+        }
+
+        def transport(method, path, payload):
+            calls.append((method, path, payload))
+            if "/git/ref/heads/" in path:
+                return {"object": {"sha": "a" * 40}}
+            if "/comments?" in path:
+                return []
+            if "/issues?" in path and "state=all" in path:
+                return [owned]
+            if "/issues?" in path:
+                return [
+                    {
+                        "number": 769,
+                        "title": "runtime",
+                        "labels": [{"name": "estado: reservado"}],
+                    }
+                ]
+            if method == "GET":
+                return {"number": 767}
+            return {"ok": True}
+
+        client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
+        self.assertEqual(client.get_issue(767)["number"], 767)
+        self.assertEqual(client.list_issue_comments(769), [])
+        self.assertEqual(client.get_branch_head("trabajo/issue-769"), "a" * 40)
+        self.assertEqual(len(client.list_open_work_items()), 1)
+        self.assertEqual(
+            client.list_owned_alerts(),
+            {fingerprint: {"number": 7, "state": "open"}},
+        )
+        spec = AlertSpec(
+            fingerprint,
+            "UNKNOWN",
+            "runtime_source_blocked",
+            ("test",),
+            fingerprint,
+        )
+        client.create_alert(spec)
+        client.reopen_alert(7, spec)
+        client.close_alert(7)
+        self.assertTrue(
+            all(path.startswith("/repos/pl0n3r/Factory/") for _, path, _ in calls)
+        )
+        with self.assertRaises(RuntimeValidationError):
+            client._request("GET", "/repos/other/repo/issues")
+        with self.assertRaises(RuntimeValidationError):
+            GitHubIssueClient("", "pl0n3r/Factory")
+        with self.assertRaises(RuntimeValidationError):
+            GitHubIssueClient("token", "bad repo")
+
+    def test_fixed_host_transport_success_and_failures(self):
+        class Response:
+            def __init__(self, status=200, raw=b'{"ok":true}'):
+                self.status = status
+                self.raw = raw
+
+            def read(self, size):
+                return self.raw
+
+        class Connection:
+            response = Response()
+            seen = []
+
+            def __init__(self, host, timeout):
+                self.host = host
+                self.timeout = timeout
+
+            def request(self, method, path, body=None, headers=None):
+                self.seen.append((self.host, method, path, body, headers))
+
+            def getresponse(self):
+                return self.response
+
+            def close(self):
+                self.closed = True
+
+        target = "scripts.unattended_watchdog_runtime.http.client.HTTPSConnection"
+        with patch(target, Connection):
+            result = _https_json_request(
+                "token",
+                "GET",
+                "/repos/pl0n3r/Factory/issues/1",
+                None,
+            )
+            self.assertEqual(result, {"ok": True})
+            self.assertEqual(Connection.seen[-1][0], "api.github.com")
+
+            Connection.response = Response(status=500)
+            with self.assertRaisesRegex(
+                RuntimeValidationError,
+                "github_request_failed",
+            ):
+                _https_json_request(
+                    "token",
+                    "GET",
+                    "/repos/pl0n3r/Factory/issues/1",
+                    None,
+                )
+
+            Connection.response = Response(raw=b"x" * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(
+                RuntimeValidationError,
+                "github_response_too_large",
+            ):
+                _https_json_request(
+                    "token",
+                    "GET",
+                    "/repos/pl0n3r/Factory/issues/1",
+                    None,
+                )
+
+            Connection.response = Response(raw=b"not-json")
+            with self.assertRaisesRegex(
+                RuntimeValidationError,
+                "github_response_invalid_json",
+            ):
+                _https_json_request(
+                    "token",
+                    "GET",
+                    "/repos/pl0n3r/Factory/issues/1",
+                    None,
+                )
+
+    def test_read_json_and_kill_switch_main_fail_closed(self):
+        config_path = ROOT / "config" / "unattended-watchdog.json"
+        self.assertEqual(read_json(str(config_path)), config())
+        self.assertIsNone(read_json("/definitely/missing/watchdog.json"))
+
+        class PausedClient:
+            repository = "pl0n3r/Factory"
+
+            def __init__(self):
+                self.writes = []
+
+            def list_owned_alerts(self):
+                return {}
+
+            def list_open_work_items(self):
+                return []
+
+            def get_issue(self, number):
+                return {
+                    "number": 767,
+                    "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
+                    "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
+                    "user": {"login": "pl0n3r"},
+                    "body": (
+                        '<!-- factory-unattended-kill-switch '
+                        '{"version":1,"state":"PAUSED","owner":"pl0n3r"} -->'
+                    ),
+                }
+
+            def create_alert(self, spec):
+                self.writes.append(("create", spec))
+
+            def reopen_alert(self, number, spec):
+                self.writes.append(("reopen", number, spec))
+
+            def close_alert(self, number):
+                self.writes.append(("close", number))
+
+        fake = PausedClient()
+        target = "scripts.unattended_watchdog_runtime.GitHubIssueClient"
+        with patch(target, return_value=fake), patch.dict(
+            os.environ,
+            {
+                "GH_TOKEN": "token",
+                "GITHUB_REPOSITORY": "pl0n3r/Factory",
+            },
+            clear=False,
+        ):
+            code = runtime_main(["--config", str(config_path)])
+        self.assertEqual(code, 1)
+        self.assertEqual(fake.writes, [])
 
 
 if __name__ == "__main__":
