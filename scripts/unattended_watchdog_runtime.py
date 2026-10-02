@@ -497,6 +497,50 @@ def _guard_payload(decision: GuardDecision) -> dict[str, object]:
     }
 
 
+def _idle_github_evidence(now: str) -> dict[str, object]:
+    """Representa inventario Factory vacío sin inventar sesión, heartbeat o capacidad."""
+    return {
+        "now": now,
+        "presence": {
+            "version": 1,
+            "source": "factory-github-inventory",
+            "observed_at": now,
+            "sessions": [],
+            "capacity": {
+                "known_slots": 0,
+                "eligible_free_slots": 0,
+                "degraded_slots": 0,
+                "freshness": "unknown",
+            },
+        },
+        "work_ready": False,
+        "ready_since": None,
+        "next_dispatch_planned": False,
+        "reservation": None,
+        "state": {
+            "work_identity": "pl0n3r/Factory#idle",
+            "repository": CANONICAL_REPOSITORY,
+            "branch": None,
+            "head_sha": None,
+            "reservation_id": None,
+            "risk": "low",
+            "severity": "S3",
+            "evidence": ["github_inventory:no_active_work_items"],
+            "last_state": "idle",
+            "next_action": "re-run dispatcher when canonical work appears",
+            "blockers": [],
+            "updated_at": now,
+        },
+        "incidents": [],
+        "already_alerted_fingerprints": [],
+        "active_fronts": [],
+        "human_gates": [],
+        "integrated": [],
+        "reverted": [],
+        "next_actions": ["re-run dispatcher when canonical work appears"],
+    }
+
+
 def collect_github_input(
     client: GitHubIssueClient,
     config_payload: object,
@@ -509,6 +553,7 @@ def collect_github_input(
         candidates: list[object] = []
         active_fronts: list[str] = []
         ready_observed = False
+        active_work_observed = False
         for issue in client.list_open_work_items():
             number = issue.get("number")
             if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
@@ -524,6 +569,7 @@ def collect_github_input(
             if "estado: disponible" in names:
                 ready_observed = True
                 continue
+            active_work_observed = True
             comments = client.list_issue_comments(number)
             projection = project_state_presence(
                 repository=client.repository,
@@ -550,6 +596,10 @@ def collect_github_input(
 
         if ready_observed:
             return {"guard": guard_payload, "evidence": None}
+        if not candidates:
+            if active_work_observed:
+                return {"guard": guard_payload, "evidence": None}
+            return {"guard": guard_payload, "evidence": _idle_github_evidence(now)}
         if len(candidates) != 1:
             return {"guard": guard_payload, "evidence": None}
 
