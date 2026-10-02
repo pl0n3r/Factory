@@ -16,7 +16,7 @@ def fence(action="replan", pause=True):
 def cfg(**changes):
     value = {
         "global_pause": False,
-        "breakers": {"health": {"state": "closed"}},
+        "breakers": {"health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 3}},
         "ceilings": {"usage": 100, "cost": 50.0, "parallelism": 2},
     }
     value.update(changes)
@@ -25,7 +25,7 @@ def cfg(**changes):
 
 def ev(**changes):
     value = {
-        "breakers": {"health": {"condition": False, "fresh": True, "consistent": True}},
+        "breakers": {"health": {"consecutive_failures": 0, "fresh": True, "consistent": True}},
         "risk": "low",
         "second_pass": False,
         "sensitive": {key: False for key in ("go_live", "spend", "irreversible", "real_data")},
@@ -53,25 +53,53 @@ class UnattendedGuardsTests(unittest.TestCase):
         self.assertEqual(blocked.action, "BLOCKED")
         self.assertIn("invalid_config_shape", blocked.reasons)
 
-    def test_circuit_breaker_requires_explicit_current_consistent_evidence(self):
-        allowed = evaluate_unattended_guards(fence("keep", False), cfg(), ev(), metrics())
-        self.assertEqual(allowed.action, "ALLOW")
+    def test_circuit_breaker_uses_explicit_threshold_and_consecutive_failures_by_scope(self):
+        for scope in ("agent", "repo"):
+            subject = "worker-1" if scope == "agent" else "pl0n3r/Factory"
+            with self.subTest(scope=scope, failures="N-1"):
+                closed = evaluate_unattended_guards(
+                    fence("keep", False),
+                    cfg(breakers={"health": {"scope": scope, "subject": subject, "threshold": 3}}),
+                    ev(breakers={"health": {"consecutive_failures": 2, "fresh": True, "consistent": True}}),
+                    metrics(),
+                )
+                self.assertEqual(closed.action, "ALLOW")
+            with self.subTest(scope=scope, failures="N"):
+                opened = evaluate_unattended_guards(
+                    fence(),
+                    cfg(breakers={"health": {"scope": scope, "subject": subject, "threshold": 3}}),
+                    ev(breakers={"health": {"consecutive_failures": 3, "fresh": True, "consistent": True}}),
+                    metrics(),
+                )
+                self.assertEqual(opened.action, "PAUSE")
+                self.assertIn("circuit_breaker_open", opened.reasons)
+
+        invalid_configs = (
+            {"health": {"scope": "repo", "threshold": 3}},
+            {"health": {"scope": "repo", "subject": "pl0n3r/Factory"}},
+            {"health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 0}},
+            {"health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 1.5}},
+            {"health": {"scope": "global", "subject": "pl0n3r/Factory", "threshold": 3}},
+            {"health": {"scope": "repo", "subject": "../factory", "threshold": 3}},
+        )
+        for breakers in invalid_configs:
+            with self.subTest(breakers=breakers):
+                result = evaluate_unattended_guards(
+                    fence(), cfg(breakers=breakers), ev(), metrics()
+                )
+                self.assertEqual(result.action, "BLOCKED")
+
         cases = (
-            ({"condition": False, "fresh": False, "consistent": True}, "breaker_evidence_not_fresh"),
-            ({"condition": False, "fresh": True, "consistent": False}, "breaker_evidence_not_consistent"),
-            ({"condition": None, "fresh": True, "consistent": True}, "breaker_condition_unknown"),
-            ({"condition": True, "fresh": True, "consistent": True}, "breaker_state_contradictory"),
+            ({"consecutive_failures": 0, "fresh": False, "consistent": True}, "breaker_evidence_not_fresh"),
+            ({"consecutive_failures": 0, "fresh": True, "consistent": False}, "breaker_evidence_not_consistent"),
         )
         for observed, reason in cases:
             with self.subTest(reason=reason):
-                result = evaluate_unattended_guards(fence(), cfg(), ev(breakers={"health": observed}), metrics())
+                result = evaluate_unattended_guards(
+                    fence(), cfg(), ev(breakers={"health": observed}), metrics()
+                )
                 self.assertEqual(result.action, "BLOCKED")
                 self.assertIn(reason, result.reasons)
-        opened = evaluate_unattended_guards(
-            fence(), cfg(breakers={"health": {"state": "open"}}),
-            ev(breakers={"health": {"condition": True, "fresh": True, "consistent": True}}), metrics()
-        )
-        self.assertEqual(opened.action, "PAUSE")
 
     def test_usage_cost_and_parallelism_ceilings_never_infer_limits(self):
         for field, value in (("usage", 101), ("cost", 50.1), ("parallelism", 3)):
