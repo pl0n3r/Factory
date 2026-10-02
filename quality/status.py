@@ -542,6 +542,17 @@ def _watchdog_dimension(
     ):
         raise QualityStatusError("watchdog reasons inválidas.")
     watchdog_reasons = [_ref(item) for item in raw_reasons]
+    reason_set = set(watchdog_reasons)
+    proven_idle = "proven_idle" in reason_set
+    capacity_unknown = "capacity:unknown" in reason_set
+    if proven_idle and capacity_unknown:
+        raise QualityStatusError("watchdog reasons de capacidad incoherentes.")
+
+    capacity_reason = None
+    if proven_idle:
+        capacity_reason = "watchdog_proven_idle"
+    elif capacity_unknown:
+        capacity_reason = "watchdog_active_capacity_unknown"
 
     provenance = _refs(row["provenance"])
     if not provenance or len(provenance) != len(set(provenance)):
@@ -568,6 +579,8 @@ def _watchdog_dimension(
 
     state_reason = f"watchdog_{state.lower()}"
     reasons.append(state_reason)
+    if capacity_reason is not None:
+        reasons.append(capacity_reason)
     reasons.extend(f"watchdog:{reason}" for reason in watchdog_reasons)
     refs.update(provenance)
     ages.append(age)

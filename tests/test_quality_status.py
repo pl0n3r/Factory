@@ -162,14 +162,14 @@ def sonar_evidence():
     }
 
 
-def watchdog_evidence(state="BLOCKED", severity="S3"):
+def watchdog_evidence(state="BLOCKED", severity="S3", *, reasons=None):
     fingerprint = "b" * 64
     return {
         "version": 1,
         "repository_ref": "pl0n3r/Factory",
         "state": state,
         "severity": severity,
-        "reasons": ["capacity:unknown"],
+        "reasons": ["capacity:unknown"] if reasons is None else reasons,
         "provenance": [
             "run:unattended-watchdog:37031848944",
             fingerprint,
@@ -243,6 +243,62 @@ class QualityStatusTests(unittest.TestCase):
             "UNKNOWN",
         )
         self.assertIn("quality_evidence_unknown", unknown["work_item_classes"])
+
+    def test_active_global_work_with_unknown_capacity_is_explainable_and_not_pass(self):
+        for state, severity in (("UNKNOWN", "UNKNOWN"), ("BLOCKED", "S3")):
+            with self.subTest(state=state):
+                evidence = watchdog_evidence(state=state, severity=severity)
+                result = health(watchdog_ev=evidence)
+
+                self.assertEqual(result["state"], state)
+                self.assertNotEqual(result["state"], "PASS")
+                self.assertIn("watchdog_active_capacity_unknown", result["reasons"])
+                self.assertNotIn("watchdog_proven_idle", result["reasons"])
+                self.assertIn(
+                    evidence["evidence_fingerprint"],
+                    result["evidence_refs"],
+                )
+                self.assertEqual(
+                    result["external_dimensions"]["watchdog"]["provenance"],
+                    evidence["provenance"],
+                )
+
+    def test_proven_idle_and_active_unknown_keep_distinct_fail_closed_reasons(self):
+        idle_evidence = watchdog_evidence(
+            state="UNKNOWN",
+            severity="UNKNOWN",
+            reasons=["proven_idle"],
+        )
+        active_evidence = watchdog_evidence(
+            state="UNKNOWN",
+            severity="UNKNOWN",
+            reasons=["capacity:unknown"],
+        )
+
+        idle = health(watchdog_ev=idle_evidence)
+        active = health(watchdog_ev=active_evidence)
+
+        self.assertEqual((idle["state"], active["state"]), ("UNKNOWN", "UNKNOWN"))
+        self.assertIn("watchdog_proven_idle", idle["reasons"])
+        self.assertNotIn("watchdog_active_capacity_unknown", idle["reasons"])
+        self.assertIn("watchdog_active_capacity_unknown", active["reasons"])
+        self.assertNotIn("watchdog_proven_idle", active["reasons"])
+        self.assertIn(
+            idle_evidence["evidence_fingerprint"],
+            idle["evidence_refs"],
+        )
+        self.assertIn(
+            active_evidence["evidence_fingerprint"],
+            active["evidence_refs"],
+        )
+
+        incoherent = watchdog_evidence(
+            state="UNKNOWN",
+            severity="UNKNOWN",
+            reasons=["proven_idle", "capacity:unknown"],
+        )
+        with self.assertRaises(QualityStatusError):
+            health(watchdog_ev=incoherent)
 
     def test_watchdog_dimension_rejects_stale_invalid_or_sensitive_evidence(self):
         stale = watchdog_evidence()
