@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -234,6 +235,49 @@ class ReusableReleasePreflightTests(unittest.TestCase):
         ambiguous[0]["workflows"][0]["content"] = CALLER.replace("@v1", "@${{ inputs.ref }}")
         with self.assertRaisesRegex(PreflightError, "ambigua"):
             evaluate_inventory(ambiguous, "f" * 40, self.root)
+
+    def test_empty_inline_top_level_permissions_are_supported_as_no_permissions(self):
+        parsed = target._jobs(
+            "permissions: {}\n"
+            "jobs:\n"
+            "  event_guard:\n"
+            "    runs-on: ubuntu-latest\n",
+            "factory:aceptacion.yml",
+        )
+        self.assertEqual(parsed, [("event_guard", None, {})])
+
+    def test_non_empty_inline_top_level_permissions_remain_fail_closed(self):
+        with self.assertRaisesRegex(PreflightError, "permissions top-level inválido"):
+            target._jobs(
+                "permissions: {contents: read}\n"
+                "jobs:\n"
+                "  event_guard:\n"
+                "    runs-on: ubuntu-latest\n",
+                "factory:aceptacion.yml",
+            )
+
+    def test_all_factory_reusable_workflows_have_parseable_permission_envelopes(self):
+        root = Path(__file__).resolve().parents[1]
+        workflows = root / ".github" / "workflows"
+        reusable = []
+        for workflow in sorted(workflows.glob("*.yml")) + sorted(workflows.glob("*.yaml")):
+            text = workflow.read_text(encoding="utf-8")
+            if re.search(r"(?m)^\s+workflow_call:\s*(?:#.*)?$", text) is None:
+                continue
+            reusable.append(workflow.name)
+            with self.subTest(workflow=workflow.name):
+                envelope = target._required(text, f"factory:.github/workflows/{workflow.name}")
+                self.assertIsInstance(envelope, dict)
+        self.assertGreater(len(reusable), 0)
+
+    def test_current_factory_acceptance_empty_permissions_parse_to_declared_envelope(self):
+        workflow = (
+            Path(__file__).resolve().parents[1] / ".github/workflows/aceptacion.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            target._required(workflow, "factory:.github/workflows/aceptacion.yml"),
+            {"contents": "read", "issues": "read", "checks": "read"},
+        )
 
     def test_empty_inline_job_permissions_are_supported_as_no_permissions(self):
         parsed = target._jobs(
