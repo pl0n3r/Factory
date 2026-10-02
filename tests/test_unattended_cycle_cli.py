@@ -159,6 +159,19 @@ class UnattendedCycleCliTests(TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(stdout.getvalue())["action"], "ALLOW")
 
+        with tempfile.TemporaryDirectory(dir=cli.ROOT / "tests") as directory:
+            inside = Path(directory) / "snapshot.json"
+            inside.write_text(raw, encoding="utf-8")
+            stdout = io.StringIO()
+            rc = cli.main(
+                ["--snapshot", str(inside)],
+                stdin=io.StringIO(""),
+                stdout=stdout,
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["action"], "ALLOW")
+
         with tempfile.TemporaryDirectory() as directory:
             external = Path(directory) / "snapshot.json"
             external.write_text(raw, encoding="utf-8")
