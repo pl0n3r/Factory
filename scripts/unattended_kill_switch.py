@@ -30,19 +30,6 @@ class KillSwitchDecision:
     authority: str = "unchanged"
 
 
-class DuplicateMarkerKeyError(ValueError):
-    """El JSON del marker no puede depender de semántica last-key-wins."""
-
-
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise DuplicateMarkerKeyError(key)
-        result[key] = value
-    return result
-
-
 def _paused(reason: str) -> KillSwitchDecision:
     return KillSwitchDecision("UNKNOWN", True, reason)
 
