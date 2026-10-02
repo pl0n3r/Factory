@@ -1336,10 +1336,17 @@ class CoordinacionTests(unittest.TestCase):
         self.assertIsNone(coordinator._revalidated_unblock_evidence(api, 12, fp))
 
         real = GitHub("pl0n3r/Factory", token="test-token")
-        with patch.object(real, "request", return_value={"id": 77}) as request:
+        public_run = {
+            "id": 77,
+            "repository": {"full_name": "pl0n3r/Factory", "private": False},
+        }
+        with patch.object(real, "public_request", return_value=public_run) as request:
             self.assertEqual(real.workflow_run(77)["id"], 77)
-        request.assert_called_once_with("GET", "/repos/pl0n3r/Factory/actions/runs/77")
-        with patch.object(real, "request", return_value=[]):
+        request.assert_called_once_with(
+            "/repos/pl0n3r/Factory/actions/runs/77",
+            allow=(404,),
+        )
+        with patch.object(real, "public_request", return_value=[]):
             with self.assertRaises(CoordinationError):
                 real.workflow_run(78)
 
