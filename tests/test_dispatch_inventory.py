@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import unittest
+from unittest.mock import patch
 
 from scripts.dispatch_inventory import dispatch_record_with_inventory
 from scripts.dispatcher_v2 import Candidate
 from scripts.work_inventory import (
     CANONICAL_REPOSITORIES,
+    PROJECT_STATES,
     WorkInventoryError,
     build_factory_inventory,
     controlbot_projection,
@@ -136,6 +138,20 @@ class DispatcherV2Tests(unittest.TestCase):
                 [],
                 work_inventory=_inventory("READY"),
             )
+
+    def test_uninterpretable_inventory_state_fails_closed(self):
+        inventory = _inventory("NO_WORK")
+        for project in inventory["projects"]:
+            project["state"] = "UNKNOWN"
+        with patch(
+            "scripts.dispatch_inventory.PROJECT_STATES",
+            PROJECT_STATES | {"UNKNOWN"},
+        ):
+            with self.assertRaisesRegex(
+                WorkInventoryError,
+                "no contiene un estado interpretable",
+            ):
+                dispatch_record_with_inventory([], work_inventory=inventory)
 
 
 if __name__ == "__main__":
