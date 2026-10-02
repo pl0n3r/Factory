@@ -301,6 +301,10 @@ def _https_json_request(
             return json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeValidationError("github_response_invalid_json") from exc
+    except RuntimeValidationError:
+        raise
+    except (OSError, TimeoutError, http.client.HTTPException) as exc:
+        raise RuntimeValidationError("github_request_failed") from exc
     finally:
         connection.close()
 
