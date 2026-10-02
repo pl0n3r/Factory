@@ -118,8 +118,9 @@ class ReusableReleasePreflightTests(unittest.TestCase):
                 n["value"] += 1
                 return {"sha": ("a" if n["value"] == 1 else "b") * 40}
             return value
+        raw_reader = lambda _: raw
         with self.assertRaisesRegex(PreflightError, "stale"):
-            collect_inventory(stale, lambda _: raw)
+            collect_inventory(stale, raw_reader)
 
     def test_missing_stale_or_ambiguous_consumer_evidence_fails_closed(self):
         with self.assertRaisesRegex(PreflightError, "incompleto"):
