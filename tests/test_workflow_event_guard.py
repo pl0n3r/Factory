@@ -179,7 +179,7 @@ class WorkflowEventGuardTests(unittest.TestCase):
         coordination = workflow[workflow.index("  coordinacion:"):workflow.index("  acceptance:")]
         self.assertIn("name: Comprobar estado live del PR", coordination)
         self.assertIn("id: pr_live", coordination)
-        self.assertIn('gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state'', coordination)
+        self.assertIn("gh api \"repos/$REPOSITORIO/pulls/$PR\" --jq '.state'", coordination)
         self.assertIn('open) echo "is_open=true" >> "$GITHUB_OUTPUT"', coordination)
         self.assertIn('closed)', coordination)
         validation = coordination[coordination.index("- name: Validar reserva, rama y colisiones"):]
@@ -195,7 +195,7 @@ class WorkflowEventGuardTests(unittest.TestCase):
         acceptance = workflow[workflow.index("  acceptance:"):workflow.index("  validar:")]
         self.assertIn("pull-requests: read", acceptance)
         self.assertIn("name: Comprobar estado live del PR", acceptance)
-        self.assertIn('gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state'', acceptance)
+        self.assertIn("gh api \"repos/$REPOSITORIO/pulls/$PR\" --jq '.state'", acceptance)
         self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", acceptance)
         evidence = acceptance[acceptance.index("- name: Construir evidencia del Issue y SHA"):]
         self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", evidence)
