@@ -648,7 +648,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         )
         self.assertIsNone(ambiguous["evidence"])
 
-    def test_idle_projection_reconciles_prior_invalid_evidence_alert_after_fresh_cycle(self):
+    def test_idle_projection_keeps_prior_alert_while_unknown_remains(self):
         class FakeClient:
             repository = "pl0n3r/Factory"
 
@@ -694,7 +694,14 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             "invalid_evidence",
             {item.code for item in decision.incidents},
         )
-        self.assertEqual(plan.close, (818,))
+        self.assertIn(
+            "presence_insufficient",
+            {item.code for item in decision.incidents},
+        )
+        self.assertTrue(
+            any(item.severity == "UNKNOWN" for item in decision.incidents)
+        )
+        self.assertEqual(plan.close, ())
 
     def test_runtime_projects_live_github_state_source_fail_closed(self):
         reservation_id = "11111111-1111-4111-8111-111111111111"
@@ -872,17 +879,10 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             current,
         )
         self.assertEqual(resolved_decision.action, "BLOCKED")
-        self.assertEqual(
-            resolved_plan.close,
-            tuple(
-                sorted(
-                    (
-                        current[stale_runtime_alert.fingerprint]["number"],
-                        historical_number,
-                    )
-                )
-            ),
+        self.assertTrue(
+            any(item.severity == "UNKNOWN" for item in resolved_decision.incidents)
         )
+        self.assertEqual(resolved_plan.close, ())
 
 
     def test_owned_alert_rejects_malformed_duplicate_marker(self):
