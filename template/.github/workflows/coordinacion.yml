@@ -41,10 +41,9 @@ jobs:
         contains(github.event.comment.body, '/migrar-contrato ') ||
         contains(github.event.comment.body, '/renovar-contrato ')
       )
-    # GitHub valida el máximo permission envelope del reusable antes de
-    # seleccionar el job interno. El reusable conserva mínimo privilegio por job.
+    # El reusable mantiene el envelope compatible con callers v1.0.18;
+    # la evidencia workflow_success del sweep usa lectura pública acotada.
     permissions:
-      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -63,7 +62,6 @@ jobs:
       github.event.action == 'labeled' &&
       github.event.label.name == 'estado: reservado'
     permissions:
-      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -77,11 +75,9 @@ jobs:
 
   pr:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    # GitHub valida el máximo permiso del reusable completo antes de evaluar
-    # qué operación interna se ejecutará. La operación pr sigue estrechando
-    # permisos dentro de Factory.
+    # La operación pr conserva el envelope histórico de v1.0.18 y el
+    # reusable sigue estrechando permisos dentro de Factory.
     permissions:
-      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -103,10 +99,9 @@ jobs:
 
   validar-pr:
     if: github.event_name == 'pull_request'
-    # Mismo sobre de carga; el job validar-pr del reusable conserva permisos
-    # read-only (contents/issues/pull-requests: read).
+    # El job validar-pr conserva permisos internos read-only sin exigir
+    # scopes nuevos al caller histórico.
     permissions:
-      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -121,7 +116,6 @@ jobs:
   issue:
     if: github.event_name == 'issues' && (github.event.action == 'closed' || github.event.action == 'reopened')
     permissions:
-      actions: read
       contents: write
       issues: write
       pull-requests: write
@@ -135,7 +129,6 @@ jobs:
   sweep:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
-      actions: read
       contents: write
       issues: write
       pull-requests: write

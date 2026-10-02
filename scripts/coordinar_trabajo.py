@@ -55,6 +55,17 @@ except ValueError:
 COMMIT_CLOCK_SKEW_SECONDS = 300
 
 ALLOWED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+PUBLIC_WORKFLOW_RUN_REPOS = frozenset(
+    {
+        "pl0n3r/factory",
+        "pl0n3r/condor",
+        "pl0n3r/grindflow",
+        "pl0n3r/brvtal",
+        "pl0n3r/controlbot",
+        "pl0n3r/autofactory",
+        "pl0n3r/factoryrunner",
+    }
+)
 
 @dataclass(frozen=True)
 class CoordinationProfile:
@@ -164,22 +175,26 @@ class GitHub:
         if not self.token:
             raise CoordinationError("Falta GH_TOKEN/GITHUB_TOKEN para consultar GitHub.")
 
-    def request(
+    def _request_json(
         self,
         method: str,
         path: str,
         payload: Any | None = None,
         allow: tuple[int, ...] = (),
+        *,
+        authenticated: bool,
+        user_agent: str,
     ) -> Any:
-        """Ejecuta una llamada JSON autenticada a la API de GitHub."""
+        """Ejecuta transporte JSON común con autenticación explícita."""
         url = f"{API_URL}{path}"
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {
             "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {self.token}",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "condor-coordinacion",
+            "User-Agent": user_agent,
         }
+        if authenticated:
+            headers["Authorization"] = f"Bearer {self.token}"
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method=method)
@@ -196,6 +211,37 @@ class GitHub:
             except json.JSONDecodeError:
                 message = raw
             raise GitHubError(exc.code, str(message)) from exc
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        payload: Any | None = None,
+        allow: tuple[int, ...] = (),
+    ) -> Any:
+        """Ejecuta una llamada JSON autenticada a la API de GitHub."""
+        return self._request_json(
+            method,
+            path,
+            payload,
+            allow,
+            authenticated=True,
+            user_agent="condor-coordinacion",
+        )
+
+    def public_request(
+        self,
+        path: str,
+        allow: tuple[int, ...] = (),
+    ) -> Any:
+        """Ejecuta un GET JSON anónimo sin enviar el token de coordinación."""
+        return self._request_json(
+            "GET",
+            path,
+            allow=allow,
+            authenticated=False,
+            user_agent="condor-coordinacion-public-evidence",
+        )
 
     def paginate(self, path: str) -> list[dict[str, Any]]:
         """Recorre una colección paginada de GitHub y devuelve todos sus elementos."""
@@ -408,14 +454,30 @@ class GitHub:
         return None
 
     def workflow_run(self, run_id: int) -> dict[str, Any]:
-        """Obtiene un workflow run por ID para verificar evidencia exacta."""
-        payload = self.request(
-            "GET",
+        """Lee evidencia workflow_success públicamente y solo en repos gobernados."""
+        repo_key = self.repo.lower()
+        if repo_key not in PUBLIC_WORKFLOW_RUN_REPOS:
+            raise CoordinationError(
+                "workflow_success solo admite lectura pública en repos gobernados."
+            )
+        payload = self.public_request(
             f"/repos/{self.repo}/actions/runs/{run_id}",
+            allow=(404,),
         )
+        if payload is None:
+            raise GitHubError(404, "Not Found")
         if not isinstance(payload, dict):
             raise CoordinationError(
                 f"No fue posible leer workflow run {run_id}."
+            )
+        repository = payload.get("repository")
+        if (
+            not isinstance(repository, dict)
+            or repository.get("private") is not False
+            or str(repository.get("full_name") or "").lower() != repo_key
+        ):
+            raise CoordinationError(
+                "workflow_success requiere evidencia pública del repositorio exacto."
             )
         return payload
 
