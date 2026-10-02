@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import inspect
 import unittest
 from unittest.mock import patch
 
@@ -27,6 +28,8 @@ from scripts.dispatcher_v2 import (
 from scripts.adaptive_fencing import FencingContext, FencingDecision, evaluate_fencing
 from scripts.adaptive_replan import decide_replan
 from scripts.presence_contract import classify_presence
+from scripts.unattended_guards import GuardDecision
+from scripts.unattended_watchdog import DailySummary, WatchdogDecision
 
 
 def work_item(**overrides):
@@ -60,6 +63,45 @@ def ready_context(**overrides):
     }
     values.update(overrides)
     return WorkItemReadinessContext(**values)
+
+
+def unattended_guard_decision(
+    action="ALLOW",
+    *,
+    authority="unchanged",
+):
+    return GuardDecision(
+        action=action,
+        authority=authority,
+        pause_allowed=action == "PAUSE",
+        reasons=("synthetic-guard",),
+        evidence_fingerprint="c" * 64,
+    )
+
+
+def unattended_watchdog_decision(
+    action="ALLOW",
+    *,
+    authority="unchanged",
+):
+    return WatchdogDecision(
+        action=action,
+        authority=authority,
+        incidents=(),
+        new_alert_fingerprints=(),
+        interrupt_owner=False,
+        daily_summary=DailySummary(
+            active_fronts=(),
+            state_freshness="fresh",
+            incidents=(),
+            blockers=(),
+            human_gates=(),
+            integrated=(),
+            reverted=(),
+            next_actions=(),
+        ),
+        evidence_fingerprint="d" * 64,
+    )
 
 
 class DispatcherV2Tests(unittest.TestCase):
@@ -815,6 +857,35 @@ class DispatcherV2Tests(unittest.TestCase):
             ),
         )
 
+    def unattended_guard(self, action="ALLOW", authority="unchanged"):
+        return GuardDecision(
+            action=action,
+            authority=authority,
+            pause_allowed=action == "PAUSE",
+            reasons=("test_guard",),
+            evidence_fingerprint="a" * 64,
+        )
+
+    def unattended_watchdog(self, action="ALLOW", authority="unchanged"):
+        return WatchdogDecision(
+            action=action,
+            authority=authority,
+            incidents=(),
+            new_alert_fingerprints=(),
+            interrupt_owner=False,
+            daily_summary=DailySummary(
+                active_fronts=(),
+                state_freshness="fresh",
+                incidents=(),
+                blockers=(),
+                human_gates=(),
+                integrated=(),
+                reverted=(),
+                next_actions=(),
+            ),
+            evidence_fingerprint="b" * 64,
+        )
+
     def test_presence_unknown_or_stale_is_not_ready(self):
         """AC-01: presence incierta nunca se convierte en capacidad utilizable."""
         for freshness, expected in (("unknown", "adaptive_presence_unknown"), ("stale", "adaptive_presence_stale")):
@@ -951,6 +1022,223 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(len(adaptive["event_fingerprint"]), 64)
         self.assertEqual(adaptive["generation"], 7)
         self.assertEqual(record["candidates"]["chosen"]["metadata"]["adaptive"], adaptive)
+
+    def test_unattended_dispatch_requires_canonical_guard_and_watchdog_decisions(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        record = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+        )
+
+        self.assertIsNone(record["selected"])
+        self.assertEqual(record["next_action"]["step"], "unattended_gate")
+        self.assertEqual(record["next_action"]["action"], "BLOCKED")
+        self.assertEqual(record["unattended"]["authority"], "unchanged")
+        self.assertIn(
+            "unattended_guard_decision_invalid",
+            record["unattended"]["reasons"],
+        )
+
+    def test_unattended_pause_or_blocked_decision_suppresses_new_dispatch(self):
+        presence = classify_presence(self.adaptive_snapshot())
+
+        for action in ("PAUSE", "BLOCKED"):
+            with self.subTest(action=action):
+                record = adaptive_dispatch_record(
+                    [Candidate(key="candidate", priority="critical")],
+                    presence=presence,
+                    fencing=self.fenced(),
+                    replan_action="keep",
+                    unattended_mode=True,
+                    unattended_guard=unattended_guard_decision(action),
+                    unattended_watchdog=unattended_watchdog_decision(action),
+                )
+
+                self.assertIsNone(record["selected"])
+                self.assertEqual(record["next_action"]["step"], "unattended_gate")
+                self.assertEqual(record["next_action"]["action"], action)
+                self.assertEqual(record["next_action"]["authority"], "unchanged")
+                self.assertTrue(record["next_action"]["reasons"])
+                self.assertIn(
+                    f"unattended_watchdog_{action.lower()}",
+                    record["next_action"]["reasons"],
+                )
+                self.assertIn(
+                    "guard:synthetic-guard",
+                    record["next_action"]["reasons"],
+                )
+
+        hardened = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("PAUSE"),
+            unattended_watchdog=unattended_watchdog_decision("BLOCKED"),
+        )
+        self.assertEqual(hardened["next_action"]["action"], "BLOCKED")
+        self.assertIn("guard:synthetic-guard", hardened["next_action"]["reasons"])
+
+    def test_unattended_inconsistent_or_expanded_authority_fails_closed(self):
+        presence = classify_presence(self.adaptive_snapshot())
+
+        cases = (
+            (
+                unattended_guard_decision("ALLOW", authority="expanded"),
+                unattended_watchdog_decision("ALLOW"),
+                "unattended_guard_authority_invalid",
+            ),
+            (
+                unattended_guard_decision("PAUSE"),
+                unattended_watchdog_decision("ALLOW"),
+                "unattended_decisions_incoherent",
+            ),
+            (
+                GuardDecision(
+                    action="ALLOW",
+                    authority="unchanged",
+                    pause_allowed=False,
+                    reasons=(),
+                    evidence_fingerprint="bad",
+                ),
+                unattended_watchdog_decision("ALLOW"),
+                "unattended_guard_evidence_invalid",
+            ),
+            (
+                unattended_guard_decision("ALLOW"),
+                WatchdogDecision(
+                    action="ALLOW",
+                    authority="unchanged",
+                    incidents=(),
+                    new_alert_fingerprints=(),
+                    interrupt_owner=False,
+                    daily_summary=DailySummary(
+                        active_fronts=(),
+                        state_freshness="fresh",
+                        incidents=(),
+                        blockers=(),
+                        human_gates=(),
+                        integrated=(),
+                        reverted=(),
+                        next_actions=(),
+                    ),
+                    evidence_fingerprint="bad",
+                ),
+                "unattended_watchdog_evidence_invalid",
+            ),
+        )
+
+        for guard, watchdog, expected_reason in cases:
+            with self.subTest(reason=expected_reason):
+                record = adaptive_dispatch_record(
+                    [Candidate(key="candidate", priority="critical")],
+                    presence=presence,
+                    fencing=self.fenced(),
+                    replan_action="keep",
+                    unattended_mode=True,
+                    unattended_guard=guard,
+                    unattended_watchdog=watchdog,
+                )
+
+                self.assertIsNone(record["selected"])
+                self.assertEqual(record["next_action"]["action"], "BLOCKED")
+                self.assertIn(expected_reason, record["unattended"]["reasons"])
+
+    def test_unattended_allow_preserves_adaptive_dispatch_selection(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        candidates = [
+            Candidate(key="high", priority="high"),
+            Candidate(key="critical", priority="critical"),
+        ]
+        legacy = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="replan",
+            replan_reasons=("capacity_changed",),
+        )
+        unattended = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="replan",
+            replan_reasons=("capacity_changed",),
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("ALLOW"),
+            unattended_watchdog=unattended_watchdog_decision("ALLOW"),
+        )
+
+        self.assertEqual(unattended["unattended"]["action"], "ALLOW")
+        comparable = dict(unattended)
+        comparable.pop("unattended")
+        self.assertEqual(comparable, legacy)
+
+    def test_unattended_mode_off_preserves_legacy_adaptive_dispatch(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        candidates = [Candidate(key="candidate", priority="critical")]
+
+        legacy = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+        )
+        explicit_off = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=False,
+            unattended_guard=object(),
+            unattended_watchdog=object(),
+        )
+
+        self.assertEqual(explicit_off, legacy)
+        self.assertNotIn("unattended", explicit_off)
+
+    def test_unattended_dispatch_integration_is_pure_and_reuses_canonical_decisions(self):
+        import scripts.dispatcher_v2 as dispatcher_module
+
+        source = (
+            inspect.getsource(dispatcher_module._unattended_dispatch_gate)
+            + inspect.getsource(dispatcher_module._suppressed_adaptive_dispatch_record)
+            + inspect.getsource(adaptive_dispatch_record)
+        )
+
+        self.assertIn("GuardDecision", source)
+        self.assertIn("WatchdogDecision", source)
+        self.assertNotIn("evaluate_unattended_guards", source)
+        self.assertNotIn("evaluate_unattended_watchdog", source)
+        for forbidden in (
+            "requests.",
+            "subprocess.",
+            "socket.",
+            "urllib.",
+            "httpx.",
+            "github.",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        presence = classify_presence(self.adaptive_snapshot())
+        with patch(
+            "scripts.dispatcher_v2.work_ladder",
+            side_effect=AssertionError("blocked unattended path must not invoke work_ladder"),
+        ):
+            blocked = adaptive_dispatch_record(
+                [Candidate(key="candidate", priority="critical")],
+                presence=presence,
+                fencing=self.fenced(),
+                replan_action="keep",
+                unattended_mode=True,
+                unattended_guard=unattended_guard_decision("BLOCKED"),
+                unattended_watchdog=unattended_watchdog_decision("BLOCKED"),
+            )
+        self.assertEqual(blocked["next_action"]["step"], "unattended_gate")
+        self.assertFalse(blocked["next_action"]["mutates"])
 
     def direction_proposal(self):
         return DirectionProposal(

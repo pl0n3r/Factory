@@ -65,3 +65,52 @@ no podrá cambiar `BLOCKED→ALLOW`, ampliar `pause_allowed`, reinterpretar
 autoridad, inventar thresholds ni añadir I/O a este módulo.
 
 Orden serial: `4A contrato → 4B guardas → 4C watchdog/resumen → 4D simulacro E2E`.
+
+
+## Aplicación en Dispatcher V2
+
+`adaptive_dispatch_record(..., unattended_mode=True)` consume las decisiones ya
+calculadas de 4B y 4C; **no** vuelve a evaluar thresholds, riesgo, freshness,
+breakers, presupuestos ni severidades.
+
+Exige:
+
+- un `GuardDecision` canónico de 4B;
+- un `WatchdogDecision` canónico de 4C;
+- `authority=unchanged` en ambos;
+- acciones cerradas `ALLOW|PAUSE|BLOCKED`;
+- evidencia/fingerprints con forma canónica y razones secret-free.
+
+Las combinaciones válidas son las que 4C puede emitir sin ser más permisivo que
+4B:
+
+- `ALLOW → ALLOW`: conserva exactamente el pipeline adaptativo y el ranking;
+- `ALLOW → BLOCKED`: 4C endurece por evidencia UNKNOWN/stale/inválida;
+- `PAUSE → PAUSE`: conserva la pausa autorizada por 4B;
+- `PAUSE → BLOCKED`: 4C endurece una pausa a bloqueo;
+- `BLOCKED → BLOCKED`: conserva el bloqueo.
+
+`ALLOW → PAUSE` no es canónico: un `GuardDecision(ALLOW)` trae
+`pause_allowed=false`, por lo que 4C no puede fabricar autoridad de pausa.
+Cualquier combinación más permisiva, evidencia inválida, decisión ausente o
+autoridad distinta de `unchanged` falla cerrado.
+
+Cuando el resultado efectivo es `PAUSE` o `BLOCKED`:
+
+- se añaden razones de readiness antes de selección;
+- el dispatcher no invoca `dispatch_record()` ni `work_ladder()`;
+- `selected=null`;
+- `next_action.step=unattended_gate` es solo un status auditable con
+  `mutates=false`;
+- las razones conservan causas canónicas secret-free como
+  `guard:<reason>` y `watchdog:<incident-code>`;
+- no se crea filler, reconciliación, WorkItem ni puerta de dirección de
+  producto.
+
+`unattended_mode=false` mantiene compatibilidad legacy y no exige decisiones
+4B/4C.
+
+Esta frontera sigue siendo pura: no agenda, no muta GitHub, no reserva, no hace
+polling y no concede autoridad para deploy, rollback, gasto o go-live. 4B/4C
+deciden; Dispatcher V2 solo aplica esa decisión antes de iniciar trabajo nuevo.
+
