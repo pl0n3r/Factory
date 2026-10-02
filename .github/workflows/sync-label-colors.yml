@@ -1,0 +1,49 @@
+name: Sincronizar colores de labels
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Dry-run/apply color-only
+    concurrency:
+      group: factory-label-color-sync
+      cancel-in-progress: false
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.issue.number == 874 &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.event.sender.login == github.event.repository.owner.login &&
+      github.event.comment.user.login == github.event.sender.login &&
+      (
+        github.event.comment.body == '/sync-label-colors dry-run' ||
+        github.event.comment.body == '/sync-label-colors apply'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Dry-run de colores
+        if: github.event.comment.body == '/sync-label-colors dry-run'
+        run: python3 scripts/sync_label_colors.py --dry-run
+
+      - name: Aplicar colores
+        if: github.event.comment.body == '/sync-label-colors apply'
+        env:
+          FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${FACTORY_PROVISION_TOKEN:-}" ]]; then
+            echo "::error::FACTORY_PROVISION_TOKEN no está disponible"
+            exit 1
+          fi
+          python3 scripts/sync_label_colors.py --apply
