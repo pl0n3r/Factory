@@ -39,6 +39,22 @@ def _inventory(factory_state):
                 }]
             elif factory_state == "NO_WORK":
                 leaves = [_leaf("Factory#done", "completed")]
+            elif factory_state == "WAITING_DECISION":
+                leaves = []
+                narrative = [{
+                    "identity": "decision:factory:owner",
+                    "title": "Decisión humana pendiente",
+                    "kind": "decision_required",
+                    "source_ref": "issue:Factory#decision",
+                }]
+            elif factory_state == "LIVE_GATED":
+                leaves = []
+                narrative = [{
+                    "identity": "live:factory:release",
+                    "title": "Trabajo reservado para live",
+                    "kind": "live_only",
+                    "source_ref": "issue:Factory#live",
+                }]
             elif factory_state == "READY":
                 leaves = [_leaf("Factory#ready", "available", priority="critical")]
             else:
@@ -67,10 +83,29 @@ class DispatcherV2Tests(unittest.TestCase):
                     expected,
                 )
                 self.assertIn(expected, handoff["states_present"])
+                action = record["next_action"]
+                self.assertEqual(action["state"], expected)
+                self.assertFalse(action["mutates"])
                 self.assertEqual(
-                    record["next_action"]["step"],
-                    "declare_idle_reason",
+                    action["step"],
+                    "materialize_inventory"
+                    if expected == "UNMATERIALIZED_WORK"
+                    else "inventory_state",
                 )
+                self.assertEqual(action["project_states"], handoff["project_states"])
+
+    def test_human_or_live_inventory_states_never_materialize(self):
+        for expected in ("WAITING_DECISION", "LIVE_GATED"):
+            with self.subTest(expected=expected):
+                record = dispatch_record_with_inventory(
+                    [],
+                    work_inventory=_inventory(expected),
+                )
+                action = record["next_action"]
+                self.assertEqual(action["step"], "inventory_state")
+                self.assertEqual(action["state"], expected)
+                self.assertFalse(action["mutates"])
+                self.assertNotEqual(action["step"], "materialize_inventory")
 
     def test_inventory_state_never_preempts_ready_candidate(self):
         inventory = _inventory("ALL_BLOCKED")
@@ -88,6 +123,12 @@ class DispatcherV2Tests(unittest.TestCase):
         record = dispatch_record_with_inventory([], work_inventory=inventory)
         self.assertIs(record["work_inventory"], inventory)
         self.assertIs(controlbot_projection(record["work_inventory"]), inventory)
+        self.assertEqual(record["next_action"]["state"], "NO_WORK")
+        with self.assertRaisesRegex(WorkInventoryError, "READY"):
+            dispatch_record_with_inventory(
+                [],
+                work_inventory=_inventory("READY"),
+            )
 
     def test_ready_inventory_without_dispatch_candidate_fails_closed(self):
         with self.assertRaisesRegex(WorkInventoryError, "READY"):
