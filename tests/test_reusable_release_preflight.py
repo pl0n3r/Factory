@@ -109,7 +109,7 @@ class ReusableReleasePreflightTests(unittest.TestCase):
                       "workflow_dispatch:", "expected_sha:", "gate_issue:",
                       "needs: [candidate-template, consumer-compat]", "needs: preflight"):
             self.assertIn(token, workflow)
-        job = workflow.split("  consumer-compat:", 1)[1].split("\n  preflight:", 1)[0]
+        job = workflow.split("  consumer-compat:", 1)[1].split("\n  release:", 1)[0]
         self.assertIn("contents: read", job)
         self.assertNotIn("contents: write", job)
 
