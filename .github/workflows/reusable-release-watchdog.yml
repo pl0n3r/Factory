@@ -190,7 +190,7 @@ jobs:
           {
             printf '%s\n' "$marker"
             printf '## startup_failure post-release de Factory@v1\n\n'
-            printf 'Factory SHA observado: `%s`\n\n' "$factory_sha"
+            printf 'Factory SHA observado: %s\n\n' "$factory_sha"
             printf 'Repositorios afectados: **%s**\n\n' "$count"
             jq -r '
               .observations[]
@@ -198,12 +198,12 @@ jobs:
             ' /tmp/reusable-release-result.json
             printf '\n'
             if [[ "$rollback" == "true" ]]; then
-              printf '**Recomendación:** rollback de `v1` según el runbook canónico.\n\n'
+              printf '**Recomendación:** rollback de v1 según el runbook canónico.\n\n'
             else
               printf '**Recomendación:** observar; aún no se alcanza el umbral de rollback.\n\n'
             fi
-            printf 'Esta alerta es advisory: `authority=unchanged`, '
-            printf '`execute_rollback=false`. Detectar o recomendar rollback '
+            printf 'Esta alerta es advisory: authority=unchanged, '
+            printf 'execute_rollback=false. Detectar o recomendar rollback '
             printf 'no autoriza mover tags ni publicar releases.\n'
           } > /tmp/reusable-release-alert.md
 
