@@ -223,7 +223,12 @@ def evaluate_inventory(inventory, factory_sha, root=None):
             for job, uses, granted in _jobs(wf["content"], f"{repo}:{path}"):
                 match = REF.fullmatch(uses or "")
                 if match:
-                    if match.group(2).lower() != "v1":
+                    reference = match.group(2)
+                    if "${{" in reference or "}}" in reference:
+                        raise PreflightError(
+                            f"{repo}:{path}:{job}: referencia Factory ambigua."
+                        )
+                    if reference.lower() != "v1":
                         continue
                     calls.append((repo, path, job, uses, match.group(1), granted))
                 elif isinstance(uses, str) and uses.lower().startswith(marker):
