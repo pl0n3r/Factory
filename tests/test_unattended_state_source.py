@@ -27,7 +27,7 @@ def reservation(active=True, at="2026-10-02T04:09:00Z", **changes):
         "reservation_id": RID,
         "branch": "trabajo/issue-775",
         "active": active,
-        "reason": "tomar" if active else "liberar",
+        "reason": "tomar" if active else "pr-merged",
         "acceptance_sha256": "b" * 64,
         "task_marker_sha256": "c" * 64,
         "task_paths": ["scripts/unattended_state_source.py"],
@@ -138,6 +138,36 @@ class UnattendedStateSourceTests(unittest.TestCase):
         self.assertIn("presence_heartbeat_unavailable", result.reasons)
         self.assertIn("presence_capacity_unknown", result.reasons)
 
+    def test_v3_pr_merged_release_becomes_unknown_not_blocked(self):
+        result = project([
+            reservation(),
+            state_comment(),
+            reservation(active=False, at="2026-10-02T04:09:30Z", reason="pr-merged"),
+        ])
+        self.assertEqual(result.status, "UNKNOWN")
+        self.assertEqual(result.authority, "unchanged")
+        self.assertEqual(result.reasons, ("active_reservation_unavailable",))
+        self.assertIsNone(result.state)
+        self.assertIsNone(result.reservation_id)
+
+    def test_v1_forced_release_becomes_unknown_not_blocked(self):
+        result = project([
+            reservation(),
+            state_comment(),
+            release_v1(reason="liberacion-forzada"),
+        ])
+        self.assertEqual(result.status, "UNKNOWN")
+        self.assertEqual(result.authority, "unchanged")
+        self.assertEqual(result.reasons, ("active_reservation_unavailable",))
+        self.assertIsNone(result.state)
+        self.assertIsNone(result.reservation_id)
+
+    def test_runbook_documents_canonical_release_shapes(self):
+        runbook = (ROOT / "docs" / "unattended-state-source.md").read_text(encoding="utf-8")
+        self.assertIn("v3 activa completa", runbook)
+        self.assertIn("v3 inactiva completa", runbook)
+        self.assertIn("v1 inactiva mínima", runbook)
+
     def test_invalid_or_incoherent_sources_fail_closed(self):
         cases = []
         duplicated = (
@@ -152,12 +182,14 @@ class UnattendedStateSourceTests(unittest.TestCase):
         cases.append([reservation(), state_comment(state_payload(blockers=["contact user@example.com"]))])
         cases.append([reservation(), state_comment(state_payload(updated_at="2026-10-02T04:11:00Z"))])
         cases.append([reservation(), state_comment(user="someone-else")])
+        cases.append([release_v1(active=True), state_comment()])
         cases.append([reservation(version=2), state_comment()])
         cases.append([reservation(acceptance_sha256="bad"), state_comment()])
         cases.append([reservation(task_marker_sha256="bad"), state_comment()])
         cases.append([reservation(task_paths=["x", "x"]), state_comment()])
         cases.append([reservation(task_depends_on=[745, 745]), state_comment()])
         cases.append([reservation(surprise="x"), state_comment()])
+        cases.append([reservation(active=False, reason="tomar"), state_comment()])
 
         for payload in cases:
             with self.subTest(payload=payload):

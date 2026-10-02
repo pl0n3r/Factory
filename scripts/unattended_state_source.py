@@ -37,6 +37,11 @@ RESERVATION_V3_FIELDS = frozenset({
     "task_paths",
     "task_depends_on",
 })
+RESERVATION_V3_RELEASE_REASONS = frozenset({
+    "pr-merged",
+    "pr-cerrado-sin-merge",
+    "issue-cerrado",
+})
 
 
 class StateSourceValidationError(ValueError):
@@ -139,13 +144,18 @@ def _reservation(value: dict[str, object], issue_number: int) -> dict[str, objec
     if not isinstance(value["reason"], str) or not value["reason"]:
         raise StateSourceValidationError("invalid_reservation_reason")
 
+    if (
+        version == 3
+        and value["active"] is False
+        and value["reason"] not in RESERVATION_V3_RELEASE_REASONS
+    ):
+        raise StateSourceValidationError("invalid_reservation_v3_release_reason")
+
     if version == 1:
         if value["active"] is not False:
             raise StateSourceValidationError("invalid_reservation_v1_active")
         return value
 
-    if value["active"] is not True:
-        raise StateSourceValidationError("invalid_reservation_v3_active")
     if (
         not isinstance(value["acceptance_sha256"], str)
         or not SHA256_RE.fullmatch(value["acceptance_sha256"])
