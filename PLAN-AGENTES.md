@@ -77,6 +77,10 @@ Si no existe trabajo `ready`, aplica la **escalera no ociosa ya integrada por Fa
 
 Reglas del despachador:
 - Una reserva activa conserva exclusividad para trabajo no planificado. Solo pueden coexistir líneas cuando el candidato y cada línea activa relevante están materializados por el orquestador, sus dependencias están completadas y los claims de paths son disjuntos. Si Factory no puede demostrarlo, falla cerrado y pasa al siguiente candidato. Tras perder una carrera de reserva, vuelve a evaluar el despacho sobre el estado actual.
+- **Preflight exact-main antes de reapertura o repair:** antes de reabrir un Issue cerrado como `completed`/`duplicate`, o de materializar un repair/decomposición porque un AC parece faltar, relee el Issue y su contrato vigente, resuelve el SHA exacto actual de `main` y verifica los AC y paths reclamados contra el árbol actual de `main` y los PRs fusionados relevantes.
+- Si `main` ya satisface el contrato, **no reabras el Issue, no ejecutes `/tomar`, no crees `trabajo/issue-N` ni abras PR**. Publica únicamente una reconciliación con evidencia exact-main que identifique el SHA y el PR/commit que ya cubre el contrato.
+- Si durante ese preflight otra línea cambia el Issue, la rama, `main` o un PR relevante, descarta el snapshot previo y **relee el estado actual antes de cualquier mutación**. Una lectura stale nunca autoriza reapertura, reserva, branch ni PR.
+- Este guard existe por los patrones observados `#699 → #703/#704/#705` y `#762 → #741/#763`: ambos demostraron que una capacidad ya integrada puede parecer ausente cuando el agente razona sobre un snapshot viejo.
 - Antes de bajar, **anuncia tu elección** como primer comentario del Issue elegido: `Despacho: elegí <repo>#<n> porque <regla N>`.
 - Al bajar al proyecto, lee su AGENTES.md/AGENTS.md y sigue este plan como si te hubieran dirigido ahí.
 - Al terminar ese trabajo, vuelve a aplicar el despacho desde el paso 1.
