@@ -30,6 +30,11 @@ MARKER_RE = re.compile(
     r"<!--\s*factory-unattended-daily-summary\s+(\{.*?\})\s*-->",
     re.DOTALL,
 )
+NIGHT_MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-night-report")
+NIGHT_MARKER_RE = re.compile(
+    r"<!--\s*factory-unattended-night-report\s+(\{.*?\})\s*-->",
+    re.DOTALL,
+)
 MAX_CONTEXT_PAGES = 5
 DECISION_LABELS = frozenset({"decisión: dueño", "decision: owner"})
 BLOCKED_LABELS = frozenset({"estado: bloqueado", "status: blocked"})
@@ -66,7 +71,23 @@ def _marker(local_date: str) -> str:
     return f"<!-- factory-unattended-daily-summary {payload} -->"
 
 
-def parse_daily_marker(comment: object) -> str | None:
+def _night_marker(local_date: str) -> str:
+    payload = json.dumps(
+        {"local_date": local_date, "version": 1},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"<!-- factory-unattended-night-report {payload} -->"
+
+
+def _parse_owned_marker(
+    comment: object,
+    *,
+    start_re: re.Pattern[str],
+    marker_re: re.Pattern[str],
+    ambiguous_reason: str,
+    invalid_reason: str,
+) -> str | None:
     if not isinstance(comment, dict):
         return None
     user = comment.get("user")
@@ -77,16 +98,16 @@ def parse_daily_marker(comment: object) -> str | None:
         or not isinstance(body, str)
     ):
         return None
-    starts = MARKER_START_RE.findall(body)
+    starts = start_re.findall(body)
     if not starts:
         return None
-    markers = MARKER_RE.findall(body)
+    markers = marker_re.findall(body)
     if len(starts) != 1 or len(markers) != 1:
-        raise DailySummaryError("ambiguous_daily_summary_marker")
+        raise DailySummaryError(ambiguous_reason)
     try:
         payload = json.loads(markers[0], object_pairs_hook=_unique_json_object)
     except (json.JSONDecodeError, DailySummaryError) as exc:
-        raise DailySummaryError("invalid_daily_summary_marker") from exc
+        raise DailySummaryError(invalid_reason) from exc
     if (
         not isinstance(payload, dict)
         or set(payload) != {"local_date", "version"}
@@ -95,8 +116,28 @@ def parse_daily_marker(comment: object) -> str | None:
         or not isinstance(payload["local_date"], str)
         or re.fullmatch(r"\d{4}-\d{2}-\d{2}", payload["local_date"]) is None
     ):
-        raise DailySummaryError("invalid_daily_summary_marker")
+        raise DailySummaryError(invalid_reason)
     return payload["local_date"]
+
+
+def parse_night_marker(comment: object) -> str | None:
+    return _parse_owned_marker(
+        comment,
+        start_re=NIGHT_MARKER_START_RE,
+        marker_re=NIGHT_MARKER_RE,
+        ambiguous_reason="ambiguous_night_report_marker",
+        invalid_reason="invalid_night_report_marker",
+    )
+
+
+def parse_daily_marker(comment: object) -> str | None:
+    return _parse_owned_marker(
+        comment,
+        start_re=MARKER_START_RE,
+        marker_re=MARKER_RE,
+        ambiguous_reason="ambiguous_daily_summary_marker",
+        invalid_reason="invalid_daily_summary_marker",
+    )
 
 
 def _parse_time(value: object) -> datetime | None:
@@ -364,6 +405,69 @@ def render_summary(
     )
 
 
+def render_night_report(
+    decision: WatchdogDecision,
+    issue_context: dict[str, tuple[Fact, ...]],
+    now: datetime,
+) -> str:
+    """Resumen idempotente de la noche; no sustituye el resumen diario 4C."""
+
+    local_date = now.astimezone(BOGOTA).date().isoformat()
+    summary = decision.daily_summary
+    advances = tuple(issue_context.get("advances", ()))
+    if not advances:
+        advances = tuple(
+            Fact(str(value), "4C night_report", None, summary.state_freshness)
+            for value in summary.integrated
+        )
+    decisions = tuple(issue_context.get("decisions", ()))
+    blockers = tuple(issue_context.get("blockers", ()))
+    incidents = tuple(
+        Fact(str(value), "4C night_report", None, summary.state_freshness)
+        for value in summary.incidents
+    )
+    quota_facts = (
+        Fact("CI: UNKNOWN", "Factory#584:not-observed", None, "unknown"),
+        Fact("GitHub API: UNKNOWN", "Factory#584:not-observed", None, "unknown"),
+        Fact("Cuentas ChatGPT: UNKNOWN", "Factory#584:not-observed", None, "unknown"),
+    )
+    return (
+        f"{_night_marker(local_date)}\n"
+        f"## Informe de la noche Factory · {local_date}\n\n"
+        "### Fusiones y avances\n"
+        f"{_render_facts(advances, 'UNKNOWN: no hay avance nocturno demostrable.')}\n\n"
+        "### PRs o puertas esperando al dueño\n"
+        f"{_render_facts(decisions, 'Ninguno demostrado.')}\n\n"
+        "### Bloqueos\n"
+        f"{_render_facts(blockers, 'Ninguno demostrado.')}\n\n"
+        "### Incidentes\n"
+        f"{_render_facts(incidents, 'Ninguno demostrado.')}\n\n"
+        "### Cuotas\n"
+        f"{_render_facts(quota_facts, 'UNKNOWN.')}\n"
+    )
+
+
+def publish_night_report_once(
+    client: GitHubIssueClient,
+    *,
+    local_date: str,
+    body: str,
+) -> bool:
+    seen: set[str] = set()
+    for comment in client.list_issue_comments(SUMMARY_ISSUE):
+        parsed = parse_night_marker(comment)
+        if parsed is not None:
+            seen.add(parsed)
+    if local_date in seen:
+        return False
+    client._request(
+        "POST",
+        f"/repos/pl0n3r/Factory/issues/{SUMMARY_ISSUE}/comments",
+        {"body": body},
+    )
+    return True
+
+
 def publish_once(
     client: GitHubIssueClient,
     *,
@@ -404,13 +508,28 @@ def main() -> int:
         )
         context = collect_issue_context(client, now)
         body = render_summary(decision, runtime_input, context, now)
+        night_body = render_night_report(decision, context, now)
 
         switch = evaluate_unattended_kill_switch(client.get_issue(767))
         if switch.global_pause:
             print(json.dumps({"published": False, "reason": f"kill_switch:{switch.reason}"}, sort_keys=True))
             return 1
+        night_published = publish_night_report_once(
+            client,
+            local_date=local_date,
+            body=night_body,
+        )
         published = publish_once(client, local_date=local_date, body=body)
-        print(json.dumps({"local_date": local_date, "published": published}, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "local_date": local_date,
+                    "night_published": night_published,
+                    "published": published,
+                },
+                sort_keys=True,
+            )
+        )
         return 0
     except (DailySummaryError, RuntimeValidationError, TypeError, ValueError, KeyError) as exc:
         print(json.dumps({"published": False, "reason": str(exc)}, sort_keys=True))
