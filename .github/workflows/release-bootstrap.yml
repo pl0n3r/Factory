@@ -179,12 +179,12 @@ jobs:
           APPROVED_SHA: ${{ needs.preflight.outputs.approved_sha }}
         run: |
           set -euo pipefail
-          ref_json="$(gh api \"repos/$REPOSITORY/git/ref/tags/v1\")"
-          ref_type="$(jq -r '.object.type' <<<\"$ref_json\")"
-          ref_object="$(jq -r '.object.sha' <<<\"$ref_json\")"
+          ref_json="$(gh api "repos/$REPOSITORY/git/ref/tags/v1")"
+          ref_type="$(jq -r '.object.type' <<<"$ref_json")"
+          ref_object="$(jq -r '.object.sha' <<<"$ref_json")"
           case "$ref_type" in
             commit) v1_sha="$ref_object" ;;
-            tag) v1_sha="$(gh api \"repos/$REPOSITORY/git/tags/$ref_object\" --jq '.object.sha')" ;;
+            tag) v1_sha="$(gh api "repos/$REPOSITORY/git/tags/$ref_object" --jq '.object.sha')" ;;
             *) echo "::error::Factory@v1 tiene tipo inesperado $ref_type"; exit 1 ;;
           esac
           [[ "$v1_sha" == "$APPROVED_SHA" ]] || {
