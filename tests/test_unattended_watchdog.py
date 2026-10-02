@@ -249,7 +249,7 @@ class UnattendedWatchdogTests(unittest.TestCase):
             "reserved": {
                 "reservation": {
                     "active": True,
-                    "work_identity": "pl0n3r/Factory#824",
+                    "work_identity": "pl0n3r/Factory#idle",
                     "updated_at": "2026-10-02T00:59:00Z",
                     "freshness": "fresh",
                 },
