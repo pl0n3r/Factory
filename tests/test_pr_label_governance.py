@@ -338,9 +338,9 @@ class PrLabelGovernanceTests(unittest.TestCase):
             {"action": "noop", "reason": "label_check_green", "pr": 7},
         )
 
+        oversized = json.loads(json.dumps(base))
+        oversized["check_runs"] = [None] * 501
         with self.assertRaises(GovernanceError):
-            oversized = json.loads(json.dumps(base))
-            oversized["check_runs"] = [None] * 501
             merged_pr_alert_plan(oversized)
 
     def test_alert_plan_accepts_label_name_variants_and_fallback_fields(self):
