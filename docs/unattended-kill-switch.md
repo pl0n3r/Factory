@@ -41,6 +41,8 @@ Si la URL no puede leerse, apunta a otro Issue/repositorio/autor, el marker falt
 
 No intentes “reparar” el marker automáticamente.
 
+La API del Issue expone `user.login` del **creador** del Issue. Esa señal ayuda a rechazar una fuente inesperada, pero **no demuestra quién hizo la última edición** del body. La regla “solo el dueño cambia el marker” sigue siendo una frontera de gobernanza y no debe presentarse como provenance técnica del último editor.
+
 ## Límite real
 
 El kill switch es una puerta de admisión para cada ciclo. No cancela una llamada remota o proceso que ya comenzó antes de observar la pausa. Por eso cada ciclo debe comprobarlo **antes de la primera mutación** y volver a comprobarlo al iniciar el siguiente ciclo.
