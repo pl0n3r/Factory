@@ -46,7 +46,7 @@ Para publicar un patch/minor posterior dentro de la major `v1`:
 5. Con A materializada y la puerta cerrada, ejecutar una **primera pasada** de **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=<SHA aprobado>` y `gate_issue=<Issue de puerta>`, mientras `v1` permanece en el último SHA estable.
 6. El preflight ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, exactitud `expected_sha == github.sha == HEAD`, puerta/aprobación, ruleset y compatibilidad de consumidores. En mantenimiento, el SHA estable previo de `v1` es válido durante esta fase y no expone el candidato.
 7. Solo si esos gates pasan, `release.yml@v1` —el trust root ya publicado— crea o verifica de forma idempotente el tag semántico y la GitHub Release para el SHA candidato. El workflow nunca crea ni mueve `v1`.
-8. El job read-only `channel-ready` relee `refs/tags/v1`. Si el canal aún apunta al SHA estable anterior, falla cerrado y el self-test no se ejecuta.
+8. El job read-only `channel-ready` relee `refs/tags/v1`. Si el canal aún apunta al SHA estable anterior, falla cerrado y la validación final del canal no se ejecuta.
 9. Después de la publicación semántica, el dueño mueve manualmente el tag mayor `v1` al SHA exacto aprobado. Esta sigue siendo una acción administrativa/humana.
 10. El dueño reejecuta de forma **idempotente** el mismo bootstrap con el mismo `expected_sha` y la misma puerta. La release semántica ya existente se verifica, `channel-ready` confirma que `v1` coincide y entonces `ci.yml@v1` ejecuta el self-test sobre `template/`.
 11. La publicación se considera completa únicamente cuando ese self-test del canal publicado termina correctamente.
