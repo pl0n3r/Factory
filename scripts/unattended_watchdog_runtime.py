@@ -40,7 +40,8 @@ ALERT_MARKER_RE = re.compile(
 )
 ALERT_TITLE = "[AUTO][WATCHDOG]"
 API_HOST = "api.github.com"
-REPOSITORY_ROOT = os.path.realpath(str(Path(__file__).resolve().parents[1]))
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "unattended-watchdog.json"
+MAX_STDIN_BYTES = 256 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_PAGES = 10
 ACTIVE_WORK_LABELS = frozenset({"estado: disponible", "estado: reservado", "estado: en revisión"})
@@ -569,29 +570,29 @@ def collect_github_input(
         return {"guard": guard_payload, "evidence": None}
 
 
-def _repository_json_path(path: str | None) -> Path | None:
-    """Canonicaliza y contiene toda lectura CLI dentro del root del repositorio."""
-    if not isinstance(path, str) or not path:
-        return None
-    candidate = os.path.realpath(os.path.join(REPOSITORY_ROOT, path))
+def load_config() -> object:
+    """Carga únicamente la configuración versionada en la ruta fija de Factory."""
     try:
-        if os.path.commonpath([REPOSITORY_ROOT, candidate]) != REPOSITORY_ROOT:
-            return None
-    except ValueError:
+        raw = CONFIG_PATH.read_text(encoding="utf-8")
+        return json.loads(raw, object_pairs_hook=_unique_json_object)
+    except (OSError, json.JSONDecodeError, RuntimeValidationError):
         return None
-    if not candidate.endswith(".json"):
-        return None
-    return Path(candidate)
 
 
-def read_json(path: str | None) -> object:
-    safe_path = _repository_json_path(path)
-    if safe_path is None:
+def read_stdin_json(stream=None) -> object:
+    """Lee una entrada offline acotada desde stdin, nunca desde una ruta controlable."""
+    source = sys.stdin if stream is None else stream
+    try:
+        raw = source.read(MAX_STDIN_BYTES + 1)
+    except (OSError, AttributeError):
+        return None
+    if not isinstance(raw, str) or len(raw) > MAX_STDIN_BYTES:
         return None
     try:
-        return json.loads(safe_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        return json.loads(raw, object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, RuntimeValidationError):
         return None
+
 
 def _plan_json(decision: WatchdogDecision, plan: AlertPlan) -> dict[str, object]:
     return {
@@ -607,20 +608,19 @@ def _plan_json(decision: WatchdogDecision, plan: AlertPlan) -> dict[str, object]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config/unattended-watchdog.json")
-    parser.add_argument("--input")
+    parser.add_argument("--input-stdin", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
-    config_payload = read_json(args.config)
-    runtime_input = read_json(args.input) if args.input else None
+    config_payload = load_config()
+    runtime_input = read_stdin_json() if args.input_stdin else None
 
     token = os.environ.get("GH_TOKEN", "")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     try:
         client = GitHubIssueClient(token, repository)
         open_alerts = client.list_owned_alerts()
-        if args.input is None:
+        if not args.input_stdin:
             now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
             runtime_input = collect_github_input(client, config_payload, now)
         if not isinstance(runtime_input, dict):
