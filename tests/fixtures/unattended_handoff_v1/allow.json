@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "action": "ALLOW",
+  "next_transition": "ALLOW",
+  "authority": "unchanged",
+  "work_identity": "Factory#797",
+  "work_class": "high",
+  "freshness": "fresh",
+  "reasons": [],
+  "provenance": {
+    "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "dispatch_ref": "dispatcher:exact-snapshot",
+    "guard_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "watchdog_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "freshness": "fresh"
+  },
+  "incidents": [],
+  "interrupt_owner": false,
+  "permissions": {
+    "reserve": false,
+    "merge": false,
+    "deploy": false,
+    "spend": false,
+    "live": false
+  }
+}

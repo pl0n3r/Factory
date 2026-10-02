@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Factory unattended handoff v1",
+  "description": "Contrato read-only y fail-closed del handoff desatendido canónico.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "action",
+    "next_transition",
+    "authority",
+    "work_identity",
+    "work_class",
+    "freshness",
+    "reasons",
+    "provenance",
+    "incidents",
+    "interrupt_owner",
+    "permissions"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "action": {"enum": ["ALLOW", "PAUSE", "BLOCKED"]},
+    "next_transition": {"enum": ["ALLOW", "PAUSE", "BLOCKED"]},
+    "authority": {"const": "unchanged"},
+    "work_identity": {"anyOf": [{"$ref": "#/$defs/text"}, {"type": "null"}]},
+    "work_class": {"anyOf": [{"$ref": "#/$defs/text"}, {"type": "null"}]},
+    "freshness": {"enum": ["fresh", "stale", "unknown"]},
+    "reasons": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/text"}
+    },
+    "provenance": {
+      "anyOf": [{"$ref": "#/$defs/provenance"}, {"type": "null"}]
+    },
+    "incidents": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/text"}
+    },
+    "interrupt_owner": {"type": ["boolean", "null"]},
+    "permissions": {"$ref": "#/$defs/permissions"}
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "action": {"const": "ALLOW"},
+            "next_transition": {"const": "ALLOW"},
+            "freshness": {"const": "fresh"},
+            "provenance": {"$ref": "#/$defs/provenance"}
+          }
+        },
+        {
+          "properties": {
+            "action": {"const": "PAUSE"},
+            "next_transition": {"const": "PAUSE"},
+            "freshness": {"const": "fresh"},
+            "work_identity": {"type": "null"},
+            "work_class": {"type": "null"},
+            "provenance": {"$ref": "#/$defs/provenance"}
+          }
+        },
+        {
+          "properties": {
+            "action": {"const": "BLOCKED"},
+            "next_transition": {"const": "BLOCKED"},
+            "work_identity": {"type": "null"},
+            "work_class": {"type": "null"}
+          }
+        }
+      ]
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "work_identity": {"type": "null"},
+            "work_class": {"type": "null"}
+          }
+        },
+        {
+          "properties": {
+            "work_identity": {"$ref": "#/$defs/text"},
+            "work_class": {"$ref": "#/$defs/text"}
+          }
+        }
+      ]
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "freshness": {"const": "fresh"},
+            "provenance": {"$ref": "#/$defs/provenance_fresh"}
+          }
+        },
+        {
+          "properties": {
+            "freshness": {"const": "stale"},
+            "provenance": {"$ref": "#/$defs/provenance_stale"}
+          }
+        },
+        {
+          "properties": {
+            "freshness": {"const": "unknown"},
+            "provenance": {
+              "anyOf": [
+                {"$ref": "#/$defs/provenance_unknown"},
+                {"type": "null"}
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "sha40": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "fingerprint64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head_sha", "dispatch_ref", "guard_ref", "watchdog_ref", "freshness"],
+      "properties": {
+        "head_sha": {"$ref": "#/$defs/sha40"},
+        "dispatch_ref": {"type": "string", "minLength": 1, "maxLength": 256},
+        "guard_ref": {"$ref": "#/$defs/fingerprint64"},
+        "watchdog_ref": {"$ref": "#/$defs/fingerprint64"},
+        "freshness": {"enum": ["fresh", "stale", "unknown"]}
+      }
+    },
+    "provenance_fresh": {
+      "allOf": [
+        {"$ref": "#/$defs/provenance"},
+        {"properties": {"freshness": {"const": "fresh"}}}
+      ]
+    },
+    "provenance_stale": {
+      "allOf": [
+        {"$ref": "#/$defs/provenance"},
+        {"properties": {"freshness": {"const": "stale"}}}
+      ]
+    },
+    "provenance_unknown": {
+      "allOf": [
+        {"$ref": "#/$defs/provenance"},
+        {"properties": {"freshness": {"const": "unknown"}}}
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reserve", "merge", "deploy", "spend", "live"],
+      "properties": {
+        "reserve": {"const": false},
+        "merge": {"const": false},
+        "deploy": {"const": false},
+        "spend": {"const": false},
+        "live": {"const": false}
+      }
+    }
+  }
+}
