@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import re
 import sys
 from typing import TextIO
 
@@ -14,6 +13,11 @@ from typing import TextIO
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "config" / "unattended-handoff-v1.schema.json"
 MAX_INPUT_BYTES = 1_048_576
+HEX_LOWER = frozenset("0123456789abcdef")
+CANONICAL_PATTERNS = {
+    "^[0-9a-f]{40}$": 40,
+    "^[0-9a-f]{64}$": 64,
+}
 
 
 class ConformanceError(ValueError):
@@ -81,6 +85,13 @@ def _type_matches(value: object, expected: str) -> bool:
     raise ConformanceError("canonical_schema_invalid")
 
 
+def _canonical_pattern_matches(value: str, pattern: str) -> bool:
+    expected_length = CANONICAL_PATTERNS.get(pattern)
+    if expected_length is None:
+        raise ConformanceError("canonical_schema_invalid")
+    return len(value) == expected_length and all(char in HEX_LOWER for char in value)
+
+
 def _validate(
     value: object,
     schema: dict[str, object],
@@ -141,12 +152,15 @@ def _validate(
             return False
         if isinstance(maximum, int) and len(value) > maximum:
             return False
-        if isinstance(pattern, str) and re.search(pattern, value) is None:
+        if isinstance(pattern, str) and not _canonical_pattern_matches(value, pattern):
             return False
 
     if isinstance(value, list):
         if schema.get("uniqueItems") is True:
-            encoded = [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in value]
+            encoded = [
+                json.dumps(item, sort_keys=True, separators=(",", ":"))
+                for item in value
+            ]
             if len(encoded) != len(set(encoded)):
                 return False
         item_schema = schema.get("items")
@@ -176,10 +190,7 @@ def evaluate_document(payload: object) -> dict[str, object]:
     """Valida contra el schema canónico sin exponer el contenido del payload."""
 
     schema = _load_schema()
-    try:
-        conformant = _validate(payload, schema, root=schema)
-    except ConformanceError:
-        raise
+    conformant = _validate(payload, schema, root=schema)
     return {
         "version": 1,
         "conformant": conformant,
@@ -187,22 +198,13 @@ def evaluate_document(payload: object) -> dict[str, object]:
     }
 
 
-def _read_input(source: str, stdin: TextIO) -> object:
-    if source == "-":
-        raw = stdin.read(MAX_INPUT_BYTES + 1)
-        if len(raw.encode("utf-8")) > MAX_INPUT_BYTES:
-            raise ConformanceError("input_too_large")
-        return _decode_json(raw)
-
-    path = Path(source)
-    try:
-        if path.stat().st_size > MAX_INPUT_BYTES:
-            raise ConformanceError("input_too_large")
-        return _decode_json(path.read_text(encoding="utf-8"))
-    except ConformanceError:
-        raise
-    except OSError as exc:
-        raise ConformanceError("input_unavailable") from exc
+def _read_input(document: str | None, stdin: TextIO) -> object:
+    if document is not None:
+        return _decode_json(document)
+    raw = stdin.read(MAX_INPUT_BYTES + 1)
+    if len(raw.encode("utf-8")) > MAX_INPUT_BYTES:
+        raise ConformanceError("input_too_large")
+    return _decode_json(raw)
 
 
 def _emit(stdout: TextIO, *, conformant: bool, code: str) -> None:
@@ -220,17 +222,16 @@ def main(
         description="Valida un handoff JSON local contra el contrato canónico v1."
     )
     parser.add_argument(
-        "source",
+        "document",
         nargs="?",
-        default="-",
-        help="Ruta local del JSON; '-' o ausencia lee stdin.",
+        help="Documento JSON inline; si se omite, lee stdin.",
     )
     args = parser.parse_args(argv)
     input_stream = sys.stdin if stdin is None else stdin
     output_stream = sys.stdout if stdout is None else stdout
 
     try:
-        payload = _read_input(args.source, input_stream)
+        payload = _read_input(args.document, input_stream)
         result = evaluate_document(payload)
     except ConformanceError as exc:
         _emit(output_stream, conformant=False, code=str(exc))
