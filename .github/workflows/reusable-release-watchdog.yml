@@ -1,0 +1,247 @@
+name: Vigilar startup_failure de reusables publicados
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reusable-release-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    name: Vigilar consumidores de Factory v1
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - name: Descargar Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Recolectar evidencia pública post-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api             "repos/$REPOSITORY/actions/workflows/release-bootstrap.yml/runs?status=completed&per_page=20"             > /tmp/release-runs.json
+
+          release="$(
+            jq -c '
+              [.workflow_runs[] | select(.conclusion == "success")]
+              | sort_by(.created_at)
+              | reverse
+              | .[0] // empty
+            ' /tmp/release-runs.json
+          )"
+          [[ -n "$release" ]] || {
+            echo "::error::No existe un release Factory v1.x exitoso para vigilar."
+            exit 1
+          }
+
+          release_sha="$(jq -r '.head_sha' <<<"$release")"
+          release_started_at="$(jq -r '.created_at' <<<"$release")"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::SHA del release inválido."
+            exit 1
+          }
+          [[ "$release_started_at" == *Z ]] || {
+            echo "::error::Timestamp del release inválido."
+            exit 1
+          }
+
+          jq -n             --arg sha "$release_sha"             --arg started "$release_started_at"             '{
+              factory_sha:$sha,
+              factory_channel:"v1",
+              release_started_at:$started,
+              observations:[]
+            }' > /tmp/reusable-release-evidence.json
+
+          consumers=(
+            "pl0n3r/Condor"
+            "pl0n3r/ControlBot"
+            "pl0n3r/FactoryRunner"
+            "pl0n3r/GrindFlow"
+            "pl0n3r/brvtal"
+            "pl0n3r/AutoFactory"
+          )
+
+          for repo in "${consumers[@]}"; do
+            encoded_repo="${repo//\//%2F}"
+            curl --fail --silent --show-error --get               -H 'Accept: application/vnd.github+json'               --data-urlencode "created=>=$release_started_at"               --data-urlencode 'per_page=100'               "https://api.github.com/repos/$encoded_repo/actions/runs"               > /tmp/consumer-runs.json
+
+            total_count="$(jq -r '.total_count' /tmp/consumer-runs.json)"
+            [[ "$total_count" =~ ^[0-9]+$ ]] || {
+              echo "::error::Respuesta Actions inválida para $repo."
+              exit 1
+            }
+            (( total_count <= 100 )) || {
+              echo "::error::Evidencia Actions truncada para $repo."
+              exit 1
+            }
+
+            jq -c '
+              .workflow_runs[]
+              | select(.conclusion == "startup_failure")
+              | select(
+                  .name == "Etiquetas"
+                  or .name == "Etiquetas Factory v1"
+                  or .name == "Factory Labels"
+                  or .name == "Coordinación"
+                  or .name == "Coordinación multiagente (V 0.1.0)"
+                )
+            ' /tmp/consumer-runs.json | while IFS= read -r run; do
+              workflow_name="$(jq -r '.name' <<<"$run")"
+              run_id="$(jq -r '.id' <<<"$run")"
+              observed_at="$(jq -r '.created_at' <<<"$run")"
+              caller_sha="$(jq -r '.head_sha' <<<"$run")"
+              caller_path="$(jq -r '.path // ""' <<<"$run")"
+
+              [[ "$run_id" =~ ^[1-9][0-9]*$ ]] || {
+                echo "::error::run_id inválido en $repo."
+                exit 1
+              }
+              [[ "$caller_sha" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "::error::caller SHA inválido en $repo."
+                exit 1
+              }
+              [[ "$caller_path" =~ ^\.github/workflows/[A-Za-z0-9._/-]+\.ya?ml$ ]] || {
+                echo "::error::caller path inválido en $repo."
+                exit 1
+              }
+
+              raw_url="https://raw.githubusercontent.com/$repo/$caller_sha/$caller_path"
+              curl --fail --silent --show-error "$raw_url" > /tmp/caller.yml
+
+              reusable_ref=""
+              reusable_count=0
+              if grep -Fq                 'pl0n3r/factory/.github/workflows/etiquetas.yml@v1'                 /tmp/caller.yml; then
+                reusable_ref='pl0n3r/factory/.github/workflows/etiquetas.yml@v1'
+                reusable_count=$((reusable_count + 1))
+              fi
+              if grep -Fq                 'pl0n3r/factory/.github/workflows/coordinacion.yml@v1'                 /tmp/caller.yml; then
+                reusable_ref='pl0n3r/factory/.github/workflows/coordinacion.yml@v1'
+                reusable_count=$((reusable_count + 1))
+              fi
+              (( reusable_count == 1 )) || {
+                echo "::error::Caller ambiguo o sin Factory@v1 en $repo/$caller_path."
+                exit 1
+              }
+
+              jq                 --arg repository_ref "$repo"                 --arg workflow "$workflow_name"                 --argjson run_id "$run_id"                 --arg observed_at "$observed_at"                 --arg factory_sha "$release_sha"                 --arg caller_sha "$caller_sha"                 --arg caller_path "$caller_path"                 --arg reusable_ref "$reusable_ref"                 '.observations += [{
+                  repository_ref:$repository_ref,
+                  workflow:$workflow,
+                  run_id:$run_id,
+                  observed_at:$observed_at,
+                  factory_sha:$factory_sha,
+                  factory_channel:"v1",
+                  conclusion:"startup_failure",
+                  caller_sha:$caller_sha,
+                  caller_path:$caller_path,
+                  reusable_ref:$reusable_ref
+                }]' /tmp/reusable-release-evidence.json                 > /tmp/reusable-release-evidence.next
+              mv /tmp/reusable-release-evidence.next                 /tmp/reusable-release-evidence.json
+            done
+          done
+
+          python3 -m scripts.reusable_release_watchdog             < /tmp/reusable-release-evidence.json             > /tmp/reusable-release-result.json
+          cat /tmp/reusable-release-result.json
+
+      - name: Mantener una alerta por release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          status="$(jq -r '.status' /tmp/reusable-release-result.json)"
+          [[ "$status" == "ALERT" || "$status" == "CLEAR" ]] || {
+            echo "::error::Resultado del watchdog inválido."
+            exit 1
+          }
+          if [[ "$status" == "CLEAR" ]]; then
+            echo "Sin startup_failure atribuible al último release observado."
+            exit 0
+          fi
+
+          factory_sha="$(jq -r '.factory_sha' /tmp/reusable-release-result.json)"
+          fingerprint="$(jq -r '.fingerprint' /tmp/reusable-release-result.json)"
+          rollback="$(
+            jq -r '.rollback_recommended' /tmp/reusable-release-result.json
+          )"
+          count="$(
+            jq -r '.affected_repository_count'               /tmp/reusable-release-result.json
+          )"
+
+          marker="<!-- factory-reusable-release-alert {\"factory_sha\":\"$factory_sha\",\"fingerprint\":\"$fingerprint\",\"version\":1} -->"
+          {
+            printf '%s\n' "$marker"
+            printf '## startup_failure post-release de Factory@v1\n\n'
+            printf 'Factory SHA observado: `%s`\n\n' "$factory_sha"
+            printf 'Repositorios afectados: **%s**\n\n' "$count"
+            jq -r '
+              .observations[]
+              | "- \`\(.repository_ref)\` · \`\(.workflow)\` · run \`\(.run_id)\` · \(.observed_at)"
+            ' /tmp/reusable-release-result.json
+            printf '\n'
+            if [[ "$rollback" == "true" ]]; then
+              printf '**Recomendación:** rollback de `v1` según el runbook canónico.\n\n'
+            else
+              printf '**Recomendación:** observar; aún no se alcanza el umbral de rollback.\n\n'
+            fi
+            printf 'Esta alerta es advisory: `authority=unchanged`, '
+            printf '`execute_rollback=false`. Detectar o recomendar rollback '
+            printf 'no autoriza mover tags ni publicar releases.\n'
+          } > /tmp/reusable-release-alert.md
+
+          gh api --paginate             "repos/$REPOSITORY/issues?state=all&per_page=100"             --slurp | jq 'add // []' > /tmp/all-issues.json
+
+          jq             --arg sha "$factory_sha"             '[
+              .[]
+              | select(.pull_request == null)
+              | select(.user.login == "github-actions[bot]")
+              | select((.body // "") | contains("<!-- factory-reusable-release-alert "))
+              | select((.body // "") | contains("\"factory_sha\":\"" + $sha + "\""))
+            ]' /tmp/all-issues.json > /tmp/owned-alerts.json
+
+          alert_count="$(jq 'length' /tmp/owned-alerts.json)"
+          (( alert_count <= 1 )) || {
+            echo "::error::Más de una alerta propia para el mismo Factory SHA."
+            exit 1
+          }
+
+          priority='prioridad: alta'
+          if [[ "$rollback" == "true" ]]; then
+            priority='prioridad: crítica'
+          fi
+          title="[AUTO][RELEASE] startup_failure ${fingerprint:0:12}"
+          jq -n             --arg title "$title"             --rawfile body /tmp/reusable-release-alert.md             --arg priority "$priority"             '{
+              title:$title,
+              body:$body,
+              state:"open",
+              labels:["tipo: incidente", $priority]
+            }' > /tmp/issue-payload.json
+
+          if (( alert_count == 0 )); then
+            gh api --method POST "repos/$REPOSITORY/issues"               --input /tmp/issue-payload.json > /dev/null
+          else
+            issue_number="$(jq -r '.[0].number' /tmp/owned-alerts.json)"
+            [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::Issue de alerta inválido."
+              exit 1
+            }
+            gh api --method PATCH               "repos/$REPOSITORY/issues/$issue_number"               --input /tmp/issue-payload.json > /dev/null
+          fi
