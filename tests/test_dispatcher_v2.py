@@ -528,6 +528,82 @@ class DispatcherV2Tests(unittest.TestCase):
             classify_readiness(parallel).reasons,
         )
 
+    def test_watchdog_unknown_does_not_preempt_product_but_s1_s2_do(self):
+        product = Candidate(key="product", priority="critical")
+        unknown = Candidate(
+            key="watchdog-unknown",
+            title="[AUTO][WATCHDOG] UNKNOWN abc123",
+            priority="high",
+            incident=True,
+            auto_class="AUTO_INCIDENT",
+            watchdog_severity="UNKNOWN",
+        )
+        s1 = Candidate(
+            key="watchdog-s1",
+            title="[AUTO][WATCHDOG] S1 abc123",
+            priority="medium",
+            incident=True,
+            auto_class="AUTO_INCIDENT",
+            watchdog_severity="S1",
+        )
+        s2 = Candidate(
+            key="watchdog-s2",
+            title="[AUTO][WATCHDOG] S2 abc123",
+            priority="medium",
+            incident=True,
+            auto_class="AUTO_INCIDENT",
+            watchdog_severity="S2",
+        )
+
+        self.assertEqual(authority_class(unknown), "high")
+        self.assertEqual(select_next([unknown, product]).key, "product")
+        self.assertEqual(authority_class(s1), "incident")
+        self.assertEqual(authority_class(s2), "incident")
+        self.assertEqual(select_next([product, s1]).key, "watchdog-s1")
+        self.assertEqual(select_next([product, s2]).key, "watchdog-s2")
+
+    def test_watchdog_s3_uses_normal_priority_instead_of_incident_authority(self):
+        watchdog = Candidate(
+            key="watchdog-s3",
+            title="[AUTO][WATCHDOG] S3 abc123",
+            priority="medium",
+            incident=True,
+            auto_class="AUTO_INCIDENT",
+            watchdog_severity="S3",
+            tranche_subject=True,
+            tranche=3,
+        )
+        product = Candidate(key="product", priority="high")
+
+        self.assertEqual(authority_class(watchdog), "medium")
+        self.assertEqual(select_next([watchdog, product]).key, "product")
+        readiness = classify_readiness(watchdog, active_tranche=2)
+        self.assertFalse(readiness.ready)
+        self.assertIn("future_tranche_blocked", readiness.reasons)
+
+    def test_watchdog_missing_or_invalid_severity_fails_closed(self):
+        for severity in (None, "S0", "critical", ""):
+            with self.subTest(severity=severity):
+                candidate = Candidate(
+                    key=f"watchdog-{severity}",
+                    title="[AUTO][WATCHDOG] UNKNOWN abc123",
+                    priority="critical",
+                    incident=True,
+                    auto_class="AUTO_INCIDENT",
+                    auto_evidence_reviewed=True,
+                    watchdog_severity=severity,
+                )
+                readiness = classify_readiness(candidate)
+                self.assertFalse(readiness.ready)
+                self.assertIn("watchdog_severity_invalid", readiness.reasons)
+                self.assertIsNone(select_next([candidate]))
+
+    def test_regular_incident_still_preempts_critical_product(self):
+        incident = Candidate(key="incident", incident=True, priority="medium")
+        product = Candidate(key="product", priority="critical")
+        self.assertEqual(authority_class(incident), "incident")
+        self.assertEqual(select_next([product, incident]).key, "incident")
+
     def test_auto_prefix_does_not_imply_incident(self):
         unclassified = Candidate(key="review", title="[AUTO] privacy review", priority="high")
         structured = Candidate(
