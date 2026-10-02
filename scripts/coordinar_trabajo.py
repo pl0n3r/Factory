@@ -98,6 +98,10 @@ UNBLOCK_EVIDENCE_RE = re.compile(
     r"<!--\s*factory-unblock-evidence\s+(\{[^{}]*\})\s*-->",
     re.IGNORECASE,
 )
+REBLOCK_EVIDENCE_RE = re.compile(
+    r"<!--\s*factory-reblock-evidence\s+(\{[^{}]*\})\s*-->",
+    re.IGNORECASE,
+)
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
 BRANCH_NAME_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 
@@ -1022,18 +1026,133 @@ def _apply_verified_unblock(
     api.set_status(number, STATUS_AVAILABLE)
 
 
+def reblock_evidence_exists(
+    comments: list[dict[str, Any]],
+    fingerprint: str,
+    trusted_login: str = TRUSTED_MARKER_LOGIN,
+) -> bool:
+    """Detecta una evidencia previa de re-bloqueo emitida por el bot canónico."""
+    for comment in comments:
+        user = comment.get("user")
+        if not isinstance(user, dict) or user.get("login") != trusted_login:
+            continue
+        for raw in REBLOCK_EVIDENCE_RE.findall(str(comment.get("body") or "")):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(payload, dict)
+                and set(payload) == {"version", "fingerprint", "reason"}
+                and payload.get("version") == 1
+                and payload.get("fingerprint") == fingerprint
+                and payload.get("reason") == "condition_unsatisfied"
+            ):
+                return True
+    return False
+
+
+def _reblock_evidence_comment(fingerprint: str) -> str:
+    payload = json.dumps(
+        {
+            "version": 1,
+            "fingerprint": fingerprint,
+            "reason": "condition_unsatisfied",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return (
+        f"<!-- factory-reblock-evidence {payload} -->\n"
+        "Readiness reconciliada automáticamente: la condición factory-unblock "
+        "dejó de verificarse; el trabajo vuelve a bloqueado."
+    )
+
+
+def _canonical_status_is(issue: dict[str, Any], expected: str) -> bool:
+    statuses = set(STATUS_LABELS).intersection(label_names(issue))
+    return statuses == {expected}
+
+
+def _initial_reblock_candidate(
+    api: GitHub,
+    issue: dict[str, Any],
+) -> tuple[int, str] | None:
+    """Filtra trabajo disponible cuya condición verificable dejó de cumplirse."""
+    number = issue.get("number")
+    if (
+        not isinstance(number, int)
+        or issue.get("state") != "open"
+        or not _canonical_status_is(issue, STATUS_AVAILABLE)
+    ):
+        return None
+    try:
+        marker = parse_unblock_marker(str(issue.get("body") or ""))
+    except CoordinationError:
+        return None
+    if marker is None:
+        return None
+    satisfied, _evidence = verify_unblock_condition(api, marker)
+    if satisfied:
+        return None
+    return number, unblock_fingerprint(marker)
+
+
+def _revalidated_reblock_needed(
+    api: GitHub,
+    number: int,
+    fingerprint: str,
+) -> bool:
+    """Relee marker y estado justo antes de volver a bloquear."""
+    current = api.issue(number)
+    if (
+        current.get("state") != "open"
+        or not _canonical_status_is(current, STATUS_AVAILABLE)
+    ):
+        return False
+    try:
+        marker = parse_unblock_marker(str(current.get("body") or ""))
+    except CoordinationError:
+        return False
+    if marker is None or unblock_fingerprint(marker) != fingerprint:
+        return False
+    satisfied, _evidence = verify_unblock_condition(api, marker)
+    return not satisfied
+
+
+def _apply_verified_reblock(
+    api: GitHub,
+    number: int,
+    fingerprint: str,
+) -> None:
+    """Publica evidencia una vez y devuelve el trabajo disponible a bloqueado."""
+    comments = api.issue_comments(number)
+    if not reblock_evidence_exists(comments, fingerprint):
+        api.comment(number, _reblock_evidence_comment(fingerprint))
+    api.set_status(number, STATUS_BLOCKED)
+
+
 def sweep_satisfied_blocks(api: GitHub) -> int:
-    """Desbloquea Issues solo cuando su marker cerrado ya tiene evidencia válida."""
+    """Reconcilia markers factory-unblock en ambos sentidos, siempre fail-closed."""
     changed = 0
     for issue in api.open_issues():
         candidate = _initial_unblock_candidate(api, issue)
-        if candidate is None:
+        if candidate is not None:
+            number, _marker, fingerprint = candidate
+            evidence = _revalidated_unblock_evidence(api, number, fingerprint)
+            if evidence is not None:
+                _apply_verified_unblock(api, number, fingerprint, evidence)
+                changed += 1
             continue
-        number, _marker, fingerprint = candidate
-        evidence = _revalidated_unblock_evidence(api, number, fingerprint)
-        if evidence is None:
+
+        reblock = _initial_reblock_candidate(api, issue)
+        if reblock is None:
             continue
-        _apply_verified_unblock(api, number, fingerprint, evidence)
+        number, fingerprint = reblock
+        if not _revalidated_reblock_needed(api, number, fingerprint):
+            continue
+        _apply_verified_reblock(api, number, fingerprint)
         changed += 1
 
     print(f"Bloqueos satisfechos reconciliados: {changed}")
