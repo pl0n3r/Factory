@@ -134,6 +134,23 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
             {"status": "ready", "sha": SHA},
         )
 
+    def test_maintenance_preflight_allows_previous_stable_v1(self):
+        payload = valid_v2_payload()
+        payload["v1_sha"] = OTHER
+        self.assertEqual(
+            validate_payload(payload),
+            {"status": "ready", "sha": SHA},
+        )
+
+    def test_first_release_still_requires_v1_on_expected_sha(self):
+        payload = valid_payload()
+        payload["v1_sha"] = OTHER
+        with self.assertRaisesRegex(
+            ReleaseBootstrapError,
+            "Primer bootstrap requiere v1 en el SHA exacto aprobado",
+        ):
+            validate_payload(payload)
+
     def test_v2_decision_is_bound_to_normalized_gate(self):
         payload = valid_v2_payload()
         payload["gate"]["body"] = payload["gate"]["body"].replace(
