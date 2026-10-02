@@ -354,12 +354,194 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved.close, (77,))
 
 
+    def test_idle_runtime_attaches_global_idle_only_from_complete_fresh_seven_repo_snapshot(self):
+        class FakeClient:
+            repository = "pl0n3r/Factory"
+
+            def list_open_work_items(self):
+                return []
+
+            def global_idle_proof(self, now):
+                return {
+                    "version": 1,
+                    "idle_global": True,
+                    "reasons": [],
+                    "provenance": [
+                        f"{repository}:github:{repository}#issues:{now}:fresh"
+                        for repository in (
+                            "pl0n3r/Factory",
+                            "pl0n3r/Condor",
+                            "pl0n3r/GrindFlow",
+                            "pl0n3r/brvtal",
+                            "pl0n3r/ControlBot",
+                            "pl0n3r/AutoFactory",
+                            "pl0n3r/FactoryRunner",
+                        )
+                    ],
+                }
+
+        runtime_input = collect_github_input(
+            FakeClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        self.assertEqual(runtime_input["guard"]["action"], "ALLOW")
+        self.assertEqual(runtime_input["guard"]["authority"], "unchanged")
+        self.assertFalse(runtime_input["guard"]["pause_allowed"])
+        self.assertTrue(runtime_input["evidence"]["global_idle"]["idle_global"])
+        self.assertEqual(
+            runtime_input["evidence"]["presence"]["capacity"]["freshness"],
+            "unknown",
+        )
+        self.assertEqual(runtime_input["evidence"]["presence"]["sessions"], [])
+
+    def test_global_inventory_activity_missing_or_ambiguous_fails_closed_without_forging_idle(self):
+        calls = []
+        canonical = (
+            "pl0n3r/Factory",
+            "pl0n3r/Condor",
+            "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal",
+            "pl0n3r/ControlBot",
+            "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        )
+
+        def transport(method, path, payload):
+            calls.append((method, path, payload))
+            if "/repos/pl0n3r/GrindFlow/issues?" in path:
+                return [
+                    {
+                        "number": 210,
+                        "labels": [{"name": "estado: reservado"}],
+                    }
+                ]
+            if "/repos/pl0n3r/brvtal/issues?" in path:
+                return [
+                    {
+                        "number": 861,
+                        "labels": [{"name": "status: reserved"}],
+                    }
+                ]
+            return []
+
+        client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
+        proof = client.global_idle_proof("2026-10-02T01:00:00Z")
+        self.assertFalse(proof["idle_global"])
+        self.assertIn(
+            "repository_reserved:pl0n3r/GrindFlow",
+            proof["reasons"],
+        )
+        self.assertIn(
+            "repository_reserved:pl0n3r/brvtal",
+            proof["reasons"],
+        )
+        self.assertEqual(
+            {path.split("/issues?", 1)[0].removeprefix("/repos/") for _, path, _ in calls},
+            set(canonical),
+        )
+        self.assertTrue(all(method == "GET" for method, _, _ in calls))
+
+        def ambiguous(method, path, payload):
+            if "/repos/pl0n3r/Factory/issues?" in path:
+                return [
+                    {
+                        "number": 819,
+                        "labels": [
+                            {"name": "estado: reservado"},
+                            {"name": "estado: en revisión"},
+                        ],
+                    }
+                ]
+            return []
+
+        ambiguous_proof = GitHubIssueClient(
+            "token", "pl0n3r/Factory", ambiguous
+        ).global_idle_proof("2026-10-02T01:00:00Z")
+        self.assertFalse(ambiguous_proof["idle_global"])
+        self.assertIn(
+            "repository_ambiguous:pl0n3r/Factory",
+            ambiguous_proof["reasons"],
+        )
+
+        def missing(method, path, payload):
+            if "/repos/pl0n3r/Factory/" in path:
+                return []
+            raise RuntimeValidationError("github_request_failed")
+
+        class MissingClient(GitHubIssueClient):
+            def list_open_work_items(self):
+                return []
+
+        runtime_input = collect_github_input(
+            MissingClient("token", "pl0n3r/Factory", missing),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        self.assertEqual(runtime_input["guard"]["action"], "BLOCKED")
+        self.assertIsNone(runtime_input["evidence"])
+
+        with self.assertRaises(RuntimeValidationError):
+            client._request("POST", "/repos/pl0n3r/Condor/issues", {})
+        with self.assertRaises(RuntimeValidationError):
+            client.repository_activity("pl0n3r/Unexpected", "2026-10-02T01:00:00Z")
+
+    def test_proven_global_idle_avoids_invalid_and_presence_alerts_without_forging_presence(self):
+        class FakeClient:
+            repository = "pl0n3r/Factory"
+
+            def list_open_work_items(self):
+                return []
+
+            def global_idle_proof(self, now):
+                return GitHubIssueClient(
+                    "token",
+                    "pl0n3r/Factory",
+                    lambda method, path, payload: [],
+                ).global_idle_proof(now)
+
+        runtime_input = collect_github_input(
+            FakeClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        decision, plan = evaluate_runtime(
+            config(),
+            runtime_input["guard"],
+            runtime_input["evidence"],
+            {},
+        )
+        self.assertEqual(decision.action, "ALLOW")
+        self.assertEqual(plan.create, ())
+        self.assertFalse(
+            {"invalid_evidence", "presence_insufficient"}
+            & {item.code for item in decision.incidents}
+        )
+        self.assertEqual(runtime_input["evidence"]["presence"]["sessions"], [])
+        self.assertEqual(
+            runtime_input["evidence"]["presence"]["capacity"],
+            {
+                "known_slots": 0,
+                "eligible_free_slots": 0,
+                "degraded_slots": 0,
+                "freshness": "unknown",
+            },
+        )
+
     def test_idle_factory_projects_valid_evidence_without_false_invalid_evidence(self):
         class FakeClient:
             repository = "pl0n3r/Factory"
 
             def list_open_work_items(self):
                 return []
+
+            def global_idle_proof(self, now):
+                return {
+                    "version": 1,
+                    "idle_global": False,
+                    "reasons": ["repository_ready:pl0n3r/Condor"],
+                    "provenance": [],
+                }
 
             def list_issue_comments(self, issue_number):
                 raise AssertionError("idle inventory must not read issue comments")
@@ -415,6 +597,14 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
 
             def list_open_work_items(self):
                 return []
+
+            def global_idle_proof(self, now):
+                return {
+                    "version": 1,
+                    "idle_global": False,
+                    "reasons": ["repository_ready:pl0n3r/Condor"],
+                    "provenance": [],
+                }
 
         runtime_input = collect_github_input(
             FakeClient(),
@@ -724,8 +914,14 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertTrue(
             all(path.startswith("/repos/pl0n3r/Factory/") for _, path, _ in calls)
         )
+        self.assertEqual(
+            len(client._request("GET", "/repos/pl0n3r/Condor/issues?state=open")),
+            3,
+        )
         with self.assertRaises(RuntimeValidationError):
             client._request("GET", "/repos/other/repo/issues")
+        with self.assertRaises(RuntimeValidationError):
+            client._request("POST", "/repos/pl0n3r/Condor/issues", {})
         with self.assertRaises(RuntimeValidationError):
             GitHubIssueClient("", "pl0n3r/Factory")
         with self.assertRaises(RuntimeValidationError):
@@ -915,6 +1111,15 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             self.assertEqual(result, {"ok": True})
             self.assertEqual(Connection.seen[-1][0], "api.github.com")
 
+            self.assertEqual(
+                _https_json_request(
+                    "token",
+                    "GET",
+                    "/repos/pl0n3r/Condor/issues/1",
+                    None,
+                ),
+                {"ok": True},
+            )
             with self.assertRaisesRegex(
                 RuntimeValidationError,
                 "github_path_outside_repository",
@@ -924,6 +1129,16 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                     "GET",
                     "/repos/pl0n3r/other/issues/1",
                     None,
+                )
+            with self.assertRaisesRegex(
+                RuntimeValidationError,
+                "github_path_outside_repository",
+            ):
+                _https_json_request(
+                    "token",
+                    "POST",
+                    "/repos/pl0n3r/Condor/issues",
+                    {},
                 )
 
             Connection.response = Response(status=500)
@@ -1015,6 +1230,14 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
 
             def list_open_work_items(self):
                 return []
+
+            def global_idle_proof(self, now):
+                return {
+                    "version": 1,
+                    "idle_global": False,
+                    "reasons": ["repository_ready:pl0n3r/Condor"],
+                    "provenance": [],
+                }
 
             def get_issue(self, number):
                 return {

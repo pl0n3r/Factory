@@ -15,7 +15,15 @@ import sys
 from typing import Callable
 from urllib.parse import urlencode
 
-from scripts.unattended_guards import GuardDecision, evaluate_unattended_guards
+from scripts.unattended_global_idle import (
+    CANONICAL_REPOSITORIES,
+    evaluate_global_idle_snapshot,
+)
+from scripts.unattended_guards import (
+    GuardDecision,
+    evaluate_global_idle_guard,
+    evaluate_unattended_guards,
+)
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
 from scripts.unattended_state_source import project_state_presence
 from scripts.unattended_watchdog import WatchdogDecision, evaluate_unattended_watchdog
@@ -33,6 +41,9 @@ GUARD_FIELDS = frozenset(
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 CANONICAL_REPOSITORY = "pl0n3r/Factory"
 REPOSITORY_API_PREFIX = "/repos/pl0n3r/Factory/"
+READ_REPOSITORY_API_PREFIXES = tuple(
+    f"/repos/{repository}/" for repository in CANONICAL_REPOSITORIES
+)
 ALERT_MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-watchdog-alert\b")
 ALERT_MARKER_RE = re.compile(
     r"<!--\s*factory-unattended-watchdog-alert\s+(\{.*?\})\s*-->",
@@ -46,7 +57,10 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 COLLECTION_PAGE_SIZE = 50
 MAX_PAGES = 20
 OWNED_ALERT_CREATOR = "github-actions[bot]"
-ACTIVE_WORK_LABELS = frozenset({"estado: disponible", "estado: reservado", "estado: en revisión"})
+READY_WORK_LABELS = frozenset({"estado: disponible", "status: available"})
+RESERVED_WORK_LABELS = frozenset({"estado: reservado", "status: reserved"})
+REVIEW_WORK_LABELS = frozenset({"estado: en revisión", "status: in review"})
+ACTIVE_WORK_LABELS = READY_WORK_LABELS | RESERVED_WORK_LABELS | REVIEW_WORK_LABELS
 
 
 class RuntimeValidationError(ValueError):
@@ -282,8 +296,11 @@ def _https_json_request(
     path: str,
     payload: object | None,
 ) -> object:
-    """Transport fijo a api.github.com; nunca acepta host dinámico."""
-    if not path.startswith(REPOSITORY_API_PREFIX):
+    """Transport fijo: GET en repos canónicos; mutaciones solo en Factory."""
+    if method == "GET":
+        if not any(path.startswith(prefix) for prefix in READ_REPOSITORY_API_PREFIXES):
+            raise RuntimeValidationError("github_path_outside_repository")
+    elif not path.startswith(REPOSITORY_API_PREFIX):
         raise RuntimeValidationError("github_path_outside_repository")
     body = None if payload is None else json.dumps(payload, separators=(",", ":"))
     headers = {
@@ -333,11 +350,74 @@ class GitHubIssueClient:
         self._transport = request_json
 
     def _request(self, method: str, path: str, payload: object | None = None) -> object:
-        if not path.startswith(REPOSITORY_API_PREFIX):
+        if method == "GET":
+            if not any(path.startswith(prefix) for prefix in READ_REPOSITORY_API_PREFIXES):
+                raise RuntimeValidationError("github_path_outside_repository")
+        elif not path.startswith(REPOSITORY_API_PREFIX):
             raise RuntimeValidationError("github_path_outside_repository")
         if self._transport is not None:
             return self._transport(method, path, payload)
         return _https_json_request(self.token, method, path, payload)
+
+    @staticmethod
+    def _repository_prefix(repository: str) -> str:
+        if repository not in CANONICAL_REPOSITORIES:
+            raise RuntimeValidationError("github_repository_outside_canonical_set")
+        return f"/repos/{repository}/"
+
+    def repository_activity(self, repository: str, now: str) -> dict[str, object]:
+        """Resume inventario read-only de un repo canónico para el proof global."""
+        prefix = self._repository_prefix(repository)
+        ready = False
+        reserved = False
+        reviewing = False
+        ambiguous = False
+        for page in range(1, MAX_PAGES + 1):
+            query = urlencode(
+                {"state": "open", "per_page": COLLECTION_PAGE_SIZE, "page": page}
+            )
+            payload = self._request("GET", f"{prefix}issues?{query}")
+            if not isinstance(payload, list):
+                raise RuntimeValidationError("github_issues_invalid")
+            for issue in payload:
+                if not isinstance(issue, dict):
+                    raise RuntimeValidationError("github_issue_invalid")
+                if "pull_request" in issue:
+                    continue
+                labels = issue.get("labels")
+                if not isinstance(labels, list):
+                    raise RuntimeValidationError("github_issue_labels_invalid")
+                names: set[str] = set()
+                for label in labels:
+                    if not isinstance(label, dict) or not isinstance(label.get("name"), str):
+                        raise RuntimeValidationError("github_issue_label_invalid")
+                    names.add(label["name"])
+                active = names & ACTIVE_WORK_LABELS
+                ready = ready or bool(active & READY_WORK_LABELS)
+                reserved = reserved or bool(active & RESERVED_WORK_LABELS)
+                reviewing = reviewing or bool(active & REVIEW_WORK_LABELS)
+                ambiguous = ambiguous or len(active) > 1
+            if len(payload) < COLLECTION_PAGE_SIZE:
+                return {
+                    "repository": repository,
+                    "freshness": "fresh",
+                    "ready": ready,
+                    "reserved": reserved,
+                    "reviewing": reviewing,
+                    "ambiguous": ambiguous,
+                    "source_ref": f"github:{repository}#issues:{now}",
+                }
+        raise RuntimeValidationError("github_issue_listing_truncated")
+
+    def global_idle_proof(self, now: str) -> dict[str, object]:
+        snapshot = {
+            "version": 1,
+            "repositories": [
+                self.repository_activity(repository, now)
+                for repository in CANONICAL_REPOSITORIES
+            ],
+        }
+        return evaluate_global_idle_snapshot(snapshot)
 
     def get_issue(self, issue_number: int) -> dict[str, object]:
         if isinstance(issue_number, bool) or not isinstance(issue_number, int) or issue_number <= 0:
@@ -599,7 +679,12 @@ def collect_github_input(
         if not candidates:
             if active_work_observed:
                 return {"guard": guard_payload, "evidence": None}
-            return {"guard": guard_payload, "evidence": _idle_github_evidence(now)}
+            evidence = _idle_github_evidence(now)
+            proof = client.global_idle_proof(now)
+            if proof["idle_global"] is True:
+                evidence["global_idle"] = proof
+                guard_payload = _guard_payload(evaluate_global_idle_guard(proof))
+            return {"guard": guard_payload, "evidence": evidence}
         if len(candidates) != 1:
             return {"guard": guard_payload, "evidence": None}
 
