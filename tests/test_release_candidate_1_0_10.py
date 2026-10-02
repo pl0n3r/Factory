@@ -54,19 +54,19 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
         reusable_permissions = self._job_permissions(reusable, "etiquetas")
         self.assertEqual(
             reusable_permissions,
-            {"contents: read", "issues: write", "pull-requests: read"},
+            {"contents: read", "issues: write", "pull-requests: write"},
         )
 
         self.assertEqual(
             self._job_permissions(template, "validar-pr"),
-            {"contents: read", "issues: write", "pull-requests: read"},
+            {"contents: read", "issues: write", "pull-requests: write"},
         )
         read_only = {"contents: read", "issues: write", "pull-requests: read"}
-        for job in ("sync", "validar-issue", "validar-pr", "sweep"):
+        for job in ("sync", "validar-issue", "sweep"):
             self.assertEqual(self._job_permissions(template, job), read_only)
 
-        self.assertEqual(template.count("pull-requests: write"), 0)
-        self.assertEqual(template.count("pull-requests: read"), 4)
+        self.assertEqual(template.count("pull-requests: write"), 1)
+        self.assertEqual(template.count("pull-requests: read"), 3)
         self.assertEqual(
             template.count("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"),
             4,
