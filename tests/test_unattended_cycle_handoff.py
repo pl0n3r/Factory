@@ -62,7 +62,7 @@ def watchdog(action: str, *, freshness: str = "fresh") -> WatchdogDecision:
         action=action,
         authority="unchanged",
         incidents=incidents,
-        new_alert_fingerprints=(),
+        new_alert_fingerprints=(("d" * 64,) if action == "BLOCKED" else ()),
         interrupt_owner=interrupt_owner,
         daily_summary=DailySummary(
             active_fronts=("Factory#774",),
