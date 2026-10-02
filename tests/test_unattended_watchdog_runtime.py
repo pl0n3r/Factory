@@ -2,6 +2,7 @@
 """Regresiones del runtime programado del watchdog desatendido."""
 from __future__ import annotations
 
+import io
 import json
 import os
 from pathlib import Path
@@ -12,14 +13,15 @@ from scripts.unattended_watchdog_runtime import (
     ALERT_TITLE,
     AlertSpec,
     GitHubIssueClient,
+    MAX_STDIN_BYTES,
     RuntimeValidationError,
     _https_json_request,
-    _repository_json_path,
     collect_github_input,
     evaluate_runtime,
+    load_config,
     main as runtime_main,
     parse_owned_alert,
-    read_json,
+    read_stdin_json,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,6 +135,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertNotIn("pull_request_target", workflow)
         self.assertNotIn("workflow_run", workflow)
         self.assertNotIn("--input", workflow)
+        self.assertNotIn("--config", workflow)
         runtime = (ROOT / "scripts" / "unattended_watchdog_runtime.py").read_text(encoding="utf-8")
         self.assertIn("evaluate_unattended_kill_switch(client.get_issue(767))", runtime)
         self.assertIn("project_state_presence(", runtime)
@@ -643,20 +646,31 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                     None,
                 )
 
-    def test_read_json_and_kill_switch_main_fail_closed(self):
-        config_path = ROOT / "config" / "unattended-watchdog.json"
-        self.assertEqual(read_json(str(config_path)), config())
-        self.assertIsNone(read_json("/definitely/missing/watchdog.json"))
-
-        self.assertEqual(read_json("config/unattended-watchdog.json"), config())
-        self.assertIsNone(read_json("../../etc/passwd"))
-        self.assertIsNone(read_json("PLAN-AGENTES.md"))
-        self.assertIsNone(_repository_json_path(""))
+    def test_fixed_config_stdin_and_kill_switch_main_fail_closed(self):
+        self.assertEqual(load_config(), config())
         with patch(
-            "scripts.unattended_watchdog_runtime.os.path.commonpath",
-            side_effect=ValueError,
+            "scripts.unattended_watchdog_runtime.CONFIG_PATH",
+            ROOT / "config" / "does-not-exist.json",
         ):
-            self.assertIsNone(_repository_json_path("config/unattended-watchdog.json"))
+            self.assertIsNone(load_config())
+
+        payload = {"guard": guard(), "evidence": evidence()}
+        self.assertEqual(
+            read_stdin_json(io.StringIO(json.dumps(payload))),
+            payload,
+        )
+        self.assertIsNone(read_stdin_json(io.StringIO("not-json")))
+        self.assertIsNone(read_stdin_json(io.StringIO('{"x":1,"x":2}')))
+        self.assertIsNone(read_stdin_json(io.StringIO("x" * (MAX_STDIN_BYTES + 1))))
+
+        runtime_source = (
+            ROOT / "scripts" / "unattended_watchdog_runtime.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('parser.add_argument("--config"', runtime_source)
+        self.assertNotIn('parser.add_argument("--input")', runtime_source)
+        self.assertNotIn("_repository_json_path", runtime_source)
+        self.assertIn('parser.add_argument("--input-stdin"', runtime_source)
+        self.assertIn("CONFIG_PATH.read_text", runtime_source)
 
         class PausedClient:
             repository = "pl0n3r/Factory"
@@ -701,7 +715,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             },
             clear=False,
         ):
-            code = runtime_main(["--config", str(config_path)])
+            code = runtime_main([])
         self.assertEqual(code, 1)
         self.assertEqual(fake.writes, [])
 
