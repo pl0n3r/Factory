@@ -417,6 +417,16 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             item.fingerprint: {"number": index + 80, "state": "open"}
             for index, item in enumerate(stale_plan.create)
         }
+        historical_fingerprint = "e" * 64
+        historical_number = 999
+        self.assertNotIn(
+            historical_fingerprint,
+            {item.fingerprint for item in stale_decision.incidents},
+        )
+        current[historical_fingerprint] = {
+            "number": historical_number,
+            "state": "open",
+        }
         repeated_decision, repeated_plan = evaluate_runtime(
             config(),
             stale_input["guard"],
@@ -448,7 +458,17 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             current,
         )
         self.assertEqual(resolved_decision.action, "BLOCKED")
-        self.assertEqual(resolved_plan.close, (current[stale_runtime_alert.fingerprint]["number"],))
+        self.assertEqual(
+            resolved_plan.close,
+            tuple(
+                sorted(
+                    (
+                        current[stale_runtime_alert.fingerprint]["number"],
+                        historical_number,
+                    )
+                )
+            ),
+        )
 
 
     def test_owned_alert_rejects_malformed_duplicate_marker(self):

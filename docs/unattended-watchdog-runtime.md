@@ -38,7 +38,7 @@ Cada alerta creada contiene:
 
 El runtime solo considera propia una Issue abierta con título `[AUTO][WATCHDOG]`, autor `github-actions[bot]` y exactamente un marker válido. Un fingerprint activo ya abierto no se duplica; markers ambiguos, claves JSON duplicadas o `version=true` se ignoran y nunca autorizan cerrar una Issue.
 
-Por seguridad, una alerta previa solo se reconcilia como resuelta cuando 4C logró validar un STATE y expone `daily_summary.state_freshness` como `fresh|stale`; una evaluación inválida conserva `unknown` y no cierra nada. La autoridad final puede seguir `BLOCKED`: resolver un fingerprint propio no convierte el ciclo en ALLOW ni amplía autoridad.
+Por seguridad, una alerta previa solo se reconcilia como resuelta cuando 4C logró validar un STATE y `daily_summary.state_freshness` es exactamente `fresh`; `stale` o `unknown` nunca demuestran resolución y no cierran alertas históricas. La autoridad final puede seguir `BLOCKED`: resolver un fingerprint propio con evidencia fresh no convierte el ciclo en ALLOW ni amplía autoridad.
 
 El runtime no edita/cierra Issues ajenos, PRs, releases ni reservas. La búsqueda incluye alertas propias abiertas y cerradas: si un fingerprint resuelto reaparece, se reabre la misma Issue en vez de crear un duplicado histórico.
 
