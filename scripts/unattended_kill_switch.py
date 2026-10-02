@@ -47,6 +47,19 @@ def _paused(reason: str) -> KillSwitchDecision:
     return KillSwitchDecision("UNKNOWN", True, reason)
 
 
+class DuplicateMarkerKeyError(ValueError):
+    """El JSON del marker no puede depender de semántica last-key-wins."""
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateMarkerKeyError(key)
+        result[key] = value
+    return result
+
+
 def evaluate_unattended_kill_switch(issue_payload: object) -> KillSwitchDecision:
     """Valida la fuente canónica; toda ambigüedad pausa fail-closed."""
     if not isinstance(issue_payload, dict):
@@ -76,13 +89,16 @@ def evaluate_unattended_kill_switch(issue_payload: object) -> KillSwitchDecision
         return _paused("kill_switch_marker_invalid_syntax")
 
     try:
-        marker = json.loads(match.group(1))
+        marker = json.loads(match.group(1), object_pairs_hook=_unique_object)
+    except DuplicateMarkerKeyError:
+        return _paused("kill_switch_marker_duplicate_key")
     except (TypeError, json.JSONDecodeError):
         return _paused("kill_switch_marker_invalid_json")
 
     if not isinstance(marker, dict) or set(marker) != {"version", "state", "owner"}:
         return _paused("kill_switch_marker_invalid_shape")
-    if marker["version"] != 1:
+    version = marker["version"]
+    if type(version) is not int or version != 1:
         return _paused("kill_switch_marker_invalid_version")
     if marker["owner"] != CANONICAL_OWNER:
         return _paused("kill_switch_marker_invalid_owner")
