@@ -31,6 +31,7 @@ from scripts.adaptive_replan import decide_replan
 from scripts.presence_contract import classify_presence
 from scripts.unattended_guards import GuardDecision
 from scripts.unattended_watchdog import DailySummary, WatchdogDecision, WatchdogIncident
+from scripts.orquestador_kit import validate_task_key
 
 
 def work_item(**overrides):
@@ -1711,6 +1712,30 @@ class DispatcherV2Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "task.key"):
             direction_gate_trigger(proposal, [])
 
+    def test_product_direction_materializes_legacy_keys_as_canonical_task_keys(self):
+        proposal = self.direction_proposal()
+        opened = direction_gate_trigger(proposal, [])
+        materialized = materialize_direction_leaves(
+            proposal,
+            decision_evidence={
+                "gate_sha256": opened["gate_sha256"],
+                "option": "A",
+                "version": 2,
+            },
+        )
+
+        self.assertEqual(
+            [leaf["key"] for leaf in opened["proposal"]["leaves"]],
+            ["CONDOR-NEXT-1", "CONDOR-NEXT-2"],
+        )
+        self.assertEqual(
+            [leaf["key"] for leaf in materialized],
+            ["CONDOR-NEXT-1", "CONDOR-NEXT-2"],
+        )
+        self.assertEqual(materialized[1]["depends_on"], ["CONDOR-NEXT-1"])
+        for leaf in materialized:
+            validate_task_key(leaf["key"])
+
     def test_product_direction_accepts_max_length_orchestrator_key_without_drift(self):
         key = "A" * 32
         proposal = DirectionProposal(
@@ -1761,13 +1786,13 @@ class DispatcherV2Tests(unittest.TestCase):
         materialized = materialize_direction_leaves(proposal, decision_evidence=approved)
         self.assertEqual(
             [leaf["key"] for leaf in materialized],
-            ["condor-next-1", "condor-next-2"],
+            ["CONDOR-NEXT-1", "CONDOR-NEXT-2"],
         )
         self.assertEqual(
             [leaf["state"] for leaf in materialized],
             ["available", "blocked"],
         )
-        self.assertEqual(materialized[1]["depends_on"], ["condor-next-1"])
+        self.assertEqual(materialized[1]["depends_on"], ["CONDOR-NEXT-1"])
         stale = {**approved, "gate_sha256": "0" * 64}
         with self.assertRaisesRegex(ValueError, "does not match"):
             materialize_direction_leaves(proposal, decision_evidence=stale)
@@ -2094,7 +2119,7 @@ class DispatcherV2Tests(unittest.TestCase):
         )
         self.assertEqual(
             trigger["proposal"]["leaves"][1]["depends_on"],
-            ["condor-next-1"],
+            ["CONDOR-NEXT-1"],
         )
         self.assertEqual(
             materialize_direction_leaves(proposal, decision_evidence=None),

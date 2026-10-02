@@ -46,7 +46,7 @@ class OwnerAutonomyAuthorizationTests(unittest.TestCase):
             objective="Materializar un tramo local y reversible con contrato ejecutable.",
             leaves=(
                 DirectionLeaf(
-                    key="safe-next",
+                    key="SAFE_NEXT",
                     title="Leaf local provider-neutral",
                     acceptance_targets=(
                         "tests/test_safe_next.py::SafeNextTests::test_local_contract",
