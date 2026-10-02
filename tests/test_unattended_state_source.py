@@ -183,7 +183,10 @@ class UnattendedStateSourceTests(unittest.TestCase):
 
         stale_lease = project([
             reservation(at="2026-10-02T03:40:00Z"),
-            state_comment(at="2026-10-02T03:40:30Z"),
+            state_comment(
+                state_payload(updated_at="2026-10-02T03:39:30Z"),
+                at="2026-10-02T03:40:30Z",
+            ),
         ])
         self.assertEqual(stale_lease.status, "UNKNOWN")
         self.assertIn("reservation_stale", stale_lease.reasons)
