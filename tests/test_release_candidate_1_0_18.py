@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regresiones del candidato Factory 1.0.18."""
+"""Regresiones históricas del candidato Factory 1.0.18."""
 
 from __future__ import annotations
 
@@ -23,11 +23,18 @@ class ReleaseCandidate1018Tests(unittest.TestCase):
             from aceptacion_kit import Criterion, run_named_test
         return Criterion, run_named_test
 
-    def test_candidate_version_is_1_0_18(self) -> None:
+    def test_candidate_is_at_least_1_0_18_and_keeps_1_0_18_guarantees(self) -> None:
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.18"})
+        self.assertEqual(set(payload), {"version"})
+        parts = payload["version"].split(".")
+        self.assertEqual(len(parts), 3)
+        self.assertGreaterEqual(tuple(map(int, parts)), (1, 0, 18))
+        self.test_candidate_preserves_release_open_pull_feedback()
+        self.test_candidate_preserves_factory_release_authority_canonicalization()
+        self.test_previous_candidate_is_historical_and_keeps_1_0_17_guarantees()
+        self.test_candidate_keeps_human_release_boundary()
 
     def test_candidate_preserves_release_open_pull_feedback(self) -> None:
         Criterion, run_named_test = self._acceptance_tools()
