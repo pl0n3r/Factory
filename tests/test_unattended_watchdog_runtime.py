@@ -354,6 +354,101 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved.close, (77,))
 
 
+    def test_idle_factory_projects_valid_evidence_without_false_invalid_evidence(self):
+        class FakeClient:
+            repository = "pl0n3r/Factory"
+
+            def list_open_work_items(self):
+                return []
+
+            def list_issue_comments(self, issue_number):
+                raise AssertionError("idle inventory must not read issue comments")
+
+            def get_branch_head(self, issue_number):
+                raise AssertionError("idle inventory must not resolve a branch")
+
+        runtime_input = collect_github_input(
+            FakeClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        self.assertEqual(runtime_input["guard"]["action"], "BLOCKED")
+        self.assertIsInstance(runtime_input["evidence"], dict)
+        self.assertEqual(
+            runtime_input["evidence"]["state"]["work_identity"],
+            "pl0n3r/Factory#idle",
+        )
+        self.assertEqual(runtime_input["evidence"]["state"]["updated_at"], "2026-10-02T01:00:00Z")
+        self.assertEqual(runtime_input["evidence"]["presence"]["sessions"], [])
+        self.assertEqual(
+            runtime_input["evidence"]["presence"]["capacity"]["freshness"],
+            "unknown",
+        )
+
+        decision, plan = evaluate_runtime(
+            config(),
+            runtime_input["guard"],
+            runtime_input["evidence"],
+            {},
+        )
+        self.assertEqual(decision.daily_summary.state_freshness, "fresh")
+        self.assertFalse(any(item.code == "invalid_evidence" for item in decision.incidents))
+        self.assertFalse(any(item.code == "invalid_evidence" for item in plan.create))
+
+        class AmbiguousClient(FakeClient):
+            def list_open_work_items(self):
+                return [{"number": 819, "labels": [{"name": "estado: reservado"}]}]
+
+            def list_issue_comments(self, issue_number):
+                return []
+
+        ambiguous = collect_github_input(
+            AmbiguousClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        self.assertIsNone(ambiguous["evidence"])
+
+    def test_idle_projection_reconciles_prior_invalid_evidence_alert_after_fresh_cycle(self):
+        class FakeClient:
+            repository = "pl0n3r/Factory"
+
+            def list_open_work_items(self):
+                return []
+
+        runtime_input = collect_github_input(
+            FakeClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        _, invalid_plan = evaluate_runtime(
+            config(),
+            runtime_input["guard"],
+            None,
+            {},
+        )
+        invalid_alert = next(
+            item for item in invalid_plan.create if item.code == "invalid_evidence"
+        )
+
+        decision, plan = evaluate_runtime(
+            config(),
+            runtime_input["guard"],
+            runtime_input["evidence"],
+            {
+                invalid_alert.fingerprint: {
+                    "number": 818,
+                    "state": "open",
+                }
+            },
+        )
+        self.assertEqual(decision.daily_summary.state_freshness, "fresh")
+        self.assertNotIn(
+            "invalid_evidence",
+            {item.code for item in decision.incidents},
+        )
+        self.assertEqual(plan.close, (818,))
+
     def test_runtime_projects_live_github_state_source_fail_closed(self):
         reservation_id = "11111111-1111-4111-8111-111111111111"
         branch = "trabajo/issue-769"
