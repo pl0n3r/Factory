@@ -51,9 +51,12 @@ La decisión 4B se recibe como `GuardDecision` y no se recalcula:
 - `ALLOW` solo permanece `ALLOW` con evidencia 4C suficiente y sin
   incidencias activas;
 - UNKNOWN en 4C falla cerrado;
-- una incidencia válida puede degradar ALLOW a `PAUSE` únicamente cuando
-  `GuardDecision.pause_allowed=true`; si 4B no permite una pausa segura, 4C
-  devuelve `BLOCKED`;
+- 4C acepta solo el shape canónico de 4B: `ALLOW|BLOCKED` llevan
+  `pause_allowed=false` y `PAUSE` lleva `pause_allowed=true`; una combinación
+  incoherente falla cerrado;
+- como un `ALLOW` canónico no concede autoridad de pausa, una incidencia 4C
+  bajo `ALLOW` produce `BLOCKED`; un `PAUSE` ya emitido por 4B permanece
+  `PAUSE`;
 - 4C nunca convierte una decisión canónica en más autoridad.
 
 La autoridad de salida siempre es `unchanged`.
