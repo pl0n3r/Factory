@@ -196,6 +196,8 @@ class UnattendedKillSwitchTests(unittest.TestCase):
         self.assertIn("UNKNOWN", guide)
         self.assertIn("no mata procesos", guide.lower())
         self.assertIn("solo el dueño", guide.lower())
+        self.assertIn("no demuestra quién hizo la última edición", guide)
+        self.assertIn("creador", guide.lower())
         self.assertLessEqual(len(guide.splitlines()), 90)
 
 
