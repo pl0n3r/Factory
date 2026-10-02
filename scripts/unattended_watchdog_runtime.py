@@ -202,7 +202,13 @@ def evaluate_runtime(
         and current[incident.fingerprint][1] == "closed"
     )
 
-    evidence_reconcilable = decision.daily_summary.state_freshness == "fresh"
+    has_unknown_incident = any(
+        incident.severity == "UNKNOWN" for incident in decision.incidents
+    )
+    evidence_reconcilable = (
+        decision.daily_summary.state_freshness == "fresh"
+        and not has_unknown_incident
+    )
     close = (
         tuple(sorted(
             alert[0]
