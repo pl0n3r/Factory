@@ -9,6 +9,7 @@ import json
 import re
 
 from scripts.presence_contract import PresenceValidationError, classify_presence
+from scripts.unattended_global_idle import GlobalIdleValidationError, validate_global_idle_proof
 from scripts.unattended_guards import GuardDecision
 
 CONFIG_FIELDS = frozenset({
@@ -32,6 +33,7 @@ EVIDENCE_FIELDS = frozenset({
     "reverted",
     "next_actions",
 })
+EVIDENCE_OPTIONAL_FIELDS = frozenset({"global_idle"})
 STATE_REQUIRED_FIELDS = frozenset({
     "work_identity",
     "repository",
@@ -360,8 +362,8 @@ def evaluate_unattended_watchdog(
 
     try:
         cfg = _normalize_config(config)
-        _reject_keys(evidence, EVIDENCE_FIELDS)
-        if set(evidence) != EVIDENCE_FIELDS:
+        _reject_keys(evidence, EVIDENCE_FIELDS | EVIDENCE_OPTIONAL_FIELDS)
+        if not EVIDENCE_FIELDS.issubset(evidence):
             raise WatchdogValidationError("invalid_evidence_shape")
         now_text, now_dt = _timestamp(evidence["now"], "now")
         presence_payload = evidence["presence"]
@@ -389,6 +391,12 @@ def evaluate_unattended_watchdog(
             state_work_identity=str(state["work_identity"]),
         )
         reported_incidents = _normalize_reported_incidents(evidence["incidents"], now=now_dt)
+        global_idle = None
+        if "global_idle" in evidence:
+            try:
+                global_idle = validate_global_idle_proof(evidence["global_idle"])
+            except GlobalIdleValidationError as exc:
+                raise WatchdogValidationError("invalid_global_idle") from exc
         active_fronts = _string_list(evidence["active_fronts"], "active_fronts")
         human_gates = _string_list(evidence["human_gates"], "human_gates")
         integrated = _string_list(evidence["integrated"], "integrated")
@@ -414,6 +422,28 @@ def evaluate_unattended_watchdog(
         return _blocked(str(exc), guard)
 
     incidents: list[WatchdogIncident] = []
+    capacity_payload = presence_payload.get("capacity")
+    empty_presence = (
+        presence_payload.get("sessions") == []
+        and isinstance(capacity_payload, dict)
+        and capacity_payload.get("known_slots") == 0
+        and capacity_payload.get("eligible_free_slots") == 0
+        and capacity_payload.get("degraded_slots") == 0
+    )
+    proven_global_idle = (
+        global_idle is not None
+        and global_idle["idle_global"] is True
+        and evidence["work_ready"] is False
+        and evidence["next_dispatch_planned"] is False
+        and reservation is None
+        and active_fronts == ()
+        and reported_incidents == ()
+        and state["work_identity"] == "pl0n3r/Factory#idle"
+        and state["last_state"] == "idle"
+        and state["freshness"] == "fresh"
+        and not state["blockers"]
+        and empty_presence
+    )
     presence_material = {
         "classifications": presence.classifications,
         "reasons": presence.reasons,
@@ -422,7 +452,7 @@ def evaluate_unattended_watchdog(
         "observed_at": presence_payload.get("observed_at"),
         **presence_material,
     }
-    if "unknown" in presence.classifications:
+    if "unknown" in presence.classifications and not proven_global_idle:
         incidents.append(_incident(
             "presence_insufficient",
             "UNKNOWN",
@@ -577,6 +607,7 @@ def evaluate_unattended_watchdog(
     normalized = {
         "now": now_text,
         "presence": presence_summary,
+        "global_idle": global_idle,
         "work_ready": evidence["work_ready"],
         "ready_since": ready_since_text,
         "next_dispatch_planned": evidence["next_dispatch_planned"],
