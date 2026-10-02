@@ -64,6 +64,19 @@ def _positive_int(value: object, name: str) -> int:
     return int(parsed)
 
 
+def _breaker_subject(scope: str, subject: object) -> str:
+    if not isinstance(subject, str):
+        raise GuardValidationError("invalid_breaker_subject")
+    if scope == "agent":
+        if not AGENT_SUBJECT.fullmatch(subject):
+            raise GuardValidationError("invalid_breaker_subject")
+        return subject
+    parts = subject.split("/")
+    if len(parts) != 2 or any(not REPO_SUBJECT_PART.fullmatch(part) for part in parts):
+        raise GuardValidationError("invalid_breaker_subject")
+    return subject
+
+
 def _normalize(config: object, evidence: object, metrics: object):
     cfg = _exact(config, {"global_pause", "breakers", "ceilings"}, "config")
     if not isinstance(cfg["global_pause"], bool):
