@@ -71,6 +71,51 @@ class T(unittest.TestCase):
 
         self.assertIn("create_failed_check(", SCRIPT)
 
+    def test_v1_0_18_caller_permission_envelope_starts_comment_label_pr_issue_and_validate(self):
+        """AC-01: el reusable completo cabe en el envelope histórico sin actions:read."""
+        legacy = {
+            "contents": "write",
+            "issues": "write",
+            "pull-requests": "write",
+            "checks": "write",
+        }
+        maximum = {}
+        for block in job_blocks(W).values():
+            for scope, level in permissions(block).items():
+                if PERMISSION_LEVEL[level] > PERMISSION_LEVEL.get(maximum.get(scope, "none"), 0):
+                    maximum[scope] = level
+        self.assertNotIn("actions", maximum)
+        for scope, required in maximum.items():
+            self.assertGreaterEqual(
+                PERMISSION_LEVEL.get(legacy.get(scope, "none"), 0),
+                PERMISSION_LEVEL[required],
+                f"caller v1.0.18 no concede {scope}: {required}",
+            )
+
+    def test_sweep_does_not_raise_reusable_permission_envelope_for_non_sweep_operations(self):
+        """AC-02: sweep verifica workflow_success sin exigir actions al caller."""
+        sweep = permissions(job_blocks(W)["sweep"])
+        self.assertNotIn("actions", sweep)
+        self.assertEqual(sweep.get("contents"), "write")
+        self.assertEqual(sweep.get("issues"), "write")
+        self.assertIn("PUBLIC_WORKFLOW_RUN_REPOS", SCRIPT)
+        self.assertIn("self.public_request(", SCRIPT)
+
+    def test_template_remains_backward_compatible_with_v1_permission_envelope(self):
+        """AC-05: el template no obliga a consumidores históricos a añadir actions:read."""
+        callers = {
+            name: block
+            for name, block in job_blocks(TEMPLATE).items()
+            if "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1" in block
+        }
+        self.assertTrue(callers)
+        for name, block in callers.items():
+            self.assertNotIn(
+                "actions",
+                permissions(block),
+                f"{name} amplía innecesariamente el envelope histórico",
+            )
+
     def test_template_supports_contract_renewal_command(self):
         """El caller enruta la renovación v2 que ya soporta el coordinador."""
         self.assertIn(
