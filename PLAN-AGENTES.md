@@ -18,7 +18,7 @@ Antes del primer comentario de despacho, `/tomar`, branch, PR o escritura de có
 y valida el único marker cerrado `factory-unattended-kill-switch` con el contrato de `scripts/unattended_kill_switch.py`.
 
 - `RUNNING` es el único estado que no añade pausa: produce `global_pause=false` y las demás guardas 4B siguen mandando.
-- `PAUSED`, fuente ausente/ilegible, Issue/autor inesperado, marker ausente/duplicado o contenido inválido producen pausa fail-closed; **cero mutaciones**.
+- `PAUSED`, fuente ausente/ilegible, Issue/creador inesperado, marker ausente/duplicado o contenido inválido producen pausa fail-closed; **cero mutaciones**. `user.login` identifica al creador del Issue y no demuestra quién hizo la última edición del body.
 - Si no es verificablemente `RUNNING`, responde una sola línea al dueño y detente: `PAUSADO: kill switch global no está en RUNNING (<razón>).`
 - Un agente nunca cambia el marker por iniciativa propia. Solo una instrucción explícita del dueño para pausar/reanudar autoriza editarlo.
 - El switch impide **nuevo trabajo/mutaciones**; no mata procesos remotos que ya estuvieran ejecutándose.
