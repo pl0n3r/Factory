@@ -142,15 +142,20 @@ def _mapping(lines, start, indent, label):
 
 
 def _jobs(text, label):
-    lines, top, jobs_at = text.splitlines(), {}, None
+    lines, top, jobs_at = text.splitlines(), None, None
     for i, raw in enumerate(lines):
         stripped = raw.strip()
         if not stripped or stripped.startswith("#") or _indent(raw, label) != 0:
             continue
         if stripped.startswith("permissions:"):
-            if stripped != "permissions:" or top:
+            if top is not None:
                 raise PreflightError(f"{label}: permissions top-level inválido.")
-            top = _mapping(lines, i, 0, label)
+            if stripped == "permissions:":
+                top = _mapping(lines, i, 0, label)
+            elif stripped == "permissions: {}":
+                top = {}
+            else:
+                raise PreflightError(f"{label}: permissions top-level inválido.")
         elif stripped == "jobs:":
             if jobs_at is not None:
                 raise PreflightError(f"{label}: jobs ambiguo.")
@@ -193,7 +198,11 @@ def _jobs(text, label):
                     permissions = {}
                 else:
                     raise PreflightError(f"{label}:{name}: permissions inválido.")
-        jobs.append((name, uses, dict(top) if permissions is None else permissions))
+        jobs.append((
+            name,
+            uses,
+            (dict(top) if top is not None else {}) if permissions is None else permissions,
+        ))
     return jobs
 
 
