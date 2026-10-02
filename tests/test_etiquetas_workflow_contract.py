@@ -40,10 +40,13 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
             "      pull-requests: read\n",
         )
 
-    def test_pr_validation_cannot_regress_to_write(self):
+    def test_pr_validation_grants_write_for_safe_label_inheritance(self):
         permissions = labels_job_permissions()
+        self.assertIn("issues: write", permissions)
         self.assertIn("pull-requests: read", permissions)
         self.assertNotIn("pull-requests: write", permissions)
+        self.assertIn('gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/labels"', WF)
+        self.assertIn("linked_issue:$linked[0]", WF)
 
     def test_metadata_permissions_remain_least_privilege(self):
         permissions = labels_job_permissions()
@@ -54,7 +57,9 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", WF)
         self.assertNotIn("contents: write", WF)
         self.assertNotIn("actions: write", WF)
+        self.assertNotIn("checks: read", permissions)
         self.assertNotIn("checks: write", WF)
+        self.assertNotIn("pull-requests: write", WF)
         self.assertNotIn("id-token: write", WF)
         self.assertNotIn("secrets: inherit", WF)
 
@@ -73,6 +78,12 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertIn("auto-close.json", WF)
         self.assertNotIn('-f state=open --input', WF)
         self.assertIn("repository: pl0n3r/factory", WF)
+        self.assertIn("pr_label_governance.py alert-plan", WF)
+        self.assertIn("commits/$head_sha/check-runs?per_page=100", WF)
+        self.assertIn("curl --fail --silent --show-error", WF)
+        self.assertIn("^[0-9a-f]{40}$", WF)
+        self.assertNotIn('gh api "repos/$REPOSITORIO/commits/$head_sha/check-runs', WF)
+        self.assertIn(".[:25]", WF)
 
     def test_external_actions_are_sha_pinned(self):
         actions = re.findall(r"^\s*uses:\s*([^\s]+)", WF, flags=re.MULTILINE)
