@@ -20,7 +20,7 @@ CONSUMERS = (
 SHA = re.compile(r"^[0-9a-f]{40}$")
 WF = re.compile(r"^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
 REF = re.compile(
-    r"^pl0n3r/factory/\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)@v1$", re.I
+    r"^pl0n3r/factory/\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)@([^\\s]+)$", re.I
 )
 API = "https://api.github.com/repos"
 RAW = "https://raw.githubusercontent.com"
@@ -203,7 +203,9 @@ def evaluate_inventory(inventory, factory_sha, root=None):
         raise PreflightError("inventario de consumidores incompleto.")
 
     calls = []
+    consumer_summaries = []
     for repo in CONSUMERS:
+        repo_call_start = len(calls)
         seen = set()
         for wf in by_repo[repo]["workflows"]:
             if not isinstance(wf, dict) or set(wf) != {"path", "blob_sha", "content"}:
@@ -215,12 +217,28 @@ def evaluate_inventory(inventory, factory_sha, root=None):
             _sha(wf["blob_sha"], f"{repo}:{path}.blob_sha")
             if not isinstance(wf["content"], str):
                 raise PreflightError(f"{repo}:{path}: contenido inválido.")
+            marker = "pl0n3r/factory/.github/workflows/"
+            if marker not in wf["content"].lower():
+                continue
             for job, uses, granted in _jobs(wf["content"], f"{repo}:{path}"):
                 match = REF.fullmatch(uses or "")
                 if match:
+                    if match.group(2).lower() != "v1":
+                        continue
                     calls.append((repo, path, job, uses, match.group(1), granted))
-        if not any(call[0] == repo for call in calls):
+                elif isinstance(uses, str) and uses.lower().startswith(marker):
+                    raise PreflightError(
+                        f"{repo}:{path}:{job}: referencia Factory ambigua."
+                    )
+        repo_call_count = len(calls) - repo_call_start
+        if repo_call_count == 0:
             raise PreflightError(f"{repo}: sin caller Factory@v1 verificable.")
+        consumer_summaries.append({
+            "repository": repo,
+            "sha": by_repo[repo]["repository_sha"],
+            "workflows": len(by_repo[repo]["workflows"]),
+            "callers": repo_call_count,
+        })
 
     base, cache, incompatible = root or Path(__file__).resolve().parents[1], {}, []
     for repo, path, job, uses, filename, granted in calls:
@@ -242,7 +260,8 @@ def evaluate_inventory(inventory, factory_sha, root=None):
         "version": 1, "status": "COMPATIBLE" if not incompatible else "INCOMPATIBLE",
         "compatible": not incompatible, "factory_sha": factory_sha,
         "consumer_count": len(by_repo), "caller_count": len(calls),
-        "reusables": sorted(cache), "incompatible": incompatible,
+        "reusables": sorted(cache), "consumers": consumer_summaries,
+        "incompatible": incompatible,
     }
 
 
