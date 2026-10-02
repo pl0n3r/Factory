@@ -416,16 +416,25 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                         "labels": [{"name": "estado: reservado"}],
                     }
                 ]
+            if "/repos/pl0n3r/brvtal/issues?" in path:
+                return [
+                    {
+                        "number": 861,
+                        "labels": [{"name": "status: reserved"}],
+                    }
+                ]
             return []
 
         client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
         proof = client.global_idle_proof("2026-10-02T01:00:00Z")
         self.assertFalse(proof["idle_global"])
-        self.assertTrue(
-            any(
-                reason == "repository_reserved:pl0n3r/GrindFlow"
-                for reason in proof["reasons"]
-            )
+        self.assertIn(
+            "repository_reserved:pl0n3r/GrindFlow",
+            proof["reasons"],
+        )
+        self.assertIn(
+            "repository_reserved:pl0n3r/brvtal",
+            proof["reasons"],
         )
         self.assertEqual(
             {path.split("/issues?", 1)[0].removeprefix("/repos/") for _, path, _ in calls},
@@ -906,8 +915,8 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             all(path.startswith("/repos/pl0n3r/Factory/") for _, path, _ in calls)
         )
         self.assertEqual(
-            client._request("GET", "/repos/pl0n3r/Condor/issues?state=open"),
-            [],
+            len(client._request("GET", "/repos/pl0n3r/Condor/issues?state=open")),
+            3,
         )
         with self.assertRaises(RuntimeValidationError):
             client._request("GET", "/repos/other/repo/issues")
