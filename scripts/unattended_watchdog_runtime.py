@@ -57,7 +57,10 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 COLLECTION_PAGE_SIZE = 50
 MAX_PAGES = 20
 OWNED_ALERT_CREATOR = "github-actions[bot]"
-ACTIVE_WORK_LABELS = frozenset({"estado: disponible", "estado: reservado", "estado: en revisión"})
+READY_WORK_LABELS = frozenset({"estado: disponible", "status: available"})
+RESERVED_WORK_LABELS = frozenset({"estado: reservado", "status: reserved"})
+REVIEW_WORK_LABELS = frozenset({"estado: en revisión", "status: in review"})
+ACTIVE_WORK_LABELS = READY_WORK_LABELS | RESERVED_WORK_LABELS | REVIEW_WORK_LABELS
 
 
 class RuntimeValidationError(ValueError):
@@ -390,9 +393,9 @@ class GitHubIssueClient:
                         raise RuntimeValidationError("github_issue_label_invalid")
                     names.add(label["name"])
                 active = names & ACTIVE_WORK_LABELS
-                ready = ready or "estado: disponible" in active
-                reserved = reserved or "estado: reservado" in active
-                reviewing = reviewing or "estado: en revisión" in active
+                ready = ready or bool(active & READY_WORK_LABELS)
+                reserved = reserved or bool(active & RESERVED_WORK_LABELS)
+                reviewing = reviewing or bool(active & REVIEW_WORK_LABELS)
                 ambiguous = ambiguous or len(active) > 1
             if len(payload) < COLLECTION_PAGE_SIZE:
                 return {
