@@ -123,6 +123,84 @@ class UnblockValidationTests(unittest.TestCase):
             (False, None),
         )
 
+    def test_public_workflow_run_read_can_verify_exact_evidence_without_actions_token_scope(self) -> None:
+        """AC-03: workflow_success usa la ruta pública y nunca el request autenticado."""
+        sha = "c" * 40
+        payload = {
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": sha,
+            "repository": {"full_name": "pl0n3r/Factory", "private": False},
+        }
+
+        class PublicOnlyGitHub(coordinator.GitHub):
+            def __init__(self) -> None:
+                super().__init__("pl0n3r/Factory", token="token-without-actions")
+                self.public_path = ""
+
+            def request(self, *args: object, **kwargs: object) -> object:
+                raise AssertionError("workflow_success no debe usar el token autenticado")
+
+            def public_request(self, path: str, allow: tuple[int, ...] = ()) -> object:
+                self.public_path = path
+                self.assert_allow = allow
+                return payload
+
+        api = PublicOnlyGitHub()
+        condition = {
+            "version": 1,
+            "kind": "workflow_success",
+            "run_id": 123,
+            "sha": sha,
+        }
+        self.assertEqual(
+            coordinator.verify_unblock_condition(api, condition),
+            (True, f"workflow_run:123@{sha}"),
+        )
+        self.assertEqual(api.public_path, "/repos/pl0n3r/Factory/actions/runs/123")
+        self.assertEqual(api.assert_allow, (404,))
+
+    def test_unreadable_or_private_workflow_run_evidence_remains_fail_closed(self) -> None:
+        """AC-04: 404, repos no gobernados y payload privado nunca desbloquean."""
+        sha = "d" * 40
+        condition = {
+            "version": 1,
+            "kind": "workflow_success",
+            "run_id": 404,
+            "sha": sha,
+        }
+
+        class MissingGitHub(coordinator.GitHub):
+            def __init__(self) -> None:
+                super().__init__("pl0n3r/Factory", token="scoped-token")
+
+            def public_request(self, path: str, allow: tuple[int, ...] = ()) -> object:
+                return None
+
+        self.assertEqual(
+            coordinator.verify_unblock_condition(MissingGitHub(), condition),
+            (False, None),
+        )
+
+        class PrivateGitHub(coordinator.GitHub):
+            def __init__(self) -> None:
+                super().__init__("pl0n3r/Factory", token="scoped-token")
+
+            def public_request(self, path: str, allow: tuple[int, ...] = ()) -> object:
+                return {
+                    "status": "completed",
+                    "conclusion": "success",
+                    "head_sha": sha,
+                    "repository": {"full_name": "pl0n3r/Factory", "private": True},
+                }
+
+        with self.assertRaises(coordinator.CoordinationError):
+            coordinator.verify_unblock_condition(PrivateGitHub(), condition)
+
+        outside = coordinator.GitHub("example/private", token="scoped-token")
+        with self.assertRaises(coordinator.CoordinationError):
+            coordinator.verify_unblock_condition(outside, condition)
+
     def test_non_404_evidence_errors_propagate(self) -> None:
         class ForbiddenGitHub:
             def issue(self, number: int) -> dict:
