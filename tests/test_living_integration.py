@@ -13,8 +13,9 @@ class LivingIntegrationTests(unittest.TestCase):
         self.assertIn("## 9. Living Software: ciclo operativo canónico", PLAN)
         self.assertIn("## Living Software", README)
         self.assertIn("docs/factory-living-software.md", README)
-        self.assertIn("Project DNA", PLAN)
-        self.assertIn("Factory Lab", PLAN)
+        self.assertIn("docs/factory-living-software.md", PLAN)
+        self.assertIn("Project DNA", LIVING)
+        self.assertIn("Factory Lab", LIVING)
 
     def test_protocol_preserves_human_authority_boundaries(self):
         combined = "\n".join((PLAN, LIVING))
@@ -53,20 +54,20 @@ class LivingIntegrationTests(unittest.TestCase):
     def test_all_living_hardenings_are_documented_closed(self):
         hardenings = ("#209", "#211", "#213", "#215", "#221", "#223", "#227")
         for issue in hardenings:
-            self.assertIn(issue, PLAN)
             self.assertIn(issue, README)
             self.assertIn(issue, LIVING)
 
+        self.assertIn("#209–#227", PLAN)
         for fragment in (
-            "**#209** — Autonomy authority + evidencia canónica: ✅ cerrado",
-            "**#211** — Factory Lab promotion provenance: ✅ cerrado",
-            "**#213** — Growth/Pruning source evidence: ✅ cerrado",
-            "**#215** — Repair human authority + immunity provenance: ✅ cerrado",
-            "**#221** — retry de renovación v2: ✅ cerrado",
-            "**#223** — provenance confiable de Repair/Immune: ✅ cerrado",
-            "**#227** — provenance productivo read-only no fabricable por el caller: ✅ cerrado",
+            "**#209 — Autonomy authority + canonical evidence:** cerrado.",
+            "**#211 — Factory Lab promotion provenance:** cerrado.",
+            "**#213 — Growth/Pruning source evidence:** cerrado.",
+            "**#215 — Repair human authority + immunity provenance:** cerrado.",
+            "**#221 — deterministic renewal retry:** cerrado.",
+            "**#223 — trusted Repair/Immune provenance:** cerrado",
+            "**#227 — read-only authenticated provenance:** cerrado.",
         ):
-            self.assertIn(fragment, PLAN)
+            self.assertIn(fragment, LIVING)
 
         self.assertNotIn("#211 Factory Lab promotion provenance:** 🚧 pendiente", README)
         self.assertNotIn("#213 Growth/Pruning source evidence:** 🚧 pendiente", README)
@@ -77,10 +78,7 @@ class LivingIntegrationTests(unittest.TestCase):
 
     def test_final_provenance_hardening_is_documented_closed(self):
         combined = "\n".join((PLAN, README, LIVING))
-        self.assertIn(
-            "**#227** — provenance productivo read-only no fabricable por el caller: ✅ cerrado",
-            PLAN,
-        )
+        self.assertIn("#209–#227", PLAN)
         self.assertIn(
             "**#227 non-self-certifiable provenance:** ✅ cerrado",
             README,

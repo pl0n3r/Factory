@@ -327,47 +327,13 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 
 ---
 
-## TANDA 1
+## TANDAS 1 y 2 — historial archivado
 
-### Condor: producción en verde
-- Crítico: PR #205 (backup previo por PDO, Closes #200) destraba las migraciones de D-054 que dejaron `/`, `/health`, `/marcela-arias-tienda` y el centro de control en 500. Termínalo e intégralo; no abras otro frente sobre el backup.
-- Tras el deploy, verifica los 5 puntos de VERDE, incluyendo `/marcela-arias-tienda` y el centro de control.
-- Al terminar: comenta "🟢 PRODUCCIÓN EN VERDE" en Condor#1 con la evidencia de los 5 puntos y detente.
-
-### GrindFlow: producción en verde
-- Crítico: el Production Smoke (#121, #73). El usuario sintético ya se aprovisiona (#130, #132); termina el PR #133 (bootstrap OIDC) o el arreglo que falte hasta que el smoke pase. Si falta una variable en el `.env` de producción, documéntala en el PR y en #121.
-- Al terminar: comenta "🟢 PRODUCCIÓN EN VERDE" en GrindFlow#2 con la evidencia y detente.
-
-### BRVTAL: production green (English)
-- Production health is already OK; confirm the 5 GREEN points. The authenticated production smoke currently shows *skipped*: make it actually run and pass.
-- Finish #623 / PR #626 (slow DISCADMIN) if still open: release the PHP session lock on read-only requests, one shared `/auth`, memoized `information_schema` checks, paginated listings; record before/after dashboard timing.
-- When done: comment "🟢 PRODUCTION GREEN" on brvtal#533 with the evidence and stop.
-
-### factory: construir el kit
-- Orden: #14 arranque → #1 kit v1 completo (ci, deploy con rollback, release, observar, coordinación, etiquetas es/en, política con `decisiones.yml` y tope de 3 rondas) → #2 roles → #3 orquestador → #4 especificaciones ejecutables → #5 evaluación de agentes → #7 costos → #8 memoria (`lecciones/`) → #9 puertas humanas → #6, #10, #11, #12 → `template/`.
-- **Extrae de lo que ya funciona en pl0n3r/Condor** en vez de inventar. Todo configurable por inputs: stack (Symfony, Laravel, PHP plano), dominio, fuente de versión, idioma de etiquetas y fase `construccion|live`.
-- Acciones fijadas a SHA, mínimo privilegio, `concurrency` y filtros `if:`.
-- Mantén el README al día: la tabla "Estado actual" refleja lo que ya existe.
-- Publica `v1.0.0` cuando #1 a #14 estén cerrados y el template pase su propio CI.
-- **Paralelismo en factory:** no hay un cupo fijo de “segundo agente”. El trabajo no planificado conserva una sola línea activa; las tareas materializadas por el orquestador pueden coexistir únicamente con dependencias satisfechas y claims de paths disjuntos, y cada agente debe reevaluar el DAG si pierde una carrera de reserva.
-- Al terminar: comenta la guía de adopción del kit v1.0.0 en Condor#192, GrindFlow#129 y brvtal#630, y detente.
-
----
-
-## TANDA 2: adoptar el kit (Condor, GrindFlow, BRVTAL y FactoryRunner)
-
-Guía: el comentario de adopción en tu épico (Condor#192, GrindFlow#129, brvtal#630 y **FactoryRunner#1**).
-
-**FactoryRunner** adopta Factory v1 desde su primer PR funcional: Node.js 24/TypeScript, CI `stack: node`, coordinación, etiquetas, aceptación, roles, política, privacidad y release. ControlBot y AutoFactory también permanecen elegibles para la cola automática, aunque no formen parte del gate histórico de adopción de estos cuatro productos.
-
-1. Reemplaza CI, coordinación, etiquetas, release, observador/smoke y deploy locales por reusable workflows del kit (`uses: pl0n3r/factory/...@v1`) cuando la superficie exista. Elimina copias locales divergentes.
-2. Crea `decisiones.yml` con la lista de la sección 7.
-3. Adopta el núcleo común de AGENTES.md del kit y conserva solo la capa propia del proyecto.
-4. En Condor, GrindFlow y BRVTAL activa deploy con rollback, merge queue/auto-merge, métricas y monitoreo. En FactoryRunner activa CI Node, coordinación, release, métricas y health del runner; no inventes deploy de browser/runtime hasta que exista un target ejecutable.
-5. Cierra como resueltos por el kit: Condor #188 y #190; GrindFlow #123, #124 y #125; brvtal #624, #625 y #627; FactoryRunner #1 cuando su bootstrap y CI exacto estén integrados.
-6. Valida con un PR de prueba que pase el CI del kit y se integre. Condor, GrindFlow y BRVTAL deben terminar en producción validada o rollback automático. FactoryRunner debe terminar con CI Node exact-main, tests/build reproducibles, release versionada y cero incidentes; cuando tenga runtime desplegado, añade health/smoke exactos.
-
-Los cuatro productos solo terminan su adopción con evidencia publicada en su Roadmap/Issue canónico.
+**ARCHIVADO · ya cumplido · no aplicar.** Las tareas históricas de TANDA 1 y TANDA 2
+se conservan en [docs/archivo/plan-agentes-tandas-1-2.md](docs/archivo/plan-agentes-tandas-1-2.md)
+solo para auditoría. El estado vigente está en [ESTADO.md](ESTADO.md) y el gate
+operativo continúa definido por la sección 6 de este plan; no reabras ni ejecutes
+trabajo histórico desde el archivo.
 
 ---
 
@@ -387,47 +353,15 @@ Elige siempre el siguiente trabajo así: **incidente de producción > prioridad 
 
 ## 9. Living Software: ciclo operativo canónico
 
-Factory integra **Living Software a nivel de arquitectura y protocolo**. Esta integración no amplía autoridad, no sustituye puertas humanas y no autoriza promoción autónoma nueva por sí sola.
+Factory integra **Living Software a nivel de arquitectura y protocolo**. La
+arquitectura/protocolo Living Software está integrada y endurecida dentro de la
+autoridad ya existente; **no amplía autoridad**, **no sustituye puertas humanas**
+y no autoriza producción autónoma irrestricta.
 
-### Ciclo continuo
-
-El ciclo operativo de alto nivel es:
-
-`observe → remember → learn → propose → shadow → experiment → validate → adopt_or_reject → measure → prune → rollback`
-
-`adopt_or_reject` es la vista operativa del estado máquina `promote_or_reject` definido por Constitution/Evolution Engine. Adoptar significa aceptar una evolución **dentro de la autoridad ya existente**; nunca significa conceder permisos nuevos.
-
-Handoffs canónicos:
-
-1. **Project DNA** descubre señales verificables del software.
-2. **Context Compiler** limita el contexto de misión.
-3. **Definition-of-Done Compiler** deriva evidencia exigible.
-4. **Risk Compiler** deriva riesgo, blast radius y controles.
-5. **Fitness Engine** compara candidate vs baseline sin score mágico.
-6. **Evolution Engine** conserva lifecycle e historia append-only.
-7. **Autonomy Engine** solo reduce supervisión para authority class `operational` con Fitness/Risk recomputados desde inputs fuente.
-8. **Factory Lab** evalúa en shadow contra `stable`; no ejecuta promociones.
-9. **Experience Guardrails**, **Growth/Pruning** e **Immune/Repair** convierten experiencia en candidatos reversibles, sin reescribir historia ni Constitución.
-10. La promoción, cuando corresponda, usa evidencia canónica y las puertas humanas ya vigentes.
-
-### Autoridad humana y fail-closed
-
-Living Software **no cambia** las decisiones del dueño de la sección 7. Dinero, legal, datos reales/personales, borrado irreversible, publicación/live y cualquier otra puerta humana vigente continúan requiriendo su mecanismo canónico.
-
-Ante discrepancia entre documentación, evidencia canónica, Constitution, una decisión vigente o un hardening abierto, **gana la restricción más segura y se falla cerrado**. Un fingerprint declarado por el consumidor no reemplaza la recomputación desde inputs fuente cuando exista un validador canónico.
-
-### Estado de hardening de fronteras de evidencia
-
-La arquitectura/protocolo Living Software está integrada y endurecida; #227 cierra la última frontera de provenance caller-proof prevista para #143:
-
-- **#209** — Autonomy authority + evidencia canónica: ✅ cerrado; authority scope estructurado y Fitness/Risk se recomputan desde inputs fuente.
-- **#211** — Factory Lab promotion provenance: ✅ cerrado; la promoción revalida provenance y evidencia fuente antes de producir una decisión confiable.
-- **#213** — Growth/Pruning source evidence: ✅ cerrado; growth/pruning recompone candidatos desde evidencia fuente verificable.
-- **#215** — Repair human authority + immunity provenance: ✅ cerrado; Repair/Immune validan estructura, scope e integridad sin ampliar ejecución.
-- **#221** — retry de renovación v2: ✅ cerrado; successor determinista y revalidación de contrato/task/HEAD evitan sesiones stale.
-- **#223** — provenance confiable de Repair/Immune: ✅ cerrado en integridad/append-only, pero #227 corrige la procedencia autocertificable de stores caller-built.
-- **#227** — provenance productivo read-only no fabricable por el caller: ✅ cerrado; Repair/Immune solo aceptan readers autenticados/read-only emitidos por el composition root.
-
-Con #227 cerrado y sus AC verdes, **#143 puede cerrarse** declarando únicamente que la arquitectura/protocolo Living Software quedó integrada y endurecida dentro de la autoridad ya existente. **No significa producción autónoma irrestricta**, no convierte Repair o Promotion en ejecución automática y no elimina ninguna puerta humana.
-
-Dinero, legal, datos reales/personales, borrado irreversible, publicación/live y cualquier otra decisión reservada siguen requiriendo sus puertas humanas canónicas. Ante evidencia inválida, fuente no confiable o conflicto de autoridad, Living Software continúa fallando cerrado.
+El contrato, lifecycle, handoffs y el hardening histórico **#209–#227** viven en
+[docs/factory-living-software.md](docs/factory-living-software.md), que es la
+referencia canónica para ese detalle. `PLAN-AGENTES.md` conserva únicamente el
+límite operativo: dinero, legal, datos reales/personales, borrado irreversible y
+publicación/live siguen sujetos a sus puertas humanas vigentes. Ante evidencia
+inválida, fuente no confiable o conflicto de autoridad, Living Software
+**continúa fallando cerrado**.
