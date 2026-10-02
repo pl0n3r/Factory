@@ -15,15 +15,18 @@ El evento de merge es terminal para el gate `validar-pr`.
 
 - El caller canónico conserva `pull_request: closed`, porque `pr-event` todavía
   debe reconciliar la reserva y el estado.
-- El job `validar-pr` del caller solo invoca `operation: validate` cuando
-  `github.event.pull_request.merged != true`.
+- El caller usa `validar-pr-evento` como precondición: ese job solo completa
+  cuando `github.event.pull_request.merged != true`. `validar-pr` conserva
+  su condición legacy y depende de esa precondición, por lo que un merge no
+  llega a invocar `operation: validate`.
 - El reusable aplica la misma defensa: una llamada `validate` originada por un
   payload `pull_request` con `merged == true` queda en `skipped`.
 - Un cierre **sin merge** tiene `merged == false` y no recibe esta excepción.
 
 La defensa doble evita que un consumidor antiguo o un wiring parcial convierta
-un merge válido en un check rojo, sin convertir el estado `closed` por sí solo
-en autoridad para saltarse validaciones.
+un merge válido en un check rojo. Mantener la forma legacy de `validar-pr`
+preserva además la generación endurecida de callers bootstrap. El estado
+`closed` por sí solo nunca se convierte en autoridad para saltarse validaciones.
 
 ## Frontera de seguridad
 
