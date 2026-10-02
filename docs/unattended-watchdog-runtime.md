@@ -51,3 +51,12 @@ Antes de la primera escritura, el runtime relee Factory#767 con el parser canón
 3. revertir los cinco paths de Factory#769 si se retira la capacidad.
 
 No es necesario tocar 4B/4C para revertir este runtime.
+
+
+## Trabajo ready sin timestamp canónico
+
+El colector observa también `estado: disponible`. Si existe al menos un Issue
+ready pero GitHub no aporta un timestamp canónico de `ready_since`, el runtime
+no inventa edad ni fija `work_ready=false`: entrega evidencia incompleta a 4C
+y conserva `BLOCKED`/alerta fail-closed. Una futura fuente explícita puede
+cerrar esa frontera sin cambiar la política 4C.

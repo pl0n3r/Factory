@@ -492,10 +492,22 @@ def collect_github_input(
         cfg = normalize_config(config_payload)
         candidates: list[object] = []
         active_fronts: list[str] = []
+        ready_observed = False
         for issue in client.list_open_work_items():
             number = issue.get("number")
             if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
                 raise RuntimeValidationError("github_issue_invalid")
+            labels = issue.get("labels")
+            names = {
+                label.get("name")
+                for label in labels
+                if isinstance(labels, list)
+                and isinstance(label, dict)
+                and isinstance(label.get("name"), str)
+            }
+            if "estado: disponible" in names:
+                ready_observed = True
+                continue
             comments = client.list_issue_comments(number)
             projection = project_state_presence(
                 repository=client.repository,
@@ -522,6 +534,8 @@ def collect_github_input(
             if projection.status == "READY" and projection.state is not None:
                 candidates.append(projection)
 
+        if ready_observed:
+            return {"guard": guard_payload, "evidence": None}
         if len(candidates) != 1:
             return {"guard": guard_payload, "evidence": None}
 

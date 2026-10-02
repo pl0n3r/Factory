@@ -609,5 +609,39 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertEqual(fake.writes, [])
 
 
+    def test_ready_issue_without_canonical_ready_since_fails_closed(self):
+        class ReadyClient:
+            repository = "pl0n3r/Factory"
+
+            def list_open_work_items(self):
+                return [
+                    {"number": 769, "labels": [{"name": "estado: reservado"}]},
+                    {"number": 900, "labels": [{"name": "estado: disponible"}]},
+                ]
+
+            def list_issue_comments(self, issue_number):
+                raise AssertionError("ready work must block before STATE projection")
+
+            def get_branch_head(self, branch):
+                raise AssertionError("ready work must block before branch lookup")
+
+        runtime_input = collect_github_input(
+            ReadyClient(),
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        self.assertEqual(runtime_input["guard"]["action"], "BLOCKED")
+        self.assertIsNone(runtime_input["evidence"])
+        decision, plan = evaluate_runtime(
+            config(),
+            runtime_input["guard"],
+            runtime_input["evidence"],
+            {},
+        )
+        self.assertEqual(decision.action, "BLOCKED")
+        self.assertNotEqual(decision.action, "ALLOW")
+        self.assertGreaterEqual(len(plan.create), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
