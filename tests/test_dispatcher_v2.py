@@ -29,7 +29,7 @@ from scripts.adaptive_fencing import FencingContext, FencingDecision, evaluate_f
 from scripts.adaptive_replan import decide_replan
 from scripts.presence_contract import classify_presence
 from scripts.unattended_guards import GuardDecision
-from scripts.unattended_watchdog import DailySummary, WatchdogDecision
+from scripts.unattended_watchdog import DailySummary, WatchdogDecision, WatchdogIncident
 
 
 def work_item(**overrides):
@@ -1054,6 +1054,46 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(hardened["next_action"]["action"], "BLOCKED")
         self.assertIn("guard:synthetic-guard", hardened["next_action"]["reasons"])
 
+        reported_incident = WatchdogIncident(
+            code="reported:ops incident 42",
+            severity="S3",
+            fingerprint="e" * 64,
+            repeated=False,
+            reasons=("source:synthetic", "freshness:fresh"),
+        )
+        reported_watchdog = WatchdogDecision(
+            action="BLOCKED",
+            authority="unchanged",
+            incidents=(reported_incident,),
+            new_alert_fingerprints=("e" * 64,),
+            interrupt_owner=False,
+            daily_summary=DailySummary(
+                active_fronts=(),
+                state_freshness="fresh",
+                incidents=("S3:reported:ops incident 42",),
+                blockers=("reported:ops incident 42",),
+                human_gates=(),
+                integrated=(),
+                reverted=(),
+                next_actions=(),
+            ),
+            evidence_fingerprint="f" * 64,
+        )
+        compatible_code = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("ALLOW"),
+            unattended_watchdog=reported_watchdog,
+        )
+        self.assertEqual(compatible_code["next_action"]["action"], "BLOCKED")
+        self.assertIn(
+            "watchdog:reported:ops incident 42",
+            compatible_code["next_action"]["reasons"],
+        )
+
     def test_unattended_inconsistent_or_expanded_authority_fails_closed(self):
         presence = classify_presence(self.adaptive_snapshot())
 
@@ -1099,7 +1139,37 @@ class DispatcherV2Tests(unittest.TestCase):
                     ),
                     evidence_fingerprint="bad",
                 ),
-                "unattended_watchdog_evidence_invalid",
+                "unattended_watchdog_contract_incoherent",
+            ),
+            (
+                unattended_guard_decision("ALLOW"),
+                WatchdogDecision(
+                    action="ALLOW",
+                    authority="unchanged",
+                    incidents=(
+                        WatchdogIncident(
+                            code="reported:synthetic-s1",
+                            severity="S1",
+                            fingerprint="1" * 64,
+                            repeated=False,
+                            reasons=("source:synthetic", "freshness:fresh"),
+                        ),
+                    ),
+                    new_alert_fingerprints=("1" * 64,),
+                    interrupt_owner=True,
+                    daily_summary=DailySummary(
+                        active_fronts=(),
+                        state_freshness="fresh",
+                        incidents=("S1:reported:synthetic-s1",),
+                        blockers=("reported:synthetic-s1",),
+                        human_gates=(),
+                        integrated=(),
+                        reverted=(),
+                        next_actions=(),
+                    ),
+                    evidence_fingerprint="2" * 64,
+                ),
+                "unattended_watchdog_contract_incoherent",
             ),
         )
 
