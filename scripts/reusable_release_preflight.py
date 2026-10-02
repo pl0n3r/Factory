@@ -19,7 +19,7 @@ CONSUMERS = (
 SHA = re.compile(r"^[0-9a-f]{40}$")
 WF = re.compile(r"^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
 REF = re.compile(
-    r"^pl0n3r/factory/\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)@([^\\s]+)$", re.I
+    r"^pl0n3r/factory/\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)@([^\s]+)$", re.I
 )
 API_HOST = "api.github.com"
 RAW_HOST = "raw.githubusercontent.com"
