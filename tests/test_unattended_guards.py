@@ -101,6 +101,80 @@ class UnattendedGuardsTests(unittest.TestCase):
                 self.assertEqual(result.action, "BLOCKED")
                 self.assertIn(reason, result.reasons)
 
+    def test_breaker_subject_is_scope_aware(self):
+        for scope, subject in (("agent", "worker-1"), ("repo", "pl0n3r/Factory")):
+            with self.subTest(valid_scope=scope):
+                result = evaluate_unattended_guards(
+                    fence("keep", False),
+                    cfg(breakers={"health": {"scope": scope, "subject": subject, "threshold": 3}}),
+                    ev(),
+                    metrics(),
+                )
+                self.assertEqual(result.action, "ALLOW")
+
+        for scope, subject in (
+            ("agent", "pl0n3r/Factory"),
+            ("repo", "Factory"),
+            ("repo", "pl0n3r/Factory/extra"),
+        ):
+            with self.subTest(invalid_scope=scope, subject=subject):
+                result = evaluate_unattended_guards(
+                    fence("keep", False),
+                    cfg(breakers={"health": {"scope": scope, "subject": subject, "threshold": 3}}),
+                    ev(),
+                    metrics(),
+                )
+                self.assertEqual(result.action, "BLOCKED")
+                self.assertIn("invalid_breaker_subject", result.reasons)
+
+    def test_replan_pending_never_becomes_allow(self):
+        pending = evaluate_unattended_guards(fence("replan", True), cfg(), ev(), metrics())
+        self.assertEqual(
+            (pending.action, pending.pause_allowed, pending.authority),
+            ("PAUSE", True, "unchanged"),
+        )
+        self.assertIn("adaptive_replan_pending", pending.reasons)
+
+        stricter = evaluate_unattended_guards(
+            fence("replan", True), cfg(), ev(risk="high"), metrics()
+        )
+        self.assertEqual((stricter.action, stricter.pause_allowed), ("BLOCKED", False))
+        self.assertIn("high_risk_second_pass_required", stricter.reasons)
+
+    def test_invalid_types_fail_closed_without_exceptions(self):
+        bad_risk = evaluate_unattended_guards(
+            fence("keep", False), cfg(), ev(risk=[]), metrics()
+        )
+        self.assertEqual(bad_risk.action, "BLOCKED")
+        self.assertIn("invalid_risk", bad_risk.reasons)
+
+        bad_scope = evaluate_unattended_guards(
+            fence("keep", False),
+            cfg(breakers={"health": {"scope": [], "subject": "pl0n3r/Factory", "threshold": 3}}),
+            ev(),
+            metrics(),
+        )
+        self.assertEqual(bad_scope.action, "BLOCKED")
+        self.assertIn("invalid_breaker_scope", bad_scope.reasons)
+
+        mixed_config = cfg(
+            breakers={
+                "health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 3},
+                1: {"scope": "agent", "subject": "worker-1", "threshold": 3},
+            }
+        )
+        mixed_evidence = ev(
+            breakers={
+                "health": {"consecutive_failures": 0, "fresh": True, "consistent": True},
+                1: {"consecutive_failures": 0, "fresh": True, "consistent": True},
+            }
+        )
+        mixed = evaluate_unattended_guards(
+            fence("keep", False), mixed_config, mixed_evidence, metrics()
+        )
+        self.assertEqual(mixed.action, "BLOCKED")
+        self.assertIn("invalid_breaker_identifier", mixed.reasons)
+
     def test_usage_cost_and_parallelism_ceilings_never_infer_limits(self):
         for field, value in (("usage", 101), ("cost", 50.1), ("parallelism", 3)):
             with self.subTest(field=field):

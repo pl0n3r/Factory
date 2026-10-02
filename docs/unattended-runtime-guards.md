@@ -12,6 +12,7 @@ autoridad.
 `scripts/unattended_guards.py` recibe una `FencingDecision` ya calculada:
 
 - `fail_closed` siempre produce `BLOCKED`;
+- `replan` nunca se degrada a `ALLOW`: produce `PAUSE` si fencing permite la pausa y `BLOCKED` en caso contrario;
 - `PAUSE` solo existe si fencing ya trae `pause_allowed=true`;
 - si una guarda necesita pausa sin safe-point/preemptibility válido, produce
   `BLOCKED`;
@@ -24,7 +25,7 @@ Es una capa de seguridad, no un segundo dispatcher/coordinador.
 `ALLOW` exige configuración cerrada y explícita de:
 
 - `global_pause`;
-- al menos un breaker con `scope=agent|repo`, `subject` acotado (1–128 caracteres seguros) y `threshold=N` positivo explícito;
+- al menos un breaker con `scope=agent|repo`, `subject` explícito y `threshold=N` positivo: `agent` usa identidad sin `/`; `repo` usa exactamente `owner/repo`, con componentes acotados;
 - evidencia por breaker con `consecutive_failures`, `fresh` y `consistent`;
 - techos no negativos de `usage`, `cost` y `parallelism`;
 - mediciones correspondientes;
@@ -33,15 +34,16 @@ Es una capa de seguridad, no un segundo dispatcher/coordinador.
 
 El estado del breaker **no lo decide el caller**: el core deriva `closed` cuando
 `consecutive_failures < threshold` y `open` cuando es `>= threshold`.
-Threshold ausente/cero/no entero, scope distinto de `agent|repo`, subject inválido, evidencia
-ausente/no entera, `UNKNOWN`, stale o contradicción fallan cerrado. Nunca se
-infiere N, presupuesto, cuota, paralelismo ni freshness.
+Threshold ausente/cero/no entero, scope o subject inválidos, tipos no esperados,
+evidencia ausente/no entera, `UNKNOWN`, stale o contradicción fallan cerrado.
+Nunca se infiere N, presupuesto, cuota, paralelismo ni freshness.
 
 ## Decisiones
 
 - `ALLOW`: todas las guardas explícitas están satisfechas.
-- `PAUSE`: pausa global, breaker derivado abierto (N o más fallos consecutivos)
-  o techo superado, solo cuando fencing permite pausa segura.
+- `PAUSE`: pausa global, breaker derivado abierto, techo superado o `replan`
+  pendiente, solo cuando fencing ya permite pausa segura; un `replan` nunca se
+  degrada a `ALLOW`.
 - `BLOCKED`: falta configuración/evidencia/autoridad o la pausa necesaria no
   está permitida.
 
