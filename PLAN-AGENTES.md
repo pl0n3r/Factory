@@ -332,8 +332,9 @@ Si una regla escrita en un repo contradice esta lista, **gana esta lista**; corr
 **ARCHIVADO · ya cumplido · no aplicar.** Las tareas históricas de TANDA 1 y TANDA 2
 se conservan en [docs/archivo/plan-agentes-tandas-1-2.md](docs/archivo/plan-agentes-tandas-1-2.md)
 solo para auditoría. El estado vigente está en [ESTADO.md](ESTADO.md) y el gate
-operativo continúa definido por la sección 6 de este plan; no reabras ni ejecutes
-trabajo histórico desde el archivo.
+operativo continúa definido por la sección 6 de este plan. El gate histórico de
+TANDA 2 sigue siendo: Condor#192, GrindFlow#129, brvtal#630 y **FactoryRunner#1**.
+No reabras ni ejecutes trabajo histórico desde el archivo.
 
 ---
 
@@ -361,7 +362,7 @@ y no autoriza producción autónoma irrestricta.
 El contrato, lifecycle, handoffs y el hardening histórico **#209–#227** viven en
 [docs/factory-living-software.md](docs/factory-living-software.md), que es la
 referencia canónica para ese detalle. `PLAN-AGENTES.md` conserva únicamente el
-límite operativo: dinero, legal, datos reales/personales, borrado irreversible y
+límite operativo: Dinero, legal, datos reales/personales, borrado irreversible y
 publicación/live siguen sujetos a sus puertas humanas vigentes. Ante evidencia
 inválida, fuente no confiable o conflicto de autoridad, Living Software
 **continúa fallando cerrado**.
