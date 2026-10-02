@@ -14,6 +14,7 @@ CANONICAL_SOURCE_URL = "https://api.github.com/repos/pl0n3r/Factory/issues/767"
 CANONICAL_REPOSITORY_URL = "https://api.github.com/repos/pl0n3r/Factory"
 CANONICAL_ISSUE_NUMBER = 767
 CANONICAL_OWNER = "pl0n3r"
+MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-kill-switch\b")
 MARKER_RE = re.compile(
     r"<!--\s*factory-unattended-kill-switch\s+(\{.*?\})\s*-->",
     re.DOTALL,
@@ -26,6 +27,7 @@ class KillSwitchDecision:
     global_pause: bool
     reason: str
     source_url: str = CANONICAL_SOURCE_URL
+    authority: str = "unchanged"
 
 
 def _paused(reason: str) -> KillSwitchDecision:
@@ -52,12 +54,16 @@ def evaluate_unattended_kill_switch(issue_payload: object) -> KillSwitchDecision
     if not isinstance(body, str):
         return _paused("invalid_issue_body")
 
-    markers = MARKER_RE.findall(body)
-    if len(markers) != 1:
+    marker_starts = MARKER_START_RE.findall(body)
+    if len(marker_starts) != 1:
         return _paused("kill_switch_marker_count_invalid")
 
+    match = MARKER_RE.search(body)
+    if match is None:
+        return _paused("kill_switch_marker_invalid_syntax")
+
     try:
-        marker = json.loads(markers[0])
+        marker = json.loads(match.group(1))
     except (TypeError, json.JSONDecodeError):
         return _paused("kill_switch_marker_invalid_json")
 
