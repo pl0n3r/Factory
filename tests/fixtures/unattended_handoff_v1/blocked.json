@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "action": "BLOCKED",
+  "next_transition": "BLOCKED",
+  "authority": "unchanged",
+  "work_identity": null,
+  "work_class": null,
+  "freshness": "fresh",
+  "reasons": ["unattended_watchdog_blocked"],
+  "provenance": {
+    "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "dispatch_ref": "dispatcher:exact-snapshot",
+    "guard_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "watchdog_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "freshness": "fresh"
+  },
+  "incidents": ["state_stale"],
+  "interrupt_owner": true,
+  "permissions": {
+    "reserve": false,
+    "merge": false,
+    "deploy": false,
+    "spend": false,
+    "live": false
+  }
+}

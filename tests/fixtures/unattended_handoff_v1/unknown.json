@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "action": "BLOCKED",
+  "next_transition": "BLOCKED",
+  "authority": "unchanged",
+  "work_identity": null,
+  "work_class": null,
+  "freshness": "unknown",
+  "reasons": ["handoff_cycle_invalid"],
+  "provenance": null,
+  "incidents": [],
+  "interrupt_owner": null,
+  "permissions": {
+    "reserve": false,
+    "merge": false,
+    "deploy": false,
+    "spend": false,
+    "live": false
+  }
+}
