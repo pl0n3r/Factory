@@ -18,7 +18,7 @@ Una lección informa; no puede contradecir una decisión activa.
 
 ## Arranque de una sesión
 
-- **antes de cualquier mutación**, leer `https://api.github.com/repos/pl0n3r/Factory/issues/767` y validar el único marker `factory-unattended-kill-switch`; solo `RUNNING` permite continuar. `PAUSED`, UNKNOWN, lectura fallida o marker inválido/duplicado implican cero mutaciones y una única línea de estado al dueño. `user.login` valida al creador canónico del Issue, no la identidad del último editor del body;
+- **antes del primer comentario de despacho, `/tomar`, creación de rama, PR o escritura de código**, leer `https://api.github.com/repos/pl0n3r/Factory/issues/767` y validar el único marker `factory-unattended-kill-switch`; solo `RUNNING` permite continuar. `PAUSED`, `UNKNOWN`, lectura fallida o marker inválido/duplicado implican cero mutaciones y una única línea de estado al dueño. `user.login` valida al creador canónico del Issue, no la identidad del último editor del body;
 - obtener SHA exacto de `main`;
 - leer `decisiones.yml`;
 - leer `lecciones/` si existe, limitado al proyecto/tarea relevante;
