@@ -14,7 +14,9 @@ RISKS = {"low", "medium", "high", "UNKNOWN"}
 BREAKER_SCOPES = {"agent", "repo"}
 SENSITIVE = ("go_live", "spend", "irreversible", "real_data")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
-SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+SUBJECT_COMPONENT = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+AGENT_SUBJECT = re.compile(rf"^{SUBJECT_COMPONENT}$")
+REPO_SUBJECT = re.compile(rf"^{SUBJECT_COMPONENT}/{SUBJECT_COMPONENT}$")
 
 
 class GuardValidationError(ValueError):
@@ -78,7 +80,7 @@ def _normalize(config: object, evidence: object, metrics: object):
         {"breakers", "risk", "second_pass", "sensitive", "production_change", "backup_required", "backup_verified"},
         "evidence",
     )
-    if ev["risk"] not in RISKS:
+    if not isinstance(ev["risk"], str) or ev["risk"] not in RISKS:
         raise GuardValidationError("invalid_risk")
     sensitive = _exact(ev["sensitive"], set(SENSITIVE), "sensitive")
     if any(not isinstance(sensitive[key], bool) for key in SENSITIVE):
@@ -91,20 +93,21 @@ def _normalize(config: object, evidence: object, metrics: object):
         raise GuardValidationError("invalid_breakers")
     if set(breaker_cfg) != set(breaker_ev):
         raise GuardValidationError("breaker_evidence_mismatch")
+    if any(not isinstance(name, str) or not IDENTIFIER.fullmatch(name) for name in breaker_cfg):
+        raise GuardValidationError("invalid_breaker_identifier")
     clean_cfg, clean_ev = {}, {}
     for name in sorted(breaker_cfg):
-        if not isinstance(name, str) or not IDENTIFIER.fullmatch(name):
-            raise GuardValidationError("invalid_breaker_identifier")
         configured = _exact(
             breaker_cfg[name],
             {"scope", "subject", "threshold"},
             "breaker_config",
         )
         scope = configured["scope"]
-        if scope not in BREAKER_SCOPES:
+        if not isinstance(scope, str) or scope not in BREAKER_SCOPES:
             raise GuardValidationError("invalid_breaker_scope")
         subject = configured["subject"]
-        if not isinstance(subject, str) or not SUBJECT.fullmatch(subject):
+        subject_pattern = AGENT_SUBJECT if scope == "agent" else REPO_SUBJECT
+        if not isinstance(subject, str) or not subject_pattern.fullmatch(subject):
             raise GuardValidationError("invalid_breaker_subject")
         threshold = _positive_int(
             configured["threshold"],
@@ -220,5 +223,7 @@ def evaluate_unattended_guards(
         return _blocked("sensitive_authority_not_granted")
     if ev["production_change"] and ev["backup_required"] and ev["backup_verified"] is not True:
         return _blocked("required_backup_not_verified")
+    if fencing.action == "replan":
+        return _pause(fencing, "adaptive_replan_pending", payload)
 
     return _decision("ALLOW", False, ["guards_satisfied"], payload)
