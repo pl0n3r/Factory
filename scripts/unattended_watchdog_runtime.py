@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Callable
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from scripts.unattended_guards import GuardDecision, evaluate_unattended_guards
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
@@ -31,9 +31,8 @@ GUARD_FIELDS = frozenset(
     {"action", "authority", "pause_allowed", "reasons", "evidence_fingerprint"}
 )
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
-REPOSITORY_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
-)
+CANONICAL_REPOSITORY = "pl0n3r/Factory"
+REPOSITORY_API_PREFIX = "/repos/pl0n3r/Factory/"
 ALERT_MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-watchdog-alert\b")
 ALERT_MARKER_RE = re.compile(
     r"<!--\s*factory-unattended-watchdog-alert\s+(\{.*?\})\s*-->",
@@ -41,9 +40,10 @@ ALERT_MARKER_RE = re.compile(
 )
 ALERT_TITLE = "[AUTO][WATCHDOG]"
 API_HOST = "api.github.com"
+REPOSITORY_ROOT = os.path.realpath(str(Path(__file__).resolve().parents[1]))
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_PAGES = 10
-ACTIVE_WORK_LABELS = frozenset({"estado: reservado", "estado: en revisión"})
+ACTIVE_WORK_LABELS = frozenset({"estado: disponible", "estado: reservado", "estado: en revisión"})
 
 
 class RuntimeValidationError(ValueError):
@@ -280,6 +280,8 @@ def _https_json_request(
     payload: object | None,
 ) -> object:
     """Transport fijo a api.github.com; nunca acepta host dinámico."""
+    if not path.startswith(REPOSITORY_API_PREFIX):
+        raise RuntimeValidationError("github_path_outside_repository")
     body = None if payload is None else json.dumps(payload, separators=(",", ":"))
     headers = {
         "Accept": "application/vnd.github+json",
@@ -321,14 +323,14 @@ class GitHubIssueClient:
     ):
         if not isinstance(token, str) or not token:
             raise RuntimeValidationError("missing_github_token")
-        if not isinstance(repository, str) or REPOSITORY_RE.fullmatch(repository) is None:
+        if repository != CANONICAL_REPOSITORY:
             raise RuntimeValidationError("invalid_repository")
         self.token = token
-        self.repository = repository
+        self.repository = CANONICAL_REPOSITORY
         self._transport = request_json
 
     def _request(self, method: str, path: str, payload: object | None = None) -> object:
-        if not path.startswith(f"/repos/{self.repository}/"):
+        if not path.startswith(REPOSITORY_API_PREFIX):
             raise RuntimeValidationError("github_path_outside_repository")
         if self._transport is not None:
             return self._transport(method, path, payload)
@@ -337,7 +339,7 @@ class GitHubIssueClient:
     def get_issue(self, issue_number: int) -> dict[str, object]:
         if isinstance(issue_number, bool) or not isinstance(issue_number, int) or issue_number <= 0:
             raise RuntimeValidationError("invalid_issue_number")
-        payload = self._request("GET", f"/repos/{self.repository}/issues/{issue_number}")
+        payload = self._request("GET", f"{REPOSITORY_API_PREFIX}issues/{issue_number}")
         if not isinstance(payload, dict):
             raise RuntimeValidationError("github_issue_invalid")
         return payload
@@ -348,12 +350,14 @@ class GitHubIssueClient:
         for page in range(1, MAX_PAGES + 1):
             query = urlencode({"state": "open", "per_page": 100, "page": page})
             payload = self._request(
-                "GET", f"/repos/{self.repository}/issues?{query}"
+                "GET", f"{REPOSITORY_API_PREFIX}issues?{query}"
             )
             if not isinstance(payload, list):
                 raise RuntimeValidationError("github_issues_invalid")
             for issue in payload:
                 if not isinstance(issue, dict) or "pull_request" in issue:
+                    continue
+                if str(issue.get("title", "")).startswith(ALERT_TITLE):
                     continue
                 labels = issue.get("labels")
                 if not isinstance(labels, list):
@@ -377,7 +381,7 @@ class GitHubIssueClient:
         for page in range(1, MAX_PAGES + 1):
             query = urlencode({"per_page": 100, "page": page})
             payload = self._request(
-                "GET", f"/repos/{self.repository}/issues/{issue_number}/comments?{query}"
+                "GET", f"{REPOSITORY_API_PREFIX}issues/{issue_number}/comments?{query}"
             )
             if not isinstance(payload, list):
                 raise RuntimeValidationError("github_comments_invalid")
@@ -386,12 +390,13 @@ class GitHubIssueClient:
                 return result
         raise RuntimeValidationError("github_comment_listing_truncated")
 
-    def get_branch_head(self, branch: str) -> str:
-        """Resuelve el SHA real de la rama para bindear STATE al HEAD observado."""
-        if not isinstance(branch, str) or not branch:
-            raise RuntimeValidationError("invalid_branch")
+    def get_branch_head(self, issue_number: int) -> str:
+        """Resuelve exclusivamente trabajo/issue-N para un Issue validado."""
+        if isinstance(issue_number, bool) or not isinstance(issue_number, int) or issue_number <= 0:
+            raise RuntimeValidationError("invalid_issue_number")
+        branch = f"trabajo/issue-{issue_number}"
         payload = self._request(
-            "GET", f"/repos/{self.repository}/git/ref/heads/{quote(branch, safe='')}"
+            "GET", f"{REPOSITORY_API_PREFIX}git/ref/heads/{branch}"
         )
         if not isinstance(payload, dict) or not isinstance(payload.get("object"), dict):
             raise RuntimeValidationError("github_branch_invalid")
@@ -405,7 +410,7 @@ class GitHubIssueClient:
         for page in range(1, MAX_PAGES + 1):
             query = urlencode({"state": "all", "per_page": 100, "page": page})
             payload = self._request(
-                "GET", f"/repos/{self.repository}/issues?{query}"
+                "GET", f"{REPOSITORY_API_PREFIX}issues?{query}"
             )
             if not isinstance(payload, list):
                 raise RuntimeValidationError("github_issues_invalid")
@@ -430,7 +435,7 @@ class GitHubIssueClient:
     def create_alert(self, spec: AlertSpec) -> None:
         self._request(
             "POST",
-            f"/repos/{self.repository}/issues",
+            f"{REPOSITORY_API_PREFIX}issues",
             {
                 "title": f"{ALERT_TITLE} {spec.severity} {spec.fingerprint[:12]}",
                 "body": alert_body(spec),
@@ -441,7 +446,7 @@ class GitHubIssueClient:
     def reopen_alert(self, issue_number: int, spec: AlertSpec) -> None:
         self._request(
             "PATCH",
-            f"/repos/{self.repository}/issues/{issue_number}",
+            f"{REPOSITORY_API_PREFIX}issues/{issue_number}",
             {
                 "state": "open",
                 "title": f"{ALERT_TITLE} {spec.severity} {spec.fingerprint[:12]}",
@@ -453,7 +458,7 @@ class GitHubIssueClient:
     def close_alert(self, issue_number: int) -> None:
         self._request(
             "PATCH",
-            f"/repos/{self.repository}/issues/{issue_number}",
+            f"{REPOSITORY_API_PREFIX}issues/{issue_number}",
             {"state": "closed", "state_reason": "completed"},
         )
 
@@ -519,17 +524,15 @@ def collect_github_input(
                 reservation_stale_minutes=cfg["reservation_stale_minutes"],
             )
             if projection.state is not None:
-                branch = projection.state.get("branch")
-                if isinstance(branch, str) and branch:
-                    projection = project_state_presence(
-                        repository=client.repository,
-                        issue_number=number,
-                        comments=comments,
-                        now=now,
-                        state_stale_minutes=cfg["state_stale_minutes"],
-                        reservation_stale_minutes=cfg["reservation_stale_minutes"],
-                        branch_head_sha=client.get_branch_head(branch),
-                    )
+                projection = project_state_presence(
+                    repository=client.repository,
+                    issue_number=number,
+                    comments=comments,
+                    now=now,
+                    state_stale_minutes=cfg["state_stale_minutes"],
+                    reservation_stale_minutes=cfg["reservation_stale_minutes"],
+                    branch_head_sha=client.get_branch_head(number),
+                )
             if projection.state is not None:
                 active_fronts.append(str(projection.state["work_identity"]))
             if projection.status == "READY" and projection.state is not None:
@@ -566,14 +569,29 @@ def collect_github_input(
         return {"guard": guard_payload, "evidence": None}
 
 
+def _repository_json_path(path: str | None) -> Path | None:
+    """Canonicaliza y contiene toda lectura CLI dentro del root del repositorio."""
+    if not isinstance(path, str) or not path:
+        return None
+    candidate = os.path.realpath(os.path.join(REPOSITORY_ROOT, path))
+    try:
+        if os.path.commonpath([REPOSITORY_ROOT, candidate]) != REPOSITORY_ROOT:
+            return None
+    except ValueError:
+        return None
+    if not candidate.endswith(".json"):
+        return None
+    return Path(candidate)
+
+
 def read_json(path: str | None) -> object:
-    if not path:
+    safe_path = _repository_json_path(path)
+    if safe_path is None:
         return None
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        return json.loads(safe_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-
 
 def _plan_json(decision: WatchdogDecision, plan: AlertPlan) -> dict[str, object]:
     return {

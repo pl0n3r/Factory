@@ -14,6 +14,7 @@ from scripts.unattended_watchdog_runtime import (
     GitHubIssueClient,
     RuntimeValidationError,
     _https_json_request,
+    _repository_json_path,
     collect_github_input,
     evaluate_runtime,
     main as runtime_main,
@@ -345,8 +346,8 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                 self.issue_number = issue_number
                 return comments
 
-            def get_branch_head(self, requested_branch):
-                self.requested_branch = requested_branch
+            def get_branch_head(self, issue_number):
+                self.head_issue_number = issue_number
                 return head
 
         client = FakeClient()
@@ -369,7 +370,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             runtime_input["evidence"]["presence"]["capacity"]["freshness"],
             "unknown",
         )
-        self.assertEqual(client.requested_branch, branch)
+        self.assertEqual(client.head_issue_number, 769)
 
         decision, plan = evaluate_runtime(
             config(),
@@ -409,6 +410,19 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         stale_runtime_alert = next(
             item for item in stale_plan.create if item.code == "state_stale"
         )
+        current = {
+            item.fingerprint: {"number": index + 80, "state": "open"}
+            for index, item in enumerate(stale_plan.create)
+        }
+        repeated_decision, repeated_plan = evaluate_runtime(
+            config(),
+            stale_input["guard"],
+            stale_input["evidence"],
+            current,
+        )
+        self.assertEqual(repeated_decision.action, "BLOCKED")
+        self.assertEqual(repeated_plan.create, ())
+        self.assertEqual(repeated_plan.close, ())
 
         comments[1]["body"] = (
             "<!-- factory-state "
@@ -428,15 +442,10 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             config(),
             resolved_input["guard"],
             resolved_input["evidence"],
-            {
-                stale_runtime_alert.fingerprint: {
-                    "number": 88,
-                    "state": "open",
-                }
-            },
+            current,
         )
         self.assertEqual(resolved_decision.action, "BLOCKED")
-        self.assertEqual(resolved_plan.close, (88,))
+        self.assertEqual(resolved_plan.close, (current[stale_runtime_alert.fingerprint]["number"],))
 
 
     def test_owned_alert_rejects_malformed_duplicate_marker(self):
@@ -484,10 +493,20 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             if "/issues?" in path:
                 return [
                     {
+                        "number": 700,
+                        "title": f"{ALERT_TITLE} S1 own",
+                        "labels": [{"name": "estado: disponible"}],
+                    },
+                    {
                         "number": 769,
                         "title": "runtime",
                         "labels": [{"name": "estado: reservado"}],
-                    }
+                    },
+                    {
+                        "number": 900,
+                        "title": "ready work",
+                        "labels": [{"name": "estado: disponible"}],
+                    },
                 ]
             if method == "GET":
                 return {"number": 767}
@@ -496,8 +515,8 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
         self.assertEqual(client.get_issue(767)["number"], 767)
         self.assertEqual(client.list_issue_comments(769), [])
-        self.assertEqual(client.get_branch_head("trabajo/issue-769"), "a" * 40)
-        self.assertEqual(len(client.list_open_work_items()), 1)
+        self.assertEqual(client.get_branch_head(769), "a" * 40)
+        self.assertEqual([item["number"] for item in client.list_open_work_items()], [769, 900])
         self.assertEqual(
             client.list_owned_alerts(),
             {fingerprint: {"number": 7, "state": "open"}},
@@ -521,6 +540,8 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             GitHubIssueClient("", "pl0n3r/Factory")
         with self.assertRaises(RuntimeValidationError):
             GitHubIssueClient("token", "bad repo")
+        with self.assertRaises(RuntimeValidationError):
+            GitHubIssueClient("token", "pl0n3r/other")
 
     def test_fixed_host_transport_success_and_failures(self):
         class Response:
@@ -558,6 +579,17 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(result, {"ok": True})
             self.assertEqual(Connection.seen[-1][0], "api.github.com")
+
+            with self.assertRaisesRegex(
+                RuntimeValidationError,
+                "github_path_outside_repository",
+            ):
+                _https_json_request(
+                    "token",
+                    "GET",
+                    "/repos/pl0n3r/other/issues/1",
+                    None,
+                )
 
             Connection.response = Response(status=500)
             with self.assertRaisesRegex(
@@ -615,6 +647,16 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         config_path = ROOT / "config" / "unattended-watchdog.json"
         self.assertEqual(read_json(str(config_path)), config())
         self.assertIsNone(read_json("/definitely/missing/watchdog.json"))
+
+        self.assertEqual(read_json("config/unattended-watchdog.json"), config())
+        self.assertIsNone(read_json("../../etc/passwd"))
+        self.assertIsNone(read_json("PLAN-AGENTES.md"))
+        self.assertIsNone(_repository_json_path(""))
+        with patch(
+            "scripts.unattended_watchdog_runtime.os.path.commonpath",
+            side_effect=ValueError,
+        ):
+            self.assertIsNone(_repository_json_path("config/unattended-watchdog.json"))
 
         class PausedClient:
             repository = "pl0n3r/Factory"
@@ -675,7 +717,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                 ]
 
             def list_issue_comments(self, issue_number):
-                raise AssertionError("ready work must block before STATE projection")
+                return []
 
             def get_branch_head(self, branch):
                 raise AssertionError("ready work must block before branch lookup")

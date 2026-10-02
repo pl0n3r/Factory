@@ -26,7 +26,7 @@ No existen defaults ocultos.
 
 El core `scripts/unattended_watchdog.py` sigue puro y sin I/O.
 
-El runtime acepta un JSON opcional con `--input` para pruebas/ejecución offline. Sin `--input`, el workflow usa GitHub en modo read-only: lista frentes `reservado/en revisión`, lee sus comentarios y delega la proyección STATE/Presence en `scripts/unattended_state_source.py` (#775); si el STATE declara rama, resuelve además su HEAD real y exige binding exacto. Si no existe una única fuente activa coherente, la entrada queda inválida y el resultado es **BLOCKED** con alerta explícita. Nunca se transforma ausencia de evidencia en ALLOW.
+El runtime acepta un JSON opcional con `--input` para pruebas/ejecución offline. Tanto `--config` como `--input` se canonicalizan con `realpath` y solo pueden resolver archivos `.json` contenidos dentro del root de Factory; traversal, rutas absolutas externas y escapes por symlink fallan cerrado. Sin `--input`, el workflow usa GitHub en modo read-only: lista frentes `reservado/en revisión`, lee sus comentarios y delega la proyección STATE/Presence en `scripts/unattended_state_source.py` (#775); si el STATE declara rama, resuelve además su HEAD real y exige binding exacto. Si no existe una única fuente activa coherente, la entrada queda inválida y el resultado es **BLOCKED** con alerta explícita. Nunca se transforma ausencia de evidencia en ALLOW.
 
 Todavía no existe una fuente runtime canónica para fencing/4B. En vez de fabricar un `GuardDecision(ALLOW)`, el adaptador llama al core `evaluate_unattended_guards()` con fencing ausente y consume su `BLOCKED` canónico. La Presence proveniente de #775 conserva heartbeat/capacidad en `UNKNOWN`, por lo que 4C alerta esa falta de evidencia hasta que exista una señal explícita; timestamps GitHub no se reinterpretan como heartbeat ni capacidad.
 
@@ -42,7 +42,7 @@ Por seguridad, una alerta previa solo se reconcilia como resuelta cuando 4C logr
 
 El runtime no edita/cierra Issues ajenos, PRs, releases ni reservas. La búsqueda incluye alertas propias abiertas y cerradas: si un fingerprint resuelto reaparece, se reabre la misma Issue en vez de crear un duplicado histórico.
 
-Antes de la primera escritura, el runtime relee Factory#767 con el parser canónico del kill switch. Cualquier estado distinto de `RUNNING`, lectura inválida o marker ambiguo produce cero mutaciones.
+El transporte queda fijado a `api.github.com` y al repositorio exacto `pl0n3r/Factory`; el HEAD solo se consulta como `trabajo/issue-N` derivado de un número validado. Antes de la primera escritura, el runtime relee Factory#767 con el parser canónico del kill switch. Cualquier estado distinto de `RUNNING`, lectura inválida o marker ambiguo produce cero mutaciones.
 
 ## Reversión
 
