@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import unittest
 
-from scripts.unattended_watchdog_runtime import evaluate_runtime
+from scripts.unattended_watchdog_runtime import evaluate_runtime, parse_owned_alert
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -183,6 +183,33 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                 self.assertEqual(plan.close, ())
 
     def test_runtime_cases_cover_valid_missing_invalid_repeat_and_resolution(self):
+        fingerprint = "b" * 64
+        owned = {
+            "number": 9,
+            "title": f"[AUTO][WATCHDOG] S3 {fingerprint[:12]}",
+            "body": (
+                '<!-- factory-unattended-watchdog-alert '
+                f'{{"fingerprint":"{fingerprint}","version":1}} -->'
+            ),
+            "user": {"login": "github-actions[bot]"},
+        }
+        self.assertEqual(parse_owned_alert(owned), (fingerprint, 9))
+        self.assertIsNone(parse_owned_alert({**owned, "user": {"login": "other"}}))
+        self.assertIsNone(
+            parse_owned_alert({**owned, "body": owned["body"] + "\n" + owned["body"]})
+        )
+        self.assertIsNone(
+            parse_owned_alert(
+                {
+                    **owned,
+                    "body": (
+                        '<!-- factory-unattended-watchdog-alert '
+                        f'{{"version":true,"fingerprint":"{fingerprint}"}} -->'
+                    ),
+                }
+            )
+        )
+
         valid_decision, valid = evaluate_runtime(
             config(), guard(), evidence(), {}
         )
