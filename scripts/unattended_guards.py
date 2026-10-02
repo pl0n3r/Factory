@@ -8,7 +8,7 @@ import json
 import math
 import re
 
-from scripts.adaptive_fencing import FencingDecision
+from scripts.adaptive_fencing import FencingDecision, fence_global_idle
 
 RISKS = {"low", "medium", "high", "UNKNOWN"}
 BREAKER_SCOPES = {"agent", "repo"}
@@ -162,6 +162,43 @@ def _pause(fencing: FencingDecision, reason: str, payload: object) -> GuardDecis
     if fencing.pause_allowed:
         return _decision("PAUSE", True, [reason], payload)
     return _decision("BLOCKED", False, [reason, "adaptive_pause_not_allowed"], payload)
+
+
+def evaluate_global_idle_guard(global_idle: object) -> GuardDecision:
+    """Evalúa 4B para idle global probado sin inventar Presence ni autoridad."""
+    fencing = fence_global_idle(global_idle)
+    if fencing.action != "keep":
+        return _blocked("global_idle_fencing_fail_closed")
+    return evaluate_unattended_guards(
+        fencing,
+        {
+            "global_pause": False,
+            "breakers": {
+                "inventory": {
+                    "scope": "repo",
+                    "subject": "pl0n3r/Factory",
+                    "threshold": 1,
+                }
+            },
+            "ceilings": {"usage": 0, "cost": 0.0, "parallelism": 0},
+        },
+        {
+            "breakers": {
+                "inventory": {
+                    "consecutive_failures": 0,
+                    "fresh": True,
+                    "consistent": True,
+                }
+            },
+            "risk": "low",
+            "second_pass": False,
+            "sensitive": {key: False for key in SENSITIVE},
+            "production_change": False,
+            "backup_required": False,
+            "backup_verified": None,
+        },
+        {"usage": 0, "cost": 0.0, "parallelism": 0},
+    )
 
 
 def evaluate_unattended_guards(
