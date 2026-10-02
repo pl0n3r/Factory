@@ -18,6 +18,7 @@ from scripts.dispatcher_v2 import (
     classify_readiness,
     direction_gate_trigger,
     idle_time_metric,
+    no_work_proof,
     dispatch_record,
     dispatch_signature,
     materialize_direction_leaves,
@@ -403,6 +404,172 @@ class DispatcherV2Tests(unittest.TestCase):
                 finished_at="2026-10-01T20:10:00Z",
                 next_dispatch_at="2026-10-01T20:07:00Z",
             )
+
+    def test_blocked_incident_with_live_blocker_does_not_preempt_dispatch(self):
+        blocked = Candidate(
+            key="pl0n3r/AutoFactory#70",
+            priority="critical",
+            incident=True,
+            blocked=True,
+        )
+        ready = Candidate(
+            key="pl0n3r/Condor#ready",
+            priority="high",
+        )
+
+        selected = select_next([blocked, ready])
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.key, "pl0n3r/Condor#ready")
+        self.assertIn(
+            "blocked_without_safe_fallback",
+            classify_readiness(blocked).reasons,
+        )
+
+    def test_foreign_factory_lease_skips_to_available_condor_candidate(self):
+        foreign = Candidate(
+            key="pl0n3r/Factory#foreign",
+            priority="critical",
+            incompatible_reservation=True,
+        )
+        condor = Candidate(
+            key="pl0n3r/Condor#ready",
+            priority="high",
+        )
+
+        selected = select_next([foreign, condor])
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.key, "pl0n3r/Condor#ready")
+        self.assertIn(
+            "incompatible_reservation",
+            classify_readiness(foreign).reasons,
+        )
+
+    def test_no_work_requires_fresh_seven_repo_inventory_reasons_and_final_recheck(self):
+        repositories = (
+            "pl0n3r/Factory",
+            "pl0n3r/Condor",
+            "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal",
+            "pl0n3r/ControlBot",
+            "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        )
+        inventory = {repo: () for repo in repositories}
+        reasons = {repo: "sin trabajo ejecutable" for repo in repositories}
+
+        proof = no_work_proof(
+            initial_inventory=inventory,
+            reasons=reasons,
+            final_inventory=dict(inventory),
+        )
+
+        self.assertTrue(proof["valid"])
+        self.assertEqual(proof["reason"], "no_work_verified")
+        self.assertEqual(proof["repository_count"], 7)
+        self.assertEqual(
+            proof["initial_fingerprint"],
+            proof["final_fingerprint"],
+        )
+        self.assertEqual(set(proof["reasons"]), set(repositories))
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "exactly the seven canonical repositories",
+        ):
+            no_work_proof(
+                initial_inventory={repo: () for repo in repositories[:-1]},
+                reasons=reasons,
+                final_inventory=inventory,
+            )
+        with self.assertRaisesRegex(
+            ValueError,
+            "one reason per canonical repository",
+        ):
+            no_work_proof(
+                initial_inventory=inventory,
+                reasons={repo: "ok" for repo in repositories[:-1]},
+                final_inventory=inventory,
+            )
+        bad_reasons = dict(reasons)
+        bad_reasons["pl0n3r/Factory"] = " "
+        with self.assertRaisesRegex(ValueError, "non-empty reasons"):
+            no_work_proof(
+                initial_inventory=inventory,
+                reasons=bad_reasons,
+                final_inventory=inventory,
+            )
+
+    def test_inventory_change_forces_dispatch_reevaluation_before_no_work(self):
+        repositories = (
+            "pl0n3r/Factory",
+            "pl0n3r/Condor",
+            "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal",
+            "pl0n3r/ControlBot",
+            "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        )
+        initial = {repo: () for repo in repositories}
+        final = dict(initial)
+        final["pl0n3r/Condor"] = ("pl0n3r/Condor#427",)
+        reasons = {repo: "sin trabajo ejecutable" for repo in repositories}
+
+        proof = no_work_proof(
+            initial_inventory=initial,
+            reasons=reasons,
+            final_inventory=final,
+        )
+
+        self.assertFalse(proof["valid"])
+        self.assertEqual(
+            proof["reason"],
+            "inventory_changed_requires_reevaluation",
+        )
+        self.assertNotEqual(
+            proof["initial_fingerprint"],
+            proof["final_fingerprint"],
+        )
+
+        occupied = dict(initial)
+        occupied["pl0n3r/FactoryRunner"] = ("pl0n3r/FactoryRunner#158",)
+        proof = no_work_proof(
+            initial_inventory=occupied,
+            reasons=reasons,
+            final_inventory=dict(occupied),
+        )
+        self.assertFalse(proof["valid"])
+        self.assertEqual(proof["reason"], "available_work_present")
+
+        malformed = dict(initial)
+        malformed["pl0n3r/Factory"] = "not-a-collection"
+        with self.assertRaisesRegex(ValueError, "entries must be collections"):
+            no_work_proof(
+                initial_inventory=malformed,
+                reasons=reasons,
+                final_inventory=initial,
+            )
+
+    def test_foreign_reservation_is_skipped_without_overlap_comment(self):
+        foreign = Candidate(
+            key="pl0n3r/Factory#foreign",
+            priority="critical",
+            incompatible_reservation=True,
+        )
+        ready = Candidate(
+            key="pl0n3r/GrindFlow#ready",
+            priority="high",
+        )
+
+        record = dispatch_record([foreign, ready])
+
+        self.assertEqual(record["selected"], "pl0n3r/GrindFlow#ready")
+        self.assertEqual(
+            record["excluded"]["pl0n3r/Factory#foreign"],
+            ["incompatible_reservation"],
+        )
+        self.assertNotIn("comment", record)
 
     def test_product_direction_trigger_covers_all_repos_when_everything_is_blocked(self):
         repositories = (
