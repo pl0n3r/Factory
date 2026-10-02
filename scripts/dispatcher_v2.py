@@ -207,6 +207,33 @@ class DirectionGateInstance:
     gate_key: str
 
 
+OWNER_AUTONOMY_SOURCE_ISSUE = 796
+OWNER_AUTONOMY_RUNWAY_FLOOR = 3
+OWNER_AUTONOMY_RISKS = frozenset({"low", "medium", "high"})
+
+
+@dataclass(frozen=True)
+class OwnerAutonomyContext:
+    """Evidencia explícita para aplicar D-068 sin fabricar aprobación humana."""
+
+    kill_switch_running: bool | None
+    production_green: bool | None
+    risk: str | None
+    second_role_reviewed: bool | None
+    go_live: bool | None
+    spend_or_purchase: bool | None
+    paid_provider: bool | None
+    backblaze_real: bool | None
+    real_customer_data: bool | None
+    secrets_or_credentials: bool | None
+    destructive_or_irreversible: bool | None
+    backup_required_without_verified: bool | None
+    grindflow_scope_choice: bool | None
+    legal_or_privacy_gate: bool | None
+    acceptance_executable: bool | None
+    source_issue: int = OWNER_AUTONOMY_SOURCE_ISSUE
+
+
 def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, object]:
     if proposal.repository_ref not in PRODUCT_DIRECTION_REPOS:
         raise ValueError("product direction only applies to canonical product-direction repos")
@@ -353,6 +380,107 @@ def _direction_gate(proposal: DirectionProposal) -> dict[str, object]:
         "marker": "<!-- factory-human-gate " + gate_json + " -->",
         "proposal": normalized,
         "proposal_sha256": proposal_sha256,
+    }
+
+
+def evaluate_owner_autonomy(
+    proposal: DirectionProposal,
+    context: OwnerAutonomyContext,
+) -> dict[str, object]:
+    """Evalúa D-068 con evidencia explícita y falla cerrado ante UNKNOWN."""
+
+    expected = _direction_gate(proposal)
+    proposal_sha256 = str(expected["proposal_sha256"])
+    common = {
+        "source_issue": context.source_issue,
+        "proposal_sha256": proposal_sha256,
+        "authority": "owner_permanent_scoped",
+    }
+    if context.source_issue != OWNER_AUTONOMY_SOURCE_ISSUE:
+        return {**common, "action": "blocked", "reason": "owner_authorization_source_invalid"}
+    if context.kill_switch_running is not True:
+        return {**common, "action": "blocked", "reason": "kill_switch_not_running"}
+    if context.production_green is not True:
+        return {**common, "action": "blocked", "reason": "production_not_green"}
+    if context.risk not in OWNER_AUTONOMY_RISKS:
+        return {**common, "action": "blocked", "reason": "risk_unknown"}
+    if context.risk == "high" and context.second_role_reviewed is not True:
+        return {**common, "action": "blocked", "reason": "second_role_review_required"}
+
+    human_only = {
+        "go_live": context.go_live,
+        "spend_or_purchase": context.spend_or_purchase,
+        "paid_provider": context.paid_provider,
+        "backblaze_real": context.backblaze_real,
+        "real_customer_data": context.real_customer_data,
+        "secrets_or_credentials": context.secrets_or_credentials,
+        "destructive_or_irreversible": context.destructive_or_irreversible,
+        "backup_required_without_verified": context.backup_required_without_verified,
+        "grindflow_scope_choice": context.grindflow_scope_choice,
+        "legal_or_privacy_gate": context.legal_or_privacy_gate,
+    }
+    human_reasons = []
+    for name, value in human_only.items():
+        if value is True:
+            human_reasons.append(name)
+        elif value is not False:
+            human_reasons.append(f"{name}_unknown")
+    if context.acceptance_executable is not True:
+        human_reasons.append("acceptance_not_executable")
+    if human_reasons:
+        return {
+            **common,
+            "action": "human_gate",
+            "reason": "outside_permanent_authorization",
+            "human_reasons": tuple(sorted(human_reasons)),
+        }
+
+    audit_comment = (
+        "Materialización bajo autorización permanente del dueño "
+        f"(#{OWNER_AUTONOMY_SOURCE_ISSUE}) · proposal_sha256={proposal_sha256}"
+    )
+    return {
+        **common,
+        "action": "auto_materialize",
+        "option": "A",
+        "version": 1,
+        "audit_comment": audit_comment,
+    }
+
+
+def runway_floor_status(
+    eligible_leaf_count: int,
+    *,
+    explicit_reason: str | None = None,
+) -> dict[str, object]:
+    """D-068: mantiene tres hojas o exige una causa explícita y auditable."""
+
+    if (
+        isinstance(eligible_leaf_count, bool)
+        or not isinstance(eligible_leaf_count, int)
+        or eligible_leaf_count < 0
+    ):
+        raise ValueError("eligible leaf count must be a non-negative integer")
+    reason = explicit_reason.strip() if isinstance(explicit_reason, str) else ""
+    if eligible_leaf_count >= OWNER_AUTONOMY_RUNWAY_FLOOR:
+        return {
+            "compliant": True,
+            "eligible_leaf_count": eligible_leaf_count,
+            "target": OWNER_AUTONOMY_RUNWAY_FLOOR,
+            "reason": "runway_floor_satisfied",
+        }
+    if reason:
+        return {
+            "compliant": True,
+            "eligible_leaf_count": eligible_leaf_count,
+            "target": OWNER_AUTONOMY_RUNWAY_FLOOR,
+            "reason": reason,
+        }
+    return {
+        "compliant": False,
+        "eligible_leaf_count": eligible_leaf_count,
+        "target": OWNER_AUTONOMY_RUNWAY_FLOOR,
+        "reason": "runway_below_floor_without_explicit_reason",
     }
 
 
@@ -686,6 +814,7 @@ def work_ladder(
     direction_proposals: Iterable[DirectionProposal] = (),
     existing_gate_keys: Iterable[str] = (),
     known_proposal_sha256s: Iterable[str] = (),
+    owner_autonomy_contexts: dict[str, OwnerAutonomyContext] | None = None,
     active_tranche: int | None = None,
     active_filler_count: int = 0,
     max_filler_parallel: int = 2,
@@ -783,14 +912,18 @@ def work_ladder(
         direction_proposals,
         key=lambda value: value.repository_ref,
     ):
+        autonomy_context = (
+            owner_autonomy_contexts or {}
+        ).get(proposal.repository_ref)
         trigger = direction_gate_trigger(
             proposal,
             items,
             existing_gate_keys=gate_keys,
             known_proposal_sha256s=proposal_hashes,
+            owner_autonomy_context=autonomy_context,
             active_tranche=active_tranche,
         )
-        if trigger["action"] == "open_gate":
+        if trigger["action"] in {"open_gate", "materialize_authorized"}:
             return {
                 "step": "product_direction",
                 "work": {
@@ -869,6 +1002,7 @@ def direction_gate_trigger(
     *,
     existing_gate_keys: Iterable[str] = (),
     known_proposal_sha256s: Iterable[str] = (),
+    owner_autonomy_context: OwnerAutonomyContext | None = None,
     eligible_leaf_threshold: int = PRODUCT_DIRECTION_ELIGIBLE_LEAF_THRESHOLD,
     active_tranche: int | None = None,
 ) -> dict[str, object]:
@@ -920,6 +1054,41 @@ def direction_gate_trigger(
             "eligible_leaf_threshold": eligible_leaf_threshold,
         }
 
+    if owner_autonomy_context is not None:
+        authorization = evaluate_owner_autonomy(proposal, owner_autonomy_context)
+        if authorization["action"] == "blocked":
+            return {
+                "action": "blocked",
+                "materialize_leaves": False,
+                "reason": authorization["reason"],
+                "gate_key": key,
+                "proposal_sha256": result["proposal_sha256"],
+                "eligible_leaf_count": eligible_leaf_count,
+                "eligible_leaf_threshold": eligible_leaf_threshold,
+                "authorization": authorization,
+            }
+        if authorization["action"] == "auto_materialize":
+            return {
+                "action": "materialize_authorized",
+                "materialize_leaves": True,
+                "gate_key": key,
+                "proposal": result["proposal"],
+                "proposal_sha256": result["proposal_sha256"],
+                "eligible_leaf_count": eligible_leaf_count,
+                "eligible_leaf_threshold": eligible_leaf_threshold,
+                "authorization": authorization,
+                "audit_comment": authorization["audit_comment"],
+            }
+        if authorization["action"] == "human_gate":
+            return {
+                "action": "open_gate",
+                "materialize_leaves": False,
+                "eligible_leaf_count": eligible_leaf_count,
+                "eligible_leaf_threshold": eligible_leaf_threshold,
+                "authorization": authorization,
+                **result,
+            }
+
     return {
         "action": "open_gate",
         "materialize_leaves": False,
@@ -934,6 +1103,7 @@ def _direction_leaf_body(
     repository_ref: str,
     objective: str,
     leaf: dict[str, object],
+    authorization_note: str | None = None,
 ) -> str:
     """Construye un contrato de aceptación canónico antes de publicar el leaf."""
     criteria = []
@@ -965,8 +1135,13 @@ def _direction_leaf_body(
         "### Contexto\n\n"
         f"Leaf `{leaf['key']}` del tramo product-direction aprobado para "
         f"`{repository_ref}`. Objetivo del tramo: {objective} "
-        f"Dependencias declaradas: {dependency_text}.\n\n"
-        "### Alcance\n\n"
+        f"Dependencias declaradas: {dependency_text}.\n"
+        + (
+            f"Autorización: {authorization_note}\n"
+            if authorization_note is not None
+            else ""
+        )
+        + "\n### Alcance\n\n"
         f"Implementar exclusivamente `{leaf['title']}` conforme a la propuesta "
         "aprobada y a sus criterios ejecutables.\n\n"
         "### Fuera de alcance\n\n"
@@ -985,22 +1160,35 @@ def _direction_leaf_body(
 def materialize_direction_leaves(
     proposal: DirectionProposal,
     *,
-    decision_evidence: dict[str, object] | None,
+    decision_evidence: dict[str, object] | None = None,
+    owner_autonomy_context: OwnerAutonomyContext | None = None,
 ) -> tuple[dict[str, object], ...]:
-    """Materializa solo con journal v2 y body prevalidado por aceptación."""
-    if decision_evidence is None:
-        return ()
-    if (
-        set(decision_evidence) != {"gate_sha256", "option", "version"}
-        or decision_evidence.get("version") != 2
-        or decision_evidence.get("option") not in {"A", "B"}
-    ):
-        raise ValueError("direction decision evidence is invalid")
+    """Materializa con journal humano v2 o provenance D-068, nunca ambos."""
+
+    if decision_evidence is not None and owner_autonomy_context is not None:
+        raise ValueError("direction materialization accepts only one authority source")
+
     expected = _direction_gate(proposal)
-    if decision_evidence.get("gate_sha256") != expected["gate_sha256"]:
-        raise ValueError("direction decision evidence does not match proposal gate")
-    if decision_evidence["option"] == "B":
-        return ()
+    authorization_note: str | None = None
+    if owner_autonomy_context is not None:
+        authorization = evaluate_owner_autonomy(proposal, owner_autonomy_context)
+        if authorization["action"] != "auto_materialize":
+            return ()
+        authorization_note = str(authorization["audit_comment"])
+    else:
+        if decision_evidence is None:
+            return ()
+        if (
+            set(decision_evidence) != {"gate_sha256", "option", "version"}
+            or decision_evidence.get("version") != 2
+            or decision_evidence.get("option") not in {"A", "B"}
+        ):
+            raise ValueError("direction decision evidence is invalid")
+        if decision_evidence.get("gate_sha256") != expected["gate_sha256"]:
+            raise ValueError("direction decision evidence does not match proposal gate")
+        if decision_evidence["option"] == "B":
+            return ()
+
     normalized = expected["proposal"]
     materialized = []
     for leaf in normalized["leaves"]:
@@ -1008,6 +1196,7 @@ def materialize_direction_leaves(
             repository_ref=str(normalized["repository_ref"]),
             objective=str(normalized["objective"]),
             leaf=leaf,
+            authorization_note=authorization_note,
         )
         parse_contract(body)
         materialized.append(
@@ -1016,6 +1205,14 @@ def materialize_direction_leaves(
                 "repository_ref": normalized["repository_ref"],
                 "body": body,
                 "state": "blocked" if leaf["depends_on"] else "available",
+                "authorization": (
+                    {
+                        "source_issue": OWNER_AUTONOMY_SOURCE_ISSUE,
+                        "proposal_sha256": expected["proposal_sha256"],
+                    }
+                    if authorization_note is not None
+                    else None
+                ),
             }
         )
     return tuple(materialized)
