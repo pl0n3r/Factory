@@ -25,9 +25,9 @@ from scripts.unattended_watchdog_runtime import (
 
 SUMMARY_ISSUE = 768
 BOGOTA = ZoneInfo("America/Bogota")
-MARKER_START_RE = re.compile(r"<!--\\s*factory-unattended-daily-summary\\b")
+MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-daily-summary\\b")
 MARKER_RE = re.compile(
-    r"<!--\\s*factory-unattended-daily-summary\\s+(\\{.*?\\})\\s*-->",
+    r"<!--\s*factory-unattended-daily-summary\s+(\{.*?\})\s*-->",
     re.DOTALL,
 )
 MAX_CONTEXT_PAGES = 5
@@ -93,7 +93,7 @@ def parse_daily_marker(comment: object) -> str | None:
         or type(payload["version"]) is not int
         or payload["version"] != 1
         or not isinstance(payload["local_date"], str)
-        or re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", payload["local_date"]) is None
+        or re.fullmatch(r"\d{4}-\d{2}-\d{2}", payload["local_date"]) is None
     ):
         raise DailySummaryError("invalid_daily_summary_marker")
     return payload["local_date"]
@@ -289,7 +289,7 @@ def _render_facts(items: Iterable[Fact], empty: str) -> str:
     rows = tuple(items)
     if not rows:
         return f"- {empty}"
-    return "\\n".join(f"- {item.text} — {_fact_suffix(item)}" for item in rows)
+    return "\n".join(f"- {item.text} — {_fact_suffix(item)}" for item in rows)
 
 
 def immediate_incidents(incidents: Iterable[str]) -> tuple[str, ...]:
@@ -335,32 +335,32 @@ def render_summary(
     )
 
     immediate_text = (
-        "\\n".join(f"- {item}" for item in immediate)
+        "\n".join(f"- {item}" for item in immediate)
         if immediate
         else "- Ninguna. Solo S1/S2 interrumpen fuera de este resumen."
     )
 
     return (
-        f"{_marker(local_date)}\\n"
-        f"## Resumen diario Factory · {local_date}\\n\\n"
-        "### Decisiones pendientes\\n"
-        f"{_render_facts(decisions, 'Ninguna demostrada.')}\\n\\n"
-        "### Bloqueos\\n"
-        f"{_render_facts(blockers, 'Ninguno demostrado.')}\\n\\n"
-        "### Avances\\n"
-        f"{_render_facts(advances, 'UNKNOWN: no hay avance demostrable en la evidencia disponible.')}\\n\\n"
-        "### Alertas\\n"
-        f"{_render_facts(incidents, 'Ninguna incidencia demostrada.')}\\n\\n"
-        "Alerta inmediata aparte:\\n"
-        f"{immediate_text}\\n\\n"
-        "### Próximas acciones\\n"
-        f"{_render_facts(next_actions, 'UNKNOWN.')}\\n\\n"
-        "### Cuotas\\n"
-        f"{_render_facts(quota_facts, 'UNKNOWN.')}\\n\\n"
-        "### Fuente principal\\n"
-        f"- {source_fact.text} — {_fact_suffix(source_fact)}\\n\\n"
+        f"{_marker(local_date)}\n"
+        f"## Resumen diario Factory · {local_date}\n\n"
+        "### Decisiones pendientes\n"
+        f"{_render_facts(decisions, 'Ninguna demostrada.')}\n\n"
+        "### Bloqueos\n"
+        f"{_render_facts(blockers, 'Ninguno demostrado.')}\n\n"
+        "### Avances\n"
+        f"{_render_facts(advances, 'UNKNOWN: no hay avance demostrable en la evidencia disponible.')}\n\n"
+        "### Alertas\n"
+        f"{_render_facts(incidents, 'Ninguna incidencia demostrada.')}\n\n"
+        "Alerta inmediata aparte:\n"
+        f"{immediate_text}\n\n"
+        "### Próximas acciones\n"
+        f"{_render_facts(next_actions, 'UNKNOWN.')}\n\n"
+        "### Cuotas\n"
+        f"{_render_facts(quota_facts, 'UNKNOWN.')}\n\n"
+        "### Fuente principal\n"
+        f"- {source_fact.text} — {_fact_suffix(source_fact)}\n\n"
         f"Acción 4C: **{decision.action}** · autoridad: **{decision.authority}**. "
-        "Los valores UNKNOWN/STALE se muestran como tales y no se completan por inferencia.\\n"
+        "Los valores UNKNOWN/STALE se muestran como tales y no se completan por inferencia.\n"
     )
 
 
