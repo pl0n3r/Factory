@@ -87,9 +87,9 @@ class UnattendedGuardsTests(unittest.TestCase):
     def test_guards_never_expand_adaptive_fencing_pause_or_authority(self):
         failed = evaluate_unattended_guards(fence("fail_closed", False), cfg(), ev(), metrics())
         self.assertEqual((failed.action, failed.pause_allowed, failed.authority), ("BLOCKED", False, "unchanged"))
-        no_pause = evaluate_unattended_guards(fence("replan", False), cfg(global_pause=True), ev(), metrics())
-        self.assertEqual((no_pause.action, no_pause.pause_allowed), ("BLOCKED", False))
-        self.assertIn("adaptive_pause_not_allowed", no_pause.reasons)
+        unsafe_replan = evaluate_unattended_guards(fence("replan", False), cfg(), ev(), metrics())
+        self.assertEqual((unsafe_replan.action, unsafe_replan.pause_allowed), ("BLOCKED", False))
+        self.assertIn("adaptive_pause_not_allowed", unsafe_replan.reasons)
 
     def test_high_risk_requires_second_pass_and_sensitive_authority_stays_closed(self):
         blocked = evaluate_unattended_guards(fence("keep", False), cfg(), ev(risk="high"), metrics())
