@@ -1434,6 +1434,85 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(sweep_satisfied_blocks(api), 1)
         self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
 
+    def test_block_sweep_reblocks_available_candidate_when_dependency_reopens(self) -> None:
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = unblock_marker(kind="issue_closed", issue=99)
+        api.related_issues[99] = {
+            "number": 99,
+            "state": "closed",
+            "labels": [],
+        }
+
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+        self.assertIn(STATUS_AVAILABLE, coordinator.label_names(api.issue_data))
+
+        api.related_issues[99]["state"] = "open"
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+        self.assertIn(STATUS_BLOCKED, coordinator.label_names(api.issue_data))
+        self.assertEqual(
+            len(
+                [
+                    row
+                    for row in api.comments
+                    if "factory-reblock-evidence" in row["body"]
+                ]
+            ),
+            1,
+        )
+
+    def test_reblock_sweep_does_not_mutate_active_or_completed_work(self) -> None:
+        for state, status in (
+            ("open", STATUS_RESERVED),
+            ("open", STATUS_REVIEW),
+            ("closed", STATUS_COMPLETED),
+        ):
+            with self.subTest(status=status):
+                api = FakeGitHub()
+                api.issue_data["state"] = state
+                api.issue_data["labels"] = [{"name": status}]
+                api.issue_data["body"] = unblock_marker(
+                    kind="issue_closed",
+                    issue=99,
+                )
+                api.related_issues[99] = {
+                    "number": 99,
+                    "state": "open",
+                    "labels": [],
+                }
+
+                self.assertEqual(sweep_satisfied_blocks(api), 0)
+                self.assertEqual(coordinator.label_names(api.issue_data), {status})
+                self.assertFalse(
+                    [
+                        row
+                        for row in api.comments
+                        if "factory-reblock-evidence" in row["body"]
+                    ]
+                )
+
+    def test_reblock_sweep_is_idempotent(self) -> None:
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_AVAILABLE}]
+        api.issue_data["body"] = unblock_marker(kind="issue_closed", issue=99)
+        api.related_issues[99] = {
+            "number": 99,
+            "state": "open",
+            "labels": [],
+        }
+
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+        api.issue_data["labels"] = [{"name": STATUS_AVAILABLE}]
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+
+        evidence = [
+            row
+            for row in api.comments
+            if "factory-reblock-evidence" in row["body"]
+        ]
+        self.assertEqual(len(evidence), 1)
+        self.assertIn(STATUS_BLOCKED, coordinator.label_names(api.issue_data))
+
     def test_sweep_skips_blocked_and_recent_reservations(self) -> None:
         """Bloqueadas y reservas con commits recientes permanecen intactas."""
         blocked = FakeGitHub()
