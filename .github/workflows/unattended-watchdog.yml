@@ -1,0 +1,37 @@
+name: Unattended Watchdog
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unattended-watchdog-${{ github.repository_id }}
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    name: Vigilar actividad desatendida
+    if: github.repository == 'pl0n3r/Factory'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Descargar Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Ejecutar watchdog fail-closed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.unattended_watchdog_runtime \
+            --config config/unattended-watchdog.json
