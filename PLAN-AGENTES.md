@@ -9,6 +9,20 @@
 
 Consulta [ESTADO.md](ESTADO.md) como **vista rápida derivada** del estado vigente. Es una vista generada/fail-closed; GitHub, los `/health` y los smoke/observer reales conservan la autoridad operativa.
 
+### Interruptor global antes de cualquier mutación
+
+Antes del primer comentario de despacho, `/tomar`, branch, PR o escritura de código de **cada ciclo**, abre exactamente:
+
+`https://api.github.com/repos/pl0n3r/Factory/issues/767`
+
+y valida el único marker cerrado `factory-unattended-kill-switch` con el contrato de `scripts/unattended_kill_switch.py`.
+
+- `RUNNING` es el único estado que no añade pausa: produce `global_pause=false` y las demás guardas 4B siguen mandando.
+- `PAUSED`, fuente ausente/ilegible, Issue/creador inesperado, marker ausente/duplicado o contenido inválido producen pausa fail-closed; **cero mutaciones**. `user.login` identifica al creador del Issue y no demuestra quién hizo la última edición del body.
+- Si no es verificablemente `RUNNING`, responde una sola línea al dueño y detente: `PAUSADO: kill switch global no está en RUNNING (<razón>).`
+- Un agente nunca cambia el marker por iniciativa propia. Solo una instrucción explícita del dueño para pausar/reanudar autoriza editarlo.
+- El switch impide **nuevo trabajo/mutaciones**; no mata procesos remotos que ya estuvieran ejecutándose.
+
 ### Preflight de capacidades
 
 Antes de despachar, confirma que puedes **abrir URLs exactas**, **leer GitHub** y **comentar Issues** usando el conector autenticado de GitHub o navegación/API equivalente. Si falta cualquiera de esas capacidades, responde una sola línea y detente:
