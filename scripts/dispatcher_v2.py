@@ -846,6 +846,73 @@ def idle_time_metric(
     }
 
 
+def no_work_proof(
+    *,
+    initial_inventory: dict[str, tuple[str, ...]],
+    reasons: dict[str, str],
+    final_inventory: dict[str, tuple[str, ...]],
+) -> dict[str, object]:
+    """Valida NO_WORK solo con inventario canónico completo y recheck estable."""
+
+    expected = CANONICAL_DISPATCH_REPOS
+    if set(initial_inventory) != expected or set(final_inventory) != expected:
+        raise ValueError("no-work proof requires exactly the seven canonical repositories")
+    if set(reasons) != expected:
+        raise ValueError("no-work proof requires one reason per canonical repository")
+
+    normalized_reasons = {
+        repo: reason.strip()
+        for repo, reason in reasons.items()
+        if isinstance(reason, str) and reason.strip()
+    }
+    if set(normalized_reasons) != expected:
+        raise ValueError("no-work proof requires non-empty reasons")
+
+    def normalize(inventory: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
+        normalized: dict[str, tuple[str, ...]] = {}
+        for repo in sorted(expected):
+            items = inventory[repo]
+            if not isinstance(items, (tuple, list, set, frozenset)):
+                raise ValueError("no-work inventory entries must be collections")
+            values = tuple(sorted(set(items)))
+            if any(not isinstance(item, str) or not item.strip() for item in values):
+                raise ValueError("no-work inventory items must be non-empty strings")
+            normalized[repo] = values
+        return normalized
+
+    initial = normalize(initial_inventory)
+    final = normalize(final_inventory)
+    initial_fingerprint = hashlib.sha256(
+        json.dumps(initial, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    final_fingerprint = hashlib.sha256(
+        json.dumps(final, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    if initial != final:
+        return {
+            "valid": False,
+            "reason": "inventory_changed_requires_reevaluation",
+            "initial_fingerprint": initial_fingerprint,
+            "final_fingerprint": final_fingerprint,
+        }
+    if any(initial.values()):
+        return {
+            "valid": False,
+            "reason": "available_work_present",
+            "initial_fingerprint": initial_fingerprint,
+            "final_fingerprint": final_fingerprint,
+        }
+    return {
+        "valid": True,
+        "reason": "no_work_verified",
+        "repository_count": len(expected),
+        "reasons": normalized_reasons,
+        "initial_fingerprint": initial_fingerprint,
+        "final_fingerprint": final_fingerprint,
+    }
+
+
 def dispatch_signature(
     *,
     agent_id: str,
