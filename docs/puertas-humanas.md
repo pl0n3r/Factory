@@ -83,6 +83,18 @@ La evidencia `factory-human-decision` usa journal **v2** y contiene únicamente 
 
 Respuestas históricas escritas como texto libre siguen requiriendo reconciliación manual; no se infieren retroactivamente como comandos. Repetir el mismo comando después de materializar la decisión es un no-op y no duplica evidencia.
 
+## Adopción en repositorios consumidores
+
+Los repositorios consumidores deben incluir `template/.github/workflows/seguridad.yml` (o un caller funcionalmente equivalente) para que las puertas humanas sean realmente operables. El workflow del consumidor:
+
+- procesa `issues: opened|edited|reopened` para clasificar y enrutar `factory-human-gate`;
+- procesa únicamente comentarios exactos `/decidir A` .. `/decidir D` de un actor `OWNER`;
+- hace checkout **solo** de `pl0n3r/factory@v1` en `.factory`, nunca del código del consumidor;
+- ejecuta `.factory/seguridad/puertas_humanas.py`, `sincronizar_puerta.py` y `decision_respuesta.py` con permisos mínimos `contents: read` + `issues: write`;
+- conserva el journal v2, deduplicación de puertas, fingerprint exacto del gate y fail-closed implementados por Factory.
+
+Tener únicamente `decisión: dueño` o un workflow de Coordinación **no** materializa `/decidir X`. Los repositorios existentes deben adoptar el caller en un PR propio; comentarios humanos anteriores a la adopción no se reproducen ni se convierten retroactivamente en journal. Tras adoptar el workflow, el dueño debe emitir un comentario nuevo sobre la puerta vigente si todavía desea la misma opción.
+
 ## Regla operativa
 
 Si no hay respuesta, el agente puede seguir únicamente con la opción declarada como `safe_default` cuando esa opción sea realmente segura y reversible; acciones que por política requieren autorización explícita continúan bloqueadas.
