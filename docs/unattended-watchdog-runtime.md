@@ -4,7 +4,9 @@ Estado: **scheduler operativo, efectos limitados a alertas propias**.
 
 ## Frecuencia y permisos
 
-`.github/workflows/unattended-watchdog.yml` corre cada **15 minutos** y también admite `workflow_dispatch`.
+`.github/workflows/unattended-watchdog.yml` conserva la cadencia periódica existente de **cada 15 minutos** (`*/15`), admite `workflow_dispatch` y ejecuta una verificación inmediata en cada `push` a `main`. El `push` funciona como evidencia post-merge temprana; no sustituye ni aumenta la frecuencia de la vigilancia periódica.
+
+El job `watchdog` valida `repository`, `refs/heads/main` y un evento allowlisted (`push`, `schedule` o `workflow_dispatch`) antes del primer checkout. El job `daily-summary` sigue restringido exclusivamente al schedule diario `0 13 * * *`; un `push` nunca publica el resumen.
 
 Permisos:
 - `contents: read`;
@@ -46,11 +48,15 @@ El transporte queda fijado a `api.github.com` y al repositorio exacto `pl0n3r/Fa
 
 ## Reversión
 
+Para revertir únicamente el repair de **Factory#815**, se revierten sus tres paths reclamados: `.github/workflows/unattended-watchdog.yml`, `tests/test_unattended_watchdog_runtime.py` y `docs/unattended-watchdog-runtime.md`. Eso elimina el trigger post-merge y devuelve la cadencia anterior sin tocar 4B/4C ni las alertas existentes.
+
+Si se retira por completo la capacidad introducida por Factory#769:
+
 1. deshabilitar o revertir `.github/workflows/unattended-watchdog.yml`;
 2. conservar las alertas abiertas como evidencia;
-3. revertir los cinco paths de Factory#769 si se retira la capacidad.
+3. revertir los cinco paths originales de Factory#769.
 
-No es necesario tocar 4B/4C para revertir este runtime.
+No es necesario tocar 4B/4C para ninguna de las dos reversiones.
 
 
 ## Trabajo ready sin timestamp canónico

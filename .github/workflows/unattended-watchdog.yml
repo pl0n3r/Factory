@@ -1,6 +1,9 @@
 name: Unattended Watchdog
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     - cron: '*/15 * * * *'
     - cron: '0 13 * * *'
@@ -16,7 +19,7 @@ concurrency:
 jobs:
   watchdog:
     name: Vigilar actividad desatendida
-    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule != '0 13 * * *'))
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule != '0 13 * * *'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
