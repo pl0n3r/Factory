@@ -47,6 +47,11 @@ class ReusableReleasePreflightTests(unittest.TestCase):
     def test_all_six_consumer_callers_must_be_compatible_before_release(self):
         ok = evaluate_inventory(inventory(), "f" * 40, self.root)
         self.assertEqual((ok["compatible"], ok["consumer_count"], ok["caller_count"]), (True, 6, 6))
+        self.assertEqual(
+            {row["repository"] for row in ok["consumers"]},
+            set(CONSUMERS),
+        )
+        self.assertTrue(all(row["callers"] == 1 for row in ok["consumers"]))
         broken = inventory()
         broken[0]["workflows"][0]["content"] = CALLER.replace("issues: write", "issues: read")
         result = evaluate_inventory(broken, "f" * 40, self.root)
@@ -92,6 +97,29 @@ class ReusableReleasePreflightTests(unittest.TestCase):
         no_call[0]["workflows"][0]["content"] = "name: Local\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
         with self.assertRaisesRegex(PreflightError, "sin caller Factory@v1"):
             evaluate_inventory(no_call, "f" * 40, self.root)
+
+        unrelated = inventory()
+        unrelated[0]["workflows"].append({
+            "path": ".github/workflows/unrelated.yml",
+            "blob_sha": "a" * 40,
+            "content": "name: Unrelated\npermissions: read-all\nnot-even-jobs: true\n",
+        })
+        self.assertTrue(
+            evaluate_inventory(unrelated, "f" * 40, self.root)["compatible"]
+        )
+
+        dynamic = inventory()
+        dynamic_content = CALLER.replace(
+            "@v1",
+            "@${{github.ref_name}}",
+        )
+        dynamic[0]["workflows"].append({
+            "path": ".github/workflows/dynamic.yml",
+            "blob_sha": blob(dynamic_content.encode()),
+            "content": dynamic_content,
+        })
+        with self.assertRaisesRegex(PreflightError, "referencia Factory ambigua"):
+            evaluate_inventory(dynamic, "f" * 40, self.root)
 
     def test_incompatibility_reports_repo_workflow_and_scope_without_sensitive_payload(self):
         broken = inventory()
