@@ -39,6 +39,14 @@ def _inventory(factory_state):
                     "kind": "executable",
                     "source_ref": "roadmap:Factory",
                 }]
+            elif factory_state == "FUTURE_ONLY":
+                leaves = []
+                narrative = [{
+                    "identity": "roadmap:factory:future",
+                    "title": "Idea futura sin contrato ejecutable",
+                    "kind": "future_idea",
+                    "source_ref": "roadmap:Factory",
+                }]
             elif factory_state == "NO_WORK":
                 leaves = [_leaf("Factory#done", "completed")]
             elif factory_state == "WAITING_DECISION":
@@ -95,6 +103,30 @@ class DispatcherV2Tests(unittest.TestCase):
                     else "inventory_state",
                 )
                 self.assertEqual(action["project_states"], handoff["project_states"])
+
+    def test_future_only_inventory_never_requests_materialization(self):
+        inventory = _inventory("FUTURE_ONLY")
+        factory = next(
+            project
+            for project in inventory["projects"]
+            if project["repository_ref"] == "pl0n3r/Factory"
+        )
+        self.assertEqual(factory["state"], "NO_WORK")
+        self.assertEqual(factory["counts"]["future_idea"], 1)
+        self.assertIsNone(factory["next_work"])
+
+        record = dispatch_record_with_inventory([], work_inventory=inventory)
+        action = record["next_action"]
+        self.assertEqual(action["state"], "NO_WORK")
+        self.assertEqual(action["step"], "inventory_state")
+        self.assertFalse(action["mutates"])
+        self.assertNotEqual(action["step"], "materialize_inventory")
+
+        executable = dispatch_record_with_inventory(
+            [],
+            work_inventory=_inventory("UNMATERIALIZED_WORK"),
+        )
+        self.assertEqual(executable["next_action"]["step"], "materialize_inventory")
 
     def test_human_or_live_inventory_states_never_materialize(self):
         for expected in ("WAITING_DECISION", "LIVE_GATED"):
