@@ -46,11 +46,12 @@ def derive_quality_health(
     recovery_health: Mapping[str, Any] | None = None,
     sonar_evidence: Mapping[str, Any] | None = None,
     dispatch_idle: Mapping[str, Any] | None = None,
+    watchdog_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deriva un único estado Quality sin ejecutar ni recalcular dimensiones externas."""
     _safe((
         gate_evidence, regressions, performance_status, recovery_health,
-        sonar_evidence, dispatch_idle,
+        sonar_evidence, dispatch_idle, watchdog_evidence,
     ))
     quality = validate_quality_contract(contract)
     now = _time(observed_at, "observed_at")
@@ -113,6 +114,11 @@ def derive_quality_health(
     )
     if idle is not None:
         external["dispatch_idle"] = idle
+    watchdog = _watchdog_dimension(
+        watchdog_evidence, project_ref, states, reasons, classes, refs, ages
+    )
+    if watchdog is not None:
+        external["watchdog"] = watchdog
     sonar = _sonar_dimension(
         quality, sonar_evidence, states, reasons, classes, refs, ages
     )
@@ -492,6 +498,94 @@ def _external_dimensions(quality, performance_status, recovery_health, states, r
                 raise QualityStatusError("recovery health inválido.") from exc
             result["recovery"] = _external("recovery", projected["recovery_health"], projected, states, reasons, classes)
     return result
+
+
+def _watchdog_dimension(
+    evidence, project_ref, states, reasons, classes, refs, ages
+):
+    """Proyecta evidencia canónica watchdog sin recalcular su señal."""
+    if evidence is None:
+        return None
+
+    row = _closed(
+        evidence,
+        {
+            "version", "repository_ref", "state", "severity", "reasons",
+            "provenance", "evidence_fingerprint", "freshness", "source",
+            "authority", "execute_actions",
+        },
+        "watchdog",
+    )
+    if (
+        row["version"] != 1
+        or row["repository_ref"] != project_ref
+        or row["source"] != "unattended_watchdog_v1"
+        or row["authority"] != "unchanged"
+        or row["execute_actions"] is not False
+    ):
+        raise QualityStatusError("watchdog evidence contract inválido.")
+
+    state = row["state"]
+    severity = row["severity"]
+    if state not in {"BLOCKED", "UNKNOWN"}:
+        raise QualityStatusError("watchdog state fuera del contrato.")
+    if severity not in {"S1", "S2", "S3", "UNKNOWN"}:
+        raise QualityStatusError("watchdog severity fuera del contrato.")
+    if state == "UNKNOWN" and severity != "UNKNOWN":
+        raise QualityStatusError("watchdog state/severity incoherente.")
+
+    raw_reasons = row["reasons"]
+    if (
+        not isinstance(raw_reasons, list)
+        or not raw_reasons
+        or len(raw_reasons) != len(set(raw_reasons))
+    ):
+        raise QualityStatusError("watchdog reasons inválidas.")
+    watchdog_reasons = [_ref(item) for item in raw_reasons]
+
+    provenance = _refs(row["provenance"])
+    if not provenance or len(provenance) != len(set(provenance)):
+        raise QualityStatusError("watchdog provenance inválida.")
+
+    fingerprint = _ref(row["evidence_fingerprint"])
+    if re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None or fingerprint not in provenance:
+        raise QualityStatusError("watchdog fingerprint/provenance incoherente.")
+
+    freshness = _closed(
+        row["freshness"],
+        {"state", "age_seconds", "max_age_seconds"},
+        "watchdog.freshness",
+    )
+    age = _freshness(freshness, "watchdog.freshness")
+    if freshness["state"] != "CURRENT" or age is None:
+        raise QualityStatusError("watchdog evidence stale o desconocida.")
+
+    states.append(state)
+    local_classes = []
+    if state == "UNKNOWN":
+        classes.append("quality_evidence_unknown")
+        local_classes.append("quality_evidence_unknown")
+
+    state_reason = f"watchdog_{state.lower()}"
+    reasons.append(state_reason)
+    reasons.extend(f"watchdog:{reason}" for reason in watchdog_reasons)
+    refs.update(provenance)
+    ages.append(age)
+
+    return {
+        "status": state,
+        "severity": severity,
+        "source": row["source"],
+        "reasons": watchdog_reasons,
+        "provenance": provenance,
+        "evidence_refs": provenance,
+        "evidence_fingerprint": fingerprint,
+        "freshness": dict(freshness),
+        "work_item_classes": local_classes,
+        "authority": "unchanged",
+        "execute_actions": False,
+        "recalculated": False,
+    }
 
 
 def _dispatch_idle_dimension(evidence, project_ref, states, reasons, classes):

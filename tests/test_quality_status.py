@@ -162,9 +162,34 @@ def sonar_evidence():
     }
 
 
+def watchdog_evidence(state="BLOCKED", severity="S3"):
+    fingerprint = "b" * 64
+    return {
+        "version": 1,
+        "repository_ref": "pl0n3r/Factory",
+        "state": state,
+        "severity": severity,
+        "reasons": ["capacity:unknown"],
+        "provenance": [
+            "run:unattended-watchdog:37031848944",
+            fingerprint,
+        ],
+        "evidence_fingerprint": fingerprint,
+        "freshness": {
+            "state": "CURRENT",
+            "age_seconds": 120,
+            "max_age_seconds": 900,
+        },
+        "source": "unattended_watchdog_v1",
+        "authority": "unchanged",
+        "execute_actions": False,
+    }
+
+
 def health(
     gate_rows=None, regressions=None, *, external=False, perf=None, rec=None,
     sonar=False, sonar_ev=None, sonar_applicability=False, dispatch_idle=None,
+    watchdog_ev=None,
 ):
     return derive_quality_health(
         contract(
@@ -180,10 +205,79 @@ def health(
         recovery_health=rec,
         sonar_evidence=sonar_ev,
         dispatch_idle=dispatch_idle,
+        watchdog_evidence=watchdog_ev,
     )
 
 
 class QualityStatusTests(unittest.TestCase):
+    def test_watchdog_dimension_projects_blocked_unknown_with_provenance_without_recalculation(self):
+        blocked_evidence = watchdog_evidence()
+        blocked = health(watchdog_ev=blocked_evidence)
+
+        self.assertEqual(blocked["state"], "BLOCKED")
+        projected = blocked["external_dimensions"]["watchdog"]
+        self.assertEqual(projected["status"], "BLOCKED")
+        self.assertEqual(projected["severity"], "S3")
+        self.assertEqual(projected["reasons"], ["capacity:unknown"])
+        self.assertEqual(projected["provenance"], blocked_evidence["provenance"])
+        self.assertEqual(
+            projected["evidence_fingerprint"],
+            blocked_evidence["evidence_fingerprint"],
+        )
+        self.assertEqual(projected["freshness"], blocked_evidence["freshness"])
+        self.assertFalse(projected["recalculated"])
+        self.assertEqual(projected["authority"], "unchanged")
+        self.assertFalse(projected["execute_actions"])
+        self.assertIn("watchdog:capacity:unknown", blocked["reasons"])
+        self.assertIn(
+            blocked_evidence["evidence_fingerprint"],
+            blocked["evidence_refs"],
+        )
+
+        unknown = health(
+            watchdog_ev=watchdog_evidence(state="UNKNOWN", severity="UNKNOWN")
+        )
+        self.assertEqual(unknown["state"], "UNKNOWN")
+        self.assertEqual(
+            unknown["external_dimensions"]["watchdog"]["status"],
+            "UNKNOWN",
+        )
+        self.assertIn("quality_evidence_unknown", unknown["work_item_classes"])
+
+    def test_watchdog_dimension_rejects_stale_invalid_or_sensitive_evidence(self):
+        stale = watchdog_evidence()
+        stale["freshness"] = {
+            "state": "STALE",
+            "age_seconds": 901,
+            "max_age_seconds": 900,
+        }
+        with self.assertRaises(QualityStatusError):
+            health(watchdog_ev=stale)
+
+        invalid = watchdog_evidence()
+        invalid["state"] = "PASS"
+        with self.assertRaises(QualityStatusError):
+            health(watchdog_ev=invalid)
+
+        ambiguous = watchdog_evidence()
+        ambiguous["provenance"] = [
+            ambiguous["evidence_fingerprint"],
+            ambiguous["evidence_fingerprint"],
+        ]
+        with self.assertRaises(QualityStatusError):
+            health(watchdog_ev=ambiguous)
+
+        mismatched = watchdog_evidence()
+        mismatched["provenance"] = ["run:unattended-watchdog:37031848944"]
+        with self.assertRaises(QualityStatusError):
+            health(watchdog_ev=mismatched)
+
+        sensitive = watchdog_evidence()
+        sensitive["reasons"] = ["token=supersecretvalue"]
+        with self.assertRaises(QualityStatusError) as caught:
+            health(watchdog_ev=sensitive)
+        self.assertNotIn("supersecretvalue", str(caught.exception))
+
     def test_quality_health_derives_pass_degraded_unknown_blocked_with_reasons_and_freshness(self):
         passed = health()
         self.assertEqual(passed["state"], "PASS")
