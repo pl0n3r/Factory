@@ -11,7 +11,7 @@ import re
 from scripts.adaptive_fencing import FencingDecision
 
 RISKS = {"low", "medium", "high", "UNKNOWN"}
-BREAKER_STATES = {"open", "closed", "UNKNOWN"}
+BREAKER_SCOPES = {"agent", "repo"}
 SENSITIVE = ("go_live", "spend", "irreversible", "real_data")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
@@ -54,6 +54,13 @@ def _tri(value: object, name: str) -> bool | None:
     raise GuardValidationError(f"invalid_{name}")
 
 
+def _positive_int(value: object, name: str) -> int:
+    parsed = _number(value, name, integer=True)
+    if parsed <= 0:
+        raise GuardValidationError(f"invalid_{name}")
+    return int(parsed)
+
+
 def _normalize(config: object, evidence: object, metrics: object):
     cfg = _exact(config, {"global_pause", "breakers", "ceilings"}, "config")
     if not isinstance(cfg["global_pause"], bool):
@@ -87,12 +94,33 @@ def _normalize(config: object, evidence: object, metrics: object):
     for name in sorted(breaker_cfg):
         if not isinstance(name, str) or not IDENTIFIER.fullmatch(name):
             raise GuardValidationError("invalid_breaker_identifier")
-        state = _exact(breaker_cfg[name], {"state"}, "breaker_config")["state"]
-        if state not in BREAKER_STATES:
-            raise GuardValidationError("invalid_breaker_state")
-        observed = _exact(breaker_ev[name], {"condition", "fresh", "consistent"}, "breaker_evidence")
-        clean_cfg[name] = {"state": state}
-        clean_ev[name] = {key: _tri(observed[key], f"breaker_{key}") for key in ("condition", "fresh", "consistent")}
+        configured = _exact(
+            breaker_cfg[name],
+            {"scope", "threshold"},
+            "breaker_config",
+        )
+        scope = configured["scope"]
+        if scope not in BREAKER_SCOPES:
+            raise GuardValidationError("invalid_breaker_scope")
+        threshold = _positive_int(
+            configured["threshold"],
+            "breaker_threshold",
+        )
+        observed = _exact(
+            breaker_ev[name],
+            {"consecutive_failures", "fresh", "consistent"},
+            "breaker_evidence",
+        )
+        clean_cfg[name] = {"scope": scope, "threshold": threshold}
+        clean_ev[name] = {
+            "consecutive_failures": _number(
+                observed["consecutive_failures"],
+                "breaker_consecutive_failures",
+                integer=True,
+            ),
+            "fresh": _tri(observed["fresh"], "breaker_fresh"),
+            "consistent": _tri(observed["consistent"], "breaker_consistent"),
+        }
 
     measured = _exact(metrics, {"usage", "cost", "parallelism"}, "measurements")
     measured = {
@@ -163,17 +191,16 @@ def evaluate_unattended_guards(
         return _pause(fencing, "global_pause_active", payload)
 
     for name in sorted(cfg["breakers"]):
-        state, observed = cfg["breakers"][name]["state"], ev["breakers"][name]
-        if state == "UNKNOWN":
-            return _blocked("breaker_state_unknown")
+        configured, observed = cfg["breakers"][name], ev["breakers"][name]
         if observed["fresh"] is not True:
             return _blocked("breaker_evidence_not_fresh")
         if observed["consistent"] is not True:
             return _blocked("breaker_evidence_not_consistent")
-        if observed["condition"] is None:
-            return _blocked("breaker_condition_unknown")
-        if (state == "closed") == bool(observed["condition"]):
-            return _blocked("breaker_state_contradictory")
+        state = (
+            "open"
+            if observed["consecutive_failures"] >= configured["threshold"]
+            else "closed"
+        )
         if state == "open":
             return _pause(fencing, "circuit_breaker_open", payload)
 
