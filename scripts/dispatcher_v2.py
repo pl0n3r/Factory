@@ -260,7 +260,11 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
     if any(not key for key in keys) or len(keys) != len(set(keys)):
         raise ValueError("direction proposal leaf keys must be non-empty and unique")
     for key in keys:
-        validate_task_key(key)
+        # DirectionLeaf conserva identidad legacy (p. ej. minúsculas), pero debe
+        # poder convertirse sin ambigüedad al task_key canónico del orquestador.
+        if not key.isascii():
+            validate_task_key(key)
+        validate_task_key(key.upper())
     key_set = set(keys)
     normalized_leaves = []
     for leaf, key in zip(proposal.leaves, keys):
