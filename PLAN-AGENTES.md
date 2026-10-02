@@ -78,10 +78,12 @@ Si no existe trabajo `ready`, aplica la **escalera no ociosa ya integrada por Fa
 
 **Cola automática canónica:** Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner. Los siete repositorios son elegibles para despacho automático. Su inclusión en la cola no altera sus responsabilidades arquitectónicas: Factory gobierna el kit, ControlBot es el control plane privado, FactoryRunner es el execution plane, AutoFactory sigue siendo una herramienta local/manual y Condor/GrindFlow/BRVTAL son productos.
 
-1. Un repositorio con HEALTH degradado según su contrato real de operación → ese repo.
-2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o clasificación AUTO equivalente) → su repo.
-3. Una reparación activa válida de HEALTH/INCIDENT → continuar ese frente antes de abrir trabajo paralelo.
+1. Un repositorio con HEALTH degradado según su contrato real de operación **y con una acción de diagnóstico/reparación ejecutable en este ciclo** → ese repo. Si el HEALTH está degradado pero toda acción materializada está bloqueada por una causa vigente y una condición de desbloqueo explícita, queda en vigilancia y el ranking continúa.
+2. Un Issue abierto de incidente (`tipo: incidente` / `type: incident` o clasificación AUTO equivalente) **solo preempta si es ejecutable**. Un incidente con `estado: bloqueado` / `status: blocked` y causa + condición de desbloqueo vigentes queda en vigilancia; no detiene el despacho de otros repos.
+3. Una reparación activa válida de HEALTH/INCIDENT y **ejecutable por esta sesión** → continuar ese frente antes de abrir trabajo paralelo. Si la línea pertenece a una lease ajena o sus claims colisionan, esa sesión no invade: excluye ese candidato y continúa el ranking global.
 4. Una decisión del dueño ya respondida que desbloquea trabajo → su repo.
+
+**Preempción ejecutable:** las reglas 1–3 ordenan candidatos ejecutables, no convierten bloqueos en trabajo. Una alerta o incidencia bloqueada puede seguir degradando HEALTH y conservarse abierta, pero no justifica terminar la sesión si existe otro candidato ejecutable en la cola canónica.
 
 **Gate de tanda antes de prioridades:** antes de aplicar las reglas 5–7, determina la primera tanda global no terminada según la sección 6. El trabajo normal de producto que dependa de una tanda posterior no es ready aunque tenga etiqueta `available` / `estado: disponible`, aunque `/tomar` haya sido solicitado o aunque exista una reserva activa: esos estados no sobreescriben este gate. HEALTH, incidentes, reparaciones activas y decisiones del dueño ya resueltas conservan su preempción. La excepción explícita de la sección 6 para mantenimiento, gobernanza y hardening transversal de Factory también se conserva.
 
@@ -90,7 +92,7 @@ Si no existe trabajo `ready`, aplica la **escalera no ociosa ya integrada por Fa
 7. Dentro de la misma prioridad: desbloqueo → impacto transversal → continuidad → menor riesgo/esfuerzo → antigüedad.
 
 Reglas del despachador:
-- Una reserva activa conserva exclusividad para trabajo no planificado. Solo pueden coexistir líneas cuando el candidato y cada línea activa relevante están materializados por el orquestador, sus dependencias están completadas y los claims de paths son disjuntos. Si Factory no puede demostrarlo, falla cerrado y pasa al siguiente candidato. Tras perder una carrera de reserva, vuelve a evaluar el despacho sobre el estado actual.
+- Una reserva activa conserva exclusividad para trabajo no planificado. Solo pueden coexistir líneas cuando el candidato y cada línea activa relevante están materializados por el orquestador, sus dependencias están completadas y los claims de paths son disjuntos. Si Factory no puede demostrarlo, falla cerrado y pasa al siguiente candidato. **Una lease ajena, un claim overlap o una carrera de reserva perdida excluyen solo ese candidato. Tras perder una carrera de reserva, la sesión relee el estado actual y continúa inmediatamente con el siguiente candidato del ranking entre los siete repos. No publica `overlap` ni `NO_WORK` hasta agotar los candidatos ejecutables del ciclo.**
 - **Preflight exact-main antes de reapertura o repair:** antes de reabrir un Issue cerrado como `completed`/`duplicate`, o de materializar un repair/decomposición porque un AC parece faltar, relee el Issue y su contrato vigente, resuelve el SHA exacto actual de `main` y verifica los AC y paths reclamados contra el árbol actual de `main` y los PRs fusionados relevantes.
 - Si `main` ya satisface el contrato, **no reabras el Issue, no ejecutes `/tomar`, no crees `trabajo/issue-N` ni abras PR**. Publica únicamente una reconciliación con evidencia exact-main que identifique el SHA y el PR/commit que ya cubre el contrato.
 - **Preflight exact-main antes de cierre/reconciliación terminal:** si vas a cerrar/cancelar un Issue o PR, marcar `completed`/`duplicate`/`not_planned` o liberar su lease porque supones que `main` u otro PR ya satisface el contrato, ejecuta el mismo preflight contra el SHA exacto actual de `main`, AC y paths reclamados y PRs fusionados relevantes.
@@ -102,6 +104,9 @@ Reglas del despachador:
 - Al terminar ese trabajo, vuelve a aplicar el despacho desde el paso 1.
 - **ControlBot** (repositorio público, acceso al panel restringido; D-062) resume el estado de la fábrica; la fuente de verdad sigue siendo GitHub y los `/health` reales. No existe cabina pública.
 - Factory, ControlBot y AutoFactory compiten dentro de la misma cola automática con las mismas reglas de readiness y prioridad. Su naturaleza arquitectónica no les da prioridad artificial ni los excluye.
+
+- **NO_WORK válido solo tras inventario global vivo:** antes de publicar `NO_WORK`, la sesión debe haber leído en **ese mismo ciclo** el estado de Factory, Condor, GrindFlow, BRVTAL, ControlBot, AutoFactory y FactoryRunner; registrar para cada repositorio el motivo por el que no existe un candidato ejecutable; y ejecutar una **recomprobación final** de `available` / `estado: disponible` inmediatamente antes del mensaje.
+- **Cualquier cambio de inventario invalida el snapshot previo:** un comentario `/tomar`, nueva lease, release de lease, cambio de labels/readiness, nuevo PR/Issue o cualquier otra mutación observada después de la lectura global obliga a descartar esa fotografía y reevaluar antes de declarar `NO_WORK`. Si no puede demostrarse la lectura viva de los siete repos y la recomprobación final, el despachador falla cerrado respecto a `NO_WORK` y continúa/relee; nunca concluye que la fábrica está sin trabajo desde un snapshot parcial o stale.
 
 ### Escalera cuando no existe trabajo `ready`
 
