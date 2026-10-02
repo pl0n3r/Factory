@@ -294,6 +294,14 @@ class UnattendedWatchdogTests(unittest.TestCase):
         self.assertNotEqual(presence_incident.fingerprint, materially_changed.fingerprint)
 
     def test_state_contract_is_closed_freshness_aware_and_secret_free(self):
+        minimal = state()
+        for optional in ("branch", "head_sha", "reservation_id"):
+            minimal.pop(optional)
+        accepted = evaluate_unattended_watchdog(
+            guard(), config(), evidence(state=minimal)
+        )
+        self.assertNotEqual(accepted.action, "BLOCKED")
+
         stale = evaluate_unattended_watchdog(
             guard(),
             config(),

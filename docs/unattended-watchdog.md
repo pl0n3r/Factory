@@ -36,11 +36,11 @@ La reserva usa identidad de trabajo, timestamp y freshness. Una reserva activa
 que no coincide con `STATE.work_identity` falla cerrado. Stale/unknown o edad
 por encima del umbral nunca se presenta como progreso.
 
-`STATE` conserva exactamente los campos de 4A: identidad, repo, branch/SHA,
-reserva, riesgo/severidad, evidencia, last state, next action, blockers y
-timestamp. El watchdog valida timestamps, SHA, repo, listas y contenido
-secret-free. Un timestamp futuro, campo desconocido o material sensible produce
-`BLOCKED`.
+`STATE` conserva los campos mínimos de 4A: identidad, repo, riesgo/severidad,
+evidencia, last state, next action, blockers y timestamp. `branch`, `head_sha` y
+`reservation_id` son opcionales: pueden omitirse o ser `null`. El watchdog
+valida timestamps, SHA, repo, listas y contenido secret-free. Un timestamp
+futuro, campo desconocido o material sensible produce `BLOCKED`.
 
 ## Decisión y autoridad
 

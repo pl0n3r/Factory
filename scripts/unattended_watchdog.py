@@ -32,12 +32,9 @@ EVIDENCE_FIELDS = frozenset({
     "reverted",
     "next_actions",
 })
-STATE_FIELDS = frozenset({
+STATE_REQUIRED_FIELDS = frozenset({
     "work_identity",
     "repository",
-    "branch",
-    "head_sha",
-    "reservation_id",
     "risk",
     "severity",
     "evidence",
@@ -46,6 +43,8 @@ STATE_FIELDS = frozenset({
     "blockers",
     "updated_at",
 })
+STATE_OPTIONAL_FIELDS = frozenset({"branch", "head_sha", "reservation_id"})
+STATE_FIELDS = STATE_REQUIRED_FIELDS | STATE_OPTIONAL_FIELDS
 RESERVATION_FIELDS = frozenset({"active", "work_identity", "updated_at", "freshness"})
 INCIDENT_FIELDS = frozenset({"incident_id", "severity", "source", "updated_at", "freshness"})
 RISKS = frozenset({"low", "medium", "high", "UNKNOWN"})
@@ -199,13 +198,13 @@ def validate_state(
     if not isinstance(payload, dict):
         raise WatchdogValidationError("invalid_state")
     _reject_keys(payload, STATE_FIELDS)
-    if set(payload) != STATE_FIELDS:
+    if not STATE_REQUIRED_FIELDS.issubset(payload):
         raise WatchdogValidationError("invalid_state_shape")
 
     repository = _safe_text(payload["repository"], "repository")
     if not REPO_RE.fullmatch(repository):
         raise WatchdogValidationError("invalid_repository")
-    head_sha = _safe_text(payload["head_sha"], "head_sha", nullable=True)
+    head_sha = _safe_text(payload.get("head_sha"), "head_sha", nullable=True)
     if head_sha is not None and not SHA_RE.fullmatch(head_sha):
         raise WatchdogValidationError("invalid_head_sha")
     risk = _safe_text(payload["risk"], "risk")
@@ -220,9 +219,9 @@ def validate_state(
     return {
         "work_identity": _safe_text(payload["work_identity"], "work_identity"),
         "repository": repository,
-        "branch": _safe_text(payload["branch"], "branch", nullable=True),
+        "branch": _safe_text(payload.get("branch"), "branch", nullable=True),
         "head_sha": head_sha,
-        "reservation_id": _safe_text(payload["reservation_id"], "reservation_id", nullable=True),
+        "reservation_id": _safe_text(payload.get("reservation_id"), "reservation_id", nullable=True),
         "risk": risk,
         "severity": severity,
         "evidence": _string_list(payload["evidence"], "state_evidence"),
