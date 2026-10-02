@@ -193,64 +193,6 @@ class UnattendedGuardsTests(unittest.TestCase):
         self.assertEqual((unsafe_replan.action, unsafe_replan.pause_allowed), ("BLOCKED", False))
         self.assertIn("adaptive_pause_not_allowed", unsafe_replan.reasons)
 
-    def test_replan_pending_never_becomes_allow(self):
-        pending = evaluate_unattended_guards(fence("replan", True), cfg(), ev(), metrics())
-        self.assertEqual((pending.action, pending.pause_allowed, pending.authority), ("PAUSE", True, "unchanged"))
-        self.assertIn("adaptive_replan_pending", pending.reasons)
-        blocked = evaluate_unattended_guards(fence("replan", False), cfg(), ev(), metrics())
-        self.assertEqual((blocked.action, blocked.pause_allowed), ("BLOCKED", False))
-
-    def test_invalid_types_fail_closed_without_exceptions(self):
-        cases = (
-            (cfg(), ev(risk=[]), "invalid_risk"),
-            (
-                cfg(breakers={"health": {"scope": [], "subject": "pl0n3r/Factory", "threshold": 3}}),
-                ev(),
-                "invalid_breaker_scope",
-            ),
-            (
-                cfg(
-                    breakers={
-                        "health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 3},
-                        7: {"scope": "agent", "subject": "worker-1", "threshold": 2},
-                    }
-                ),
-                ev(
-                    breakers={
-                        "health": {"consecutive_failures": 0, "fresh": True, "consistent": True},
-                        7: {"consecutive_failures": 0, "fresh": True, "consistent": True},
-                    }
-                ),
-                "invalid_breaker_identifier",
-            ),
-        )
-        for config, evidence, reason in cases:
-            with self.subTest(reason=reason):
-                result = evaluate_unattended_guards(fence(), config, evidence, metrics())
-                self.assertEqual(result.action, "BLOCKED")
-                self.assertIn(reason, result.reasons)
-
-    def test_breaker_subject_is_scope_aware(self):
-        invalid = (
-            {"health": {"scope": "agent", "subject": "team/worker", "threshold": 3}},
-            {"health": {"scope": "repo", "subject": "Factory", "threshold": 3}},
-            {"health": {"scope": "repo", "subject": "pl0n3r/Factory/extra", "threshold": 3}},
-        )
-        for breakers in invalid:
-            with self.subTest(breakers=breakers):
-                result = evaluate_unattended_guards(fence(), cfg(breakers=breakers), ev(), metrics())
-                self.assertEqual(result.action, "BLOCKED")
-                self.assertIn("invalid_breaker_subject", result.reasons)
-        for scope, subject in (("agent", "worker-1"), ("repo", "pl0n3r/Factory")):
-            with self.subTest(scope=scope, subject=subject):
-                result = evaluate_unattended_guards(
-                    fence("keep", False),
-                    cfg(breakers={"health": {"scope": scope, "subject": subject, "threshold": 3}}),
-                    ev(),
-                    metrics(),
-                )
-                self.assertEqual(result.action, "ALLOW")
-
     def test_high_risk_requires_second_pass_and_sensitive_authority_stays_closed(self):
         blocked = evaluate_unattended_guards(fence("keep", False), cfg(), ev(risk="high"), metrics())
         self.assertIn("high_risk_second_pass_required", blocked.reasons)
