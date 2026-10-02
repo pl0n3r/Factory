@@ -54,6 +54,7 @@ class Candidate:
     auto_class: str | None = None
     auto_evidence_reviewed: bool = False
     title: str = ""
+    watchdog_severity: str | None = None
     blocked: bool = False
     fallback_safe: bool = False
     dependencies_open: tuple[str, ...] = ()
@@ -577,8 +578,25 @@ def candidate_from_work_item(
     )
 
 
+def _is_watchdog_alert(candidate: Candidate) -> bool:
+    return candidate.title.startswith("[AUTO][WATCHDOG]")
+
+
+def _watchdog_severity_valid(candidate: Candidate) -> bool:
+    return candidate.watchdog_severity in WATCHDOG_SEVERITIES
+
+
+def _watchdog_preempts(candidate: Candidate) -> bool:
+    return (
+        _is_watchdog_alert(candidate)
+        and candidate.watchdog_severity in {"S1", "S2"}
+    )
+
+
 def _bypasses_tranche_gate(candidate: Candidate) -> bool:
     """Conserva preempciones y la excepción Factory explícita de PLAN-AGENTES."""
+    if _is_watchdog_alert(candidate):
+        return _watchdog_preempts(candidate)
     if (
         candidate.health
         or candidate.incident
@@ -649,6 +667,8 @@ def classify_readiness(
         reasons.append("idempotency_active")
     if candidate.requires_extra_authority:
         reasons.append("requires_extra_authority")
+    if _is_watchdog_alert(candidate) and not _watchdog_severity_valid(candidate):
+        reasons.append("watchdog_severity_invalid")
     if candidate.title.startswith("[AUTO]") and candidate.auto_class is None and not candidate.auto_evidence_reviewed:
         reasons.append("unclassified_auto_needs_review")
     if candidate.auto_class == "AUTO_INFO":
@@ -657,6 +677,13 @@ def classify_readiness(
 
 
 def authority_class(candidate: Candidate) -> str:
+    if _is_watchdog_alert(candidate):
+        if _watchdog_preempts(candidate):
+            return "incident"
+        priority = candidate.priority.lower()
+        if priority not in {"critical", "high", "medium"}:
+            priority = "medium"
+        return priority
     if candidate.health:
         return "health"
     if candidate.incident or candidate.auto_class == "AUTO_INCIDENT":
