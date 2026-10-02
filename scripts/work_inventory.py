@@ -136,8 +136,6 @@ def project_inventory(snapshot: Any) -> dict[str, Any]:
         state = "LIVE_GATED"
     elif counts["blocked"]:
         state = "ALL_BLOCKED"
-    elif counts["future_idea"]:
-        state = "UNMATERIALIZED_WORK"
     else:
         state = "NO_WORK"
 

@@ -145,13 +145,18 @@ class WorkInventoryTests(unittest.TestCase):
         self.assertEqual(result["next_work"], "Factory#critical")
         self.assertEqual(result["counts"]["future_idea"], 1)
 
-        future_only = project_inventory(
+    def test_future_only_is_not_unmaterialized_executable_work(self):
+        result = project_inventory(
             snapshot(
                 "pl0n3r/Factory",
                 narrative=[narrative("later-only", "future_idea")],
             )
         )
-        self.assertEqual(future_only["state"], "UNMATERIALIZED_WORK")
+        self.assertEqual(result["state"], "NO_WORK")
+        self.assertEqual(result["counts"]["future_idea"], 1)
+        self.assertEqual(result["counts"]["unmaterialized"], 0)
+        self.assertIsNone(result["next_work"])
+        self.assertEqual(result["unmaterialized_identities"], [])
 
     def test_initial_sweep_rejects_missing_sources_and_wrong_order(self):
         payload = json.loads(
@@ -164,8 +169,7 @@ class WorkInventoryTests(unittest.TestCase):
 
         wrong_order = json.loads(json.dumps(payload))
         wrong_order["projects"][0], wrong_order["projects"][1] = (
-            wrong_order["projects"][1],
-            wrong_order["projects"][0],
+            wrong_order["projects"][1], wrong_order["projects"][0]
         )
         with self.assertRaises(WorkInventoryError):
             validate_initial_sweep(wrong_order)
