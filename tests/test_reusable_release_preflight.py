@@ -150,7 +150,7 @@ class ReusableReleasePreflightTests(unittest.TestCase):
         )
         dynamic[0]["workflows"].append({
             "path": ".github/workflows/dynamic.yml",
-            "blob_sha": blob(dynamic_content.encode()),
+            "blob_sha": "c" * 40,
             "content": dynamic_content,
         })
         with self.assertRaisesRegex(PreflightError, "referencia Factory ambigua"):
