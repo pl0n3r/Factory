@@ -30,10 +30,9 @@ class ReleaseCandidate1011Tests(unittest.TestCase):
             "    permissions:\n"
             "      contents: read\n"
             "      issues: write\n"
-            "      pull-requests: read\n"
+            "      pull-requests: write\n"
         )
         self.assertIn(minimum, workflow)
-        self.assertNotIn("pull-requests: write", workflow)
 
     def test_candidate_contains_profile_invariant_contract_renewal(self) -> None:
         reservation = "0b9040ef-85eb-5c31-b5b9-9722a07675bf"

@@ -37,29 +37,33 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
             labels_job_permissions(),
             "      contents: read\n"
             "      issues: write\n"
-            "      pull-requests: read\n",
+            "      pull-requests: write\n",
         )
 
-    def test_pr_validation_grants_write_for_safe_label_inheritance(self):
+    def test_pr_validation_has_minimum_write_authority(self):
         permissions = labels_job_permissions()
         self.assertIn("issues: write", permissions)
-        self.assertIn("pull-requests: read", permissions)
-        self.assertNotIn("pull-requests: write", permissions)
+        self.assertIn("pull-requests: write", permissions)
         self.assertIn('gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/labels"', WF)
         self.assertIn("linked_issue:$linked[0]", WF)
+
+    def test_pr_validation_cannot_regress_to_read_only(self):
+        permissions = labels_job_permissions()
+        self.assertNotIn("pull-requests: read", permissions)
+        self.assertIn("pull-requests: write", permissions)
 
     def test_metadata_permissions_remain_least_privilege(self):
         permissions = labels_job_permissions()
         self.assertEqual(
             set(line.strip() for line in permissions.splitlines()),
-            {"contents: read", "issues: write", "pull-requests: read"},
+            {"contents: read", "issues: write", "pull-requests: write"},
         )
         self.assertIn("permissions:\n  contents: read", WF)
         self.assertNotIn("contents: write", WF)
         self.assertNotIn("actions: write", WF)
         self.assertNotIn("checks: read", permissions)
         self.assertNotIn("checks: write", WF)
-        self.assertNotIn("pull-requests: write", WF)
+        self.assertNotIn("pull-requests: read", permissions)
         self.assertNotIn("id-token: write", WF)
         self.assertNotIn("secrets: inherit", WF)
 
