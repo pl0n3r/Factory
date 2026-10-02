@@ -37,6 +37,22 @@ def _inventory(factory_state):
                     "kind": "executable",
                     "source_ref": "roadmap:Factory",
                 }]
+            elif factory_state == "WAITING_DECISION":
+                leaves = []
+                narrative = [{
+                    "identity": "decision:factory:pending",
+                    "title": "Decisión pendiente",
+                    "kind": "decision_required",
+                    "source_ref": "decision:Factory",
+                }]
+            elif factory_state == "LIVE_GATED":
+                leaves = []
+                narrative = [{
+                    "identity": "live:factory:gated",
+                    "title": "Trabajo reservado para live",
+                    "kind": "live_only",
+                    "source_ref": "live:Factory",
+                }]
             elif factory_state == "NO_WORK":
                 leaves = [_leaf("Factory#done", "completed")]
             elif factory_state == "READY":
@@ -53,7 +69,12 @@ def _inventory(factory_state):
 
 class DispatcherV2Tests(unittest.TestCase):
     def test_dispatch_distinguishes_blocked_unmaterialized_and_no_work(self):
-        for expected in ("ALL_BLOCKED", "UNMATERIALIZED_WORK", "NO_WORK"):
+        expected_actions = {
+            "ALL_BLOCKED": "inventory_state",
+            "UNMATERIALIZED_WORK": "materialize_inventory",
+            "NO_WORK": "inventory_state",
+        }
+        for expected, expected_step in expected_actions.items():
             with self.subTest(expected=expected):
                 inventory = _inventory(expected)
                 record = dispatch_record_with_inventory(
@@ -66,8 +87,11 @@ class DispatcherV2Tests(unittest.TestCase):
                     handoff["project_states"]["pl0n3r/Factory"],
                     expected,
                 )
+                self.assertEqual(handoff["fallback_state"], expected)
                 self.assertIn(expected, handoff["states_present"])
-                self.assertEqual(
+                self.assertEqual(record["next_action"]["step"], expected_step)
+                self.assertEqual(record["next_action"]["reason"], expected)
+                self.assertNotEqual(
                     record["next_action"]["step"],
                     "declare_idle_reason",
                 )
@@ -95,6 +119,16 @@ class DispatcherV2Tests(unittest.TestCase):
                 [],
                 work_inventory=_inventory("READY"),
             )
+
+    def test_human_or_live_inventory_states_never_materialize(self):
+        for state in ("WAITING_DECISION", "LIVE_GATED"):
+            with self.subTest(state=state):
+                record = dispatch_record_with_inventory(
+                    [],
+                    work_inventory=_inventory(state),
+                )
+                self.assertEqual(record["next_action"]["step"], "inventory_state")
+                self.assertEqual(record["next_action"]["reason"], state)
 
 
 if __name__ == "__main__":
