@@ -45,6 +45,15 @@ class RuntimeValidationError(ValueError):
     """Contrato runtime inválido o fuera del límite permitido."""
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise RuntimeValidationError("duplicate_json_key")
+        result[key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class AlertSpec:
     fingerprint: str
@@ -172,18 +181,56 @@ def _alert_marker(fingerprint: str) -> str:
 
 
 def alert_body(spec: AlertSpec) -> str:
-    reasons = "\n".join(f"- \`{reason}\`" for reason in spec.reasons) or "- \`none\`"
+    reasons = "\n".join(f"- `{reason}`" for reason in spec.reasons) or "- `none`"
     return (
         f"{_alert_marker(spec.fingerprint)}\n"
         "## Watchdog desatendido\n\n"
         f"Severidad: **{spec.severity}**\n\n"
-        f"Código: \`{spec.code}\`\n\n"
-        f"Fingerprint: \`{spec.fingerprint}\`\n\n"
-        f"Evidencia 4C: \`{spec.evidence_fingerprint}\`\n\n"
+        f"Código: `{spec.code}`\n\n"
+        f"Fingerprint: `{spec.fingerprint}`\n\n"
+        f"Evidencia 4C: `{spec.evidence_fingerprint}`\n\n"
         f"### Razones\n{reasons}\n\n"
         "Esta alerta pertenece exclusivamente al runtime unattended-watchdog. "
         "No concede autoridad nueva ni implica go-live, gasto o datos reales.\n"
     )
+
+
+def parse_owned_alert(issue: object) -> tuple[str, int] | None:
+    """Reconoce solo alertas creadas por este workflow; nunca Issues ajenos."""
+    if not isinstance(issue, dict) or "pull_request" in issue:
+        return None
+    body = issue.get("body")
+    title = issue.get("title")
+    number = issue.get("number")
+    user = issue.get("user")
+    if (
+        not isinstance(body, str)
+        or not isinstance(title, str)
+        or not title.startswith(ALERT_TITLE + " ")
+        or isinstance(number, bool)
+        or not isinstance(number, int)
+        or number <= 0
+        or not isinstance(user, dict)
+        or user.get("login") != "github-actions[bot]"
+    ):
+        return None
+    markers = ALERT_MARKER_RE.findall(body)
+    if len(markers) != 1:
+        return None
+    try:
+        marker = json.loads(markers[0], object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, RuntimeValidationError):
+        return None
+    if (
+        not isinstance(marker, dict)
+        or set(marker) != {"version", "fingerprint"}
+        or type(marker["version"]) is not int
+        or marker["version"] != 1
+        or not isinstance(marker["fingerprint"], str)
+        or FINGERPRINT_RE.fullmatch(marker["fingerprint"]) is None
+    ):
+        return None
+    return marker["fingerprint"], number
 
 
 class GitHubIssueClient:
@@ -230,28 +277,10 @@ class GitHubIssueClient:
             if not isinstance(payload, list):
                 raise RuntimeValidationError("github_issues_invalid")
             for issue in payload:
-                if not isinstance(issue, dict) or "pull_request" in issue:
+                owned = parse_owned_alert(issue)
+                if owned is None:
                     continue
-                body = issue.get("body")
-                number = issue.get("number")
-                if not isinstance(body, str) or not isinstance(number, int):
-                    continue
-                match = ALERT_MARKER_RE.search(body)
-                if match is None:
-                    continue
-                try:
-                    marker = json.loads(match.group(1))
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    not isinstance(marker, dict)
-                    or set(marker) != {"version", "fingerprint"}
-                    or marker["version"] != 1
-                    or not isinstance(marker["fingerprint"], str)
-                    or FINGERPRINT_RE.fullmatch(marker["fingerprint"]) is None
-                ):
-                    continue
-                fingerprint = marker["fingerprint"]
+                fingerprint, number = owned
                 if fingerprint in result and result[fingerprint] != number:
                     raise RuntimeValidationError("duplicate_owned_alert_fingerprint")
                 result[fingerprint] = number
