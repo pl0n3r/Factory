@@ -25,7 +25,7 @@ from scripts.unattended_watchdog_runtime import (
 
 SUMMARY_ISSUE = 768
 BOGOTA = ZoneInfo("America/Bogota")
-MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-daily-summary\\b")
+MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-daily-summary")
 MARKER_RE = re.compile(
     r"<!--\s*factory-unattended-daily-summary\s+(\{.*?\})\s*-->",
     re.DOTALL,
