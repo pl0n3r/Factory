@@ -144,7 +144,7 @@ class UnattendedCycleTests(TestCase):
             ),
             new_alert_fingerprints=(),
             interrupt_owner=False,
-            daily_summary=summary(),
+            daily_summary=watchdog().daily_summary,
             evidence_fingerprint="b" * 64,
         )
 
