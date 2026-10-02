@@ -13,6 +13,10 @@ from scripts.adaptive_replan import (
     event_fingerprint as replan_event_fingerprint,
     normalize_event,
 )
+from scripts.unattended_global_idle import (
+    GlobalIdleValidationError,
+    validate_global_idle_proof,
+)
 
 IMMEDIATE_TYPES = frozenset({"health_changed", "incident_changed"})
 
@@ -260,6 +264,44 @@ def _pause_policy(
         return False, reasons
     reasons.append("pause_allowed_safe_point")
     return True, reasons
+
+
+def fence_global_idle(global_idle: object) -> FencingDecision:
+    """Deriva fencing neutral solo desde un proof global-idle validado."""
+    try:
+        proof = validate_global_idle_proof(global_idle)
+    except GlobalIdleValidationError:
+        return FencingDecision(
+            action="fail_closed",
+            pause_allowed=False,
+            generation=0,
+            attempt=0,
+            snapshot_fingerprint=_fingerprint({"global_idle": "invalid"}),
+            event_fingerprint=_fingerprint([]),
+            coalesced_events=0,
+            reasons=("global_idle_invalid",),
+        )
+    if proof["idle_global"] is not True:
+        return FencingDecision(
+            action="fail_closed",
+            pause_allowed=False,
+            generation=0,
+            attempt=0,
+            snapshot_fingerprint=_fingerprint(proof),
+            event_fingerprint=_fingerprint([]),
+            coalesced_events=0,
+            reasons=("global_idle_not_proven",),
+        )
+    return FencingDecision(
+        action="keep",
+        pause_allowed=False,
+        generation=0,
+        attempt=0,
+        snapshot_fingerprint=_fingerprint(proof),
+        event_fingerprint=_fingerprint([]),
+        coalesced_events=0,
+        reasons=("global_idle_proven",),
+    )
 
 
 def evaluate_fencing(
