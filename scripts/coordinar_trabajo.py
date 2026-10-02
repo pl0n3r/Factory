@@ -55,6 +55,17 @@ except ValueError:
 COMMIT_CLOCK_SKEW_SECONDS = 300
 
 ALLOWED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+PUBLIC_WORKFLOW_RUN_REPOS = frozenset(
+    {
+        "pl0n3r/factory",
+        "pl0n3r/condor",
+        "pl0n3r/grindflow",
+        "pl0n3r/brvtal",
+        "pl0n3r/controlbot",
+        "pl0n3r/autofactory",
+        "pl0n3r/factoryrunner",
+    }
+)
 
 @dataclass(frozen=True)
 class CoordinationProfile:
@@ -183,6 +194,33 @@ class GitHub:
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method=method)
+        try:
+            with urlopen(request, timeout=30) as response:
+                raw = response.read()
+                return None if not raw else json.loads(raw.decode("utf-8"))
+        except HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            if exc.code in allow:
+                return None
+            try:
+                message = json.loads(raw).get("message", raw)
+            except json.JSONDecodeError:
+                message = raw
+            raise GitHubError(exc.code, str(message)) from exc
+
+    def public_request(
+        self,
+        path: str,
+        allow: tuple[int, ...] = (),
+    ) -> Any:
+        """Ejecuta un GET JSON anónimo sin enviar el token de coordinación."""
+        url = f"{API_URL}{path}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "condor-coordinacion-public-evidence",
+        }
+        request = Request(url, headers=headers, method="GET")
         try:
             with urlopen(request, timeout=30) as response:
                 raw = response.read()
@@ -408,14 +446,30 @@ class GitHub:
         return None
 
     def workflow_run(self, run_id: int) -> dict[str, Any]:
-        """Obtiene un workflow run por ID para verificar evidencia exacta."""
-        payload = self.request(
-            "GET",
+        """Lee evidencia workflow_success públicamente y solo en repos gobernados."""
+        repo_key = self.repo.lower()
+        if repo_key not in PUBLIC_WORKFLOW_RUN_REPOS:
+            raise CoordinationError(
+                "workflow_success solo admite lectura pública en repos gobernados."
+            )
+        payload = self.public_request(
             f"/repos/{self.repo}/actions/runs/{run_id}",
+            allow=(404,),
         )
+        if payload is None:
+            raise GitHubError(404, "Not Found")
         if not isinstance(payload, dict):
             raise CoordinationError(
                 f"No fue posible leer workflow run {run_id}."
+            )
+        repository = payload.get("repository")
+        if (
+            not isinstance(repository, dict)
+            or repository.get("private") is not False
+            or str(repository.get("full_name") or "").lower() != repo_key
+        ):
+            raise CoordinationError(
+                "workflow_success requiere evidencia pública del repositorio exacto."
             )
         return payload
 
