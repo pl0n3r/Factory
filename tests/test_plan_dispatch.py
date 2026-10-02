@@ -85,6 +85,57 @@ class PlanContractTests(unittest.TestCase):
             PLAN,
         )
 
+    def test_blocked_incident_is_watch_only_and_dispatch_continues(self):
+        for value in (
+            "solo preempta si es ejecutable",
+            "estado: bloqueado",
+            "queda en vigilancia",
+            "no detiene el despacho de otros repos",
+            "Preempción ejecutable",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
+    def test_lost_reservation_or_overlap_must_continue_global_ranking(self):
+        for value in (
+            "lease ajena",
+            "claim overlap",
+            "carrera de reserva perdida",
+            "continúa inmediatamente con el siguiente candidato del ranking entre los siete repos",
+            "No publica `overlap` ni `NO_WORK` hasta agotar los candidatos ejecutables del ciclo",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
+    def test_no_work_requires_live_seven_repo_inventory_and_final_recheck(self):
+        self.assertIn("NO_WORK válido solo tras inventario global vivo", PLAN)
+        self.assertIn("en **ese mismo ciclo**", PLAN)
+        for repo in (
+            "Factory",
+            "Condor",
+            "GrindFlow",
+            "BRVTAL",
+            "ControlBot",
+            "AutoFactory",
+            "FactoryRunner",
+        ):
+            with self.subTest(repo=repo):
+                self.assertIn(repo, PLAN)
+        self.assertIn("registrar para cada repositorio el motivo", PLAN)
+        self.assertIn("recomprobación final", PLAN)
+        self.assertIn("available", PLAN)
+        self.assertIn("estado: disponible", PLAN)
+
+    def test_inventory_change_invalidates_prior_no_work_snapshot(self):
+        for value in (
+            "Cualquier cambio de inventario invalida el snapshot previo",
+            "descartar esa fotografía y reevaluar",
+            "snapshot parcial o stale",
+            "falla cerrado respecto a `NO_WORK`",
+        ):
+            with self.subTest(value=value):
+                self.assertIn(value, PLAN)
+
     def test_tranche_gate_precedes_ready_reservation_and_cannot_be_overridden(self):
         gate = "**Gate de tanda antes de prioridades:**"
         priority = "5. El Issue ready de"
