@@ -347,6 +347,15 @@ class UnattendedWatchdogTests(unittest.TestCase):
         self.assertEqual(unknown_risk.action, "BLOCKED")
         self.assertIn("UNKNOWN:state_risk_unknown", unknown_risk.daily_summary.incidents)
 
+        minimal_state = state()
+        for optional in ("branch", "head_sha", "reservation_id"):
+            del minimal_state[optional]
+        minimal = evaluate_unattended_watchdog(
+            guard(), config(), evidence(state=minimal_state, reservation=None)
+        )
+        self.assertEqual((minimal.action, minimal.authority), ("ALLOW", "unchanged"))
+        self.assertEqual(minimal.daily_summary.state_freshness, "fresh")
+
     def test_guard_decision_is_consumed_without_recalculation_or_authority_expansion(self):
         healthy = evidence(reservation=None)
         allowed = evaluate_unattended_watchdog(guard("ALLOW", False), config(), healthy)
