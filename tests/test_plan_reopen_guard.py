@@ -40,7 +40,7 @@ class PlanReopenGuardTests(unittest.TestCase):
             PLAN,
         )
 
-    def test_plan_forbids_stale_terminal_reconciliation_when_main_missing_contract(self):
+    def test_plan_forbids_stale_close_when_main_does_not_satisfy_contract(self):
         required = (
             "Preflight exact-main antes de cierre/reconciliación terminal",
             "marcar `completed`/`duplicate`/`not_planned`",
