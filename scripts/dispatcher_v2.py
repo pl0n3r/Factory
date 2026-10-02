@@ -10,6 +10,7 @@ from typing import Iterable
 
 from scripts.adaptive_fencing import FencingDecision
 from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET, parse_contract
+from scripts.orquestador_kit import validate_task_key
 from scripts.presence_contract import PresenceAssessment
 from scripts.unattended_guards import GuardDecision
 from scripts.unattended_watchdog import (
@@ -258,6 +259,8 @@ def _normalize_direction_proposal(proposal: DirectionProposal) -> dict[str, obje
     keys = [leaf.key.strip() for leaf in proposal.leaves]
     if any(not key for key in keys) or len(keys) != len(set(keys)):
         raise ValueError("direction proposal leaf keys must be non-empty and unique")
+    for key in keys:
+        validate_task_key(key)
     key_set = set(keys)
     normalized_leaves = []
     for leaf, key in zip(proposal.leaves, keys):
