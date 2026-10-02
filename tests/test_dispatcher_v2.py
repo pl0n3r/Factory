@@ -857,35 +857,6 @@ class DispatcherV2Tests(unittest.TestCase):
             ),
         )
 
-    def unattended_guard(self, action="ALLOW", authority="unchanged"):
-        return GuardDecision(
-            action=action,
-            authority=authority,
-            pause_allowed=action == "PAUSE",
-            reasons=("test_guard",),
-            evidence_fingerprint="a" * 64,
-        )
-
-    def unattended_watchdog(self, action="ALLOW", authority="unchanged"):
-        return WatchdogDecision(
-            action=action,
-            authority=authority,
-            incidents=(),
-            new_alert_fingerprints=(),
-            interrupt_owner=False,
-            daily_summary=DailySummary(
-                active_fronts=(),
-                state_freshness="fresh",
-                incidents=(),
-                blockers=(),
-                human_gates=(),
-                integrated=(),
-                reverted=(),
-                next_actions=(),
-            ),
-            evidence_fingerprint="b" * 64,
-        )
-
     def test_presence_unknown_or_stale_is_not_ready(self):
         """AC-01: presence incierta nunca se convierte en capacidad utilizable."""
         for freshness, expected in (("unknown", "adaptive_presence_unknown"), ("stale", "adaptive_presence_stale")):
