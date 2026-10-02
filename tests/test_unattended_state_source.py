@@ -166,6 +166,21 @@ class UnattendedStateSourceTests(unittest.TestCase):
                 self.assertEqual(result.authority, "unchanged")
                 self.assertNotEqual(result.status, "READY")
 
+    def test_invalid_top_level_contract_fails_closed(self):
+        for changes in (
+            {"repository": "invalid"},
+            {"issue_number": True},
+            {"state_stale_minutes": 0},
+            {"reservation_stale_minutes": 0},
+            {"branch_head_sha": "bad"},
+            {"now": "2026-10-02T04:10:00"},
+        ):
+            with self.subTest(changes=changes):
+                result = project([reservation(), state_comment()], **changes)
+                self.assertEqual(result.status, "BLOCKED")
+                self.assertEqual(result.authority, "unchanged")
+                self.assertIsNone(result.state)
+
     def test_plan_requires_machine_readable_state_at_handoff(self):
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
         self.assertIn("factory-state", plan)
