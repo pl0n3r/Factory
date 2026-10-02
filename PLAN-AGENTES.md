@@ -66,6 +66,7 @@ Si no existe trabajo `ready`, aplica la **escalera no ociosa ya integrada por Fa
 - No tratar `available` como autoridad para saltar tandas, puertas humanas o go-live.
 - No gastar, publicar/live, usar datos reales ni tomar decisiones reservadas al dueño.
 - No hacer polling de CI; una lectura terminal al final del cambio.
+- **Puertas D-043/release: evidencia terminal, no color del workflow.** `workflow conclusion=success` por sí solo **no satisface D-043** ni desbloquea trabajo dependiente. El despachador debe leer la evidencia canónica del run y exigir estado final exacto `VALIDATED_IN_PRODUCTION`, identidad/SHA coincidentes y ningún check de transición requerido pendiente. `DEPLOY_OBSERVED`, `NO_OBSERVADO`, `pending` no vacío, evidencia ausente/ilegible o identidad distinta mantienen el leaf bloqueado **aunque GitHub Actions muestre `success`**. Una lease creada por inferir readiness desde `success` no amplía autoridad ni habilita implementación; la línea permanece fail-closed hasta evidencia terminal y otra sesión no la invade ni libera.
 - Tras cerrar/liberar un frente, volver a ejecutar el árbol de despacho.
 
 ---
