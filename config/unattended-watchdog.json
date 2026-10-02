@@ -1,0 +1,5 @@
+{
+  "ready_without_dispatch_minutes": 10,
+  "reservation_stale_minutes": 15,
+  "state_stale_minutes": 20
+}
