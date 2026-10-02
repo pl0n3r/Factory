@@ -127,7 +127,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("schedule:", workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("cron: '7,22,37,52 * * * *'", workflow)
+        self.assertIn("cron: '*/15 * * * *'", workflow)
         self.assertIn("push:", workflow)
         self.assertIn("branches:", workflow)
         self.assertIn("- main", workflow)
@@ -164,19 +164,12 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertNotIn("pull_request_target", workflow)
         self.assertNotIn("workflow_run", workflow)
 
-    def test_watchdog_schedule_keeps_four_offset_quarter_hour_slots(self):
+    def test_watchdog_schedule_keeps_explicit_quarter_hour_cadence(self):
         workflow = (
             ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("cron: '7,22,37,52 * * * *'", workflow)
-        self.assertNotIn("cron: '*/15 * * * *'", workflow)
-        minutes = (7, 22, 37, 52)
-        gaps = tuple(
-            (minutes[(index + 1) % len(minutes)] - minute) % 60
-            for index, minute in enumerate(minutes)
-        )
-        self.assertEqual(gaps, (15, 15, 15, 15))
-        self.assertTrue(set(minutes).isdisjoint({0, 15, 30, 45}))
+        self.assertIn("cron: '*/15 * * * *'", workflow)
+        self.assertEqual(workflow.count("cron: '*/15 * * * *'"), 1)
 
     def test_main_push_never_runs_daily_summary(self):
         workflow = (
@@ -216,7 +209,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             ROOT / "docs" / "unattended-watchdog-runtime.md"
         ).read_text(encoding="utf-8")
         self.assertIn("`push` a `main`", runbook)
-        self.assertIn("07/22/37/52", runbook)
+        self.assertIn("cada **15 minutos**", runbook)
         self.assertIn("post-merge", runbook)
         self.assertIn("## Reversión", runbook)
         self.assertIn("Factory#815", runbook)
