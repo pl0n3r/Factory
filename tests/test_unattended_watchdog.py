@@ -4,6 +4,7 @@ from pathlib import Path
 import copy
 import unittest
 
+from scripts.unattended_global_idle import CANONICAL_REPOSITORIES, evaluate_global_idle_snapshot
 from scripts.unattended_guards import GuardDecision
 from scripts.unattended_watchdog import evaluate_unattended_watchdog
 
@@ -102,7 +103,114 @@ def evidence(**changes):
     return value
 
 
+def proven_global_idle():
+    return evaluate_global_idle_snapshot(
+        {
+            "version": 1,
+            "repositories": [
+                {
+                    "repository": repository,
+                    "freshness": "fresh",
+                    "ready": False,
+                    "reserved": False,
+                    "reviewing": False,
+                    "ambiguous": False,
+                    "source_ref": f"github:{repository}#inventory",
+                }
+                for repository in CANONICAL_REPOSITORIES
+            ],
+        }
+    )
+
+
+def idle_presence():
+    return {
+        "version": 1,
+        "source": "factory-github-inventory",
+        "observed_at": "2026-10-02T01:00:00Z",
+        "sessions": [],
+        "capacity": {
+            "known_slots": 0,
+            "eligible_free_slots": 0,
+            "degraded_slots": 0,
+            "freshness": "unknown",
+        },
+    }
+
+
+def idle_state():
+    return state(
+        work_identity="pl0n3r/Factory#idle",
+        branch=None,
+        head_sha=None,
+        reservation_id=None,
+        risk="low",
+        severity="S3",
+        evidence=["github_inventory:no_active_work_items"],
+        last_state="idle",
+        next_action="re-run dispatcher when canonical work appears",
+        blockers=[],
+        updated_at="2026-10-02T01:00:00Z",
+    )
+
+
 class UnattendedWatchdogTests(unittest.TestCase):
+    def test_proven_global_idle_does_not_emit_presence_insufficient_or_block_idle_by_itself(self):
+        result = evaluate_unattended_watchdog(
+            guard(),
+            config(),
+            evidence(
+                presence=idle_presence(),
+                reservation=None,
+                state=idle_state(),
+                active_fronts=[],
+                next_dispatch_planned=False,
+                global_idle=proven_global_idle(),
+            ),
+        )
+        self.assertEqual(result.action, "ALLOW")
+        self.assertNotIn(
+            "presence_insufficient",
+            {item.code for item in result.incidents},
+        )
+        self.assertFalse(result.daily_summary.incidents)
+
+    def test_unknown_presence_still_blocks_when_global_idle_is_unproven_or_work_is_active(self):
+        base = dict(
+            presence=idle_presence(),
+            reservation=None,
+            state=idle_state(),
+            active_fronts=[],
+            next_dispatch_planned=False,
+        )
+        unproven = evaluate_unattended_watchdog(
+            guard(),
+            config(),
+            evidence(**base),
+        )
+        self.assertEqual(unproven.action, "BLOCKED")
+        self.assertIn(
+            "presence_insufficient",
+            {item.code for item in unproven.incidents},
+        )
+
+        active = evaluate_unattended_watchdog(
+            guard(),
+            config(),
+            evidence(
+                **{
+                    **base,
+                    "active_fronts": ["pl0n3r/Factory#823"],
+                    "global_idle": proven_global_idle(),
+                }
+            ),
+        )
+        self.assertEqual(active.action, "BLOCKED")
+        self.assertIn(
+            "presence_insufficient",
+            {item.code for item in active.incidents},
+        )
+
     def test_presence_unknown_stale_or_missing_heartbeat_never_counts_as_healthy_progress(self):
         cases = []
         stale = presence()
