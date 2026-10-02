@@ -174,6 +174,55 @@ class WorkflowEventGuardTests(unittest.TestCase):
         self.assertIn("success|skipped", validar)
         self.assertIn("Gate con resultado $r", validar)
 
+    def test_factory_coordination_rechecks_live_pr_state_before_lease_validation(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        coordination = workflow[workflow.index("  coordinacion:"):workflow.index("  acceptance:")]
+        self.assertIn("name: Comprobar estado live del PR", coordination)
+        self.assertIn("id: pr_live", coordination)
+        self.assertIn('gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state'', coordination)
+        self.assertIn('open) echo "is_open=true" >> "$GITHUB_OUTPUT"', coordination)
+        self.assertIn('closed)', coordination)
+        validation = coordination[coordination.index("- name: Validar reserva, rama y colisiones"):]
+        self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", validation)
+        self.assertIn("coordinar_trabajo.py validar-pr", validation)
+        self.assertLess(
+            coordination.index("name: Comprobar estado live del PR"),
+            coordination.index("coordinar_trabajo.py validar-pr"),
+        )
+
+    def test_factory_acceptance_rechecks_live_pr_state_before_issue_evidence(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        acceptance = workflow[workflow.index("  acceptance:"):workflow.index("  validar:")]
+        self.assertIn("pull-requests: read", acceptance)
+        self.assertIn("name: Comprobar estado live del PR", acceptance)
+        self.assertIn('gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state'', acceptance)
+        self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", acceptance)
+        evidence = acceptance[acceptance.index("- name: Construir evidencia del Issue y SHA"):]
+        self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", evidence)
+        self.assertLess(
+            acceptance.index("name: Comprobar estado live del PR"),
+            acceptance.index("Construir evidencia del Issue y SHA"),
+        )
+
+    def test_live_pr_guard_keeps_open_pr_validation_fail_closed(self) -> None:
+        workflow = self.text("factory-ci.yml")
+        self.assertEqual(workflow.count("name: Comprobar estado live del PR"), 2)
+        self.assertGreaterEqual(
+            workflow.count("if: steps.pr_live.outputs.is_open == 'true'"),
+            5,
+        )
+        self.assertIn('*) echo "::error::Estado live inesperado para PR #$PR: $state"; exit 1 ;;', workflow)
+        self.assertIn("coordinar_trabajo.py validar-pr", workflow)
+        self.assertIn("python3 scripts/aceptacion_kit.py", workflow)
+        self.assertIn(
+            "if: github.event_name == 'pull_request' && github.event.pull_request.state == 'open'",
+            workflow,
+        )
+        self.assertIn(
+            "if: always() && github.event_name == 'pull_request' && github.event.pull_request.state == 'open'",
+            workflow,
+        )
+
     def test_docs_define_event_contract(self) -> None:
         agents = (ROOT / "AGENTES.md").read_text(encoding="utf-8")
         architecture = (ROOT / "docs" / "arquitectura-tecnica.md").read_text(encoding="utf-8")
