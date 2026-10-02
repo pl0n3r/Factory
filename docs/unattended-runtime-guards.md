@@ -12,6 +12,7 @@ autoridad.
 `scripts/unattended_guards.py` recibe una `FencingDecision` ya calculada:
 
 - `fail_closed` siempre produce `BLOCKED`;
+- `replan` nunca se degrada a `ALLOW`: produce `PAUSE` si fencing permite la pausa y `BLOCKED` en caso contrario;
 - `PAUSE` solo existe si fencing ya trae `pause_allowed=true`;
 - si una guarda necesita pausa sin safe-point/preemptibility válido, produce
   `BLOCKED`;
