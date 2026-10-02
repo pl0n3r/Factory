@@ -185,9 +185,14 @@ def _jobs(text, label):
                     raise PreflightError(f"{label}:{name}: uses ambiguo.")
                 uses = stripped[5:].strip().strip("'\"")
             elif stripped.startswith("permissions:"):
-                if stripped != "permissions:" or permissions is not None:
+                if permissions is not None:
                     raise PreflightError(f"{label}:{name}: permissions inválido.")
-                permissions = _mapping(lines, i, 4, label)
+                if stripped == "permissions:":
+                    permissions = _mapping(lines, i, 4, label)
+                elif stripped == "permissions: {}":
+                    permissions = {}
+                else:
+                    raise PreflightError(f"{label}:{name}: permissions inválido.")
         jobs.append((name, uses, dict(top) if permissions is None else permissions))
     return jobs
 

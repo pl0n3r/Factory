@@ -235,6 +235,33 @@ class ReusableReleasePreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(PreflightError, "ambigua"):
             evaluate_inventory(ambiguous, "f" * 40, self.root)
 
+    def test_empty_inline_job_permissions_are_supported_as_no_permissions(self):
+        parsed = target._jobs(
+            "jobs:\n"
+            "  event_guard:\n"
+            "    permissions: {}\n"
+            "    runs-on: ubuntu-latest\n",
+            "factory:ci.yml",
+        )
+        self.assertEqual(parsed, [("event_guard", None, {})])
+
+    def test_non_empty_inline_permissions_remain_fail_closed(self):
+        with self.assertRaisesRegex(PreflightError, "permissions inválido"):
+            target._jobs(
+                "jobs:\n"
+                "  call:\n"
+                "    permissions: {contents: read}\n"
+                "    runs-on: ubuntu-latest\n",
+                "factory:ci.yml",
+            )
+
+    def test_current_factory_ci_empty_permissions_parse_to_contents_read_envelope(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
+        self.assertEqual(
+            target._required(workflow, "factory:.github/workflows/ci.yml"),
+            {"contents": "read"},
+        )
+
     def test_main_returns_success_and_fail_closed(self):
         good = evaluate_inventory(inventory(), "f" * 40, self.root)
         with patch.object(target, "collect_inventory", return_value=inventory()), \
