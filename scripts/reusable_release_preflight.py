@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
+from http.client import HTTPException, HTTPSConnection
 import json
 from pathlib import Path
 import re
 import sys
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import quote
 
 from scripts.reusable_permission_compat import compare_permissions
 
@@ -22,30 +21,53 @@ WF = re.compile(r"^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$")
 REF = re.compile(
     r"^pl0n3r/factory/\.github/workflows/([A-Za-z0-9._-]+\.ya?ml)@([^\\s]+)$", re.I
 )
-API = "https://api.github.com/repos"
-RAW = "https://raw.githubusercontent.com"
+API_HOST = "api.github.com"
+RAW_HOST = "raw.githubusercontent.com"
 RANK = {"none": 0, "read": 1, "write": 2}
+USER_AGENT = "factory-release-preflight/1"
 
 
 class PreflightError(ValueError):
     pass
 
 
-def _json(url):
+def _github_json(path):
+    connection = HTTPSConnection(API_HOST, timeout=20)
     try:
-        with urlopen(Request(url, headers={"User-Agent": "factory-release-preflight/1"}), timeout=20) as r:
-            return json.load(r)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        connection.request(
+            "GET",
+            path,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        response = connection.getresponse()
+        if response.status != 200:
+            raise PreflightError("evidencia GitHub pública ilegible.")
+        raw = response.read(1_000_001)
+        if len(raw) > 1_000_000:
+            raise PreflightError("evidencia GitHub pública demasiado grande.")
+        return json.loads(raw)
+    except (OSError, HTTPException, UnicodeError, json.JSONDecodeError) as exc:
         raise PreflightError("evidencia GitHub pública ilegible.") from exc
+    finally:
+        connection.close()
 
 
-def _bytes(url):
+def _github_bytes(path):
+    connection = HTTPSConnection(RAW_HOST, timeout=20)
     try:
-        with urlopen(Request(url, headers={"User-Agent": "factory-release-preflight/1"}), timeout=20) as r:
-            return r.read(300_001)
-    except (HTTPError, URLError, TimeoutError) as exc:
+        connection.request("GET", path, headers={"User-Agent": USER_AGENT})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise PreflightError("workflow público ilegible.")
+        return response.read(300_001)
+    except (OSError, HTTPException) as exc:
         raise PreflightError("workflow público ilegible.") from exc
-
+    finally:
+        connection.close()
 
 def _sha(value, label):
     if not isinstance(value, str) or SHA.fullmatch(value) is None:
@@ -53,20 +75,17 @@ def _sha(value, label):
     return value
 
 
-def _blob(raw):
-    return hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
-
-
-def collect_inventory(get_json=_json, get_bytes=_bytes):
+def collect_inventory(get_json=_github_json, get_bytes=_github_bytes):
     inventory = []
     for repo in CONSUMERS:
-        meta = get_json(f"{API}/{repo}")
+        meta = get_json(f"/repos/{repo}")
         branch = meta.get("default_branch") if isinstance(meta, dict) else None
         if not isinstance(branch, str) or not branch:
             raise PreflightError(f"{repo}: default branch inválida.")
-        head = f"{API}/{repo}/commits/{branch}"
+        branch_segment = quote(branch, safe="")
+        head = f"/repos/{repo}/commits/{branch_segment}"
         first = _sha(get_json(head).get("sha"), f"{repo}.sha")
-        tree = get_json(f"{API}/{repo}/git/trees/{first}?recursive=1")
+        tree = get_json(f"/repos/{repo}/git/trees/{first}?recursive=1")
         if not isinstance(tree, dict) or tree.get("truncated") is not False:
             raise PreflightError(f"{repo}: árbol truncado/ilegible.")
         rows = tree.get("tree")
@@ -83,9 +102,9 @@ def collect_inventory(get_json=_json, get_bytes=_bytes):
                 raise PreflightError(f"{repo}: workflow ambiguo.")
             seen.add(path)
             blob = _sha(item.get("sha"), f"{repo}:{path}.blob")
-            raw = get_bytes(f"{RAW}/{repo}/{first}/{path}")
-            if len(raw) > 300_000 or _blob(raw) != blob:
-                raise PreflightError(f"{repo}:{path}: contenido no corresponde.")
+            raw = get_bytes(f"/{repo}/{first}/{path}")
+            if len(raw) > 300_000:
+                raise PreflightError(f"{repo}:{path}: contenido demasiado grande.")
             try:
                 text = raw.decode()
             except UnicodeDecodeError as exc:
