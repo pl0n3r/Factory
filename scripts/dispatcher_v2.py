@@ -1015,9 +1015,15 @@ def direction_gate_trigger(
     ):
         raise ValueError("eligible leaf threshold must be a non-negative integer")
 
+    effective_leaf_threshold = (
+        max(eligible_leaf_threshold, OWNER_AUTONOMY_RUNWAY_FLOOR - 1)
+        if owner_autonomy_context is not None
+        else eligible_leaf_threshold
+    )
     repo = str(normalized["repository_ref"])
     key = _direction_gate_key(repo)
-    if key in set(existing_gate_keys):
+    gate_is_open = key in set(existing_gate_keys)
+    if gate_is_open and owner_autonomy_context is None:
         return {
             "action": "noop",
             "reason": "direction_gate_already_open",
@@ -1034,24 +1040,73 @@ def direction_gate_trigger(
         for candidate in product_candidates
         if classify_readiness(candidate, active_tranche=active_tranche).ready
     )
-    if eligible_leaf_count > eligible_leaf_threshold:
+    if eligible_leaf_count > effective_leaf_threshold:
         return {
             "action": "noop",
             "reason": "sufficient_eligible_work",
             "gate_key": key,
             "eligible_leaf_count": eligible_leaf_count,
-            "eligible_leaf_threshold": eligible_leaf_threshold,
+            "eligible_leaf_threshold": effective_leaf_threshold,
         }
 
     result = _direction_gate(proposal)
-    if result["proposal_sha256"] in set(known_proposal_sha256s):
+    known_hashes = set(known_proposal_sha256s)
+    if gate_is_open:
+        if result["proposal_sha256"] not in known_hashes:
+            return {
+                "action": "blocked",
+                "materialize_leaves": False,
+                "reason": "direction_gate_open_without_matching_proposal",
+                "gate_key": key,
+                "proposal_sha256": result["proposal_sha256"],
+                "eligible_leaf_count": eligible_leaf_count,
+                "eligible_leaf_threshold": effective_leaf_threshold,
+            }
+        authorization = evaluate_owner_autonomy(proposal, owner_autonomy_context)
+        if authorization["action"] == "blocked":
+            return {
+                "action": "blocked",
+                "materialize_leaves": False,
+                "reason": authorization["reason"],
+                "gate_key": key,
+                "proposal_sha256": result["proposal_sha256"],
+                "eligible_leaf_count": eligible_leaf_count,
+                "eligible_leaf_threshold": effective_leaf_threshold,
+                "authorization": authorization,
+                "reuses_existing_gate": True,
+            }
+        if authorization["action"] == "auto_materialize":
+            return {
+                "action": "materialize_authorized",
+                "materialize_leaves": True,
+                "gate_key": key,
+                "proposal": result["proposal"],
+                "proposal_sha256": result["proposal_sha256"],
+                "eligible_leaf_count": eligible_leaf_count,
+                "eligible_leaf_threshold": effective_leaf_threshold,
+                "authorization": authorization,
+                "audit_comment": authorization["audit_comment"],
+                "reuses_existing_gate": True,
+            }
+        return {
+            "action": "noop",
+            "reason": "direction_gate_already_open",
+            "gate_key": key,
+            "proposal_sha256": result["proposal_sha256"],
+            "eligible_leaf_count": eligible_leaf_count,
+            "eligible_leaf_threshold": effective_leaf_threshold,
+            "authorization": authorization,
+            "reuses_existing_gate": True,
+        }
+
+    if result["proposal_sha256"] in known_hashes:
         return {
             "action": "noop",
             "reason": "direction_proposal_already_known",
             "gate_key": key,
             "proposal_sha256": result["proposal_sha256"],
             "eligible_leaf_count": eligible_leaf_count,
-            "eligible_leaf_threshold": eligible_leaf_threshold,
+            "eligible_leaf_threshold": effective_leaf_threshold,
         }
 
     if owner_autonomy_context is not None:
@@ -1064,7 +1119,7 @@ def direction_gate_trigger(
                 "gate_key": key,
                 "proposal_sha256": result["proposal_sha256"],
                 "eligible_leaf_count": eligible_leaf_count,
-                "eligible_leaf_threshold": eligible_leaf_threshold,
+                "eligible_leaf_threshold": effective_leaf_threshold,
                 "authorization": authorization,
             }
         if authorization["action"] == "auto_materialize":
@@ -1075,7 +1130,7 @@ def direction_gate_trigger(
                 "proposal": result["proposal"],
                 "proposal_sha256": result["proposal_sha256"],
                 "eligible_leaf_count": eligible_leaf_count,
-                "eligible_leaf_threshold": eligible_leaf_threshold,
+                "eligible_leaf_threshold": effective_leaf_threshold,
                 "authorization": authorization,
                 "audit_comment": authorization["audit_comment"],
             }
@@ -1084,7 +1139,7 @@ def direction_gate_trigger(
                 "action": "open_gate",
                 "materialize_leaves": False,
                 "eligible_leaf_count": eligible_leaf_count,
-                "eligible_leaf_threshold": eligible_leaf_threshold,
+                "eligible_leaf_threshold": effective_leaf_threshold,
                 "authorization": authorization,
                 **result,
             }
@@ -1093,7 +1148,7 @@ def direction_gate_trigger(
         "action": "open_gate",
         "materialize_leaves": False,
         "eligible_leaf_count": eligible_leaf_count,
-        "eligible_leaf_threshold": eligible_leaf_threshold,
+        "eligible_leaf_threshold": effective_leaf_threshold,
         **result,
     }
 

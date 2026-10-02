@@ -8,6 +8,7 @@ from pathlib import Path
 import unittest
 
 from scripts.dispatcher_v2 import (
+    Candidate,
     DirectionLeaf,
     DirectionProposal,
     OwnerAutonomyContext,
@@ -120,6 +121,31 @@ class OwnerAutonomyAuthorizationTests(unittest.TestCase):
         )
         self.assertIn(trigger["proposal_sha256"], materialized[0]["body"])
 
+        reused = direction_gate_trigger(
+            proposal,
+            [],
+            existing_gate_keys=(trigger["gate_key"],),
+            known_proposal_sha256s=(trigger["proposal_sha256"],),
+            owner_autonomy_context=context,
+        )
+        self.assertEqual(reused["action"], "materialize_authorized")
+        self.assertTrue(reused["materialize_leaves"])
+        self.assertTrue(reused["reuses_existing_gate"])
+        self.assertEqual(reused["proposal_sha256"], trigger["proposal_sha256"])
+
+        mismatched = direction_gate_trigger(
+            proposal,
+            [],
+            existing_gate_keys=(trigger["gate_key"],),
+            owner_autonomy_context=context,
+        )
+        self.assertEqual(mismatched["action"], "blocked")
+        self.assertFalse(mismatched["materialize_leaves"])
+        self.assertEqual(
+            mismatched["reason"],
+            "direction_gate_open_without_matching_proposal",
+        )
+
     def test_runway_floor_is_three_or_requires_explicit_reason(self):
         self.assertTrue(runway_floor_status(3)["compliant"])
         self.assertFalse(runway_floor_status(2)["compliant"])
@@ -129,6 +155,46 @@ class OwnerAutonomyAuthorizationTests(unittest.TestCase):
         )
         self.assertTrue(below["compliant"])
         self.assertEqual(below["target"], 3)
+
+        two_ready = [
+            Candidate(
+                key=f"condor-ready-{index}",
+                priority="high",
+                metadata={"repository_ref": "pl0n3r/Condor"},
+            )
+            for index in range(2)
+        ]
+        refill = direction_gate_trigger(
+            self.proposal(),
+            two_ready,
+            owner_autonomy_context=self.safe_context(),
+        )
+        self.assertEqual(refill["action"], "materialize_authorized")
+        self.assertEqual(refill["eligible_leaf_count"], 2)
+        self.assertEqual(refill["eligible_leaf_threshold"], 2)
+
+        three_ready = [
+            *two_ready,
+            Candidate(
+                key="condor-ready-2",
+                priority="high",
+                metadata={"repository_ref": "pl0n3r/Condor"},
+            ),
+        ]
+        sufficient = direction_gate_trigger(
+            self.proposal(),
+            three_ready,
+            owner_autonomy_context=self.safe_context(),
+        )
+        self.assertEqual(sufficient["action"], "noop")
+        self.assertEqual(sufficient["reason"], "sufficient_eligible_work")
+        self.assertEqual(sufficient["eligible_leaf_count"], 3)
+        self.assertEqual(sufficient["eligible_leaf_threshold"], 2)
+
+        legacy = direction_gate_trigger(self.proposal(), two_ready)
+        self.assertEqual(legacy["action"], "noop")
+        self.assertEqual(legacy["reason"], "sufficient_eligible_work")
+        self.assertEqual(legacy["eligible_leaf_threshold"], 1)
 
     def test_runway_topics_remain_bounded_and_executable(self):
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
@@ -145,6 +211,10 @@ class OwnerAutonomyAuthorizationTests(unittest.TestCase):
         self.assertIn("criterios de aceptación ejecutables", plan)
         self.assertIn("Runway D-068", plan)
         self.assertIn("3 hojas elegibles", plan)
+        self.assertIn("Factory#796 §4", plan)
+        self.assertIn("iniciativas explícitas", plan)
+        self.assertIn("pendiente de materialización product-direction", plan)
+        self.assertIn("no cuenta para el piso de 3", plan)
 
     def test_human_only_boundaries_never_auto_authorize(self):
         proposal = self.proposal()
