@@ -34,12 +34,13 @@ FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 REPOSITORY_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
 )
+ALERT_MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-watchdog-alert\b")
 ALERT_MARKER_RE = re.compile(
     r"<!--\s*factory-unattended-watchdog-alert\s+(\{.*?\})\s*-->",
     re.DOTALL,
 )
 ALERT_TITLE = "[AUTO][WATCHDOG]"
-API_ORIGIN = "https://api.github.com"
+API_HOST = "api.github.com"
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_PAGES = 10
 ACTIVE_WORK_LABELS = frozenset({"estado: reservado", "estado: en revisión"})
