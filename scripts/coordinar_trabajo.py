@@ -175,22 +175,26 @@ class GitHub:
         if not self.token:
             raise CoordinationError("Falta GH_TOKEN/GITHUB_TOKEN para consultar GitHub.")
 
-    def request(
+    def _request_json(
         self,
         method: str,
         path: str,
         payload: Any | None = None,
         allow: tuple[int, ...] = (),
+        *,
+        authenticated: bool,
+        user_agent: str,
     ) -> Any:
-        """Ejecuta una llamada JSON autenticada a la API de GitHub."""
+        """Ejecuta transporte JSON común con autenticación explícita."""
         url = f"{API_URL}{path}"
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {
             "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {self.token}",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "condor-coordinacion",
+            "User-Agent": user_agent,
         }
+        if authenticated:
+            headers["Authorization"] = f"Bearer {self.token}"
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method=method)
@@ -208,32 +212,36 @@ class GitHub:
                 message = raw
             raise GitHubError(exc.code, str(message)) from exc
 
+    def request(
+        self,
+        method: str,
+        path: str,
+        payload: Any | None = None,
+        allow: tuple[int, ...] = (),
+    ) -> Any:
+        """Ejecuta una llamada JSON autenticada a la API de GitHub."""
+        return self._request_json(
+            method,
+            path,
+            payload,
+            allow,
+            authenticated=True,
+            user_agent="condor-coordinacion",
+        )
+
     def public_request(
         self,
         path: str,
         allow: tuple[int, ...] = (),
     ) -> Any:
         """Ejecuta un GET JSON anónimo sin enviar el token de coordinación."""
-        url = f"{API_URL}{path}"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "condor-coordinacion-public-evidence",
-        }
-        request = Request(url, headers=headers, method="GET")
-        try:
-            with urlopen(request, timeout=30) as response:
-                raw = response.read()
-                return None if not raw else json.loads(raw.decode("utf-8"))
-        except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
-            if exc.code in allow:
-                return None
-            try:
-                message = json.loads(raw).get("message", raw)
-            except json.JSONDecodeError:
-                message = raw
-            raise GitHubError(exc.code, str(message)) from exc
+        return self._request_json(
+            "GET",
+            path,
+            allow=allow,
+            authenticated=False,
+            user_agent="condor-coordinacion-public-evidence",
+        )
 
     def paginate(self, path: str) -> list[dict[str, Any]]:
         """Recorre una colección paginada de GitHub y devuelve todos sus elementos."""
