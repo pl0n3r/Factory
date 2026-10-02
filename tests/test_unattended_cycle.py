@@ -148,6 +148,25 @@ class UnattendedCycleTests(TestCase):
             evidence_fingerprint="b" * 64,
         )
 
+        malformed_incident_watchdog = WatchdogDecision(
+            action="BLOCKED",
+            authority="unchanged",
+            incidents=(object(),),
+            new_alert_fingerprints=(),
+            interrupt_owner=False,
+            daily_summary=summary(),
+            evidence_fingerprint="b" * 64,
+        )
+        missing_summary_watchdog = WatchdogDecision(
+            action="BLOCKED",
+            authority="unchanged",
+            incidents=(),
+            new_alert_fingerprints=(),
+            interrupt_owner=False,
+            daily_summary=None,
+            evidence_fingerprint="b" * 64,
+        )
+
         missing_unattended_key = dispatch()
         missing_unattended_key["unattended"] = {
             "enabled": True,
@@ -253,6 +272,22 @@ class UnattendedCycleTests(TestCase):
                 dispatch(),
                 guard(),
                 incoherent_allow_watchdog,
+                provenance(),
+                "cycle_component_contract_invalid",
+            ),
+            (
+                "malformed watchdog incident",
+                dispatch("BLOCKED"),
+                guard("BLOCKED"),
+                malformed_incident_watchdog,
+                provenance(),
+                "cycle_component_contract_invalid",
+            ),
+            (
+                "missing watchdog summary",
+                dispatch("BLOCKED"),
+                guard("BLOCKED"),
+                missing_summary_watchdog,
                 provenance(),
                 "cycle_component_contract_invalid",
             ),

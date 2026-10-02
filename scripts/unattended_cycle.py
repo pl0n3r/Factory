@@ -117,7 +117,10 @@ def compose_unattended_cycle(
     ):
         return _blocked("cycle_evidence_ref_mismatch", provenance=clean_provenance)
 
-    canonical_action, canonical_reasons = _unattended_dispatch_gate(guard, watchdog)
+    try:
+        canonical_action, canonical_reasons = _unattended_dispatch_gate(guard, watchdog)
+    except (AttributeError, TypeError, ValueError):
+        return _blocked("cycle_component_contract_invalid", provenance=clean_provenance)
     expected_watchdog_reason = f"unattended_watchdog_{watchdog.action.lower()}"
     canonical_contract = (
         canonical_action == "ALLOW" and canonical_reasons == ()
