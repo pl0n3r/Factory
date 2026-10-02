@@ -72,8 +72,8 @@ def evaluate_unattended_kill_switch(issue_payload: object) -> KillSwitchDecision
     if issue_payload.get("repository_url") != CANONICAL_REPOSITORY_URL:
         return _paused("unexpected_repository")
 
-    author = issue_payload.get("user")
-    if not isinstance(author, dict) or author.get("login") != CANONICAL_OWNER:
+    creator = issue_payload.get("user")
+    if not isinstance(creator, dict) or creator.get("login") != CANONICAL_OWNER:
         return _paused("unexpected_issue_author")
 
     body = issue_payload.get("body")

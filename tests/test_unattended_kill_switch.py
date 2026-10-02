@@ -79,7 +79,10 @@ class UnattendedKillSwitchTests(unittest.TestCase):
             CANONICAL_SOURCE_URL,
             "https://api.github.com/repos/pl0n3r/Factory/issues/767",
         )
-        self.assertEqual(\n            (running.state, running.global_pause, running.authority),\n            ("RUNNING", False, "unchanged"),\n        )
+        self.assertEqual(
+            (running.state, running.global_pause, running.authority),
+            ("RUNNING", False, "unchanged"),
+        )
 
         wrong_issue = issue()
         wrong_issue["number"] = 768
@@ -156,7 +159,8 @@ class UnattendedKillSwitchTests(unittest.TestCase):
                 decision = evaluate_unattended_kill_switch(payload)
                 self.assertEqual(decision.state, "UNKNOWN")
                 self.assertTrue(decision.global_pause)
-                self.assertEqual(decision.reason, expected_reason)\n                self.assertEqual(decision.authority, "unchanged")
+                self.assertEqual(decision.reason, expected_reason)
+                self.assertEqual(decision.authority, "unchanged")
 
     def test_running_paused_missing_and_resume_feed_global_pause(self):
         metrics = {"usage": 10, "cost": 5.0, "parallelism": 1}
