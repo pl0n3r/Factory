@@ -9,6 +9,7 @@ from scripts.unattended_global_idle import (
     CANONICAL_REPOSITORIES,
     GlobalIdleValidationError,
     evaluate_global_idle_snapshot,
+    validate_global_idle_proof,
 )
 
 
@@ -79,6 +80,22 @@ class UnattendedGlobalIdleTests(unittest.TestCase):
                     ],
                 }
             )
+
+    def test_idle_proof_rejects_forged_seven_entry_provenance(self):
+        forged = {
+            "version": 1,
+            "idle_global": True,
+            "reasons": [],
+            "provenance": [f"fake/repo-{index}:source:fresh" for index in range(7)],
+        }
+        with self.assertRaisesRegex(
+            GlobalIdleValidationError,
+            "idle_global_invalid_provenance",
+        ):
+            validate_global_idle_proof(forged)
+
+        canonical = evaluate_global_idle_snapshot(snapshot())
+        self.assertTrue(validate_global_idle_proof(canonical)["idle_global"])
 
     def test_global_idle_never_fabricates_presence_capacity_heartbeat_or_sessions(self):
         proof = evaluate_global_idle_snapshot(snapshot())
