@@ -3,6 +3,7 @@ name: Unattended Watchdog
 on:
   schedule:
     - cron: '*/15 * * * *'
+    - cron: '0 13 * * *'
   workflow_dispatch:
 
 permissions:
