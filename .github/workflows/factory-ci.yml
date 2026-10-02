@@ -60,11 +60,30 @@ jobs:
       issues: read
       pull-requests: read
     steps:
+      - name: Comprobar estado live del PR
+        id: pr_live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          state="$(gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state')"
+          case "$state" in
+            open) echo "is_open=true" >> "$GITHUB_OUTPUT" ;;
+            closed)
+              echo "is_open=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::PR #$PR ya está cerrado en estado live; se omite validación de lease terminal."
+              ;;
+            *) echo "::error::Estado live inesperado para PR #$PR: $state"; exit 1 ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: steps.pr_live.outputs.is_open == 'true'
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Validar reserva, rama y colisiones
+        if: steps.pr_live.outputs.is_open == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
@@ -86,8 +105,27 @@ jobs:
       contents: read
       issues: read
       checks: read
+      pull-requests: read
     steps:
+      - name: Comprobar estado live del PR
+        id: pr_live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          state="$(gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state')"
+          case "$state" in
+            open) echo "is_open=true" >> "$GITHUB_OUTPUT" ;;
+            closed)
+              echo "is_open=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::PR #$PR ya está cerrado en estado live; se omite evidencia de aceptación ligada a lease."
+              ;;
+            *) echo "::error::Estado live inesperado para PR #$PR: $state"; exit 1 ;;
+          esac
       - name: Exigir gates base del mismo run
+        if: steps.pr_live.outputs.is_open == 'true'
         env:
           RESULTADOS: ${{ join(needs.*.result, ' ') }}
         run: |
@@ -97,10 +135,12 @@ jobs:
           done
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: steps.pr_live.outputs.is_open == 'true'
         with:
           persist-credentials: false
 
       - name: Construir evidencia del Issue y SHA
+        if: steps.pr_live.outputs.is_open == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
@@ -140,6 +180,7 @@ jobs:
             > /tmp/acceptance.json
 
       - name: Verificar criterios específicos
+        if: steps.pr_live.outputs.is_open == 'true'
         run: |
           set -euo pipefail
           python3 scripts/aceptacion_kit.py < /tmp/acceptance.json             | tee /tmp/acceptance-result.json
