@@ -236,8 +236,12 @@ def validate_payload(payload: Any) -> dict[str, str]:
         raise ReleaseBootstrapError("Bootstrap requiere al propietario del repositorio.")
     if event_name != "workflow_dispatch" or ref != f"refs/heads/{branch}":
         raise ReleaseBootstrapError("Bootstrap solo acepta workflow_dispatch en default branch.")
-    if not (expected == current == branch_sha == v1_sha):
-        raise ReleaseBootstrapError("expected_sha, github.sha, HEAD y v1 deben coincidir.")
+    if not (expected == current == branch_sha):
+        raise ReleaseBootstrapError("expected_sha, github.sha y HEAD deben coincidir.")
+    if not v1_0_0_exists and v1_sha != expected:
+        raise ReleaseBootstrapError(
+            "Primer bootstrap requiere v1 en el SHA exacto aprobado."
+        )
 
     issues = payload.get("issues")
     if not isinstance(issues, dict):

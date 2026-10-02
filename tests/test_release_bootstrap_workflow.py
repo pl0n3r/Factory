@@ -36,6 +36,53 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertNotIn("kit_ref:", release)
         self.assertIn("factory_bootstrap: true", release)
 
+    def test_release_keeps_published_v1_trust_root_before_channel_move(self):
+        release = BOOTSTRAP.split("\n  release:", 1)[1].split(
+            "\n  channel-ready:", 1
+        )[0]
+        self.assertIn(
+            "uses: pl0n3r/factory/.github/workflows/release.yml@v1",
+            release,
+        )
+        self.assertNotIn("uses: ./.github/workflows/release.yml", release)
+        self.assertLess(
+            BOOTSTRAP.index("\n  release:"),
+            BOOTSTRAP.index("\n  channel-ready:"),
+        )
+
+    def test_channel_gate_blocks_selftest_until_v1_matches_approved_sha(self):
+        channel = BOOTSTRAP.split("\n  channel-ready:", 1)[1].split(
+            "\n  selftest-published:", 1
+        )[0]
+        for value in (
+            "needs: [preflight, release]",
+            "contents: read",
+            "repos/$REPOSITORY/git/ref/tags/v1",
+            "APPROVED_SHA",
+            '[[ "$v1_sha" == "$APPROVED_SHA" ]]',
+            "mueve administrativamente v1",
+        ):
+            self.assertIn(value, channel)
+        self.assertNotIn("contents: write", channel)
+
+        selftest = BOOTSTRAP.split("\n  selftest-published:", 1)[1]
+        self.assertIn("needs: channel-ready", selftest)
+        self.assertIn(
+            "uses: pl0n3r/factory/.github/workflows/ci.yml@v1",
+            selftest,
+        )
+
+    def test_guide_orders_semantic_release_before_manual_v1_move_and_selftest(self):
+        maintenance = GUIDE.split("## Mantenimiento v1.x", 1)[1].split(
+            "## Rollback tras startup_failure", 1
+        )[0]
+        semantic = maintenance.index("release semántico")
+        move = maintenance.index("mueve manualmente el tag mayor `v1`")
+        selftest = maintenance.index("self-test")
+        self.assertLess(semantic, move)
+        self.assertLess(move, selftest)
+        self.assertIn("reejecuta", maintenance)
+        self.assertIn("idempotente", maintenance)
     def test_preflight_revalidates_v1_ruleset_read_only(self):
         preflight = BOOTSTRAP.split("\n  preflight:", 1)[1].split("\n  release:", 1)[0]
         self.assertIn(

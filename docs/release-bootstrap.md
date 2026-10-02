@@ -43,15 +43,17 @@ Para publicar un patch/minor posterior dentro de la major `v1`:
 2. Revalidar CI de `main` y fijar el SHA exacto candidato.
 3. Crear una puerta humana `factory-release` para ese SHA. El default seguro es **no publicar**.
 4. El OWNER responde explícitamente `/decidir A` para publicar o `/decidir B` para no publicar. Texto libre o `sigue` no cuentan como decisión.
-5. Solo si A quedó materializada con journal v2 válido y gate cerrado, el dueño mueve manualmente el tag mayor `v1` al SHA exacto aprobado. El workflow nunca crea ni mueve `v1`.
-6. Ejecutar **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=<SHA aprobado>` y `gate_issue=<Issue de puerta>`.
-7. El preflight ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, SHA/HEAD/`v1`, puerta/aprobación y el ruleset actual.
-8. El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`. La comprobación runtime es **solo estructural**; #83 conserva la evidencia administrativa de bypass.
-9. Solo si todo coincide, `release.yml@v1` crea/verifica el tag anotado semántico y la GitHub Release.
-10. Después se ejecuta un self-test consumidor mediante `ci.yml@v1` sobre `template/`.
+5. Con A materializada y la puerta cerrada, ejecutar una **primera pasada** de **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=<SHA aprobado>` y `gate_issue=<Issue de puerta>`, mientras `v1` permanece en el último SHA estable.
+6. El preflight ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, exactitud `expected_sha == github.sha == HEAD`, puerta/aprobación, ruleset y compatibilidad de consumidores. En mantenimiento, el SHA estable previo de `v1` es válido durante esta fase y no expone el candidato.
+7. Solo si esos gates pasan, `release.yml@v1` —el trust root ya publicado— crea o verifica de forma idempotente el tag semántico y la GitHub Release para el SHA candidato. El workflow nunca crea ni mueve `v1`.
+8. El job read-only `channel-ready` relee `refs/tags/v1`. Si el canal aún apunta al SHA estable anterior, falla cerrado y el self-test no se ejecuta.
+9. Después de la publicación semántica, el dueño mueve manualmente el tag mayor `v1` al SHA exacto aprobado. Esta sigue siendo una acción administrativa/humana.
+10. El dueño reejecuta de forma **idempotente** el mismo bootstrap con el mismo `expected_sha` y la misma puerta. La release semántica ya existente se verifica, `channel-ready` confirma que `v1` coincide y entonces `ci.yml@v1` ejecuta el self-test sobre `template/`.
+11. La publicación se considera completa únicamente cuando ese self-test del canal publicado termina correctamente.
 
-Cambiar `main`, mover `v1` a otro SHA, usar una puerta de otra categoría o reutilizar una aprobación para un SHA distinto hace fallar cerrado el preflight.
+El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`. La comprobación runtime es **solo estructural**; #83 conserva la evidencia administrativa de bypass.
 
+Cambiar `main`, mover `v1` a un SHA distinto del aprobado, usar una puerta de otra categoría o reutilizar una aprobación para un SHA distinto hace fallar cerrado. Que `v1` permanezca en el SHA estable anterior durante la primera pasada de mantenimiento es el estado esperado hasta `channel-ready`; nunca equivale a publicar el candidato.
 ## Rollback tras startup_failure
 
 Si una publicación de `Factory@v1` provoca `startup_failure` en consumidores, aplica el runbook fail-closed [`docs/reusable-release-rollback.md`](reusable-release-rollback.md). Detectar o recomendar rollback no autoriza a mover `v1`; la acción sigue siendo humana/administrativa y exige evidencia nueva de recuperación en un consumidor real.

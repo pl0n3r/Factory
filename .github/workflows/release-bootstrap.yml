@@ -164,9 +164,37 @@ jobs:
       factory_bootstrap: true
       expected_sha: ${{ needs.preflight.outputs.approved_sha }}
 
+  channel-ready:
+    name: Verificar canal v1 antes del self-test
+    needs: [preflight, release]
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Exigir v1 en el SHA aprobado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          APPROVED_SHA: ${{ needs.preflight.outputs.approved_sha }}
+        run: |
+          set -euo pipefail
+          ref_json="$(gh api \"repos/$REPOSITORY/git/ref/tags/v1\")"
+          ref_type="$(jq -r '.object.type' <<<\"$ref_json\")"
+          ref_object="$(jq -r '.object.sha' <<<\"$ref_json\")"
+          case "$ref_type" in
+            commit) v1_sha="$ref_object" ;;
+            tag) v1_sha="$(gh api \"repos/$REPOSITORY/git/tags/$ref_object\" --jq '.object.sha')" ;;
+            *) echo "::error::Factory@v1 tiene tipo inesperado $ref_type"; exit 1 ;;
+          esac
+          [[ "$v1_sha" == "$APPROVED_SHA" ]] || {
+            echo "::error::Factory@v1 sigue en $v1_sha; mueve administrativamente v1 a $APPROVED_SHA y reejecuta este bootstrap."
+            exit 1
+          }
+
   selftest-published:
     name: Self-test del canal v1 publicado
-    needs: release
+    needs: channel-ready
     permissions:
       contents: read
     uses: pl0n3r/factory/.github/workflows/ci.yml@v1
