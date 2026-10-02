@@ -540,6 +540,22 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
                     None,
                 )
 
+        class BrokenConnection(Connection):
+            def request(self, method, path, body=None, headers=None):
+                raise OSError("network down")
+
+        with patch(target, BrokenConnection):
+            with self.assertRaisesRegex(
+                RuntimeValidationError,
+                "github_request_failed",
+            ):
+                _https_json_request(
+                    "token",
+                    "GET",
+                    "/repos/pl0n3r/Factory/issues/1",
+                    None,
+                )
+
     def test_read_json_and_kill_switch_main_fail_closed(self):
         config_path = ROOT / "config" / "unattended-watchdog.json"
         self.assertEqual(read_json(str(config_path)), config())
