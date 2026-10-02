@@ -215,7 +215,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         runbook = (
             ROOT / "docs" / "unattended-watchdog-runtime.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("push a `main`", runbook)
+        self.assertIn("`push` a `main`", runbook)
         self.assertIn("07/22/37/52", runbook)
         self.assertIn("post-merge", runbook)
         self.assertIn("## Reversión", runbook)
