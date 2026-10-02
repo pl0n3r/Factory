@@ -41,9 +41,9 @@ trata como fusionado.
 
 El contrato se cubre en:
 
-- `tests/test_coordinacion_reusable_contract.py::T::test_validate_job_skips_merged_pull_request`;
+- `tests/test_coordinacion_reusable_contract.py::T::test_merged_pr_validation_is_neutral`;
 - `tests/test_consumer_coordination_template.py::ConsumerCoordinationTemplateTests::test_merged_pr_does_not_revalidate`;
-- `tests/test_coordinar_trabajo.py::CoordinacionTests::test_validate_pull_rejects_open_pr_with_closed_issue`.
+- `tests/test_coordinar_trabajo.py::CoordinacionTests::test_open_pr_with_closed_issue_still_fails_closed`.
 
 La suite `Tests de scripts` es la evidencia agregada requerida por Factory.
 La reversión es un revert de estos cambios declarativos y no requiere migración

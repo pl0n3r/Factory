@@ -93,9 +93,8 @@ jobs:
       action: ${{ github.event.action }}
 
   validar-pr:
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.merged != true
+    if: github.event_name == 'pull_request'
+      && github.event.pull_request.merged != true
     # Mismo sobre de carga; el job validar-pr del reusable conserva permisos
     # read-only (contents/issues/pull-requests: read).
     permissions:

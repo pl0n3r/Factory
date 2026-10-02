@@ -79,7 +79,7 @@ class T(unittest.TestCase):
         )
         self.assertIn('("/renovar-contrato ", "renovar-contrato")', SCRIPT)
 
-    def test_validate_job_skips_merged_pull_request(self):
+    def test_merged_pr_validation_is_neutral(self):
         """AC-01: el reusable neutraliza únicamente un PR ya fusionado."""
         block = job_blocks(W)["validar-pr"]
         self.assertIn("inputs.operation == 'validate'", block)

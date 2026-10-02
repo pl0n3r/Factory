@@ -2519,7 +2519,7 @@ class CoordinacionTests(unittest.TestCase):
         with self.assertRaises(CoordinationError):
             validate_pull(api, 15, False)
 
-    def test_validate_pull_rejects_open_pr_with_closed_issue(self) -> None:
+    def test_open_pr_with_closed_issue_still_fails_closed(self) -> None:
         """AC-02: un PR abierto conserva el fail-closed si su Issue ya cerró."""
         api = FakeGitHub()
         add_active_reservation(api)
