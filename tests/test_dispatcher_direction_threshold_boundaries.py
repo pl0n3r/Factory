@@ -16,7 +16,7 @@ class DirectionGateThresholdBoundaryTests(unittest.TestCase):
             objective="Preparar el siguiente tramo antes de vaciar la cola.",
             leaves=(
                 DirectionLeaf(
-                    key="condor-next",
+                    key="CONDOR_NEXT",
                     title="Siguiente leaf funcional",
                     acceptance_targets=(
                         "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
