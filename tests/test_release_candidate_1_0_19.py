@@ -50,6 +50,8 @@ class ReleaseCandidate1019Tests(unittest.TestCase):
                 "test_block_sweep_unblocks_verified_workflow_once",
                 "tests/test_coordinar_trabajo.py::CoordinacionTests::"
                 "test_block_sweep_fails_closed_on_unverified_or_invalid_condition",
+                "tests/test_coordinar_trabajo_unblock_validation.py::"
+                "UnblockValidationTests::test_missing_targets_fail_closed_without_stopping_sweep",
                 "tests/test_coordinar_trabajo.py::CoordinacionTests::"
                 "test_block_sweep_retry_does_not_duplicate_evidence_comment",
                 "tests/test_coordinar_trabajo.py::CoordinacionTests::"
