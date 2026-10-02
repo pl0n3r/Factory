@@ -42,34 +42,51 @@ def _bounded_list(value: Any, field: str) -> list[Any]:
     return value
 
 
+def _ruleset_applies_to_default_branch(ruleset: Any) -> bool:
+    if not isinstance(ruleset, dict):
+        raise GovernanceError("ruleset inválido.")
+    if ruleset.get("target") != "branch" or ruleset.get("enforcement") != "active":
+        return False
+    conditions = ruleset.get("conditions") or {}
+    ref_name = conditions.get("ref_name") if isinstance(conditions, dict) else None
+    if not isinstance(ref_name, dict):
+        return True
+    includes = ref_name.get("include")
+    return not (
+        isinstance(includes, list)
+        and includes
+        and "~DEFAULT_BRANCH" not in includes
+    )
+
+
+def _required_status_checks(rule: Any) -> list[Any]:
+    if not isinstance(rule, dict):
+        raise GovernanceError("ruleset rule inválida.")
+    if rule.get("type") != "required_status_checks":
+        return []
+    parameters = rule.get("parameters") or {}
+    checks = (
+        parameters.get("required_status_checks")
+        if isinstance(parameters, dict)
+        else None
+    )
+    if checks is None:
+        return []
+    return _bounded_list(checks, "required_status_checks")
+
+
 def _status_contexts_from_rulesets(rulesets: Any) -> set[str]:
     if rulesets is None:
         return set()
     contexts: set[str] = set()
     for ruleset in _bounded_list(rulesets, "rulesets"):
-        if not isinstance(ruleset, dict):
-            raise GovernanceError("ruleset inválido.")
-        if ruleset.get("target") != "branch" or ruleset.get("enforcement") != "active":
+        if not _ruleset_applies_to_default_branch(ruleset):
             continue
-        conditions = ruleset.get("conditions") or {}
-        ref_name = conditions.get("ref_name") if isinstance(conditions, dict) else None
-        if isinstance(ref_name, dict):
-            includes = ref_name.get("include")
-            if isinstance(includes, list) and includes and "~DEFAULT_BRANCH" not in includes:
-                continue
-        rules = ruleset.get("rules") or []
-        for rule in _bounded_list(rules, "ruleset.rules"):
-            if not isinstance(rule, dict):
-                raise GovernanceError("ruleset rule inválida.")
-            if rule.get("type") != "required_status_checks":
-                continue
-            parameters = rule.get("parameters") or {}
-            checks = parameters.get("required_status_checks") if isinstance(parameters, dict) else None
-            if checks is None:
-                continue
-            for check in _bounded_list(checks, "required_status_checks"):
-                if isinstance(check, dict) and isinstance(check.get("context"), str):
-                    contexts.add(check["context"])
+        for rule in _bounded_list(ruleset.get("rules") or [], "ruleset.rules"):
+            for check in _required_status_checks(rule):
+                context = check.get("context") if isinstance(check, dict) else None
+                if isinstance(context, str):
+                    contexts.add(context)
     return contexts
 
 
@@ -183,7 +200,7 @@ def _check_sort_key(check: dict[str, Any]) -> tuple[str, str, int]:
     return completed, started, identifier
 
 
-def merged_pr_alert_plan(document: Any) -> dict[str, Any]:
+def _validated_alert_identity(document: Any) -> tuple[dict[str, Any], int, str]:
     if not isinstance(document, dict) or set(document) != {"pr", "check_runs", "comments"}:
         raise GovernanceError("Documento de alerta inválido.")
     pr = document["pr"]
@@ -192,30 +209,46 @@ def merged_pr_alert_plan(document: Any) -> dict[str, Any]:
     number = pr.get("number")
     if isinstance(number, bool) or not isinstance(number, int) or number < 1:
         raise GovernanceError("Número de PR inválido.")
-    merged_at = pr.get("merged_at")
     head = pr.get("head")
     if not isinstance(head, dict) or not isinstance(head.get("sha"), str) or len(head["sha"]) != 40:
         raise GovernanceError("HEAD de PR inválido.")
-    head_sha = head["sha"]
+    return pr, number, head["sha"]
+
+
+def _latest_label_check(check_runs: Any) -> dict[str, Any] | None:
+    candidates = [
+        item
+        for item in _bounded_list(check_runs, "check_runs")
+        if isinstance(item, dict) and _is_label_check(item.get("name"))
+    ]
+    return max(candidates, key=_check_sort_key) if candidates else None
+
+
+def _comments_contain_marker(comments: Any, marker: str) -> bool:
+    for comment in _bounded_list(comments, "comments"):
+        body = comment.get("body") if isinstance(comment, dict) else None
+        if isinstance(body, str) and body.startswith(marker):
+            return True
+    return False
+
+
+def merged_pr_alert_plan(document: Any) -> dict[str, Any]:
+    pr, number, head_sha = _validated_alert_identity(document)
+    merged_at = pr.get("merged_at")
     if not merged_at:
         return {"action": "noop", "reason": "not_merged", "pr": number}
 
-    check_runs = _bounded_list(document["check_runs"], "check_runs")
-    candidates = [item for item in check_runs if isinstance(item, dict) and _is_label_check(item.get("name"))]
-    if not candidates:
+    latest = _latest_label_check(document["check_runs"])
+    if latest is None:
         return {"action": "noop", "reason": "no_label_check", "pr": number}
-    latest = max(candidates, key=_check_sort_key)
     if latest.get("status") != "completed":
         return {"action": "noop", "reason": "label_check_not_terminal", "pr": number}
     if latest.get("conclusion") == "success":
         return {"action": "noop", "reason": "label_check_green", "pr": number}
 
     marker = f"{ALERT_MARKER_PREFIX} pr={number} -->"
-    comments = _bounded_list(document["comments"], "comments")
-    for comment in comments:
-        if isinstance(comment, dict) and isinstance(comment.get("body"), str):
-            if comment["body"].startswith(marker):
-                return {"action": "noop", "reason": "already_alerted", "pr": number}
+    if _comments_contain_marker(document["comments"], marker):
+        return {"action": "noop", "reason": "already_alerted", "pr": number}
 
     check_name = latest.get("name") if isinstance(latest.get("name"), str) else "unknown"
     conclusion = latest.get("conclusion") if isinstance(latest.get("conclusion"), str) else "unknown"
