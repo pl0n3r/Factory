@@ -1231,6 +1231,14 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             def list_open_work_items(self):
                 return []
 
+            def global_idle_proof(self, now):
+                return {
+                    "version": 1,
+                    "idle_global": False,
+                    "reasons": ["repository_ready:pl0n3r/Condor"],
+                    "provenance": [],
+                }
+
             def get_issue(self, number):
                 return {
                     "number": 767,
