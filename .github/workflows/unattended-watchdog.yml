@@ -33,5 +33,5 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          python3 scripts/unattended_watchdog_runtime.py \
+          python3 -m scripts.unattended_watchdog_runtime \
             --config config/unattended-watchdog.json
