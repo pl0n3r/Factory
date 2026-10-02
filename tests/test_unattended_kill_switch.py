@@ -114,7 +114,7 @@ class UnattendedKillSwitchTests(unittest.TestCase):
         switch_section = plan.index("### Interruptor global antes de cualquier mutación")
         preflight = plan.index("### Preflight de capacidades")
         self.assertLess(switch_section, preflight)
-        self.assertIn("antes del primer comentario de despacho", plan)
+        self.assertIn("antes del primer comentario de despacho", plan.lower())
 
     def test_missing_or_invalid_switch_fails_closed(self):
         cases: list[tuple[object, str]] = [
@@ -132,6 +132,14 @@ class UnattendedKillSwitchTests(unittest.TestCase):
             (
                 issue('<!-- factory-unattended-kill-switch {"version":2,"state":"RUNNING","owner":"pl0n3r"} -->'),
                 "kill_switch_marker_invalid_version",
+            ),
+            (
+                issue('<!-- factory-unattended-kill-switch {"version":true,"state":"RUNNING","owner":"pl0n3r"} -->'),
+                "kill_switch_marker_invalid_version",
+            ),
+            (
+                issue('<!-- factory-unattended-kill-switch {"version":1,"state":"PAUSED","state":"RUNNING","owner":"pl0n3r"} -->'),
+                "kill_switch_marker_duplicate_key",
             ),
             (
                 issue('<!-- factory-unattended-kill-switch {"version":1,"state":"RUNNING","owner":"other"} -->'),
