@@ -26,7 +26,21 @@ def snapshot() -> dict[str, object]:
             "next_action": {"step": "normal"},
             "ready_not_selected": [],
             "excluded": {},
-            "candidates": {},
+            "candidates": {
+                "Factory#773": {
+                    "authority_class": "high",
+                    "ready_age": 0,
+                    "displaced_cycles": 0,
+                    "active_pr": False,
+                    "unlock_impact": 0,
+                    "transversal_impact": 0,
+                    "claims": [],
+                    "tranche_subject": None,
+                    "tranche": None,
+                    "tranche_exception": False,
+                    "metadata": {},
+                }
+            },
             "aging_threshold": 3,
             "active_tranche": None,
             "unattended": {
@@ -106,8 +120,18 @@ class UnattendedCycleCliTests(TestCase):
         self.assertNotIn("token=", lowered)
         self.assertNotIn("@example.", lowered)
 
+        forged = snapshot()
+        forged["dispatch"]["selected"] = "Factory#ghost"
+        forged_rc, forged_output = run_stdin(forged)
+        self.assertEqual(forged_rc, 0)
+        self.assertEqual(json.loads(forged_output)["action"], "BLOCKED")
+        self.assertEqual(
+            json.loads(forged_output)["reasons"],
+            ["cycle_dispatch_selection_invalid"],
+        )
+
         unsafe = snapshot()
-        unsafe["dispatch"]["selected"] = "token=do-not-emit"
+        unsafe["provenance"]["dispatch_ref"] = "token=do-not-emit"
         unsafe_rc, unsafe_output = run_stdin(unsafe)
         self.assertEqual(unsafe_rc, 2)
         self.assertEqual(json.loads(unsafe_output), {"error": "invalid_snapshot"})

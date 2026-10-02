@@ -87,6 +87,30 @@ def _blocked(
     }
 
 
+def _dispatch_selection_is_coherent(dispatch: dict[str, object]) -> bool:
+    """Valida identidad ya seleccionada sin recalcular ranking ni readiness."""
+    candidates = dispatch["candidates"]
+    selected = dispatch["selected"]
+    selected_class = dispatch["selected_class"]
+
+    if not isinstance(candidates, dict):
+        return False
+    if (selected is None) != (selected_class is None):
+        return False
+    if selected is None:
+        return True
+    if not isinstance(selected, str) or not selected:
+        return False
+    if not isinstance(selected_class, str) or not selected_class:
+        return False
+
+    candidate = candidates.get(selected)
+    if not isinstance(candidate, dict):
+        return False
+    authority_class = candidate.get("authority_class")
+    return isinstance(authority_class, str) and authority_class == selected_class
+
+
 def compose_unattended_cycle(
     dispatch: object,
     guard: object,
@@ -133,6 +157,8 @@ def compose_unattended_cycle(
 
     if not isinstance(dispatch, dict) or set(dispatch) != DISPATCH_KEYS:
         return _blocked("cycle_dispatch_shape_invalid", provenance=clean_provenance)
+    if not _dispatch_selection_is_coherent(dispatch):
+        return _blocked("cycle_dispatch_selection_invalid", provenance=clean_provenance)
     unattended = dispatch.get("unattended")
     if not isinstance(unattended, dict) or set(unattended) != UNATTENDED_KEYS:
         return _blocked("cycle_dispatch_unattended_invalid", provenance=clean_provenance)
