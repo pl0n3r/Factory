@@ -209,7 +209,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
             ROOT / "docs" / "unattended-watchdog-runtime.md"
         ).read_text(encoding="utf-8")
         self.assertIn("`push` a `main`", runbook)
-        self.assertIn("cada **15 minutos**", runbook)
+        self.assertIn("**cada 15 minutos**", runbook)
         self.assertIn("post-merge", runbook)
         self.assertIn("## Reversión", runbook)
         self.assertIn("Factory#815", runbook)
