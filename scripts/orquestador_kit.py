@@ -71,7 +71,8 @@ def _extract_marker(body: str, name: str) -> str | None:
     return body[start:end].strip()
 
 
-def _valid_key(value: Any) -> str:
+def validate_task_key(value: Any) -> str:
+    """Valida la identidad canónica compartida por plan y factory-plan-task."""
     if (
         not isinstance(value, str)
         or not 1 <= len(value) <= 32
@@ -82,6 +83,11 @@ def _valid_key(value: Any) -> str:
     ):
         raise PlanError("task.key debe usar identificador ASCII mayúsculo de hasta 32 caracteres.")
     return value
+
+
+def _valid_key(value: Any) -> str:
+    """Compatibilidad interna: delega en la única autoridad de task.key."""
+    return validate_task_key(value)
 
 
 def _valid_owner(value: Any) -> str:
