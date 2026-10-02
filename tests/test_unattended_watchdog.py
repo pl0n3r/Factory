@@ -359,6 +359,21 @@ class UnattendedWatchdogTests(unittest.TestCase):
         self.assertEqual(invalid_contract.action, "BLOCKED")
         self.assertIn("invalid_guard_contract", invalid_contract.daily_summary.blockers)
 
+        bad_pause = GuardDecision("ALLOW", "unchanged", True, ("test",), "b" * 64)
+        invalid_pause = evaluate_unattended_watchdog(bad_pause, config(), evidence())
+        self.assertEqual(invalid_pause.action, "BLOCKED")
+        self.assertIn("invalid_guard_pause_contract", invalid_pause.daily_summary.blockers)
+
+        bad_evidence = GuardDecision("ALLOW", "unchanged", False, (), "not-a-fingerprint")
+        invalid_guard_evidence = evaluate_unattended_watchdog(
+            bad_evidence, config(), evidence()
+        )
+        self.assertEqual(invalid_guard_evidence.action, "BLOCKED")
+        self.assertIn(
+            "invalid_guard_evidence_contract",
+            invalid_guard_evidence.daily_summary.blockers,
+        )
+
         invalid_evidence = evaluate_unattended_watchdog(guard(), config(), [])
         self.assertEqual(invalid_evidence.action, "BLOCKED")
         self.assertIn("invalid_evidence", invalid_evidence.daily_summary.blockers)
