@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import inspect
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from scripts.dispatcher_v2 import (
@@ -27,6 +29,8 @@ from scripts.dispatcher_v2 import (
 from scripts.adaptive_fencing import FencingContext, FencingDecision, evaluate_fencing
 from scripts.adaptive_replan import decide_replan
 from scripts.presence_contract import classify_presence
+from scripts.unattended_guards import GuardDecision
+from scripts.unattended_watchdog import DailySummary, WatchdogDecision, WatchdogIncident
 
 
 def work_item(**overrides):
@@ -60,6 +64,45 @@ def ready_context(**overrides):
     }
     values.update(overrides)
     return WorkItemReadinessContext(**values)
+
+
+def unattended_guard_decision(
+    action="ALLOW",
+    *,
+    authority="unchanged",
+):
+    return GuardDecision(
+        action=action,
+        authority=authority,
+        pause_allowed=action == "PAUSE",
+        reasons=("synthetic-guard",),
+        evidence_fingerprint="c" * 64,
+    )
+
+
+def unattended_watchdog_decision(
+    action="ALLOW",
+    *,
+    authority="unchanged",
+):
+    return WatchdogDecision(
+        action=action,
+        authority=authority,
+        incidents=(),
+        new_alert_fingerprints=(),
+        interrupt_owner=False,
+        daily_summary=DailySummary(
+            active_fronts=(),
+            state_freshness="fresh",
+            incidents=(),
+            blockers=(),
+            human_gates=(),
+            integrated=(),
+            reverted=(),
+            next_actions=(),
+        ),
+        evidence_fingerprint="d" * 64,
+    )
 
 
 class DispatcherV2Tests(unittest.TestCase):
@@ -951,6 +994,491 @@ class DispatcherV2Tests(unittest.TestCase):
         self.assertEqual(len(adaptive["event_fingerprint"]), 64)
         self.assertEqual(adaptive["generation"], 7)
         self.assertEqual(record["candidates"]["chosen"]["metadata"]["adaptive"], adaptive)
+
+    def test_unattended_dispatch_requires_canonical_guard_and_watchdog_decisions(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        record = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+        )
+
+        self.assertIsNone(record["selected"])
+        self.assertEqual(record["next_action"]["step"], "unattended_gate")
+        self.assertEqual(record["next_action"]["action"], "BLOCKED")
+        self.assertEqual(record["unattended"]["authority"], "unchanged")
+        self.assertIn(
+            "unattended_guard_decision_invalid",
+            record["unattended"]["reasons"],
+        )
+
+    def test_unattended_pause_or_blocked_decision_suppresses_new_dispatch(self):
+        presence = classify_presence(self.adaptive_snapshot())
+
+        for action in ("PAUSE", "BLOCKED"):
+            with self.subTest(action=action):
+                record = adaptive_dispatch_record(
+                    [Candidate(key="candidate", priority="critical")],
+                    presence=presence,
+                    fencing=self.fenced(),
+                    replan_action="keep",
+                    unattended_mode=True,
+                    unattended_guard=unattended_guard_decision(action),
+                    unattended_watchdog=unattended_watchdog_decision(action),
+                )
+
+                self.assertIsNone(record["selected"])
+                self.assertEqual(record["next_action"]["step"], "unattended_gate")
+                self.assertEqual(record["next_action"]["action"], action)
+                self.assertEqual(record["next_action"]["authority"], "unchanged")
+                self.assertTrue(record["next_action"]["reasons"])
+                self.assertIn(
+                    f"unattended_watchdog_{action.lower()}",
+                    record["next_action"]["reasons"],
+                )
+                self.assertIn(
+                    "guard:synthetic-guard",
+                    record["next_action"]["reasons"],
+                )
+
+        hardened = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("PAUSE"),
+            unattended_watchdog=unattended_watchdog_decision("BLOCKED"),
+        )
+        self.assertEqual(hardened["next_action"]["action"], "BLOCKED")
+        self.assertIn("guard:synthetic-guard", hardened["next_action"]["reasons"])
+
+        reported_incident = WatchdogIncident(
+            code="reported:ops incident 42",
+            severity="S3",
+            fingerprint="e" * 64,
+            repeated=False,
+            reasons=("source:synthetic", "freshness:fresh"),
+        )
+        reported_watchdog = WatchdogDecision(
+            action="BLOCKED",
+            authority="unchanged",
+            incidents=(reported_incident,),
+            new_alert_fingerprints=("e" * 64,),
+            interrupt_owner=False,
+            daily_summary=DailySummary(
+                active_fronts=(),
+                state_freshness="fresh",
+                incidents=("S3:reported:ops incident 42",),
+                blockers=("reported:ops incident 42",),
+                human_gates=(),
+                integrated=(),
+                reverted=(),
+                next_actions=(),
+            ),
+            evidence_fingerprint="f" * 64,
+        )
+        compatible_code = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("ALLOW"),
+            unattended_watchdog=reported_watchdog,
+        )
+        self.assertEqual(compatible_code["next_action"]["action"], "BLOCKED")
+        self.assertIn(
+            "watchdog:reported:ops incident 42",
+            compatible_code["next_action"]["reasons"],
+        )
+
+    def test_unattended_inconsistent_or_expanded_authority_fails_closed(self):
+        presence = classify_presence(self.adaptive_snapshot())
+
+        cases = (
+            (
+                unattended_guard_decision("ALLOW", authority="expanded"),
+                unattended_watchdog_decision("ALLOW"),
+                "unattended_guard_authority_invalid",
+            ),
+            (
+                unattended_guard_decision("PAUSE"),
+                unattended_watchdog_decision("ALLOW"),
+                "unattended_decisions_incoherent",
+            ),
+            (
+                GuardDecision(
+                    action="ALLOW",
+                    authority="unchanged",
+                    pause_allowed=False,
+                    reasons=(),
+                    evidence_fingerprint="bad",
+                ),
+                unattended_watchdog_decision("ALLOW"),
+                "unattended_guard_evidence_invalid",
+            ),
+            (
+                unattended_guard_decision("ALLOW"),
+                WatchdogDecision(
+                    action="ALLOW",
+                    authority="unchanged",
+                    incidents=(),
+                    new_alert_fingerprints=(),
+                    interrupt_owner=False,
+                    daily_summary=DailySummary(
+                        active_fronts=(),
+                        state_freshness="fresh",
+                        incidents=(),
+                        blockers=(),
+                        human_gates=(),
+                        integrated=(),
+                        reverted=(),
+                        next_actions=(),
+                    ),
+                    evidence_fingerprint="bad",
+                ),
+                "unattended_watchdog_contract_incoherent",
+            ),
+            (
+                unattended_guard_decision("ALLOW"),
+                WatchdogDecision(
+                    action="ALLOW",
+                    authority="unchanged",
+                    incidents=(
+                        WatchdogIncident(
+                            code="reported:synthetic-s1",
+                            severity="S1",
+                            fingerprint="1" * 64,
+                            repeated=False,
+                            reasons=("source:synthetic", "freshness:fresh"),
+                        ),
+                    ),
+                    new_alert_fingerprints=("1" * 64,),
+                    interrupt_owner=True,
+                    daily_summary=DailySummary(
+                        active_fronts=(),
+                        state_freshness="fresh",
+                        incidents=("S1:reported:synthetic-s1",),
+                        blockers=("reported:synthetic-s1",),
+                        human_gates=(),
+                        integrated=(),
+                        reverted=(),
+                        next_actions=(),
+                    ),
+                    evidence_fingerprint="2" * 64,
+                ),
+                "unattended_watchdog_contract_incoherent",
+            ),
+        )
+
+        for guard, watchdog, expected_reason in cases:
+            with self.subTest(reason=expected_reason):
+                record = adaptive_dispatch_record(
+                    [Candidate(key="candidate", priority="critical")],
+                    presence=presence,
+                    fencing=self.fenced(),
+                    replan_action="keep",
+                    unattended_mode=True,
+                    unattended_guard=guard,
+                    unattended_watchdog=watchdog,
+                )
+
+                self.assertIsNone(record["selected"])
+                self.assertEqual(record["next_action"]["action"], "BLOCKED")
+                self.assertIn(expected_reason, record["unattended"]["reasons"])
+
+    def test_unattended_allow_preserves_adaptive_dispatch_selection(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        candidates = [
+            Candidate(key="high", priority="high"),
+            Candidate(key="critical", priority="critical"),
+        ]
+        legacy = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="replan",
+            replan_reasons=("capacity_changed",),
+        )
+        unattended = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="replan",
+            replan_reasons=("capacity_changed",),
+            unattended_mode=True,
+            unattended_guard=unattended_guard_decision("ALLOW"),
+            unattended_watchdog=unattended_watchdog_decision("ALLOW"),
+        )
+
+        self.assertEqual(unattended["unattended"]["action"], "ALLOW")
+        comparable = dict(unattended)
+        comparable.pop("unattended")
+        self.assertEqual(comparable, legacy)
+
+    def test_unattended_mode_off_preserves_legacy_adaptive_dispatch(self):
+        presence = classify_presence(self.adaptive_snapshot())
+        candidates = [Candidate(key="candidate", priority="critical")]
+
+        legacy = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+        )
+        explicit_off = adaptive_dispatch_record(
+            candidates,
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode=False,
+            unattended_guard=object(),
+            unattended_watchdog=object(),
+        )
+
+        self.assertEqual(explicit_off, legacy)
+        self.assertNotIn("unattended", explicit_off)
+
+    def test_unattended_dispatch_integration_is_pure_and_reuses_canonical_decisions(self):
+        import scripts.dispatcher_v2 as dispatcher_module
+
+        source = (
+            inspect.getsource(dispatcher_module._unattended_dispatch_gate)
+            + inspect.getsource(dispatcher_module._suppressed_adaptive_dispatch_record)
+            + inspect.getsource(adaptive_dispatch_record)
+        )
+
+        self.assertIn("GuardDecision", source)
+        self.assertIn("WatchdogDecision", source)
+        self.assertNotIn("evaluate_unattended_guards", source)
+        self.assertNotIn("evaluate_unattended_watchdog", source)
+        for forbidden in (
+            "requests.",
+            "subprocess.",
+            "socket.",
+            "urllib.",
+            "httpx.",
+            "github.",
+        ):
+            self.assertNotIn(forbidden, source)
+
+        presence = classify_presence(self.adaptive_snapshot())
+        with patch(
+            "scripts.dispatcher_v2.work_ladder",
+            side_effect=AssertionError("blocked unattended path must not invoke work_ladder"),
+        ):
+            blocked = adaptive_dispatch_record(
+                [Candidate(key="candidate", priority="critical")],
+                presence=presence,
+                fencing=self.fenced(),
+                replan_action="keep",
+                unattended_mode=True,
+                unattended_guard=unattended_guard_decision("BLOCKED"),
+                unattended_watchdog=unattended_watchdog_decision("BLOCKED"),
+            )
+        self.assertEqual(blocked["next_action"]["step"], "unattended_gate")
+        self.assertFalse(blocked["next_action"]["mutates"])
+
+    def test_unattended_validation_helpers_cover_fail_closed_edges(self):
+        import scripts.dispatcher_v2 as dispatcher_module
+
+        self.assertTrue(dispatcher_module._valid_unattended_fingerprint("a" * 64))
+        self.assertFalse(dispatcher_module._valid_unattended_fingerprint(None))
+        self.assertFalse(dispatcher_module._valid_unattended_fingerprint("a" * 63))
+        self.assertFalse(dispatcher_module._valid_unattended_fingerprint("z" * 64))
+
+        self.assertTrue(dispatcher_module._valid_unattended_reason("guards_satisfied"))
+        self.assertFalse(dispatcher_module._valid_unattended_reason(None))
+        self.assertFalse(dispatcher_module._valid_unattended_reason(""))
+        self.assertFalse(dispatcher_module._valid_unattended_reason("x" * 129))
+        self.assertFalse(dispatcher_module._valid_unattended_reason("token=secret"))
+        self.assertFalse(dispatcher_module._valid_unattended_reason("has space"))
+
+        self.assertTrue(
+            dispatcher_module._valid_unattended_incident_code(
+                "reported:ops incident 42"
+            )
+        )
+        self.assertFalse(dispatcher_module._valid_unattended_incident_code(None))
+        self.assertFalse(dispatcher_module._valid_unattended_incident_code(""))
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident_code(" incident")
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident_code("x" * 522)
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident_code(
+                "reported:token=value"
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident_code(
+                "reported:user@example.com"
+            )
+        )
+
+        incident = WatchdogIncident(
+            code="reported:ops incident 42",
+            severity="S3",
+            fingerprint="e" * 64,
+            repeated=False,
+            reasons=("source:synthetic",),
+        )
+        self.assertTrue(dispatcher_module._valid_unattended_incident(incident))
+        self.assertFalse(dispatcher_module._valid_unattended_incident(object()))
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident(
+                replace(incident, severity="S9")
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident(
+                replace(incident, fingerprint="bad")
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident(
+                replace(incident, repeated="no")
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident(
+                replace(incident, reasons=["source:synthetic"])
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_incident(
+                replace(incident, reasons=("",))
+            )
+        )
+
+        summary = DailySummary(
+            active_fronts=(),
+            state_freshness="fresh",
+            incidents=("S3:reported:ops incident 42",),
+            blockers=("reported:ops incident 42",),
+            human_gates=(),
+            integrated=(),
+            reverted=(),
+            next_actions=(),
+        )
+        valid_watchdog = WatchdogDecision(
+            action="BLOCKED",
+            authority="unchanged",
+            incidents=(incident,),
+            new_alert_fingerprints=("e" * 64,),
+            interrupt_owner=False,
+            daily_summary=summary,
+            evidence_fingerprint="f" * 64,
+        )
+        self.assertTrue(
+            dispatcher_module._valid_unattended_watchdog_contract(valid_watchdog)
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_watchdog_contract(
+                replace(valid_watchdog, daily_summary=object())
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_watchdog_contract(
+                replace(valid_watchdog, incidents=[incident])
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_watchdog_contract(
+                replace(valid_watchdog, new_alert_fingerprints=["e" * 64])
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_watchdog_contract(
+                replace(valid_watchdog, new_alert_fingerprints=("d" * 64,))
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_watchdog_contract(
+                replace(valid_watchdog, interrupt_owner="yes")
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_watchdog_contract(
+                replace(valid_watchdog, interrupt_owner=True)
+            )
+        )
+        self.assertFalse(
+            dispatcher_module._valid_unattended_watchdog_contract(
+                replace(valid_watchdog, evidence_fingerprint="bad")
+            )
+        )
+
+    def test_unattended_gate_rejects_malformed_contract_edges(self):
+        import scripts.dispatcher_v2 as dispatcher_module
+
+        valid_guard = unattended_guard_decision("ALLOW")
+        valid_watchdog = unattended_watchdog_decision("ALLOW")
+        cases = (
+            (
+                valid_guard,
+                object(),
+                "unattended_watchdog_decision_invalid",
+            ),
+            (
+                valid_guard,
+                unattended_watchdog_decision("ALLOW", authority="expanded"),
+                "unattended_watchdog_authority_invalid",
+            ),
+            (
+                replace(valid_guard, action="INVALID"),
+                valid_watchdog,
+                "unattended_guard_action_invalid",
+            ),
+            (
+                valid_guard,
+                replace(valid_watchdog, action="INVALID"),
+                "unattended_watchdog_action_invalid",
+            ),
+            (
+                replace(valid_guard, pause_allowed="yes"),
+                valid_watchdog,
+                "unattended_guard_pause_contract_invalid",
+            ),
+            (
+                replace(valid_guard, action="PAUSE", pause_allowed=False),
+                unattended_watchdog_decision("PAUSE"),
+                "unattended_guard_pause_contract_invalid",
+            ),
+            (
+                replace(valid_guard, reasons=("token=secret",)),
+                valid_watchdog,
+                "unattended_guard_evidence_invalid",
+            ),
+        )
+        for guard, watchdog, expected_reason in cases:
+            with self.subTest(reason=expected_reason):
+                action, reasons = dispatcher_module._unattended_dispatch_gate(
+                    guard,
+                    watchdog,
+                )
+                self.assertEqual(action, "BLOCKED")
+                self.assertEqual(reasons, (expected_reason,))
+
+        presence = classify_presence(self.adaptive_snapshot())
+        invalid_mode = adaptive_dispatch_record(
+            [Candidate(key="candidate", priority="critical")],
+            presence=presence,
+            fencing=self.fenced(),
+            replan_action="keep",
+            unattended_mode="yes",
+        )
+        self.assertIsNone(invalid_mode["selected"])
+        self.assertEqual(invalid_mode["next_action"]["action"], "BLOCKED")
+        self.assertIn(
+            "unattended_mode_invalid",
+            invalid_mode["unattended"]["reasons"],
+        )
 
     def direction_proposal(self):
         return DirectionProposal(
