@@ -11,7 +11,10 @@ class CodeqlEvidenceWorkflowTests(unittest.TestCase):
         self.text = WORKFLOW.read_text(encoding="utf-8")
 
     def test_codeql_evidence_is_read_only_and_pinned(self) -> None:
-        self.assertIn("permissions:\n  contents: read", self.text)
+        self.assertIn(
+            "permissions:\n  contents: read\n  security-events: read",
+            self.text,
+        )
         self.assertNotIn("security-events: write", self.text)
         self.assertIn("github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2", self.text)
         self.assertIn("github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2", self.text)
