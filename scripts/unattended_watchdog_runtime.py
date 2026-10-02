@@ -185,13 +185,14 @@ def evaluate_runtime(
         and current[incident.fingerprint][1] == "closed"
     )
 
+    evidence_reconcilable = decision.daily_summary.state_freshness in {"fresh", "stale"}
     close = (
         tuple(sorted(
             alert[0]
             for fp, alert in current.items()
             if alert[1] == "open" and fp not in active
         ))
-        if decision.action == "ALLOW"
+        if evidence_reconcilable
         else ()
     )
     return decision, AlertPlan(

@@ -383,6 +383,61 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(plan.create), 1)
 
+        stale_state = dict(state_payload)
+        stale_state["updated_at"] = "2026-10-02T00:30:00Z"
+        comments[1]["body"] = (
+            "<!-- factory-state "
+            + json.dumps(
+                {"version": 1, "state": stale_state},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + " -->"
+        )
+        stale_input = collect_github_input(
+            client,
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        stale_decision, stale_plan = evaluate_runtime(
+            config(),
+            stale_input["guard"],
+            stale_input["evidence"],
+            {},
+        )
+        self.assertEqual(stale_decision.action, "BLOCKED")
+        stale_runtime_alert = next(
+            item for item in stale_plan.create if item.code == "state_stale"
+        )
+
+        comments[1]["body"] = (
+            "<!-- factory-state "
+            + json.dumps(
+                {"version": 1, "state": state_payload},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + " -->"
+        )
+        resolved_input = collect_github_input(
+            client,
+            config(),
+            "2026-10-02T01:00:00Z",
+        )
+        resolved_decision, resolved_plan = evaluate_runtime(
+            config(),
+            resolved_input["guard"],
+            resolved_input["evidence"],
+            {
+                stale_runtime_alert.fingerprint: {
+                    "number": 88,
+                    "state": "open",
+                }
+            },
+        )
+        self.assertEqual(resolved_decision.action, "BLOCKED")
+        self.assertEqual(resolved_plan.close, (88,))
+
 
     def test_owned_alert_rejects_malformed_duplicate_marker(self):
         fingerprint = "c" * 64
