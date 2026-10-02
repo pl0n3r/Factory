@@ -16,7 +16,7 @@ def fence(action="replan", pause=True):
 def cfg(**changes):
     value = {
         "global_pause": False,
-        "breakers": {"health": {"scope": "repo", "threshold": 3}},
+        "breakers": {"health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 3}},
         "ceilings": {"usage": 100, "cost": 50.0, "parallelism": 2},
     }
     value.update(changes)
@@ -55,10 +55,11 @@ class UnattendedGuardsTests(unittest.TestCase):
 
     def test_circuit_breaker_uses_explicit_threshold_and_consecutive_failures_by_scope(self):
         for scope in ("agent", "repo"):
+            subject = "worker-1" if scope == "agent" else "pl0n3r/Factory"
             with self.subTest(scope=scope, failures="N-1"):
                 closed = evaluate_unattended_guards(
                     fence("keep", False),
-                    cfg(breakers={"health": {"scope": scope, "threshold": 3}}),
+                    cfg(breakers={"health": {"scope": scope, "subject": subject, "threshold": 3}}),
                     ev(breakers={"health": {"consecutive_failures": 2, "fresh": True, "consistent": True}}),
                     metrics(),
                 )
@@ -66,7 +67,7 @@ class UnattendedGuardsTests(unittest.TestCase):
             with self.subTest(scope=scope, failures="N"):
                 opened = evaluate_unattended_guards(
                     fence(),
-                    cfg(breakers={"health": {"scope": scope, "threshold": 3}}),
+                    cfg(breakers={"health": {"scope": scope, "subject": subject, "threshold": 3}}),
                     ev(breakers={"health": {"consecutive_failures": 3, "fresh": True, "consistent": True}}),
                     metrics(),
                 )
@@ -74,10 +75,12 @@ class UnattendedGuardsTests(unittest.TestCase):
                 self.assertIn("circuit_breaker_open", opened.reasons)
 
         invalid_configs = (
-            {"health": {"scope": "repo"}},
-            {"health": {"scope": "repo", "threshold": 0}},
-            {"health": {"scope": "repo", "threshold": 1.5}},
-            {"health": {"scope": "global", "threshold": 3}},
+            {"health": {"scope": "repo", "threshold": 3}},
+            {"health": {"scope": "repo", "subject": "pl0n3r/Factory"}},
+            {"health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 0}},
+            {"health": {"scope": "repo", "subject": "pl0n3r/Factory", "threshold": 1.5}},
+            {"health": {"scope": "global", "subject": "pl0n3r/Factory", "threshold": 3}},
+            {"health": {"scope": "repo", "subject": "../factory", "threshold": 3}},
         )
         for breakers in invalid_configs:
             with self.subTest(breakers=breakers):

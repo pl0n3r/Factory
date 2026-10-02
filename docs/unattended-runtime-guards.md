@@ -24,7 +24,7 @@ Es una capa de seguridad, no un segundo dispatcher/coordinador.
 `ALLOW` exige configuración cerrada y explícita de:
 
 - `global_pause`;
-- al menos un breaker con `scope=agent|repo` y `threshold=N` positivo explícito;
+- al menos un breaker con `scope=agent|repo`, `subject` acotado (1–128 caracteres seguros) y `threshold=N` positivo explícito;
 - evidencia por breaker con `consecutive_failures`, `fresh` y `consistent`;
 - techos no negativos de `usage`, `cost` y `parallelism`;
 - mediciones correspondientes;
@@ -33,7 +33,7 @@ Es una capa de seguridad, no un segundo dispatcher/coordinador.
 
 El estado del breaker **no lo decide el caller**: el core deriva `closed` cuando
 `consecutive_failures < threshold` y `open` cuando es `>= threshold`.
-Threshold ausente/cero/no entero, scope distinto de `agent|repo`, evidencia
+Threshold ausente/cero/no entero, scope distinto de `agent|repo`, subject inválido, evidencia
 ausente/no entera, `UNKNOWN`, stale o contradicción fallan cerrado. Nunca se
 infiere N, presupuesto, cuota, paralelismo ni freshness.
 

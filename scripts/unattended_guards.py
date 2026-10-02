@@ -14,6 +14,7 @@ RISKS = {"low", "medium", "high", "UNKNOWN"}
 BREAKER_SCOPES = {"agent", "repo"}
 SENSITIVE = ("go_live", "spend", "irreversible", "real_data")
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+SUBJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
 class GuardValidationError(ValueError):
@@ -96,12 +97,15 @@ def _normalize(config: object, evidence: object, metrics: object):
             raise GuardValidationError("invalid_breaker_identifier")
         configured = _exact(
             breaker_cfg[name],
-            {"scope", "threshold"},
+            {"scope", "subject", "threshold"},
             "breaker_config",
         )
         scope = configured["scope"]
         if scope not in BREAKER_SCOPES:
             raise GuardValidationError("invalid_breaker_scope")
+        subject = configured["subject"]
+        if not isinstance(subject, str) or not SUBJECT.fullmatch(subject):
+            raise GuardValidationError("invalid_breaker_subject")
         threshold = _positive_int(
             configured["threshold"],
             "breaker_threshold",
@@ -111,7 +115,7 @@ def _normalize(config: object, evidence: object, metrics: object):
             {"consecutive_failures", "fresh", "consistent"},
             "breaker_evidence",
         )
-        clean_cfg[name] = {"scope": scope, "threshold": threshold}
+        clean_cfg[name] = {"scope": scope, "subject": subject, "threshold": threshold}
         clean_ev[name] = {
             "consecutive_failures": _number(
                 observed["consecutive_failures"],
