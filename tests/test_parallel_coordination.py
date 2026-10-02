@@ -258,18 +258,22 @@ class ParallelCoordinationTests(unittest.TestCase):
         )
 
     def test_coordination_workflows_serialize_reservation_decisions(self) -> None:
-        for path in (
-            Path(".github/workflows/coordinacion-trabajo.yml"),
-            Path(".github/workflows/coordinacion.yml"),
-        ):
-            workflow = path.read_text(encoding="utf-8")
-            with self.subTest(path=path):
-                self.assertIn(
-                    "group: factory-coordination-${{ github.repository_id }}",
-                    workflow,
-                )
-                self.assertIn("cancel-in-progress: false", workflow)
-                self.assertIn("queue: max", workflow)
+        internal = Path(
+            ".github/workflows/coordinacion-trabajo.yml"
+        ).read_text(encoding="utf-8")
+        reusable = Path(
+            ".github/workflows/coordinacion.yml"
+        ).read_text(encoding="utf-8")
+
+        for workflow in (internal, reusable):
+            self.assertIn(
+                "group: factory-coordination-${{ github.repository_id }}",
+                workflow,
+            )
+            self.assertIn("cancel-in-progress: false", workflow)
+
+        self.assertIn("queue: max", internal)
+        self.assertNotIn("queue: max", reusable)
 
         actionlint = Path(".github/actionlint.yaml").read_text(encoding="utf-8")
         self.assertIn(".github/workflows/coordinacion-trabajo.yml:", actionlint)
