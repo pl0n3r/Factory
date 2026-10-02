@@ -177,41 +177,51 @@ class WorkflowEventGuardTests(unittest.TestCase):
     def test_factory_coordination_rechecks_live_pr_state_before_lease_validation(self) -> None:
         workflow = self.text("factory-ci.yml")
         coordination = workflow[workflow.index("  coordinacion:"):workflow.index("  acceptance:")]
-        self.assertIn("name: Comprobar estado live del PR", coordination)
-        self.assertIn("id: pr_live", coordination)
-        self.assertIn("gh api \"repos/$REPOSITORIO/pulls/$PR\" --jq '.state'", coordination)
-        self.assertIn('open) echo "is_open=true" >> "$GITHUB_OUTPUT"', coordination)
-        self.assertIn('closed)', coordination)
+        self.assertNotIn("name: Comprobar estado live del PR", coordination)
         validation = coordination[coordination.index("- name: Validar reserva, rama y colisiones"):]
-        self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", validation)
-        self.assertIn("coordinar_trabajo.py validar-pr", validation)
+        self.assertIn("gh api \"repos/$REPOSITORIO/pulls/$PR\" --jq '.state'", validation)
+        self.assertIn('closed)', validation)
+        self.assertIn("exit 0", validation)
+        self.assertIn(
+            "esac\n          python3 scripts/coordinar_trabajo.py validar-pr",
+            validation,
+        )
         self.assertLess(
-            coordination.index("name: Comprobar estado live del PR"),
-            coordination.index("coordinar_trabajo.py validar-pr"),
+            validation.index("gh api \"repos/$REPOSITORIO/pulls/$PR\""),
+            validation.index("coordinar_trabajo.py validar-pr"),
         )
 
     def test_factory_acceptance_rechecks_live_pr_state_before_issue_evidence(self) -> None:
         workflow = self.text("factory-ci.yml")
         acceptance = workflow[workflow.index("  acceptance:"):workflow.index("  validar:")]
+        self.assertNotIn("name: Comprobar estado live del PR", acceptance)
         self.assertIn("pull-requests: read", acceptance)
-        self.assertIn("name: Comprobar estado live del PR", acceptance)
-        self.assertIn("gh api \"repos/$REPOSITORIO/pulls/$PR\" --jq '.state'", acceptance)
-        self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", acceptance)
         evidence = acceptance[acceptance.index("- name: Construir evidencia del Issue y SHA"):]
-        self.assertIn("if: steps.pr_live.outputs.is_open == 'true'", evidence)
+        self.assertIn("id: acceptance_evidence", evidence)
+        self.assertIn("gh api \"repos/$REPOSITORIO/pulls/$PR\" --jq '.state'", evidence)
+        self.assertIn('open) echo "is_open=true" >> "$GITHUB_OUTPUT"', evidence)
+        self.assertIn('closed)', evidence)
         self.assertLess(
-            acceptance.index("name: Comprobar estado live del PR"),
-            acceptance.index("Construir evidencia del Issue y SHA"),
+            evidence.index("gh api \"repos/$REPOSITORIO/pulls/$PR\""),
+            evidence.index('gh api "repos/$REPOSITORIO/issues/$issue"'),
+        )
+        verify = acceptance[acceptance.index("- name: Verificar criterios específicos"):]
+        self.assertIn(
+            "if: steps.acceptance_evidence.outputs.is_open == 'true'",
+            verify,
         )
 
     def test_live_pr_guard_keeps_open_pr_validation_fail_closed(self) -> None:
         workflow = self.text("factory-ci.yml")
-        self.assertEqual(workflow.count("name: Comprobar estado live del PR"), 2)
-        self.assertGreaterEqual(
-            workflow.count("if: steps.pr_live.outputs.is_open == 'true'"),
-            5,
+        self.assertEqual(workflow.count("name: Comprobar estado live del PR"), 0)
+        self.assertEqual(
+            workflow.count("gh api \"repos/$REPOSITORIO/pulls/$PR\" --jq '.state'"),
+            2,
         )
-        self.assertIn('*) echo "::error::Estado live inesperado para PR #$PR: $state"; exit 1 ;;', workflow)
+        self.assertGreaterEqual(
+            workflow.count('*) echo "::error::Estado live inesperado para PR #$PR: $state"; exit 1 ;;'),
+            2,
+        )
         self.assertIn("coordinar_trabajo.py validar-pr", workflow)
         self.assertIn("python3 scripts/aceptacion_kit.py", workflow)
         self.assertIn(
