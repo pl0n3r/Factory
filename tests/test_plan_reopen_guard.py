@@ -64,7 +64,7 @@ class PlanReopenGuardTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn(value, PLAN)
 
-    def test_regression_mentions_observed_stale_snapshot_pattern(self):
+    def test_regression_mentions_observed_stale_snapshot_patterns(self):
         self.assertIn("#699 → #703/#704/#705", PLAN)
         self.assertIn("#741/#763", PLAN)
         self.assertIn("atribuyó a `#762` un contrato que exact-main todavía no contenía", PLAN)
