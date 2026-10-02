@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -49,10 +50,10 @@ SUMMARY_KEYS = frozenset(
     }
 )
 SENSITIVE_VALUE_RE = re.compile(
-    r"(?:password|passwd|secret|token|cookie|credential|authorization|private_key)\\s*[:=]",
+    r"(?:password|passwd|secret|token|cookie|credential|authorization|private_key)\s*[:=]",
     re.IGNORECASE,
 )
-EMAIL_RE = re.compile(r"\\b[^\\s@]+@[^\\s@]+\\.[^\\s@]+\\b")
+EMAIL_RE = re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b")
 
 
 class SnapshotError(ValueError):
@@ -178,11 +179,14 @@ def _read_snapshot_text(path: str | None, stdin: TextIO, *, root: Path = ROOT) -
     else:
         checkout = root.resolve()
         candidate = Path(path)
-        resolved = (
-            candidate.resolve()
-            if candidate.is_absolute()
-            else (checkout / candidate).resolve()
+        lexical = Path(
+            os.path.abspath(
+                str(candidate if candidate.is_absolute() else checkout / candidate)
+            )
         )
+        if not _is_within_checkout(lexical, checkout):
+            raise SnapshotError("snapshot_path_outside_checkout")
+        resolved = lexical.resolve()
         if not _is_within_checkout(resolved, checkout):
             raise SnapshotError("snapshot_path_outside_checkout")
         if not resolved.is_file():
@@ -191,6 +195,7 @@ def _read_snapshot_text(path: str | None, stdin: TextIO, *, root: Path = ROOT) -
     if len(content) > MAX_SNAPSHOT_CHARS:
         raise SnapshotError("snapshot_too_large")
     return content
+
 
 
 def _contains_sensitive_output(value: object) -> bool:

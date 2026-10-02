@@ -106,6 +106,13 @@ class UnattendedCycleCliTests(TestCase):
         self.assertNotIn("token=", lowered)
         self.assertNotIn("@example.", lowered)
 
+        unsafe = snapshot()
+        unsafe["dispatch"]["selected"] = "token=do-not-emit"
+        unsafe_rc, unsafe_output = run_stdin(unsafe)
+        self.assertEqual(unsafe_rc, 2)
+        self.assertEqual(json.loads(unsafe_output), {"error": "invalid_snapshot"})
+        self.assertNotIn("do-not-emit", unsafe_output)
+
     def test_cli_is_confined_and_performs_no_network_or_external_mutation(self):
         raw = json.dumps(snapshot())
 
@@ -133,11 +140,19 @@ class UnattendedCycleCliTests(TestCase):
             external.write_text(raw, encoding="utf-8")
             before = external.read_bytes()
             stdout = io.StringIO()
-            rc = cli.main(
-                ["--snapshot", str(external)],
-                stdin=io.StringIO(""),
-                stdout=stdout,
-            )
+            original_resolve = Path.resolve
+
+            def guarded_resolve(path: Path, *args, **kwargs):
+                if path == external:
+                    raise AssertionError("external path must be rejected before resolve")
+                return original_resolve(path, *args, **kwargs)
+
+            with patch.object(Path, "resolve", guarded_resolve):
+                rc = cli.main(
+                    ["--snapshot", str(external)],
+                    stdin=io.StringIO(""),
+                    stdout=stdout,
+                )
             after = external.read_bytes()
 
         self.assertEqual(rc, 2)
