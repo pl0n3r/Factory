@@ -15,12 +15,12 @@
     {
       "id": "D-056",
       "status": "active",
-      "text": "Los releases se publican mediante el kit Factory y se validan por versión/SHA exactos."
+      "text": "Condor, GrindFlow y BRVTAL usan el sistema común de releases del kit Factory; BRVTAL reemplaza update-release-metadata.yml."
     },
     {
       "id": "D-057",
       "status": "active",
-      "text": "Todo Issue y PR debe tener exactamente una etiqueta de tipo, una de prioridad y una de estado."
+      "text": "Todo Issue y PR debe tener exactamente una etiqueta de tipo, una de prioridad y una de estado, en el idioma configurado."
     },
     {
       "id": "D-058",
@@ -71,6 +71,11 @@
       "id": "D-067",
       "status": "active",
       "text": "Factory#683: AutoFactory#79 queda resuelta en opción A; AutoFactory#70 no recibe otro ciclo correctivo por inferencia y espera nueva evidencia SonarCloud directa/canónica o una nueva decisión explícita."
+    },
+    {
+      "id": "D-068",
+      "status": "active",
+      "text": "Factory#796: la dirección product-direction puede materializarse como opción A sin /decidir únicamente bajo autorización permanente acotada del dueño, con provenance de propuesta, kill switch RUNNING, producción verde, aceptación ejecutable y límites de riesgo satisfechos. Quedan siempre fuera go-live, gasto/compras/planes, proveedores de pago o traducción, Backblaze/offsite real, datos reales/personales, secretos/credenciales, SQL destructivo o borrado irreversible, producción sin backup verificado, decisiones de descarte/rediseño de GrindFlow y puertas legal/privacidad vigentes. Fuera de esos límites D-064 conserva la puerta humana y el dispatcher continúa con otro trabajo."
     }
   ]
 }
