@@ -47,8 +47,40 @@ def dispatch_record_with_inventory(
             "inventario READY sin candidato seleccionado; no declarar ausencia."
         )
 
+    states_present = tuple(sorted(set(project_states.values())))
     result["inventory_no_candidate"] = {
         "project_states": project_states,
-        "states_present": tuple(sorted(set(project_states.values()))),
+        "states_present": states_present,
+    }
+
+    state_priority = (
+        "UNMATERIALIZED_WORK",
+        "WAITING_DECISION",
+        "LIVE_GATED",
+        "ALL_BLOCKED",
+        "NO_WORK",
+    )
+    inventory_state = next(
+        (state for state in state_priority if state in states_present),
+        None,
+    )
+    if inventory_state is None:
+        raise WorkInventoryError(
+            "inventario sin candidato no contiene un estado interpretable."
+        )
+
+    result["next_action"] = {
+        "step": (
+            "materialize_inventory"
+            if inventory_state == "UNMATERIALIZED_WORK"
+            else "inventory_state"
+        ),
+        "work": {
+            "kind": "inventory",
+            "key": "factory:work-inventory",
+        },
+        "state": inventory_state,
+        "project_states": project_states,
+        "mutates": False,
     }
     return result
