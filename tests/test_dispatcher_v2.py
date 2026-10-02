@@ -1678,17 +1678,17 @@ class DispatcherV2Tests(unittest.TestCase):
             ),
             leaves=(
                 DirectionLeaf(
-                    key="CONDOR_NEXT_1",
+                    key="condor-next-1",
                     title="Primer leaf del nuevo tramo",
                     acceptance_targets=(
                         "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
                     ),
                 ),
                 DirectionLeaf(
-                    key="CONDOR_NEXT_2",
+                    key="condor-next-2",
                     title="Segundo leaf dependiente",
                     acceptance_targets=("check:validate",),
-                    depends_on=("CONDOR_NEXT_1",),
+                    depends_on=("condor-next-1",),
                 ),
             ),
         )
@@ -1761,13 +1761,13 @@ class DispatcherV2Tests(unittest.TestCase):
         materialized = materialize_direction_leaves(proposal, decision_evidence=approved)
         self.assertEqual(
             [leaf["key"] for leaf in materialized],
-            ["CONDOR_NEXT_1", "CONDOR_NEXT_2"],
+            ["condor-next-1", "condor-next-2"],
         )
         self.assertEqual(
             [leaf["state"] for leaf in materialized],
             ["available", "blocked"],
         )
-        self.assertEqual(materialized[1]["depends_on"], ["CONDOR_NEXT_1"])
+        self.assertEqual(materialized[1]["depends_on"], ["condor-next-1"])
         stale = {**approved, "gate_sha256": "0" * 64}
         with self.assertRaisesRegex(ValueError, "does not match"):
             materialize_direction_leaves(proposal, decision_evidence=stale)
@@ -1873,7 +1873,7 @@ class DispatcherV2Tests(unittest.TestCase):
                         objective="Propuesta inválida por check genérico.",
                         leaves=(
                             DirectionLeaf(
-                                key="INVALID_CHECK",
+                                key="invalid-check",
                                 title="Leaf con check prohibido",
                                 acceptance_targets=(target,),
                             ),
@@ -1890,7 +1890,7 @@ class DispatcherV2Tests(unittest.TestCase):
                     objective="Propuesta inválida por target de test.",
                     leaves=(
                         DirectionLeaf(
-                            key="INVALID_TEST",
+                            key="invalid-test",
                             title="Leaf con test no canónico",
                             acceptance_targets=(
                                 "tests/test_next_slice.py::NextSliceTests::not_a_test",
@@ -1908,17 +1908,17 @@ class DispatcherV2Tests(unittest.TestCase):
                 objective="Propuesta con evidencia ejecutable canónica.",
                 leaves=(
                     DirectionLeaf(
-                        key="CANONICAL_TEST",
+                        key="canonical-test",
                         title="Leaf con test exacto",
                         acceptance_targets=(
                             "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
                         ),
                     ),
                     DirectionLeaf(
-                        key="CANONICAL_CHECK",
+                        key="canonical-check",
                         title="Leaf con check específico",
                         acceptance_targets=("check:validate",),
-                        depends_on=("CANONICAL_TEST",),
+                        depends_on=("canonical-test",),
                     ),
                 ),
             ),
@@ -2094,7 +2094,7 @@ class DispatcherV2Tests(unittest.TestCase):
         )
         self.assertEqual(
             trigger["proposal"]["leaves"][1]["depends_on"],
-            ["CONDOR_NEXT_1"],
+            ["condor-next-1"],
         )
         self.assertEqual(
             materialize_direction_leaves(proposal, decision_evidence=None),
@@ -2197,7 +2197,7 @@ class DispatcherV2Tests(unittest.TestCase):
             objective="Preparar el siguiente tramo del execution plane.",
             leaves=(
                 DirectionLeaf(
-                    key="FACTORYRUNNER_NEXT",
+                    key="factoryrunner-next",
                     title="Siguiente leaf de FactoryRunner",
                     acceptance_targets=(
                         "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
@@ -2250,7 +2250,7 @@ class DispatcherV2Tests(unittest.TestCase):
             objective="Mejorar la trazabilidad local del execution plane.",
             leaves=(
                 DirectionLeaf(
-                    key="FACTORYRUNNER_SAFE_NEXT",
+                    key="factoryrunner-safe-next",
                     title="Trazabilidad reversible del runner",
                     acceptance_targets=(
                         "tests/test_next_slice.py::NextSliceTests::test_first_leaf",
