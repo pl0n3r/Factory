@@ -4,7 +4,7 @@ Estado: **scheduler operativo, efectos limitados a alertas propias**.
 
 ## Frecuencia y permisos
 
-`.github/workflows/unattended-watchdog.yml` corre cada **15 minutos** en los slots UTC **07/22/37/52**, admite `workflow_dispatch` y ejecuta una verificación inmediata en cada `push a `main``. El `push` funciona como evidencia post-merge temprana; no sustituye la vigilancia periódica.
+`.github/workflows/unattended-watchdog.yml` corre cada **15 minutos** en los slots UTC **07/22/37/52**, admite `workflow_dispatch` y ejecuta una verificación inmediata en cada `push` a `main`. El `push` funciona como evidencia post-merge temprana; no sustituye la vigilancia periódica.
 
 El job `watchdog` valida `repository`, `refs/heads/main` y un evento allowlisted (`push`, `schedule` o `workflow_dispatch`) antes del primer checkout. El job `daily-summary` sigue restringido exclusivamente al schedule diario `0 13 * * *`; un `push` nunca publica el resumen.
 
