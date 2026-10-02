@@ -353,6 +353,63 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(resolved.close, (77,))
 
+    def test_unknown_cycle_never_closes_prior_alerts(self):
+        incident_evidence = evidence(
+            work_ready=True,
+            ready_since="2026-10-02T00:40:00Z",
+            next_dispatch_planned=False,
+        )
+        _, prior_plan = evaluate_runtime(
+            config(),
+            guard(),
+            incident_evidence,
+            {},
+        )
+        prior_alert = prior_plan.create[0]
+
+        unknown_presence = presence(freshness="unknown")
+        decision, plan = evaluate_runtime(
+            config(),
+            guard(),
+            evidence(presence=unknown_presence),
+            {prior_alert.fingerprint: 77},
+        )
+
+        self.assertEqual(decision.action, "BLOCKED")
+        self.assertEqual(decision.daily_summary.state_freshness, "fresh")
+        self.assertTrue(
+            any(item.severity == "UNKNOWN" for item in decision.incidents)
+        )
+        self.assertEqual(plan.close, ())
+
+    def test_fresh_clean_cycle_still_reconciles_resolved_alerts(self):
+        incident_evidence = evidence(
+            work_ready=True,
+            ready_since="2026-10-02T00:40:00Z",
+            next_dispatch_planned=False,
+        )
+        _, prior_plan = evaluate_runtime(
+            config(),
+            guard(),
+            incident_evidence,
+            {},
+        )
+        prior_alert = prior_plan.create[0]
+
+        decision, plan = evaluate_runtime(
+            config(),
+            guard(),
+            evidence(),
+            {prior_alert.fingerprint: 77},
+        )
+
+        self.assertEqual(decision.action, "ALLOW")
+        self.assertEqual(decision.daily_summary.state_freshness, "fresh")
+        self.assertFalse(
+            any(item.severity == "UNKNOWN" for item in decision.incidents)
+        )
+        self.assertEqual(plan.close, (77,))
+
 
     def test_idle_runtime_attaches_global_idle_only_from_complete_fresh_seven_repo_snapshot(self):
         class FakeClient:
