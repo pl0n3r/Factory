@@ -3562,5 +3562,83 @@ class PostMergeEventOrderingTests(unittest.TestCase):
         self.assertEqual(latest["owner"], "pl0n3r")
 
 
+class CoordinationTests(unittest.TestCase):
+    """Regresiones de metadata de reserva de PR para Factory#905."""
+
+    def test_pr_reservation_hidden_marker_wins_over_visible_format_variants(self) -> None:
+        variants = (
+            f"Reserva: \`{SESSION_B}\`",
+            f"**Reserva:** {SESSION_B}",
+            f"Cierra #12 · Reserva: {SESSION_B}",
+            f"Reserva : {SESSION_B}",
+        )
+        for visible in variants:
+            with self.subTest(visible=visible):
+                body = (
+                    f"Closes #12\n{visible}\n"
+                    f"<!-- condor-reserva-id: {SESSION_A} -->"
+                )
+                self.assertEqual(reservation_from_pr_body(body), SESSION_A)
+
+    def test_malformed_visible_reservation_reports_precise_format_error(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": f"Closes #12\nReserva: \`{SESSION_A}\`",
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "Metadata visible de reserva no canónica.*Usa exactamente",
+        ):
+            validate_pull(api, 15, True)
+
+    def test_conflicting_hidden_reservation_still_fails_closed(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\nReserva: {SESSION_A}\n"
+                f"<!-- condor-reserva-id: {SESSION_B} -->"
+            ),
+            "head": {"ref": "trabajo/issue-12"},
+            "base": {"ref": "main"},
+        }
+
+        with self.assertRaisesRegex(
+            CoordinationError,
+            "marker oculto de reserva.*sesión activa",
+        ):
+            validate_pull(api, 15, True)
+
+    def test_renewal_metadata_regression_matches_condor_448_variants(self) -> None:
+        variants = (
+            f"Reserva: \`{SESSION_A}\`",
+            f"**Reserva:** {SESSION_A}",
+            f"Cierra #445 · Reserva: {SESSION_A}",
+        )
+        for visible in variants:
+            with self.subTest(visible=visible):
+                body = (
+                    f"Closes #445\n{visible}\n"
+                    f"<!-- condor-reserva-id: {SESSION_A} -->"
+                )
+                self.assertEqual(reservation_from_pr_body(body), SESSION_A)
+                updated = rewrite_pull_reservation(body, SESSION_B)
+                self.assertEqual(reservation_from_pr_body(updated), SESSION_B)
+                self.assertIn(
+                    f"<!-- condor-reserva-id: {SESSION_B} -->",
+                    updated,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
