@@ -238,11 +238,14 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         if not isinstance(issue, dict):
             continue
         body = issue.get("body")
-        if not isinstance(body, str) or WINDOW_INTENT_RE.search(body) is None:
+        if not isinstance(body, str):
             continue
+        window_intent = WINDOW_INTENT_RE.search(body) is not None
         gate_info = _gate_from_body(body)
         if gate_info is None:
-            raise ReleaseWindowError("release-window sin puerta factory-release.")
+            if window_intent:
+                raise ReleaseWindowError("release-window sin puerta factory-release.")
+            continue
         gate, version, target_sha = gate_info
         number = issue.get("number")
         state = issue.get("state")
