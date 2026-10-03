@@ -266,11 +266,19 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         legacy_release_intent = _legacy_factory_release_intent(body)
         if not window_intent and not legacy_release_intent:
             continue
-        gate_info = _gate_from_body(body)
-        if gate_info is None:
-            if window_intent:
+        if window_intent:
+            gate_info = _gate_from_body(body)
+            if gate_info is None:
                 raise ReleaseWindowError("release-window sin puerta factory-release.")
-            continue
+        else:
+            try:
+                gate_info = _gate_from_body(body)
+            except ReleaseWindowError:
+                # Gates legacy sin window no conceden autoridad por sí solos.
+                # Si su schema/target ya no es demostrable, se omiten.
+                continue
+            if gate_info is None:
+                continue
         gate, version, target_sha = gate_info
         number = issue.get("number")
         state = issue.get("state")
