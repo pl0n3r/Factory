@@ -48,6 +48,31 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertIn('gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/labels"', WF)
         self.assertIn("linked_issue:$linked[0]", WF)
 
+    def test_sweep_routes_merge_alerts_to_linked_issue_without_pr_write(self):
+        self.assertIn('closing-reference --language "$LANGUAGE"', WF)
+        self.assertIn('linked_issue="$(jq -r \'.number // empty\' <<<"$closing_json")"', WF)
+        self.assertIn(
+            'gh api --paginate "repos/$REPOSITORIO/issues/$linked_issue/comments?per_page=100"',
+            WF,
+        )
+        self.assertIn(
+            'gh api --method POST "repos/$REPOSITORIO/issues/$linked_issue/comments"',
+            WF,
+        )
+        self.assertIn("no tiene referencia cerrante canónica; se omite alerta persistente", WF)
+        self.assertIn('gh api "repos/$REPOSITORIO/issues/$linked_issue" > /tmp/linked-issue.json', WF)
+        self.assertIn('has("pull_request")', WF)
+        self.assertIn("el destino también es una PR; se omite alerta persistente", WF)
+        self.assertNotIn(
+            'gh api --paginate "repos/$REPOSITORIO/issues/$number/comments?per_page=100"',
+            WF,
+        )
+        self.assertNotIn(
+            'gh api --method POST "repos/$REPOSITORIO/issues/$number/comments"',
+            WF,
+        )
+        self.assertNotIn("pull-requests: write", WF)
+
     def test_metadata_permissions_remain_least_privilege(self):
         permissions = labels_job_permissions()
         self.assertEqual(
