@@ -189,6 +189,18 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertIsNone(rw.freeze_gate(records, NOW))
 
     def test_invalid_window_intent_stays_fail_closed_while_modern_window_remains_supported(self) -> None:
+        self.assertFalse(rw._legacy_factory_release_intent("plain text"))
+        self.assertTrue(
+            rw._legacy_factory_release_intent(
+                '<!-- factory-human-gate {broken factory-release} -->'
+            )
+        )
+        self.assertFalse(
+            rw._legacy_factory_release_intent(
+                '<!-- factory-human-gate {broken} -->'
+            )
+        )
+
         unrelated_legacy = (
             '<!-- factory-human-gate '
             '{"category":"product-direction","context":"legacy schema"} -->'
