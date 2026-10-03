@@ -186,7 +186,7 @@ class NoWorkDedupTests(unittest.TestCase):
         self.assertIn("scripts/no_work_dedup.py", plan)
         self.assertIn("create | update | omit", plan)
         self.assertIn("30 min", plan)
-        self.assertIn("no se publican nuevos", plan)
+        self.assertIn("no se publican nuevos", plan.lower())
         self.assertIn("NO_WORK", plan)
 
     def test_measurement_caps_new_comments_for_unchanged_inventory(self):
