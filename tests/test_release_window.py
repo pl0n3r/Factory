@@ -142,7 +142,7 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertIn(f"main@{NEW_SHA}", planned["body"])
         self.assertIn('"safe_default":"B"', planned["body"])
         self.assertNotIn("factory-human-decision", planned["body"])
-        self.assertNotIn("/decidir A", planned["body"])
+        self.assertIn("Responde explícitamente `/decidir A` o `/decidir B`.", planned["body"])
 
         new_row = gate_row(number=922, body=planned["body"], state="open")
         repeated = rw.plan_rearm({
@@ -178,7 +178,9 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertIn("issues: read", factory_ci)
         self.assertIn("pull-requests: read", factory_ci)
         self.assertIn("python3 scripts/release_window.py pr-check", factory_ci)
-        self.assertIn("release_window", factory_ci.split("validar:", 1)[1])
+        coordination = factory_ci.split("  coordinacion:", 1)[1].split("  acceptance:", 1)[0]
+        self.assertIn("needs: [release_window]", coordination)
+        self.assertIn("needs: [workflows, scripts, coordinacion, acceptance]", factory_ci)
 
 
 if __name__ == "__main__":
