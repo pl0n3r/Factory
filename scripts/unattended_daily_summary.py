@@ -9,7 +9,6 @@ import os
 import re
 import sys
 from typing import Iterable
-from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -276,7 +275,7 @@ def _public_condor_comments(opener=None) -> list[dict[str, object]]:
         try:
             with open_url(request, timeout=CONDOR_D043_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (URLError, OSError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             raise DailySummaryError("condor_d043_public_api_unavailable") from exc
         if not isinstance(payload, list):
             raise DailySummaryError("condor_d043_public_api_invalid")
