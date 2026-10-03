@@ -307,5 +307,137 @@ class ReleaseWindowTests(unittest.TestCase):
         )
 
 
+    def test_release_evidence_validation_fails_closed(self) -> None:
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._canonical_time(None, "now")
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._canonical_time("not-a-time", "now")
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._sha("not-a-sha", "sha")
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._semver("1.2")
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.check_pull_request([])
+
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        self.assertIsNone(rw._gate_from_body("plain text"))
+        self.assertIsNone(rw._window_from_body("plain text", OLD_SHA))
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._window_from_body("<!-- factory-release-window -->", OLD_SHA)
+
+        gate, _, _ = rw._gate_from_body(rendered["body"])
+        fingerprint = rw._gate_fingerprint(gate)
+        self.assertFalse(rw._decision_a([], fingerprint))
+        self.assertFalse(rw._decision_a([
+            {"user": {"login": "someone"}, "body": "<!-- factory-human-decision {} -->"}
+        ], fingerprint))
+
+        option_b = {
+            "gate_sha256": fingerprint,
+            "option": "B",
+            "version": 2,
+        }
+        self.assertFalse(rw._decision_a([
+            {
+                "user": {"login": "github-actions[bot]"},
+                "body": (
+                    "<!-- factory-human-decision "
+                    + json.dumps(option_b, separators=(",", ":"), sort_keys=True)
+                    + " -->"
+                ),
+            }
+        ], fingerprint))
+
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._decision_a([
+                {
+                    "user": {"login": "github-actions[bot]"},
+                    "body": "<!-- factory-human-decision {broken} -->",
+                }
+            ], fingerprint)
+
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records("not-a-list")
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([{
+                "issue": {
+                    "number": 1,
+                    "state": "open",
+                    "body": "<!-- factory-release-window {} -->",
+                },
+                "comments": [],
+            }])
+
+    def test_execution_markers_reject_ambiguous_or_invalid_evidence(self) -> None:
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        approved = approved_comment(rendered["body"])
+
+        invalid_execution = {
+            "user": {"login": "github-actions[bot]"},
+            "body": "<!-- factory-release-executed {broken} -->",
+        }
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([
+                gate_row(
+                    number=918,
+                    body=rendered["body"],
+                    state="closed",
+                    comments=[approved, invalid_execution],
+                )
+            ])
+
+        def execution_comment(run_id: int) -> dict[str, object]:
+            payload = {
+                "version": 1,
+                "sha": OLD_SHA,
+                "run_id": run_id,
+                "executed_at": "2026-10-03T10:05:00Z",
+            }
+            return {
+                "user": {"login": "github-actions[bot]"},
+                "body": (
+                    "<!-- factory-release-executed "
+                    + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                    + " -->"
+                ),
+            }
+
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([
+                gate_row(
+                    number=918,
+                    body=rendered["body"],
+                    state="closed",
+                    comments=[approved, execution_comment(1), execution_comment(2)],
+                )
+            ])
+
+        self.assertEqual(
+            rw.plan_execution({
+                "conclusion": "success",
+                "now": "2026-10-03T10:30:00Z",
+                "head_sha": OLD_SHA,
+                "run_id": 123,
+                "gates": [
+                    gate_row(
+                        number=918,
+                        body=rendered["body"],
+                        state="closed",
+                        comments=[],
+                    )
+                ],
+            }),
+            {"action": "none", "reason": "no_approved_gate_for_run_sha"},
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.plan_execution({
+                "conclusion": "success",
+                "now": "2026-10-03T10:30:00Z",
+                "head_sha": OLD_SHA,
+                "run_id": 0,
+                "gates": [],
+            })
+
+
 if __name__ == "__main__":
     unittest.main()
