@@ -195,5 +195,117 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertIn("needs: [workflows, scripts, coordinacion, acceptance]", factory_ci)
 
 
+    def test_execution_marks_only_approved_exact_sha_and_becomes_idempotent(self) -> None:
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        approved = approved_comment(rendered["body"])
+        row = gate_row(
+            number=918,
+            body=rendered["body"],
+            state="closed",
+            comments=[approved],
+        )
+
+        self.assertEqual(
+            rw.plan_execution({"conclusion": "failure"}),
+            {"action": "none", "reason": "release_run_not_successful"},
+        )
+        self.assertEqual(
+            rw.plan_execution({
+                "conclusion": "success",
+                "now": "2026-10-03T10:30:00Z",
+                "head_sha": NEW_SHA,
+                "run_id": 12345,
+                "gates": [row],
+            }),
+            {"action": "none", "reason": "no_approved_gate_for_run_sha"},
+        )
+
+        before = rw.approved_unexecuted({"gates": [row]})
+        self.assertEqual(before["issue"], 918)
+        self.assertEqual(before["sha"], OLD_SHA)
+
+        marked = rw.plan_execution({
+            "conclusion": "success",
+            "now": "2026-10-03T10:30:00Z",
+            "head_sha": OLD_SHA,
+            "run_id": 12345,
+            "gates": [row],
+        })
+        self.assertEqual(marked["action"], "mark_executed")
+        self.assertEqual(marked["issue"], 918)
+        self.assertIn(OLD_SHA, marked["comment"])
+        self.assertIn('"run_id":12345', marked["comment"])
+
+        executed_row = gate_row(
+            number=918,
+            body=rendered["body"],
+            state="closed",
+            comments=[
+                approved,
+                {
+                    "user": {"login": "github-actions[bot]"},
+                    "body": marked["comment"],
+                },
+            ],
+        )
+        self.assertEqual(
+            rw.plan_execution({
+                "conclusion": "success",
+                "now": "2026-10-03T10:31:00Z",
+                "head_sha": OLD_SHA,
+                "run_id": 12346,
+                "gates": [executed_row],
+            }),
+            {"action": "none", "reason": "execution_already_recorded"},
+        )
+        self.assertIsNone(rw.approved_unexecuted({"gates": [executed_row]}))
+
+    def test_rearm_noops_without_eligible_stale_approval(self) -> None:
+        base = {
+            "now": "2026-10-03T10:20:00Z",
+            "main_sha": NEW_SHA,
+            "version": "1.0.23",
+        }
+        self.assertEqual(
+            rw.plan_rearm({**base, "gates": []}),
+            {"action": "none", "reason": "no_prior_release_gate"},
+        )
+
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        closed_unapproved = gate_row(number=918, body=rendered["body"], state="closed")
+        self.assertEqual(
+            rw.plan_rearm({**base, "gates": [closed_unapproved]}),
+            {"action": "none", "reason": "latest_gate_not_approved"},
+        )
+
+        approved = approved_comment(rendered["body"])
+        execution = {
+            "version": 1,
+            "sha": OLD_SHA,
+            "run_id": 9876,
+            "executed_at": "2026-10-03T10:05:00Z",
+        }
+        executed = gate_row(
+            number=918,
+            body=rendered["body"],
+            state="closed",
+            comments=[
+                approved,
+                {
+                    "user": {"login": "github-actions[bot]"},
+                    "body": (
+                        "<!-- factory-release-executed "
+                        + json.dumps(execution, separators=(",", ":"), sort_keys=True)
+                        + " -->"
+                    ),
+                },
+            ],
+        )
+        self.assertEqual(
+            rw.plan_rearm({**base, "gates": [executed]}),
+            {"action": "none", "reason": "latest_release_executed"},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
