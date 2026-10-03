@@ -43,6 +43,18 @@ MAX_REARM_DEPTH = 8
 MAX_RELEASE_WINDOW_MINUTES = 120
 MAX_INPUT = 1_000_000
 MAX_COMMENT_BODY = 20_000
+VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+EXPECTED_MODES = {"exact", "latest"}
+REQUIRED_EXACT_MAIN_CHECKS = ("ci", "sonar", "codeql", "watchdog")
+RELEASE_MACHINERY_EXACT_PATHS = frozenset(
+    {
+        "scripts/release_bootstrap.py",
+        "scripts/reusable_release_preflight.py",
+        "scripts/reusable_permission_compat.py",
+        "scripts/verificar_ruleset_v1.py",
+        "template/.github/workflows/release.yml",
+    }
+)
 
 
 class ReleaseBootstrapError(ValueError):
@@ -165,6 +177,81 @@ def _release_gate_target(body: str) -> str:
     return _sha(targets[0], "gate.target_sha")
 
 
+def _release_gate_version(body: str) -> str:
+    gate, _ = _normalized_gate_snapshot(body)
+    if gate.get("category") != "factory-release":
+        raise ReleaseBootstrapError("Puerta por versión requiere factory-release.")
+    option_a = next(
+        (item for item in gate.get("options", []) if item.get("id") == "A"),
+        None,
+    )
+    label = str(option_a.get("label", "")).strip() if isinstance(option_a, dict) else ""
+    match = re.fullmatch(r"Publicar Factory v?([0-9]+\.[0-9]+\.[0-9]+)", label)
+    if match is None:
+        raise ReleaseBootstrapError(
+            "Puerta por versión requiere opción A 'Publicar Factory X.Y.Z'."
+        )
+    return match.group(1)
+
+
+def _is_release_machinery_path(path: str) -> bool:
+    if path in RELEASE_MACHINERY_EXACT_PATHS:
+        return True
+    if path.startswith(".github/workflows/"):
+        filename = path.rsplit("/", 1)[-1].casefold()
+        return "release" in filename and filename.endswith((".yml", ".yaml"))
+    return False
+
+
+def _validate_latest_release_context(
+    *,
+    body: str,
+    expected: str,
+    current_version: Any,
+    changed_files: Any,
+    exact_main_checks: Any,
+) -> None:
+    version = _string(current_version, "current_version", 64)
+    if VERSION_RE.fullmatch(version) is None:
+        raise ReleaseBootstrapError("current_version inválida.")
+    if _release_gate_version(body) != version:
+        raise ReleaseBootstrapError(
+            "La versión aprobada por la puerta no coincide con config/version.json."
+        )
+
+    gate_sha = _release_gate_target(body)
+    if not isinstance(changed_files, list):
+        raise ReleaseBootstrapError("changed_files_since_gate inválido.")
+    normalized_files = [
+        _string(path, "changed_files_since_gate[]", 500)
+        for path in changed_files
+    ]
+    if gate_sha != expected:
+        protected = sorted(
+            path for path in normalized_files if _is_release_machinery_path(path)
+        )
+        if protected:
+            raise ReleaseBootstrapError(
+                "La maquinaria de release cambió desde la puerta; requiere una puerta nueva: "
+                + ", ".join(protected)
+            )
+
+    if (
+        not isinstance(exact_main_checks, dict)
+        or set(exact_main_checks) != set(REQUIRED_EXACT_MAIN_CHECKS)
+    ):
+        raise ReleaseBootstrapError("Evidencia exact-main incompleta.")
+    red = [
+        name
+        for name in REQUIRED_EXACT_MAIN_CHECKS
+        if exact_main_checks.get(name) != "success"
+    ]
+    if red:
+        raise ReleaseBootstrapError(
+            "Checks exact-main no están todos en success: " + ", ".join(red)
+        )
+
+
 def _rearm_marker(body: str, target_sha: str) -> int:
     raw = _marker_payload(
         body,
@@ -232,6 +319,8 @@ def _validate_rearmed_bot_gate(
     owner: str,
     now: Any,
     sources: Any,
+    allow_target_drift: bool = False,
+    require_current_window: bool = True,
 ) -> None:
     user = gate.get("user")
     if not isinstance(user, dict) or user.get("login") != DECISION_BOT:
@@ -241,7 +330,7 @@ def _validate_rearmed_bot_gate(
     if not isinstance(body, str):
         raise ReleaseBootstrapError("Puerta rearmada sin body válido.")
     target_sha = _release_gate_target(body)
-    if target_sha != expected:
+    if target_sha != expected and not allow_target_drift:
         raise ReleaseBootstrapError(
             "Puerta rearmada corresponde a otro SHA."
         )
@@ -250,7 +339,7 @@ def _validate_rearmed_bot_gate(
         body,
         target_sha,
         created_at=gate.get("created_at"),
-        current_at=now,
+        current_at=now if require_current_window else None,
     )
 
     if not isinstance(sources, list) or not sources:
@@ -325,6 +414,7 @@ def _validate_v2_maintenance_decision(
     comments: Any,
     owner: str,
     expected: str,
+    allow_target_drift: bool = False,
 ) -> None:
     gate, gate_sha256 = _normalized_gate_snapshot(body)
     if gate.get("category") != "factory-release":
@@ -348,9 +438,11 @@ def _validate_v2_maintenance_decision(
         raise ReleaseBootstrapError("Opción A debe identificar inequívocamente publicación.")
 
     targets = MAIN_TARGET_RE.findall(str(gate.get("context", "")))
-    if len(targets) != 1 or targets[0] != expected:
+    if len(targets) != 1 or (
+        targets[0] != expected and not allow_target_drift
+    ):
         raise ReleaseBootstrapError(
-            "Puerta v2 debe ligar un único main@SHA al expected_sha."
+            "Puerta v2 debe ligar un único main@SHA compatible con el modo solicitado."
         )
 
     if not isinstance(comments, list):
@@ -423,6 +515,9 @@ def validate_payload(payload: Any) -> dict[str, str]:
     event_name = _string(payload.get("event_name"), "event_name")
     branch = _string(payload.get("default_branch"), "default_branch")
     ref = _string(payload.get("ref"), "ref")
+    expected_mode = payload.get("expected_mode", "exact")
+    if expected_mode not in EXPECTED_MODES:
+        raise ReleaseBootstrapError("expected_mode inválido.")
     expected = _sha(payload.get("expected_sha"), "expected_sha")
     current = _sha(payload.get("current_sha"), "current_sha")
     branch_sha = _sha(payload.get("default_branch_sha"), "default_branch_sha")
@@ -462,6 +557,8 @@ def validate_payload(payload: Any) -> dict[str, str]:
             owner=owner,
             now=payload.get("now"),
             sources=payload.get("rearm_sources"),
+            allow_target_drift=expected_mode == "latest",
+            require_current_window=expected_mode != "latest",
         )
     body = gate.get("body")
     gate_result = classify_body(body if isinstance(body, str) else "")
@@ -476,13 +573,27 @@ def validate_payload(payload: Any) -> dict[str, str]:
         if _v2_release_intent(gate):
             if closed_by != DECISION_BOT:
                 raise ReleaseBootstrapError("Puerta v2 debe cerrar por el bot de decisión.")
+            gate_body = body if isinstance(body, str) else ""
             _validate_v2_maintenance_decision(
-                body=body if isinstance(body, str) else "",
+                body=gate_body,
                 comments=gate.get("comments"),
                 owner=owner,
                 expected=expected,
+                allow_target_drift=expected_mode == "latest",
             )
+            if expected_mode == "latest":
+                _validate_latest_release_context(
+                    body=gate_body,
+                    expected=expected,
+                    current_version=payload.get("current_version"),
+                    changed_files=payload.get("changed_files_since_gate"),
+                    exact_main_checks=payload.get("exact_main_checks"),
+                )
         else:
+            if expected_mode == "latest":
+                raise ReleaseBootstrapError(
+                    "expected_sha=latest requiere una puerta v2 por versión."
+                )
             if closed_by != owner:
                 raise ReleaseBootstrapError("Puerta legacy debe ser cerrada por el dueño.")
             if _latest_owner_approval(gate.get("comments"), owner) != expected:
@@ -490,6 +601,10 @@ def validate_payload(payload: Any) -> dict[str, str]:
                     "La aprobación legacy del dueño corresponde a otro SHA."
                 )
     else:
+        if expected_mode == "latest":
+            raise ReleaseBootstrapError(
+                "expected_sha=latest solo está permitido para mantenimiento v1.x."
+            )
         if category != "release-1.0.0":
             raise ReleaseBootstrapError("Primer release requiere puerta release-1.0.0.")
         if closed_by != owner:
