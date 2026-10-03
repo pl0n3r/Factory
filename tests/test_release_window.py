@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -446,10 +447,10 @@ class ReleaseWindowTests(unittest.TestCase):
             stderr = io.StringIO()
             data = raw if raw is not None else json.dumps(payload, separators=(",", ":"))
             with (
-                unittest.mock.patch.object(rw.sys, "argv", ["release_window.py", mode]),
-                unittest.mock.patch.object(rw.sys, "stdin", io.StringIO(data)),
-                unittest.mock.patch.object(rw.sys, "stdout", stdout),
-                unittest.mock.patch.object(rw.sys, "stderr", stderr),
+                patch.object(rw.sys, "argv", ["release_window.py", mode]),
+                patch.object(rw.sys, "stdin", io.StringIO(data)),
+                patch.object(rw.sys, "stdout", stdout),
+                patch.object(rw.sys, "stderr", stderr),
             ):
                 code = rw.main()
             return code, stdout.getvalue(), stderr.getvalue()
