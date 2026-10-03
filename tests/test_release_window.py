@@ -200,16 +200,19 @@ class ReleaseWindowTests(unittest.TestCase):
             [],
         )
 
-        invalid_release_legacy = (
+        obsolete_release_legacy = (
             '<!-- factory-human-gate '
             '{"category":"factory-release","context":"Factory v1.0.23 main@'
             + OLD_SHA
-            + '"} -->'
+            + '","options":[{"id":"A","label":"Publicar"},{"id":"B","label":"No publicar"}],'
+            '"safe_default":"B"} -->'
         )
-        with self.assertRaises(rw.ReleaseWindowError):
+        self.assertEqual(
             rw.gate_records([
-                gate_row(number=918, body=invalid_release_legacy, state="closed")
-            ])
+                gate_row(number=470, body=obsolete_release_legacy, state="closed")
+            ]),
+            [],
+        )
 
         legacy = legacy_gate_body("1.0.23", OLD_SHA)
         malformed = legacy + "\n<!-- factory-release-window -->"
