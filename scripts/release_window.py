@@ -40,6 +40,10 @@ EXECUTED_RE = re.compile(
 EXCEPTION_RE = re.compile(
     r"<!--\s*factory-release-freeze-exception\s+(\{[^\n]*\})\s*-->"
 )
+DUPLICATE_RE = re.compile(
+    r"<!--\s*factory-human-gate-duplicate\s+canonical=([1-9][0-9]*)\s*-->"
+)
+DUPLICATE_INTENT_RE = re.compile(r"<!--\s*factory-human-gate-duplicate\b")
 ACTIONS_BOT = "github-actions[bot]"
 MAX_ROWS = 200
 MAX_COMMENTS = 300
@@ -173,6 +177,33 @@ def _comments(row: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in comments if isinstance(item, dict)]
 
 
+def _duplicate_canonical(
+    comments: list[dict[str, Any]],
+    issue_number: int,
+) -> int | None:
+    destinations: list[int] = []
+    for comment in comments:
+        user = comment.get("user")
+        if not isinstance(user, dict) or user.get("login") != ACTIONS_BOT:
+            continue
+        body = comment.get("body")
+        if not isinstance(body, str):
+            continue
+        matches = DUPLICATE_RE.findall(body)
+        intent = DUPLICATE_INTENT_RE.search(body) is not None
+        if intent and len(matches) != 1:
+            raise ReleaseWindowError("Marker de gate duplicado ambiguo o inválido.")
+        if not matches:
+            continue
+        target = int(matches[0])
+        if target == issue_number:
+            raise ReleaseWindowError("Gate duplicado no puede apuntarse a sí mismo.")
+        destinations.append(target)
+    if len(destinations) > 1:
+        raise ReleaseWindowError("Gate duplicado contiene múltiples destinos canónicos.")
+    return destinations[0] if destinations else None
+
+
 def _decision_a(
     comments: list[dict[str, Any]],
     gate_fingerprint: str,
@@ -285,6 +316,7 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         if type(number) is not int or number < 1 or state not in {"open", "closed"}:
             raise ReleaseWindowError("Issue de release inválido.")
         comments = _comments(row)
+        duplicate_of = _duplicate_canonical(comments, number)
         fingerprint = _gate_fingerprint(gate)
         records.append({
             "number": number,
@@ -298,18 +330,39 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
             "window": _window_from_body(body, target_sha),
             "approved_a": _decision_a(comments, fingerprint),
             "executed": _execution(comments, target_sha),
+            "duplicate_of": duplicate_of,
         })
+
+    by_number = {item["number"]: item for item in records}
+    for record in records:
+        duplicate_of = record["duplicate_of"]
+        if duplicate_of is None:
+            continue
+        canonical = by_number.get(duplicate_of)
+        if canonical is None:
+            raise ReleaseWindowError("Gate duplicado referencia una puerta ausente.")
+        if canonical["version"] != record["version"]:
+            raise ReleaseWindowError("Gate duplicado referencia otra versión.")
+        if canonical["duplicate_of"] is not None:
+            raise ReleaseWindowError("Cadena de gates duplicados no permitida.")
+
     return sorted(records, key=lambda item: item["number"])
 
 
 def _latest_by_version(records: list[dict[str, Any]], version: str) -> dict[str, Any] | None:
-    matches = [item for item in records if item["version"] == version]
+    matches = [
+        item
+        for item in records
+        if item["version"] == version and item["duplicate_of"] is None
+    ]
     return max(matches, key=lambda item: item["number"], default=None)
 
 
 def freeze_gate(records: list[dict[str, Any]], now: datetime) -> dict[str, Any] | None:
     active: list[dict[str, Any]] = []
     for record in records:
+        if record["duplicate_of"] is not None:
+            continue
         window = record["window"]
         if window is None or record["executed"] is not None:
             continue
@@ -495,7 +548,11 @@ def plan_execution(payload: Any) -> dict[str, Any]:
     records = gate_records(payload.get("gates"))
     matches = [
         item for item in records
-        if item["sha"] == head_sha and item["approved_a"]
+        if (
+            item["duplicate_of"] is None
+            and item["sha"] == head_sha
+            and item["approved_a"]
+        )
     ]
     if not matches:
         return {"action": "none", "reason": "no_approved_gate_for_run_sha"}
@@ -530,6 +587,8 @@ def approved_unexecuted(payload: Any) -> dict[str, Any] | None:
     records = gate_records(payload.get("gates"))
     by_version: dict[str, dict[str, Any]] = {}
     for record in records:
+        if record["duplicate_of"] is not None:
+            continue
         previous = by_version.get(record["version"])
         if previous is None or record["number"] > previous["number"]:
             by_version[record["version"]] = record
