@@ -237,9 +237,12 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         issue = row.get("issue")
         if not isinstance(issue, dict):
             continue
-        gate_info = _gate_from_body(issue.get("body"))
-        if gate_info is None:
+        body = issue.get("body")
+        if not isinstance(body, str) or WINDOW_INTENT_RE.search(body) is None:
             continue
+        gate_info = _gate_from_body(body)
+        if gate_info is None:
+            raise ReleaseWindowError("release-window sin puerta factory-release.")
         gate, version, target_sha = gate_info
         number = issue.get("number")
         state = issue.get("state")
@@ -256,7 +259,7 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
             "fingerprint": fingerprint,
             "version": version,
             "sha": target_sha,
-            "window": _window_from_body(str(issue.get("body") or ""), target_sha),
+            "window": _window_from_body(body, target_sha),
             "approved_a": _decision_a(comments, fingerprint),
             "executed": _execution(comments, target_sha),
         })

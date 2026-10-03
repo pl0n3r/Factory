@@ -120,6 +120,18 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertTrue(expired["allowed"])
         self.assertEqual(expired["reason"], "no_active_release_window")
 
+    def test_legacy_release_gates_without_window_marker_are_ignored(self) -> None:
+        legacy = (
+            '<!-- factory-human-gate '
+            '{"category":"factory-release","context":"Factory v1.0.22 main@'
+            + OLD_SHA
+            + '"} -->'
+        )
+        self.assertEqual(
+            rw.gate_records([gate_row(number=901, body=legacy, state="closed")]),
+            [],
+        )
+
     def test_stale_approved_sha_rearms_current_head_without_reusing_decision(self) -> None:
         old = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
         old_row = gate_row(
