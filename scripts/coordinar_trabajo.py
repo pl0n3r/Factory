@@ -548,10 +548,57 @@ def post_merge_incident_issue(body: str) -> int | None:
     return issue
 
 def reservation_from_pr_body(body: str) -> str | None:
-    """Extrae el ID de reserva visible legacy u oculto de un Pull Request."""
+    """Extrae la reserva del PR; el marker oculto es la autoridad canónica."""
     value = body or ""
-    match = RESERVATION_HIDDEN_RE.search(value) or RESERVATION_LINE_RE.search(value)
-    return match.group(1).lower() if match else None
+    hidden = RESERVATION_HIDDEN_RE.search(value)
+    if hidden:
+        return hidden.group(1).lower()
+    visible = RESERVATION_LINE_RE.search(value)
+    return visible.group(1).lower() if visible else None
+
+
+def reservation_metadata_error(body: str, expected_id: str) -> str | None:
+    """Explica metadata de reserva inválida sin confundir formato con sesión."""
+    value = body or ""
+    expected = expected_id.lower()
+    hidden = RESERVATION_HIDDEN_RE.search(value)
+    if hidden:
+        actual = hidden.group(1).lower()
+        if actual == expected:
+            return None
+        return (
+            f"El marker oculto de reserva declara `{actual}`, "
+            f"pero la sesión activa es `{expected}`."
+        )
+
+    visible = RESERVATION_LINE_RE.search(value)
+    if visible:
+        actual = visible.group(1).lower()
+        if actual == expected:
+            return None
+        return (
+            f"La línea visible {PROFILE.visible_reservation}: declara `{actual}`, "
+            f"pero la sesión activa es `{expected}`; añade también "
+            f"`<!-- {PROFILE.hidden_marker}: {expected} -->`."
+        )
+
+    candidate_re = re.compile(
+        rf"(?im)^.*{re.escape(PROFILE.visible_reservation)}\s*:\s*.*?"
+        rf"({SESSION_RE.pattern[1:-1]}).*$"
+    )
+    candidate = candidate_re.search(value)
+    if candidate:
+        line = candidate.group(0).strip()
+        return (
+            f"Metadata visible de reserva no canónica: {line!r}. "
+            f"Usa exactamente `{PROFILE.visible_reservation}: {expected}` y "
+            f"`<!-- {PROFILE.hidden_marker}: {expected} -->`."
+        )
+
+    return (
+        "El PR debe declarar la sesión activa mediante metadata de reserva oculta: "
+        f"`<!-- {PROFILE.hidden_marker}: {expected} -->`."
+    )
 
 
 def new_reservation_id() -> str:
@@ -2857,10 +2904,12 @@ def reservation_validation_errors(
         errors.append(
             f"El marcador de reserva apunta a {reservation['branch']}, no a {branch}."
         )
-    if reservation_from_pr_body(body) != reservation["reservation_id"]:
-        errors.append(
-            "El PR debe declarar la sesión activa mediante metadata de reserva oculta."
-        )
+    metadata_error = reservation_metadata_error(
+        body,
+        str(reservation["reservation_id"]),
+    )
+    if metadata_error:
+        errors.append(metadata_error)
 
     pinned = reservation.get("acceptance_sha256")
     if not isinstance(pinned, str):
