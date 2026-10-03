@@ -76,6 +76,69 @@ jobs:
           gh api "repos/$REPOSITORY/issues/$GATE_ISSUE" > /tmp/gate.json
           gh api --paginate "repos/$REPOSITORY/issues/$GATE_ISSUE/comments?per_page=100"             --slurp | jq 'add // []' > /tmp/comments.json
 
+          extract_rearm_source() {
+            python3 - "$1" <<'PY'
+          import json
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              issue = json.load(handle)
+          body = issue.get("body")
+          if not isinstance(body, str):
+              raise SystemExit(0)
+          matches = re.findall(
+              r"<!--\s*factory-release-rearm\s+(\{[^\n]*\})\s*-->",
+              body,
+          )
+          if len(matches) != 1:
+              raise SystemExit(0)
+          try:
+              marker = json.loads(matches[0])
+          except json.JSONDecodeError:
+              raise SystemExit(0)
+          source_issue = marker.get("source_issue") if isinstance(marker, dict) else None
+          if type(source_issue) is int and source_issue > 0:
+              print(source_issue)
+          PY
+          }
+
+          printf '[]\n' > /tmp/rearm-sources.json
+          source_issue="$(extract_rearm_source /tmp/gate.json)"
+          for _depth in {1..8}; do
+            [[ -n "$source_issue" ]] || break
+            [[ "$source_issue" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::source_issue de rearmado inválido"
+              exit 1
+            }
+            if jq -e --argjson number "$source_issue"               'map(.number) | index($number) != null'               /tmp/rearm-sources.json >/dev/null; then
+              echo "::error::cadena factory-release-rearm cíclica"
+              exit 1
+            fi
+            gh api "repos/$REPOSITORY/issues/$source_issue" > /tmp/rearm-source.json
+            jq --slurpfile item /tmp/rearm-source.json               '. + [($item[0] | {
+                number,
+                state,
+                author_association,
+                created_at,
+                user:{login:(.user.login // "")},
+                body:(.body // "")
+              })]' /tmp/rearm-sources.json > /tmp/rearm-sources.next
+            mv /tmp/rearm-sources.next /tmp/rearm-sources.json
+
+            source_login="$(jq -r '.user.login // ""' /tmp/rearm-source.json)"
+            source_association="$(jq -r '.author_association // ""' /tmp/rearm-source.json)"
+            if [[ "$source_login" == "$REPOSITORY_OWNER" && "$source_association" == "OWNER" ]]; then
+              source_issue=""
+              break
+            fi
+            source_issue="$(extract_rearm_source /tmp/rearm-source.json)"
+          done
+          [[ -z "$source_issue" ]] || {
+            echo "::error::cadena factory-release-rearm excede 8 saltos"
+            exit 1
+          }
+
           gh api --paginate "repos/$REPOSITORY/rulesets?includes_parents=true&per_page=100"             --slurp | jq 'add // []' > /tmp/ruleset-index.json
           printf '[]\n' > /tmp/rulesets.json
           jq -r '.[].id' /tmp/ruleset-index.json | while IFS= read -r ruleset_id; do
@@ -111,15 +174,19 @@ jobs:
             exit 1
           fi
 
-          jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_sha "$EXPECTED_SHA"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg v1_sha "$v1_sha"             --argjson v1_0_0_exists "$v1_0_0_exists"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             '{
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_sha "$EXPECTED_SHA"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg v1_sha "$v1_sha"             --arg now "$now"             --argjson v1_0_0_exists "$v1_0_0_exists"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             --slurpfile rearm_sources /tmp/rearm-sources.json             '{
               repository:$repository, repository_owner:$repository_owner,
               actor:$actor, event_name:$event_name, ref:$ref,
               default_branch:$default_branch, expected_sha:$expected_sha,
               current_sha:$current_sha, default_branch_sha:$default_branch_sha,
-              v1_sha:$v1_sha, v1_0_0_exists:$v1_0_0_exists, issues:$issues[0],
+              v1_sha:$v1_sha, v1_0_0_exists:$v1_0_0_exists, now:$now,
+              issues:$issues[0], rearm_sources:$rearm_sources[0],
               gate:{
                 state:$gate[0].state,
                 author_association:$gate[0].author_association,
+                created_at:$gate[0].created_at,
+                user:{login:($gate[0].user.login // "")},
                 closed_by:($gate[0].closed_by.login // ""),
                 body:($gate[0].body // ""),
                 comments:($comments[0] | map({
