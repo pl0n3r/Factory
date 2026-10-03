@@ -40,11 +40,11 @@ Antes del primer release se exigieron #1–#14, #54 y #83 cerrados, CI del templ
 Para publicar un patch/minor posterior dentro de la major `v1`:
 
 1. Integrar el cambio en `main` con la versión semántica nueva en `config/version.json`.
-2. Revalidar CI de `main` y fijar el SHA exacto candidato.
-3. Crear una puerta humana `factory-release` para ese SHA. El default seguro es **no publicar**.
+2. Revalidar `main` y confirmar la versión semántica candidata.
+3. Crear una puerta humana `factory-release` para esa versión. El body conserva el `main@SHA` vigente como baseline de deriva y el default seguro es **no publicar**.
 4. El OWNER responde explícitamente `/decidir A` para publicar o `/decidir B` para no publicar. Texto libre o `sigue` no cuentan como decisión.
-5. Con A materializada y la puerta cerrada, ejecutar una **primera pasada** de **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=<SHA aprobado>` y `gate_issue=<Issue de puerta>`, mientras `v1` permanece en el último SHA estable.
-6. El preflight ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, exactitud `expected_sha == github.sha == HEAD`, puerta/aprobación, ruleset y compatibilidad de consumidores. En mantenimiento, el SHA estable previo de `v1` es válido durante esta fase y no expone el candidato.
+5. Con A materializada y la puerta cerrada, ejecutar una **primera pasada** de **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=latest` (recomendado para la aprobación por versión) o con un SHA explícito para compatibilidad histórica, y `gate_issue=<Issue de puerta>`, mientras `v1` permanece en el último SHA estable.
+6. El preflight resuelve y registra el SHA candidato, ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, versión, evidencia exact-main, deriva de maquinaria de release, puerta/aprobación, ruleset y compatibilidad de consumidores. En mantenimiento, el SHA estable previo de `v1` es válido durante esta fase y no expone el candidato.
 7. Solo si esos gates pasan, `release.yml@v1` —el trust root ya publicado— crea o verifica de forma idempotente el **release semántico** (tag anotado + GitHub Release) para el SHA candidato. El workflow nunca crea ni mueve `v1`.
 8. El job read-only `channel-ready` relee `refs/tags/v1`. Si el canal aún apunta al SHA estable anterior, falla cerrado y la validación final del canal no se ejecuta.
 9. Después de la publicación semántica, el dueño mueve manualmente el tag mayor `v1` al SHA exacto aprobado. Esta sigue siendo una acción administrativa/humana.
@@ -54,6 +54,52 @@ Para publicar un patch/minor posterior dentro de la major `v1`:
 El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`. La comprobación runtime es **solo estructural**; #83 conserva la evidencia administrativa de bypass.
 
 Cambiar `main`, mover `v1` a un SHA distinto del aprobado, usar una puerta de otra categoría o reutilizar una aprobación para un SHA distinto hace fallar cerrado. Que `v1` permanezca en el SHA estable anterior durante la primera pasada de mantenimiento es el estado esperado hasta `channel-ready`; nunca equivale a publicar el candidato.
+## Aprobación por versión y resolución `latest`
+
+Para mantenimiento de la major `v1`, una decisión A puede autorizar una **versión
+semántica** en lugar de quedar consumida por el SHA exacto que tenía `main` cuando
+se abrió la puerta. La opción A de la puerta debe identificar la versión de forma
+inequívoca, por ejemplo `Publicar Factory 1.0.23`. El contexto conserva un único
+`main@<SHA>` como **baseline de deriva**; no es una autorización para saltar
+validaciones.
+
+El bootstrap acepta dos formas de `expected_sha`:
+
+- un SHA de 40 hex: conserva el contrato histórico exact-SHA;
+- `latest`: resuelve una sola vez el HEAD de la rama por defecto al iniciar el
+  preflight y registra ese SHA como `approved_sha`.
+
+`latest` falla cerrado salvo que se cumpla todo lo siguiente:
+
+1. `github.sha`, el HEAD de la rama por defecto y el SHA resuelto sean idénticos;
+   si `main` se mueve durante el bootstrap, hay que reejecutar;
+2. `config/version.json` contenga exactamente la versión autorizada por la puerta;
+3. existan ejecuciones `success` sobre ese SHA exacto de **CI factory**,
+   **Sonar CI-based**, **Evidencia CodeQL** y **Unattended Watchdog**;
+4. el job **Compatibilidad de consumidores** y el CI reusable del candidato
+   terminen correctamente dentro del propio bootstrap;
+5. al comparar el SHA baseline de la puerta con el HEAD resuelto no haya cambios
+   en la maquinaria de release.
+
+Se considera maquinaria de release, como mínimo, cualquier workflow cuyo nombre de
+archivo contenga `release`, `scripts/release_bootstrap.py`,
+`scripts/reusable_release_preflight.py`, el contrato de permission envelopes,
+el validador del ruleset y el workflow de release del template. Si cualquiera de
+esas rutas cambió desde la puerta, se exige **una puerta nueva**. Cambios ordinarios
+de producto/documentación que hayan pasado los gates exact-main no invalidan por sí
+solos la aprobación de la versión.
+
+Las puertas rearmadas por automatización siguen necesitando provenance canónico
+hasta una puerta creada por el OWNER. En modo `latest`, la ventana temporal
+autentica que la puerta rearmada fue creada correctamente; no convierte la decisión
+A de una versión en una autorización para otra versión o para maquinaria de release
+modificada. `safe_default=B` y el journal `factory-human-decision` continúan
+siendo obligatorios.
+
+Nada de lo anterior mueve `v1` automáticamente. El orden seguro permanece:
+bootstrap → release semántico → movimiento administrativo de `v1` por el dueño →
+re-bootstrap idempotente.
+
 ## Ventana de release y freeze exact-SHA
 
 Para evitar que una aprobación válida caduque porque `main` sigue moviéndose, Factory usa una ventana de release con TTL (60 minutos por defecto) gobernada por `scripts/release_window.py` y `.github/workflows/release-window.yml`.
