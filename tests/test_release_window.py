@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import io
 import json
 import unittest
 from datetime import datetime, timezone
@@ -437,6 +438,61 @@ class ReleaseWindowTests(unittest.TestCase):
                 "run_id": 0,
                 "gates": [],
             })
+
+
+    def test_cli_dispatches_all_modes_and_reports_invalid_json(self) -> None:
+        def cli(mode: str, payload: object | None = None, raw: str | None = None):
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            data = raw if raw is not None else json.dumps(payload, separators=(",", ":"))
+            with (
+                unittest.mock.patch.object(rw.sys, "argv", ["release_window.py", mode]),
+                unittest.mock.patch.object(rw.sys, "stdin", io.StringIO(data)),
+                unittest.mock.patch.object(rw.sys, "stdout", stdout),
+                unittest.mock.patch.object(rw.sys, "stderr", stderr),
+            ):
+                code = rw.main()
+            return code, stdout.getvalue(), stderr.getvalue()
+
+        code, out, err = cli("summary", {"gates": []})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), None)
+        self.assertEqual(err, "")
+
+        code, out, _ = cli("workflow-run", {"conclusion": "failure"})
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(out),
+            {"action": "none", "reason": "release_run_not_successful"},
+        )
+
+        code, out, _ = cli("push", {
+            "now": "2026-10-03T10:20:00Z",
+            "main_sha": NEW_SHA,
+            "version": "1.0.23",
+            "gates": [],
+        })
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["reason"], "no_prior_release_gate")
+
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        code, out, _ = cli("pr-check", {
+            "now": "2026-10-03T10:10:00Z",
+            "gates": [gate_row(number=918, body=rendered["body"])],
+            "pr": {"number": 922, "body": ""},
+            "work_issue": {
+                "number": 922,
+                "state": "open",
+                "labels": [{"name": "prioridad: alta"}],
+            },
+        })
+        self.assertEqual(code, 3)
+        self.assertFalse(json.loads(out)["allowed"])
+
+        code, out, err = cli("summary", raw="{broken")
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("ERROR: JSON inválido.", err)
 
 
 if __name__ == "__main__":
