@@ -11,6 +11,8 @@ on:
       expected_sha: {required: false, default: '', type: string}
       require_schema: {required: false, default: false, type: boolean}
       label_language: {required: false, default: 'es', type: string}
+      convergence_attempts: {required: false, default: 1, type: number}
+      convergence_delay_seconds: {required: false, default: 0, type: number}
 permissions:
   contents: read
 
@@ -33,10 +35,16 @@ jobs:
           REF_NAME: ${{ github.ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           LABEL_LANGUAGE: ${{ inputs.label_language }}
+          CONVERGENCE_ATTEMPTS: ${{ inputs.convergence_attempts }}
+          CONVERGENCE_DELAY_SECONDS: ${{ inputs.convergence_delay_seconds }}
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in push|schedule|workflow_dispatch) ;; *) echo "::error::Observación solo acepta push/schedule/workflow_dispatch"; exit 1 ;; esac
           case "$LABEL_LANGUAGE" in es|en) ;; *) echo "::error::label_language inválido"; exit 1 ;; esac
+          case "$CONVERGENCE_ATTEMPTS" in 1|2|3|4|5) ;; *) echo "::error::convergence_attempts debe ser entero 1..5"; exit 1 ;; esac
+          [[ "$CONVERGENCE_DELAY_SECONDS" =~ ^[0-9]+$ ]] || { echo "::error::convergence_delay_seconds debe ser entero 0..120"; exit 1; }
+          convergence_delay=$((10#$CONVERGENCE_DELAY_SECONDS))
+          (( convergence_delay <= 120 )) || { echo "::error::convergence_delay_seconds debe ser entero 0..120"; exit 1; }
           [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH" ]] || { echo "::error::Observación solo acepta la rama principal"; exit 1; }
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -62,15 +70,27 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           REQUIRE_SCHEMA: ${{ inputs.require_schema }}
+          CONVERGENCE_ATTEMPTS: ${{ inputs.convergence_attempts }}
+          CONVERGENCE_DELAY_SECONDS: ${{ inputs.convergence_delay_seconds }}
         run: |
           set -euo pipefail
           sha="$EXPECTED_SHA"; [[ -n "$sha" ]] || sha="$GITHUB_SHA"
           args=(--origin "$DOMAIN" --health-path "$HEALTH_PATH" --version "$VERSION" --sha "$sha" --paths "$PATHS")
           [[ "$REQUIRE_SCHEMA" == "true" ]] && args+=(--require-schema)
-          set +e
-          python3 .factory/scripts/observe_kit.py "${args[@]}" > /tmp/factory-observation.json
-          code=$?
-          set -e
+          attempts="$CONVERGENCE_ATTEMPTS"
+          delay_seconds="$CONVERGENCE_DELAY_SECONDS"
+          code=1
+          for ((attempt=1; attempt<=attempts; attempt++)); do
+            set +e
+            python3 .factory/scripts/observe_kit.py "${args[@]}" > /tmp/factory-observation.json
+            code=$?
+            set -e
+            [[ "$code" -eq 0 ]] && break
+            if (( attempt < attempts )); then
+              echo "::notice::Observación no convergió en intento $attempt/$attempts; reintento en ${delay_seconds}s"
+              sleep "$delay_seconds"
+            fi
+          done
           echo "code=$code" >> "$GITHUB_OUTPUT"
       - name: Gestionar incidente automático
         if: always() && steps.smoke.outputs.code != ''

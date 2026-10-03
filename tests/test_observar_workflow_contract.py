@@ -28,6 +28,55 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertNotIn('--label "tipo: incidente"', WF)
         self.assertNotIn('--label "priority: critical"', WF)
 
+    def test_convergence_inputs_default_to_one_shot_and_are_bounded(self):
+        self.assertIn(
+            "convergence_attempts: {required: false, default: 1, type: number}", WF
+        )
+        self.assertIn(
+            "convergence_delay_seconds: {required: false, default: 0, type: number}", WF
+        )
+        self.assertIn(
+            'CONVERGENCE_ATTEMPTS: ${{ inputs.convergence_attempts }}', WF
+        )
+        self.assertIn(
+            'CONVERGENCE_DELAY_SECONDS: ${{ inputs.convergence_delay_seconds }}', WF
+        )
+        self.assertIn(
+            'case "$CONVERGENCE_ATTEMPTS" in 1|2|3|4|5)', WF
+        )
+        self.assertIn('(( convergence_delay <= 120 ))', WF)
+
+    def test_bounded_convergence_reuses_exact_observation_and_reports_only_final_result(self):
+        smoke = _indented_block(WF, "- id: smoke", 6)
+        self.assertEqual(smoke.count("observe_kit.py"), 1)
+        self.assertIn(
+            'args=(--origin "$DOMAIN" --health-path "$HEALTH_PATH" --version "$VERSION" --sha "$sha" --paths "$PATHS")',
+            smoke,
+        )
+        self.assertIn(
+            '[[ "$REQUIRE_SCHEMA" == "true" ]] && args+=(--require-schema)', smoke
+        )
+        self.assertIn(
+            'for ((attempt=1; attempt<=attempts; attempt++)); do', smoke
+        )
+        self.assertIn('[[ "$code" -eq 0 ]] && break', smoke)
+        self.assertIn('if (( attempt < attempts )); then', smoke)
+        self.assertIn('sleep "$delay_seconds"', smoke)
+        self.assertEqual(
+            smoke.count('echo "code=$code" >> "$GITHUB_OUTPUT"'), 1
+        )
+        self.assertNotIn("gh issue", smoke)
+
+    def test_invalid_convergence_inputs_fail_closed_before_checkout(self):
+        first_checkout = WF.index("uses: actions/checkout@")
+        for guard in (
+            'case "$CONVERGENCE_ATTEMPTS" in 1|2|3|4|5)',
+            '[[ "$CONVERGENCE_DELAY_SECONDS" =~ ^[0-9]+$ ]]',
+            'convergence_delay=$((10#$CONVERGENCE_DELAY_SECONDS))',
+            '(( convergence_delay <= 120 ))',
+        ):
+            self.assertLess(WF.index(guard), first_checkout)
+
     def test_incident_lifecycle_is_localized_and_singleton(self):
         self.assertIn("<!-- factory-auto-observer -->", WF)
         self.assertIn("issues?state=all&per_page=100", WF)
