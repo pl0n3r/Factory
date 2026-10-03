@@ -56,7 +56,7 @@ En Factory:
 
 `Lint + Tests + Coordinación → Criterios de aceptación → Validar`
 
-El job de aceptación consulta los check-runs después de que sus dependencias base terminaron. Para criterios `kind=check` externos que todavía no estén terminales, el reusable hace un preflight **checks-only** acotado sobre el SHA exacto: hasta 12 lecturas, separadas por 10 segundos. Un fallo terminal aborta de inmediato y el timeout falla cerrado.
+El job de aceptación consulta los check-runs después de que sus dependencias base terminaron. Para criterios `kind=check` externos que todavía no estén terminales, el reusable hace un preflight **checks-only** acotado sobre el SHA exacto: hasta 21 lecturas, separadas por 60 segundos, para una ventana de espera de hasta 20 minutos dentro de un job con presupuesto de 25 minutos. La espera solo vuelve a leer check-runs: **no vuelve a ejecutar** workflows, jobs ni tests del consumidor. Un fallo terminal distinto de evidencia pendiente aborta de inmediato y el timeout falla cerrado.
 
 Los criterios `kind=test` no se ejecutan durante ese preflight. La aceptación completa corre exactamente una vez después de obtener un snapshot de checks listo, evitando multiplicar costo de tests.
 
