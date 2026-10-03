@@ -21,6 +21,7 @@ if __package__:
         PlanError,
         PlannedTask,
         build_task_marker,
+        expand_derived_claims,
         parse_plan,
         parse_task_marker,
         render_graph,
@@ -42,6 +43,7 @@ else:
         PlanError,
         PlannedTask,
         build_task_marker,
+        expand_derived_claims,
         parse_plan,
         parse_task_marker,
         render_graph,
@@ -383,6 +385,7 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     if epic.get("pull_request") or epic.get("state") != "open":
         raise PlanError("El épico debe ser un Issue abierto.")
     tasks = parse_plan(str(epic.get("body") or ""))
+    tasks = expand_derived_claims(api.repo, tasks)
     ordered = topological_order(tasks)
     all_issues = _all_issues(api)
     historical_warnings: list[str] = []
