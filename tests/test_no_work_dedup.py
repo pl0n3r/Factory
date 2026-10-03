@@ -170,6 +170,16 @@ class NoWorkDedupTests(unittest.TestCase):
         with self.assertRaises(NoWorkInventoryError):
             inventory_fingerprint(incomplete)
 
+        missing_pr_head = inventory()
+        del missing_pr_head["repositories"]["Condor"]["pull_requests"][0]["head_sha"]
+        with self.assertRaises(NoWorkInventoryError):
+            inventory_fingerprint(missing_pr_head)
+
+        malformed_pr = inventory()
+        malformed_pr["repositories"]["Condor"]["pull_requests"] = ["PR#448"]
+        with self.assertRaises(NoWorkInventoryError):
+            inventory_fingerprint(malformed_pr)
+
     def test_plan_routes_global_no_work_to_factory_904(self):
         plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
         self.assertIn("Factory#904", plan)
@@ -212,7 +222,10 @@ class NoWorkDedupTests(unittest.TestCase):
         )
 
         guide = (ROOT / "docs" / "no-work-dedup.md").read_text(encoding="utf-8")
-        self.assertIn(">= 17.1", guide)
+        self.assertIn("119 comentarios", guide)
+        self.assertIn("43.0 comentarios nuevos/h", guide)
+        self.assertIn("20:00:19Z", guide)
+        self.assertIn("22:46:22Z", guide)
         self.assertIn("0 comentarios nuevos/h", guide)
         self.assertIn("new_no_work_comments_per_hour", guide)
 
