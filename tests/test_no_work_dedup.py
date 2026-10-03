@@ -211,6 +211,11 @@ class NoWorkDedupTests(unittest.TestCase):
             2,
         )
 
+        guide = (ROOT / "docs" / "no-work-dedup.md").read_text(encoding="utf-8")
+        self.assertIn(">= 17.1", guide)
+        self.assertIn("0 comentarios nuevos/h", guide)
+        self.assertIn("new_no_work_comments_per_hour", guide)
+
 
 if __name__ == "__main__":
     unittest.main()
