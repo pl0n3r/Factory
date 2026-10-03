@@ -12,7 +12,7 @@ from scripts.adaptive_fencing import FencingDecision
 from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET, parse_contract
 from scripts.orquestador_kit import validate_task_key
 from scripts.presence_contract import PresenceAssessment
-from scripts.unattended_guards import GuardDecision
+from scripts.unattended_guards import GuardDecision, guard_blocks_global_dispatch
 from scripts.unattended_watchdog import (
     DailySummary,
     EMAIL_RE as WATCHDOG_EMAIL_RE,
@@ -135,6 +135,11 @@ CANONICAL_DISPATCH_REPOS = {
     "pl0n3r/AutoFactory",
     "pl0n3r/FactoryRunner",
 }
+
+# Presence/Watchdog runtime is currently collected from Factory. UNKNOWN in this
+# evidence scope must not become a global pause for an explicitly scoped,
+# otherwise-ready pre-live leaf in another canonical repository.
+UNATTENDED_WATCHDOG_SCOPE_REPOSITORY = "pl0n3r/Factory"
 
 PRODUCT_DIRECTION_REPOS = {
     "pl0n3r/Factory",
@@ -990,6 +995,8 @@ def work_ladder(
             "filler parallel counts must be non-negative integers capped at 2"
         )
 
+    items = list(candidates)
+    selection_items = items
     unattended_action = "ALLOW"
     unattended_reasons: tuple[str, ...] = ()
     if not isinstance(unattended_mode, bool):
@@ -1002,19 +1009,29 @@ def work_ladder(
         )
 
     if unattended_action != "ALLOW":
-        return {
-            "step": "unattended_gate",
-            "work": {
-                "kind": "status",
-                "key": "dispatcher:unattended-safe-mode",
-            },
-            "action": unattended_action,
-            "authority": "unchanged",
-            "reasons": unattended_reasons,
-            "mutates": False,
-        }
+        cross_repo = _unattended_local_unknown_candidates(
+            items,
+            guard=unattended_guard,
+            watchdog=unattended_watchdog,
+            active_tranche=active_tranche,
+        )
+        if cross_repo:
+            selection_items = list(cross_repo)
+            unattended_action = "ALLOW"
+            unattended_reasons = ("watchdog_unknown_local_scope",)
+        else:
+            return {
+                "step": "unattended_gate",
+                "work": {
+                    "kind": "status",
+                    "key": "dispatcher:unattended-safe-mode",
+                },
+                "action": unattended_action,
+                "authority": "unchanged",
+                "reasons": unattended_reasons,
+                "mutates": False,
+            }
 
-    items = list(candidates)
     for step, lane in (
         ("normal", "normal"),
         ("quality", "quality"),
@@ -1038,7 +1055,7 @@ def work_ladder(
                 }
 
         lane_candidates = [
-            candidate for candidate in items if _work_lane(candidate) == lane
+            candidate for candidate in selection_items if _work_lane(candidate) == lane
         ]
         if step == "filler":
             lane_candidates = [
@@ -1481,13 +1498,24 @@ def dispatch_record(
         unattended_watchdog=unattended_watchdog,
     )
     suppressed = next_action["step"] == "unattended_gate"
+    local_unknown_candidates = (
+        _unattended_local_unknown_candidates(
+            items,
+            guard=unattended_guard,
+            watchdog=unattended_watchdog,
+            active_tranche=active_tranche,
+        )
+        if unattended_mode is True and not suppressed
+        else ()
+    )
+    selection_items = list(local_unknown_candidates) if local_unknown_candidates else items
     selected = None if suppressed else select_next(
-        items,
+        selection_items,
         aging_threshold=aging_threshold,
         active_tranche=active_tranche,
     )
     ready = [] if suppressed else [
-        candidate for candidate in items if states[candidate.key].ready
+        candidate for candidate in selection_items if states[candidate.key].ready
     ]
     excluded = {
         candidate.key: list(states[candidate.key].reasons)
@@ -1533,7 +1561,11 @@ def dispatch_record(
                     "reasons": (
                         tuple(next_action["reasons"])
                         if next_action["step"] == "unattended_gate"
-                        else ()
+                        else (
+                            ("watchdog_unknown_local_scope",)
+                            if local_unknown_candidates
+                            else ()
+                        )
                     ),
                 }
             }
@@ -1584,9 +1616,20 @@ def adapt_candidates_for_adaptive(
     """Añade readiness/metadata adaptativos sin alterar la jerarquía de selección."""
     presence_reasons = _adaptive_presence_reasons(presence)
     fencing_reasons = _adaptive_fencing_reasons(fencing)
-    adaptive_reasons = tuple(sorted(set((*presence_reasons, *fencing_reasons))))
     adapted: list[Candidate] = []
     for candidate in candidates:
+        repository_ref = _candidate_repository(candidate)
+        candidate_presence_reasons = (
+            ()
+            if (
+                repository_ref is not None
+                and repository_ref != UNATTENDED_WATCHDOG_SCOPE_REPOSITORY
+            )
+            else presence_reasons
+        )
+        adaptive_reasons = tuple(
+            sorted(set((*candidate_presence_reasons, *fencing_reasons)))
+        )
         metadata = dict(candidate.metadata)
         metadata["adaptive"] = {
             "snapshot_fingerprint": fencing.snapshot_fingerprint,
@@ -1758,6 +1801,68 @@ def _unattended_dispatch_gate(
         for incident in watchdog.incidents
     )
     return action, tuple(sorted(set(reasons)))
+
+
+def _candidate_repository(candidate: Candidate) -> str | None:
+    repository_ref = candidate.metadata.get("repository_ref")
+    if (
+        isinstance(repository_ref, str)
+        and repository_ref in CANONICAL_DISPATCH_REPOS
+    ):
+        return repository_ref
+    return None
+
+
+def _safe_cross_repo_candidate(
+    candidate: Candidate,
+    *,
+    active_tranche: int | None,
+) -> bool:
+    repository_ref = _candidate_repository(candidate)
+    if (
+        repository_ref is None
+        or repository_ref == UNATTENDED_WATCHDOG_SCOPE_REPOSITORY
+        or candidate.pending_human_gate
+        or candidate.requires_extra_authority
+    ):
+        return False
+    return classify_readiness(
+        candidate,
+        active_tranche=active_tranche,
+    ).ready
+
+
+def _local_unknown_watchdog(watchdog: WatchdogDecision | None) -> bool:
+    return (
+        isinstance(watchdog, WatchdogDecision)
+        and watchdog.action == "BLOCKED"
+        and watchdog.authority == "unchanged"
+        and bool(watchdog.incidents)
+        and all(incident.severity == "UNKNOWN" for incident in watchdog.incidents)
+        and watchdog.interrupt_owner is False
+        and _valid_unattended_watchdog_contract(watchdog)
+    )
+
+
+def _unattended_local_unknown_candidates(
+    candidates: Iterable[Candidate],
+    *,
+    guard: GuardDecision | None,
+    watchdog: WatchdogDecision | None,
+    active_tranche: int | None,
+) -> tuple[Candidate, ...]:
+    """Yield a local UNKNOWN only to explicit, ready work in another repo.
+
+    4B remains globally authoritative. Missing repo identity also fails closed,
+    preserving the historical unattended contract for ambiguous candidates.
+    """
+    if guard_blocks_global_dispatch(guard) or not _local_unknown_watchdog(watchdog):
+        return ()
+    return tuple(
+        candidate
+        for candidate in candidates
+        if _safe_cross_repo_candidate(candidate, active_tranche=active_tranche)
+    )
 
 
 def adaptive_dispatch_record(
