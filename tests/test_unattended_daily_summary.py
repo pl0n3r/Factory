@@ -601,6 +601,14 @@ class UnattendedDailySummaryTests(unittest.TestCase):
             "scripts.unattended_daily_summary.collect_issue_context",
             return_value={"decisions": (), "blockers": (), "advances": ()},
         ), patch(
+            "scripts.unattended_daily_summary.collect_condor_d043_gate",
+            return_value=Fact(
+                "UNKNOWN: puerta D-043 de Condor no verificable.",
+                "Condor#1 public GitHub",
+                None,
+                "stale",
+            ),
+        ), patch(
             "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
             return_value=SimpleNamespace(global_pause=True, reason="paused"),
         ):
