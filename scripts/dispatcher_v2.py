@@ -997,6 +997,7 @@ def work_ladder(
 
     items = list(candidates)
     selection_items = items
+    local_unknown_yield = False
     unattended_action = "ALLOW"
     unattended_reasons: tuple[str, ...] = ()
     if not isinstance(unattended_mode, bool):
@@ -1017,6 +1018,7 @@ def work_ladder(
         )
         if cross_repo:
             selection_items = list(cross_repo)
+            local_unknown_yield = True
             unattended_action = "ALLOW"
             unattended_reasons = ("watchdog_unknown_local_scope",)
         else:
@@ -1039,7 +1041,7 @@ def work_ladder(
     ):
         if step == "filler" and active_filler_count >= max_filler_parallel:
             continue
-        if step == "quality":
+        if step == "quality" and not local_unknown_yield:
             actions = reconcile_stale_blocks(
                 blocked_work,
                 reconciled_keys=reconciled_block_keys,
