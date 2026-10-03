@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       expected_sha:
-        description: SHA exacto de main aprobado para release v1.x
+        description: SHA exacto de main o "latest" para resolver HEAD al lanzar
         required: true
         type: string
       gate_issue:
@@ -38,6 +38,7 @@ jobs:
     name: Validar gates de release v1.x
     needs: [candidate-template, consumer-compat]
     permissions:
+      actions: read
       contents: read
       issues: read
     runs-on: ubuntu-latest
@@ -60,12 +61,33 @@ jobs:
           CURRENT_SHA: ${{ github.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_SHA_INPUT: ${{ inputs.expected_sha }}
           GATE_ISSUE: ${{ inputs.gate_issue }}
         run: |
           set -euo pipefail
           [[ "$GATE_ISSUE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::gate_issue inválido"; exit 1; }
 
           default_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+          expected_mode="exact"
+          resolved_sha="$EXPECTED_SHA_INPUT"
+          if [[ "$EXPECTED_SHA_INPUT" == "latest" ]]; then
+            expected_mode="latest"
+            resolved_sha="$default_sha"
+          else
+            [[ "$EXPECTED_SHA_INPUT" =~ ^[0-9a-fA-F]{40}$ ]] || {
+              echo "::error::expected_sha debe ser un SHA-1 de 40 hex o latest"
+              exit 1
+            }
+            resolved_sha="${EXPECTED_SHA_INPUT,,}"
+          fi
+          [[ "$CURRENT_SHA" == "$resolved_sha" && "$default_sha" == "$resolved_sha" ]] || {
+            echo "::error::main cambió durante el bootstrap; reejecuta sobre el HEAD vigente"
+            exit 1
+          }
+          current_version="$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' config/version.json)"
+          printf '[]\n' > /tmp/changed-files-since-gate.json
+          printf '{}\n' > /tmp/exact-main-checks.json
+
           printf '{}\n' > /tmp/issues.json
           for number in {1..14} 54 83; do
             state="$(gh api "repos/$REPOSITORY/issues/$number" --jq '.state')"
@@ -75,6 +97,68 @@ jobs:
 
           gh api "repos/$REPOSITORY/issues/$GATE_ISSUE" > /tmp/gate.json
           gh api --paginate "repos/$REPOSITORY/issues/$GATE_ISSUE/comments?per_page=100"             --slurp | jq 'add // []' > /tmp/comments.json
+
+          if [[ "$expected_mode" == "latest" ]]; then
+            gate_sha="$(python3 - /tmp/gate.json <<'PY'
+          import json
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              gate = json.load(handle)
+          body = gate.get("body")
+          if not isinstance(body, str):
+              raise SystemExit("gate sin body")
+          targets = re.findall(r"\bmain@([0-9a-f]{40})\b", body)
+          if len(targets) != 1:
+              raise SystemExit("gate sin main@SHA único")
+          print(targets[0])
+          PY
+            )"
+            if [[ "$gate_sha" != "$resolved_sha" ]]; then
+              gh api "repos/$REPOSITORY/compare/$gate_sha...$resolved_sha" > /tmp/gate-drift.json
+              compare_status="$(jq -r '.status // ""' /tmp/gate-drift.json)"
+              [[ "$compare_status" == "ahead" || "$compare_status" == "identical" ]] || {
+                echo "::error::HEAD actual no desciende limpiamente del SHA de la puerta"
+                exit 1
+              }
+              changed_count="$(jq '.files | length' /tmp/gate-drift.json)"
+              (( changed_count < 300 )) || {
+                echo "::error::diff de la puerta demasiado grande para validar deriva de forma segura"
+                exit 1
+              }
+              jq '[.files[].filename]' /tmp/gate-drift.json > /tmp/changed-files-since-gate.json
+            fi
+
+            gh run list --commit "$resolved_sha" --limit 100 \
+              --json name,status,conclusion,headSha > /tmp/exact-main-runs.json
+            require_exact_main_success() {
+              local workflow_name="$1"
+              jq -e \
+                --arg workflow_name "$workflow_name" \
+                --arg sha "$resolved_sha" \
+                'map(select(
+                  .name == $workflow_name and
+                  .headSha == $sha and
+                  .status == "completed" and
+                  .conclusion == "success"
+                )) | length > 0' \
+                /tmp/exact-main-runs.json >/dev/null || {
+                  echo "::error::$workflow_name no tiene ejecución success sobre $resolved_sha"
+                  exit 1
+                }
+            }
+            require_exact_main_success "CI factory"
+            require_exact_main_success "Sonar CI-based"
+            require_exact_main_success "Evidencia CodeQL"
+            require_exact_main_success "Unattended Watchdog"
+            jq -n '{
+              ci:"success",
+              sonar:"success",
+              codeql:"success",
+              watchdog:"success"
+            }' > /tmp/exact-main-checks.json
+          fi
 
           extract_rearm_source() {
             python3 - "$1" <<'PY'
@@ -175,11 +259,15 @@ jobs:
           fi
 
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_sha "$EXPECTED_SHA"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg v1_sha "$v1_sha"             --arg now "$now"             --argjson v1_0_0_exists "$v1_0_0_exists"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             --slurpfile rearm_sources /tmp/rearm-sources.json             '{
+          jq -n             --arg repository "$REPOSITORY"             --arg repository_owner "$REPOSITORY_OWNER"             --arg actor "$ACTOR"             --arg event_name "$EVENT_NAME"             --arg ref "$REF_NAME"             --arg default_branch "$DEFAULT_BRANCH"             --arg expected_mode "$expected_mode"             --arg expected_sha "$resolved_sha"             --arg current_sha "$CURRENT_SHA"             --arg default_branch_sha "$default_sha"             --arg current_version "$current_version"             --arg v1_sha "$v1_sha"             --arg now "$now"             --argjson v1_0_0_exists "$v1_0_0_exists"             --slurpfile issues /tmp/issues.json             --slurpfile gate /tmp/gate.json             --slurpfile comments /tmp/comments.json             --slurpfile rearm_sources /tmp/rearm-sources.json             --slurpfile changed_files /tmp/changed-files-since-gate.json             --slurpfile exact_main_checks /tmp/exact-main-checks.json             '{
               repository:$repository, repository_owner:$repository_owner,
               actor:$actor, event_name:$event_name, ref:$ref,
-              default_branch:$default_branch, expected_sha:$expected_sha,
-              current_sha:$current_sha, default_branch_sha:$default_branch_sha,
+              default_branch:$default_branch, expected_mode:$expected_mode,
+              expected_sha:$expected_sha, current_sha:$current_sha,
+              default_branch_sha:$default_branch_sha,
+              current_version:$current_version,
+              changed_files_since_gate:$changed_files[0],
+              exact_main_checks:$exact_main_checks[0],
               v1_sha:$v1_sha, v1_0_0_exists:$v1_0_0_exists, now:$now,
               issues:$issues[0], rearm_sources:$rearm_sources[0],
               gate:{
