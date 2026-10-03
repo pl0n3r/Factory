@@ -6,6 +6,7 @@ from scripts.orquestador_kit import (
     PlannedTask,
     build_task_marker,
     claims_overlap,
+    expand_derived_claims,
     parse_plan,
     parse_task_marker,
     reservation_blockers,
@@ -374,6 +375,49 @@ class OrchestratorKitTests(unittest.TestCase):
             reservation_blockers(current, [current], "pl0n3r", completed),
             [],
         )
+
+
+    def test_condor_datos_yml_expands_privacy_as_code_claims(self):
+        source = PlannedTask(
+            key="PRIVACY",
+            title="Actualizar datos",
+            owner="pl0n3r",
+            paths=("datos.yml",),
+            depends_on=(),
+        )
+
+        expanded = expand_derived_claims("pl0n3r/Condor", [source])[0]
+
+        self.assertEqual(
+            expanded.paths,
+            (
+                "datos.yml",
+                "tests/php/Privacy/PrivacyAsCodeTest.php",
+                "docs/privacidad/aviso-privacidad.md",
+                "docs/privacidad/canal-derechos.md",
+                "docs/privacidad/politica-tratamiento.md",
+                "docs/privacidad/registro-tratamientos.md",
+                "docs/privacidad/retencion.md",
+                "docs/privacidad/terminos-condiciones.md",
+            ),
+        )
+        self.assertNotIn("config/version.php", expanded.paths)
+
+    def test_derived_claims_are_repo_scoped_and_idempotent(self):
+        source = PlannedTask(
+            key="PRIVACY",
+            title="Actualizar datos",
+            owner="pl0n3r",
+            paths=("datos.yml",),
+            depends_on=(),
+        )
+
+        first = expand_derived_claims("pl0n3r/Condor", [source])
+        second = expand_derived_claims("pl0n3r/condor", first)
+        factory = expand_derived_claims("pl0n3r/Factory", [source])
+
+        self.assertEqual(first, second)
+        self.assertEqual(factory, [source])
 
 
 if __name__ == "__main__":

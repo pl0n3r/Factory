@@ -23,6 +23,21 @@ El workflow valida esquema, límites y DAG; rechaza ciclos; detecta claims de pa
 
 Si dos tareas reclaman rutas solapadas, el plan solo es válido cuando una depende transitivamente de la otra. Una tarea ya activa no puede cambiar su marker y una tarea materializada no puede desaparecer del plan.
 
+## Claims derivados allowlisted
+
+Antes de materializar cada `factory-plan-task`, Factory expande claims deterministas
+con contexto del repositorio y vuelve a validar colisiones. La primera regla está
+cerrada a `pl0n3r/Condor`: un task que reclama exactamente `datos.yml` reclama
+también `tests/php/Privacy/PrivacyAsCodeTest.php` y los documentos canónicos bajo
+`docs/privacidad/` (aviso, canal de derechos, política de tratamiento, registro de
+tratamientos, retención y términos/condiciones).
+
+La expansión es estable, idempotente y no se aplica a otros repositorios.
+`config/version.php` no se deriva de `datos.yml`: debe aparecer explícitamente
+cuando una hoja cambie versión. Si una tarea ya activa conserva un marker anterior
+con claims menores, el resync falla cerrado; la ampliación requiere el flujo
+explícito de renovación del contrato en vez de mutar silenciosamente la lease.
+
 ## Enforcement antes de /tomar
 
 Cada Issue hijo lleva un marker factory-plan-task. El coordinador lo lee antes de crear o recuperar una reserva:
