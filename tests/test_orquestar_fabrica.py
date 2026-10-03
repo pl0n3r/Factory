@@ -331,5 +331,59 @@ class OrquestarFabricaTests(unittest.TestCase):
             sync_plan(api, 3)
 
 
+    def test_sync_plan_materializes_condor_datos_yml_with_derived_claims(self):
+        api = FakeGitHub()
+        api.repo = "pl0n3r/Condor"
+        api.issues[3]["body"] = (
+            '<!-- factory-plan {"version":1,"tasks":['
+            '{"key":"PRIVACY","title":"Actualizar datos","owner":"pl0n3r",'
+            '"paths":["datos.yml"],"depends_on":[]}'
+            ']} -->'
+        )
+
+        result = sync_plan(api, 3)
+        issue = api.issues[result["issues"]["PRIVACY"]]
+        marker = parse_task_marker(issue["body"])
+
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertIn("datos.yml", marker["paths"])
+        self.assertIn(
+            "tests/php/Privacy/PrivacyAsCodeTest.php",
+            marker["paths"],
+        )
+        self.assertIn(
+            "docs/privacidad/politica-tratamiento.md",
+            marker["paths"],
+        )
+        self.assertNotIn("config/version.php", marker["paths"])
+
+    def test_active_task_does_not_silently_expand_derived_claims(self):
+        api = FakeGitHub()
+        api.issues[3]["body"] = (
+            '<!-- factory-plan {"version":1,"tasks":['
+            '{"key":"PRIVACY","title":"Actualizar datos","owner":"pl0n3r",'
+            '"paths":["datos.yml"],"depends_on":[]}'
+            ']} -->'
+        )
+        first = sync_plan(api, 3)
+        issue = api.issues[first["issues"]["PRIVACY"]]
+        before = issue["body"]
+        issue["labels"] = [{"name": "estado: reservado"}]
+        api.repo = "pl0n3r/Condor"
+        api.requests.clear()
+
+        with self.assertRaisesRegex(PlanError, "activo; su plan no puede mutar"):
+            sync_plan(api, 3)
+
+        self.assertEqual(issue["body"], before)
+        self.assertFalse(
+            any(
+                method == "PATCH" and "/issues/" in path
+                for method, path, _payload in api.requests
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
