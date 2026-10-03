@@ -276,6 +276,23 @@ class OwnerAutonomyAuthorizationTests(unittest.TestCase):
                 self.assertFalse(trigger["materialize_leaves"])
                 self.assertEqual(trigger["reason"], reason)
 
+    def test_pre_live_build_ahead_separates_prepare_from_activate(self):
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("Build-ahead pre-live — preparar no equivale a activar", plan)
+        self.assertIn("PR build-ahead", plan)
+        self.assertIn("puede bloquear **merge/activación** sin bloquear la **preparación**", plan)
+        self.assertIn("merge/activación permanece bloqueado", plan)
+        self.assertIn("gate operativo pendiente", plan)
+        self.assertIn("fase `construccion`", plan)
+
+    def test_pre_live_build_ahead_never_authorizes_merge_live_spend_real_data_or_irreversible(self):
+        plan = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
+        self.assertIn("no toca producción", plan)
+        self.assertIn("datos reales/PII", plan)
+        self.assertIn("secretos/credenciales", plan)
+        self.assertIn("gasto/proveedores", plan)
+        self.assertIn("destructivas/irreversibles", plan)
+        self.assertIn("nunca autoriza `VALIDATED_IN_PRODUCTION`, GREEN, go-live", plan)
     def test_night_report_and_daily_summary_are_deduplicated(self):
         client = MemoryClient()
         date = "2026-10-02"
