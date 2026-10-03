@@ -230,5 +230,58 @@ class NoWorkDedupTests(unittest.TestCase):
         self.assertIn("new_no_work_comments_per_hour", guide)
 
 
+    def test_invalid_and_inactive_inventory_evidence_is_fail_closed(self):
+        base = inventory()
+        base_fingerprint = inventory_fingerprint(base)
+
+        inactive = inventory()
+        inactive["repositories"]["ControlBot"]["reservations"].append(
+            {"issue": 999, "reservation_id": "old", "active": False}
+        )
+        self.assertEqual(inventory_fingerprint(inactive), base_fingerprint)
+
+        closed_pr = inventory()
+        closed_pr["repositories"]["Condor"]["pull_requests"].append(
+            {"number": 449, "state": "closed", "head_sha": "c" * 40}
+        )
+        self.assertEqual(inventory_fingerprint(closed_pr), base_fingerprint)
+
+        missing_switch_state = inventory()
+        del missing_switch_state["kill_switch"]["state"]
+        with self.assertRaisesRegex(NoWorkInventoryError, "kill_switch_missing"):
+            inventory_fingerprint(missing_switch_state)
+
+        wrong_repo_field = inventory()
+        wrong_repo_field["repositories"]["Factory"]["available"] = "not-a-list"
+        with self.assertRaisesRegex(NoWorkInventoryError, "repository_field_invalid"):
+            inventory_fingerprint(wrong_repo_field)
+
+        invalid_pr_state = inventory()
+        invalid_pr_state["repositories"]["Condor"]["pull_requests"][0]["state"] = None
+        with self.assertRaisesRegex(NoWorkInventoryError, "pull_request_state_invalid"):
+            inventory_fingerprint(invalid_pr_state)
+
+        invalid_pr_number = inventory()
+        invalid_pr_number["repositories"]["Condor"]["pull_requests"][0]["number"] = True
+        with self.assertRaisesRegex(NoWorkInventoryError, "pull_request_number_invalid"):
+            inventory_fingerprint(invalid_pr_number)
+
+        invalid_pr_head = inventory()
+        invalid_pr_head["repositories"]["Condor"]["pull_requests"][0]["head_sha"] = "not-a-sha"
+        with self.assertRaisesRegex(NoWorkInventoryError, "pull_request_head_invalid"):
+            inventory_fingerprint(invalid_pr_head)
+
+        with self.assertRaisesRegex(NoWorkInventoryError, "now_invalid"):
+            decide_no_work(base, None, -1)
+
+        with self.assertRaisesRegex(NoWorkInventoryError, "publication_state_invalid"):
+            decide_no_work(base, "not-state", 1)
+
+        first = decide_no_work(base, None, 10)
+        previous = state_after(first, comment_id=904_999, published_at=10)
+        with self.assertRaisesRegex(NoWorkInventoryError, "time_moved_backwards"):
+            decide_no_work(base, previous, 9)
+
+
 if __name__ == "__main__":
     unittest.main()
