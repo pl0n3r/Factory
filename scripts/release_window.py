@@ -93,6 +93,28 @@ def _gate_fingerprint(gate: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _legacy_factory_release_intent(body: str) -> bool:
+    """Detecta solo si un marker legacy pretende gobernar Factory release.
+
+    La búsqueda GitHub del workflow es deliberadamente amplia y puede devolver
+    puertas históricas de otras categorías cuyos schemas ya no son válidos para
+    el validador moderno. Esas puertas no pertenecen al release-window.
+    """
+    matches = MARKER_RE.findall(body)
+    if not matches:
+        return False
+    for marker in matches:
+        try:
+            raw = json.loads(marker)
+        except json.JSONDecodeError:
+            if "factory-release" in marker:
+                return True
+            continue
+        if isinstance(raw, dict) and raw.get("category") == "factory-release":
+            return True
+    return False
+
+
 def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
     if not isinstance(body, str):
         return None
@@ -241,6 +263,9 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         if not isinstance(body, str):
             continue
         window_intent = WINDOW_INTENT_RE.search(body) is not None
+        legacy_release_intent = _legacy_factory_release_intent(body)
+        if not window_intent and not legacy_release_intent:
+            continue
         gate_info = _gate_from_body(body)
         if gate_info is None:
             if window_intent:
