@@ -44,6 +44,7 @@ jobs:
                 select((has("pull_request") | not))
                 | select((.body // "") | contains("factory-human-gate"))
                 | select((.body // "") | contains("factory-release"))
+                | {number, state, title, body, updated_at}
               )
             ' /tmp/release-page.json > /tmp/release-page-filtered.json
             jq --slurp 'add' /tmp/release-issues.json /tmp/release-page-filtered.json               > /tmp/release-issues.next
@@ -59,7 +60,17 @@ jobs:
               echo "::error::Issue release inválido"
               exit 1
             }
-            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq 'add // []' > /tmp/release-comments.json
+            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq '
+              add // []
+              | map(
+                  select(.user.login == "github-actions[bot]")
+                  | select(
+                      ((.body // "") | contains("factory-human-decision"))
+                      or ((.body // "") | contains("factory-release-executed"))
+                    )
+                  | {user: {login: .user.login}, body: (.body // "")}
+                )
+            ' > /tmp/release-comments.json
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < <(jq -c '.[]' /tmp/release-issues.json)
@@ -124,6 +135,7 @@ jobs:
                 select((has("pull_request") | not))
                 | select((.body // "") | contains("factory-human-gate"))
                 | select((.body // "") | contains("factory-release"))
+                | {number, state, title, body, updated_at}
               )
             ' /tmp/release-page.json > /tmp/release-page-filtered.json
             jq --slurp 'add' /tmp/release-issues.json /tmp/release-page-filtered.json               > /tmp/release-issues.next
@@ -135,7 +147,17 @@ jobs:
           printf '[]\n' > /tmp/release-gates.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
-            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq 'add // []' > /tmp/release-comments.json
+            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq '
+              add // []
+              | map(
+                  select(.user.login == "github-actions[bot]")
+                  | select(
+                      ((.body // "") | contains("factory-human-decision"))
+                      or ((.body // "") | contains("factory-release-executed"))
+                    )
+                  | {user: {login: .user.login}, body: (.body // "")}
+                )
+            ' > /tmp/release-comments.json
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < <(jq -c '.[]' /tmp/release-issues.json)
