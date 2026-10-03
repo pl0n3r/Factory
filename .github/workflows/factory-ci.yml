@@ -50,6 +50,54 @@ jobs:
           if [[ -d lecciones ]]; then PYTHONPATH=lecciones python3 -m unittest discover -s lecciones -p 'test_*.py'; fi
           if [[ -d producto ]]; then PYTHONPATH=producto python3 -m unittest discover -s producto -p 'test_*.py'; fi
 
+  release_window:
+    name: Ventana de release Factory
+    if: github.event_name == 'pull_request' && github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validar freeze exact-SHA de release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_REF" =~ ^trabajo/issue-([1-9][0-9]*)$ ]] || {
+            echo "::error::Rama sin Issue canónico para validar release window"
+            exit 1
+          }
+          work_issue="${BASH_REMATCH[1]}"
+
+          gh api -X GET search/issues             -f q="repo:$REPOSITORY is:issue \"factory-human-gate\" in:body"             -f per_page=100 > /tmp/release-search.json
+          jq '[.items[] | select((.body // "") | contains("\"factory-release\""))]'             /tmp/release-search.json > /tmp/release-issues.json
+          printf '[]\n' > /tmp/release-gates.json
+          while IFS= read -r issue; do
+            number="$(jq -r '.number' <<<"$issue")"
+            [[ "$number" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::Issue de release inválido"
+              exit 1
+            }
+            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq 'add // []' > /tmp/release-comments.json
+            jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
+            mv /tmp/release-gates.next /tmp/release-gates.json
+          done < <(jq -c '.[]' /tmp/release-issues.json)
+
+          gh api "repos/$REPOSITORY/pulls/$PR" > /tmp/release-pr.json
+          gh api "repos/$REPOSITORY/issues/$work_issue" > /tmp/release-work-item.json
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n             --arg now "$now"             --slurpfile gates /tmp/release-gates.json             --slurpfile pr /tmp/release-pr.json             --slurpfile work /tmp/release-work-item.json             '{now:$now,gates:$gates[0],pr:$pr[0],work_issue:$work[0]}'             > /tmp/release-window-input.json
+
+          python3 scripts/release_window.py pr-check             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
+
   coordinacion:
     name: Validar coordinación
     if: github.event_name == 'pull_request' && github.event.pull_request.state == 'open'
@@ -174,7 +222,7 @@ jobs:
 
   validar:
     name: Validar
-    needs: [workflows, scripts, coordinacion, acceptance]
+    needs: [workflows, scripts, release_window, coordinacion, acceptance]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
