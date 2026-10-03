@@ -271,61 +271,27 @@ def _positive_role_text(text: str) -> str:
     return value
 
 
-ROLE_EVIDENCE_KEYS = {
-    "rol(es)",
-    "roles",
-    "rol primario",
-    "revisión cruzada",
-    "revision cruzada",
-    "role(s)",
-    "primary role",
-    "cross review",
-    "cross-review",
-}
-ROLE_CHECKLIST_HEADINGS = {
-    "## checklist de roles",
-    "## role checklist",
-    "## roles checklist",
-}
+ROLE_DECLARATION_LINE = re.compile(
+    r"(?im)^[ \\t]*(?:rol\\(es\\)|roles|rol primario|revisi[oó]n cruzada|"
+    r"role\\(s\\)|primary role|cross[- ]review)[ \\t]*:[^\\r\\n]*(?:\\r?\\n|$)"
+)
+ROLE_DECLARATION_CHECKLIST = re.compile(
+    r"(?im)(?:^[ \\t]*(?:rol\\(es\\)|roles|rol primario|revisi[oó]n cruzada|"
+    r"role\\(s\\)|primary role|cross[- ]review)[ \\t]*:[^\\r\\n]*\\r?\\n)+"
+    r"(?:^[ \\t]*\\r?\\n)*"
+    r"(?:^[ \\t]*- \\[[ xX]\\] .*(?:\\r?\\n|$))+"
+)
+ROLE_CHECKLIST_SECTION = re.compile(
+    r"(?ims)^[ \\t]*##[ \\t]+(?:checklist de roles|role checklist|roles checklist)"
+    r"[ \\t]*\\r?$.*?(?=^[ \\t]*##[ \\t]+|\\Z)"
+)
 
 
 def _text_without_role_evidence(body: str) -> str:
     """Excluye solo evidencia estructural de roles de señales semánticas."""
-    lines: list[str] = []
-    contiguous_role_evidence = False
-    in_role_checklist = False
-
-    for line in body.splitlines():
-        stripped = line.strip()
-        normalized = stripped.casefold()
-
-        if stripped.startswith("## "):
-            if normalized in ROLE_CHECKLIST_HEADINGS:
-                in_role_checklist = True
-                contiguous_role_evidence = False
-                continue
-            if in_role_checklist:
-                in_role_checklist = False
-
-        if in_role_checklist:
-            continue
-
-        name, separator, _ = stripped.partition(":")
-        if separator and name.casefold() in ROLE_EVIDENCE_KEYS:
-            contiguous_role_evidence = True
-            continue
-
-        if (
-            contiguous_role_evidence
-            and re.fullmatch(r"- \[[ xX]\] .+", stripped)
-        ):
-            continue
-
-        if stripped:
-            contiguous_role_evidence = False
-        lines.append(line)
-
-    return "\n".join(lines)
+    value = ROLE_CHECKLIST_SECTION.sub("", body)
+    value = ROLE_DECLARATION_CHECKLIST.sub("", value)
+    return ROLE_DECLARATION_LINE.sub("", value)
 
 
 def _roles_from_text(text: str) -> set[str]:
