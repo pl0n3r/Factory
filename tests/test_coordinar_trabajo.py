@@ -3619,6 +3619,37 @@ class CoordinationTests(unittest.TestCase):
         ):
             validate_pull(api, 15, True)
 
+    def test_reservation_metadata_error_covers_canonical_legacy_and_missing_paths(self) -> None:
+        """Cubre rutas diagnósticas válidas, conflictivas y ausentes."""
+        self.assertIsNone(
+            coordinator.reservation_metadata_error(
+                f"<!-- condor-reserva-id: {SESSION_A} -->",
+                SESSION_A,
+            )
+        )
+        self.assertIsNone(
+            coordinator.reservation_metadata_error(
+                f"Reserva: {SESSION_A}",
+                SESSION_A,
+            )
+        )
+
+        visible_conflict = coordinator.reservation_metadata_error(
+            f"Reserva: {SESSION_B}",
+            SESSION_A,
+        )
+        self.assertIsNotNone(visible_conflict)
+        assert visible_conflict is not None
+        self.assertIn("línea visible", visible_conflict)
+        self.assertIn(SESSION_B, visible_conflict)
+        self.assertIn(SESSION_A, visible_conflict)
+
+        missing = coordinator.reservation_metadata_error("Closes #12", SESSION_A)
+        self.assertIsNotNone(missing)
+        assert missing is not None
+        self.assertIn("metadata de reserva oculta", missing)
+        self.assertIn(SESSION_A, missing)
+
     def test_renewal_metadata_regression_matches_condor_448_variants(self) -> None:
         variants = (
             f"Reserva: `{SESSION_A}`",
