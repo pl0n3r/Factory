@@ -67,6 +67,7 @@ jobs:
                   | select(
                       ((.body // "") | contains("factory-human-decision"))
                       or ((.body // "") | contains("factory-release-executed"))
+                      or ((.body // "") | contains("factory-human-gate-duplicate"))
                     )
                   | {user: {login: .user.login}, body: (.body // "")}
                 )
@@ -154,6 +155,7 @@ jobs:
                   | select(
                       ((.body // "") | contains("factory-human-decision"))
                       or ((.body // "") | contains("factory-release-executed"))
+                      or ((.body // "") | contains("factory-human-gate-duplicate"))
                     )
                   | {user: {login: .user.login}, body: (.body // "")}
                 )
