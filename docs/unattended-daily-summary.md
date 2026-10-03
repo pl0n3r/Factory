@@ -27,6 +27,33 @@ Cada hecho muestra `source`, edad y freshness cuando existe evidencia temporal. 
 
 Las cuotas de CI, GitHub API y cuentas de ChatGPT se muestran como `UNKNOWN` mientras Factory#584 no entregue una medición canónica al runtime. El resumen no inventa capacidad.
 
+## Puerta pública D-043 de Condor
+
+Antes de renderizar “Decisiones pendientes”, el resumen consulta únicamente la API
+pública de comentarios de `pl0n3r/Condor#1`:
+
+- método `GET`, sin header `Authorization`;
+- `User-Agent` explícito y timeout de 3 segundos;
+- máximo 3 páginas de 100 comentarios y cero retries internos;
+- solo se confían comentarios de `github-actions[bot]` con el marker exacto
+  `condor-d043-validation-card`;
+- la versión visible, SHA de 40 hex y el comando
+  `gh workflow run observar-release.yml` deben describir la misma identidad;
+- una evidencia automática `VALIDATED_IN_PRODUCTION` elimina únicamente la
+  tarjeta con la misma versión **y** SHA; una release posterior nunca cubre otra
+  por inferencia;
+- si quedan varias tarjetas pendientes, se muestra la versión más reciente y el
+  número de anteriores aún pendientes.
+
+La Fact resultante usa `source=Condor#1 public GitHub`, edad y freshness. Si la
+API pública falla, el JSON es inválido, se agota el límite de páginas o un marker
+canónico es ambiguo/inconsistente, el resumen muestra una Fact
+`UNKNOWN`/`STALE` y continúa entregando las demás secciones.
+
+Esta lectura no reutiliza `GH_TOKEN`, PAT, GitHub App ni ninguna credencial de
+Factory. Tampoco ejecuta `observar-release.yml`, marca flags D-043, escribe en
+Condor ni declara producción validada.
+
 ## Orden del resumen
 
 El comentario prioriza, en este orden:

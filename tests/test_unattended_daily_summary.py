@@ -7,11 +7,13 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import URLError
 import unittest
 
 from scripts.unattended_daily_summary import (
     DailySummaryError,
     Fact,
+    collect_condor_d043_gate,
     collect_issue_context,
     immediate_incidents,
     main as daily_main,
@@ -84,7 +86,172 @@ class FakeClient:
         return {"ok": True}
 
 
+class PublicResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        import json
+        return json.dumps(self.payload).encode("utf-8")
+
+
+def d043_card(version, sha, *, created_at="2026-10-02T12:55:00Z", user="github-actions[bot]"):
+    return {
+        "user": {"login": user},
+        "created_at": created_at,
+        "body": (
+            f'<!-- condor-d043-validation-card {{"sha":"{sha}","version":1}} -->\n'
+            "## Validación humana D-043 pendiente\n\n"
+            f"- Versión: `V{version}`\n"
+            f"- SHA exacto: `{sha}`\n\n"
+            "### Comando listo para ejecutar por el dueño\n\n"
+            "```bash\n"
+            "gh workflow run observar-release.yml --repo pl0n3r/Condor "
+            f"-f version={version} -f sha={sha} "
+            "-f tenant_slug=marcela-arias-tienda -f cache_verificada=true\n"
+            "```\n"
+        ),
+    }
+
+
+def d043_validation(version, sha):
+    return {
+        "user": {"login": "github-actions[bot]"},
+        "created_at": "2026-10-02T12:58:00Z",
+        "body": (
+            "✅ VALIDATED_IN_PRODUCTION automático: producción sirve "
+            f"V {version} ({sha}) y los smoke checks de solo lectura pasaron."
+        ),
+    }
+
+
 class UnattendedDailySummaryTests(unittest.TestCase):
+    def test_condor_d043_public_gate_is_rendered_first_without_cross_repo_token(self):
+        now = datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc)
+        calls = []
+        sha = "1" * 40
+
+        def opener(request, timeout):
+            calls.append((request, timeout))
+            return PublicResponse([d043_card("0.1.125", sha)])
+
+        gate = collect_condor_d043_gate(now, opener=opener)
+        self.assertEqual(gate.text, "Condor V0.1.125 espera tu validación D-043")
+        self.assertEqual(gate.source, "Condor#1 public GitHub")
+        self.assertEqual(gate.age_minutes, 5)
+        self.assertEqual(gate.freshness, "fresh")
+        self.assertEqual(len(calls), 1)
+
+        request, timeout = calls[0]
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertNotIn("authorization", headers)
+        self.assertIn("user-agent", headers)
+        self.assertLessEqual(timeout, 3)
+
+        rendered = render_summary(
+            decision(),
+            runtime_input(),
+            {
+                "condor_d043": (gate,),
+                "decisions": (Fact("#900 decisión", "GitHub Issues", 1, "fresh"),),
+                "blockers": (),
+                "advances": (),
+            },
+            now,
+        )
+        self.assertLess(
+            rendered.index("### Puerta D-043 Condor"),
+            rendered.index("### Decisiones pendientes"),
+        )
+        self.assertIn("source=Condor#1 public GitHub", rendered)
+
+    def test_condor_exact_validation_clears_only_same_identity_and_keeps_older_pending(self):
+        now = datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc)
+        old_sha = "2" * 40
+        new_sha = "3" * 40
+        payload = [
+            d043_card("0.1.124", old_sha, created_at="2026-10-02T12:40:00Z"),
+            d043_card("0.1.125", new_sha, created_at="2026-10-02T12:50:00Z"),
+            d043_validation("0.1.125", new_sha),
+        ]
+
+        gate = collect_condor_d043_gate(
+            now,
+            opener=lambda request, timeout: PublicResponse(payload),
+        )
+        self.assertEqual(gate.text, "Condor V0.1.124 espera tu validación D-043")
+        self.assertEqual(gate.age_minutes, 20)
+
+        no_inference = collect_condor_d043_gate(
+            now,
+            opener=lambda request, timeout: PublicResponse([
+                d043_card("0.1.124", old_sha),
+                d043_validation("0.1.125", new_sha),
+            ]),
+        )
+        self.assertIn("V0.1.124", no_inference.text)
+
+    def test_condor_public_api_failure_or_ambiguous_card_becomes_unknown_without_blocking_summary(self):
+        now = datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc)
+
+        def failing(request, timeout):
+            raise URLError("offline")
+
+        failed = collect_condor_d043_gate(now, opener=failing)
+        self.assertTrue(failed.text.startswith("UNKNOWN:"))
+        self.assertEqual(failed.freshness, "stale")
+
+        ambiguous = d043_card("0.1.125", "4" * 40)
+        ambiguous["body"] += ambiguous["body"].split("\n", 1)[0]
+        invalid = collect_condor_d043_gate(
+            now,
+            opener=lambda request, timeout: PublicResponse([ambiguous]),
+        )
+        self.assertTrue(invalid.text.startswith("UNKNOWN:"))
+        self.assertEqual(invalid.source, "Condor#1 public GitHub")
+
+        rendered = render_summary(
+            decision(),
+            runtime_input(),
+            {
+                "condor_d043": (failed,),
+                "decisions": (),
+                "blockers": (),
+                "advances": (),
+            },
+            now,
+        )
+        self.assertIn("UNKNOWN: puerta D-043 de Condor no verificable.", rendered)
+        self.assertIn("### Próximas acciones", rendered)
+
+    def test_condor_public_reader_is_bounded_unauthenticated_and_read_only(self):
+        now = datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc)
+        calls = []
+
+        def full_pages(request, timeout):
+            calls.append((request, timeout))
+            return PublicResponse([
+                {"user": {"login": "someone"}, "body": "noise"}
+                for _ in range(100)
+            ])
+
+        gate = collect_condor_d043_gate(now, opener=full_pages)
+        self.assertTrue(gate.text.startswith("UNKNOWN:"))
+        self.assertEqual(len(calls), 3)
+        for request, timeout in calls:
+            self.assertEqual(request.get_method(), "GET")
+            self.assertLessEqual(timeout, 3)
+            headers = {key.lower(): value for key, value in request.header_items()}
+            self.assertNotIn("authorization", headers)
+            self.assertIn("user-agent", headers)
+            self.assertIn("api.github.com/repos/pl0n3r/Condor/issues/1/comments", request.full_url)
+
     def test_workflow_delivers_once_per_local_day_at_0800_bogota(self):
         workflow = (
             ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
@@ -386,6 +553,15 @@ class UnattendedDailySummaryTests(unittest.TestCase):
                 return_value={"decisions": (), "blockers": (), "advances": ()},
             ),
             patch(
+                "scripts.unattended_daily_summary.collect_condor_d043_gate",
+                return_value=Fact(
+                    "Condor V0.1.125 espera tu validación D-043",
+                    "Condor#1 public GitHub",
+                    5,
+                    "fresh",
+                ),
+            ),
+            patch(
                 "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
                 return_value=SimpleNamespace(global_pause=False, reason="running"),
             ),
@@ -394,7 +570,7 @@ class UnattendedDailySummaryTests(unittest.TestCase):
             os.environ,
             {"GH_TOKEN": "token", "GITHUB_REPOSITORY": "pl0n3r/Factory"},
             clear=False,
-        ), patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+        ), patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
             self.assertEqual(daily_main(), 0)
         self.assertEqual(len(clients[-1].writes), 2)
         self.assertTrue(
@@ -424,6 +600,22 @@ class UnattendedDailySummaryTests(unittest.TestCase):
         ), patch(
             "scripts.unattended_daily_summary.collect_issue_context",
             return_value={"decisions": (), "blockers": (), "advances": ()},
+        ), patch(
+            "scripts.unattended_daily_summary.collect_condor_d043_gate",
+            return_value=Fact(
+                "UNKNOWN: puerta D-043 de Condor no verificable.",
+                "Condor#1 public GitHub",
+                None,
+                "stale",
+            ),
+        ), patch(
+            "scripts.unattended_daily_summary.collect_condor_d043_gate",
+            return_value=Fact(
+                "Condor D-043: ninguna tarjeta pendiente demostrada.",
+                "Condor#1 public GitHub",
+                0,
+                "fresh",
+            ),
         ), patch(
             "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
             return_value=SimpleNamespace(global_pause=True, reason="paused"),
