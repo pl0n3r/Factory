@@ -60,6 +60,9 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
             WF,
         )
         self.assertIn("no tiene referencia cerrante canónica; se omite alerta persistente", WF)
+        self.assertIn('gh api "repos/$REPOSITORIO/issues/$linked_issue" > /tmp/linked-issue.json', WF)
+        self.assertIn('has("pull_request")', WF)
+        self.assertIn("el destino también es una PR; se omite alerta persistente", WF)
         self.assertNotIn(
             'gh api --paginate "repos/$REPOSITORIO/issues/$number/comments?per_page=100"',
             WF,
