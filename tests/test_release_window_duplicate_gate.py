@@ -106,5 +106,76 @@ class ReleaseWindowDuplicateGateTests(unittest.TestCase):
             ])
 
 
+    def test_duplicate_reference_validation_fails_closed(self) -> None:
+        with self.subTest("self_reference"):
+            with self.assertRaises(rw.ReleaseWindowError):
+                rw.gate_records([
+                    gate_row(number=939, body=self.canonical["body"]),
+                    gate_row(
+                        number=940,
+                        body=self.canonical["body"],
+                        state="closed",
+                        comments=[bot_comment(
+                            "<!-- factory-human-gate-duplicate canonical=940 -->"
+                        )],
+                    ),
+                ])
+
+        with self.subTest("missing_canonical"):
+            with self.assertRaises(rw.ReleaseWindowError):
+                rw.gate_records([
+                    gate_row(number=939, body=self.canonical["body"]),
+                    self.duplicate_row(
+                        "<!-- factory-human-gate-duplicate canonical=938 -->"
+                    ),
+                ])
+
+        with self.subTest("different_version"):
+            other = rw._render_gate(
+                "1.0.22", OLD_SHA, NOW, source_issue=900
+            )
+            with self.assertRaises(rw.ReleaseWindowError):
+                rw.gate_records([
+                    gate_row(number=938, body=other["body"]),
+                    self.duplicate_row(
+                        "<!-- factory-human-gate-duplicate canonical=938 -->"
+                    ),
+                ])
+
+        with self.subTest("duplicate_chain"):
+            with self.assertRaises(rw.ReleaseWindowError):
+                rw.gate_records([
+                    gate_row(number=938, body=self.canonical["body"]),
+                    gate_row(
+                        number=939,
+                        body=self.canonical["body"],
+                        state="closed",
+                        comments=[bot_comment(
+                            "<!-- factory-human-gate-duplicate canonical=938 -->"
+                        )],
+                    ),
+                    self.duplicate_row(),
+                ])
+
+    def test_duplicate_gate_cannot_freeze_as_active(self) -> None:
+        records = rw.gate_records([
+            gate_row(
+                number=939,
+                body=self.canonical["body"],
+                state="closed",
+            ),
+            gate_row(
+                number=940,
+                body=self.canonical["body"],
+                state="open",
+                comments=[bot_comment(
+                    "<!-- factory-human-gate-duplicate canonical=939 -->"
+                )],
+            ),
+        ])
+        self.assertIsNone(rw.freeze_gate(records, NOW))
+
+
+
 if __name__ == "__main__":
     unittest.main()
