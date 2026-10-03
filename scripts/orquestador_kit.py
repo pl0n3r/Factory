@@ -21,6 +21,16 @@ ACTIVE_STATUSES = {
     "status: recovery required",
 }
 
+CONDOR_PRIVACY_DERIVED_CLAIMS = (
+    "tests/php/Privacy/PrivacyAsCodeTest.php",
+    "docs/privacidad/aviso-privacidad.md",
+    "docs/privacidad/canal-derechos.md",
+    "docs/privacidad/politica-tratamiento.md",
+    "docs/privacidad/registro-tratamientos.md",
+    "docs/privacidad/retencion.md",
+    "docs/privacidad/terminos-condiciones.md",
+)
+
 
 class PlanError(ValueError):
     pass
@@ -230,6 +240,41 @@ def claims_overlap(left: str, right: str) -> bool:
     if right_dir and len(right_parts) < len(left_parts):
         return left_parts[: len(right_parts)] == right_parts
     return False
+
+
+def expand_derived_claims(
+    repository_ref: str,
+    tasks: list[PlannedTask],
+) -> list[PlannedTask]:
+    """Expande claims deterministas allowlisted antes de materializar el plan."""
+    if not isinstance(repository_ref, str) or not repository_ref.strip():
+        raise PlanError("repository_ref inválido para derivar claims.")
+
+    is_condor = repository_ref.strip().lower() == "pl0n3r/condor"
+    expanded: list[PlannedTask] = []
+    for task in tasks:
+        paths = [_valid_path(path) for path in task.paths]
+        if is_condor and "datos.yml" in paths:
+            for derived in CONDOR_PRIVACY_DERIVED_CLAIMS:
+                if not any(claims_overlap(existing, derived) for existing in paths):
+                    paths.append(derived)
+
+        if len(paths) > MAX_PATHS:
+            raise PlanError(
+                f"{task.key} excede MAX_PATHS tras expandir claims derivados."
+            )
+        expanded.append(
+            PlannedTask(
+                key=task.key,
+                title=task.title,
+                owner=task.owner,
+                paths=tuple(paths),
+                depends_on=task.depends_on,
+            )
+        )
+
+    _validate_parallel_claims(expanded)
+    return expanded
 
 
 def tasks_overlap(left: PlannedTask, right: PlannedTask) -> list[str]:
