@@ -158,6 +158,21 @@ def _blocked(reason: str) -> GuardDecision:
     return _decision("BLOCKED", False, [reason], {"invalid": reason})
 
 
+def guard_blocks_global_dispatch(decision: GuardDecision | None) -> bool:
+    """Only a structurally valid 4B ALLOW can leave cross-repo dispatch open.
+
+    Watchdog UNKNOWN may be scoped locally by the dispatcher, but no local
+    watchdog decision can override PAUSE/BLOCKED from 4B or malformed guard
+    evidence.
+    """
+    return (
+        not isinstance(decision, GuardDecision)
+        or decision.authority != "unchanged"
+        or decision.action != "ALLOW"
+        or decision.pause_allowed
+    )
+
+
 def _pause(fencing: FencingDecision, reason: str, payload: object) -> GuardDecision:
     if fencing.pause_allowed:
         return _decision("PAUSE", True, [reason], payload)
