@@ -61,7 +61,7 @@ CONDOR_D043_VISIBLE_SHA_RE = re.compile(
 )
 CONDOR_D043_VALIDATED_RE = re.compile(
     r"^✅ VALIDATED_IN_PRODUCTION automático:\s*producción sirve V\s*"
-    r"(\d+\.\d+\.\d+)\s*\(([0-9a-f]{40})\)\b",
+    r"(\d+\.\d+\.\d+)\s*\(([0-9a-f]{40})\)(?:\s|$)",
     re.MULTILINE,
 )
 

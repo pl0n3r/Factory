@@ -609,6 +609,14 @@ class UnattendedDailySummaryTests(unittest.TestCase):
                 "stale",
             ),
         ), patch(
+            "scripts.unattended_daily_summary.collect_condor_d043_gate",
+            return_value=Fact(
+                "Condor D-043: ninguna tarjeta pendiente demostrada.",
+                "Condor#1 public GitHub",
+                0,
+                "fresh",
+            ),
+        ), patch(
             "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
             return_value=SimpleNamespace(global_pause=True, reason="paused"),
         ):
