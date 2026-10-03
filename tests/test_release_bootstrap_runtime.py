@@ -188,6 +188,32 @@ def valid_v2_payload(*, gate_body=GATE_MAINTENANCE):
     return payload
 
 
+def valid_latest_payload(
+    *,
+    gate_sha: str = OTHER,
+    version: str = "1.0.15",
+    changed_files: list[str] | None = None,
+    checks: dict[str, str] | None = None,
+):
+    gate_body = GATE_MAINTENANCE.replace(
+        f"main@{SHA}",
+        f"main@{gate_sha}",
+    )
+    payload = valid_v2_payload(gate_body=gate_body)
+    payload["expected_mode"] = "latest"
+    payload["current_version"] = version
+    payload["changed_files_since_gate"] = (
+        [] if changed_files is None else changed_files
+    )
+    payload["exact_main_checks"] = checks or {
+        "ci": "success",
+        "sonar": "success",
+        "codeql": "success",
+        "watchdog": "success",
+    }
+    return payload
+
+
 def valid_rearmed_v2_payload(
     *,
     gate_body: str | None = None,
@@ -271,6 +297,13 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
         self.assertIn("rearm_sources:$rearm_sources[0]", workflow)
         self.assertIn("created_at:$gate[0].created_at", workflow)
         self.assertIn("issues: read", workflow)
+        self.assertIn('EXPECTED_SHA_INPUT: ${{ inputs.expected_sha }}', workflow)
+        self.assertIn('[[ "$EXPECTED_SHA_INPUT" == "latest" ]]', workflow)
+        self.assertIn('compare/$gate_sha...$resolved_sha', workflow)
+        self.assertIn('"CI factory"', workflow)
+        self.assertIn('"Sonar CI-based"', workflow)
+        self.assertIn('"Evidencia CodeQL"', workflow)
+        self.assertIn('"Unattended Watchdog"', workflow)
 
     def test_valid_first_release_candidate(self):
         self.assertEqual(
@@ -294,6 +327,62 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
             validate_payload(valid_v2_payload()),
             {"status": "ready", "sha": SHA},
         )
+
+    def test_version_gate_authorizes_current_head_when_version_matches_and_checks_green(self):
+        self.assertEqual(
+            validate_payload(valid_latest_payload()),
+            {"status": "ready", "sha": SHA},
+        )
+
+    def test_head_drift_touching_release_machinery_requires_new_gate(self):
+        safe = valid_latest_payload(
+            changed_files=["docs/README.md", "tests/test_unrelated.py"]
+        )
+        self.assertEqual(
+            validate_payload(safe),
+            {"status": "ready", "sha": SHA},
+        )
+
+        protected_paths = (
+            ".github/workflows/release.yml",
+            ".github/workflows/release-window.yml",
+            "scripts/release_bootstrap.py",
+            "scripts/reusable_release_preflight.py",
+            "scripts/reusable_permission_compat.py",
+            "scripts/verificar_ruleset_v1.py",
+            "template/.github/workflows/release.yml",
+        )
+        for path in protected_paths:
+            with self.subTest(path=path):
+                payload = valid_latest_payload(changed_files=[path])
+                with self.assertRaisesRegex(
+                    ReleaseBootstrapError,
+                    "maquinaria de release",
+                ):
+                    validate_payload(payload)
+
+    def test_version_mismatch_or_red_checks_fail_closed(self):
+        mismatch = valid_latest_payload(version="1.0.16")
+        with self.assertRaisesRegex(
+            ReleaseBootstrapError,
+            "versión aprobada",
+        ):
+            validate_payload(mismatch)
+
+        for check in ("ci", "sonar", "codeql", "watchdog"):
+            with self.subTest(check=check):
+                checks = {
+                    "ci": "success",
+                    "sonar": "success",
+                    "codeql": "success",
+                    "watchdog": "success",
+                }
+                checks[check] = "failure"
+                with self.assertRaisesRegex(
+                    ReleaseBootstrapError,
+                    "Checks exact-main",
+                ):
+                    validate_payload(valid_latest_payload(checks=checks))
 
     def test_maintenance_preflight_allows_previous_stable_v1(self):
         payload = valid_v2_payload()
