@@ -9,7 +9,9 @@ import os
 import re
 import sys
 from typing import Iterable
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
@@ -39,6 +41,29 @@ MAX_CONTEXT_PAGES = 5
 DECISION_LABELS = frozenset({"decisión: dueño", "decision: owner"})
 BLOCKED_LABELS = frozenset({"estado: bloqueado", "status: blocked"})
 COMPLETED_LABELS = frozenset({"estado: completado", "status: completed"})
+CONDOR_D043_COMMENTS_URL = "https://api.github.com/repos/pl0n3r/Condor/issues/1/comments"
+CONDOR_D043_SOURCE = "Condor#1 public GitHub"
+CONDOR_D043_USER_AGENT = "Factory-unattended-daily-summary/1"
+CONDOR_D043_TIMEOUT_SECONDS = 3
+MAX_CONDOR_D043_PAGES = 3
+CONDOR_D043_MARKER_START_RE = re.compile(r"<!--\s*condor-d043-validation-card")
+CONDOR_D043_MARKER_RE = re.compile(
+    r'<!--\s*condor-d043-validation-card\s+(\{.*?\})\s*-->',
+    re.DOTALL,
+)
+CONDOR_D043_VISIBLE_VERSION_RE = re.compile(
+    r"^- Versión:\s*\x60V(\d+\.\d+\.\d+)\x60\s*$",
+    re.MULTILINE,
+)
+CONDOR_D043_VISIBLE_SHA_RE = re.compile(
+    r"^- SHA exacto:\s*\x60([0-9a-f]{40})\x60\s*$",
+    re.MULTILINE,
+)
+CONDOR_D043_VALIDATED_RE = re.compile(
+    r"^✅ VALIDATED_IN_PRODUCTION automático:\s*producción sirve V\s*"
+    r"(\d+\.\d+\.\d+)\s*\(([0-9a-f]{40})\)\b",
+    re.MULTILINE,
+)
 
 
 class DailySummaryError(ValueError):
@@ -159,6 +184,154 @@ def _age_minutes(now: datetime, observed_at: object) -> int | None:
     if seconds < 0:
         return None
     return int(seconds // 60)
+
+
+def _condor_version_key(version: str) -> tuple[int, int, int]:
+    parts = version.split(".")
+    if len(parts) != 3 or any(not part.isdigit() for part in parts):
+        raise DailySummaryError("condor_d043_version_invalid")
+    return tuple(int(part) for part in parts)  # type: ignore[return-value]
+
+
+def _parse_condor_d043_card(comment: object) -> tuple[str, str, object] | None:
+    if not isinstance(comment, dict):
+        return None
+    user = comment.get("user")
+    body = comment.get("body")
+    if (
+        not isinstance(user, dict)
+        or user.get("login") != "github-actions[bot]"
+        or not isinstance(body, str)
+    ):
+        return None
+    starts = CONDOR_D043_MARKER_START_RE.findall(body)
+    if not starts:
+        return None
+    markers = CONDOR_D043_MARKER_RE.findall(body)
+    if len(starts) != 1 or len(markers) != 1:
+        raise DailySummaryError("condor_d043_card_ambiguous")
+    try:
+        payload = json.loads(markers[0], object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, DailySummaryError) as exc:
+        raise DailySummaryError("condor_d043_card_invalid") from exc
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"sha", "version"}
+        or payload.get("version") != 1
+        or not isinstance(payload.get("sha"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", payload["sha"]) is None
+    ):
+        raise DailySummaryError("condor_d043_card_invalid")
+
+    versions = CONDOR_D043_VISIBLE_VERSION_RE.findall(body)
+    shas = CONDOR_D043_VISIBLE_SHA_RE.findall(body)
+    if len(versions) != 1 or len(shas) != 1 or shas[0] != payload["sha"]:
+        raise DailySummaryError("condor_d043_card_identity_mismatch")
+    version = versions[0]
+    command_prefix = (
+        "gh workflow run observar-release.yml --repo pl0n3r/Condor "
+        f"-f version={version} -f sha={payload['sha']}"
+    )
+    if body.count(command_prefix) != 1:
+        raise DailySummaryError("condor_d043_card_command_mismatch")
+    _condor_version_key(version)
+    return version, payload["sha"], comment.get("created_at")
+
+
+def _parse_condor_d043_validation(comment: object) -> tuple[str, str] | None:
+    if not isinstance(comment, dict):
+        return None
+    user = comment.get("user")
+    body = comment.get("body")
+    if (
+        not isinstance(user, dict)
+        or user.get("login") != "github-actions[bot]"
+        or not isinstance(body, str)
+    ):
+        return None
+    matches = CONDOR_D043_VALIDATED_RE.findall(body)
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise DailySummaryError("condor_d043_validation_ambiguous")
+    version, sha = matches[0]
+    _condor_version_key(version)
+    return version, sha
+
+
+def _public_condor_comments(opener=None) -> list[dict[str, object]]:
+    open_url = urlopen if opener is None else opener
+    comments: list[dict[str, object]] = []
+    for page in range(1, MAX_CONDOR_D043_PAGES + 1):
+        url = f"{CONDOR_D043_COMMENTS_URL}?{urlencode({'per_page': 100, 'page': page})}"
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": CONDOR_D043_USER_AGENT,
+            },
+            method="GET",
+        )
+        try:
+            with open_url(request, timeout=CONDOR_D043_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DailySummaryError("condor_d043_public_api_unavailable") from exc
+        if not isinstance(payload, list):
+            raise DailySummaryError("condor_d043_public_api_invalid")
+        if any(not isinstance(item, dict) for item in payload):
+            raise DailySummaryError("condor_d043_public_api_invalid")
+        comments.extend(payload)
+        if len(payload) < 100:
+            return comments
+    raise DailySummaryError("condor_d043_public_api_truncated")
+
+
+def collect_condor_d043_gate(now: datetime, *, opener=None) -> Fact:
+    try:
+        comments = _public_condor_comments(opener=opener)
+        cards: dict[tuple[str, str], object] = {}
+        validations: set[tuple[str, str]] = set()
+        for comment in comments:
+            card = _parse_condor_d043_card(comment)
+            if card is not None:
+                version, sha, created_at = card
+                cards[(version, sha)] = created_at
+            validated = _parse_condor_d043_validation(comment)
+            if validated is not None:
+                validations.add(validated)
+
+        pending = [
+            (version, sha, created_at)
+            for (version, sha), created_at in cards.items()
+            if (version, sha) not in validations
+        ]
+        if not pending:
+            return Fact(
+                text="Condor D-043: ninguna tarjeta pendiente demostrada.",
+                source=CONDOR_D043_SOURCE,
+                age_minutes=0,
+                freshness="fresh",
+            )
+
+        pending.sort(key=lambda item: (_condor_version_key(item[0]), item[1]))
+        version, _sha, created_at = pending[-1]
+        age = _age_minutes(now, created_at)
+        older = len(pending) - 1
+        suffix = f" (+{older} anteriores pendientes)" if older else ""
+        return Fact(
+            text=f"Condor V{version} espera tu validación D-043{suffix}",
+            source=CONDOR_D043_SOURCE,
+            age_minutes=age,
+            freshness="unknown" if age is None else ("fresh" if age < 1440 else "stale"),
+        )
+    except (DailySummaryError, TypeError, ValueError, KeyError):
+        return Fact(
+            text="UNKNOWN: puerta D-043 de Condor no verificable.",
+            source=CONDOR_D043_SOURCE,
+            age_minutes=None,
+            freshness="stale",
+        )
 
 
 def _labels(issue: dict[str, object]) -> set[str]:
@@ -359,6 +532,7 @@ def render_summary(
         for value in values
     )
 
+    condor_gate = tuple(issue_context.get("condor_d043", ()))
     decisions = tuple(issue_context.get("decisions", ())) + four_c_facts(summary.human_gates)
     blockers = tuple(issue_context.get("blockers", ())) + four_c_facts(summary.blockers)
     advances = tuple(issue_context.get("advances", ())) + four_c_facts(summary.integrated)
@@ -384,6 +558,8 @@ def render_summary(
     return (
         f"{_marker(local_date)}\n"
         f"## Resumen diario Factory · {local_date}\n\n"
+        "### Puerta D-043 Condor\n"
+        f"{_render_facts(condor_gate, 'UNKNOWN: puerta D-043 de Condor no observada.')}\n\n"
         "### Decisiones pendientes\n"
         f"{_render_facts(decisions, 'Ninguna demostrada.')}\n\n"
         "### Bloqueos\n"
@@ -507,6 +683,7 @@ def main() -> int:
             open_alerts,
         )
         context = collect_issue_context(client, now)
+        context["condor_d043"] = (collect_condor_d043_gate(now),)
         body = render_summary(decision, runtime_input, context, now)
         night_body = render_night_report(decision, context, now)
 
