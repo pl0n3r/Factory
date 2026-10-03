@@ -78,29 +78,29 @@ jobs:
 
           extract_rearm_source() {
             python3 - "$1" <<'PY'
-import json
-import re
-import sys
+          import json
+          import re
+          import sys
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    issue = json.load(handle)
-body = issue.get("body")
-if not isinstance(body, str):
-    raise SystemExit(0)
-matches = re.findall(
-    r"<!--\\s*factory-release-rearm\\s+(\\{[^\\n]*\\})\\s*-->",
-    body,
-)
-if len(matches) != 1:
-    raise SystemExit(0)
-try:
-    marker = json.loads(matches[0])
-except json.JSONDecodeError:
-    raise SystemExit(0)
-source_issue = marker.get("source_issue") if isinstance(marker, dict) else None
-if type(source_issue) is int and source_issue > 0:
-    print(source_issue)
-PY
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              issue = json.load(handle)
+          body = issue.get("body")
+          if not isinstance(body, str):
+              raise SystemExit(0)
+          matches = re.findall(
+              r"<!--\s*factory-release-rearm\s+(\{[^\n]*\})\s*-->",
+              body,
+          )
+          if len(matches) != 1:
+              raise SystemExit(0)
+          try:
+              marker = json.loads(matches[0])
+          except json.JSONDecodeError:
+              raise SystemExit(0)
+          source_issue = marker.get("source_issue") if isinstance(marker, dict) else None
+          if type(source_issue) is int and source_issue > 0:
+              print(source_issue)
+          PY
           }
 
           printf '[]\n' > /tmp/rearm-sources.json

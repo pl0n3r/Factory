@@ -32,13 +32,13 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 RELEASE_GATE_CATEGORIES = {"release-1.0.0", "factory-release"}
 REARM_RE = re.compile(
-    r"<!--\\s*factory-release-rearm\\s+(\\{[^\\n]*\\})\\s*-->"
+    r"<!--\s*factory-release-rearm\s+(\{[^\n]*\})\s*-->"
 )
-REARM_INTENT_RE = re.compile(r"<!--\\s*factory-release-rearm\\b")
+REARM_INTENT_RE = re.compile(r"<!--\s*factory-release-rearm\b")
 RELEASE_WINDOW_RE = re.compile(
-    r"<!--\\s*factory-release-window\\s+(\\{[^\\n]*\\})\\s*-->"
+    r"<!--\s*factory-release-window\s+(\{[^\n]*\})\s*-->"
 )
-RELEASE_WINDOW_INTENT_RE = re.compile(r"<!--\\s*factory-release-window\\b")
+RELEASE_WINDOW_INTENT_RE = re.compile(r"<!--\s*factory-release-window\b")
 MAX_REARM_DEPTH = 8
 MAX_RELEASE_WINDOW_MINUTES = 120
 MAX_INPUT = 1_000_000
