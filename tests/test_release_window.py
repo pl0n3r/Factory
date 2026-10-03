@@ -197,6 +197,38 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertIn("needs: [workflows, scripts, coordinacion, acceptance]", factory_ci)
 
 
+    def test_workflow_projects_minimal_release_evidence_before_parser(self) -> None:
+        workflow = (
+            ROOT / ".github" / "workflows" / "release-window.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(
+            workflow.count("| {number, state, title, body, updated_at}"),
+            2,
+        )
+        self.assertEqual(
+            workflow.count('select(.user.login == "github-actions[bot]")'),
+            2,
+        )
+        self.assertEqual(
+            workflow.count('contains("factory-human-decision")'),
+            2,
+        )
+        self.assertEqual(
+            workflow.count('contains("factory-release-executed")'),
+            2,
+        )
+        self.assertEqual(
+            workflow.count(
+                '| {user: {login: .user.login}, body: (.body // "")}'
+            ),
+            2,
+        )
+        self.assertNotIn(
+            "--slurp | jq 'add // []' > /tmp/release-comments.json",
+            workflow,
+        )
+
     def test_execution_marks_only_approved_exact_sha_and_becomes_idempotent(self) -> None:
         rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
         approved = approved_comment(rendered["body"])
