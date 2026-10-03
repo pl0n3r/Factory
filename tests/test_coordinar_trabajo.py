@@ -3567,7 +3567,7 @@ class CoordinationTests(unittest.TestCase):
 
     def test_pr_reservation_hidden_marker_wins_over_visible_format_variants(self) -> None:
         variants = (
-            f"Reserva: \`{SESSION_B}\`",
+            f"Reserva: `{SESSION_B}`",
             f"**Reserva:** {SESSION_B}",
             f"Cierra #12 · Reserva: {SESSION_B}",
             f"Reserva : {SESSION_B}",
@@ -3587,7 +3587,7 @@ class CoordinationTests(unittest.TestCase):
             "number": 15,
             "state": "open",
             "draft": False,
-            "body": f"Closes #12\nReserva: \`{SESSION_A}\`",
+            "body": f"Closes #12\nReserva: `{SESSION_A}`",
             "head": {"ref": "trabajo/issue-12"},
             "base": {"ref": "main"},
         }
@@ -3621,7 +3621,7 @@ class CoordinationTests(unittest.TestCase):
 
     def test_renewal_metadata_regression_matches_condor_448_variants(self) -> None:
         variants = (
-            f"Reserva: \`{SESSION_A}\`",
+            f"Reserva: `{SESSION_A}`",
             f"**Reserva:** {SESSION_A}",
             f"Cierra #445 · Reserva: {SESSION_A}",
         )
