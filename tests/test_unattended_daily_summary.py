@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,10 +11,12 @@ from unittest.mock import patch
 from urllib.error import URLError
 import unittest
 
+from scripts import release_window as rw
 from scripts.unattended_daily_summary import (
     DailySummaryError,
     Fact,
     collect_condor_d043_gate,
+    collect_factory_release_pending,
     collect_issue_context,
     immediate_incidents,
     main as daily_main,
@@ -454,6 +457,95 @@ class UnattendedDailySummaryTests(unittest.TestCase):
         self.assertIn("### Cuotas", missing)
 
 
+    def test_approved_unexecuted_factory_release_is_visible_until_execution_marker(self):
+        now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+        sha = "4" * 40
+        rendered_gate = rw._render_gate(
+            "1.0.23",
+            sha,
+            datetime(2026, 10, 3, 9, 30, tzinfo=timezone.utc),
+            source_issue=900,
+        )
+        parsed = rw._gate_from_body(rendered_gate["body"])
+        self.assertIsNotNone(parsed)
+        gate, _, _ = parsed
+        journal = {
+            "gate_sha256": rw._gate_fingerprint(gate),
+            "option": "A",
+            "version": 2,
+        }
+
+        class ReleaseClient:
+            def __init__(self):
+                self.comments = [
+                    {
+                        "user": {"login": "github-actions[bot]"},
+                        "body": (
+                            "<!-- factory-human-decision "
+                            + json.dumps(journal, separators=(",", ":"), sort_keys=True)
+                            + " -->"
+                        ),
+                    }
+                ]
+
+            def _request(self, method, path, payload=None):
+                self.assert_method = method
+                if path.startswith("/search/issues?"):
+                    return {
+                        "items": [
+                            {
+                                "number": 918,
+                                "state": "closed",
+                                "title": "Factory 1.0.23",
+                                "body": rendered_gate["body"],
+                                "updated_at": "2026-10-03T09:40:00Z",
+                            }
+                        ]
+                    }
+                raise AssertionError(path)
+
+            def list_issue_comments(self, issue_number):
+                if issue_number != 918:
+                    raise AssertionError(issue_number)
+                return list(self.comments)
+
+        client = ReleaseClient()
+        pending = collect_factory_release_pending(client, now)
+        self.assertEqual(len(pending), 1)
+        self.assertIn("Factory 1.0.23 aprobada sin ejecutar", pending[0].text)
+        self.assertIn("Issue #918", pending[0].text)
+        self.assertIn(f"main@{sha}", pending[0].text)
+        self.assertEqual(pending[0].age_minutes, 20)
+
+        context = {
+            "decisions": (),
+            "blockers": (),
+            "advances": (),
+            "condor_d043": (),
+            "factory_release": pending,
+        }
+        daily = render_summary(decision(), runtime_input(), context, now)
+        night = render_night_report(decision(), context, now)
+        self.assertIn("### Release Factory aprobada sin ejecutar", daily)
+        self.assertIn("Factory 1.0.23 aprobada sin ejecutar", daily)
+        self.assertIn("Factory 1.0.23 aprobada sin ejecutar", night)
+
+        executed = {
+            "version": 1,
+            "sha": sha,
+            "run_id": 12345,
+            "executed_at": "2026-10-03T09:55:00Z",
+        }
+        client.comments.append({
+            "user": {"login": "github-actions[bot]"},
+            "body": (
+                "<!-- factory-release-executed "
+                + json.dumps(executed, separators=(",", ":"), sort_keys=True)
+                + " -->"
+            ),
+        })
+        self.assertEqual(collect_factory_release_pending(client, now), ())
+
     def test_live_issue_context_and_entrypoint_are_fail_closed_and_publish_once(self):
         now = datetime(2026, 10, 2, 13, 0, tzinfo=timezone.utc)
 
@@ -565,12 +657,16 @@ class UnattendedDailySummaryTests(unittest.TestCase):
                 "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
                 return_value=SimpleNamespace(global_pause=False, reason="running"),
             ),
+            patch(
+                "scripts.unattended_daily_summary.collect_factory_release_pending",
+                return_value=(),
+            ),
         )
         with patch.dict(
             os.environ,
             {"GH_TOKEN": "token", "GITHUB_REPOSITORY": "pl0n3r/Factory"},
             clear=False,
-        ), patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        ), patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
             self.assertEqual(daily_main(), 0)
         self.assertEqual(len(clients[-1].writes), 2)
         self.assertTrue(
@@ -616,6 +712,9 @@ class UnattendedDailySummaryTests(unittest.TestCase):
                 0,
                 "fresh",
             ),
+        ), patch(
+            "scripts.unattended_daily_summary.collect_factory_release_pending",
+            return_value=(),
         ), patch(
             "scripts.unattended_daily_summary.evaluate_unattended_kill_switch",
             return_value=SimpleNamespace(global_pause=True, reason="paused"),
