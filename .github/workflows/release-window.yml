@@ -1,0 +1,176 @@
+name: Factory Release Window
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Release Factory v1.x"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-release-window
+  cancel-in-progress: false
+
+jobs:
+  rearm:
+    name: Rearmar puerta exact-SHA si main derivó
+    if: github.repository == 'pl0n3r/Factory' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Construir snapshot acotado de puertas release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          printf '[]\n' > /tmp/release-issues.json
+          for page in 1 2 3 4 5; do
+            gh api               "repos/$REPOSITORY/issues?state=all&per_page=100&sort=updated&direction=desc&page=$page"               > /tmp/release-page.json
+            jq '
+              map(
+                select((has("pull_request") | not))
+                | select((.body // "") | contains("factory-human-gate"))
+                | select((.body // "") | contains("factory-release"))
+              )
+            ' /tmp/release-page.json > /tmp/release-page-filtered.json
+            jq --slurp 'add' /tmp/release-issues.json /tmp/release-page-filtered.json               > /tmp/release-issues.next
+            mv /tmp/release-issues.next /tmp/release-issues.json
+            count="$(jq 'length' /tmp/release-page.json)"
+            [[ "$count" == "100" ]] || break
+          done
+
+          printf '[]\n' > /tmp/release-gates.json
+          while IFS= read -r issue; do
+            number="$(jq -r '.number' <<<"$issue")"
+            [[ "$number" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::Issue release inválido"
+              exit 1
+            }
+            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq 'add // []' > /tmp/release-comments.json
+            jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
+            mv /tmp/release-gates.next /tmp/release-gates.json
+          done < <(jq -c '.[]' /tmp/release-issues.json)
+
+      - name: Rearmar únicamente si la decisión previa quedó stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
+          version="$(jq -er '.version' config/version.json)"
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n             --arg now "$now"             --arg main_sha "$main_sha"             --arg version "$version"             --slurpfile gates /tmp/release-gates.json             '{now:$now,main_sha:$main_sha,version:$version,gates:$gates[0]}'             > /tmp/release-window-input.json
+
+          python3 scripts/release_window.py push             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
+
+          action="$(jq -r '.action' /tmp/release-window-result.json)"
+          case "$action" in
+            none)
+              echo "::notice::release window: $(jq -r '.reason' /tmp/release-window-result.json)"
+              ;;
+            create_gate)
+              jq '{title,body,labels}' /tmp/release-window-result.json                 > /tmp/release-create.json
+              created="$(
+                gh api --method POST "repos/$REPOSITORY/issues"                   --input /tmp/release-create.json
+              )"
+              number="$(jq -r '.number' <<<"$created")"
+              echo "::notice::factory-release-rearm: creada puerta #$number para $main_sha"
+              ;;
+            *)
+              echo "::error::Acción release-window inesperada: $action"
+              exit 1
+              ;;
+          esac
+
+  execution:
+    name: Registrar release ejecutada tras self-test publicado
+    if: github.repository == 'pl0n3r/Factory' && github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Construir snapshot acotado de puertas release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          printf '[]\n' > /tmp/release-issues.json
+          for page in 1 2 3 4 5; do
+            gh api               "repos/$REPOSITORY/issues?state=all&per_page=100&sort=updated&direction=desc&page=$page"               > /tmp/release-page.json
+            jq '
+              map(
+                select((has("pull_request") | not))
+                | select((.body // "") | contains("factory-human-gate"))
+                | select((.body // "") | contains("factory-release"))
+              )
+            ' /tmp/release-page.json > /tmp/release-page-filtered.json
+            jq --slurp 'add' /tmp/release-issues.json /tmp/release-page-filtered.json               > /tmp/release-issues.next
+            mv /tmp/release-issues.next /tmp/release-issues.json
+            count="$(jq 'length' /tmp/release-page.json)"
+            [[ "$count" == "100" ]] || break
+          done
+
+          printf '[]\n' > /tmp/release-gates.json
+          while IFS= read -r issue; do
+            number="$(jq -r '.number' <<<"$issue")"
+            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq 'add // []' > /tmp/release-comments.json
+            jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
+            mv /tmp/release-gates.next /tmp/release-gates.json
+          done < <(jq -c '.[]' /tmp/release-issues.json)
+
+      - name: Registrar marker terminal exact-SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RUN_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n             --arg now "$now"             --arg head_sha "$RUN_HEAD_SHA"             --arg conclusion "$RUN_CONCLUSION"             --argjson run_id "$RUN_ID"             --slurpfile gates /tmp/release-gates.json             '{now:$now,head_sha:$head_sha,conclusion:$conclusion,run_id:$run_id,gates:$gates[0]}'             > /tmp/release-window-input.json
+
+          python3 scripts/release_window.py workflow-run             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
+
+          action="$(jq -r '.action' /tmp/release-window-result.json)"
+          case "$action" in
+            none)
+              echo "::notice::release execution: $(jq -r '.reason' /tmp/release-window-result.json)"
+              ;;
+            mark_executed)
+              issue="$(jq -r '.issue' /tmp/release-window-result.json)"
+              body="$(jq -r '.comment' /tmp/release-window-result.json)"
+              [[ "$issue" =~ ^[1-9][0-9]*$ ]]
+              jq -n --arg body "$body" '{body:$body}' > /tmp/release-comment.json
+              gh api --method POST                 "repos/$REPOSITORY/issues/$issue/comments"                 --input /tmp/release-comment.json >/dev/null
+              echo "::notice::factory-release-executed: gate #$issue / $RUN_HEAD_SHA"
+              ;;
+            *)
+              echo "::error::Acción release execution inesperada: $action"
+              exit 1
+              ;;
+          esac

@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from scripts.release_window import ReleaseWindowError, approved_unexecuted
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
 from scripts.unattended_watchdog import DailySummary, WatchdogDecision
 from scripts.unattended_watchdog_runtime import (
@@ -429,6 +430,70 @@ def _list_issues(
     raise DailySummaryError("github_issue_context_truncated")
 
 
+def collect_factory_release_pending(
+    client: GitHubIssueClient,
+    now: datetime,
+) -> tuple[Fact, ...]:
+    """Expone una aprobación exact-SHA que aún no produjo ejecución terminal."""
+    query = urlencode({
+        "q": 'repo:pl0n3r/Factory is:issue "factory-human-gate" in:body',
+        "per_page": 100,
+        "sort": "updated",
+        "order": "desc",
+    })
+    payload = client._request("GET", f"/search/issues?{query}")
+    if not isinstance(payload, dict):
+        raise DailySummaryError("factory_release_search_invalid")
+    items = payload.get("items")
+    if not isinstance(items, list) or len(items) > 100:
+        raise DailySummaryError("factory_release_search_invalid")
+
+    rows: list[dict[str, object]] = []
+    for issue in items:
+        if not isinstance(issue, dict):
+            continue
+        body = issue.get("body")
+        number = issue.get("number")
+        if (
+            not isinstance(body, str)
+            or "factory-human-gate" not in body
+            or "factory-release" not in body
+            or isinstance(number, bool)
+            or not isinstance(number, int)
+            or number < 1
+        ):
+            continue
+        comments = client.list_issue_comments(number)
+        if not isinstance(comments, list):
+            raise DailySummaryError("factory_release_comments_invalid")
+        rows.append({"issue": issue, "comments": comments})
+
+    try:
+        pending = approved_unexecuted({"gates": rows})
+    except ReleaseWindowError as exc:
+        raise DailySummaryError("factory_release_window_invalid") from exc
+    if pending is None:
+        return ()
+
+    age = _age_minutes(now, pending.get("updated_at"))
+    freshness = (
+        "unknown"
+        if age is None
+        else ("fresh" if age < 1440 else "stale")
+    )
+    return (
+        Fact(
+            text=(
+                f"Factory {pending['version']} aprobada sin ejecutar · "
+                f"Issue #{pending['issue']} · main@{pending['sha']}"
+            ),
+            source="Factory release window",
+            age_minutes=age,
+            freshness=freshness,
+        ),
+    )
+
+
 def collect_issue_context(
     client: GitHubIssueClient,
     now: datetime,
@@ -536,6 +601,7 @@ def render_summary(
     )
 
     condor_gate = tuple(issue_context.get("condor_d043", ()))
+    factory_release = tuple(issue_context.get("factory_release", ()))
     decisions = tuple(issue_context.get("decisions", ())) + four_c_facts(summary.human_gates)
     blockers = tuple(issue_context.get("blockers", ())) + four_c_facts(summary.blockers)
     advances = tuple(issue_context.get("advances", ())) + four_c_facts(summary.integrated)
@@ -563,6 +629,8 @@ def render_summary(
         f"## Resumen diario Factory · {local_date}\n\n"
         "### Puerta D-043 Condor\n"
         f"{_render_facts(condor_gate, 'UNKNOWN: puerta D-043 de Condor no observada.')}\n\n"
+        "### Release Factory aprobada sin ejecutar\n"
+        f"{_render_facts(factory_release, 'Ninguna demostrada.')}\n\n"
         "### Decisiones pendientes\n"
         f"{_render_facts(decisions, 'Ninguna demostrada.')}\n\n"
         "### Bloqueos\n"
@@ -600,6 +668,7 @@ def render_night_report(
             for value in summary.integrated
         )
     decisions = tuple(issue_context.get("decisions", ()))
+    factory_release = tuple(issue_context.get("factory_release", ()))
     blockers = tuple(issue_context.get("blockers", ()))
     incidents = tuple(
         Fact(str(value), "4C night_report", None, summary.state_freshness)
@@ -617,6 +686,8 @@ def render_night_report(
         f"{_render_facts(advances, 'UNKNOWN: no hay avance nocturno demostrable.')}\n\n"
         "### PRs o puertas esperando al dueño\n"
         f"{_render_facts(decisions, 'Ninguno demostrado.')}\n\n"
+        "### Release Factory aprobada sin ejecutar\n"
+        f"{_render_facts(factory_release, 'Ninguna demostrada.')}\n\n"
         "### Bloqueos\n"
         f"{_render_facts(blockers, 'Ninguno demostrado.')}\n\n"
         "### Incidentes\n"
@@ -687,6 +758,7 @@ def main() -> int:
         )
         context = collect_issue_context(client, now)
         context["condor_d043"] = (collect_condor_d043_gate(now),)
+        context["factory_release"] = collect_factory_release_pending(client, now)
         body = render_summary(decision, runtime_input, context, now)
         night_body = render_night_report(decision, context, now)
 

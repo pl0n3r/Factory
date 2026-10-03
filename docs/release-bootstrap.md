@@ -54,6 +54,24 @@ Para publicar un patch/minor posterior dentro de la major `v1`:
 El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`. La comprobación runtime es **solo estructural**; #83 conserva la evidencia administrativa de bypass.
 
 Cambiar `main`, mover `v1` a un SHA distinto del aprobado, usar una puerta de otra categoría o reutilizar una aprobación para un SHA distinto hace fallar cerrado. Que `v1` permanezca en el SHA estable anterior durante la primera pasada de mantenimiento es el estado esperado hasta `channel-ready`; nunca equivale a publicar el candidato.
+## Ventana de release y freeze exact-SHA
+
+Para evitar que una aprobación válida caduque porque `main` sigue moviéndose, Factory usa una ventana de release con TTL (60 minutos por defecto) gobernada por `scripts/release_window.py` y `.github/workflows/release-window.yml`.
+
+Orden canónico:
+
+`candidato exact-SHA → freeze → puerta factory-release → decisión OWNER → bootstrap → mover v1 → re-bootstrap → marker factory-release-executed → unfreeze`.
+
+Mientras exista una puerta vigente o una decisión A exact-SHA todavía no ejecutada, los PR normales quedan congelados. El único bypass permitido es un repair crítico con Issue de prioridad crítica y el marker explícito:
+
+    <!-- factory-release-freeze-exception {"version":1,"reason":"critical-repair","issue":<N>} -->
+
+La excepción habilita exclusivamente el repair indicado; no publica una release, no crea una decisión humana y no transporta autoridad entre SHAs.
+
+Si el TTL vence, el freeze deja de bloquear merges, pero la decisión A previa continúa ligada únicamente a su SHA original. Si `main` cambió, `release-window.yml` rearma de forma idempotente una nueva puerta `factory-release` sobre el HEAD vigente con `safe_default=B`; nunca copia el journal A anterior.
+
+Una release solo se considera ejecutada cuando el workflow `Release Factory v1.x` termina con éxito y la puerta exact-SHA recibe un marker `factory-release-executed` coincidente. Hasta entonces el resumen diario/nocturno debe mantener visible “release aprobada sin ejecutar”.
+
 ## Rollback tras startup_failure
 
 Si una publicación de `Factory@v1` provoca `startup_failure` en consumidores, aplica el runbook fail-closed [`docs/reusable-release-rollback.md`](reusable-release-rollback.md). Detectar o recomendar rollback no autoriza a mover `v1`; la acción sigue siendo humana/administrativa y exige evidencia nueva de recuperación en un consumidor real.
