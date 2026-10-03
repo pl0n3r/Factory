@@ -282,19 +282,49 @@ ROLE_EVIDENCE_KEYS = {
     "cross review",
     "cross-review",
 }
+ROLE_CHECKLIST_HEADINGS = {
+    "## checklist de roles",
+    "## role checklist",
+    "## roles checklist",
+}
 
 
 def _text_without_role_evidence(body: str) -> str:
-    """Excluye metadatos/checklists de roles de las señales semánticas."""
+    """Excluye solo evidencia estructural de roles de señales semánticas."""
     lines: list[str] = []
+    contiguous_role_evidence = False
+    in_role_checklist = False
+
     for line in body.splitlines():
         stripped = line.strip()
+        normalized = stripped.casefold()
+
+        if stripped.startswith("## "):
+            if normalized in ROLE_CHECKLIST_HEADINGS:
+                in_role_checklist = True
+                contiguous_role_evidence = False
+                continue
+            if in_role_checklist:
+                in_role_checklist = False
+
+        if in_role_checklist:
+            continue
+
         name, separator, _ = stripped.partition(":")
         if separator and name.casefold() in ROLE_EVIDENCE_KEYS:
+            contiguous_role_evidence = True
             continue
-        if re.fullmatch(r"- \[[ xX]\] .+", stripped):
+
+        if (
+            contiguous_role_evidence
+            and re.fullmatch(r"- \[[ xX]\] .+", stripped)
+        ):
             continue
+
+        if stripped:
+            contiguous_role_evidence = False
         lines.append(line)
+
     return "\n".join(lines)
 
 

@@ -261,6 +261,13 @@ class RolesKitTests(unittest.TestCase):
         self.assertLessEqual({"contenido", "marketing"}, set(roles))
         self.assertNotIn("legal-privacidad", roles)
 
+    def test_non_role_checkbox_prose_still_drives_text_role_classification(self):
+        roles, _ = classify(
+            context(body="- [x] CTA de campaña visible para conversión."),
+            self.catalog,
+        )
+        self.assertLessEqual({"contenido", "marketing"}, set(roles))
+
     def test_database_migration_signals_still_trigger_dba(self):
         for body in (
             "Migración de schema para pedidos.",
