@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -5,15 +6,41 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AcceptanceWorkflowContractTests(unittest.TestCase):
-    def test_reusable_waits_boundedly_for_required_checks(self):
+    def test_reusable_waits_long_enough_for_slow_required_checks(self):
         reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
-        self.assertIn("max_attempts=12", reusable)
-        self.assertIn("wait_seconds=10", reusable)
+        acceptance = reusable.split("  acceptance:\n", 1)[1]
+        timeout_minutes = int(
+            re.search(r"timeout-minutes: ([0-9]+)", acceptance).group(1)
+        )
+        max_attempts = int(re.search(r"max_attempts=([0-9]+)", acceptance).group(1))
+        wait_seconds = int(re.search(r"wait_seconds=([0-9]+)", acceptance).group(1))
+        wait_budget = (max_attempts - 1) * wait_seconds
+
+        self.assertGreaterEqual(wait_budget, 20 * 60)
+        self.assertLess(wait_budget, timeout_minutes * 60)
         self.assertIn('commits/$SHA/check-runs?per_page=100', reusable)
-        self.assertIn('[[ "$readiness_rc" != "3" ]]', reusable)
+        self.assertIn("Checks requeridos no quedaron terminales dentro del límite.", reusable)
+
+    def test_reusable_uses_low_frequency_bounded_check_polling(self):
+        reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
+        max_attempts = int(re.search(r"max_attempts=([0-9]+)", reusable).group(1))
+        wait_seconds = int(re.search(r"wait_seconds=([0-9]+)", reusable).group(1))
+
+        self.assertGreaterEqual(wait_seconds, 30)
+        self.assertLessEqual(max_attempts, 50)
         self.assertIn("attempt == max_attempts", reusable)
         self.assertIn('sleep "$wait_seconds"', reusable)
-        self.assertIn("Checks requeridos no quedaron terminales dentro del límite.", reusable)
+
+    def test_terminal_acceptance_errors_still_abort_without_retry(self):
+        reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
+        terminal_guard = 'if [[ "$readiness_rc" != "3" ]]; then'
+        terminal_exit = 'exit "$readiness_rc"'
+        pending_limit = "if (( attempt == max_attempts )); then"
+
+        self.assertIn(terminal_guard, reusable)
+        self.assertIn(terminal_exit, reusable)
+        self.assertLess(reusable.index(terminal_guard), reusable.index(pending_limit))
+        self.assertLess(reusable.index(terminal_guard), reusable.index(terminal_exit))
 
     def test_readiness_does_not_repeat_contract_tests(self):
         reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
@@ -27,6 +54,14 @@ class AcceptanceWorkflowContractTests(unittest.TestCase):
         self.assertLess(loop_start, reusable.index(checks_only))
         self.assertLess(reusable.index(checks_only), loop_end)
         self.assertGreater(reusable.index(final), loop_end)
+
+    def test_documentation_explains_bounded_wait_without_reruns(self):
+        doc = (ROOT / "docs/aceptacion-ejecutable.md").read_text(encoding="utf-8")
+
+        self.assertIn("20 minutos", doc)
+        self.assertIn("60 segundos", doc)
+        self.assertIn("no vuelve a ejecutar", doc)
+        self.assertIn("fallo terminal", doc)
 
     def test_issue_form_and_required_gate_are_wired(self):
         ci = (ROOT / ".github/workflows/factory-ci.yml").read_text(encoding="utf-8")
