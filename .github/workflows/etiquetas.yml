@@ -190,6 +190,10 @@ jobs:
           while IFS= read -r pr; do
             number="$(jq -r '.number' <<<"$pr")"
             head_sha="$(jq -r '.head.sha' <<<"$pr")"
+            if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::HEAD de PR inválido para auditoría de Etiquetas"
+              exit 1
+            fi
             body="$(jq -r '.body // ""' <<<"$pr")"
             closing_json="$(printf '%s' "$body" | python3 .factory/scripts/labels_kit.py closing-reference --language "$LANGUAGE")"
             linked_issue="$(jq -r '.number // empty' <<<"$closing_json")"
@@ -197,9 +201,13 @@ jobs:
               echo "::warning::PR #$number no tiene referencia cerrante canónica; se omite alerta persistente."
               continue
             fi
-            if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::HEAD de PR inválido para auditoría de Etiquetas"
-              exit 1
+            if ! gh api "repos/$REPOSITORIO/issues/$linked_issue" > /tmp/linked-issue.json; then
+              echo "::warning::PR #$number referencia #$linked_issue, pero el Issue fuente no es legible; se omite alerta persistente."
+              continue
+            fi
+            if [[ "$(jq -r 'has("pull_request")' /tmp/linked-issue.json)" == "true" ]]; then
+              echo "::warning::PR #$number referencia #$linked_issue, pero el destino también es una PR; se omite alerta persistente."
+              continue
             fi
             curl --fail --silent --show-error --location --max-time 20 \
               --header 'Accept: application/vnd.github+json' \
