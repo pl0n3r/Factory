@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import datetime, timedelta
 from typing import Any
 
 from seguridad.puertas_humanas import (
@@ -30,6 +31,16 @@ MAIN_TARGET_RE = re.compile(r"\bmain@([0-9a-f]{40})\b")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 RELEASE_GATE_CATEGORIES = {"release-1.0.0", "factory-release"}
+REARM_RE = re.compile(
+    r"<!--\\s*factory-release-rearm\\s+(\\{[^\\n]*\\})\\s*-->"
+)
+REARM_INTENT_RE = re.compile(r"<!--\\s*factory-release-rearm\\b")
+RELEASE_WINDOW_RE = re.compile(
+    r"<!--\\s*factory-release-window\\s+(\\{[^\\n]*\\})\\s*-->"
+)
+RELEASE_WINDOW_INTENT_RE = re.compile(r"<!--\\s*factory-release-window\\b")
+MAX_REARM_DEPTH = 8
+MAX_RELEASE_WINDOW_MINUTES = 120
 MAX_INPUT = 1_000_000
 MAX_COMMENT_BODY = 20_000
 
@@ -49,6 +60,49 @@ def _sha(value: Any, field: str) -> str:
     if SHA_RE.fullmatch(text) is None:
         raise ReleaseBootstrapError(f"{field} debe ser SHA-1 de 40 hex.")
     return text
+
+
+def _canonical_time(value: Any, field: str) -> datetime:
+    text = _string(value, field, 40)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ReleaseBootstrapError(f"{field} inválido.") from exc
+    if parsed.tzinfo is None:
+        raise ReleaseBootstrapError(f"{field} requiere zona horaria.")
+    return parsed
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReleaseBootstrapError(f"Marker contiene clave duplicada: {key}.")
+        result[key] = value
+    return result
+
+
+def _marker_payload(
+    body: str,
+    *,
+    marker_re: re.Pattern[str],
+    intent_re: re.Pattern[str],
+    name: str,
+) -> dict[str, Any] | None:
+    matches = marker_re.findall(body)
+    if not matches:
+        if intent_re.search(body):
+            raise ReleaseBootstrapError(f"Marker {name} incompleto.")
+        return None
+    if len(matches) != 1:
+        raise ReleaseBootstrapError(f"Marker {name} ambiguo.")
+    try:
+        raw = json.loads(matches[0], object_pairs_hook=_unique_json_object)
+    except json.JSONDecodeError as exc:
+        raise ReleaseBootstrapError(f"Marker {name} inválido.") from exc
+    if not isinstance(raw, dict):
+        raise ReleaseBootstrapError(f"Marker {name} inválido.")
+    return raw
 
 
 def _latest_owner_approval(comments: Any, owner: str) -> str:
@@ -99,6 +153,153 @@ def _normalized_gate_snapshot(body: str) -> tuple[dict[str, Any], str]:
     )
     fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return gate, fingerprint
+
+
+def _release_gate_target(body: str) -> str:
+    gate, _ = _normalized_gate_snapshot(body)
+    if gate.get("category") != "factory-release":
+        raise ReleaseBootstrapError("Origen de rearmado no es factory-release.")
+    targets = MAIN_TARGET_RE.findall(str(gate.get("context", "")))
+    if len(targets) != 1:
+        raise ReleaseBootstrapError("Origen de rearmado sin main@SHA único.")
+    return _sha(targets[0], "gate.target_sha")
+
+
+def _rearm_marker(body: str, target_sha: str) -> int:
+    raw = _marker_payload(
+        body,
+        marker_re=REARM_RE,
+        intent_re=REARM_INTENT_RE,
+        name="factory-release-rearm",
+    )
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"version", "source_issue", "sha"}
+        or raw.get("version") != 1
+        or type(raw.get("source_issue")) is not int
+        or raw["source_issue"] < 1
+        or _sha(raw.get("sha"), "rearm.sha") != target_sha
+    ):
+        raise ReleaseBootstrapError("Origen de rearmado inválido.")
+    return raw["source_issue"]
+
+
+def _release_window(
+    body: str,
+    target_sha: str,
+    *,
+    created_at: Any = None,
+    current_at: Any = None,
+) -> None:
+    raw = _marker_payload(
+        body,
+        marker_re=RELEASE_WINDOW_RE,
+        intent_re=RELEASE_WINDOW_INTENT_RE,
+        name="factory-release-window",
+    )
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != {"version", "sha", "opened_at", "expires_at"}
+        or raw.get("version") != 1
+        or _sha(raw.get("sha"), "window.sha") != target_sha
+    ):
+        raise ReleaseBootstrapError("Ventana de rearmado inválida.")
+    opened = _canonical_time(raw["opened_at"], "window.opened_at")
+    expires = _canonical_time(raw["expires_at"], "window.expires_at")
+    if (
+        expires <= opened
+        or expires - opened > timedelta(minutes=MAX_RELEASE_WINDOW_MINUTES)
+    ):
+        raise ReleaseBootstrapError("Ventana de rearmado fuera de límites.")
+    if created_at is not None:
+        created = _canonical_time(created_at, "gate.created_at")
+        if created < opened or created >= expires:
+            raise ReleaseBootstrapError(
+                "Puerta rearmada fue creada fuera de su ventana."
+            )
+    if current_at is not None:
+        current = _canonical_time(current_at, "now")
+        if current < opened or current >= expires:
+            raise ReleaseBootstrapError(
+                "Puerta rearmada fuera de su ventana vigente."
+            )
+
+
+def _validate_rearmed_bot_gate(
+    *,
+    gate: dict[str, Any],
+    expected: str,
+    owner: str,
+    now: Any,
+    sources: Any,
+) -> None:
+    user = gate.get("user")
+    if not isinstance(user, dict) or user.get("login") != DECISION_BOT:
+        raise ReleaseBootstrapError("Puerta creada por actor no confiable.")
+
+    body = gate.get("body")
+    if not isinstance(body, str):
+        raise ReleaseBootstrapError("Puerta rearmada sin body válido.")
+    target_sha = _release_gate_target(body)
+    if target_sha != expected:
+        raise ReleaseBootstrapError(
+            "Puerta rearmada corresponde a otro SHA."
+        )
+    next_issue = _rearm_marker(body, target_sha)
+    _release_window(
+        body,
+        target_sha,
+        created_at=gate.get("created_at"),
+        current_at=now,
+    )
+
+    if not isinstance(sources, list) or not sources:
+        raise ReleaseBootstrapError("Falta provenance de rearmado.")
+    if len(sources) > MAX_REARM_DEPTH:
+        raise ReleaseBootstrapError("Cadena de rearmado excede el límite.")
+
+    seen: set[int] = set()
+    for index, source in enumerate(sources):
+        if not isinstance(source, dict):
+            raise ReleaseBootstrapError("Fuente de rearmado inválida.")
+        number = source.get("number")
+        if type(number) is not int or number < 1 or number != next_issue:
+            raise ReleaseBootstrapError("Cadena de rearmado no coincide.")
+        if number in seen:
+            raise ReleaseBootstrapError("Cadena de rearmado cíclica.")
+        seen.add(number)
+
+        source_body = source.get("body")
+        if not isinstance(source_body, str):
+            raise ReleaseBootstrapError("Fuente de rearmado sin body válido.")
+        source_target = _release_gate_target(source_body)
+        source_user = source.get("user")
+        source_login = (
+            source_user.get("login") if isinstance(source_user, dict) else None
+        )
+        association = source.get("author_association")
+
+        if source_login == owner and association == "OWNER":
+            if index != len(sources) - 1:
+                raise ReleaseBootstrapError(
+                    "Cadena de rearmado contiene evidencia sobrante."
+                )
+            return
+
+        if source_login != DECISION_BOT:
+            raise ReleaseBootstrapError(
+                "Cadena de rearmado no termina en una puerta del OWNER."
+            )
+        next_issue = _rearm_marker(source_body, source_target)
+        _release_window(
+            source_body,
+            source_target,
+            created_at=source.get("created_at"),
+        )
+
+    raise ReleaseBootstrapError(
+        "Cadena de rearmado no termina en una puerta del OWNER."
+    )
 
 
 def _v2_release_intent(gate: dict[str, Any]) -> bool:
@@ -255,7 +456,13 @@ def validate_payload(payload: Any) -> dict[str, str]:
     if not isinstance(gate, dict) or gate.get("state") != "closed":
         raise ReleaseBootstrapError("Puerta de release debe estar cerrada.")
     if gate.get("author_association") not in TRUSTED_ASSOCIATIONS:
-        raise ReleaseBootstrapError("Puerta creada por actor no confiable.")
+        _validate_rearmed_bot_gate(
+            gate=gate,
+            expected=expected,
+            owner=owner,
+            now=payload.get("now"),
+            sources=payload.get("rearm_sources"),
+        )
     body = gate.get("body")
     gate_result = classify_body(body if isinstance(body, str) else "")
     category = gate_result.get("category") if gate_result.get("status") == "gate" else None

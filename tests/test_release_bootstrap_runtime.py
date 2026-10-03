@@ -2,12 +2,17 @@
 import hashlib
 import json
 import unittest
+from pathlib import Path
 
 from scripts.release_bootstrap import ReleaseBootstrapError, validate_payload
 from seguridad.puertas_humanas import MARKER_RE, validate_gate
 
+ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 OTHER = "b" * 40
+NOW = "2026-10-03T10:30:00Z"
+WINDOW_OPEN = "2026-10-03T10:00:00Z"
+WINDOW_CLOSE = "2026-10-03T11:00:00Z"
 GATE_FIRST = (
     '<!-- factory-human-gate '
     '{"category":"release-1.0.0","context":"Publicar Factory v1.0.0.",'
@@ -22,6 +27,75 @@ GATE_MAINTENANCE = (
     '{"id":"B","label":"No publicar todavía"}],'
     '"recommendation":"A","safe_default":"B"} -->'
 )
+
+
+def rearmed_gate_body(
+    *,
+    sha: str = SHA,
+    source_issue: int = 927,
+    opened_at: str = WINDOW_OPEN,
+    expires_at: str = WINDOW_CLOSE,
+) -> str:
+    window = json.dumps(
+        {
+            "expires_at": expires_at,
+            "opened_at": opened_at,
+            "sha": sha,
+            "version": 1,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    rearm = json.dumps(
+        {
+            "sha": sha,
+            "source_issue": source_issue,
+            "version": 1,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return (
+        GATE_MAINTENANCE
+        + f"\n<!-- factory-release-window {window} -->"
+        + f"\n<!-- factory-release-rearm {rearm} -->"
+    )
+
+
+def owner_source_issue(
+    *,
+    number: int = 927,
+    body: str = GATE_MAINTENANCE,
+) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": "closed",
+        "author_association": "OWNER",
+        "created_at": "2026-10-03T09:50:00Z",
+        "user": {"login": "pl0n3r"},
+        "body": body,
+    }
+
+
+def bot_source_issue(
+    *,
+    number: int,
+    source_issue: int,
+    sha: str = SHA,
+) -> dict[str, object]:
+    return {
+        "number": number,
+        "state": "closed",
+        "author_association": "NONE",
+        "created_at": "2026-10-03T10:05:00Z",
+        "user": {"login": "github-actions[bot]"},
+        "body": rearmed_gate_body(
+            sha=sha,
+            source_issue=source_issue,
+            opened_at="2026-10-03T10:00:00Z",
+            expires_at="2026-10-03T10:20:00Z",
+        ),
+    }
 
 
 def gate_fingerprint(body: str) -> str:
@@ -65,6 +139,8 @@ def valid_payload(*, gate_body=GATE_FIRST, v1_0_0_exists=False):
         "default_branch_sha": SHA,
         "v1_sha": SHA,
         "v1_0_0_exists": v1_0_0_exists,
+        "now": NOW,
+        "rearm_sources": [],
         "issues": {
             **{str(n): {"state": "closed"} for n in range(1, 15)},
             "54": {"state": "closed"},
@@ -73,6 +149,8 @@ def valid_payload(*, gate_body=GATE_FIRST, v1_0_0_exists=False):
         "gate": {
             "state": "closed",
             "author_association": "OWNER",
+            "created_at": "2026-10-03T10:05:00Z",
+            "user": {"login": "pl0n3r"},
             "closed_by": "pl0n3r",
             "body": gate_body,
             "comments": [
@@ -110,7 +188,90 @@ def valid_v2_payload(*, gate_body=GATE_MAINTENANCE):
     return payload
 
 
+def valid_rearmed_v2_payload(
+    *,
+    gate_body: str | None = None,
+    sources: list[dict[str, object]] | None = None,
+):
+    body = gate_body or rearmed_gate_body()
+    payload = valid_v2_payload(gate_body=body)
+    payload["gate"]["author_association"] = "NONE"
+    payload["gate"]["user"] = {"login": "github-actions[bot]"}
+    payload["gate"]["created_at"] = "2026-10-03T10:05:00Z"
+    payload["rearm_sources"] = (
+        sources if sources is not None else [owner_source_issue()]
+    )
+    return payload
+
+
 class ReleaseBootstrapRuntimeTests(unittest.TestCase):
+    def test_owner_created_gate_remains_trusted(self):
+        self.assertEqual(
+            validate_payload(valid_v2_payload()),
+            {"status": "ready", "sha": SHA},
+        )
+
+    def test_rearmed_bot_gate_with_owner_source_issue_is_trusted(self):
+        self.assertEqual(
+            validate_payload(valid_rearmed_v2_payload()),
+            {"status": "ready", "sha": SHA},
+        )
+
+        chained = valid_rearmed_v2_payload(
+            gate_body=rearmed_gate_body(source_issue=930),
+            sources=[
+                bot_source_issue(number=930, source_issue=927),
+                owner_source_issue(),
+            ],
+        )
+        self.assertEqual(
+            validate_payload(chained),
+            {"status": "ready", "sha": SHA},
+        )
+
+    def test_bot_gate_without_valid_rearm_origin_fails_closed(self):
+        cases = {}
+
+        missing_origin = valid_rearmed_v2_payload(
+            gate_body=GATE_MAINTENANCE
+        )
+        cases["missing-origin"] = missing_origin
+
+        wrong_sha = valid_rearmed_v2_payload(
+            gate_body=rearmed_gate_body(sha=OTHER)
+        )
+        cases["wrong-sha"] = wrong_sha
+
+        expired = valid_rearmed_v2_payload(
+            gate_body=rearmed_gate_body(
+                expires_at="2026-10-03T10:20:00Z"
+            )
+        )
+        cases["expired-window"] = expired
+
+        wrong_owner = valid_rearmed_v2_payload()
+        wrong_owner["rearm_sources"][0]["user"]["login"] = "otro"
+        cases["wrong-owner"] = wrong_owner
+
+        wrong_source = valid_rearmed_v2_payload()
+        wrong_source["rearm_sources"][0]["number"] = 999
+        cases["wrong-source"] = wrong_source
+
+        for name, payload in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(ReleaseBootstrapError):
+                    validate_payload(payload)
+
+    def test_release_bootstrap_workflow_collects_rearm_provenance(self):
+        workflow = (
+            ROOT / ".github" / "workflows" / "release-bootstrap.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("/tmp/rearm-sources.json", workflow)
+        self.assertIn("factory-release-rearm", workflow)
+        self.assertIn("rearm_sources:$rearm_sources[0]", workflow)
+        self.assertIn("created_at:$gate[0].created_at", workflow)
+        self.assertIn("issues: read", workflow)
+
     def test_valid_first_release_candidate(self):
         self.assertEqual(
             validate_payload(valid_payload()),
