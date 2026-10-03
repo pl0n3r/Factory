@@ -3640,5 +3640,27 @@ class CoordinationTests(unittest.TestCase):
                 )
 
 
+    def test_reservation_metadata_diagnostics_cover_authoritative_and_legacy_paths(self) -> None:
+        hidden = f"<!-- condor-reserva-id: {SESSION_A} -->"
+        self.assertIsNone(coordinator.reservation_metadata_error(hidden, SESSION_A))
+
+        visible = f"Reserva: {SESSION_A}"
+        self.assertIsNone(coordinator.reservation_metadata_error(visible, SESSION_A))
+
+        visible_conflict = coordinator.reservation_metadata_error(
+            f"Reserva: {SESSION_B}",
+            SESSION_A,
+        )
+        self.assertIsNotNone(visible_conflict)
+        self.assertIn("línea visible", visible_conflict.lower())
+        self.assertIn(SESSION_B, visible_conflict)
+        self.assertIn(SESSION_A, visible_conflict)
+
+        missing = coordinator.reservation_metadata_error("Closes #12", SESSION_A)
+        self.assertIsNotNone(missing)
+        self.assertIn("metadata de reserva oculta", missing)
+        self.assertIn(SESSION_A, missing)
+
+
 if __name__ == "__main__":
     unittest.main()
