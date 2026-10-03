@@ -22,6 +22,7 @@ y valida el único marker cerrado `factory-unattended-kill-switch` con el contra
 - Si no es verificablemente `RUNNING`, responde una sola línea al dueño y detente: `PAUSADO: kill switch global no está en RUNNING (<razón>).`
 - Un agente nunca cambia el marker por iniciativa propia. Solo una instrucción explícita del dueño para pausar/reanudar autoriza editarlo.
 - El switch impide **nuevo trabajo/mutaciones**; no mata procesos remotos que ya estuvieran ejecutándose.
+- **WATCHDOG `UNKNOWN` no es una pausa global.** Si Presence/HEALTH/evidencia de un frente queda `UNKNOWN`, ese frente y cualquier acción que dependa de esa evidencia fallan cerrado, pero el dispatcher continúa el ranking global y puede elegir una hoja pre-live segura, explícitamente scoped y `ready` de otro repositorio. Solo #767 `PAUSED`/ilegible (o una guarda global 4B válida como pausa) detiene todo el despacho. Esta continuidad nunca salta live/go-live, gasto, secretos/credenciales, datos reales, irreversible ni backup requerido sin verificar.
 
 ### Preflight de capacidades
 
