@@ -40,14 +40,16 @@ para NO_WORK. Un incidente como Factory#860 no es un sink alternativo.
 
 ## Baseline y métrica
 
-El contexto de Factory#904 registra “decenas de comentarios” casi idénticos entre
-aproximadamente 22:50 y 00:00 UTC del 2026-10-02 (~70 min). El feed actual de
-GitHub no permite reconstruir con certeza un conteo histórico exacto de esos
-comentarios; por eso no se publica una cifra puntual inventada.
+Factory#904 describía el episodio como “decenas de comentarios” entre
+aproximadamente 22:50 y 00:00 UTC. La relectura reproducible del feed global de
+comentarios de GitHub mostró un desfase horario en esa descripción: esa ventana
+exacta contiene 0 comentarios NO_WORK, mientras el burst observable anterior sí
+puede medirse sin inferencia.
 
-Para comparación cuantitativa se usa un lower bound conservador: “decenas” en
-plural implica al menos 20 publicaciones en ~70 min, es decir **>= 17.1
-comentarios nuevos/h** durante el episodio reportado.
+Entre **20:00:19Z** y **22:46:22Z** del 2026-10-02, la API devuelve
+**119 comentarios** NO_WORK nuevos, todos en Factory#860. Son 166.05 minutos y
+equivalen a **43.0 comentarios nuevos/h**. Este es el baseline verificable usado
+por la regresión; no se extrapola desde la palabra “decenas”.
 
 Con la política nueva:
 
