@@ -271,6 +271,33 @@ def _positive_role_text(text: str) -> str:
     return value
 
 
+ROLE_EVIDENCE_KEYS = {
+    "rol(es)",
+    "roles",
+    "rol primario",
+    "revisión cruzada",
+    "revision cruzada",
+    "role(s)",
+    "primary role",
+    "cross review",
+    "cross-review",
+}
+
+
+def _text_without_role_evidence(body: str) -> str:
+    """Excluye metadatos/checklists de roles de las señales semánticas."""
+    lines: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        name, separator, _ = stripped.partition(":")
+        if separator and name.casefold() in ROLE_EVIDENCE_KEYS:
+            continue
+        if re.fullmatch(r"- \[[ xX]\] .+", stripped):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _roles_from_text(text: str) -> set[str]:
     text = _positive_role_text(text)
     keyword_rules = (
@@ -336,10 +363,13 @@ def classify(
         roles.update(file_roles)
         risks.update(file_risks)
 
-    text = f"{context['title']}\n{context['body']}".lower()
+    semantic_body = _text_without_role_evidence(context["body"])
+    text = f"{context['title']}\n{semantic_body}".lower()
     roles.update(_roles_from_text(text))
     if catalog is not None:
-        roles.update(_roles_from_catalog_extensions(context, catalog))
+        semantic_context = dict(context)
+        semantic_context["body"] = semantic_body
+        roles.update(_roles_from_catalog_extensions(semantic_context, catalog))
 
     if not roles:
         roles.update({"ingenieria-software", "qa"})

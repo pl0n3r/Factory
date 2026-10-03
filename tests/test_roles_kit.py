@@ -232,6 +232,35 @@ class RolesKitTests(unittest.TestCase):
         roles, _ = classify(context(body="CTA de campaña y campaign tracking."))
         self.assertLessEqual({"marketing", "contenido"}, set(roles))
 
+    def test_pr_role_checklists_do_not_create_recursive_required_roles(self):
+        body = complete_body(["contenido"], primary="contenido")
+        result = validate_pr(
+            context(
+                body=body,
+                labels=["tipo: documentación", self.catalog["contenido"]["label_es"]],
+            ),
+            self.catalog,
+            ROLES_DIR,
+            "es",
+        )
+        self.assertEqual(result["required"], ["contenido"])
+        self.assertEqual(result["declared"], ["contenido"])
+
+    def test_real_pr_prose_still_drives_text_role_classification_after_evidence_is_ignored(self):
+        body = (
+            complete_body(["contenido", "marketing"], primary="marketing")
+            + "\n\nLa campaña requiere CTA medible para mejorar conversión."
+        )
+        roles, _ = classify(
+            context(
+                body=body,
+                labels=["tipo: documentación"],
+            ),
+            self.catalog,
+        )
+        self.assertLessEqual({"contenido", "marketing"}, set(roles))
+        self.assertNotIn("legal-privacidad", roles)
+
     def test_database_migration_signals_still_trigger_dba(self):
         for body in (
             "Migración de schema para pedidos.",
