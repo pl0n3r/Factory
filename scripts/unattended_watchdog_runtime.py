@@ -40,6 +40,7 @@ GUARD_FIELDS = frozenset(
 )
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 CANONICAL_REPOSITORY = "pl0n3r/Factory"
+WATCHDOG_EVIDENCE_SCOPE_REPOSITORY = CANONICAL_REPOSITORY
 REPOSITORY_API_PREFIX = "/repos/pl0n3r/Factory/"
 READ_REPOSITORY_API_PREFIXES = tuple(
     f"/repos/{repository}/" for repository in CANONICAL_REPOSITORIES
@@ -248,7 +249,9 @@ def alert_body(spec: AlertSpec) -> str:
         f"Evidencia 4C: `{spec.evidence_fingerprint}`\n\n"
         f"### Razones\n{reasons}\n\n"
         "Esta alerta pertenece exclusivamente al runtime unattended-watchdog. "
-        "No concede autoridad nueva ni implica go-live, gasto o datos reales.\n"
+        f"Su evidencia UNKNOWN queda acotada a {WATCHDOG_EVIDENCE_SCOPE_REPOSITORY}; "
+        "no equivale a global_pause ni concede autoridad nueva. "
+        "Go-live, gasto, credenciales, datos reales e irreversible siguen fail-closed.\n"
     )
 
 
