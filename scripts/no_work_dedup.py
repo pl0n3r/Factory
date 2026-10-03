@@ -95,19 +95,30 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
 
     open_prs = []
     for pr in value["pull_requests"]:
-        if isinstance(pr, dict):
-            state = pr.get("state")
-            if state not in (None, "open"):
+        if not isinstance(pr, dict):
+            raise NoWorkInventoryError(f"pull_request_invalid:{name}")
+        state = pr.get("state")
+        if state != "open":
+            if isinstance(state, str):
                 continue
-            open_prs.append(
-                {
-                    key: pr[key]
-                    for key in ("number", "state", "head_sha")
-                    if key in pr
-                }
-            )
-        else:
-            open_prs.append(pr)
+            raise NoWorkInventoryError(f"pull_request_state_invalid:{name}")
+        number = pr.get("number")
+        head_sha = pr.get("head_sha")
+        if type(number) is not int or number <= 0:
+            raise NoWorkInventoryError(f"pull_request_number_invalid:{name}")
+        if (
+            not isinstance(head_sha, str)
+            or len(head_sha) not in (40, 64)
+            or any(ch not in "0123456789abcdef" for ch in head_sha)
+        ):
+            raise NoWorkInventoryError(f"pull_request_head_invalid:{name}")
+        open_prs.append(
+            {
+                "number": number,
+                "state": "open",
+                "head_sha": head_sha,
+            }
+        )
 
     return {
         "available": _stable(value["available"]),
