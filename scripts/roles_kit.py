@@ -271,6 +271,29 @@ def _positive_role_text(text: str) -> str:
     return value
 
 
+ROLE_DECLARATION_LINE = re.compile(
+    r"(?im)^[ \t]*(?:rol\(es\)|roles|rol primario|revisi[oó]n cruzada|"
+    r"role\(s\)|primary role|cross[- ]review)[ \t]*:[^\r\n]*(?:\r?\n|$)"
+)
+ROLE_DECLARATION_CHECKLIST = re.compile(
+    r"(?im)(?:^[ \t]*(?:rol\(es\)|roles|rol primario|revisi[oó]n cruzada|"
+    r"role\(s\)|primary role|cross[- ]review)[ \t]*:[^\r\n]*\r?\n)+"
+    r"(?:^[ \t]*\r?\n)*"
+    r"(?:^[ \t]*- \[[ xX]\] .*(?:\r?\n|$))+"
+)
+ROLE_CHECKLIST_SECTION = re.compile(
+    r"(?ims)^[ \t]*##[ \t]+(?:checklist de roles|role checklist|roles checklist)"
+    r"[ \t]*\r?$.*?(?=^[ \t]*##[ \t]+|\Z)"
+)
+
+
+def _text_without_role_evidence(body: str) -> str:
+    """Excluye solo evidencia estructural de roles de señales semánticas."""
+    value = ROLE_CHECKLIST_SECTION.sub("", body)
+    value = ROLE_DECLARATION_CHECKLIST.sub("", value)
+    return ROLE_DECLARATION_LINE.sub("", value)
+
+
 def _roles_from_text(text: str) -> set[str]:
     text = _positive_role_text(text)
     keyword_rules = (
@@ -336,10 +359,13 @@ def classify(
         roles.update(file_roles)
         risks.update(file_risks)
 
-    text = f"{context['title']}\n{context['body']}".lower()
+    semantic_body = _text_without_role_evidence(context["body"])
+    text = f"{context['title']}\n{semantic_body}".lower()
     roles.update(_roles_from_text(text))
     if catalog is not None:
-        roles.update(_roles_from_catalog_extensions(context, catalog))
+        semantic_context = dict(context)
+        semantic_context["body"] = semantic_body
+        roles.update(_roles_from_catalog_extensions(semantic_context, catalog))
 
     if not roles:
         roles.update({"ingenieria-software", "qa"})
