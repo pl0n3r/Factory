@@ -36,6 +36,16 @@ def gate_row(
     }
 
 
+def legacy_gate_body(version: str, sha: str) -> str:
+    rendered = rw._render_gate(version, sha, NOW, source_issue=900)
+    return "\n".join(
+        line
+        for line in rendered["body"].splitlines()
+        if "factory-release-window" not in line
+        and "factory-release-rearm" not in line
+    )
+
+
 def approved_comment(body: str) -> dict[str, object]:
     parsed = rw._gate_from_body(body)
     assert parsed is not None
@@ -122,17 +132,115 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertTrue(expired["allowed"])
         self.assertEqual(expired["reason"], "no_active_release_window")
 
-    def test_legacy_release_gates_without_window_marker_are_ignored(self) -> None:
-        legacy = (
+    def test_legacy_approved_gate_without_window_rearms_new_head_without_reusing_decision(self) -> None:
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        row = gate_row(
+            number=918,
+            body=legacy,
+            state="closed",
+            comments=[approved_comment(legacy)],
+        )
+
+        records = rw.gate_records([row])
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0]["window"])
+        self.assertTrue(records[0]["approved_a"])
+
+        planned = rw.plan_rearm({
+            "now": "2026-10-03T10:20:00Z",
+            "main_sha": NEW_SHA,
+            "version": "1.0.23",
+            "gates": [row],
+        })
+        self.assertEqual(planned["action"], "create_gate")
+        self.assertEqual(planned["source_issue"], 918)
+        self.assertEqual(planned["source_sha"], OLD_SHA)
+        self.assertEqual(planned["sha"], NEW_SHA)
+        self.assertIn('"safe_default":"B"', planned["body"])
+        self.assertNotIn("factory-human-decision", planned["body"])
+
+    def test_legacy_open_gate_without_window_rearms_new_head(self) -> None:
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        planned = rw.plan_rearm({
+            "now": "2026-10-03T10:20:00Z",
+            "main_sha": NEW_SHA,
+            "version": "1.0.23",
+            "gates": [gate_row(number=918, body=legacy, state="open")],
+        })
+
+        self.assertEqual(planned["action"], "create_gate")
+        self.assertEqual(planned["source_issue"], 918)
+        self.assertEqual(planned["source_sha"], OLD_SHA)
+        self.assertEqual(planned["sha"], NEW_SHA)
+
+    def test_legacy_gate_without_window_does_not_freeze_retroactively(self) -> None:
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        records = rw.gate_records([
+            gate_row(
+                number=918,
+                body=legacy,
+                state="closed",
+                comments=[approved_comment(legacy)],
+            )
+        ])
+
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0]["window"])
+        self.assertIsNone(rw.freeze_gate(records, NOW))
+
+    def test_invalid_window_intent_stays_fail_closed_while_modern_window_remains_supported(self) -> None:
+        self.assertFalse(rw._legacy_factory_release_intent("plain text"))
+        self.assertTrue(
+            rw._legacy_factory_release_intent(
+                '<!-- factory-human-gate {broken factory-release} -->'
+            )
+        )
+        self.assertFalse(
+            rw._legacy_factory_release_intent(
+                '<!-- factory-human-gate {broken} -->'
+            )
+        )
+
+        unrelated_legacy = (
             '<!-- factory-human-gate '
-            '{"category":"factory-release","context":"Factory v1.0.22 main@'
-            + OLD_SHA
-            + '"} -->'
+            '{"category":"product-direction","context":"legacy schema"} -->'
         )
         self.assertEqual(
-            rw.gate_records([gate_row(number=901, body=legacy, state="closed")]),
+            rw.gate_records([
+                gate_row(number=700, body=unrelated_legacy, state="closed")
+            ]),
             [],
         )
+
+        obsolete_release_legacy = (
+            '<!-- factory-human-gate '
+            '{"category":"factory-release","context":"Factory v1.0.23 main@'
+            + OLD_SHA
+            + '","options":[{"id":"A","label":"Publicar"},{"id":"B","label":"No publicar"}],'
+            '"safe_default":"B"} -->'
+        )
+        self.assertEqual(
+            rw.gate_records([
+                gate_row(number=470, body=obsolete_release_legacy, state="closed")
+            ]),
+            [],
+        )
+
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        malformed = legacy + "\n<!-- factory-release-window -->"
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([gate_row(number=918, body=malformed)])
+
+        modern = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        records = rw.gate_records([gate_row(number=927, body=modern["body"])])
+        self.assertEqual(len(records), 1)
+        self.assertIsNotNone(records[0]["window"])
+        active = rw.freeze_gate(
+            records,
+            datetime(2026, 10, 3, 10, 30, tzinfo=timezone.utc),
+        )
+        self.assertIsNotNone(active)
+        self.assertEqual(active["number"], 927)
 
     def test_stale_approved_sha_rearms_current_head_without_reusing_decision(self) -> None:
         old = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
