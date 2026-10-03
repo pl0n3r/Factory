@@ -9,7 +9,7 @@ import os
 import re
 import sys
 from typing import Iterable
-from urllib.error import HTTPError, URLError
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -41,6 +41,7 @@ MAX_CONTEXT_PAGES = 5
 DECISION_LABELS = frozenset({"decisión: dueño", "decision: owner"})
 BLOCKED_LABELS = frozenset({"estado: bloqueado", "status: blocked"})
 COMPLETED_LABELS = frozenset({"estado: completado", "status: completed"})
+ACTIONS_BOT_LOGIN = "github-actions[bot]"
 CONDOR_D043_COMMENTS_URL = "https://api.github.com/repos/pl0n3r/Condor/issues/1/comments"
 CONDOR_D043_SOURCE = "Condor#1 public GitHub"
 CONDOR_D043_USER_AGENT = "Factory-unattended-daily-summary/1"
@@ -48,7 +49,7 @@ CONDOR_D043_TIMEOUT_SECONDS = 3
 MAX_CONDOR_D043_PAGES = 3
 CONDOR_D043_MARKER_START_RE = re.compile(r"<!--\s*condor-d043-validation-card")
 CONDOR_D043_MARKER_RE = re.compile(
-    r'<!--\s*condor-d043-validation-card\s+(\{.*?\})\s*-->',
+    r'<!--\s*condor-d043-validation-card\s+(\{[^}]*\})\s*-->',
     re.DOTALL,
 )
 CONDOR_D043_VISIBLE_VERSION_RE = re.compile(
@@ -119,7 +120,7 @@ def _parse_owned_marker(
     body = comment.get("body")
     if (
         not isinstance(user, dict)
-        or user.get("login") != "github-actions[bot]"
+        or user.get("login") != ACTIONS_BOT_LOGIN
         or not isinstance(body, str)
     ):
         return None
@@ -200,7 +201,7 @@ def _parse_condor_d043_card(comment: object) -> tuple[str, str, object] | None:
     body = comment.get("body")
     if (
         not isinstance(user, dict)
-        or user.get("login") != "github-actions[bot]"
+        or user.get("login") != ACTIONS_BOT_LOGIN
         or not isinstance(body, str)
     ):
         return None
@@ -245,7 +246,7 @@ def _parse_condor_d043_validation(comment: object) -> tuple[str, str] | None:
     body = comment.get("body")
     if (
         not isinstance(user, dict)
-        or user.get("login") != "github-actions[bot]"
+        or user.get("login") != ACTIONS_BOT_LOGIN
         or not isinstance(body, str)
     ):
         return None
@@ -275,7 +276,7 @@ def _public_condor_comments(opener=None) -> list[dict[str, object]]:
         try:
             with open_url(request, timeout=CONDOR_D043_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (URLError, OSError, ValueError) as exc:
             raise DailySummaryError("condor_d043_public_api_unavailable") from exc
         if not isinstance(payload, list):
             raise DailySummaryError("condor_d043_public_api_invalid")
@@ -319,13 +320,16 @@ def collect_condor_d043_gate(now: datetime, *, opener=None) -> Fact:
         age = _age_minutes(now, created_at)
         older = len(pending) - 1
         suffix = f" (+{older} anteriores pendientes)" if older else ""
+        freshness = "unknown"
+        if age is not None:
+            freshness = "fresh" if age < 1440 else "stale"
         return Fact(
             text=f"Condor V{version} espera tu validación D-043{suffix}",
             source=CONDOR_D043_SOURCE,
             age_minutes=age,
-            freshness="unknown" if age is None else ("fresh" if age < 1440 else "stale"),
+            freshness=freshness,
         )
-    except (DailySummaryError, TypeError, ValueError, KeyError):
+    except (TypeError, ValueError, KeyError):
         return Fact(
             text="UNKNOWN: puerta D-043 de Condor no verificable.",
             source=CONDOR_D043_SOURCE,
