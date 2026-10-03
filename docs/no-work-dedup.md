@@ -1,0 +1,70 @@
+# Deduplicación global de NO_WORK
+
+Factory#904 define un único sink canónico para el estado global NO_WORK:
+
+- Issue: `pl0n3r/Factory#904`.
+- La decisión es pura y vive en `scripts/no_work_dedup.py`.
+- El caller sigue siendo responsable de leer inventario vivo, recheck final y GitHub.
+- Este contrato no altera ranking, readiness, kill switch, D-068 ni puertas humanas.
+
+## Huella del inventario
+
+La huella SHA-256 usa exclusivamente:
+
+1. estado del kill switch;
+2. hojas `available` / `estado: disponible`;
+3. hojas de recovery;
+4. reservas vivas;
+5. bloqueos;
+6. número, estado y HEAD de PRs abiertos;
+7. los siete repos canónicos: Factory, Condor, GrindFlow, brvtal, ControlBot,
+   AutoFactory y FactoryRunner.
+
+Campos incidentales como timestamps de observación, títulos de PR o texto de UI no
+cambian la huella. Un repo faltante hace fallar el cálculo en vez de permitir un
+NO_WORK parcial.
+
+## Decisión create | update | omit
+
+Dado el snapshot actual y el estado del comentario canónico:
+
+| Condición | Acción |
+| --- | --- |
+| No existe comentario canónico previo | `create` una vez en Factory#904 |
+| La huella cambió | `update` del mismo comment_id |
+| Huella idéntica y han pasado < 30 min | `omit` |
+| Huella idéntica y han pasado >= 30 min | `update` del mismo comment_id |
+
+Después de la creación inicial, la política nunca requiere crear otro comentario
+para NO_WORK. Un incidente como Factory#860 no es un sink alternativo.
+
+## Baseline y métrica
+
+Factory#904 describía el episodio como “decenas de comentarios” entre
+aproximadamente 22:50 y 00:00 UTC. La relectura reproducible del feed global de
+comentarios de GitHub mostró un desfase horario en esa descripción: esa ventana
+exacta contiene 0 comentarios NO_WORK, mientras el burst observable anterior sí
+puede medirse sin inferencia.
+
+Entre **20:00:19Z** y **22:46:22Z** del 2026-10-02, la API devuelve
+**119 comentarios** NO_WORK nuevos, todos en Factory#860. Son 166.05 minutos y
+equivalen a **43.0 comentarios nuevos/h**. Este es el baseline verificable usado
+por la regresión; no se extrapola desde la palabra “decenas”.
+
+Con la política nueva:
+
+- primera observación sin comentario canónico: máximo **1 creación total**;
+- después de existir el comentario: máximo **0 comentarios nuevos/h** por
+  inventario idéntico;
+- con huella idéntica, como máximo **2 updates in-place/h** (intervalo 30 min);
+- un cambio real de inventario puede actualizar inmediatamente el mismo
+  comentario, pero no crea uno nuevo.
+
+La métrica primaria es `new_no_work_comments_per_hour`; la secundaria es
+`canonical_no_work_updates_per_hour`. El objetivo no es esconder cambios, sino
+hacer que un cambio real sea visible sin multiplicar comentarios equivalentes.
+
+## Reversión
+
+Revertir el PR restaura la conducta previa del despachador. No modifica reservas,
+Issues de trabajo, kill switch ni producción.
