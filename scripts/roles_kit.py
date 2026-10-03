@@ -272,18 +272,18 @@ def _positive_role_text(text: str) -> str:
 
 
 ROLE_DECLARATION_LINE = re.compile(
-    r"(?im)^[ \\t]*(?:rol\\(es\\)|roles|rol primario|revisi[oó]n cruzada|"
-    r"role\\(s\\)|primary role|cross[- ]review)[ \\t]*:[^\\r\\n]*(?:\\r?\\n|$)"
+    r"(?im)^[ \t]*(?:rol\(es\)|roles|rol primario|revisi[oó]n cruzada|"
+    r"role\(s\)|primary role|cross[- ]review)[ \t]*:[^\r\n]*(?:\r?\n|$)"
 )
 ROLE_DECLARATION_CHECKLIST = re.compile(
-    r"(?im)(?:^[ \\t]*(?:rol\\(es\\)|roles|rol primario|revisi[oó]n cruzada|"
-    r"role\\(s\\)|primary role|cross[- ]review)[ \\t]*:[^\\r\\n]*\\r?\\n)+"
-    r"(?:^[ \\t]*\\r?\\n)*"
-    r"(?:^[ \\t]*- \\[[ xX]\\] .*(?:\\r?\\n|$))+"
+    r"(?im)(?:^[ \t]*(?:rol\(es\)|roles|rol primario|revisi[oó]n cruzada|"
+    r"role\(s\)|primary role|cross[- ]review)[ \t]*:[^\r\n]*\r?\n)+"
+    r"(?:^[ \t]*\r?\n)*"
+    r"(?:^[ \t]*- \[[ xX]\] .*(?:\r?\n|$))+"
 )
 ROLE_CHECKLIST_SECTION = re.compile(
-    r"(?ims)^[ \\t]*##[ \\t]+(?:checklist de roles|role checklist|roles checklist)"
-    r"[ \\t]*\\r?$.*?(?=^[ \\t]*##[ \\t]+|\\Z)"
+    r"(?ims)^[ \t]*##[ \t]+(?:checklist de roles|role checklist|roles checklist)"
+    r"[ \t]*\r?$.*?(?=^[ \t]*##[ \t]+|\Z)"
 )
 
 
