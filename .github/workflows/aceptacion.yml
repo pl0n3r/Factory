@@ -35,7 +35,7 @@ jobs:
     needs: event_guard
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     permissions:
       contents: read
       issues: read
@@ -108,8 +108,8 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          max_attempts=12
-          wait_seconds=10
+          max_attempts=21
+          wait_seconds=60
 
           for attempt in $(seq 1 "$max_attempts"); do
             gh api --paginate "repos/$REPOSITORY/commits/$SHA/check-runs?per_page=100" --slurp > /tmp/check-pages.json
