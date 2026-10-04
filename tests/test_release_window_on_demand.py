@@ -24,7 +24,7 @@ CHECKS = [
     {"name": "CI factory", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Sonar CI-based", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Evidencia CodeQL", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
-    {"name": "Vigilar startup_failure de reusables publicados", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
+    {"name": "Unattended Watchdog", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Compatibilidad de consumidores", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
 ]
 
@@ -88,7 +88,7 @@ def request_payload(**changes) -> dict:
 
 class ReleaseWindowOnDemandTests(unittest.TestCase):
     def test_owner_request_step_uses_snapshot_main_sha_across_steps(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+        workflow = WORKFLOW
 
         self.assertIn("id: snapshot", workflow)
         self.assertIn("main_sha=%s", workflow)
