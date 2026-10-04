@@ -124,6 +124,50 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertEqual(len(evidence), 1)
         self.assertEqual(api.issue["state"], "closed")
 
+    def test_existing_current_head_gate_is_reused_without_creating_another(self):
+        result = plan_request({
+            "now": "2026-10-04T19:00:00Z",
+            "main_sha": MAIN_SHA,
+            "version": "1.0.28",
+            "owner_requested": True,
+            "actor": "pl0n3r",
+            "candidate_version": "1.0.28",
+            "workflows": CHECKS,
+            "gates": [gate_row(901, MAIN_SHA)],
+        })
+        self.assertEqual(result["action"], "none")
+        self.assertEqual(result["reason"], "current_head_already_has_gate")
+        self.assertEqual(result["issue"], 901)
+
+    def test_request_rejects_non_list_workflows_fail_closed(self):
+        with self.assertRaisesRegex(Exception, "workflows inválidos"):
+            plan_request({
+                "now": "2026-10-04T19:00:00Z",
+                "main_sha": MAIN_SHA,
+                "version": "1.0.28",
+                "owner_requested": True,
+                "actor": "pl0n3r",
+                "candidate_version": "1.0.28",
+                "workflows": None,
+                "gates": [],
+            })
+
+    def test_request_rejects_missing_exact_main_evidence(self):
+        workflows = [dict(item, head_sha=OLD_SHA) for item in CHECKS]
+        result = plan_request({
+            "now": "2026-10-04T19:00:00Z",
+            "main_sha": MAIN_SHA,
+            "version": "1.0.28",
+            "owner_requested": True,
+            "actor": "pl0n3r",
+            "candidate_version": "1.0.28",
+            "workflows": workflows,
+            "gates": [],
+        })
+        self.assertEqual(result["action"], "rejected")
+        self.assertEqual(result["reason"], "revalidation_required")
+        self.assertEqual(set(result["missing_checks"]), {item["name"] for item in CHECKS})
+
     def test_requested_version_must_match_config_candidate(self):
         result = plan_request({
             "now": "2026-10-04T19:00:00Z",
