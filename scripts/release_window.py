@@ -523,6 +523,61 @@ def _render_gate(version: str, sha: str, now: datetime, *, source_issue: int) ->
     }
 
 
+def plan_request(payload: Any) -> dict[str, Any]:
+    """Crea una puerta solo ante petición explícita del OWNER y evidencia exacta."""
+    if not isinstance(payload, dict):
+        raise ReleaseWindowError("Payload request inválido.")
+    if payload.get("owner_requested") is not True or payload.get("actor") != "pl0n3r":
+        return {"action": "rejected", "reason": "owner_request_required"}
+    now = _canonical_time(payload.get("now"), "now")
+    main_sha = _sha(payload.get("main_sha"), "main_sha")
+    version = _semver(payload.get("version"))
+    checks = payload.get("checks")
+    if not isinstance(checks, list):
+        raise ReleaseWindowError("checks inválidos.")
+    required = {
+        "CI factory",
+        "Sonar CI-based",
+        "Evidencia CodeQL",
+        "Vigilar startup_failure de reusables publicados",
+        "Compatibilidad de consumidores",
+    }
+    missing = []
+    for name in sorted(required):
+        if not any(
+            isinstance(row, dict)
+            and row.get("name") == name
+            and row.get("status") == "completed"
+            and row.get("conclusion") == "success"
+            and row.get("head_sha") == main_sha
+            for row in checks
+        ):
+            missing.append(name)
+    if missing:
+        return {"action": "rejected", "reason": "revalidation_required", "missing_checks": missing}
+    records = gate_records(payload.get("gates", []))
+    latest = _latest_by_version(records, version)
+    if latest is not None and latest["sha"] == main_sha and latest["executed"] is None:
+        return {"action": "none", "reason": "current_head_already_has_gate", "issue": latest["number"], "sha": main_sha, "version": version}
+    source = latest or _latest_canonical_gate(records)
+    source_issue = source["number"] if source is not None else 1
+    supersede_issues = [
+        item["number"]
+        for item in records
+        if item["version"] == version and item["duplicate_of"] is None and item["state"] == "open" and item["sha"] != main_sha
+    ]
+    gate = _render_gate(version, main_sha, now, source_issue=source_issue)
+    return {
+        "action": "create_gate",
+        "reason": "owner_requested",
+        "source_issue": source_issue,
+        "source_sha": source.get("sha") if source else None,
+        "supersede_issues": sorted(set(supersede_issues)),
+        "sha": main_sha,
+        "version": version,
+        **gate,
+    }
+
 def plan_rearm(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ReleaseWindowError("Payload push inválido.")
@@ -686,13 +741,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "mode",
-        choices=("pr-check", "push", "workflow-run", "summary"),
+        choices=("pr-check", "request", "push", "workflow-run", "summary"),
     )
     args = parser.parse_args()
     try:
         payload = _read_payload()
         if args.mode == "pr-check":
             result = check_pull_request(payload)
+        elif args.mode == "request":
+            result = plan_request(payload)
         elif args.mode == "push":
             result = plan_rearm(payload)
         elif args.mode == "workflow-run":
