@@ -108,28 +108,17 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         events = {"repository": {"full_name": "pl0n3r/Factory"}, "issue": issue,
                   "comment": {"body": "/decidir A", "author_association": "OWNER",
                               "user": {"type": "User", "login": "pl0n3r"}}}
-        class FakeAPI:
-            def __init__(self):
-                self.issue = dict(issue)
-                self.comments = comments
-                self.closed = False
-            def __call__(self, method, path, payload=None):
-                if path == "repos/pl0n3r/Factory/issues?state=all&per_page=100":
-                    return [self.issue]
-                if path == "repos/pl0n3r/Factory/issues/901":
-                    return {**self.issue, "comments": self.comments}
-                if path == "repos/pl0n3r/Factory/issues/901/comments?per_page=100":
-                    return self.comments
-                if path == "repos/pl0n3r/Factory/issues?state=all&per_page=100":
-                    return [self.issue]
-                if method == "POST" and path == "repos/pl0n3r/Factory/issues/901/comments":
-                    self.comments.append({"user": {"login": "github-actions[bot]"}, "body": payload["body"]})
-                    return {}
-                if method == "PATCH" and path == "repos/pl0n3r/Factory/issues/901":
-                    self.issue.update(payload)
-                    return {}
-                return {}
-        api = FakeAPI()
+        from seguridad.test_decision_respuesta import event as decision_event, FakeAPI as DecisionFakeAPI
+
+        api = DecisionFakeAPI()
+        decision = decision_event(command="/decidir A", issue_body=rendered["body"])
+        self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))
+        self.assertEqual(api.issue["state"], "closed")
+        evidence = [c for c in api.comments if c["body"].startswith("<!-- factory-human-decision ")]
+        self.assertEqual(len(evidence), 1)
+        api.issue["state"] = "open"
+        api.issue["labels"].append({"name": "decisión: dueño"})
+        self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))        api = FakeAPI()
         self.assertTrue(materialize_decision(events, api, "pl0n3r/Factory"))
         self.assertTrue(any("factory-human-decision" in c["body"] for c in api.comments))
         self.assertEqual(api.issue.get("state"), "closed")
