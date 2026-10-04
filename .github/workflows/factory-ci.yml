@@ -78,7 +78,11 @@ jobs:
           work_issue="${BASH_REMATCH[1]}"
 
           gh api -X GET search/issues             -f q="repo:$REPOSITORY is:issue \"factory-human-gate\" in:body"             -f per_page=100 > /tmp/release-search.json
-          jq '[.items[] | select((.body // "") | contains("\"factory-release\""))]'             /tmp/release-search.json > /tmp/release-issues.json
+          jq '[
+                .items[]
+                | select((.body // "") | contains("factory-release"))
+                | {number, state, title, body, updated_at}
+              ]'             /tmp/release-search.json > /tmp/release-issues.json
           printf '[]\n' > /tmp/release-gates.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
@@ -86,13 +90,24 @@ jobs:
               echo "::error::Issue de release inválido"
               exit 1
             }
-            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq 'add // []' > /tmp/release-comments.json
+            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq '
+              add // []
+              | map(
+                  select(.user.login == "github-actions[bot]")
+                  | select(
+                      ((.body // "") | contains("factory-human-decision"))
+                      or ((.body // "") | contains("factory-release-executed"))
+                      or ((.body // "") | contains("factory-human-gate-duplicate"))
+                    )
+                  | {user: {login: .user.login}, body: (.body // "")}
+                )
+            ' > /tmp/release-comments.json
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < <(jq -c '.[]' /tmp/release-issues.json)
 
-          gh api "repos/$REPOSITORY/pulls/$PR" > /tmp/release-pr.json
-          gh api "repos/$REPOSITORY/issues/$work_issue" > /tmp/release-work-item.json
+          gh api "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
+          gh api "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n             --arg now "$now"             --slurpfile gates /tmp/release-gates.json             --slurpfile pr /tmp/release-pr.json             --slurpfile work /tmp/release-work-item.json             '{now:$now,gates:$gates[0],pr:$pr[0],work_issue:$work[0]}'             > /tmp/release-window-input.json
 
