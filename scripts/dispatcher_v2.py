@@ -86,6 +86,17 @@ class Candidate:
 
 
 @dataclass(frozen=True)
+class RepoFairnessContext:
+    """Contexto determinista de equidad entre repos para un ciclo de despacho."""
+
+    recent_dispatch_repos: tuple[str, ...] = ()
+    failed_take_keys: frozenset[str] = frozenset()
+    consecutive_limit: int = 3
+    starvation_minutes: int = 30
+    now: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkItemReadinessContext:
     """Evidencia externa necesaria para convertir WorkItem en candidato ejecutable."""
 
@@ -716,12 +727,87 @@ def _tiebreak(candidate: Candidate, *, aging_threshold: int) -> tuple[object, ..
     )
 
 
+def _fairness_repository(candidate: Candidate) -> str | None:
+    repository_ref = candidate.metadata.get("repository_ref")
+    if isinstance(repository_ref, str) and repository_ref in CANONICAL_DISPATCH_REPOS:
+        return repository_ref
+    return None
+
+
+def _parse_fairness_datetime(value: object, *, name: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be an offset-aware ISO timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{name} must be an offset-aware ISO timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{name} must be an offset-aware ISO timestamp")
+    return parsed
+
+
+def _validate_fairness_context(context: RepoFairnessContext) -> datetime | None:
+    if (
+        isinstance(context.consecutive_limit, bool)
+        or not isinstance(context.consecutive_limit, int)
+        or context.consecutive_limit <= 0
+    ):
+        raise ValueError("fairness consecutive_limit must be a positive integer")
+    if (
+        isinstance(context.starvation_minutes, bool)
+        or not isinstance(context.starvation_minutes, int)
+        or context.starvation_minutes <= 0
+    ):
+        raise ValueError("fairness starvation_minutes must be a positive integer")
+    if any(repo not in CANONICAL_DISPATCH_REPOS for repo in context.recent_dispatch_repos):
+        raise ValueError("fairness history must contain canonical repositories only")
+    if any(not isinstance(key, str) or not key.strip() for key in context.failed_take_keys):
+        raise ValueError("fairness failed_take_keys must contain non-empty strings")
+    if context.now is None:
+        return None
+    return _parse_fairness_datetime(context.now, name="fairness now")
+
+
+def _fairness_ready_age_minutes(
+    candidate: Candidate,
+    *,
+    now: datetime | None,
+) -> float | None:
+    if now is None:
+        return None
+    ready_since = candidate.metadata.get("ready_since")
+    if ready_since is None:
+        return None
+    ready_at = _parse_fairness_datetime(ready_since, name=f"{candidate.key} ready_since")
+    elapsed_seconds = (now - ready_at).total_seconds()
+    if elapsed_seconds < 0:
+        raise ValueError("candidate ready_since cannot be in the future")
+    return elapsed_seconds / 60
+
+
+def _recent_repo_streak(context: RepoFairnessContext) -> str | None:
+    if len(context.recent_dispatch_repos) < context.consecutive_limit:
+        return None
+    repository_ref = context.recent_dispatch_repos[-1]
+    recent = context.recent_dispatch_repos[-context.consecutive_limit :]
+    if all(repo == repository_ref for repo in recent):
+        return repository_ref
+    return None
+
+
 def select_next(
     candidates: Iterable[Candidate],
     *,
     aging_threshold: int = 3,
     active_tranche: int | None = None,
+    fairness_context: RepoFairnessContext | None = None,
 ) -> Candidate | None:
+    now = None
+    failed_take_keys: frozenset[str] = frozenset()
+    if fairness_context is not None:
+        now = _validate_fairness_context(fairness_context)
+        failed_take_keys = fairness_context.failed_take_keys
+
     evaluated = [
         (
             candidate,
@@ -729,7 +815,11 @@ def select_next(
         )
         for candidate in candidates
     ]
-    ready = [candidate for candidate, state in evaluated if state.ready]
+    ready = [
+        candidate
+        for candidate, state in evaluated
+        if state.ready and candidate.key not in failed_take_keys
+    ]
     if not ready:
         return None
     best_rank = min(AUTHORITY_ORDER[authority_class(candidate)] for candidate in ready)
@@ -738,7 +828,82 @@ def select_next(
         for candidate in ready
         if AUTHORITY_ORDER[authority_class(candidate)] == best_rank
     ]
+
+    ages: dict[str, float] = {}
+    if fairness_context is not None:
+        for candidate in same_class:
+            age = _fairness_ready_age_minutes(candidate, now=now)
+            if age is not None:
+                ages[candidate.key] = age
+        starved = [
+            candidate
+            for candidate in same_class
+            if ages.get(candidate.key, -1) >= fairness_context.starvation_minutes
+        ]
+        if starved:
+            same_class = starved
+
+        streak_repo = _recent_repo_streak(fairness_context)
+        if streak_repo is not None:
+            alternatives = [
+                candidate
+                for candidate in same_class
+                if (
+                    _fairness_repository(candidate) is not None
+                    and _fairness_repository(candidate) != streak_repo
+                )
+            ]
+            if alternatives:
+                same_class = alternatives
+
+    if ages and any(candidate.key in ages for candidate in same_class):
+        return min(
+            same_class,
+            key=lambda item: (
+                -ages.get(item.key, -1),
+                *_tiebreak(item, aging_threshold=aging_threshold),
+            ),
+        )
     return min(same_class, key=lambda item: _tiebreak(item, aging_threshold=aging_threshold))
+
+
+def select_after_take_failure(
+    candidates: Iterable[Candidate],
+    *,
+    failed_key: str,
+    fairness_context: RepoFairnessContext | None = None,
+    aging_threshold: int = 3,
+    active_tranche: int | None = None,
+) -> dict[str, object]:
+    """Continúa el ranking tras un `/tomar` rechazado por formato, sin NO_WORK."""
+
+    items = list(candidates)
+    if not isinstance(failed_key, str) or not failed_key.strip():
+        raise ValueError("failed take key must be a non-empty string")
+    if failed_key not in {candidate.key for candidate in items}:
+        raise ValueError("failed take key must identify a candidate in this cycle")
+
+    base_context = fairness_context or RepoFairnessContext()
+    _validate_fairness_context(base_context)
+    failed_keys = frozenset((*base_context.failed_take_keys, failed_key))
+    next_context = replace(base_context, failed_take_keys=failed_keys)
+    selected = select_next(
+        items,
+        aging_threshold=aging_threshold,
+        active_tranche=active_tranche,
+        fairness_context=next_context,
+    )
+    return {
+        "failed_key": failed_key,
+        "repair": {
+            "action": "mark_format_repair",
+            "dedup_key": f"take-format:{failed_key}",
+        },
+        "selected": selected.key if selected is not None else None,
+        "continue_same_cycle": True,
+        "declare_no_work": False,
+        "fairness_context": next_context,
+    }
 
 
 def _work_lane(candidate: Candidate) -> str:
@@ -970,6 +1135,7 @@ def work_ladder(
     known_proposal_sha256s: Iterable[str] = (),
     owner_autonomy_contexts: dict[str, OwnerAutonomyContext] | None = None,
     active_tranche: int | None = None,
+    fairness_context: RepoFairnessContext | None = None,
     active_filler_count: int = 0,
     max_filler_parallel: int = 2,
     unattended_mode: bool = False,
@@ -1066,6 +1232,7 @@ def work_ladder(
         selected = select_next(
             lane_candidates,
             active_tranche=active_tranche,
+            fairness_context=fairness_context,
         )
         if selected is not None:
             return {
@@ -1100,6 +1267,18 @@ def work_ladder(
                 },
                 "trigger": trigger,
             }
+
+    if fairness_context is not None and fairness_context.failed_take_keys:
+        return {
+            "step": "take_format_repair",
+            "work": {
+                "kind": "status",
+                "key": "dispatcher:take-format-repair",
+            },
+            "failed_take_keys": tuple(sorted(fairness_context.failed_take_keys)),
+            "reason": "recheck global ranking after format failure",
+            "mutates": False,
+        }
 
     reason = no_safe_work_reason.strip()
     if not reason:
@@ -1477,6 +1656,7 @@ def dispatch_record(
     *,
     aging_threshold: int = 3,
     active_tranche: int | None = None,
+    fairness_context: RepoFairnessContext | None = None,
     unattended_mode: bool = False,
     unattended_guard: GuardDecision | None = None,
     unattended_watchdog: WatchdogDecision | None = None,
@@ -1495,6 +1675,7 @@ def dispatch_record(
     next_action = work_ladder(
         items,
         active_tranche=active_tranche,
+        fairness_context=fairness_context,
         unattended_mode=unattended_mode,
         unattended_guard=unattended_guard,
         unattended_watchdog=unattended_watchdog,
@@ -1515,14 +1696,26 @@ def dispatch_record(
         selection_items,
         aging_threshold=aging_threshold,
         active_tranche=active_tranche,
+        fairness_context=fairness_context,
+    )
+    failed_take_keys = (
+        fairness_context.failed_take_keys
+        if fairness_context is not None
+        else frozenset()
     )
     ready = [] if suppressed else [
-        candidate for candidate in selection_items if states[candidate.key].ready
+        candidate
+        for candidate in selection_items
+        if states[candidate.key].ready and candidate.key not in failed_take_keys
     ]
     excluded = {
-        candidate.key: list(states[candidate.key].reasons)
+        candidate.key: (
+            ["take_failed_current_cycle"]
+            if candidate.key in failed_take_keys
+            else list(states[candidate.key].reasons)
+        )
         for candidate in items
-        if not states[candidate.key].ready
+        if not states[candidate.key].ready or candidate.key in failed_take_keys
     }
     return {
         "selected": selected.key if selected else None,
@@ -1876,6 +2069,7 @@ def adaptive_dispatch_record(
     replan_reasons: tuple[str, ...] = (),
     aging_threshold: int = 3,
     active_tranche: int | None = None,
+    fairness_context: RepoFairnessContext | None = None,
     unattended_mode: bool = False,
     unattended_guard: GuardDecision | None = None,
     unattended_watchdog: WatchdogDecision | None = None,
@@ -1892,6 +2086,7 @@ def adaptive_dispatch_record(
         adapted,
         aging_threshold=aging_threshold,
         active_tranche=active_tranche,
+        fairness_context=fairness_context,
         unattended_mode=unattended_mode,
         unattended_guard=unattended_guard,
         unattended_watchdog=unattended_watchdog,
