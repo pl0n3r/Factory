@@ -29,10 +29,23 @@ def permissions(name):
 
 
 class TemplateEtiquetasWorkflowContractTests(unittest.TestCase):
-    def test_all_callers_match_reusable_least_privilege(self):
+    def test_only_pr_validation_requests_pull_request_write(self):
         read_only_pr = {"contents: read", "issues: write", "pull-requests: read"}
-        for name in ("sync", "validar-issue", "validar-pr", "sweep"):
-            self.assertEqual(permissions(name), read_only_pr)
+        pr_write = {"contents: read", "issues: write", "pull-requests: write"}
+
+        for name in ("sync", "validar-issue", "sweep"):
+            with self.subTest(job=name):
+                self.assertEqual(permissions(name), read_only_pr)
+        self.assertEqual(permissions("validar-pr"), pr_write)
+
+        writers = [
+            name
+            for name in ("sync", "validar-issue", "validar-pr", "sweep")
+            if "pull-requests: write" in permissions(name)
+        ]
+        self.assertEqual(writers, ["validar-pr"])
+        self.assertEqual(WF.count("pull-requests: write"), 1)
+        self.assertEqual(WF.count("pull-requests: read"), 3)
 
     def test_template_keeps_factory_v1_and_least_privilege(self):
         for name in ("sync", "validar-issue", "validar-pr", "sweep"):
@@ -40,17 +53,21 @@ class TemplateEtiquetasWorkflowContractTests(unittest.TestCase):
             self.assertIn("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1", block)
             self.assertIn("contents: read", block)
             self.assertIn("issues: write", block)
+
         for forbidden in (
-            "contents: write", "actions: write", "checks: write",
-            "id-token: write", "secrets: inherit", "pull-requests: write",
+            "contents: write",
+            "actions: write",
+            "checks: write",
+            "id-token: write",
+            "secrets: inherit",
         ):
             self.assertNotIn(forbidden, WF)
 
     def test_pr_validation_grants_write_for_safe_label_inheritance(self):
         pr_permissions = permissions("validar-pr")
         self.assertIn("issues: write", pr_permissions)
-        self.assertIn("pull-requests: read", pr_permissions)
-        self.assertNotIn("pull-requests: write", pr_permissions)
+        self.assertIn("pull-requests: write", pr_permissions)
+        self.assertNotIn("pull-requests: read", pr_permissions)
         self.assertIn("mode: validate", job_block("validar-pr"))
         self.assertIn(
             "issue_number: ${{ github.event.pull_request.number }}",
@@ -62,14 +79,13 @@ class TemplateEtiquetasWorkflowContractTests(unittest.TestCase):
             name: permissions(name)
             for name in ("sync", "validar-issue", "validar-pr", "sweep")
         }
-        self.assertFalse(
-            [name for name, perms in distribution.items() if "pull-requests: write" in perms]
+        self.assertEqual(
+            [name for name, perms in distribution.items() if "pull-requests: write" in perms],
+            ["validar-pr"],
         )
-        self.assertEqual(WF.count("pull-requests: write"), 0)
-        self.assertEqual(WF.count("pull-requests: read"), 4)
+        self.assertEqual(WF.count("pull-requests: write"), 1)
+        self.assertEqual(WF.count("pull-requests: read"), 3)
         self.assertNotIn("checks: read", permissions("sweep"))
-        self.assertIn("mode: validate", job_block("validar-pr"))
-        self.assertIn("issue_number: ${{ github.event.pull_request.number }}", job_block("validar-pr"))
 
 
 if __name__ == "__main__":
