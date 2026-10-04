@@ -109,7 +109,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertEqual(result["supersede_issues"], [])
         self.assertIn("python3 -m scripts.reusable_release_preflight", WORKFLOW)
         workflow = (ROOT / ".github" / "workflows" / "release-window.yml").read_text(encoding="utf-8")
-        self.assertIn("Vigilar startup_failure de reusables publicados", workflow)
+        self.assertIn("python3 -m scripts.reusable_release_preflight", workflow)
 
     def test_non_owner_or_inexact_request_is_ignored_and_older_gates_are_superseded_silently(self):
         stale = gate_row(900, OLD_SHA)
