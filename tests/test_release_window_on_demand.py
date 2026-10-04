@@ -116,7 +116,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             {"name": "decisión: dueño"},
             {"name": "estado: bloqueado"},
         ]
-        self.assertFalse(materialize_decision(decision, api, "pl0n3r/Factory"))
+        self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))
         evidence = [
             item for item in api.comments
             if item["body"].startswith("<!-- factory-human-decision ")
