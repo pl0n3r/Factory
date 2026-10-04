@@ -358,6 +358,15 @@ def _latest_by_version(records: list[dict[str, Any]], version: str) -> dict[str,
     return max(matches, key=lambda item: item["number"], default=None)
 
 
+def _latest_canonical_gate(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    canonical = [
+        item
+        for item in records
+        if item["duplicate_of"] is None
+    ]
+    return max(canonical, key=lambda item: item["number"], default=None)
+
+
 def freeze_gate(records: list[dict[str, Any]], now: datetime) -> dict[str, Any] | None:
     latest_by_version: dict[str, dict[str, Any]] = {}
     for record in records:
@@ -526,7 +535,24 @@ def plan_rearm(payload: Any) -> dict[str, Any]:
     records = gate_records(payload.get("gates"))
     latest = _latest_by_version(records, version)
     if latest is None:
-        return {"action": "none", "reason": "no_prior_release_gate"}
+        source = _latest_canonical_gate(records)
+        if source is None:
+            return {"action": "none", "reason": "no_prior_release_gate"}
+        gate = _render_gate(
+            version,
+            main_sha,
+            now,
+            source_issue=source["number"],
+        )
+        return {
+            "action": "create_gate",
+            "reason": "new_version_gate",
+            "source_issue": source["number"],
+            "source_sha": source["sha"],
+            "sha": main_sha,
+            "version": version,
+            **gate,
+        }
     if latest["executed"] is not None:
         return {"action": "none", "reason": "latest_release_executed"}
 
