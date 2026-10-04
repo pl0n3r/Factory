@@ -7,13 +7,31 @@ La revisión externa sigue siendo el camino normal. Este fallback existe únicam
 La policy solo acepta el fallback cuando se cumplen **todas** estas condiciones:
 
 1. La fase canónica leída desde `datos.yml` de la **BASE exacta** del PR es `construccion`.
-2. El reviewer requerido publicó una respuesta `Review rate limited` **después del timestamp del commit HEAD exacto**; respuestas anteriores al HEAD vigente no cuentan.
-3. Sobre el mismo HEAD exacto existe después un fallo de `Factory policy / Validar decisiones y límite de revisión`.
-4. Existe un reintento posterior y el reviewer vuelve a responder `Review rate limited`.
+2. Existe evidencia de rate limit del reviewer requerido asociada al **HEAD exacto**.
+3. Sobre ese mismo HEAD existe un fallo de `Factory policy / Validar decisiones y límite de revisión`.
+4. Existe un reintento posterior verificable.
 5. Los demás gates obligatorios observados sobre ese HEAD están terminales y verdes: CI, pruebas/aceptación, Sonar, CodeQL, Coordinación y Privacidad.
-6. No existe ningún thread abierto/no resuelto del reviewer requerido.
+6. No existe ningún thread abierto/no resuelto del reviewer requerido ni un `CHANGES_REQUESTED` sobre el HEAD exacto.
 
-Un único rate limit nunca basta.
+Un único rate limit sin reintento verificable nunca basta.
+
+### Dos formas válidas de demostrar el reintento
+
+El camino histórico sigue siendo válido cuando el reviewer crea comentarios separados:
+
+1. comentario `Review rate limited` posterior al commit HEAD;
+2. Policy falla sobre ese HEAD;
+3. un segundo comentario rate-limited del reviewer aparece después del fallo.
+
+CodeRabbit también puede **reutilizar y editar el mismo comentario canónico** en vez de crear un segundo comentario. Para ese caso, la policy exige una cadena más explícita:
+
+1. Policy falla sobre el HEAD exacto;
+2. el `OWNER` del repositorio publica exactamente `@coderabbitai review` después de ese fallo;
+3. el comentario del reviewer requerido se actualiza después de ese trigger y contiene una señal terminal de capacidad (`Review rate limited` o `Review limit reached`);
+4. el body actualizado contiene el SHA completo del HEAD exacto;
+5. `updated_at` es posterior al trigger y no puede ser anterior a `created_at`.
+
+El simple hecho de que un comentario del bot tenga un `updated_at` reciente **no** cuenta como reintento. Sin el trigger OWNER posterior al fallo de Policy, el fallback permanece bloqueado. Un usuario no OWNER tampoco puede producir esa evidencia.
 
 ## Qué no permite
 
@@ -22,6 +40,7 @@ Un único rate limit nunca basta.
 - No permite pasar con CI, pruebas, Sonar, CodeQL, Coordinación o Privacidad en rojo.
 - No permite activar el fallback cuando la fase es `live`.
 - No cambia el límite de rondas de reviewers ni elimina la obligación de revisión externa antes de live.
+- No permite convertir cualquier edición de comentario en evidencia: el retry OWNER, el orden temporal y el HEAD exacto siguen siendo obligatorios.
 
 Si la fase no puede leerse de forma canónica desde la BASE, el fallback queda deshabilitado y la policy conserva el comportamiento estricto.
 
@@ -30,11 +49,11 @@ Si la fase no puede leerse de forma canónica desde la BASE, el fallback queda d
 Cuando aplica, el workflow deja evidencia **read-only** en el summary y en un notice del run con:
 
 - el SHA exacto;
-- la hora del reintento rate-limited;
+- la hora del reintento rate-limited o de la actualización terminal del comentario canónico;
 - el enlace al comentario del reviewer;
 - una advertencia explícita de que la revisión externa sigue siendo obligatoria para `live`.
 
-El fallback no publica, edita ni elimina comentarios del PR. Así el reusable conserva el mismo permission envelope de los callers históricos: `contents: read` + `pull-requests: read`.
+El fallback no publica, edita ni elimina comentarios del reviewer. Así el reusable conserva el mismo permission envelope de los callers históricos: `contents: read` + `pull-requests: read`.
 
 ## Modelo de seguridad
 
@@ -44,4 +63,4 @@ Los check-runs usados como evidencia se consultan por HEAD exacto mediante `gh a
 
 La lectura de reviews, comentarios, BASE exacta y reviewThreads continúa usando únicamente permisos read-only. El fallback no eleva el token del caller.
 
-Cualquier ambigüedad —fase ausente, demasiados check-runs/threads para evaluar de forma acotada, evidencia malformada, HEAD distinto o finding abierto— falla cerrado.
+Cualquier ambigüedad —fase ausente, demasiados check-runs/threads para evaluar de forma acotada, evidencia malformada, HEAD distinto, trigger no OWNER, secuencia temporal incoherente o finding abierto— falla cerrado.
