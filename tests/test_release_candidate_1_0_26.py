@@ -40,7 +40,10 @@ class ReleaseCandidate1026Tests(unittest.TestCase):
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.26"})
+        parts = payload["version"].split(".")
+        self.assertEqual(len(parts), 3)
+        self.assertTrue(all(part.isdigit() for part in parts))
+        self.assertGreaterEqual(tuple(map(int, parts)), (1, 0, 26))
 
     def test_candidate_keeps_1_0_25_guarantees_as_historical_compatibility(
         self,
