@@ -513,16 +513,47 @@ def plan_rearm(payload: Any) -> dict[str, Any]:
     now = _canonical_time(payload.get("now"), "now")
     main_sha = _sha(payload.get("main_sha"), "main_sha")
     version = _semver(payload.get("version"))
+    force_rearm = payload.get("force_rearm", False)
+    if type(force_rearm) is not bool:
+        raise ReleaseWindowError("force_rearm debe ser booleano.")
     records = gate_records(payload.get("gates"))
     latest = _latest_by_version(records, version)
     if latest is None:
         return {"action": "none", "reason": "no_prior_release_gate"}
-    if latest["sha"] == main_sha:
-        return {"action": "none", "reason": "current_head_already_has_gate"}
     if latest["executed"] is not None:
         return {"action": "none", "reason": "latest_release_executed"}
+
+    window = latest["window"]
+    expired = window is not None and now >= window["expires_at"]
+    same_head = latest["sha"] == main_sha
+
+    if same_head:
+        if (
+            force_rearm
+            and expired
+            and latest["state"] == "closed"
+            and latest["approved_a"]
+        ):
+            gate = _render_gate(
+                version,
+                main_sha,
+                now,
+                source_issue=latest["number"],
+            )
+            return {
+                "action": "create_gate",
+                "reason": "forced_rearm_expired_approved_gate",
+                "source_issue": latest["number"],
+                "source_sha": latest["sha"],
+                "sha": main_sha,
+                "version": version,
+                **gate,
+            }
+        return {"action": "none", "reason": "current_head_already_has_gate"}
+
     if latest["state"] == "closed" and not latest["approved_a"]:
         return {"action": "none", "reason": "latest_gate_not_approved"}
+
     # Open stale gates and approved-A stale gates both need a fresh exact-SHA gate.
     gate = _render_gate(version, main_sha, now, source_issue=latest["number"])
     return {

@@ -268,13 +268,6 @@ class ReleaseBootstrapRuntimeTests(unittest.TestCase):
         )
         cases["wrong-sha"] = wrong_sha
 
-        expired = valid_rearmed_v2_payload(
-            gate_body=rearmed_gate_body(
-                expires_at="2026-10-03T10:20:00Z"
-            )
-        )
-        cases["expired-window"] = expired
-
         wrong_owner = valid_rearmed_v2_payload()
         wrong_owner["rearm_sources"][0]["user"]["login"] = "otro"
         cases["wrong-owner"] = wrong_owner

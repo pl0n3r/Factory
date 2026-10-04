@@ -80,12 +80,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
           version="$(jq -er '.version' config/version.json)"
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n             --arg now "$now"             --arg main_sha "$main_sha"             --arg version "$version"             --slurpfile gates /tmp/release-gates.json             '{now:$now,main_sha:$main_sha,version:$version,gates:$gates[0]}'             > /tmp/release-window-input.json
+          force_rearm=false
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            force_rearm=true
+          fi
+          jq -n             --arg now "$now"             --arg main_sha "$main_sha"             --arg version "$version"             --argjson force_rearm "$force_rearm"             --slurpfile gates /tmp/release-gates.json             '{now:$now,main_sha:$main_sha,version:$version,force_rearm:$force_rearm,gates:$gates[0]}'             > /tmp/release-window-input.json
 
           python3 scripts/release_window.py push             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
 
