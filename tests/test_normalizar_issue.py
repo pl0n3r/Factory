@@ -5,6 +5,7 @@ import unittest
 from scripts.aceptacion_kit import parse_contract
 from scripts.normalizar_issue import normalize_issue_body, plan_issue_normalization
 from scripts.orquestador_kit import parse_task_marker
+from scripts.dispatcher_v2 import Candidate, RepoFairnessContext, select_next_action
 
 
 TASK_METADATA = {
@@ -146,6 +147,72 @@ No inventar.
         self.assertFalse(second["should_comment"])
         self.assertIsNone(second["comment"])
         self.assertTrue(second["continue_same_cycle"])
+
+
+    def test_dispatcher_normalizes_before_first_take_and_skips_incomplete_same_cycle(self):
+        complete_body = """## Problema
+Legacy completo.
+
+## Trabajo
+Normalizar.
+
+## Límites
+Sin inventar.
+
+## Criterios
+- [ ] [AC-01] `tests/test_normalizar_issue.py::NormalizarIssueTests::test_dispatcher_normalizes_before_first_take_and_skips_incomplete_same_cycle`.
+
+### Rutas reclamadas
+- `scripts/normalizar_issue.py`
+"""
+        complete = Candidate(
+            key="factory-complete",
+            priority="high",
+            metadata={
+                "repository_ref": "pl0n3r/Factory",
+                "issue_body": complete_body,
+                "normalizer_task_metadata": TASK_METADATA,
+            },
+        )
+        action = select_next_action(
+            [complete],
+            fairness_context=RepoFairnessContext(),
+        )
+        self.assertEqual(action["action"], "normalize_then_take")
+        self.assertEqual(action["selected"], "factory-complete")
+        self.assertTrue(action["retry_once"])
+
+        incomplete_body = complete_body.replace(
+            "- [ ] [AC-01] `tests/test_normalizar_issue.py::NormalizarIssueTests::test_dispatcher_normalizes_before_first_take_and_skips_incomplete_same_cycle`.",
+            "- [ ] [AC-01] Sin target.",
+        )
+        incomplete = Candidate(
+            key="factory-incomplete",
+            priority="high",
+            unlock_impact=10,
+            metadata={
+                "repository_ref": "pl0n3r/Factory",
+                "issue_body": incomplete_body,
+                "normalizer_task_metadata": TASK_METADATA,
+            },
+        )
+        next_candidate = Candidate(
+            key="condor-next",
+            priority="high",
+            metadata={"repository_ref": "pl0n3r/Condor"},
+        )
+        action = select_next_action(
+            [incomplete, next_candidate],
+            fairness_context=RepoFairnessContext(),
+        )
+        self.assertEqual(action["action"], "take")
+        self.assertEqual(action["selected"], "condor-next")
+        self.assertEqual(len(action["repairs"]), 1)
+        self.assertEqual(
+            action["repairs"][0]["plan"]["action"],
+            "comment_and_skip",
+        )
+        self.assertFalse(action["declare_no_work"])
 
 
 if __name__ == "__main__":
