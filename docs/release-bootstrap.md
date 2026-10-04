@@ -144,7 +144,7 @@ Desde #1016, un `push` a `main` **nunca** abre ni rearma una puerta. Sin petici�
 
 Procedimiento corto:
 
-1. **Pídele a Factory que publique**: el OWNER ejecuta manualmente `Factory Release Window` sobre `main` (versión vacía = `config/version.json`).
+1. **Pídele a Factory que publique**: el OWNER ejecuta manualmente `Factory Release Window` sobre `main` (`workflow_dispatch`) (versión vacía = `config/version.json`).
 2. Factory exige sobre el HEAD vigente **CI factory, Sonar CI-based, Evidencia CodeQL, Unattended Watchdog** y la **Compatibilidad de consumidores**; si falta evidencia, falla cerrado y no crea puerta.
 3. **Decide A** o B con `/decidir A` o `/decidir B`. `sigue` y texto libre no autorizan publicar.
 4. Con A materializada, **lanza el workflow** `Release Factory v1.x`.
