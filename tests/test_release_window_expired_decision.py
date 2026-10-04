@@ -193,8 +193,9 @@ class ReleaseWindowExpiredDecisionTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "release-window.yml"
         ).read_text(encoding="utf-8")
         self.assertIn('EVENT_NAME: ${{ github.event_name }}', workflow)
-        self.assertIn('force_rearm=true', workflow)
-        self.assertIn('force_rearm:$force_rearm', workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("owner_requested", workflow)
+        self.assertNotIn("force_rearm=true", workflow)
 
     def test_newer_b_gate_supersedes_older_active_a_window(self) -> None:
         older = rw._render_gate(
