@@ -242,6 +242,156 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertIsNotNone(active)
         self.assertEqual(active["number"], 927)
 
+    def test_new_version_bootstraps_from_latest_canonical_release_gate(self) -> None:
+        older_sha = "3" * 40
+        older = rw._render_gate("1.0.25", older_sha, NOW, source_issue=900)
+        latest = rw._render_gate("1.0.26", OLD_SHA, NOW, source_issue=995)
+
+        planned = rw.plan_rearm({
+            "now": "2026-10-03T10:20:00Z",
+            "main_sha": NEW_SHA,
+            "version": "1.0.27",
+            "gates": [
+                gate_row(number=990, body=older["body"], state="closed"),
+                gate_row(number=997, body=latest["body"], state="open"),
+            ],
+        })
+
+        self.assertEqual(planned["action"], "create_gate")
+        self.assertEqual(planned["reason"], "new_version_gate")
+        self.assertEqual(planned["source_issue"], 997)
+        self.assertEqual(planned["source_sha"], OLD_SHA)
+        self.assertEqual(planned["sha"], NEW_SHA)
+        self.assertEqual(planned["version"], "1.0.27")
+        self.assertIn("Factory **1.0.27**", planned["body"])
+        self.assertIn(f"main@{NEW_SHA}", planned["body"])
+        self.assertIn('"safe_default":"B"', planned["body"])
+        self.assertNotIn("factory-human-decision", planned["body"])
+        self.assertNotIn("factory-release-executed", planned["body"])
+
+        record = rw.gate_records([
+            gate_row(number=1000, body=planned["body"], state="open")
+        ])[0]
+        self.assertEqual(record["version"], "1.0.27")
+        self.assertFalse(record["approved_a"])
+        self.assertIsNone(record["executed"])
+
+    def test_new_version_bootstrap_never_inherits_prior_decision_or_execution(self) -> None:
+        prior = rw._render_gate("1.0.26", OLD_SHA, NOW, source_issue=995)
+        parsed = rw._gate_from_body(prior["body"])
+        assert parsed is not None
+        prior_gate, _, _ = parsed
+        fingerprint = rw._gate_fingerprint(prior_gate)
+
+        def decision(option: str) -> dict[str, object]:
+            payload = {
+                "gate_sha256": fingerprint,
+                "option": option,
+                "version": 2,
+            }
+            return {
+                "user": {"login": "github-actions[bot]"},
+                "body": (
+                    "<!-- factory-human-decision "
+                    + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                    + " -->"
+                ),
+            }
+
+        execution = {
+            "version": 1,
+            "sha": OLD_SHA,
+            "run_id": 9876,
+            "executed_at": "2026-10-03T10:05:00Z",
+        }
+        executed_comment = {
+            "user": {"login": "github-actions[bot]"},
+            "body": (
+                "<!-- factory-release-executed "
+                + json.dumps(execution, separators=(",", ":"), sort_keys=True)
+                + " -->"
+            ),
+        }
+
+        variants = (
+            ("open", "open", []),
+            ("closed-b", "closed", [decision("B")]),
+            ("closed-a", "closed", [decision("A")]),
+            ("executed", "closed", [decision("A"), executed_comment]),
+        )
+        for name, state, comments in variants:
+            with self.subTest(name=name):
+                planned = rw.plan_rearm({
+                    "now": "2026-10-03T10:20:00Z",
+                    "main_sha": NEW_SHA,
+                    "version": "1.0.27",
+                    "gates": [
+                        gate_row(
+                            number=997,
+                            body=prior["body"],
+                            state=state,
+                            comments=comments,
+                        )
+                    ],
+                })
+                self.assertEqual(planned["action"], "create_gate")
+                self.assertEqual(planned["reason"], "new_version_gate")
+                self.assertEqual(planned["source_issue"], 997)
+                self.assertNotIn("factory-human-decision", planned["body"])
+                self.assertNotIn("factory-release-executed", planned["body"])
+
+                fresh = rw.gate_records([
+                    gate_row(number=1000, body=planned["body"], state="open")
+                ])[0]
+                self.assertFalse(fresh["approved_a"])
+                self.assertIsNone(fresh["executed"])
+
+    def test_new_version_without_any_release_history_stays_fail_closed(self) -> None:
+        self.assertEqual(
+            rw.plan_rearm({
+                "now": "2026-10-03T10:20:00Z",
+                "main_sha": NEW_SHA,
+                "version": "1.0.27",
+                "gates": [],
+            }),
+            {"action": "none", "reason": "no_prior_release_gate"},
+        )
+
+    def test_existing_version_keeps_same_version_rearm_semantics(self) -> None:
+        current = rw._render_gate("1.0.27", OLD_SHA, NOW, source_issue=997)
+
+        self.assertEqual(
+            rw.plan_rearm({
+                "now": "2026-10-03T10:20:00Z",
+                "main_sha": NEW_SHA,
+                "version": "1.0.27",
+                "gates": [
+                    gate_row(
+                        number=998,
+                        body=current["body"],
+                        state="closed",
+                    )
+                ],
+            }),
+            {"action": "none", "reason": "latest_gate_not_approved"},
+        )
+
+        self.assertEqual(
+            rw.plan_rearm({
+                "now": "2026-10-03T10:20:00Z",
+                "main_sha": OLD_SHA,
+                "version": "1.0.27",
+                "gates": [
+                    gate_row(
+                        number=998,
+                        body=current["body"],
+                        state="open",
+                    )
+                ],
+            }),
+            {"action": "none", "reason": "current_head_already_has_gate"},
+        )
+
     def test_stale_approved_sha_rearms_current_head_without_reusing_decision(self) -> None:
         old = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
         old_row = gate_row(
