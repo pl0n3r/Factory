@@ -942,6 +942,15 @@ def select_next_action(
                 "retry_once": True,
                 "declare_no_work": False,
             }
+        if action == "take":
+            return {
+                "action": "take",
+                "selected": selected.key,
+                "normalization": normalization,
+                "repairs": tuple(repairs),
+                "retry_once": False,
+                "declare_no_work": False,
+            }
 
         repairs.append(
             {
@@ -1274,6 +1283,7 @@ def work_ladder(
 
     items = list(candidates)
     selection_items = items
+    normalization_repairs: list[dict[str, object]] = []
     local_unknown_yield = False
     unattended_action = "ALLOW"
     unattended_reasons: tuple[str, ...] = ()
@@ -1340,17 +1350,45 @@ def work_ladder(
             lane_candidates = [
                 candidate for candidate in lane_candidates if _filler_is_safe(candidate)
             ]
-        selected = select_next(
+        selection = select_next_action(
             lane_candidates,
             active_tranche=active_tranche,
             fairness_context=fairness_context,
         )
-        if selected is not None:
+        normalization_repairs.extend(selection.get("repairs", ()))
+        selected_key = selection.get("selected")
+        if isinstance(selected_key, str):
+            selected = next(
+                candidate for candidate in lane_candidates
+                if candidate.key == selected_key
+            )
+            if selection.get("action") == "normalize_then_take":
+                return {
+                    "step": "normalize_before_take",
+                    "work": {"kind": "candidate", "key": selected.key},
+                    "selected_class": authority_class(selected),
+                    "normalization": selection["normalization"],
+                    "repairs": tuple(normalization_repairs),
+                    "retry_once": True,
+                }
             return {
                 "step": step,
                 "work": {"kind": "candidate", "key": selected.key},
                 "selected_class": authority_class(selected),
+                "repairs": tuple(normalization_repairs),
             }
+
+    if normalization_repairs:
+        return {
+            "step": "take_format_repair",
+            "work": {
+                "kind": "status",
+                "key": "dispatcher:take-format-repair",
+            },
+            "repairs": tuple(normalization_repairs),
+            "reason": "normalization required before any take",
+            "mutates": False,
+        }
 
     gate_keys = tuple(existing_gate_keys)
     proposal_hashes = tuple(known_proposal_sha256s)
