@@ -87,6 +87,15 @@ def request_payload(**changes) -> dict:
 
 
 class ReleaseWindowOnDemandTests(unittest.TestCase):
+    def test_owner_request_step_uses_snapshot_main_sha_across_steps(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("id: snapshot", workflow)
+        self.assertIn("main_sha=%s", workflow)
+        self.assertIn("GITHUB_OUTPUT", workflow)
+        self.assertIn("MAIN_SHA: ${{ steps.snapshot.outputs.main_sha }}", workflow)
+        self.assertIn('main_sha="$MAIN_SHA"', workflow)
+
     def test_push_to_main_never_opens_or_rearms_a_release_gate_without_owner_request(self):
         result = plan_request(request_payload(owner_requested=False))
         self.assertEqual(
