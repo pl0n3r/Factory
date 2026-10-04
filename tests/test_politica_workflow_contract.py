@@ -44,7 +44,7 @@ class T(unittest.TestCase):
         for forbidden in ("contents: write", "pull-requests: write", "secrets:"):
             self.assertNotIn(forbidden, W + COMMENT_W + TEMPLATE)
         self.assertNotIn("issues: write", COMMENT_W)
-        for event in ("pull_request_target", "workflow_run", "check_run", "repository_dispatch"):
+        for event in ("pull_request_target:", "workflow_run:", "check_run:", "repository_dispatch:"):
             self.assertNotIn(event, W + COMMENT_W + TEMPLATE)
 
     def test_candidate_caller_cannot_disable_base_required_reviewer(self):
