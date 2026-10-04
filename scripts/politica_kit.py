@@ -445,6 +445,7 @@ def _rate_limit_comments(
     lines: list[str],
     *,
     required_review_bot: str,
+    not_before: str,
 ) -> list[tuple[str, int]]:
     evidence: list[tuple[str, int]] = []
     for item in parse_comments(lines):
@@ -464,6 +465,8 @@ def _rate_limit_comments(
         created_at = _parse_iso_timestamp(
             item.get("created_at"), noun="Timestamp de comentario rate-limit"
         )
+        if created_at < not_before:
+            continue
         evidence.append((created_at, comment_id))
     return sorted(evidence)
 
@@ -472,13 +475,30 @@ def validate_rate_limit_fallback(
     *,
     required_review_bot: str,
     head_sha: str,
+    head_committed_at: str,
     phase: str,
+    review_lines: list[str],
     comment_lines: list[str],
     check_lines: list[str],
     thread_lines: list[str],
 ) -> tuple[int, str]:
     if phase != "construccion":
         raise PolicyError("Fallback de reviewer solo permitido en construccion.")
+    committed_at = _parse_iso_timestamp(
+        head_committed_at, noun="Timestamp del HEAD exacto"
+    )
+    for review in parse_reviews(review_lines):
+        user = review.get("user")
+        if (
+            isinstance(user, dict)
+            and user.get("type") == "Bot"
+            and user.get("login") == required_review_bot
+            and review.get("commit_id") == head_sha
+            and review.get("state") == "CHANGES_REQUESTED"
+        ):
+            raise PolicyError(
+                "Existe CHANGES_REQUESTED bloqueante del reviewer sobre el HEAD exacto."
+            )
     if _has_open_blocking_finding(
         thread_lines,
         required_review_bot=required_review_bot,
@@ -489,6 +509,7 @@ def validate_rate_limit_fallback(
     rate_limits = _rate_limit_comments(
         comment_lines,
         required_review_bot=required_review_bot,
+        not_before=committed_at,
     )
     if len(rate_limits) < 2:
         raise PolicyError("Un único rate limit no habilita fallback.")
@@ -526,6 +547,7 @@ def validate_required_bot_review_or_fallback(
     required_review_bot: str,
     head_sha: str,
     *,
+    head_committed_at: str = "",
     comment_lines: list[str],
     check_lines: list[str],
     thread_lines: list[str],
@@ -545,7 +567,9 @@ def validate_required_bot_review_or_fallback(
     retry_id, retry_at = validate_rate_limit_fallback(
         required_review_bot=required_review_bot,
         head_sha=head_sha,
+        head_committed_at=head_committed_at,
         phase=phase,
+        review_lines=lines,
         comment_lines=comment_lines,
         check_lines=check_lines,
         thread_lines=thread_lines,
@@ -580,6 +604,7 @@ def args() -> argparse.Namespace:
     parser.add_argument("--required-review-bot", default="")
     parser.add_argument("--base-policy-file", default="")
     parser.add_argument("--head-sha", default="")
+    parser.add_argument("--head-committed-at", default="")
     parser.add_argument("--comments-file", default="")
     parser.add_argument("--checks-file", default="")
     parser.add_argument("--threads-file", default="")
@@ -635,6 +660,7 @@ def main() -> int:
             lines,
             effective_required,
             options.head_sha,
+            head_committed_at=options.head_committed_at,
             comment_lines=comment_lines,
             check_lines=check_lines,
             thread_lines=thread_lines,
