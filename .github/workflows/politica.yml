@@ -210,10 +210,10 @@ jobs:
             {
               echo "### Reviewer rate-limit fallback"
               echo
-              printf -- '- HEAD exacto: `%s`\n' "$PR_HEAD_SHA"
-              printf -- '- Reintento rate-limited: `%s`\n' "$retry_at"
+              printf -- '- HEAD exacto: %s\n' "$PR_HEAD_SHA"
+              printf -- '- Reintento rate-limited: %s\n' "$retry_at"
               printf -- '- Evidencia: %s\n' "$evidence_url"
-              printf '%s\n' '- Alcance: solo fase `construccion`; revisión externa obligatoria antes de `live`.'
+              printf '%s\n' '- Alcance: solo fase construccion; revisión externa obligatoria antes de live.'
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::notice title=Reviewer rate-limit fallback::HEAD $PR_HEAD_SHA · evidencia $evidence_url"
           fi
