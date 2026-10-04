@@ -103,6 +103,27 @@ class ReleaseCandidate1024Tests(unittest.TestCase):
             ),
         )
 
+    def test_candidate_keeps_reviewer_rate_limit_transport_backward_compatible(
+        self,
+    ) -> None:
+        self._run_canonical_targets(
+            "AC-05",
+            (
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_rate_limit_fallback_keeps_legacy_caller_permissions",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_rate_limit_fallback_reads_public_checks_without_token",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_rate_limit_fallback_audit_is_read_only",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_template_policy_caller_stays_legacy_compatible",
+                "tests/test_politica_kit.py::T::"
+                "test_single_rate_limit_is_not_enough_to_pass",
+                "tests/test_politica_kit.py::T::"
+                "test_rate_limit_fallback_never_applies_with_open_blocking_finding_or_other_phase_or_other_head",
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,19 +27,21 @@ Si la fase no puede leerse de forma canónica desde la BASE, el fallback queda d
 
 ## Evidencia que deja
 
-Cuando aplica, el workflow publica o actualiza un único comentario por HEAD con:
+Cuando aplica, el workflow deja evidencia **read-only** en el summary y en un notice del run con:
 
 - el SHA exacto;
 - la hora del reintento rate-limited;
 - el enlace al comentario del reviewer;
 - una advertencia explícita de que la revisión externa sigue siendo obligatoria para `live`.
 
-El marker `factory-reviewer-rate-limit-fallback` hace que el comentario sea idempotente: repetir la evaluación del mismo HEAD actualiza el mismo comentario en lugar de crear ruido.
+El fallback no publica, edita ni elimina comentarios del PR. Así el reusable conserva el mismo permission envelope de los callers históricos: `contents: read` + `pull-requests: read`.
 
 ## Modelo de seguridad
 
 La fase se lee desde la **BASE exacta**, no desde el código candidato. Así un PR no puede habilitar su propio fallback cambiando `datos.yml`.
 
-Los check-runs usados como evidencia se consultan por HEAD exacto. El propio check de policy y el agregado circular `Validar` no se usan para decidir si los demás controles están verdes.
+Los check-runs usados como evidencia se consultan por HEAD exacto mediante el endpoint REST público de GitHub **sin credenciales**. Este transporte se admite únicamente para repositorios públicos: error de red, HTTP distinto de 200, JSON inválido, payload excesivo o demasiados check-runs fallan cerrado. El propio check de policy y el agregado circular `Validar` no se usan para decidir si los demás controles están verdes.
+
+La lectura de reviews, comentarios, BASE exacta y reviewThreads continúa usando únicamente permisos read-only. El fallback no eleva el token del caller.
 
 Cualquier ambigüedad —fase ausente, demasiados check-runs/threads para evaluar de forma acotada, evidencia malformada, HEAD distinto o finding abierto— falla cerrado.
