@@ -18,6 +18,7 @@ CANONICAL_HEADINGS = (
     "### Criterios de aceptación",
     "### Contrato ejecutable",
 )
+NOTES_HEADING = "### Notas legacy conservadas"
 HEADING_ALIASES = {
     "contexto": "### Contexto",
     "problema": "### Contexto",
@@ -36,6 +37,7 @@ HEADING_ALIASES = {
     "criterios de aceptación": "### Criterios de aceptación",
     "criterios de aceptacion": "### Criterios de aceptación",
     "contrato ejecutable": "### Contrato ejecutable",
+    "notas legacy conservadas": NOTES_HEADING,
 }
 AC_LINE = re.compile(r"^- \[[ xX]\] \[(AC-[0-9]{2})\] (.{1,500})$")
 TEST_IN_TEXT = re.compile(
@@ -44,6 +46,7 @@ TEST_IN_TEXT = re.compile(
 CHECK_IN_TEXT = re.compile(r"(?:Check|check)\s+`([^`\r\n]{1,120})`")
 PATH_LINE = re.compile(r"^\s*[-*]\s+`([^\r\n`]+)`\s*$")
 FORMAT_COMMENT_MARKER = "factory-format-repair"
+TASK_MARKER_IN_TEXT = re.compile(r"<!-- factory-plan-task \{[^\r\n]*\} -->")
 
 
 class NormalizationError(ValueError):
@@ -181,8 +184,11 @@ def _extract_claim_paths(body: str) -> tuple[str, ...]:
 
 
 def _task_marker(body: str, metadata: dict[str, object] | None) -> tuple[str | None, tuple[str, ...]]:
-    if "<!-- factory-plan-task " in body:
-        return None, ()
+    existing_markers = TASK_MARKER_IN_TEXT.findall(body)
+    if existing_markers:
+        if len(existing_markers) != 1:
+            return None, ("factory-plan-task duplicado",)
+        return existing_markers[0], ()
     paths = _extract_claim_paths(body)
     if not paths:
         return None, ("Rutas reclamadas",)
@@ -274,7 +280,8 @@ def normalize_issue_body(
         raise NormalizationError("Body del Issue inválido o demasiado grande.")
 
     original = body
-    prelude, sections, extras = _split_sections(body)
+    render_source = TASK_MARKER_IN_TEXT.sub("", body)
+    prelude, sections, extras = _split_sections(render_source)
     missing: list[str] = []
     rendered: list[str] = []
 
@@ -307,21 +314,19 @@ def normalize_issue_body(
         rendered.extend((heading, "", content, ""))
 
     # Conserva prosa no clasificada después de las cinco secciones para no perder contenido.
-    extra_text = "\n".join(line for line in extras if line.strip()).strip()
+    legacy_parts = [
+        "\n".join(sections.get(NOTES_HEADING, [])).strip(),
+        "\n".join(line for line in extras if line.strip()).strip(),
+    ]
+    extra_text = "\n".join(part for part in legacy_parts if part).strip()
     if extra_text:
-        rendered.extend(("### Notas legacy conservadas", "", extra_text, ""))
+        rendered.extend((NOTES_HEADING, "", extra_text, ""))
 
     normalized = "\n".join(rendered).rstrip() + "\n"
     task_marker, task_missing = _task_marker(original, task_metadata)
     missing.extend(task_missing)
     if task_marker is not None:
         normalized += "\n" + task_marker + "\n"
-    elif "<!-- factory-plan-task " in original:
-        # El marker existente no se reescribe ni se duplica.
-        marker_start = original.index("<!-- factory-plan-task ")
-        marker_end = original.find("-->", marker_start)
-        if marker_end >= 0:
-            normalized += "\n" + original[marker_start:marker_end + 3].strip() + "\n"
 
     dedup_key = _dedup_key(original)
     unique_missing = tuple(dict.fromkeys(missing))
@@ -356,10 +361,19 @@ def plan_issue_normalization(
 
     result = normalize_issue_body(body, task_metadata=task_metadata)
     if result.complete:
+        if not result.changed:
+            return {
+                "action": "take",
+                "body": result.body,
+                "changed": False,
+                "retry_once": False,
+                "continue_same_cycle": True,
+                "dedup_key": result.dedup_key,
+            }
         return {
             "action": "edit_and_retry_once",
             "body": result.body,
-            "changed": result.changed,
+            "changed": True,
             "retry_once": True,
             "continue_same_cycle": True,
             "dedup_key": result.dedup_key,
