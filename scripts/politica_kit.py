@@ -32,7 +32,7 @@ MAX_CHECKS_BYTES = 2_000_000
 MAX_THREADS_BYTES = 2_000_000
 MAX_PHASE_BYTES = 512 * 1024
 MAX_EVIDENCE_ITEM_BYTES = 100_000
-RATE_LIMIT_TEXT = "Review rate limited"
+RATE_LIMIT_TEXTS = ("Review rate limited", "Review limit reached")
 POLICY_CHECK_NAME = "Factory policy / Validar decisiones y límite de revisión"
 ALLOWED_GATE_CONCLUSIONS = {"success", "neutral", "skipped"}
 
@@ -441,6 +441,31 @@ def _has_open_blocking_finding(
     return False
 
 
+def _is_rate_limit_body(body: str) -> bool:
+    return any(text in body for text in RATE_LIMIT_TEXTS)
+
+
+def _rate_limit_comment_identity(
+    item: dict[str, object],
+    *,
+    required_review_bot: str,
+) -> tuple[str, int] | None:
+    user = item.get("user")
+    body = item.get("body")
+    comment_id = item.get("id")
+    if not (
+        isinstance(user, dict)
+        and user.get("type") == "Bot"
+        and user.get("login") == required_review_bot
+        and isinstance(body, str)
+        and _is_rate_limit_body(body)
+    ):
+        return None
+    if type(comment_id) is not int or comment_id <= 0:
+        raise PolicyError("Comentario rate-limit sin id válido.")
+    return body, comment_id
+
+
 def _rate_limit_comments(
     lines: list[str],
     *,
@@ -449,25 +474,78 @@ def _rate_limit_comments(
 ) -> list[tuple[str, int]]:
     evidence: list[tuple[str, int]] = []
     for item in parse_comments(lines):
-        user = item.get("user")
-        body = item.get("body")
-        comment_id = item.get("id")
-        if not (
-            isinstance(user, dict)
-            and user.get("type") == "Bot"
-            and user.get("login") == required_review_bot
-            and isinstance(body, str)
-            and RATE_LIMIT_TEXT in body
-        ):
+        identity = _rate_limit_comment_identity(
+            item, required_review_bot=required_review_bot
+        )
+        if identity is None:
             continue
-        if type(comment_id) is not int or comment_id <= 0:
-            raise PolicyError("Comentario rate-limit sin id válido.")
+        _body, comment_id = identity
         created_at = _parse_iso_timestamp(
             item.get("created_at"), noun="Timestamp de comentario rate-limit"
         )
         if created_at < not_before:
             continue
         evidence.append((created_at, comment_id))
+    return sorted(evidence)
+
+
+def _owner_review_retry_comments(
+    lines: list[str],
+    *,
+    required_review_bot: str,
+    not_before: str,
+) -> list[tuple[str, int]]:
+    mention = _normalized_bot_login(required_review_bot)
+    expected = f"@{mention} review"
+    evidence: list[tuple[str, int]] = []
+    for item in parse_comments(lines):
+        body = item.get("body")
+        comment_id = item.get("id")
+        if not (
+            isinstance(body, str)
+            and body.strip().lower() == expected
+            and item.get("author_association") == "OWNER"
+        ):
+            continue
+        if type(comment_id) is not int or comment_id <= 0:
+            raise PolicyError("Comentario de reintento owner sin id válido.")
+        created_at = _parse_iso_timestamp(
+            item.get("created_at"), noun="Timestamp de reintento owner"
+        )
+        if created_at < not_before:
+            continue
+        evidence.append((created_at, comment_id))
+    return sorted(evidence)
+
+
+def _in_place_rate_limit_updates(
+    lines: list[str],
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    not_before: str,
+) -> list[tuple[str, int]]:
+    evidence: list[tuple[str, int]] = []
+    for item in parse_comments(lines):
+        identity = _rate_limit_comment_identity(
+            item, required_review_bot=required_review_bot
+        )
+        if identity is None:
+            continue
+        body, comment_id = identity
+        if head_sha not in body:
+            continue
+        created_at = _parse_iso_timestamp(
+            item.get("created_at"), noun="Timestamp original de comentario rate-limit"
+        )
+        updated_at = _parse_iso_timestamp(
+            item.get("updated_at"), noun="Timestamp actualizado de comentario rate-limit"
+        )
+        if updated_at < created_at:
+            raise PolicyError("Comentario rate-limit actualizado tiene timestamps incoherentes.")
+        if updated_at <= not_before:
+            continue
+        evidence.append((updated_at, comment_id))
     return sorted(evidence)
 
 
@@ -506,14 +584,6 @@ def validate_rate_limit_fallback(
         raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
 
     validate_other_gates_green(check_lines, head_sha=head_sha)
-    rate_limits = _rate_limit_comments(
-        comment_lines,
-        required_review_bot=required_review_bot,
-        not_before=committed_at,
-    )
-    if len(rate_limits) < 2:
-        raise PolicyError("Un único rate limit no habilita fallback.")
-
     failed_policy_checks: list[str] = []
     for check in parse_checks(check_lines):
         if (
@@ -529,14 +599,42 @@ def validate_rate_limit_fallback(
                 )
             )
 
-    for first_at, _first_id in rate_limits:
-        for failed_at in sorted(failed_policy_checks):
-            if failed_at < first_at:
-                continue
-            for retry_at, retry_id in rate_limits:
-                if retry_at > failed_at:
-                    return retry_id, retry_at
+    rate_limits = _rate_limit_comments(
+        comment_lines,
+        required_review_bot=required_review_bot,
+        not_before=committed_at,
+    )
+    if len(rate_limits) >= 2:
+        for first_at, _first_id in rate_limits:
+            for failed_at in sorted(failed_policy_checks):
+                if failed_at < first_at:
+                    continue
+                for retry_at, retry_id in rate_limits:
+                    if retry_at > failed_at:
+                        return retry_id, retry_at
 
+    for failed_at in sorted(failed_policy_checks):
+        owner_retries = _owner_review_retry_comments(
+            comment_lines,
+            required_review_bot=required_review_bot,
+            not_before=failed_at,
+        )
+        for retry_at, _retry_id in owner_retries:
+            if retry_at <= failed_at:
+                continue
+            updates = _in_place_rate_limit_updates(
+                comment_lines,
+                required_review_bot=required_review_bot,
+                head_sha=head_sha,
+                not_before=retry_at,
+            )
+            if updates:
+                return updates[0][1], updates[0][0]
+
+    if len(rate_limits) < 2:
+        raise PolicyError(
+            "Un único rate limit no habilita fallback sin reintento OWNER verificable."
+        )
     raise PolicyError(
         "Falta un reintento rate-limited posterior a un fallo de policy sobre el HEAD exacto."
     )
