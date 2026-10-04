@@ -167,7 +167,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("issues: write", W)
         self.assertNotIn("checks: read", W)
 
-    def test_rate_limit_fallback_reads_checks_with_github_token_transport(self):
+    def test_rate_limit_fallback_reads_public_checks_without_token(self):
         start = W.index(
             'checks_url_base="repos/$REPOSITORY/'
             'commits/$PR_HEAD_SHA/check-runs?per_page=100"'
@@ -194,7 +194,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("curl --silent", checks_transport)
         self.assertNotIn("Authorization:", checks_transport)
 
-    def test_authenticated_check_transport_paginates_bounded_exact_head_evidence(self):
+    def test_public_check_transport_paginates_bounded_exact_head_evidence(self):
         self.assertIn('MAX_PUBLIC_CHECKS: "500"', W)
         self.assertIn(
             'checks_url_base="repos/$REPOSITORY/'
@@ -207,15 +207,15 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         self.assertIn('observed_count="$(wc -l < "$checks_file")"', W)
         self.assertIn("(( observed_count == expected_total ))", W)
 
-    def test_authenticated_check_transport_fails_closed_above_bound_or_inconsistent_pages(self):
+    def test_public_check_transport_fails_closed_above_bound_or_inconsistent_pages(self):
         self.assertIn("(( current_total <= MAX_PUBLIC_CHECKS ))", W)
         self.assertIn("total_count cambió entre páginas de check-runs", W)
-        self.assertIn("Evidencia incompleta de check-runs públicos", W)
+        self.assertIn("Evidencia incompleta de check-runs autenticados", W)
         self.assertIn("Se observaron más check-runs que total_count", W)
-        self.assertIn("IDs de check-runs públicos inválidos o duplicados", W)
+        self.assertIn("IDs de check-runs autenticados inválidos o duplicados", W)
         self.assertIn("([.[].id] | unique | length)", W)
 
-    def test_authenticated_check_transport_uses_gh_token_and_stays_bounded(self):
+    def test_public_check_transport_remains_anonymous_and_bounded(self):
         start = W.index('checks_url_base="repos/$REPOSITORY/')
         end = W.index('owner="${REPOSITORY%%/*}"', start)
         checks_transport = W[start:end]
