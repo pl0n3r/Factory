@@ -51,20 +51,19 @@ class TemplateEtiquetasWorkflowContractTests(unittest.TestCase):
         general_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"
         pr_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1"
 
-        for name in ("sync", "validar-issue", "sweep"):
+        for name in ("sync", "validar-issue", "validar-pr", "sweep"):
             block = job_block(name)
             self.assertIn(general_ref, block)
             self.assertIn("contents: read", block)
             self.assertIn("issues: write", block)
 
         pr_block = job_block("validar-pr")
-        self.assertIn(pr_ref, pr_block)
-        self.assertNotIn(general_ref, pr_block)
+        self.assertNotIn(pr_ref, pr_block)
         self.assertIn("contents: read", pr_block)
         self.assertIn("issues: write", pr_block)
 
-        self.assertEqual(WF.count(general_ref), 3)
-        self.assertEqual(WF.count(pr_ref), 1)
+        self.assertEqual(WF.count(general_ref), 4)
+        self.assertEqual(WF.count(pr_ref), 0)
 
         for forbidden in (
             "contents: write",
