@@ -54,6 +54,7 @@ jobs:
           set -euo pipefail
           main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
           [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main inválido"; exit 1; }
+          main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
           printf '[]\n' > /tmp/release-issues.json
           for page in 1 2 3 4 5; do
             gh api               "repos/$REPOSITORY/issues?state=all&per_page=100&sort=updated&direction=desc&page=$page"               > /tmp/release-page.json
@@ -120,7 +121,7 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
+
           config_version="$(jq -er '.version' config/version.json)"
           version="$REQUESTED_VERSION"
           if [[ -z "$version" ]]; then version="$config_version"; fi
