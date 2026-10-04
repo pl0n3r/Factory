@@ -445,6 +445,27 @@ def _is_rate_limit_body(body: str) -> bool:
     return any(text in body for text in RATE_LIMIT_TEXTS)
 
 
+def _rate_limit_comment_identity(
+    item: dict[str, object],
+    *,
+    required_review_bot: str,
+) -> tuple[str, int] | None:
+    user = item.get("user")
+    body = item.get("body")
+    comment_id = item.get("id")
+    if not (
+        isinstance(user, dict)
+        and user.get("type") == "Bot"
+        and user.get("login") == required_review_bot
+        and isinstance(body, str)
+        and _is_rate_limit_body(body)
+    ):
+        return None
+    if type(comment_id) is not int or comment_id <= 0:
+        raise PolicyError("Comentario rate-limit sin id válido.")
+    return body, comment_id
+
+
 def _rate_limit_comments(
     lines: list[str],
     *,
@@ -453,19 +474,12 @@ def _rate_limit_comments(
 ) -> list[tuple[str, int]]:
     evidence: list[tuple[str, int]] = []
     for item in parse_comments(lines):
-        user = item.get("user")
-        body = item.get("body")
-        comment_id = item.get("id")
-        if not (
-            isinstance(user, dict)
-            and user.get("type") == "Bot"
-            and user.get("login") == required_review_bot
-            and isinstance(body, str)
-            and _is_rate_limit_body(body)
-        ):
+        identity = _rate_limit_comment_identity(
+            item, required_review_bot=required_review_bot
+        )
+        if identity is None:
             continue
-        if type(comment_id) is not int or comment_id <= 0:
-            raise PolicyError("Comentario rate-limit sin id válido.")
+        _body, comment_id = identity
         created_at = _parse_iso_timestamp(
             item.get("created_at"), noun="Timestamp de comentario rate-limit"
         )
@@ -513,20 +527,14 @@ def _in_place_rate_limit_updates(
 ) -> list[tuple[str, int]]:
     evidence: list[tuple[str, int]] = []
     for item in parse_comments(lines):
-        user = item.get("user")
-        body = item.get("body")
-        comment_id = item.get("id")
-        if not (
-            isinstance(user, dict)
-            and user.get("type") == "Bot"
-            and user.get("login") == required_review_bot
-            and isinstance(body, str)
-            and _is_rate_limit_body(body)
-            and head_sha in body
-        ):
+        identity = _rate_limit_comment_identity(
+            item, required_review_bot=required_review_bot
+        )
+        if identity is None:
             continue
-        if type(comment_id) is not int or comment_id <= 0:
-            raise PolicyError("Comentario rate-limit actualizado sin id válido.")
+        body, comment_id = identity
+        if head_sha not in body:
+            continue
         created_at = _parse_iso_timestamp(
             item.get("created_at"), noun="Timestamp original de comentario rate-limit"
         )
