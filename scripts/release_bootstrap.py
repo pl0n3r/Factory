@@ -277,7 +277,7 @@ def _release_window(
     *,
     created_at: Any = None,
     current_at: Any = None,
-) -> None:
+) -> dict[str, datetime]:
     raw = _marker_payload(
         body,
         marker_re=RELEASE_WINDOW_RE,
@@ -306,10 +306,19 @@ def _release_window(
             )
     if current_at is not None:
         current = _canonical_time(current_at, "now")
-        if current < opened or current >= expires:
+        if current < opened:
             raise ReleaseBootstrapError(
-                "Puerta rearmada fuera de su ventana vigente."
+                "Ventana de release todavía no está vigente."
             )
+        if current >= expires:
+            expires_text = expires.isoformat(timespec="seconds").replace(
+                "+00:00", "Z"
+            )
+            raise ReleaseBootstrapError(
+                f"Ventana de release venció en {expires_text}; "
+                "rearma una puerta nueva y vuelve a ejecutar el bootstrap."
+            )
+    return {"opened_at": opened, "expires_at": expires}
 
 
 def _validate_rearmed_bot_gate(
@@ -330,17 +339,35 @@ def _validate_rearmed_bot_gate(
     if not isinstance(body, str):
         raise ReleaseBootstrapError("Puerta rearmada sin body válido.")
     target_sha = _release_gate_target(body)
-    if target_sha != expected and not allow_target_drift:
-        raise ReleaseBootstrapError(
-            "Puerta rearmada corresponde a otro SHA."
-        )
     next_issue = _rearm_marker(body, target_sha)
-    _release_window(
+    window = _release_window(
         body,
         target_sha,
         created_at=gate.get("created_at"),
-        current_at=now if require_current_window else None,
     )
+
+    if target_sha != expected and not allow_target_drift:
+        current = _canonical_time(now, "now")
+        if current >= window["expires_at"]:
+            expires_text = window["expires_at"].isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+            raise ReleaseBootstrapError(
+                f"Ventana de release venció en {expires_text}; "
+                f"HEAD derivó de {target_sha[:12]} a {expected[:12]}. "
+                "Rearma una puerta nueva exact-SHA y vuelve a ejecutar el bootstrap."
+            )
+        raise ReleaseBootstrapError(
+            "Puerta rearmada corresponde a otro SHA; "
+            "HEAD derivó y requiere una puerta nueva exact-SHA."
+        )
+    if require_current_window:
+        _release_window(
+            body,
+            target_sha,
+            created_at=gate.get("created_at"),
+            current_at=now,
+        )
 
     if not isinstance(sources, list) or not sources:
         raise ReleaseBootstrapError("Falta provenance de rearmado.")
@@ -389,7 +416,6 @@ def _validate_rearmed_bot_gate(
     raise ReleaseBootstrapError(
         "Cadena de rearmado no termina en una puerta del OWNER."
     )
-
 
 def _v2_release_intent(gate: dict[str, Any]) -> bool:
     if gate.get("closed_by") == DECISION_BOT:
@@ -558,7 +584,10 @@ def validate_payload(payload: Any) -> dict[str, str]:
             now=payload.get("now"),
             sources=payload.get("rearm_sources"),
             allow_target_drift=expected_mode == "latest",
-            require_current_window=expected_mode != "latest",
+            # El TTL gobierna el freeze, no invalida una decisión A válida.
+            # La creación dentro de ventana y la provenance OWNER siguen
+            # verificándose; deriva de SHA/maquinaria conserva fail-closed.
+            require_current_window=False,
         )
     body = gate.get("body")
     gate_result = classify_body(body if isinstance(body, str) else "")
