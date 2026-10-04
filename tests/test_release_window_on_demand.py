@@ -24,7 +24,7 @@ CHECKS = [
     {"name": "CI factory", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Sonar CI-based", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Evidencia CodeQL", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
-    {"name": "Unattended Watchdog", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
+    {"name": "Vigilar startup_failure de reusables publicados", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Compatibilidad de consumidores", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
 ]
 
@@ -199,7 +199,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertEqual(result["reason"], "revalidation_required")
         self.assertEqual(
             result["missing_checks"],
-            ["Vigilar startup_failure de reusables publicados", "Compatibilidad de consumidores"],
+            ["Compatibilidad de consumidores", "Vigilar startup_failure de reusables publicados"],
         )
 
 
