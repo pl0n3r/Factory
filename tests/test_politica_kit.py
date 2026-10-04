@@ -538,6 +538,7 @@ class T(unittest.TestCase):
             required_review_bot = ""
             base_policy_file = ""
             head_sha = ""
+            head_committed_at = ""
             comments_file = ""
             checks_file = ""
             threads_file = ""
