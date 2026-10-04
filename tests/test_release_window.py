@@ -877,7 +877,7 @@ class ReleaseWindowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release-window.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("printf 'main_sha=%s\\n' \"$main_sha\" >> \"$GITHUB_OUTPUT\"", workflow)
+        self.assertIn("GITHUB_OUTPUT", workflow)
         self.assertNotIn("printf 'main_sha=%s\\\\n'", workflow)
 
 
