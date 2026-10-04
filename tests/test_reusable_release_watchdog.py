@@ -282,7 +282,10 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
             "pl0n3r/AutoFactory",
         ):
             self.assertIn(repository, workflow)
-        self.assertEqual(workflow.count("actions_url=\"https://api.github.com/repos/$repo/actions/runs\""), 1)
+        self.assertEqual(
+            workflow.count("actions_url=\"https://api.github.com/repos/$repo/actions/runs\""),
+            1,
+        )
         self.assertIn("--data-urlencode 'status=startup_failure'", workflow)
         self.assertIn(".conclusion == \"startup_failure\"", workflow)
         self.assertIn("authority=unchanged", workflow)
