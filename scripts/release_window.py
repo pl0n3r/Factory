@@ -359,10 +359,17 @@ def _latest_by_version(records: list[dict[str, Any]], version: str) -> dict[str,
 
 
 def freeze_gate(records: list[dict[str, Any]], now: datetime) -> dict[str, Any] | None:
-    active: list[dict[str, Any]] = []
+    latest_by_version: dict[str, dict[str, Any]] = {}
     for record in records:
         if record["duplicate_of"] is not None:
             continue
+        version = str(record["version"])
+        current = latest_by_version.get(version)
+        if current is None or record["number"] > current["number"]:
+            latest_by_version[version] = record
+
+    active: list[dict[str, Any]] = []
+    for record in latest_by_version.values():
         window = record["window"]
         if window is None or record["executed"] is not None:
             continue
