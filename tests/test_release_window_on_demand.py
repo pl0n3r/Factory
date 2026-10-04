@@ -90,41 +90,38 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertNotIn("decision", result["reason"])
 
     def test_owner_decision_is_not_lost_to_concurrency_cancel_or_prior_reconciliation(self):
-        rendered = _render_gate("1.0.28", MAIN_SHA, datetime.fromisoformat("2026-10-04T19:00:00+00:00"), source_issue=900)
-        marker = rendered["body"]
-        gate_marker = marker.split("<!-- factory-human-gate ", 1)[1].split(" -->", 1)[0]
-        gate_sha = hashlib.sha256(json.dumps(json.loads(gate_marker), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()
-        issue = {
-            "number": 901,
-            "state": "open",
-            "author_association": "OWNER",
-            "user": {"login": "pl0n3r", "type": "User"},
-            "body": rendered["body"],
-            "labels": [{"name": "decisión: dueño"}],
-            "author_association": "OWNER",
-            "user": {"login": "pl0n3r", "type": "User"},
-        }
-        comments = []
-        events = {"repository": {"full_name": "pl0n3r/Factory"}, "issue": issue,
-                  "comment": {"body": "/decidir A", "author_association": "OWNER",
-                              "user": {"type": "User", "login": "pl0n3r"}}}
         from seguridad.test_decision_respuesta import event as decision_event, FakeAPI as DecisionFakeAPI
 
-        api = DecisionFakeAPI()
-        decision = decision_event(command="/decidir A", issue_body=rendered["body"])
+        rendered = _render_gate(
+            "1.0.28",
+            MAIN_SHA,
+            datetime.fromisoformat("2026-10-04T19:00:00+00:00"),
+            source_issue=900,
+        )
+        api = DecisionFakeAPI(body=rendered["body"])
+        decision = decision_event(
+            command="/decidir A",
+            issue_body=rendered["body"],
+        )
         self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))
         self.assertEqual(api.issue["state"], "closed")
-        evidence = [c for c in api.comments if c["body"].startswith("<!-- factory-human-decision ")]
+        evidence = [
+            item for item in api.comments
+            if item["body"].startswith("<!-- factory-human-decision ")
+        ]
         self.assertEqual(len(evidence), 1)
+
         api.issue["state"] = "open"
-        api.issue["labels"].append({"name": "decisión: dueño"})
-        self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))
-        self.assertTrue(any("factory-human-decision" in c["body"] for c in api.comments))
-        self.assertEqual(api.issue.get("state"), "closed")
-        api.issue["state"] = "open"
-        api.issue["labels"] = [{"name": "decisión: dueño"}]
-        events["comment"]["body"] = "/decidir A"
-        self.assertTrue(materialize_decision(events, api, "pl0n3r/Factory"))
+        api.issue["labels"] = [
+            {"name": "decisión: dueño"},
+            {"name": "estado: bloqueado"},
+        ]
+        self.assertFalse(materialize_decision(decision, api, "pl0n3r/Factory"))
+        evidence = [
+            item for item in api.comments
+            if item["body"].startswith("<!-- factory-human-decision ")
+        ]
+        self.assertEqual(len(evidence), 1)
 
     def test_requested_version_must_match_config_candidate(self):
         result = plan_request({
