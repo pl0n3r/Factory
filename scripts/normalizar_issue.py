@@ -287,6 +287,21 @@ def normalize_issue_body(
         raise NormalizationError("Body del Issue inválido o demasiado grande.")
 
     original = body
+    try:
+        canonical_contract = parse_contract(original)
+        canonical_task = parse_task_marker(original)
+    except (AcceptanceError, PlanError):
+        canonical_contract = []
+        canonical_task = None
+    if canonical_contract and canonical_task is not None:
+        return NormalizationResult(
+            body=original,
+            complete=True,
+            changed=False,
+            missing=(),
+            comment=None,
+            dedup_key=_dedup_key(original),
+        )
     render_source = TASK_MARKER_IN_TEXT.sub("", body)
     prelude, sections, extras = _split_sections(render_source)
     missing: list[str] = []
