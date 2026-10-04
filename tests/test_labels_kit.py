@@ -75,6 +75,70 @@ class LabelsKitTests(unittest.TestCase):
                 },
             )
 
+    def test_unknown_dimension_like_state_does_not_default_issue_to_available(self):
+        cases = (
+            (
+                "es",
+                {"tipo: producto", "prioridad: media", "estado: en progreso"},
+                "estado: en progreso",
+                "estado: disponible",
+            ),
+            (
+                "en",
+                {"type: product", "priority: medium", "status: in progress"},
+                "status: in progress",
+                "status: available",
+            ),
+        )
+        for language, names, legacy_state, default_state in cases:
+            with self.subTest(language=language):
+                catalog = catalog_for_language(language)
+                plan = validation_plan(catalog, names, is_pull_request=False)
+
+                self.assertFalse(plan["valid"])
+                self.assertIn(legacy_state, plan["unknown"])
+                self.assertNotIn(default_state, plan["add"])
+                self.assertNotIn("state", plan["missing"])
+                warning = warning_plan(plan, language)
+                self.assertEqual(warning["action"], "warn")
+                self.assertIn(legacy_state, warning["body"])
+                with self.assertRaises(LabelError):
+                    validate_selection(catalog, names)
+
+    def test_unknown_dimension_like_type_or_priority_fails_closed_without_fabricating_dimension(self):
+        cases = (
+            (
+                "es",
+                {"tipo: iniciativa", "prioridad: alta", "estado: bloqueado"},
+                "tipo: iniciativa",
+            ),
+            (
+                "es",
+                {"tipo: producto", "prioridad: urgente", "estado: bloqueado"},
+                "prioridad: urgente",
+            ),
+            (
+                "en",
+                {"type: initiative", "priority: high", "status: blocked"},
+                "type: initiative",
+            ),
+            (
+                "en",
+                {"type: product", "priority: urgent", "status: blocked"},
+                "priority: urgent",
+            ),
+        )
+        for language, names, unknown_label in cases:
+            with self.subTest(language=language, label=unknown_label):
+                catalog = catalog_for_language(language)
+                plan = validation_plan(catalog, names, is_pull_request=False)
+
+                self.assertFalse(plan["valid"])
+                self.assertIn(unknown_label, plan["unknown"])
+                self.assertEqual(plan["add"], [])
+                with self.assertRaises(LabelError):
+                    validate_selection(catalog, names)
+
     def test_upsert_plan_is_idempotent_and_updates_drift(self):
         existing = [
             {
