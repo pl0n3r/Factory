@@ -25,6 +25,7 @@ from scripts.dispatcher_v2 import (
     reconcile_direction_gate_instances,
     parallel_ready,
     select_next,
+    select_next_action,
     work_ladder,
 )
 
@@ -109,6 +110,99 @@ def unattended_watchdog_decision(
 
 
 class DispatcherV2Tests(unittest.TestCase):
+    def test_available_parent_without_executable_contract_is_repaired_and_skipped(self):
+        parent = Candidate(
+            key="pl0n3r/Condor#554",
+            priority="high",
+            metadata={
+                "repository_ref": "pl0n3r/Condor",
+                "issue_state": "open",
+                "issue_body": """### Contexto
+Parent de product-direction con leaves ya materializados.
+
+### Alcance
+Coordinar el tramo, no ejecutar un leaf.
+
+### Fuera de alcance
+No reservar el parent.
+
+<!-- factory-product-direction {"repository_ref":"pl0n3r/Condor","objective":"tramo","leaves":[]} -->
+""",
+            },
+        )
+        fallback = Candidate(
+            key="pl0n3r/Factory#981",
+            priority="medium",
+        )
+
+        action = select_next_action([parent, fallback])
+
+        self.assertEqual(action["action"], "take")
+        self.assertEqual(action["selected"], "pl0n3r/Factory#981")
+        self.assertEqual(len(action["repairs"]), 1)
+        repair = action["repairs"][0]
+        self.assertEqual(repair["key"], "pl0n3r/Condor#554")
+        self.assertEqual(repair["action"], "normalize_issue")
+        self.assertEqual(repair["plan"]["action"], "comment_and_skip")
+        self.assertFalse(repair["plan"]["retry_once"])
+
+        missing_body = Candidate(
+            key="pl0n3r/Condor#parent-empty",
+            priority="high",
+            metadata={"issue_body": "", "issue_state": "open"},
+        )
+        empty_action = select_next_action([missing_body, fallback])
+        self.assertEqual(empty_action["selected"], "pl0n3r/Factory#981")
+        self.assertEqual(
+            empty_action["repairs"][0]["plan"]["missing"],
+            ("issue_body legible",),
+        )
+
+    def test_legacy_executable_leaf_normalization_from_943_still_retries_once(self):
+        legacy_body = """## Problema
+Leaf legacy con evidencia suficiente.
+
+## Trabajo
+Normalizar antes de reservar.
+
+## Límites
+No inventar contrato.
+
+## Criterios
+- [ ] [AC-01] `tests/test_dispatcher_v2.py::DispatcherV2Tests::test_legacy_executable_leaf_normalization_from_943_still_retries_once`.
+
+### Rutas reclamadas
+- `scripts/dispatcher_v2.py`
+- `tests/test_dispatcher_v2.py`
+"""
+        candidate = Candidate(
+            key="pl0n3r/Factory#legacy",
+            priority="high",
+            metadata={
+                "repository_ref": "pl0n3r/Factory",
+                "issue_state": "open",
+                "issue_body": legacy_body,
+                "normalizer_task_metadata": {
+                    "epic": 981,
+                    "task_key": "FALSE_AVAILABLE_PARENT_V1",
+                    "order": 1,
+                    "owner": "pl0n3r",
+                    "roles": ["arquitectura", "ingenieria-software", "qa"],
+                    "depends_on": [],
+                },
+            },
+        )
+
+        action = select_next_action([candidate])
+
+        self.assertEqual(action["action"], "normalize_then_take")
+        self.assertEqual(action["selected"], "pl0n3r/Factory#legacy")
+        self.assertTrue(action["retry_once"])
+        self.assertEqual(
+            action["normalization"]["action"],
+            "edit_and_retry_once",
+        )
+
     def test_work_ladder_never_returns_none_when_all_repos_have_no_ready(self):
         candidates = [
             Candidate(
