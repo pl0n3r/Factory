@@ -122,6 +122,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             if item["body"].startswith("<!-- factory-human-decision ")
         ]
         self.assertEqual(len(evidence), 1)
+        self.assertEqual(api.issue["state"], "closed")
 
     def test_requested_version_must_match_config_candidate(self):
         result = plan_request({
