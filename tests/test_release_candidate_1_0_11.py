@@ -25,25 +25,49 @@ class ReleaseCandidate1011Tests(unittest.TestCase):
         version = tuple(int(part) for part in payload["version"].split("."))
         self.assertGreaterEqual(version, (1, 0, 11))
 
-    def test_candidate_contains_labels_startup_fix(self) -> None:
-        workflow = (self.root / ".github/workflows/etiquetas.yml").read_text()
+    def test_candidate_keeps_mode_scoped_labels_permissions(self) -> None:
+        reusable = (self.root / ".github/workflows/etiquetas.yml").read_text()
+        template = (
+            self.root / "template/.github/workflows/etiquetas.yml"
+        ).read_text()
+
         general = re.search(
             r"(?ms)^  etiquetas:\n(?P<body>.*?)(?=^  etiquetas-pr:\n)",
-            workflow,
+            reusable,
         )
         pr_validate = re.search(
             r"(?ms)^  etiquetas-pr:\n(?P<body>.*)\Z",
-            workflow,
+            reusable,
+        )
+        template_pr = re.search(
+            r"(?ms)^  validar-pr:\n(?P<body>.*?)(?=^  sweep:\n)",
+            template,
         )
         self.assertIsNotNone(general)
         self.assertIsNotNone(pr_validate)
+        self.assertIsNotNone(template_pr)
+
         general_body = general.group("body")
         pr_body = pr_validate.group("body")
+        template_pr_body = template_pr.group("body")
 
         self.assertIn("pull-requests: read", general_body)
         self.assertNotIn("pull-requests: write", general_body)
         self.assertIn("pull-requests: write", pr_body)
-        self.assertEqual(workflow.count("pull-requests: write"), 1)
+        self.assertIn("pull-requests: write", template_pr_body)
+
+        self.assertEqual(reusable.count("pull-requests: write"), 1)
+        self.assertEqual(template.count("pull-requests: write"), 1)
+        self.assertEqual(template.count("pull-requests: read"), 3)
+        for forbidden in (
+            "contents: write",
+            "actions: write",
+            "checks: write",
+            "id-token: write",
+            "secrets: inherit",
+        ):
+            self.assertNotIn(forbidden, reusable)
+            self.assertNotIn(forbidden, template)
 
     def test_candidate_contains_profile_invariant_contract_renewal(self) -> None:
         reservation = "0b9040ef-85eb-5c31-b5b9-9722a07675bf"

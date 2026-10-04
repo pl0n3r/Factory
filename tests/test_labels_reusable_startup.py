@@ -46,25 +46,33 @@ class LabelsReusableStartupTests(unittest.TestCase):
             1,
         )
 
-    def test_template_caller_uses_published_v1_permissions(self) -> None:
-        for name in ("sync", "validar-issue", "validar-pr", "sweep"):
+    def test_template_caller_uses_mode_scoped_permissions(self) -> None:
+        for name in ("sync", "validar-issue", "sweep"):
             with self.subTest(job=name):
                 self.assertEqual(permissions(TEMPLATE, name), EXPECTED_GENERAL)
+        self.assertEqual(permissions(TEMPLATE, "validar-pr"), EXPECTED_PR_VALIDATE)
         self.assertIn("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1", TEMPLATE)
-        self.assertEqual(TEMPLATE.count("pull-requests: write"), 0)
+        self.assertEqual(TEMPLATE.count("pull-requests: write"), 1)
 
-    def test_caller_and_reusable_startup_contract_regression(self) -> None:
-        reusable_general = permissions(REUSABLE, "etiquetas")
-        for name in ("sync", "validar-issue", "sweep"):
-            caller = permissions(TEMPLATE, name)
-            self.assertTrue(
-                reusable_general.issubset(caller),
-                msg=f"{name} concede menos autoridad que el reusable general: {caller} vs {reusable_general}",
-            )
+    def test_caller_and_reusable_permissions_match_by_mode(self) -> None:
+        mapping = {
+            "sync": "etiquetas",
+            "validar-issue": "etiquetas",
+            "validar-pr": "etiquetas-pr",
+            "sweep": "etiquetas",
+        }
+        for caller_name, reusable_name in mapping.items():
+            with self.subTest(caller=caller_name, reusable=reusable_name):
+                caller = permissions(TEMPLATE, caller_name)
+                reusable = permissions(REUSABLE, reusable_name)
+                self.assertEqual(
+                    caller,
+                    reusable,
+                    msg=f"{caller_name} no coincide con {reusable_name}: {caller} vs {reusable}",
+                )
 
-        self.assertEqual(permissions(TEMPLATE, "validar-pr"), EXPECTED_GENERAL)
-        self.assertEqual(permissions(REUSABLE, "etiquetas-pr"), EXPECTED_PR_VALIDATE)
         self.assertEqual(REUSABLE.count("pull-requests: write"), 1)
+        self.assertEqual(TEMPLATE.count("pull-requests: write"), 1)
         self.assertNotIn("pull-requests: write", job_block(REUSABLE, "etiquetas"))
 
     def test_modes_remain_closed_timed_and_fail_closed(self) -> None:
