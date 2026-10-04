@@ -192,7 +192,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
     def test_missing_exact_main_evidence_fails_closed(self):
         reduced = [
             check for check in CHECKS
-            if check["name"] not in {"Compatibilidad de consumidores"}
+            if check["name"] not in {"Compatibilidad de consumidores", "Vigilar startup_failure de reusables publicados"}
         ]
         result = plan_request(request_payload(workflows=reduced))
         self.assertEqual(result["action"], "rejected")
