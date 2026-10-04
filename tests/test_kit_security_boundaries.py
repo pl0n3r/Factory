@@ -58,7 +58,16 @@ class KitSecurityBoundaryTests(unittest.TestCase):
         self.assertNotIn("decisions_path:", text)
         self.assertNotIn("inputs.kit_ref", text)
         self.assertNotIn("--file", text)
+        self.assertIn(
+            'factory_ref: {required: false, type: string, default: "v1"}',
+            text,
+        )
+        self.assertIn('FACTORY_REF: ${{ inputs.factory_ref }}', text)
+        self.assertIn('[[ "$FACTORY_REF" =~ ^[0-9a-f]{40}$ ]]', text)
+        self.assertIn("Checkout Factory stable v1", text)
         self.assertIn("ref: v1", text)
+        self.assertIn("Checkout Factory exact SHA", text)
+        self.assertIn('ref: ${{ inputs.factory_ref }}', text)
 
     def test_version_source_is_closed_in_reusable_ci(self):
         text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
