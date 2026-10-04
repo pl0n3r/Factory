@@ -11,9 +11,12 @@ import subprocess
 from urllib.parse import quote
 
 from puertas_humanas import (
+    FACTORY_RELEASE_TARGET_RE,
+    MARKER_RE,
     GateValidationError,
     gate_authority_contract_from_body,
     gate_target_identity_from_body,
+    validate_gate,
 )
 
 MARKER = "<!-- factory-invalid-gate -->"
@@ -26,6 +29,10 @@ DECISION_LABEL = "decisión: dueño"
 TRUSTED_ISSUE_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 DUPLICATE_MARKER = "<!-- factory-human-gate-duplicate"
 DECISION_RE = re.compile(r'^<!-- factory-human-decision (\{[^\n]*\}) -->')
+RELEASE_REARM_RE = re.compile(
+    r"<!--\s*factory-release-rearm\s+(\{[^\n]*\})\s*-->"
+)
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -180,6 +187,54 @@ def _decision_evidence(api, base: str) -> tuple[str, str] | None:
     return next(iter(found), None)
 
 
+def _trusted_gate_candidate(candidate: dict) -> bool:
+    """Acepta humanos confiables o el release-rearm exacto creado por Actions."""
+    if candidate.get("author_association") in TRUSTED_ISSUE_ASSOCIATIONS:
+        return True
+
+    user = candidate.get("user")
+    body = candidate.get("body")
+    if (
+        not isinstance(user, dict)
+        or user.get("login") != BOT
+        or user.get("type") != "Bot"
+        or not isinstance(body, str)
+    ):
+        return False
+
+    gate_markers = MARKER_RE.findall(body)
+    rearm_markers = RELEASE_REARM_RE.findall(body)
+    if len(gate_markers) != 1 or len(rearm_markers) != 1:
+        return False
+
+    try:
+        gate = validate_gate(json.loads(gate_markers[0]))
+        rearm = json.loads(rearm_markers[0])
+    except (GateValidationError, json.JSONDecodeError, TypeError):
+        return False
+
+    if gate.get("category") != "factory-release":
+        return False
+    target = FACTORY_RELEASE_TARGET_RE.search(gate.get("context", ""))
+    if target is None:
+        return False
+
+    if (
+        not isinstance(rearm, dict)
+        or set(rearm) != {"version", "source_issue", "sha"}
+        or type(rearm.get("version")) is not int
+        or rearm["version"] != 1
+        or type(rearm.get("source_issue")) is not int
+        or rearm["source_issue"] <= 0
+        or not isinstance(rearm.get("sha"), str)
+        or SHA_RE.fullmatch(rearm["sha"]) is None
+        or rearm["sha"] != target.group(2).lower()
+    ):
+        return False
+
+    return True
+
+
 def _target_issues(api, repository: str, target_identity: str) -> list[dict]:
     candidates = api(
         "GET", f"repos/{repository}/issues?state=all&per_page=100"
@@ -188,7 +243,7 @@ def _target_issues(api, repository: str, target_identity: str) -> list[dict]:
     for candidate in candidates:
         if not isinstance(candidate, dict) or "pull_request" in candidate:
             continue
-        if candidate.get("author_association") not in TRUSTED_ISSUE_ASSOCIATIONS:
+        if not _trusted_gate_candidate(candidate):
             continue
         body = candidate.get("body")
         if not isinstance(body, str):
