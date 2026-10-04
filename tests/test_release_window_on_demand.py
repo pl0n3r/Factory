@@ -172,7 +172,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertIn("decision_materialized=true", SECURITY)
 
     def test_workflow_resolves_main_sha_before_workflow_run_snapshot(self):
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+        workflow = WORKFLOW
         assign = workflow.index('main_sha="$(gh api "repos/$REPOSITORY/commits/main"')
         snapshot = workflow.index('actions/runs?head_sha=$main_sha')
         request = workflow.index("scripts/release_window.py request")
