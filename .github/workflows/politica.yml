@@ -10,6 +10,11 @@ permissions:
 jobs:
   politica:
     name: Validar decisiones y límite de revisión
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+      checks: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -78,10 +83,18 @@ jobs:
           set -euo pipefail
           reviews_file="$(mktemp)"
           comments_file="$(mktemp)"
-          trap 'rm -f "$reviews_file" "$comments_file"' EXIT
+          checks_file="$(mktemp)"
+          checks_json="$(mktemp)"
+          threads_file="$(mktemp)"
+          threads_json="$(mktemp)"
+          phase_file="$(mktemp)"
+          phase_err="$(mktemp)"
+          trap 'rm -f "$reviews_file" "$comments_file" "$checks_file" "$checks_json" "$threads_file" "$threads_json" "$phase_file" "$phase_err"' EXIT
 
-          gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100"             --jq '.[] | @json' > "$reviews_file"
-          gh api --paginate "repos/$REPOSITORY/issues/$PR/comments?per_page=100"             --jq '.[] | @json' > "$comments_file"
+          gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100" \
+            --jq '.[] | @json' > "$reviews_file"
+          gh api --paginate "repos/$REPOSITORY/issues/$PR/comments?per_page=100" \
+            --jq '.[] | @json' > "$comments_file"
 
           reviews_bytes="$(wc -c < "$reviews_file")"
           comments_bytes="$(wc -c < "$comments_file")"
@@ -94,7 +107,102 @@ jobs:
             exit 1
           }
 
-          args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA")
+          primary_args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA")
+          [[ -z "${BASE_POLICY_FILE:-}" ]] || primary_args+=(--base-policy-file "$BASE_POLICY_FILE")
+          primary_args+=(--comments-file "$comments_file")
+
+          set +e
+          PRIMARY_OUTPUT="$(python3 .factory/scripts/politica_kit.py "${primary_args[@]}" < "$reviews_file" 2>&1)"
+          PRIMARY_STATUS=$?
+          set -e
+          if (( PRIMARY_STATUS == 0 )); then
+            printf '%s\n' "$PRIMARY_OUTPUT"
+            exit 0
+          fi
+
+          phase_args=()
+          if gh api -H "Accept: application/vnd.github.raw+json" \
+              "repos/$REPOSITORY/contents/datos.yml?ref=$PR_BASE_SHA" \
+              > "$phase_file" 2> "$phase_err"; then
+            PHASE_BYTES="$(wc -c < "$phase_file")"
+            if (( PHASE_BYTES <= 524288 )) && jq -e \
+              'type == "object" and (.phase == "construccion" or .phase == "live")' \
+              "$phase_file" >/dev/null; then
+              phase_args=(--phase-file "$phase_file")
+            else
+              echo "::warning::datos.yml BASE no define una fase válida; fallback reviewer deshabilitado."
+            fi
+          else
+            echo "::warning::No se pudo leer datos.yml desde BASE exacta; fallback reviewer deshabilitado."
+          fi
+
+          HEAD_COMMIT_JSON="$(gh api "repos/$REPOSITORY/commits/$PR_HEAD_SHA")"
+          HEAD_COMMITTED_AT="$(jq -r '.commit.committer.date // empty' <<<"$HEAD_COMMIT_JSON")"
+          [[ "$HEAD_COMMITTED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+            echo "::error::Timestamp del HEAD exacto inválido"
+            exit 1
+          }
+
+          gh api -H "Accept: application/vnd.github+json" \
+            "repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100" > "$checks_json"
+          jq -e '.total_count <= 100' "$checks_json" >/dev/null || {
+            echo "::error::Demasiados check-runs para evaluar fallback de reviewer"
+            exit 1
+          }
+          jq -c '.check_runs[]' "$checks_json" > "$checks_file"
+
+          owner="${REPOSITORY%%/*}"
+          repo_name="${REPOSITORY#*/}"
+          # shellcheck disable=SC2016
+          gh api graphql \
+            -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{author{login}}}}}}}}' \
+            -F owner="$owner" -F repo="$repo_name" -F pr="$PR" > "$threads_json"
+          jq -e '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false' "$threads_json" >/dev/null || {
+            echo "::error::Review threads exceden el límite evaluable"
+            exit 1
+          }
+          jq -e '[.data.repository.pullRequest.reviewThreads.nodes[].comments.pageInfo.hasNextPage] | all(. == false)' "$threads_json" >/dev/null || {
+            echo "::error::Comentarios de review thread exceden el límite evaluable"
+            exit 1
+          }
+          jq -c '.data.repository.pullRequest.reviewThreads.nodes[]' "$threads_json" > "$threads_file"
+
+          (( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES )) || {
+            echo "::error::Checks exceden el tamaño permitido"
+            exit 1
+          }
+          (( $(wc -c < "$threads_file") <= MAX_EVIDENCE_BYTES )) || {
+            echo "::error::Threads exceden el tamaño permitido"
+            exit 1
+          }
+
+          args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --head-committed-at "$HEAD_COMMITTED_AT")
           [[ -z "${BASE_POLICY_FILE:-}" ]] || args+=(--base-policy-file "$BASE_POLICY_FILE")
-          args+=(--comments-file "$comments_file")
-          python3 .factory/scripts/politica_kit.py "${args[@]}" < "$reviews_file"
+          args+=("${phase_args[@]}" --comments-file "$comments_file" --checks-file "$checks_file" --threads-file "$threads_file")
+          POLICY_OUTPUT="$(python3 .factory/scripts/politica_kit.py "${args[@]}" < "$reviews_file")"
+          printf '%s\n' "$POLICY_OUTPUT"
+
+          if [[ "$(jq -r '.review_fallback // false' <<<"$POLICY_OUTPUT")" == "true" ]]; then
+            retry_id="$(jq -r '.rate_limit_comment_id' <<<"$POLICY_OUTPUT")"
+            retry_at="$(jq -r '.rate_limit_created_at' <<<"$POLICY_OUTPUT")"
+            [[ "$retry_id" =~ ^[0-9]+$ ]] || { echo "::error::Evidence comment id inválido"; exit 1; }
+            [[ "$retry_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || { echo "::error::Evidence timestamp inválido"; exit 1; }
+
+            marker="<!-- factory-reviewer-rate-limit-fallback {\"version\":1,\"head\":\"$PR_HEAD_SHA\"} -->"
+            evidence_url="https://github.com/$REPOSITORY/pull/$PR#issuecomment-$retry_id"
+            body="$(printf '%s\n\n%s\n%s\n%s\n%s' \
+              "$marker" \
+              'Revisión externa no disponible por límite de capacidad.' \
+              "HEAD exacto: \`$PR_HEAD_SHA\`." \
+              "Evidencia terminal del reintento: $retry_at · $evidence_url" \
+              'Fallback permitido únicamente en fase construccion; la revisión externa vuelve a ser obligatoria para live.')"
+
+            existing_id="$(gh api --paginate "repos/$REPOSITORY/issues/$PR/comments?per_page=100" \
+              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("factory-reviewer-rate-limit-fallback") and contains("'"$PR_HEAD_SHA"'")) | .id' \
+              | head -n 1)"
+            if [[ -n "$existing_id" ]]; then
+              gh api --method PATCH "repos/$REPOSITORY/issues/comments/$existing_id" -f body="$body" >/dev/null
+            else
+              gh api --method POST "repos/$REPOSITORY/issues/$PR/comments" -f body="$body" >/dev/null
+            fi
+          fi
