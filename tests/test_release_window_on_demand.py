@@ -201,15 +201,23 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         )
         self.assertIn("sort_by(.run_id) | reverse | .[0:1]", WORKFLOW)
 
-    def test_workflow_resolves_main_sha_before_workflow_run_snapshot(self):
+    def test_workflow_pins_checkout_to_remote_main_before_snapshot_and_gate(self):
         workflow = WORKFLOW
-        assign = workflow.index('main_sha="$(gh api "repos/$REPOSITORY/commits/main"')
+        checked_out = workflow.index('checked_out_sha="$(git rev-parse HEAD)"')
+        remote = workflow.index('remote_main_sha="$(gh api "repos/$REPOSITORY/commits/main"')
+        equal = workflow.index('[[ "$checked_out_sha" == "$remote_main_sha" ]]')
         snapshot = workflow.index(
             'actions/workflows/$workflow_file/runs?head_sha=$main_sha&per_page=20'
         )
+        current = workflow.index('current_main_sha="$(gh api "repos/$REPOSITORY/commits/main"')
+        stale_guard = workflow.index('[[ "$current_main_sha" != "$main_sha" ]]')
         request = workflow.index("scripts/release_window.py request")
-        self.assertLess(assign, snapshot)
-        self.assertLess(snapshot, request)
+        self.assertLess(checked_out, remote)
+        self.assertLess(remote, equal)
+        self.assertLess(equal, snapshot)
+        self.assertLess(snapshot, current)
+        self.assertLess(current, stale_guard)
+        self.assertLess(stale_guard, request)
 
     def test_missing_exact_main_evidence_fails_closed(self):
         reduced = [
