@@ -79,11 +79,11 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
         self.assertEqual(template.count("pull-requests: read"), 3)
         self.assertEqual(
             template.count("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"),
-            3,
+            4,
         )
         self.assertEqual(
             template.count("uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1"),
-            1,
+            0,
         )
 
     def test_candidate_keeps_human_release_boundary(self) -> None:
