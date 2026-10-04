@@ -481,7 +481,7 @@ class ReleaseWindowTests(unittest.TestCase):
             workflow.count(
                 '| {user: {login: .user.login}, body: (.body // "")}'
             ),
-            2,
+            1,
         )
         self.assertNotIn(
             "--slurp | jq 'add // []' > /tmp/release-comments.json",
