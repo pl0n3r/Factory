@@ -28,6 +28,7 @@ concurrency:
 jobs:
   etiquetas:
     name: Labels
+    if: inputs.mode != 'validate' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     permissions:
@@ -226,3 +227,84 @@ jobs:
               echo "::warning::PR #$number fue fusionado sin un check de Etiquetas verde posterior; alerta persistida en Issue #$linked_issue."
             fi
           done < <(jq -c '.[]' /tmp/merged-prs.json)
+
+  etiquetas-pr:
+    name: Labels
+    if: inputs.mode == 'validate' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Validar inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          LANGUAGE: ${{ inputs.language }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in sync|validate|sweep) ;; *) echo "::error::mode debe ser sync, validate o sweep"; exit 1 ;; esac
+          case "$LANGUAGE" in es|en) ;; *) echo "::error::language debe ser es o en"; exit 1 ;; esac
+          if [[ "$MODE" == "validate" && "$ISSUE_NUMBER" == "0" ]]; then
+            echo "::error::issue_number es obligatorio cuando mode=validate"
+            exit 1
+          fi
+
+      - name: Descargar kit Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Validar catálogo
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: python3 .factory/scripts/labels_kit.py validate-catalog --language "$LANGUAGE"
+
+      - name: Validar PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORIO/issues/$ISSUE_NUMBER" > /tmp/item.json
+          body="$(jq -r '.body // ""' /tmp/item.json)"
+          closing_json="$(printf '%s' "$body" | python3 .factory/scripts/labels_kit.py closing-reference --language "$LANGUAGE")"
+          closing="$(jq -r '.number // empty' <<<"$closing_json")"
+          printf 'null\n' > /tmp/linked.json
+          if [[ -n "$closing" ]]; then
+            gh api "repos/$REPOSITORIO/issues/$closing" > /tmp/linked.json
+          fi
+          jq -n --slurpfile item /tmp/item.json --slurpfile linked /tmp/linked.json \
+            '{labels:$item[0].labels,is_pull_request:($item[0].pull_request != null),body:($item[0].body // ""),linked_issue:$linked[0]}' \
+            | python3 .factory/scripts/labels_kit.py plan-validation --language "$LANGUAGE" > /tmp/plan.json
+
+          jq -r '.add[]' /tmp/plan.json > /tmp/add-labels.txt
+          if [[ -s /tmp/add-labels.txt ]]; then
+            jq -Rn '[inputs] | {labels:.}' < /tmp/add-labels.txt > /tmp/add-labels.json
+            gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/labels" --input /tmp/add-labels.json >/dev/null
+          fi
+
+          marker='<!-- factory-label-validation -->'
+          comment_id="$(gh api --paginate "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/comments?per_page=100" --slurp \
+            | jq -r --arg marker "$marker" 'add // [] | map(select((.user.login // "") == "github-actions[bot]" and ((.body // "") | startswith($marker)))) | first | .id // empty')"
+          jq -r '.warning.body' /tmp/plan.json > /tmp/warning.md
+          jq -n --rawfile body /tmp/warning.md '{body:$body}' > /tmp/comment.json
+          warning_action="$(jq -r '.warning.action' /tmp/plan.json)"
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPOSITORIO/issues/comments/$comment_id" --input /tmp/comment.json >/dev/null
+          elif [[ "$warning_action" == "warn" ]]; then
+            gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/comments" --input /tmp/comment.json >/dev/null
+          fi
+
+          jq -e '.valid == true' /tmp/plan.json >/dev/null || {
+            echo "::error::Labels incompletas o duplicadas después de las reparaciones seguras"
+            exit 1
+          }
+
