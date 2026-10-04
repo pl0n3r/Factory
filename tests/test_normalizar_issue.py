@@ -5,7 +5,7 @@ import unittest
 from scripts.aceptacion_kit import parse_contract
 from scripts.normalizar_issue import normalize_issue_body, plan_issue_normalization
 from scripts.orquestador_kit import parse_task_marker
-from scripts.dispatcher_v2 import Candidate, RepoFairnessContext, select_next_action
+from scripts.dispatcher_v2 import Candidate, RepoFairnessContext, select_next_action, work_ladder
 
 
 TASK_METADATA = {
@@ -213,6 +213,78 @@ Sin inventar.
             "comment_and_skip",
         )
         self.assertFalse(action["declare_no_work"])
+
+
+    def test_normalization_is_idempotent_and_preserves_single_task_marker(self):
+        body = """## Problema
+Legacy con marker de tarea existente.
+
+## Trabajo
+Normalizar sin duplicar markers.
+
+## Límites
+No inventar.
+
+## Criterios
+- [ ] [AC-01] `tests/test_normalizar_issue.py::NormalizarIssueTests::test_normalization_is_idempotent_and_preserves_single_task_marker`.
+
+### Rutas reclamadas
+- `scripts/normalizar_issue.py`
+
+<!-- factory-plan-task {"depends_on":[942],"epic":943,"order":1,"owner":"pl0n3r","paths":["scripts/normalizar_issue.py"],"roles":["ingenieria-software"],"task_key":"ISSUE_NORMALIZER_V1","version":1} -->
+"""
+        first = normalize_issue_body(body, task_metadata=TASK_METADATA)
+        self.assertTrue(first.complete)
+        self.assertEqual(first.body.count("<!-- factory-plan-task "), 1)
+
+        second = normalize_issue_body(first.body, task_metadata=TASK_METADATA)
+        self.assertTrue(second.complete)
+        self.assertFalse(second.changed)
+        self.assertEqual(second.body.count("<!-- factory-plan-task "), 1)
+
+        plan = plan_issue_normalization(
+            first.body,
+            task_metadata=TASK_METADATA,
+        )
+        self.assertEqual(plan["action"], "take")
+        self.assertFalse(plan["retry_once"])
+
+    def test_work_ladder_exposes_normalization_before_take(self):
+        body = """## Problema
+Legacy listo para normalizar.
+
+## Trabajo
+Normalizar.
+
+## Límites
+Sin inventar.
+
+## Criterios
+- [ ] [AC-01] `tests/test_normalizar_issue.py::NormalizarIssueTests::test_work_ladder_exposes_normalization_before_take`.
+
+### Rutas reclamadas
+- `scripts/normalizar_issue.py`
+"""
+        candidate = Candidate(
+            key="factory-legacy",
+            priority="high",
+            metadata={
+                "repository_ref": "pl0n3r/Factory",
+                "issue_body": body,
+                "normalizer_task_metadata": TASK_METADATA,
+            },
+        )
+        action = work_ladder(
+            [candidate],
+            fairness_context=RepoFairnessContext(),
+        )
+        self.assertEqual(action["step"], "normalize_before_take")
+        self.assertEqual(action["work"]["key"], "factory-legacy")
+        self.assertEqual(
+            action["normalization"]["action"],
+            "edit_and_retry_once",
+        )
+        self.assertTrue(action["retry_once"])
 
 
 if __name__ == "__main__":
