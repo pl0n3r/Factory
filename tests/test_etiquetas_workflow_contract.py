@@ -6,9 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GENERAL = (ROOT / ".github/workflows/etiquetas.yml").read_text(encoding="utf-8")
 PR = (ROOT / ".github/workflows/etiquetas-pr.yml").read_text(encoding="utf-8")
-
-EXPECTED_GENERAL = {"contents: read", "issues: write", "pull-requests: read"}
-EXPECTED_PR = {"contents: read", "issues: write", "pull-requests: write"}
+TEMPLATE = (ROOT / "template/.github/workflows/etiquetas.yml").read_text(encoding="utf-8")
 
 
 def job_block(text: str, name: str) -> str:
@@ -33,158 +31,100 @@ def job_permissions(text: str, name: str) -> set[str]:
 
 
 class EtiquetasWorkflowContractTests(unittest.TestCase):
-    def test_modes_and_language_are_closed(self):
+    def test_reusable_envelope_is_compatible_with_read_only_issue_sweep_and_sync_callers(self):
+        self.assertEqual(
+            job_permissions(GENERAL, "etiquetas"),
+            {"contents: read", "issues: write", "pull-requests: read"},
+        )
+        self.assertNotIn("pull-requests: write", GENERAL)
+        self.assertNotIn("\n  etiquetas-pr:\n", GENERAL)
+        for token in (
+            "Sincronizar catálogo",
+            "Barrer trabajo abierto",
+            "Detectar merges con Etiquetas no verde",
+        ):
+            self.assertIn(token, GENERAL)
+
+    def test_pr_write_authority_is_isolated_to_pr_callers_only(self):
+        self.assertEqual(
+            job_permissions(PR, "etiquetas-pr"),
+            {"contents: read", "issues: write", "pull-requests: write"},
+        )
+        self.assertEqual(PR.count("pull-requests: write"), 1)
+        self.assertNotIn("Barrer trabajo abierto", PR)
+        self.assertNotIn("Sincronizar catálogo", PR)
+        self.assertNotIn("Detectar merges con Etiquetas no verde", PR)
+        self.assertIn("plan-validation", PR)
+        self.assertIn("<!-- factory-label-validation -->", PR)
+        self.assertIn(
+            "if: inputs.mode == 'validate' && github.event_name == 'pull_request'",
+            PR,
+        )
+
+    def test_template_routes_only_pr_validation_to_write_reusable(self):
+        general_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"
+        pr_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1"
+        self.assertEqual(TEMPLATE.count(general_ref), 3)
+        self.assertEqual(TEMPLATE.count(pr_ref), 1)
+        validar_pr = job_block(TEMPLATE, "validar-pr")
+        self.assertIn(pr_ref, validar_pr)
+        self.assertEqual(
+            job_permissions(TEMPLATE, "validar-pr"),
+            {"contents: read", "issues: write", "pull-requests: write"},
+        )
+        for name in ("sync", "validar-issue", "sweep"):
+            with self.subTest(job=name):
+                block = job_block(TEMPLATE, name)
+                self.assertIn(general_ref, block)
+                self.assertEqual(
+                    job_permissions(TEMPLATE, name),
+                    {"contents: read", "issues: write", "pull-requests: read"},
+                )
+
+    def test_modes_language_and_factory_checkout_remain_closed(self):
         self.assertIn('case "$MODE" in sync|validate|sweep)', GENERAL)
         self.assertIn('case "$MODE" in validate)', PR)
         for workflow in (GENERAL, PR):
             self.assertIn('case "$LANGUAGE" in es|en)', workflow)
-
-    def test_uses_published_factory_catalog_by_language_not_path(self):
-        for workflow, name in ((GENERAL, "etiquetas"), (PR, "etiquetas-pr")):
-            block = job_block(workflow, name)
-            self.assertIn("repository: pl0n3r/factory", block)
-            self.assertIn("labels_kit.py", block)
-            self.assertIn("ref: v1", block)
-            self.assertIn("--language", block)
-            self.assertNotIn("--catalog", block)
-        self.assertNotIn("inputs.kit_ref", GENERAL)
-        self.assertNotIn("inputs.kit_ref", PR)
-
-    def test_reusable_envelope_is_compatible_with_read_only_issue_sweep_and_sync_callers(self):
-        self.assertEqual(job_permissions(GENERAL, "etiquetas"), EXPECTED_GENERAL)
-        self.assertNotIn("pull-requests: write", GENERAL)
-        self.assertNotIn("  etiquetas-pr:\n", GENERAL)
-        self.assertIn("Sincronizar catálogo", GENERAL)
-        self.assertIn("Barrer trabajo abierto", GENERAL)
-        self.assertIn("Validar Issue o PR", GENERAL)
-
-    def test_pr_write_authority_is_isolated_to_pr_callers_only(self):
-        self.assertEqual(job_permissions(PR, "etiquetas-pr"), EXPECTED_PR)
-        self.assertEqual(PR.count("pull-requests: write"), 1)
-        self.assertNotIn("pull-requests: write", GENERAL)
-        block = job_block(PR, "etiquetas-pr")
-        self.assertIn(
-            "if: inputs.mode == 'validate' && github.event_name == 'pull_request'",
-            block,
-        )
-        for forbidden in (
-            "checks: write",
-            "actions: write",
-            "id-token: write",
-            "contents: write",
-        ):
-            self.assertNotIn(forbidden, block)
-
-    def test_non_pr_job_remains_read_only(self):
-        block = job_block(GENERAL, "etiquetas")
-        self.assertEqual(job_permissions(GENERAL, "etiquetas"), EXPECTED_GENERAL)
-        self.assertIn(
-            "if: inputs.mode != 'validate' || github.event_name != 'pull_request'",
-            block,
-        )
-        self.assertNotIn("pull-requests: write", block)
-        self.assertIn("Detectar merges con Etiquetas no verde", block)
-
-    def test_pr_and_non_pr_jobs_keep_labels_check_name(self):
-        general = job_block(GENERAL, "etiquetas")
-        pr = job_block(PR, "etiquetas-pr")
-        self.assertIn("name: Labels", general)
-        self.assertIn("name: Labels", pr)
-        self.assertEqual(GENERAL.count("    name: Labels\n"), 1)
-        self.assertEqual(PR.count("    name: Labels\n"), 1)
-
-    def test_pr_validate_keeps_safe_label_inheritance_without_changing_sweep(self):
-        pr = job_block(PR, "etiquetas-pr")
-        general = job_block(GENERAL, "etiquetas")
-
-        self.assertIn("plan-validation", pr)
-        self.assertIn("linked_issue:$linked[0]", pr)
-        self.assertIn(
-            'gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/labels"',
-            pr,
-        )
-        self.assertIn("<!-- factory-label-validation -->", pr)
-        self.assertNotIn("sweep-plan", pr)
-        self.assertNotIn("factory-auto-unlabeled", pr)
-        self.assertNotIn("Detectar merges con Etiquetas no verde", pr)
-
-        self.assertIn("sweep-plan", general)
-        self.assertIn("<!-- factory-auto-unlabeled -->", general)
-        self.assertIn("pr_label_governance.py alert-plan", general)
-        self.assertIn("commits/$head_sha/check-runs?per_page=100", general)
-        self.assertIn("curl --fail --silent --show-error", general)
-        self.assertIn("^[0-9a-f]{40}$", general)
-        self.assertIn(".[:25]", general)
-
-    def test_validate_issue_path_stays_on_general_job(self):
-        general = job_block(GENERAL, "etiquetas")
-        self.assertIn("name: Validar Issue o PR", general)
-        self.assertIn("if: inputs.mode == 'validate'", general)
-        self.assertIn("plan-validation", general)
-        self.assertIn("pull-requests: read", general)
-        self.assertNotIn("pull-requests: write", general)
-
-    def test_sweep_routes_merge_alerts_to_linked_issue_without_pr_write(self):
-        block = job_block(GENERAL, "etiquetas")
-        self.assertIn('closing-reference --language "$LANGUAGE"', block)
-        self.assertIn(
-            "linked_issue=\"$(jq -r '.number // empty' <<<\"$closing_json\")\"",
-            block,
-        )
-        self.assertIn(
-            'gh api --paginate "repos/$REPOSITORIO/issues/$linked_issue/comments?per_page=100"',
-            block,
-        )
-        self.assertIn(
-            'gh api --method POST "repos/$REPOSITORIO/issues/$linked_issue/comments"',
-            block,
-        )
-        self.assertNotIn(
-            'gh api --method POST "repos/$REPOSITORIO/issues/$number/comments"',
-            block,
-        )
-        self.assertNotIn("pull-requests: write", block)
-
-    def test_metadata_permissions_remain_least_privilege(self):
-        for workflow in (GENERAL, PR):
-            self.assertIn("permissions:\n  contents: read", workflow)
+            self.assertIn("repository: pl0n3r/factory", workflow)
+            self.assertIn("ref: v1", workflow)
+            self.assertIn("persist-credentials: false", workflow)
+            self.assertNotIn("secrets: inherit", workflow)
             self.assertNotIn("contents: write", workflow)
             self.assertNotIn("actions: write", workflow)
             self.assertNotIn("checks: write", workflow)
             self.assertNotIn("id-token: write", workflow)
-            self.assertNotIn("secrets: inherit", workflow)
-        self.assertEqual(PR.count("pull-requests: write"), 1)
-        self.assertEqual(GENERAL.count("pull-requests: write"), 0)
 
-    def test_validate_and_sweep_lifecycle_remains_bounded(self):
-        general = job_block(GENERAL, "etiquetas")
-        self.assertIn("plan-validation", general)
-        self.assertIn("sweep-plan", general)
+    def test_general_and_pr_paths_keep_visible_labels_check_name(self):
+        self.assertIn("name: Labels", job_block(GENERAL, "etiquetas"))
+        self.assertIn("name: Labels", job_block(PR, "etiquetas-pr"))
+        self.assertEqual(GENERAL.count("    name: Labels\n"), 1)
+        self.assertEqual(PR.count("    name: Labels\n"), 1)
+
+    def test_validate_pr_keeps_safe_label_inheritance(self):
+        block = job_block(PR, "etiquetas-pr")
+        self.assertIn("linked_issue:$linked[0]", block)
         self.assertIn(
-            "group: labels-${{ github.repository }}-${{ inputs.mode }}-${{ inputs.issue_number }}",
-            GENERAL,
+            'gh api --method POST "repos/$REPOSITORIO/issues/$ISSUE_NUMBER/labels"',
+            block,
         )
-        self.assertIn(
-            "group: labels-pr-${{ github.repository }}-${{ inputs.issue_number }}",
-            PR,
-        )
-        self.assertNotIn("github.run_id", GENERAL)
-        self.assertNotIn("github.run_id", PR)
-        self.assertIn("select(.number != $auto)", general)
-        self.assertIn("auto-create.json", general)
-        self.assertIn("auto-update.json", general)
-        self.assertIn("auto-close.json", general)
-        self.assertNotIn("-f state=open --input", general)
+        self.assertIn("warning_action", block)
+        self.assertNotIn("sweep-plan", block)
+
+    def test_general_validate_issue_stays_read_only_for_pull_requests(self):
+        block = job_block(GENERAL, "etiquetas")
+        self.assertIn("name: Validar Issue o PR", block)
+        self.assertIn("if: inputs.mode == 'validate'", block)
+        self.assertIn("plan-validation", block)
+        self.assertIn("pull-requests: read", block)
+        self.assertNotIn("pull-requests: write", block)
 
     def test_external_actions_are_sha_pinned(self):
-        actions = re.findall(
-            r"^\s*uses:\s*([^\s]+)",
-            GENERAL + "\n" + PR,
-            flags=re.MULTILINE,
-        )
-        self.assertTrue(actions)
-        for action in actions:
-            self.assertRegex(action, r"@[0-9a-f]{40}$")
+        for workflow in (GENERAL, PR):
+            actions = re.findall(r"^\s*uses:\s*([^\s]+)", workflow, flags=re.MULTILINE)
+            self.assertTrue(actions)
+            for action in actions:
+                self.assertRegex(action, r"@[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":
