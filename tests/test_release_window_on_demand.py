@@ -24,7 +24,7 @@ CHECKS = [
     {"name": "CI factory", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Sonar CI-based", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Evidencia CodeQL", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
-    {"name": "Unattended Watchdog", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
+    {"name": "Vigilar startup_failure de reusables publicados", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Compatibilidad de consumidores", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
 ]
 
@@ -192,14 +192,14 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
     def test_missing_exact_main_evidence_fails_closed(self):
         reduced = [
             check for check in CHECKS
-            if check["name"] != "Compatibilidad de consumidores"
+            if check["name"] not in {"Compatibilidad de consumidores"}
         ]
         result = plan_request(request_payload(workflows=reduced))
         self.assertEqual(result["action"], "rejected")
         self.assertEqual(result["reason"], "revalidation_required")
         self.assertEqual(
             result["missing_checks"],
-            ["Compatibilidad de consumidores"],
+            ["Vigilar startup_failure de reusables publicados", "Compatibilidad de consumidores"],
         )
 
 
