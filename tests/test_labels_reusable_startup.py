@@ -80,6 +80,10 @@ class LabelsReusableStartupTests(unittest.TestCase):
         pr = job_block(TEMPLATE, "validar-pr")
         self.assertEqual(permissions(TEMPLATE, "validar-pr"), PR_GRANT)
         self.assertIn(
+            "uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1",
+            pr,
+        )
+        self.assertNotIn(
             "uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1",
             pr,
         )
