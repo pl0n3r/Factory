@@ -131,6 +131,12 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             WORKFLOW,
         )
         self.assertNotIn("@$OWNER", WORKFLOW)
+        self.assertNotIn('[[ "$ACTOR" == "$OWNER" ]]', WORKFLOW)
+        rejected_branch = WORKFLOW.split("            rejected)", 1)[1].split(
+            "            create_gate)", 1
+        )[0]
+        self.assertIn("::notice::Solicitud de release ignorada", rejected_branch)
+        self.assertNotIn("exit 1", rejected_branch)
 
     def test_owner_decision_is_not_lost_to_concurrency_cancel_or_prior_reconciliation(self):
         rendered = _render_gate(

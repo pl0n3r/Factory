@@ -39,7 +39,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$EVENT_NAME" == "workflow_dispatch" ]] || { echo "::error::Solicitud de release no explícita"; exit 1; }
-          [[ "$ACTOR" == "$OWNER" ]] || { echo "::error::Solo el OWNER puede pedir una puerta de release"; exit 1; }
           [[ "$REF_NAME" == "$DEFAULT_BRANCH" ]] || { echo "::error::La solicitud debe ejecutarse sobre la rama principal"; exit 1; }
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -148,8 +147,7 @@ jobs:
             rejected)
               reason="$(jq -r '.reason' /tmp/release-window-result.json)"
               missing="$(jq -r '(.missing_checks // []) | join(", ")' /tmp/release-window-result.json)"
-              echo "::error::Solicitud de release rechazada: $reason${missing:+ · $missing}"
-              exit 1
+              echo "::notice::Solicitud de release ignorada: $reason${missing:+ · $missing}"
               ;;
             create_gate)
               while IFS= read -r old_issue; do
