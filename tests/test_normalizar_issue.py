@@ -2,7 +2,9 @@
 import json
 import unittest
 
+from scripts.aceptacion_kit import parse_contract
 from scripts.normalizar_issue import normalize_issue_body, plan_issue_normalization
+from scripts.orquestador_kit import parse_task_marker
 
 
 TASK_METADATA = {
@@ -19,6 +21,9 @@ class NormalizarIssueTests(unittest.TestCase):
     def test_legacy_headings_are_mapped_to_five_canonical_sections_without_losing_content(self):
         body = """## Problema
 Caso histórico equivalente a Factory#931: una puerta rearmada fue rechazada.
+
+#### Qué pasó
+El detalle del fallo debe conservar su subencabezado.
 
 ## Trabajo
 Normalizar el contrato sin cambiar su semántica.
@@ -49,10 +54,19 @@ Nota final que debe sobrevivir.
         ):
             self.assertEqual(result.body.count(heading), 1)
         self.assertIn("Caso histórico equivalente a Factory#931", result.body)
+        self.assertIn("#### Qué pasó", result.body)
+        self.assertIn("El detalle del fallo debe conservar su subencabezado.", result.body)
         self.assertIn("Nota final que debe sobrevivir.", result.body)
         self.assertIn("<!-- factory-acceptance ", result.body)
         self.assertIn("<!-- factory-plan-task ", result.body)
         self.assertIn('"paths":["scripts/normalizar_issue.py","tests/test_normalizar_issue.py"]', result.body)
+        self.assertEqual(len(parse_contract(result.body)), 2)
+        marker = parse_task_marker(result.body)
+        self.assertIsNotNone(marker)
+        self.assertEqual(
+            marker["paths"],
+            ["scripts/normalizar_issue.py", "tests/test_normalizar_issue.py"],
+        )
 
     def test_markers_are_built_only_from_valid_targets_never_invented(self):
         valid = """## Problema
