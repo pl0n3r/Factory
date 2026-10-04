@@ -203,7 +203,9 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
     def test_workflow_resolves_main_sha_before_workflow_run_snapshot(self):
         workflow = WORKFLOW
         assign = workflow.index('main_sha="$(gh api "repos/$REPOSITORY/commits/main"')
-        snapshot = workflow.index('actions/runs?head_sha=$main_sha')
+        snapshot = workflow.index(
+            'actions/workflows/$workflow_file/runs?head_sha=$main_sha&per_page=20'
+        )
         request = workflow.index("scripts/release_window.py request")
         self.assertLess(assign, snapshot)
         self.assertLess(snapshot, request)
