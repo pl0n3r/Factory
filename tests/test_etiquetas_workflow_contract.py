@@ -123,7 +123,7 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
         block = job_block("etiquetas")
         self.assertIn('closing-reference --language "$LANGUAGE"', block)
         self.assertIn(
-            'linked_issue="$(jq -r \' .number // empty\' <<<"$closing_json")"'.replace("' .", "'."),
+            "linked_issue=\"$(jq -r '.number // empty' <<<\"$closing_json\")\"",
             block,
         )
         self.assertIn(
