@@ -171,6 +171,14 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertIn("canonical=true", SECURITY)
         self.assertIn("decision_materialized=true", SECURITY)
 
+    def test_workflow_resolves_main_sha_before_workflow_run_snapshot(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        assign = workflow.index('main_sha="$(gh api "repos/$REPOSITORY/commits/main"')
+        snapshot = workflow.index('actions/runs?head_sha=$main_sha')
+        request = workflow.index("scripts/release_window.py request")
+        self.assertLess(assign, snapshot)
+        self.assertLess(snapshot, request)
+
     def test_missing_exact_main_evidence_fails_closed(self):
         reduced = [
             check for check in CHECKS
