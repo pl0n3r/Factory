@@ -296,6 +296,23 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
         )
         self.assertIn("(( total_count <= 100 ))", workflow)
 
+    def test_workflow_declares_post_merge_watchdog_contract_without_pr_activation(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("name: Vigilar startup_failure de reusables publicados", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        for repository in (
+            "pl0n3r/Condor",
+            "pl0n3r/ControlBot",
+            "pl0n3r/FactoryRunner",
+            "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal",
+            "pl0n3r/AutoFactory",
+        ):
+            self.assertIn(f'"{repository}"', workflow)
+
     def test_workflow_builds_consumer_actions_url_without_encoding_owner_repo_slash(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
