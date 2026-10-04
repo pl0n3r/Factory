@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
 
+
+ROOT = Path(__file__).resolve().parents[1]
+SECURITY_ROOT = ROOT / "seguridad"
+if str(SECURITY_ROOT) not in sys.path:
+    sys.path.insert(0, str(SECURITY_ROOT))
+
 from scripts.release_window import _render_gate, plan_request
-from seguridad.decision_respuesta import materialize_decision
-from seguridad.test_decision_respuesta import (
+from decision_respuesta import materialize_decision
+from test_decision_respuesta import (
     FakeAPI as DecisionFakeAPI,
     event as decision_event,
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/release-window.yml").read_text(encoding="utf-8")
 SECURITY = (ROOT / ".github/workflows/seguridad.yml").read_text(encoding="utf-8")
 
