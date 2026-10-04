@@ -463,7 +463,7 @@ class ReleaseWindowTests(unittest.TestCase):
 
         self.assertEqual(
             workflow.count("| {number, state, title, body, updated_at}"),
-            2,
+            1,
         )
         self.assertEqual(
             workflow.count('select(.user.login == "github-actions[bot]")'),
