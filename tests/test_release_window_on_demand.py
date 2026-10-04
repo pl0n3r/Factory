@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
+from datetime import datetime
 
 from scripts.release_window import _render_gate, plan_request
 from seguridad.decision_respuesta import materialize_decision
@@ -19,7 +20,7 @@ CHECKS = [
 ]
 
 def gate_row(number: int, sha: str, state: str = "open") -> dict:
-    rendered = _render_gate("1.0.28", sha, "2026-10-04T19:00:00+00:00", source_issue=number)
+    rendered = _render_gate("1.0.28", sha, datetime.fromisoformat("2026-10-04T19:00:00+00:00"), source_issue=number)
     return {
         "issue": {
             "number": number,
@@ -85,7 +86,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertNotIn("decision", result["reason"])
 
     def test_owner_decision_is_not_lost_to_concurrency_cancel_or_prior_reconciliation(self):
-        rendered = _render_gate("1.0.28", MAIN_SHA, "2026-10-04T19:00:00+00:00", source_issue=900)
+        rendered = _render_gate("1.0.28", MAIN_SHA, datetime.fromisoformat("2026-10-04T19:00:00+00:00"), source_issue=900)
         marker = rendered["body"]
         gate_marker = marker.split("<!-- factory-human-gate ", 1)[1].split(" -->", 1)[0]
         gate_sha = hashlib.sha256(json.dumps(json.loads(gate_marker), ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()
