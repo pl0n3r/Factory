@@ -99,7 +99,7 @@ jobs:
                     | select(.head_sha == $sha)
                     | {name:$name,status,conclusion,head_sha:.head_sha,run_id:.id}
                   ] | sort_by(.run_id) | reverse | .[0:1]
-                \
+                ' \
               >> /tmp/release-workflows.raw
           done
           jq -s 'add // []' /tmp/release-workflows.raw > /tmp/release-workflows.json
