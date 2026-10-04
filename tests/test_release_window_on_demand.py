@@ -93,6 +93,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         issue = {
             "number": 901,
             "state": "open",
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
             "body": rendered["body"],
             "labels": [{"name": "decisión: dueño"}],
         }
@@ -106,6 +108,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
                 self.comments = comments
                 self.closed = False
             def __call__(self, method, path, payload=None):
+                if path == "repos/pl0n3r/Factory/issues?state=all&per_page=100":
+                    return [self.issue]
                 if path == "repos/pl0n3r/Factory/issues/901":
                     return {**self.issue, "comments": self.comments}
                 if path == "repos/pl0n3r/Factory/issues/901/comments?per_page=100":
