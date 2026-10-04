@@ -274,6 +274,58 @@ class T(unittest.TestCase):
                 phase_file=phase_path,
             )
 
+    def test_acceptance_check_does_not_create_policy_cycle(self):
+        base_checks = green_gate_checks()
+        cases = (
+            check(
+                check_id=90,
+                name=policy.ACCEPTANCE_CHECK_NAME,
+                status="in_progress",
+                conclusion=None,
+            ),
+            check(
+                check_id=91,
+                name=policy.ACCEPTANCE_CHECK_NAME,
+                status="completed",
+                conclusion="failure",
+            ),
+        )
+        for acceptance_check in cases:
+            with self.subTest(acceptance_check=acceptance_check):
+                policy.validate_other_gates_green(
+                    base_checks + [acceptance_check],
+                    head_sha=HEAD,
+                )
+
+    def test_non_acceptance_pending_gate_still_fails_closed(self):
+        checks = green_gate_checks() + [
+            check(
+                check_id=90,
+                name="security / external gate",
+                status="in_progress",
+                conclusion=None,
+            ),
+        ]
+        with self.assertRaisesRegex(PolicyError, "Check pendiente"):
+            policy.validate_other_gates_green(checks, head_sha=HEAD)
+
+    def test_independent_test_gate_remains_required_when_acceptance_is_ignored(self):
+        checks = [
+            line
+            for line in green_gate_checks()
+            if json.loads(line)["name"] != "tests"
+        ]
+        checks.append(
+            check(
+                check_id=90,
+                name=policy.ACCEPTANCE_CHECK_NAME,
+                status="completed",
+                conclusion="success",
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "tests"):
+            policy.validate_other_gates_green(checks, head_sha=HEAD)
+
     def test_rate_limit_plus_failed_retry_passes_in_construction_when_other_gates_green(self):
         comments = [
             rate_limit_comment(
