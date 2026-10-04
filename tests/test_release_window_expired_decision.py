@@ -211,6 +211,94 @@ class ReleaseWindowExpiredDecisionTests(unittest.TestCase):
         self.assertIn("workflow_dispatch", guide)
         self.assertIn("hora de expiración", guide)
 
+    def test_same_head_expired_without_manual_force_preserves_gate(self) -> None:
+        rendered = rw._render_gate(
+            VERSION,
+            OLD_SHA,
+            OPENED,
+            source_issue=900,
+        )
+        result = rw.plan_rearm(
+            {
+                "now": AFTER_EXPIRY,
+                "main_sha": OLD_SHA,
+                "version": VERSION,
+                "gates": [
+                    gate_row(number=949, body=rendered["body"])
+                ],
+            }
+        )
+        self.assertEqual(
+            result,
+            {"action": "none", "reason": "current_head_already_has_gate"},
+        )
+
+    def test_force_rearm_input_must_be_boolean(self) -> None:
+        with self.assertRaisesRegex(
+            rw.ReleaseWindowError,
+            "force_rearm debe ser booleano",
+        ):
+            rw.plan_rearm(
+                {
+                    "now": AFTER_EXPIRY,
+                    "main_sha": OLD_SHA,
+                    "version": VERSION,
+                    "force_rearm": "true",
+                    "gates": [],
+                }
+            )
+
+    def test_release_window_helper_keeps_actionable_time_errors(self) -> None:
+        rendered = rw._render_gate(
+            VERSION,
+            OLD_SHA,
+            OPENED,
+            source_issue=900,
+        )
+        current = rb._release_window(
+            rendered["body"],
+            OLD_SHA,
+            created_at="2026-10-03T10:05:00Z",
+            current_at="2026-10-03T10:30:00Z",
+        )
+        self.assertEqual(
+            current["expires_at"].isoformat(timespec="seconds"),
+            "2026-10-03T11:00:00+00:00",
+        )
+
+        with self.assertRaisesRegex(
+            rb.ReleaseBootstrapError,
+            "todavía no está vigente",
+        ):
+            rb._release_window(
+                rendered["body"],
+                OLD_SHA,
+                current_at="2026-10-03T09:59:00Z",
+            )
+
+        with self.assertRaisesRegex(
+            rb.ReleaseBootstrapError,
+            "Ventana de release venció en .*rearma una puerta nueva",
+        ):
+            rb._release_window(
+                rendered["body"],
+                OLD_SHA,
+                current_at=AFTER_EXPIRY,
+            )
+
+    def test_nonexpired_exact_sha_drift_fails_closed_too(self) -> None:
+        payload = bootstrap_payload(
+            expected_sha=NEW_SHA,
+            gate_sha=OLD_SHA,
+        )
+        payload["now"] = "2026-10-03T10:30:00Z"
+        with self.assertRaises(rb.ReleaseBootstrapError) as raised:
+            rb.validate_payload(payload)
+        message = str(raised.exception)
+        self.assertIn("corresponde a otro SHA", message)
+        self.assertIn("HEAD derivó", message)
+        self.assertIn("puerta nueva exact-SHA", message)
+
 
 if __name__ == "__main__":
     unittest.main()
