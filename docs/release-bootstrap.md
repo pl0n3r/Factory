@@ -138,3 +138,7 @@ Si una publicación de `Factory@v1` provoca `startup_failure` en consumidores, a
 - `v1.0.0`: publicado y validado.
 - `v1`: canal mayor protegido.
 - Los cambios posteriores solo llegan a consumidores de `@v1` después de una puerta `factory-release` y una publicación protegida.
+
+## Puertas bajo demanda
+
+Desde #1016, `Factory Release Window` no se rearma por `push` de `main`. La puerta solo se solicita mediante `workflow_dispatch` por el OWNER. El workflow relee los checks terminales del HEAD actual, exige CI/Sonar/CodeQL/watchdog/compatibilidad en ese SHA y solo entonces crea una puerta nueva; las puertas abiertas anteriores de la misma versión quedan superseded silenciosamente. `/decidir A|B` sigue siendo exclusivamente humano y `sigue` no autoriza publicar.
