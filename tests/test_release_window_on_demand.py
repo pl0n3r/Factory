@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import sys
 import unittest
+import sys
 from datetime import datetime
 from pathlib import Path
 
 
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "seguridad") not in sys.path:
+    sys.path.insert(0, str(ROOT / "seguridad"))
 ROOT = Path(__file__).resolve().parents[1]
 SECURITY_ROOT = ROOT / "seguridad"
 if str(SECURITY_ROOT) not in sys.path:
