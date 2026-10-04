@@ -17,6 +17,11 @@ else:
 HEX = re.compile(r"^[0-9A-Fa-f]{6}$")
 KEY = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 DIMENSIONS = ("type_", "priority_", "state_")
+DIMENSION_LABEL_PREFIXES = {
+    "type_": ("tipo:", "type:"),
+    "priority_": ("prioridad:", "priority:"),
+    "state_": ("estado:", "status:"),
+}
 KIT_ROOT = Path(__file__).resolve().parents[1]
 CATALOGS = {
     "es": Path("labels/es.json"),
@@ -120,6 +125,11 @@ def validate_selection(catalog: list[dict[str, str]], names: set[str]) -> None:
     }
     labels = {"type_": "tipo/type", "priority_": "prioridad/priority", "state_": "estado/status"}
     for prefix, allowed in by_dimension.items():
+        unknown = _unknown_dimension_labels(catalog, names, prefix)
+        if unknown:
+            raise LabelError(
+                f"Etiqueta no canónica de {labels[prefix]}: {sorted(unknown)}"
+            )
         matches = names & allowed
         if len(matches) != 1:
             raise LabelError(
@@ -189,6 +199,21 @@ def _dimension_matches(catalog: list[dict[str, str]], names: set[str], prefix: s
     allowed = {item["name"] for item in catalog if item["key"].startswith(prefix)}
     return names & allowed
 
+
+def _unknown_dimension_labels(
+    catalog: list[dict[str, str]],
+    names: set[str],
+    prefix: str,
+) -> set[str]:
+    allowed = {item["name"] for item in catalog if item["key"].startswith(prefix)}
+    textual_prefixes = DIMENSION_LABEL_PREFIXES[prefix]
+    return {
+        name
+        for name in names
+        if name not in allowed
+        and name.casefold().startswith(tuple(item.casefold() for item in textual_prefixes))
+    }
+
 def closing_issue_reference(body: str) -> int | None:
     if not isinstance(body, str) or len(body) > 100_000:
         raise LabelError("Body fuera del contrato para referencia de cierre.")
@@ -218,8 +243,15 @@ def validation_plan(
         raise LabelError("is_pull_request debe ser booleano.")
     additions: list[str] = []
     planned = set(names)
+    unknown_by_dimension = {
+        prefix: _unknown_dimension_labels(catalog, planned, prefix)
+        for prefix in DIMENSIONS
+    }
 
-    if not _dimension_matches(catalog, planned, "state_"):
+    if (
+        not _dimension_matches(catalog, planned, "state_")
+        and not unknown_by_dimension["state_"]
+    ):
         default_key = "state_review" if is_pull_request else "state_available"
         default_name = _catalog_name(catalog, default_key)
         additions.append(default_name)
@@ -228,7 +260,10 @@ def validation_plan(
     closing = closing_issue_reference(body) if is_pull_request else None
     if closing is not None and linked_names is not None:
         for prefix in ("type_", "priority_"):
-            if _dimension_matches(catalog, planned, prefix):
+            if (
+                _dimension_matches(catalog, planned, prefix)
+                or unknown_by_dimension[prefix]
+            ):
                 continue
             inherited = _dimension_matches(catalog, linked_names, prefix)
             if len(inherited) == 1:
@@ -241,17 +276,25 @@ def validation_plan(
     multiple: list[str] = []
     for prefix in DIMENSIONS:
         matches = _dimension_matches(catalog, planned, prefix)
-        if not matches:
+        if not matches and not unknown_by_dimension[prefix]:
             missing.append(dimension_codes[prefix])
         elif len(matches) > 1:
             multiple.append(dimension_codes[prefix])
 
+    unknown = sorted(
+        {
+            name
+            for values in unknown_by_dimension.values()
+            for name in values
+        }
+    )
     return {
         "add": sorted(set(additions)),
         "closing_issue": closing,
         "missing": missing,
         "multiple": multiple,
-        "valid": not missing and not multiple,
+        "unknown": unknown,
+        "valid": not missing and not multiple and not unknown,
     }
 
 def warning_plan(plan: dict[str, Any], language: str) -> dict[str, str]:
@@ -263,7 +306,13 @@ def warning_plan(plan: dict[str, Any], language: str) -> dict[str, str]:
         return {"action": "clear", "body": WARNING_MARKER + "\n" + message}
     missing = plan.get("missing", [])
     multiple = plan.get("multiple", [])
-    if not isinstance(missing, list) or not isinstance(multiple, list):
+    unknown = plan.get("unknown", [])
+    if (
+        not isinstance(missing, list)
+        or not isinstance(multiple, list)
+        or not isinstance(unknown, list)
+        or any(not isinstance(item, str) or not item for item in unknown)
+    ):
         raise LabelError("Plan de warning inválido.")
     controlled = {"type", "priority", "state"}
     if any(item not in controlled for item in [*missing, *multiple]):
@@ -274,6 +323,8 @@ def warning_plan(plan: dict[str, Any], language: str) -> dict[str, str]:
             details.append("faltan: " + ", ".join(missing))
         if multiple:
             details.append("duplicadas: " + ", ".join(multiple))
+        if unknown:
+            details.append("no canónicas: " + ", ".join(unknown))
         message = "⚠️ Clasificación incompleta (" + "; ".join(details) + ")."
     else:
         details = []
@@ -281,6 +332,8 @@ def warning_plan(plan: dict[str, Any], language: str) -> dict[str, str]:
             details.append("missing: " + ", ".join(missing))
         if multiple:
             details.append("multiple: " + ", ".join(multiple))
+        if unknown:
+            details.append("non-canonical: " + ", ".join(unknown))
         message = "⚠️ Incomplete classification (" + "; ".join(details) + ")."
     return {"action": "warn", "body": WARNING_MARKER + "\n" + message}
 
