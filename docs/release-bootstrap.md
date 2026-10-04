@@ -41,7 +41,7 @@ Para publicar un patch/minor posterior dentro de la major `v1`:
 
 1. Integrar el cambio en `main` con la versión semántica nueva en `config/version.json`.
 2. Revalidar `main` y confirmar la versión semántica candidata.
-3. Crear una puerta humana `factory-release` para esa versión. El body conserva el `main@SHA` vigente como baseline de deriva y el default seguro es **no publicar**.
+3. El OWNER ejecuta manualmente **Factory Release Window** sobre `main`. El workflow revalida exact-main y compatibilidad de consumidores antes de crear una única puerta `factory-release` para el HEAD vigente; el default seguro es **no publicar**.
 4. El OWNER responde explícitamente `/decidir A` para publicar o `/decidir B` para no publicar. Texto libre o `sigue` no cuentan como decisión.
 5. Con A materializada y la puerta cerrada, ejecutar una **primera pasada** de **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `main` con `expected_sha=latest` (recomendado para la aprobación por versión) o con un SHA explícito para compatibilidad histórica, y `gate_issue=<Issue de puerta>`, mientras `v1` permanece en el último SHA estable.
 6. El preflight resuelve y registra el SHA candidato, ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, versión, evidencia exact-main, deriva de maquinaria de release, puerta/aprobación, ruleset y compatibilidad de consumidores. En mantenimiento, el SHA estable previo de `v1` es válido durante esta fase y no expone el candidato.
@@ -89,12 +89,11 @@ esas rutas cambió desde la puerta, se exige **una puerta nueva**. Cambios ordin
 de producto/documentación que hayan pasado los gates exact-main no invalidan por sí
 solos la aprobación de la versión.
 
-Las puertas rearmadas por automatización siguen necesitando provenance canónico
-hasta una puerta creada por el OWNER. En modo `latest`, la ventana temporal
-autentica que la puerta rearmada fue creada correctamente; no convierte la decisión
-A de una versión en una autorización para otra versión o para maquinaria de release
-modificada. `safe_default=B` y el journal `factory-human-decision` continúan
-siendo obligatorios.
+Las puertas creadas por automatización después de una solicitud explícita del OWNER
+siguen necesitando provenance canónico hasta una puerta histórica creada por el
+OWNER. La solicitud manual no convierte la decisión A de una versión en autorización
+para otra versión o para maquinaria de release modificada. `safe_default=B` y el
+journal `factory-human-decision` continúan siendo obligatorios.
 
 Nada de lo anterior mueve `v1` automáticamente. El orden seguro permanece:
 bootstrap → release semántico → movimiento administrativo de `v1` por el dueño →
@@ -114,9 +113,9 @@ Mientras exista una puerta vigente o una decisión A exact-SHA todavía no ejecu
 
 La excepción habilita exclusivamente el repair indicado; no publica una release, no crea una decisión humana y no transporta autoridad entre SHAs.
 
-Si el TTL vence, **solo termina el freeze de merges**. Una decisión A v2 válida no caduca por reloj cuando `main` sigue exactamente en el SHA aprobado y la maquinaria de release no derivó; el bootstrap puede reutilizar esa autorización porque el journal continúa ligado al fingerprint del gate y al mismo SHA. Si `main` cambió, la autorización exact-SHA no se transporta: `release-window.yml` rearma de forma idempotente una nueva puerta `factory-release` sobre el HEAD vigente con `safe_default=B` y nunca copia el journal A anterior. Un lanzamiento manual de `Factory Release Window` (`workflow_dispatch`) puede forzar un rearmado limpio de una A vencida y aún no ejecutada aunque el SHA no haya cambiado; la nueva puerta vuelve a requerir `/decidir A` o `/decidir B`. Cuando un preflight rechaza una ventana vencida junto con deriva, el error debe indicar la hora de expiración, que el HEAD derivó y que el siguiente paso es rearmar una puerta nueva.
+Si el TTL vence, **solo termina el freeze de merges**. Una decisión A v2 válida no caduca por reloj cuando `main` sigue exactamente en el SHA aprobado y la maquinaria de release no derivó; el bootstrap puede reutilizar esa autorización porque el journal continúa ligado al fingerprint del gate y al mismo SHA. Si `main` cambió, la autorización exact-SHA no se transporta y **no se abre ni rearma ninguna puerta automáticamente**. El OWNER debe ejecutar de nuevo `Factory Release Window`; la nueva solicitud se liga al HEAD vigente, revalida exact-main + compatibilidad, retira silenciosamente las puertas stale de la misma versión y vuelve a exigir `/decidir A` o `/decidir B`.
 
-### Confianza de puertas rearmadas por automatización
+### Confianza de puertas creadas tras solicitud OWNER
 
 Una puerta creada por `github-actions[bot]` **no se vuelve confiable por el nombre del actor**. El bootstrap solo admite esa excepción estrecha cuando la evidencia read-only demuestra simultáneamente que:
 
@@ -125,7 +124,7 @@ Una puerta creada por `github-actions[bot]` **no se vuelve confiable por el nomb
 - la cadena `source_issue` es acíclica, tiene como máximo ocho saltos y cada salto intermedio creado por el bot conserva markers canónicos coherentes con el SHA de su propia puerta;
 - la cadena termina en una puerta `factory-release` creada por el OWNER del repositorio con `author_association=OWNER`.
 
-El workflow obtiene esa cadena únicamente mediante `issues: read` dentro del mismo repositorio y la entrega al parser puro; no amplía permisos ni confía en datos derivados del título. Marker ausente/duplicado/malformado, SHA incompatible, creación fuera de ventana, deriva de maquinaria, ciclo, profundidad excesiva o una cadena que no termina en el OWNER fallan cerrado. Esto permite rearms encadenados sin convertir a `github-actions[bot]` en una identidad globalmente confiable.
+El workflow obtiene esa cadena únicamente mediante `issues: read` dentro del mismo repositorio y la entrega al parser puro; no amplía permisos ni confía en datos derivados del título. Marker ausente/duplicado/malformado, SHA incompatible, creación fuera de ventana, deriva de maquinaria, ciclo, profundidad excesiva o una cadena que no termina en el OWNER fallan cerrado. Esto conserva la cadena de provenance sin convertir a `github-actions[bot]` en una identidad globalmente confiable.
 
 Una release solo se considera ejecutada cuando el workflow `Release Factory v1.x` termina con éxito y la puerta exact-SHA recibe un marker `factory-release-executed` coincidente. Hasta entonces el resumen diario/nocturno debe mantener visible “release aprobada sin ejecutar”.
 
@@ -141,4 +140,14 @@ Si una publicación de `Factory@v1` provoca `startup_failure` en consumidores, a
 
 ## Puertas bajo demanda
 
-Desde #1016, `Factory Release Window` no se rearma por `push` de `main`. La puerta solo se solicita mediante `workflow_dispatch` por el OWNER. El workflow relee los checks terminales del HEAD actual, exige CI/Sonar/CodeQL/watchdog/compatibilidad en ese SHA y solo entonces crea una puerta nueva; las puertas abiertas anteriores de la misma versión quedan superseded silenciosamente. `/decidir A|B` sigue siendo exclusivamente humano y `sigue` no autoriza publicar.
+Desde #1016, un `push` a `main` **nunca** abre ni rearma una puerta. Sin petición del OWNER no hay una nueva `decisión: dueño` ni un nuevo freeze de release.
+
+Procedimiento corto:
+
+1. **Pídele a Factory que publique**: el OWNER ejecuta manualmente `Factory Release Window` sobre `main` (versión vacía = `config/version.json`).
+2. Factory exige sobre el HEAD vigente **CI factory, Sonar CI-based, Evidencia CodeQL, Unattended Watchdog** y la **Compatibilidad de consumidores**; si falta evidencia, falla cerrado y no crea puerta.
+3. **Decide A** o B con `/decidir A` o `/decidir B`. `sigue` y texto libre no autorizan publicar.
+4. Con A materializada, **lanza el workflow** `Release Factory v1.x`.
+5. Tras crear/verificar el release semántico, el dueño **mueve `v1`** al SHA exacto aprobado y reejecuta el bootstrap idempotente.
+
+Una solicitud nueva cierra silenciosamente las puertas stale de la misma versión y retira su etiqueta `decisión: dueño`; nunca hereda una A anterior.

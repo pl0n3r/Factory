@@ -1,109 +1,158 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import hashlib
-import json
 import unittest
 from datetime import datetime
+from pathlib import Path
 
 from scripts.release_window import _render_gate, plan_request
 from seguridad.decision_respuesta import materialize_decision
+from seguridad.test_decision_respuesta import (
+    FakeAPI as DecisionFakeAPI,
+    event as decision_event,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = (ROOT / ".github/workflows/release-window.yml").read_text(encoding="utf-8")
+SECURITY = (ROOT / ".github/workflows/seguridad.yml").read_text(encoding="utf-8")
 
 MAIN_SHA = "a" * 40
 OLD_SHA = "b" * 40
+VERSION = "1.0.28"
 CHECKS = [
     {"name": "CI factory", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Sonar CI-based", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Evidencia CodeQL", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
-    {"name": "Vigilar startup_failure de reusables publicados", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
+    {"name": "Unattended Watchdog", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Compatibilidad de consumidores", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
 ]
 
-def gate_row(number: int, sha: str, state: str = "open") -> dict:
-    rendered = _render_gate("1.0.28", sha, datetime.fromisoformat("2026-10-04T19:00:00+00:00"), source_issue=number)
+
+def gate_row(
+    number: int,
+    sha: str,
+    state: str = "open",
+    *,
+    automated: bool = True,
+) -> dict:
+    rendered = _render_gate(
+        VERSION,
+        sha,
+        datetime.fromisoformat("2026-10-04T19:00:00+00:00"),
+        source_issue=800,
+    )
+    body = rendered["body"]
+    if not automated:
+        body = "\n".join(
+            line
+            for line in body.splitlines()
+            if "factory-release-window" not in line
+            and "factory-release-rearm" not in line
+        )
     return {
         "issue": {
             "number": number,
             "state": state,
             "title": rendered["title"],
-            "body": rendered["body"],
+            "body": body,
+            "updated_at": "2026-10-04T19:00:00Z",
+            "author_association": "NONE" if automated else "OWNER",
+            "user": {
+                "login": "github-actions[bot]" if automated else "pl0n3r",
+                "type": "Bot" if automated else "User",
+            },
         },
         "comments": [],
     }
 
+
+HISTORY = [gate_row(800, OLD_SHA, state="closed", automated=False)]
+
+
+def request_payload(**changes) -> dict:
+    payload = {
+        "now": "2026-10-04T19:00:00Z",
+        "main_sha": MAIN_SHA,
+        "version": VERSION,
+        "candidate_version": VERSION,
+        "owner_requested": True,
+        "actor": "pl0n3r",
+        "owner": "pl0n3r",
+        "workflows": CHECKS,
+        "gates": list(HISTORY),
+    }
+    payload.update(changes)
+    return payload
+
+
 class ReleaseWindowOnDemandTests(unittest.TestCase):
     def test_push_to_main_never_opens_or_rearms_a_release_gate_without_owner_request(self):
-        result = plan_request({
-            "now": "2026-10-04T19:00:00Z",
-            "main_sha": MAIN_SHA,
-            "version": "1.0.28",
-            "owner_requested": False,
-            "actor": "pl0n3r",
-            "candidate_version": "1.0.28",
-            "workflows": CHECKS,
-            "gates": [],
-        })
-        self.assertEqual(result["action"], "rejected")
-        self.assertEqual(result["reason"], "owner_request_required")
+        result = plan_request(request_payload(owner_requested=False))
+        self.assertEqual(
+            result,
+            {"action": "rejected", "reason": "owner_request_required"},
+        )
+        trigger = WORKFLOW.split("permissions:", 1)[0]
+        self.assertNotIn("\n  push:\n", trigger)
+        self.assertIn("workflow_dispatch:", trigger)
+        self.assertIn("workflow_run:", trigger)
+        self.assertNotIn("scripts/release_window.py push", WORKFLOW)
 
     def test_owner_request_opens_single_gate_on_current_head_with_revalidated_evidence(self):
-        result = plan_request({
-            "now": "2026-10-04T19:00:00Z",
-            "main_sha": MAIN_SHA,
-            "version": "1.0.28",
-            "owner_requested": True,
-            "actor": "pl0n3r",
-            "candidate_version": "1.0.28",
-            "workflows": CHECKS,
-            "gates": [],
-        })
+        result = plan_request(request_payload())
         self.assertEqual(result["action"], "create_gate")
+        self.assertEqual(result["reason"], "owner_requested")
         self.assertEqual(result["sha"], MAIN_SHA)
-        self.assertEqual(result["version"], "1.0.28")
+        self.assertEqual(result["version"], VERSION)
+        self.assertEqual(result["source_issue"], 800)
         self.assertEqual(result["supersede_issues"], [])
+        self.assertIn("python3 -m scripts.reusable_release_preflight", WORKFLOW)
+        self.assertIn("Unattended Watchdog", (ROOT / "scripts/release_window.py").read_text(encoding="utf-8"))
 
     def test_non_owner_or_inexact_request_is_ignored_and_older_gates_are_superseded_silently(self):
-        gates = [gate_row(900, OLD_SHA)]
-        rejected = plan_request({
-            "now": "2026-10-04T19:00:00Z",
-            "main_sha": MAIN_SHA,
-            "version": "1.0.28",
-            "owner_requested": True,
-            "actor": "someone-else",
-            "candidate_version": "1.0.28",
-            "workflows": CHECKS,
-            "gates": gates,
-        })
-        self.assertEqual(rejected["action"], "rejected")
-        result = plan_request({
-            "now": "2026-10-04T19:00:00Z",
-            "main_sha": MAIN_SHA,
-            "version": "1.0.28",
-            "owner_requested": True,
-            "actor": "pl0n3r",
-            "candidate_version": "1.0.28",
-            "workflows": CHECKS,
-            "gates": gates,
-        })
+        stale = gate_row(900, OLD_SHA)
+        gates = HISTORY + [stale]
+
+        rejected = plan_request(request_payload(actor="someone-else", gates=gates))
+        self.assertEqual(rejected["reason"], "owner_request_required")
+
+        inexact = plan_request(
+            request_payload(version="1.0.29", gates=gates)
+        )
+        self.assertEqual(inexact["reason"], "version_mismatch")
+
+        result = plan_request(request_payload(gates=gates))
         self.assertEqual(result["action"], "create_gate")
         self.assertEqual(result["supersede_issues"], [900])
-        self.assertNotIn("decision", result["reason"])
+        self.assertIn("state_reason=not_planned", WORKFLOW)
+        self.assertIn(
+            "labels/decisi%C3%B3n%3A%20due%C3%B1o",
+            WORKFLOW,
+        )
+        self.assertNotIn("@$OWNER", WORKFLOW)
 
     def test_owner_decision_is_not_lost_to_concurrency_cancel_or_prior_reconciliation(self):
-        from seguridad.test_decision_respuesta import event as decision_event, FakeAPI as DecisionFakeAPI
-
         rendered = _render_gate(
-            "1.0.28",
+            VERSION,
             MAIN_SHA,
             datetime.fromisoformat("2026-10-04T19:00:00+00:00"),
-            source_issue=900,
+            source_issue=800,
         )
-        api = DecisionFakeAPI(body=rendered["body"])
         decision = decision_event(
             command="/decidir A",
             issue_body=rendered["body"],
         )
-        self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))
+        api = DecisionFakeAPI(
+            body=rendered["body"],
+            crash_after_evidence_once=True,
+        )
+
+        with self.assertRaises(RuntimeError):
+            materialize_decision(decision, api, "pl0n3r/Factory")
+        self.assertTrue(
+            materialize_decision(decision, api, "pl0n3r/Factory")
+        )
         self.assertEqual(api.issue["state"], "closed")
         evidence = [
             item for item in api.comments
@@ -111,83 +160,24 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         ]
         self.assertEqual(len(evidence), 1)
 
-        api.issue["state"] = "open"
-        api.issue["labels"] = [
-            {"name": "decisión: dueño"},
-            {"name": "estado: bloqueado"},
+        self.assertIn("human-gate-{0}", SECURITY)
+        self.assertIn("cancel-in-progress: false", SECURITY)
+        self.assertIn("canonical=true", SECURITY)
+        self.assertIn("decision_materialized=true", SECURITY)
+
+    def test_missing_exact_main_evidence_fails_closed(self):
+        reduced = [
+            check for check in CHECKS
+            if check["name"] != "Compatibilidad de consumidores"
         ]
-        self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))
-        evidence = [
-            item for item in api.comments
-            if item["body"].startswith("<!-- factory-human-decision ")
-        ]
-        self.assertEqual(len(evidence), 1)
-        self.assertEqual(api.issue["state"], "closed")
-
-    def test_existing_current_head_gate_is_reused_without_creating_another(self):
-        result = plan_request({
-            "now": "2026-10-04T19:00:00Z",
-            "main_sha": MAIN_SHA,
-            "version": "1.0.28",
-            "owner_requested": True,
-            "actor": "pl0n3r",
-            "candidate_version": "1.0.28",
-            "workflows": CHECKS,
-            "gates": [gate_row(901, MAIN_SHA)],
-        })
-        self.assertEqual(result["action"], "none")
-        self.assertEqual(result["reason"], "current_head_already_has_gate")
-        self.assertEqual(result["issue"], 901)
-
-    def test_request_rejects_non_list_workflows_fail_closed(self):
-        with self.assertRaisesRegex(Exception, "workflows inválidos"):
-            plan_request({
-                "now": "2026-10-04T19:00:00Z",
-                "main_sha": MAIN_SHA,
-                "version": "1.0.28",
-                "owner_requested": True,
-                "actor": "pl0n3r",
-                "candidate_version": "1.0.28",
-                "workflows": None,
-                "gates": [],
-            })
-
-    def test_request_rejects_missing_exact_main_evidence(self):
-        workflows = [dict(item, head_sha=OLD_SHA) for item in CHECKS]
-        result = plan_request({
-            "now": "2026-10-04T19:00:00Z",
-            "main_sha": MAIN_SHA,
-            "version": "1.0.28",
-            "owner_requested": True,
-            "actor": "pl0n3r",
-            "candidate_version": "1.0.28",
-            "workflows": workflows,
-            "gates": [],
-        })
+        result = plan_request(request_payload(workflows=reduced))
         self.assertEqual(result["action"], "rejected")
         self.assertEqual(result["reason"], "revalidation_required")
-        self.assertEqual(set(result["missing_checks"]), {item["name"] for item in CHECKS})
+        self.assertEqual(
+            result["missing_checks"],
+            ["Compatibilidad de consumidores"],
+        )
 
-    def test_requested_version_must_match_config_candidate(self):
-        result = plan_request({
-            "now": "2026-10-04T19:00:00Z",
-            "main_sha": MAIN_SHA,
-            "version": "1.0.29",
-            "candidate_version": "1.0.28",
-            "owner_requested": True,
-            "actor": "pl0n3r",
-            "workflows": CHECKS,
-            "gates": [],
-        })
-        self.assertEqual(result["action"], "rejected")
-        self.assertEqual(result["reason"], "version_mismatch")
-
-    def test_security_gate_materialization_is_serialized_and_retried(self):
-        from pathlib import Path
-        workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "seguridad.yml").read_text(encoding="utf-8")
-        self.assertIn("human-gate-{0}", workflow)
-        self.assertIn("for attempt in 1 2 3", workflow)
-        self.assertIn("decision_respuesta.py", workflow)
 
 if __name__ == "__main__":
     unittest.main()

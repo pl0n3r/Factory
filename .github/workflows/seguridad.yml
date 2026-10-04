@@ -118,13 +118,19 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
+          canonical=false
           for attempt in 1 2 3; do
-            if python3 seguridad/sincronizar_puerta.py valid >> "$GITHUB_OUTPUT"; then
-              exit 0
+            output=""
+            if output="$(python3 seguridad/sincronizar_puerta.py valid 2>/dev/null)"; then
+              if grep -Fxq 'canonical=true' <<<"$output"; then
+                canonical=true
+                break
+              fi
             fi
-            if [[ "$attempt" == 3 ]]; then exit 1; fi
-            sleep 2
+            if [[ "$attempt" != 3 ]]; then sleep 2; fi
           done
+          [[ "$canonical" == "true" ]] || { echo "::error::La puerta no convergió a canónica"; exit 1; }
+          echo "canonical=true" >> "$GITHUB_OUTPUT"
 
       - name: Validar comando y materializar decisión
         if: steps.preflight.outputs.trusted == 'true' && steps.gate_sync.outputs.canonical == 'true'
@@ -133,14 +139,17 @@ jobs:
           REPOSITORIO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          set -euo pipefail
           for attempt in 1 2 3; do
-            if PYTHONPATH=seguridad python3 seguridad/decision_respuesta.py < "$GITHUB_EVENT_PATH"; then
-              exit 0
+            output=""
+            if output="$(PYTHONPATH=seguridad python3 seguridad/decision_respuesta.py < "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+              if grep -Fxq 'decision_materialized=true' <<<"$output"; then
+                exit 0
+              fi
             fi
-            if [[ "$attempt" == 3 ]]; then exit 1; fi
-            sleep 2
+            if [[ "$attempt" != 3 ]]; then sleep 2; fi
           done
+          echo "::error::La decisión OWNER no pudo materializarse tras 3 intentos"
+          exit 1
 
   sincronizar-decision:
     name: Validar y enrutar decisión
