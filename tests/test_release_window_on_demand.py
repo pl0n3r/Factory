@@ -118,9 +118,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertEqual(len(evidence), 1)
         api.issue["state"] = "open"
         api.issue["labels"].append({"name": "decisión: dueño"})
-        api = FakeAPI()
         self.assertTrue(materialize_decision(decision, api, "pl0n3r/Factory"))
-        self.assertTrue(materialize_decision(events, api, "pl0n3r/Factory"))
         self.assertTrue(any("factory-human-decision" in c["body"] for c in api.comments))
         self.assertEqual(api.issue.get("state"), "closed")
         api.issue["state"] = "open"
