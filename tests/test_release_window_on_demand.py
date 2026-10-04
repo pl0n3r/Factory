@@ -78,6 +78,7 @@ def request_payload(**changes) -> dict:
         "candidate_version": VERSION,
         "owner_requested": True,
         "actor": "pl0n3r",
+            "owner": "pl0n3r",
         "owner": "pl0n3r",
         "workflows": CHECKS,
         "gates": list(HISTORY),
