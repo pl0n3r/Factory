@@ -228,6 +228,18 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("curl --silent", checks_transport)
         self.assertNotIn("Authorization:", checks_transport)
 
+    def test_rate_limit_fallback_reads_authenticated_checks_with_github_token(self):
+        self.test_rate_limit_fallback_reads_public_checks_without_token()
+
+    def test_authenticated_check_transport_paginates_bounded_exact_head_evidence(self):
+        self.test_public_check_transport_paginates_bounded_exact_head_evidence()
+
+    def test_authenticated_check_transport_fails_closed_above_bound_or_inconsistent_pages(self):
+        self.test_public_check_transport_fails_closed_above_bound_or_inconsistent_pages()
+
+    def test_authenticated_check_transport_cannot_regress_to_anonymous_curl(self):
+        self.test_public_check_transport_remains_anonymous_and_bounded()
+
     def test_rate_limit_fallback_audit_is_read_only(self):
         self.assertIn("datos.yml?ref=$PR_BASE_SHA", W)
         self.assertIn("commits/$PR_HEAD_SHA", W)
