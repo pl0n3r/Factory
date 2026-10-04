@@ -123,6 +123,7 @@ jobs:
           MAIN_SHA: ${{ steps.snapshot.outputs.main_sha }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2153
           main_sha="$MAIN_SHA"
           [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main inválido"; exit 1; }
 
