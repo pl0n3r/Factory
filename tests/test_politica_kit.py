@@ -13,7 +13,9 @@ from scripts.politica_kit import (
     load_reviewer_policy,
     parse_reviewer_policy,
     resolve_required_review_bot,
+    validate_rate_limit_fallback,
     validate_required_bot_review,
+    validate_required_bot_review_or_fallback,
     validate_rounds,
 )
 
@@ -50,6 +52,52 @@ def comment(*, comment_id=1, login="coderabbitai[bot]", user_type="Bot",
         "id": comment_id,
         "body": body,
         "user": {"type": user_type, "login": login},
+    })
+
+
+def rate_limit_comment(*, comment_id, created_at, login="coderabbitai[bot]"):
+    return json.dumps({
+        "id": comment_id,
+        "body": "Review rate limited.",
+        "created_at": created_at,
+        "user": {"type": "Bot", "login": login},
+    })
+
+
+def check(*, check_id, name, conclusion="success", status="completed",
+          head_sha=HEAD, completed_at="2026-10-04T05:00:00Z"):
+    return json.dumps({
+        "id": check_id,
+        "name": name,
+        "head_sha": head_sha,
+        "status": status,
+        "conclusion": conclusion,
+        "completed_at": completed_at,
+    })
+
+
+def green_gate_checks(*, head_sha=HEAD):
+    names = (
+        "validate",
+        "SonarCloud Code Analysis",
+        "CodeQL",
+        "tests",
+        "validar-pr / Validar coordinación",
+        "privacidad / Privacidad como código",
+    )
+    return [
+        check(check_id=index, name=name, head_sha=head_sha)
+        for index, name in enumerate(names, start=10)
+    ]
+
+
+def review_thread(*, resolved=False, login="coderabbitai"):
+    return json.dumps({
+        "isResolved": resolved,
+        "comments": {
+            "pageInfo": {"hasNextPage": False},
+            "nodes": [{"author": {"login": login}}],
+        },
     })
 
 
@@ -174,6 +222,139 @@ class T(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(PolicyError):
                     parse_reviewer_policy(payload)
+
+    def test_single_rate_limit_is_not_enough_to_pass(self):
+        comments = [
+            rate_limit_comment(
+                comment_id=101,
+                created_at="2026-10-04T05:00:00Z",
+            ),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                conclusion="failure",
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", delete=False
+        ) as handle:
+            handle.write(json.dumps({"phase": "construccion"}))
+            phase_path = Path(handle.name)
+        self.addCleanup(lambda: phase_path.unlink(missing_ok=True))
+
+        with self.assertRaisesRegex(PolicyError, "único rate limit"):
+            validate_required_bot_review_or_fallback(
+                [],
+                "coderabbitai[bot]",
+                HEAD,
+                comment_lines=comments,
+                check_lines=checks,
+                thread_lines=[],
+                phase_file=phase_path,
+            )
+
+    def test_rate_limit_plus_failed_retry_passes_in_construction_when_other_gates_green(self):
+        comments = [
+            rate_limit_comment(
+                comment_id=101,
+                created_at="2026-10-04T05:00:00Z",
+            ),
+            rate_limit_comment(
+                comment_id=102,
+                created_at="2026-10-04T05:02:00Z",
+            ),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                conclusion="failure",
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", delete=False
+        ) as handle:
+            handle.write(json.dumps({"phase": "construccion"}))
+            phase_path = Path(handle.name)
+        self.addCleanup(lambda: phase_path.unlink(missing_ok=True))
+
+        result = validate_required_bot_review_or_fallback(
+            [],
+            "coderabbitai[bot]",
+            HEAD,
+            comment_lines=comments,
+            check_lines=checks,
+            thread_lines=[],
+            phase_file=phase_path,
+        )
+        self.assertTrue(result["review_fallback"])
+        self.assertEqual(result["rate_limit_comment_id"], 102)
+        self.assertEqual(
+            result["rate_limit_created_at"],
+            "2026-10-04T05:02:00Z",
+        )
+        self.assertEqual(result["phase"], "construccion")
+
+    def test_rate_limit_fallback_never_applies_with_open_blocking_finding_or_other_phase_or_other_head(self):
+        comments = [
+            rate_limit_comment(
+                comment_id=101,
+                created_at="2026-10-04T05:00:00Z",
+            ),
+            rate_limit_comment(
+                comment_id=102,
+                created_at="2026-10-04T05:02:00Z",
+            ),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                conclusion="failure",
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+
+        cases = (
+            {
+                "phase": "construccion",
+                "check_lines": checks,
+                "thread_lines": [review_thread()],
+            },
+            {
+                "phase": "live",
+                "check_lines": checks,
+                "thread_lines": [],
+            },
+            {
+                "phase": "construccion",
+                "check_lines": green_gate_checks(head_sha="b" * 40) + [
+                    check(
+                        check_id=99,
+                        name=policy.POLICY_CHECK_NAME,
+                        conclusion="failure",
+                        head_sha="b" * 40,
+                        completed_at="2026-10-04T05:01:00Z",
+                    ),
+                ],
+                "thread_lines": [],
+            },
+        )
+        for case in cases:
+            with self.subTest(phase=case["phase"]):
+                with self.assertRaises(PolicyError):
+                    validate_rate_limit_fallback(
+                        required_review_bot="coderabbitai[bot]",
+                        head_sha=HEAD,
+                        phase=case["phase"],
+                        comment_lines=comments,
+                        check_lines=case["check_lines"],
+                        thread_lines=case["thread_lines"],
+                    )
 
     def test_green_checks_without_required_final_review_fail_closed(self):
         with self.assertRaises(PolicyError):
@@ -311,6 +492,9 @@ class T(unittest.TestCase):
             base_policy_file = ""
             head_sha = ""
             comments_file = ""
+            checks_file = ""
+            threads_file = ""
+            phase_file = ""
 
         fake_policy = {"version": 1, "review_round_limit": 3, "decisions": []}
         with (

@@ -37,8 +37,11 @@ class T(unittest.TestCase):
         self.assertIn("required_review_bot:", TEMPLATE)
         self.assertIn("contents: read", W)
         self.assertIn("pull-requests: read", W)
-        for forbidden in ("contents: write", "pull-requests: write", "issues: write", "secrets:"):
+        self.assertIn("issues: write", W)
+        self.assertIn("checks: read", W)
+        for forbidden in ("contents: write", "pull-requests: write", "secrets:"):
             self.assertNotIn(forbidden, W + COMMENT_W + TEMPLATE)
+        self.assertNotIn("issues: write", COMMENT_W + TEMPLATE)
         for event in ("pull_request_target", "workflow_run", "check_run", "repository_dispatch"):
             self.assertNotIn(event, W + COMMENT_W + TEMPLATE)
 
@@ -73,7 +76,7 @@ class T(unittest.TestCase):
         self.assertIn('PR_JSON="$(gh api "repos/$REPOSITORY/pulls/$INPUT_PR")"', W)
         self.assertIn('[[ "$CURRENT_HEAD" == "$EVENT_HEAD" ]]', W)
         self.assertIn('[[ "$CURRENT_BASE" == "$EVENT_BASE" ]]', W)
-        self.assertNotIn("issues: write", W)
+        self.assertIn("issues: write", W)
         self.assertNotIn("issue_comment", W)
 
     def test_comment_revalidation_never_executes_consumer_code(self):
@@ -143,6 +146,27 @@ class T(unittest.TestCase):
         for forbidden in ("contents: write", "pull-requests: write", "issues: write", "secrets:"):
             self.assertNotIn(forbidden, COMMENT_W)
         self.assertNotIn("pull_request_target", COMMENT_W)
+
+
+class PoliticaWorkflowContractTests(unittest.TestCase):
+    def test_fallback_comment_is_idempotent_and_records_head_and_time(self):
+        self.assertIn("datos.yml?ref=$PR_BASE_SHA", W)
+        self.assertIn("BASE_PHASE_FILE", W)
+        self.assertIn('--phase-file "$BASE_PHASE_FILE"', W)
+        self.assertIn("check-runs?per_page=100", W)
+        self.assertIn("reviewThreads(first:100)", W)
+        self.assertIn("comments(first:100){pageInfo{hasNextPage}", W)
+        self.assertIn('--checks-file "$checks_file"', W)
+        self.assertIn('--threads-file "$threads_file"', W)
+        self.assertIn("factory-reviewer-rate-limit-fallback", W)
+        self.assertIn("rate_limit_comment_id", W)
+        self.assertIn("rate_limit_created_at", W)
+        self.assertIn("issues: write", W)
+        self.assertIn('--method PATCH "repos/$REPOSITORY/issues/comments/$existing_id"', W)
+        self.assertIn('--method POST "repos/$REPOSITORY/issues/$PR/comments"', W)
+        self.assertIn("HEAD exacto:", W)
+        self.assertIn("Evidencia terminal del reintento:", W)
+        self.assertIn("#issuecomment-$retry_id", W)
 
 
 if __name__ == "__main__":

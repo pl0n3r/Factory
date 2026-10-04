@@ -28,7 +28,13 @@ MAX_POLICY_BYTES = 256 * 1024
 MAX_REVIEWER_POLICY_BYTES = 4096
 MAX_REVIEWS_BYTES = 2_000_000
 MAX_COMMENTS_BYTES = 2_000_000
+MAX_CHECKS_BYTES = 2_000_000
+MAX_THREADS_BYTES = 2_000_000
+MAX_PHASE_BYTES = 512 * 1024
 MAX_EVIDENCE_ITEM_BYTES = 100_000
+RATE_LIMIT_TEXT = "Review rate limited"
+POLICY_CHECK_NAME = "Factory policy / Validar decisiones y límite de revisión"
+ALLOWED_GATE_CONCLUSIONS = {"success", "neutral", "skipped"}
 
 
 class PolicyError(ValueError):
@@ -161,6 +167,14 @@ def parse_comments(lines: list[str]) -> list[dict[str, Any]]:
     return _parse_ndjson(lines, noun="Comentario")
 
 
+def parse_checks(lines: list[str]) -> list[dict[str, Any]]:
+    return _parse_ndjson(lines, noun="Check")
+
+
+def parse_threads(lines: list[str]) -> list[dict[str, Any]]:
+    return _parse_ndjson(lines, noun="Thread")
+
+
 def review_counts_as_round(review: dict[str, Any]) -> bool:
     state = review.get("state")
     if state in {"APPROVED", "CHANGES_REQUESTED"}:
@@ -226,15 +240,13 @@ def _comment_has_exact_head_coverage(
     )
 
 
-def validate_required_bot_review(
+def _required_bot_review_satisfied(
     lines: list[str],
-    required_review_bot: str = "",
-    head_sha: str = "",
+    required_review_bot: str,
+    head_sha: str,
     *,
     comment_lines: list[str] | None = None,
-) -> None:
-    if required_review_bot == "":
-        return
+) -> bool:
     if not BOT_LOGIN_RE.fullmatch(required_review_bot):
         raise PolicyError("Reviewer-bot requerido inválido.")
     if not SHA_RE.fullmatch(head_sha):
@@ -249,17 +261,301 @@ def validate_required_bot_review(
             and review.get("state") != "CHANGES_REQUESTED"
             and review_counts_as_round(review)
         ):
-            return
+            return True
     for comment in parse_comments(comment_lines or []):
         if _comment_has_exact_head_coverage(
             comment,
             required_review_bot=required_review_bot,
             head_sha=head_sha,
         ):
-            return
+            return True
+    return False
+
+
+def validate_required_bot_review(
+    lines: list[str],
+    required_review_bot: str = "",
+    head_sha: str = "",
+    *,
+    comment_lines: list[str] | None = None,
+) -> None:
+    if required_review_bot == "":
+        return
+    if _required_bot_review_satisfied(
+        lines,
+        required_review_bot,
+        head_sha,
+        comment_lines=comment_lines,
+    ):
+        return
     raise PolicyError(
         "Falta review o cobertura terminal/sustantiva del reviewer-bot requerido sobre el HEAD exacto."
     )
+
+
+def _parse_iso_timestamp(value: object, *, noun: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value
+    ):
+        raise PolicyError(f"{noun} inválido.")
+    return value
+
+
+def _normalized_bot_login(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.removesuffix("[bot]").lower()
+
+
+def parse_phase_payload(payload: str) -> str:
+    if len(payload.encode("utf-8")) > MAX_PHASE_BYTES:
+        raise PolicyError("datos.yml excede el tamaño permitido.")
+    try:
+        raw = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise PolicyError("datos.yml inválido.") from exc
+    if not isinstance(raw, dict):
+        raise PolicyError("datos.yml inválido.")
+    phase = raw.get("phase")
+    if phase not in {"construccion", "live"}:
+        raise PolicyError("Fase de datos.yml ausente o inválida.")
+    return phase
+
+
+def load_phase(path: Path | None) -> str:
+    if path is None:
+        return ""
+    resolved = _resolve_temp_input(path, noun="datos.yml base")
+    try:
+        payload = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise PolicyError("No se pudo leer datos.yml base.") from exc
+    return parse_phase_payload(payload)
+
+
+def _latest_checks_by_name(
+    lines: list[str],
+    *,
+    head_sha: str,
+) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for check in parse_checks(lines):
+        name = check.get("name")
+        check_head = check.get("head_sha")
+        check_id = check.get("id")
+        if not isinstance(name, str) or not name.strip():
+            raise PolicyError("Check sin nombre.")
+        if check_head != head_sha:
+            raise PolicyError("Check observado sobre HEAD distinto.")
+        if type(check_id) is not int or check_id <= 0:
+            raise PolicyError("Check sin id válido.")
+        current = latest.get(name)
+        if current is None or check_id > current["id"]:
+            latest[name] = check
+    return latest
+
+
+def validate_other_gates_green(
+    lines: list[str],
+    *,
+    head_sha: str,
+) -> None:
+    latest = _latest_checks_by_name(lines, head_sha=head_sha)
+    if not latest:
+        raise PolicyError("No hay evidencia de checks exact-HEAD.")
+
+    successful_names: list[str] = []
+    for name, check in latest.items():
+        if name == POLICY_CHECK_NAME or name == "Validar":
+            continue
+        status = check.get("status")
+        conclusion = check.get("conclusion")
+        if status != "completed":
+            raise PolicyError(f"Check pendiente: {name}.")
+        if conclusion not in ALLOWED_GATE_CONCLUSIONS:
+            raise PolicyError(f"Check no verde: {name}={conclusion}.")
+        if conclusion == "success":
+            successful_names.append(name.lower())
+
+    categories = {
+        "ci": lambda name: (
+            name == "validate"
+            or "factory ci reusable / validar" in name
+            or name.startswith("ci ")
+            or " ci / validate" in name
+        ),
+        "sonar": lambda name: "sonar" in name,
+        "codeql": lambda name: "codeql" in name or name.startswith("analyze ("),
+        "tests": lambda name: (
+            name == "tests"
+            or "test" in name
+            or "acceptance" in name
+            or "criterios de aceptación" in name
+        ),
+        "coordinacion": lambda name: (
+            "coordinación" in name or "coordinacion" in name
+        ),
+        "privacidad": lambda name: "privacidad" in name or "privacy" in name,
+    }
+    missing = [
+        category
+        for category, predicate in categories.items()
+        if not any(predicate(name) for name in successful_names)
+    ]
+    if missing:
+        raise PolicyError(
+            "Faltan gates obligatorios verdes: " + ", ".join(missing) + "."
+        )
+
+
+def _has_open_blocking_finding(
+    lines: list[str],
+    *,
+    required_review_bot: str,
+) -> bool:
+    target = _normalized_bot_login(required_review_bot)
+    for thread in parse_threads(lines):
+        resolved = thread.get("isResolved")
+        comments = thread.get("comments")
+        if not isinstance(resolved, bool) or not isinstance(comments, dict):
+            raise PolicyError("Thread de review inválido.")
+        page_info = comments.get("pageInfo")
+        if not isinstance(page_info, dict) or type(page_info.get("hasNextPage")) is not bool:
+            raise PolicyError("Paginación de thread inválida.")
+        if page_info["hasNextPage"]:
+            raise PolicyError("Thread de review excede el límite evaluable.")
+        nodes = comments.get("nodes")
+        if not isinstance(nodes, list):
+            raise PolicyError("Thread de review inválido.")
+        if resolved:
+            continue
+        for item in nodes:
+            if not isinstance(item, dict):
+                raise PolicyError("Comentario de thread inválido.")
+            author = item.get("author")
+            if (
+                isinstance(author, dict)
+                and _normalized_bot_login(author.get("login")) == target
+            ):
+                return True
+    return False
+
+
+def _rate_limit_comments(
+    lines: list[str],
+    *,
+    required_review_bot: str,
+) -> list[tuple[str, int]]:
+    evidence: list[tuple[str, int]] = []
+    for item in parse_comments(lines):
+        user = item.get("user")
+        body = item.get("body")
+        comment_id = item.get("id")
+        if not (
+            isinstance(user, dict)
+            and user.get("type") == "Bot"
+            and user.get("login") == required_review_bot
+            and isinstance(body, str)
+            and RATE_LIMIT_TEXT in body
+        ):
+            continue
+        if type(comment_id) is not int or comment_id <= 0:
+            raise PolicyError("Comentario rate-limit sin id válido.")
+        created_at = _parse_iso_timestamp(
+            item.get("created_at"), noun="Timestamp de comentario rate-limit"
+        )
+        evidence.append((created_at, comment_id))
+    return sorted(evidence)
+
+
+def validate_rate_limit_fallback(
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    phase: str,
+    comment_lines: list[str],
+    check_lines: list[str],
+    thread_lines: list[str],
+) -> tuple[int, str]:
+    if phase != "construccion":
+        raise PolicyError("Fallback de reviewer solo permitido en construccion.")
+    if _has_open_blocking_finding(
+        thread_lines,
+        required_review_bot=required_review_bot,
+    ):
+        raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
+
+    validate_other_gates_green(check_lines, head_sha=head_sha)
+    rate_limits = _rate_limit_comments(
+        comment_lines,
+        required_review_bot=required_review_bot,
+    )
+    if len(rate_limits) < 2:
+        raise PolicyError("Un único rate limit no habilita fallback.")
+
+    failed_policy_checks: list[str] = []
+    for check in parse_checks(check_lines):
+        if (
+            check.get("name") == POLICY_CHECK_NAME
+            and check.get("head_sha") == head_sha
+            and check.get("status") == "completed"
+            and check.get("conclusion") == "failure"
+        ):
+            failed_policy_checks.append(
+                _parse_iso_timestamp(
+                    check.get("completed_at"),
+                    noun="Timestamp de policy failure",
+                )
+            )
+
+    for first_at, _first_id in rate_limits:
+        for failed_at in sorted(failed_policy_checks):
+            if failed_at < first_at:
+                continue
+            for retry_at, retry_id in rate_limits:
+                if retry_at > failed_at:
+                    return retry_id, retry_at
+
+    raise PolicyError(
+        "Falta un reintento rate-limited posterior a un fallo de policy sobre el HEAD exacto."
+    )
+
+
+def validate_required_bot_review_or_fallback(
+    lines: list[str],
+    required_review_bot: str,
+    head_sha: str,
+    *,
+    comment_lines: list[str],
+    check_lines: list[str],
+    thread_lines: list[str],
+    phase_file: Path | None,
+) -> dict[str, Any]:
+    if required_review_bot == "":
+        return {"review_fallback": False}
+    if _required_bot_review_satisfied(
+        lines,
+        required_review_bot,
+        head_sha,
+        comment_lines=comment_lines,
+    ):
+        return {"review_fallback": False}
+
+    phase = load_phase(phase_file)
+    retry_id, retry_at = validate_rate_limit_fallback(
+        required_review_bot=required_review_bot,
+        head_sha=head_sha,
+        phase=phase,
+        comment_lines=comment_lines,
+        check_lines=check_lines,
+        thread_lines=thread_lines,
+    )
+    return {
+        "review_fallback": True,
+        "rate_limit_comment_id": retry_id,
+        "rate_limit_created_at": retry_at,
+        "phase": phase,
+    }
 
 
 def validate_rounds(rounds: int, limit: int) -> None:
@@ -285,6 +581,9 @@ def args() -> argparse.Namespace:
     parser.add_argument("--base-policy-file", default="")
     parser.add_argument("--head-sha", default="")
     parser.add_argument("--comments-file", default="")
+    parser.add_argument("--checks-file", default="")
+    parser.add_argument("--threads-file", default="")
+    parser.add_argument("--phase-file", default="")
     return parser.parse_args()
 
 
@@ -312,13 +611,34 @@ def main() -> int:
             if options.comments_file
             else []
         )
+        check_lines = (
+            _read_bounded_lines(
+                Path(options.checks_file),
+                max_bytes=MAX_CHECKS_BYTES,
+                noun="checks",
+            )
+            if options.checks_file
+            else []
+        )
+        thread_lines = (
+            _read_bounded_lines(
+                Path(options.threads_file),
+                max_bytes=MAX_THREADS_BYTES,
+                noun="threads",
+            )
+            if options.threads_file
+            else []
+        )
         rounds = count_review_rounds(lines)
         validate_rounds(rounds, policy["review_round_limit"])
-        validate_required_bot_review(
+        review_result = validate_required_bot_review_or_fallback(
             lines,
             effective_required,
             options.head_sha,
             comment_lines=comment_lines,
+            check_lines=check_lines,
+            thread_lines=thread_lines,
+            phase_file=Path(options.phase_file) if options.phase_file else None,
         )
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -327,6 +647,7 @@ def main() -> int:
         "decisions": len(policy["decisions"]),
         "review_rounds": rounds,
         "required_review_bot": effective_required or None,
+        **review_result,
     }, sort_keys=True))
     return 0
 
