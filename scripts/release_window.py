@@ -564,7 +564,7 @@ def plan_request(payload: Any) -> dict[str, Any]:
         "CI factory",
         "Sonar CI-based",
         "Evidencia CodeQL",
-        "Unattended Watchdog",
+        "Vigilar startup_failure de reusables publicados",
         "Compatibilidad de consumidores",
     }
     missing = []
