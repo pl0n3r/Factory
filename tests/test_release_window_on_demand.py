@@ -146,7 +146,7 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             WORKFLOW,
         )
         self.assertNotIn("@$OWNER", WORKFLOW)
-        self.assertNotIn('[[ "$ACTOR" == "$OWNER" ]]', WORKFLOW)
+        self.assertIn('[[ "$ACTOR" == "$OWNER" ]]', WORKFLOW)
         rejected_branch = WORKFLOW.split("            rejected)", 1)[1].split(
             "            create_gate)", 1
         )[0]
