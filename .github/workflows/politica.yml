@@ -96,11 +96,13 @@ jobs:
           gh api --paginate "repos/$REPOSITORY/issues/$PR/comments?per_page=100" \
             --jq '.[] | @json' > "$comments_file"
 
-          (( $(wc -c < "$reviews_file") <= MAX_EVIDENCE_BYTES )) || {
+          reviews_bytes="$(wc -c < "$reviews_file")"
+          comments_bytes="$(wc -c < "$comments_file")"
+          (( reviews_bytes <= MAX_EVIDENCE_BYTES )) || {
             echo "::error::Reviews exceden el tamaño permitido"
             exit 1
           }
-          (( $(wc -c < "$comments_file") <= MAX_EVIDENCE_BYTES )) || {
+          (( comments_bytes <= MAX_EVIDENCE_BYTES )) || {
             echo "::error::Comentarios exceden el tamaño permitido"
             exit 1
           }
@@ -144,11 +146,16 @@ jobs:
 
           owner="${REPOSITORY%%/*}"
           repo_name="${REPOSITORY#*/}"
+          # shellcheck disable=SC2016
           gh api graphql \
             -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{author{login}}}}}}}}' \
             -F owner="$owner" -F repo="$repo_name" -F pr="$PR" > "$threads_json"
           jq -e '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false' "$threads_json" >/dev/null || {
             echo "::error::Review threads exceden el límite evaluable"
+            exit 1
+          }
+          jq -e '[.data.repository.pullRequest.reviewThreads.nodes[].comments.pageInfo.hasNextPage] | all(. == false)' "$threads_json" >/dev/null || {
+            echo "::error::Comentarios de review thread exceden el límite evaluable"
             exit 1
           }
           jq -c '.data.repository.pullRequest.reviewThreads.nodes[]' "$threads_json" > "$threads_file"
