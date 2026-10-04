@@ -253,6 +253,69 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
             self.assertEqual(watchdog_main(), 2)
         self.assertIn("payload demasiado grande", stderr.getvalue())
 
+    def test_workflow_filters_startup_failure_before_bounded_actions_evidence(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "--data-urlencode 'status=startup_failure'",
+            workflow,
+        )
+        self.assertIn(
+            '--data-urlencode "created=>=$release_started_at"',
+            workflow,
+        )
+        self.assertIn("--data-urlencode 'per_page=100'", workflow)
+        self.assertLess(
+            workflow.index("--data-urlencode 'status=startup_failure'"),
+            workflow.index("--data-urlencode 'per_page=100'"),
+        )
+
+    def test_workflow_preserves_six_consumer_queries_and_post_release_scope(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        for repository in (
+            "pl0n3r/Condor",
+            "pl0n3r/ControlBot",
+            "pl0n3r/FactoryRunner",
+            "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal",
+            "pl0n3r/AutoFactory",
+        ):
+            self.assertIn(repository, workflow)
+        self.assertEqual(
+            workflow.count("actions_url=\"https://api.github.com/repos/$repo/actions/runs\""),
+            1,
+        )
+        self.assertIn("--data-urlencode 'status=startup_failure'", workflow)
+        self.assertIn(".conclusion == \"startup_failure\"", workflow)
+        self.assertIn("authority=unchanged", workflow)
+
+    def test_workflow_keeps_startup_failure_defense_in_depth_and_total_count_bound(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".workflow_runs[]\n              | select(.conclusion == \"startup_failure\")",
+            workflow,
+        )
+        self.assertIn("(( total_count <= 100 ))", workflow)
+
+    def test_workflow_declares_post_merge_watchdog_contract_without_pr_activation(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("name: Vigilar startup_failure de reusables publicados", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        for repository in (
+            "pl0n3r/Condor",
+            "pl0n3r/ControlBot",
+            "pl0n3r/FactoryRunner",
+            "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal",
+            "pl0n3r/AutoFactory",
+        ):
+            self.assertIn(f'"{repository}"', workflow)
+
     def test_workflow_builds_consumer_actions_url_without_encoding_owner_repo_slash(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
