@@ -323,6 +323,12 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
             "state": state,
             "title": str(issue.get("title") or ""),
             "updated_at": issue.get("updated_at"),
+            "author_association": issue.get("author_association"),
+            "user_login": (
+                issue.get("user", {}).get("login")
+                if isinstance(issue.get("user"), dict)
+                else None
+            ),
             "gate": gate,
             "fingerprint": fingerprint,
             "version": version,
@@ -523,6 +529,114 @@ def _render_gate(version: str, sha: str, now: datetime, *, source_issue: int) ->
     }
 
 
+def plan_request(payload: Any) -> dict[str, Any]:
+    """Crea una puerta solo ante petición explícita del OWNER y evidencia exacta."""
+    if not isinstance(payload, dict):
+        raise ReleaseWindowError("Payload request inválido.")
+
+    actor = payload.get("actor")
+    owner = payload.get("owner")
+    if (
+        payload.get("owner_requested") is not True
+        or not isinstance(actor, str)
+        or not isinstance(owner, str)
+        or not owner
+        or actor != owner
+    ):
+        return {"action": "rejected", "reason": "owner_request_required"}
+
+    now = _canonical_time(payload.get("now"), "now")
+    main_sha = _sha(payload.get("main_sha"), "main_sha")
+    version = _semver(payload.get("version"))
+    candidate_version = _semver(payload.get("candidate_version"))
+    if version != candidate_version:
+        return {
+            "action": "rejected",
+            "reason": "version_mismatch",
+            "version": version,
+            "candidate_version": candidate_version,
+        }
+
+    workflows = payload.get("workflows")
+    if not isinstance(workflows, list) or len(workflows) > 200:
+        raise ReleaseWindowError("workflows inválidos.")
+    required = {
+        "CI factory",
+        "Sonar CI-based",
+        "Evidencia CodeQL",
+        "Vigilar startup_failure de reusables publicados",
+        "Compatibilidad de consumidores",
+    }
+    missing = []
+    for name in sorted(required):
+        if not any(
+            isinstance(row, dict)
+            and row.get("name") == name
+            and row.get("status") == "completed"
+            and row.get("conclusion") == "success"
+            and row.get("head_sha") == main_sha
+            for row in workflows
+        ):
+            missing.append(name)
+    if missing:
+        return {
+            "action": "rejected",
+            "reason": "revalidation_required",
+            "missing_checks": missing,
+        }
+
+    records = [
+        record
+        for record in gate_records(payload.get("gates", []))
+        if (
+            record.get("author_association") in {"OWNER", "MEMBER", "COLLABORATOR"}
+            or (
+                record.get("user_login") == ACTIONS_BOT
+                and record.get("window") is not None
+            )
+        )
+    ]
+    latest = _latest_by_version(records, version)
+    if (
+        latest is not None
+        and latest["sha"] == main_sha
+        and latest["executed"] is None
+        and (latest["state"] == "open" or latest["approved_a"])
+    ):
+        return {
+            "action": "none",
+            "reason": "current_head_already_has_gate",
+            "issue": latest["number"],
+            "sha": main_sha,
+            "version": version,
+        }
+
+    source = latest or _latest_canonical_gate(records)
+    if source is None:
+        return {"action": "rejected", "reason": "no_trusted_release_history"}
+
+    supersede_issues = [
+        item["number"]
+        for item in records
+        if (
+            item["version"] == version
+            and item["duplicate_of"] is None
+            and item["state"] == "open"
+        )
+    ]
+    gate = _render_gate(version, main_sha, now, source_issue=source["number"])
+    return {
+        "action": "create_gate",
+        "reason": "owner_requested",
+        "source_issue": source["number"],
+        "source_sha": source["sha"],
+        "supersede_issues": sorted(set(supersede_issues)),
+        "sha": main_sha,
+        "version": version,
+        **gate,
+    }
+
+
 def plan_rearm(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ReleaseWindowError("Payload push inválido.")
@@ -686,13 +800,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "mode",
-        choices=("pr-check", "push", "workflow-run", "summary"),
+        choices=("pr-check", "request", "push", "workflow-run", "summary"),
     )
     args = parser.parse_args()
     try:
         payload = _read_payload()
         if args.mode == "pr-check":
             result = check_pull_request(payload)
+        elif args.mode == "request":
+            result = plan_request(payload)
         elif args.mode == "push":
             result = plan_rearm(payload)
         elif args.mode == "workflow-run":

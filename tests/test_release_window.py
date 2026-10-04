@@ -5,7 +5,7 @@ import io
 import json
 import unittest
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts import release_window as rw
@@ -436,15 +436,16 @@ class ReleaseWindowTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "factory-ci.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("push:", workflow)
+        self.assertNotIn("push:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("workflow_run:", workflow)
         self.assertIn("Release Factory v1.x", workflow)
-        self.assertIn("python3 scripts/release_window.py push", workflow)
+        self.assertIn("python3 scripts/release_window.py request", workflow)
         self.assertIn("python3 scripts/release_window.py workflow-run", workflow)
         self.assertIn("issues: write", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertIn("factory-release-executed", workflow)
-        self.assertIn("factory-release-rearm", workflow)
+        self.assertIn("factory-release-owner-request", workflow)
 
         self.assertIn("release_window:", factory_ci)
         self.assertIn("issues: read", factory_ci)
@@ -462,7 +463,7 @@ class ReleaseWindowTests(unittest.TestCase):
 
         self.assertEqual(
             workflow.count("| {number, state, title, body, updated_at}"),
-            2,
+            1,
         )
         self.assertEqual(
             workflow.count('select(.user.login == "github-actions[bot]")'),
@@ -784,6 +785,101 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(out, "")
         self.assertIn("ERROR: JSON inválido.", err)
+
+
+    def test_gate_records_preserve_author_identity_and_duplicate_canonical(self) -> None:
+        canonical = rw._render_gate("1.0.28", NEW_SHA, NOW, source_issue=900)
+        duplicate = rw._render_gate("1.0.28", NEW_SHA, NOW, source_issue=900)
+        duplicate["body"] += "\n<!-- factory-human-gate-duplicate canonical=900 -->"
+        rows = [
+            gate_row(
+                number=900,
+                body=canonical["body"],
+                comments=[],
+            ),
+            {
+                **gate_row(number=901, body=duplicate["body"]),
+                "issue": {
+                    **gate_row(number=901, body=duplicate["body"])["issue"],
+                    "author_association": "OWNER",
+                    "user": {"login": "pl0n3r", "type": "User"},
+                },
+                "comments": [
+                    {
+                        "user": {"login": "github-actions[bot]"},
+                        "body": "<!-- factory-human-gate-duplicate canonical=900 -->",
+                    }
+                ],
+            },
+        ]
+        records = rw.gate_records(rows)
+        self.assertEqual(records[0]["author_association"], None)
+        self.assertEqual(records[1]["author_association"], "OWNER")
+        self.assertEqual(records[1]["user_login"], "pl0n3r")
+        self.assertEqual(records[1]["duplicate_of"], 900)
+
+
+    def test_latest_canonical_gate_and_freeze_ignore_duplicates_and_prior_versions(self) -> None:
+        old = rw._render_gate("1.0.27", OLD_SHA, NOW, source_issue=800)
+        current = rw._render_gate("1.0.28", NEW_SHA, NOW, source_issue=900)
+        rows = rw.gate_records([
+            gate_row(number=800, body=old["body"], state="closed"),
+            gate_row(number=900, body=current["body"], state="open"),
+        ])
+        latest = rw._latest_canonical_gate(rows)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["number"], 900)
+        self.assertEqual(
+            rw.freeze_gate(rows, NOW + timedelta(minutes=1))["number"],
+            900,
+        )
+
+
+    def test_critical_exception_requires_exact_schema_open_issue_and_critical_label(self) -> None:
+        body = (
+            '<!-- factory-release-freeze-exception '
+            '{"version":1,"reason":"critical-repair","issue":921} -->'
+        )
+        valid_pr = {"body": body}
+        valid_issue = {
+            "number": 921,
+            "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        self.assertTrue(rw._critical_exception(valid_pr, valid_issue))
+        self.assertFalse(
+            rw._critical_exception(valid_pr, {**valid_issue, "state": "closed"})
+        )
+        self.assertFalse(
+            rw._critical_exception(valid_pr, {
+                **valid_issue,
+                "labels": [{"name": "prioridad: alta"}],
+            })
+        )
+        self.assertFalse(
+            rw._critical_exception(
+                {"body": body.replace('"issue":921', '"issue":922')},
+                valid_issue,
+            )
+        )
+
+
+    def test_render_gate_emits_new_exact_sha_window_and_rearm_markers(self) -> None:
+        rendered = rw._render_gate("1.0.28", NEW_SHA, NOW, source_issue=900)
+        self.assertIn(f"main@{NEW_SHA}", rendered["body"])
+        self.assertIn("factory-release-window", rendered["body"])
+        self.assertIn("factory-release-rearm", rendered["body"])
+        self.assertIn("/decidir A", rendered["body"])
+        self.assertEqual(rendered["labels"][1], "decisión: dueño")
+
+
+    def test_workflow_snapshot_output_uses_one_newline_record(self) -> None:
+        workflow = (ROOT / ".github/workflows/release-window.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("GITHUB_OUTPUT", workflow)
+        self.assertNotIn("printf 'main_sha=%s\\\\n'", workflow)
+
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: seguridad-${{ (github.event_name == 'issues' || github.event_name == 'issue_comment') && 'human-gates' || github.event.pull_request.number || github.ref }}
+  group: seguridad-${{ (github.event_name == 'issues' || github.event_name == 'issue_comment') && format('human-gate-{0}', github.event.issue.number) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -118,7 +118,19 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
-          python3 seguridad/sincronizar_puerta.py valid >> "$GITHUB_OUTPUT"
+          canonical=false
+          for attempt in 1 2 3; do
+            output=""
+            if output="$(python3 seguridad/sincronizar_puerta.py valid 2>/dev/null)"; then
+              if grep -Fxq 'canonical=true' <<<"$output"; then
+                canonical=true
+                break
+              fi
+            fi
+            if [[ "$attempt" != 3 ]]; then sleep 2; fi
+          done
+          [[ "$canonical" == "true" ]] || { echo "::error::La puerta no convergió a canónica"; exit 1; }
+          echo "canonical=true" >> "$GITHUB_OUTPUT"
 
       - name: Validar comando y materializar decisión
         if: steps.preflight.outputs.trusted == 'true' && steps.gate_sync.outputs.canonical == 'true'
@@ -127,7 +139,17 @@ jobs:
           REPOSITORIO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          PYTHONPATH=seguridad python3 seguridad/decision_respuesta.py < "$GITHUB_EVENT_PATH"
+          for attempt in 1 2 3; do
+            output=""
+            if output="$(PYTHONPATH=seguridad python3 seguridad/decision_respuesta.py < "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+              if grep -Fxq 'decision_materialized=true' <<<"$output"; then
+                exit 0
+              fi
+            fi
+            if [[ "$attempt" != 3 ]]; then sleep 2; fi
+          done
+          echo "::error::La decisión OWNER no pudo materializarse tras 3 intentos"
+          exit 1
 
   sincronizar-decision:
     name: Validar y enrutar decisión

@@ -1,9 +1,12 @@
 name: Factory Release Window
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión semántica candidata (vacío = config/version.json)"
+        required: false
+        type: string
   workflow_run:
     workflows: ["Release Factory v1.x"]
     types: [completed]
@@ -17,25 +20,47 @@ concurrency:
 
 jobs:
   rearm:
-    name: Rearmar puerta exact-SHA si main derivó
-    if: github.repository == 'pl0n3r/Factory' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    name: Abrir puerta exact-SHA bajo demanda
+    if: github.repository == 'pl0n3r/Factory' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
+      actions: read
       contents: read
       issues: write
     steps:
+      - name: Autorizar solicitud OWNER antes de checkout
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == "workflow_dispatch" ]] || { echo "::error::Solicitud de release no explícita"; exit 1; }
+          [[ "$REF_NAME" == "$DEFAULT_BRANCH" ]] || { echo "::error::La solicitud debe ejecutarse sobre la rama principal"; exit 1; }
+          [[ "$ACTOR" == "$OWNER" ]] || { echo "::error::Factory Release Window solo puede solicitarlo el OWNER"; exit 1; }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
           persist-credentials: false
 
       - name: Construir snapshot acotado de puertas release
+        id: snapshot
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          [[ "$checked_out_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD checkout inválido"; exit 1; }
+          remote_main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
+          [[ "$remote_main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main remoto inválido"; exit 1; }
+          [[ "$checked_out_sha" == "$remote_main_sha" ]] || { echo "::error::main derivó después del checkout"; exit 1; }
+          main_sha="$checked_out_sha"
+          printf 'main_sha=%s\n' "$main_sha" >> "$GITHUB_OUTPUT"
           printf '[]\n' > /tmp/release-issues.json
           for page in 1 2 3 4 5; do
             gh api               "repos/$REPOSITORY/issues?state=all&per_page=100&sort=updated&direction=desc&page=$page"               > /tmp/release-page.json
@@ -44,7 +69,15 @@ jobs:
                 select((has("pull_request") | not))
                 | select((.body // "") | contains("factory-human-gate"))
                 | select((.body // "") | contains("factory-release"))
-                | {number, state, title, body, updated_at}
+                | {
+                    number,
+                    state,
+                    title,
+                    body,
+                    updated_at,
+                    author_association,
+                    user: {login: .user.login, type: .user.type}
+                  }
               )
             ' /tmp/release-page.json > /tmp/release-page-filtered.json
             jq --slurp 'add' /tmp/release-issues.json /tmp/release-page-filtered.json               > /tmp/release-issues.next
@@ -54,6 +87,31 @@ jobs:
           done
 
           printf '[]\n' > /tmp/release-gates.json
+          printf '[]\n' > /tmp/release-workflows.json
+          printf '[]\n' > /tmp/release-workflows.raw
+          declare -A REQUIRED_WORKFLOWS=(
+            ["CI factory"]="factory-ci.yml"
+            ["Sonar CI-based"]="sonar.yml"
+            ["Evidencia CodeQL"]="codeql-evidence.yml"
+            ["Vigilar startup_failure de reusables publicados"]="reusable-release-watchdog.yml"
+          )
+          for workflow_name in "CI factory" "Sonar CI-based" "Evidencia CodeQL" "Vigilar startup_failure de reusables publicados"; do
+            workflow_file="${REQUIRED_WORKFLOWS[$workflow_name]}"
+            gh api "repos/$REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$main_sha&per_page=20" \
+              | jq --arg name "$workflow_name" --arg sha "$main_sha" '
+                  [.workflow_runs[]
+                    | select(.head_sha == $sha)
+                    | {name:$name,status,conclusion,head_sha:.head_sha,run_id:.id}
+                  ] | sort_by(.run_id) | reverse | .[0:1]
+                ' \
+              >> /tmp/release-workflows.raw
+          done
+          jq -s 'add // []' /tmp/release-workflows.raw > /tmp/release-workflows.json
+          python3 -m scripts.reusable_release_preflight --factory-sha "$main_sha"
+          jq --arg sha "$main_sha" \
+            '. + [{name:"Compatibilidad de consumidores",status:"completed",conclusion:"success",head_sha:$sha}]' \
+            /tmp/release-workflows.json > /tmp/release-workflows.next
+          mv /tmp/release-workflows.next /tmp/release-workflows.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
             [[ "$number" =~ ^[1-9][0-9]*$ ]] || {
@@ -76,36 +134,68 @@ jobs:
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < <(jq -c '.[]' /tmp/release-issues.json)
 
-      - name: Rearmar únicamente si la decisión previa quedó stale
+      - name: Crear puerta únicamente tras solicitud OWNER
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          MAIN_SHA: ${{ steps.snapshot.outputs.main_sha }}
         run: |
           set -euo pipefail
-          main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
-          version="$(jq -er '.version' config/version.json)"
-          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          force_rearm=false
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            force_rearm=true
+          # shellcheck disable=SC2153
+          main_sha="$MAIN_SHA"
+          [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main inválido"; exit 1; }
+          current_main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
+          [[ "$current_main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main actual inválido"; exit 1; }
+          if [[ "$current_main_sha" != "$main_sha" ]]; then
+            echo "::notice::main cambió después de la revalidación; no se crea puerta stale"
+            exit 0
           fi
-          jq -n             --arg now "$now"             --arg main_sha "$main_sha"             --arg version "$version"             --argjson force_rearm "$force_rearm"             --slurpfile gates /tmp/release-gates.json             '{now:$now,main_sha:$main_sha,version:$version,force_rearm:$force_rearm,gates:$gates[0]}'             > /tmp/release-window-input.json
 
-          python3 scripts/release_window.py push             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
+          config_version="$(jq -er '.version' config/version.json)"
+          version="$REQUESTED_VERSION"
+          if [[ -z "$version" ]]; then version="$config_version"; fi
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg now "$now" \
+            --arg main_sha "$main_sha" \
+            --arg version "$version" \
+            --arg candidate_version "$config_version" \
+            --arg actor "$ACTOR" \
+            --arg owner "$OWNER" \
+            --argjson owner_requested true \
+            --slurpfile gates /tmp/release-gates.json \
+            --slurpfile workflows /tmp/release-workflows.json \
+            '{now:$now,main_sha:$main_sha,version:$version,candidate_version:$candidate_version,actor:$actor,owner:$owner,owner_requested:$owner_requested,workflows:$workflows[0],gates:$gates[0]}' \
+            > /tmp/release-window-input.json
+          python3 scripts/release_window.py request             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
 
           action="$(jq -r '.action' /tmp/release-window-result.json)"
           case "$action" in
             none)
-              echo "::notice::release window: $(jq -r '.reason' /tmp/release-window-result.json)"
+              echo "::notice::release request: $(jq -r '.reason' /tmp/release-window-result.json)"
+              ;;
+            rejected)
+              reason="$(jq -r '.reason' /tmp/release-window-result.json)"
+              missing="$(jq -r '(.missing_checks // []) | join(", ")' /tmp/release-window-result.json)"
+              echo "::notice::Solicitud de release ignorada: $reason${missing:+ · $missing}"
               ;;
             create_gate)
-              jq '{title,body,labels}' /tmp/release-window-result.json                 > /tmp/release-create.json
-              created="$(
-                gh api --method POST "repos/$REPOSITORY/issues"                   --input /tmp/release-create.json
-              )"
+              while IFS= read -r old_issue; do
+                [[ "$old_issue" =~ ^[1-9][0-9]*$ ]] || exit 1
+                gh api --method DELETE \
+                  "repos/$REPOSITORY/issues/$old_issue/labels/decisi%C3%B3n%3A%20due%C3%B1o" \
+                  >/dev/null 2>&1 || true
+                gh api --method PATCH "repos/$REPOSITORY/issues/$old_issue" \
+                  -f state=closed -f state_reason=not_planned >/dev/null
+              done < <(jq -r '.supersede_issues[]?' /tmp/release-window-result.json)
+
+              jq '{title,body,labels}' /tmp/release-window-result.json > /tmp/release-create.json
+              created="$(gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/release-create.json)"
               number="$(jq -r '.number' <<<"$created")"
-              echo "::notice::factory-release-rearm: creada puerta #$number para $main_sha"
+              echo "::notice::factory-release-owner-request: creada puerta #$number para $main_sha"
               ;;
             *)
               echo "::error::Acción release-window inesperada: $action"
