@@ -8,7 +8,14 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from scripts.aceptacion_kit import CHECK_NAME, FORBIDDEN_CHECKS, TEST_TARGET
+from scripts.aceptacion_kit import (
+    AcceptanceError,
+    CHECK_NAME,
+    FORBIDDEN_CHECKS,
+    TEST_TARGET,
+    parse_contract,
+)
+from scripts.orquestador_kit import PlanError, parse_task_marker
 
 MAX_BODY = 200_000
 CANONICAL_HEADINGS = (
@@ -327,6 +334,17 @@ def normalize_issue_body(
     missing.extend(task_missing)
     if task_marker is not None:
         normalized += "\n" + task_marker + "\n"
+
+    if not missing:
+        try:
+            parse_contract(normalized)
+        except AcceptanceError as exc:
+            missing.append(f"Contrato ejecutable inválido: {exc}")
+        try:
+            if parse_task_marker(normalized) is None:
+                missing.append("factory-plan-task ausente")
+        except PlanError as exc:
+            missing.append(f"factory-plan-task inválido: {exc}")
 
     dedup_key = _dedup_key(original)
     unique_missing = tuple(dict.fromkeys(missing))
