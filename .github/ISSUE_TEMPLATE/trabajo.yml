@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Todo trabajo debe enlazar criterios humanos AC-* con evidencia ejecutable. No pegues secretos, PII ni comandos shell arbitrarios.
+        Todo trabajo debe enlazar criterios humanos AC-* con evidencia ejecutable. No pegues secretos, PII ni comandos shell arbitrarios. El normalizador puede mapear encabezados legacy, pero nunca inventa tests, checks ni rutas.
 
   - type: textarea
     id: contexto
@@ -40,10 +40,10 @@ body:
     id: criterios
     attributes:
       label: Criterios de aceptación
-      description: Usa una línea por criterio con ID estable AC-NN.
+      description: Usa una línea por criterio con ID estable AC-NN e incluye el target ejecutable explícito cuando quieras que un Issue legacy pueda normalizarse automáticamente.
       placeholder: |
-        - [ ] [AC-01] El comportamiento X queda probado.
-        - [ ] [AC-02] El check Y termina success.
+        - [ ] [AC-01] `tests/test_x.py::Clase::test_caso` demuestra el comportamiento X.
+        - [ ] [AC-02] Check `Tests de scripts` termina success.
     validations:
       required: true
 

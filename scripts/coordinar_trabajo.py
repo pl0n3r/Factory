@@ -1814,7 +1814,13 @@ def reserve_work(
         acceptance_sha256 = contract_fingerprint(issue_body)
     except AcceptanceError as exc:
         raise CoordinationError(
-            f"Issue #{issue_number} no tiene criterios de aceptación ejecutables válidos: {exc}"
+            f"Issue #{issue_number} no tiene criterios de aceptación ejecutables válidos: "
+            f"{exc} Corrige el body usando exactamente las secciones "
+            "`### Contexto`, `### Alcance`, `### Fuera de alcance`, "
+            "`### Criterios de aceptación` y `### Contrato ejecutable`. "
+            "Escribe cada criterio como `- [ ] [AC-01] descripción` con un "
+            "target ejecutable explícito y añade un único marker "
+            "`<!-- factory-acceptance {...} -->` version=1."
         ) from exc
 
     labels = label_names(issue)
@@ -1922,7 +1928,11 @@ def reserve_work(
         )
     except PlanError as exc:
         raise CoordinationError(
-            f"Plan de orquestación inválido en Issue #{issue_number}: {exc}"
+            f"Plan de orquestación inválido en Issue #{issue_number}: {exc} "
+            "Corrige el body declarando `### Rutas reclamadas` y un único "
+            "`<!-- factory-plan-task {...} -->` con version=1, epic, task_key, "
+            "order, owner, roles, depends_on y paths; paths debe coincidir con "
+            "las rutas reclamadas."
         ) from exc
     if plan_blockers:
         details = "\n".join(f"- {item}" for item in plan_blockers)
