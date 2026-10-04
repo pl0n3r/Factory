@@ -1,9 +1,5 @@
 name: Factory Release Window
 
-# Legacy compatibility contract (disabled):
-# push:
-#   branches: [main]
-# python3 scripts/release_window.py push
 on:
   workflow_dispatch:
     inputs:
