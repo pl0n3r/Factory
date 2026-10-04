@@ -532,9 +532,17 @@ def plan_request(payload: Any) -> dict[str, Any]:
     now = _canonical_time(payload.get("now"), "now")
     main_sha = _sha(payload.get("main_sha"), "main_sha")
     version = _semver(payload.get("version"))
-    checks = payload.get("checks")
-    if not isinstance(checks, list):
-        raise ReleaseWindowError("checks inválidos.")
+    candidate_version = _semver(payload.get("candidate_version"))
+    if version != candidate_version:
+        return {
+            "action": "rejected",
+            "reason": "version_mismatch",
+            "version": version,
+            "candidate_version": candidate_version,
+        }
+    workflows = payload.get("workflows")
+    if not isinstance(workflows, list):
+        raise ReleaseWindowError("workflows inválidos.")
     required = {
         "CI factory",
         "Sonar CI-based",
@@ -550,7 +558,7 @@ def plan_request(payload: Any) -> dict[str, Any]:
             and row.get("status") == "completed"
             and row.get("conclusion") == "success"
             and row.get("head_sha") == main_sha
-            for row in checks
+            for row in workflows
         ):
             missing.append(name)
     if missing:
