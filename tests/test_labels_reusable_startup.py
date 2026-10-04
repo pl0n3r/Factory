@@ -11,7 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REUSABLE = (ROOT / ".github/workflows/etiquetas.yml").read_text(encoding="utf-8")
 TEMPLATE = (ROOT / "template/.github/workflows/etiquetas.yml").read_text(encoding="utf-8")
-EXPECTED = {"contents: read", "issues: write", "pull-requests: read"}
+EXPECTED_GENERAL = {"contents: read", "issues: write", "pull-requests: read"}
+EXPECTED_PR_VALIDATE = {"contents: read", "issues: write", "pull-requests: write"}
 
 
 def job_block(text: str, name: str) -> str:
@@ -37,24 +38,34 @@ def permissions(text: str, name: str) -> set[str]:
 
 class LabelsReusableStartupTests(unittest.TestCase):
     def test_reusable_contract_is_valid_for_pull_request_callers(self) -> None:
-        self.assertEqual(permissions(REUSABLE, "etiquetas"), EXPECTED)
+        self.assertEqual(permissions(REUSABLE, "etiquetas"), EXPECTED_GENERAL)
+        self.assertEqual(permissions(REUSABLE, "etiquetas-pr"), EXPECTED_PR_VALIDATE)
         self.assertNotIn("pull-requests: write", job_block(REUSABLE, "etiquetas"))
+        self.assertEqual(
+            job_block(REUSABLE, "etiquetas-pr").count("pull-requests: write"),
+            1,
+        )
 
-    def test_template_caller_uses_minimum_mode_specific_permissions(self) -> None:
+    def test_template_caller_uses_published_v1_permissions(self) -> None:
         for name in ("sync", "validar-issue", "validar-pr", "sweep"):
             with self.subTest(job=name):
-                self.assertEqual(permissions(TEMPLATE, name), EXPECTED)
+                self.assertEqual(permissions(TEMPLATE, name), EXPECTED_GENERAL)
+        self.assertIn("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1", TEMPLATE)
+        self.assertEqual(TEMPLATE.count("pull-requests: write"), 0)
 
     def test_caller_and_reusable_startup_contract_regression(self) -> None:
-        reusable = permissions(REUSABLE, "etiquetas")
-        for name in ("sync", "validar-issue", "validar-pr", "sweep"):
+        reusable_general = permissions(REUSABLE, "etiquetas")
+        for name in ("sync", "validar-issue", "sweep"):
             caller = permissions(TEMPLATE, name)
             self.assertTrue(
-                reusable.issubset(caller),
-                msg=f"{name} concede menos autoridad que el reusable: {caller} vs {reusable}",
+                reusable_general.issubset(caller),
+                msg=f"{name} concede menos autoridad que el reusable general: {caller} vs {reusable_general}",
             )
-        self.assertEqual(TEMPLATE.count("pull-requests: write"), 0)
-        self.assertEqual(REUSABLE.count("pull-requests: write"), 0)
+
+        self.assertEqual(permissions(TEMPLATE, "validar-pr"), EXPECTED_GENERAL)
+        self.assertEqual(permissions(REUSABLE, "etiquetas-pr"), EXPECTED_PR_VALIDATE)
+        self.assertEqual(REUSABLE.count("pull-requests: write"), 1)
+        self.assertNotIn("pull-requests: write", job_block(REUSABLE, "etiquetas"))
 
     def test_modes_remain_closed_timed_and_fail_closed(self) -> None:
         self.assertIn("workflow_call:", REUSABLE)

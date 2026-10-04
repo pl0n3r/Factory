@@ -2,6 +2,7 @@
 """Regresiones mínimas del candidato Factory 1.0.11."""
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -26,14 +27,23 @@ class ReleaseCandidate1011Tests(unittest.TestCase):
 
     def test_candidate_contains_labels_startup_fix(self) -> None:
         workflow = (self.root / ".github/workflows/etiquetas.yml").read_text()
-        minimum = (
-            "    permissions:\n"
-            "      contents: read\n"
-            "      issues: write\n"
-            "      pull-requests: read\n"
+        general = re.search(
+            r"(?ms)^  etiquetas:\n(?P<body>.*?)(?=^  etiquetas-pr:\n)",
+            workflow,
         )
-        self.assertIn(minimum, workflow)
-        self.assertNotIn("pull-requests: write", workflow)
+        pr_validate = re.search(
+            r"(?ms)^  etiquetas-pr:\n(?P<body>.*)\Z",
+            workflow,
+        )
+        self.assertIsNotNone(general)
+        self.assertIsNotNone(pr_validate)
+        general_body = general.group("body")
+        pr_body = pr_validate.group("body")
+
+        self.assertIn("pull-requests: read", general_body)
+        self.assertNotIn("pull-requests: write", general_body)
+        self.assertIn("pull-requests: write", pr_body)
+        self.assertEqual(workflow.count("pull-requests: write"), 1)
 
     def test_candidate_contains_profile_invariant_contract_renewal(self) -> None:
         reservation = "0b9040ef-85eb-5c31-b5b9-9722a07675bf"
