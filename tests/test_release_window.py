@@ -445,7 +445,7 @@ class ReleaseWindowTests(unittest.TestCase):
         self.assertIn("issues: write", workflow)
         self.assertNotIn("contents: write", workflow)
         self.assertIn("factory-release-executed", workflow)
-        self.assertIn("factory-release-rearm", workflow)
+        self.assertIn("factory-release-owner-request", workflow)
 
         self.assertIn("release_window:", factory_ci)
         self.assertIn("issues: read", factory_ci)
@@ -463,19 +463,19 @@ class ReleaseWindowTests(unittest.TestCase):
 
         self.assertEqual(
             workflow.count("| {number, state, title, body, updated_at}"),
-            2,
+            1,
         )
         self.assertEqual(
             workflow.count('select(.user.login == "github-actions[bot]")'),
-            2,
+            1,
         )
         self.assertEqual(
             workflow.count('contains("factory-human-decision")'),
-            2,
+            1,
         )
         self.assertEqual(
             workflow.count('contains("factory-release-executed")'),
-            2,
+            1,
         )
         self.assertEqual(
             workflow.count(
