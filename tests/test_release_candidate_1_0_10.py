@@ -43,9 +43,12 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
         self.assertGreaterEqual(version, (1, 0, 10))
 
     def test_candidate_contains_labels_metadata_permission_contract(self) -> None:
-        """Reusable y template conservan el envelope metadata-only compatible."""
+        """Los reusables y el template conservan least privilege compatible."""
         reusable = (
             self.root / ".github" / "workflows" / "etiquetas.yml"
+        ).read_text(encoding="utf-8")
+        pr_reusable = (
+            self.root / ".github" / "workflows" / "etiquetas-pr.yml"
         ).read_text(encoding="utf-8")
         template = (
             self.root / "template" / ".github" / "workflows" / "etiquetas.yml"
@@ -56,8 +59,13 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
             reusable_permissions,
             {"contents: read", "issues: write", "pull-requests: read"},
         )
+        self.assertNotIn("pull-requests: write", reusable)
 
         pr_write = {"contents: read", "issues: write", "pull-requests: write"}
+        self.assertEqual(
+            self._job_permissions(pr_reusable, "etiquetas-pr"),
+            pr_write,
+        )
         self.assertEqual(
             self._job_permissions(template, "validar-pr"),
             pr_write,
@@ -72,6 +80,10 @@ class ReleaseCandidate1010Tests(unittest.TestCase):
         self.assertEqual(
             template.count("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"),
             4,
+        )
+        self.assertEqual(
+            template.count("uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1"),
+            0,
         )
 
     def test_candidate_keeps_human_release_boundary(self) -> None:

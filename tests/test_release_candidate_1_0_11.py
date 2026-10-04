@@ -27,17 +27,18 @@ class ReleaseCandidate1011Tests(unittest.TestCase):
 
     def test_candidate_keeps_mode_scoped_labels_permissions(self) -> None:
         reusable = (self.root / ".github/workflows/etiquetas.yml").read_text()
+        pr_reusable = (self.root / ".github/workflows/etiquetas-pr.yml").read_text()
         template = (
             self.root / "template/.github/workflows/etiquetas.yml"
         ).read_text()
 
         general = re.search(
-            r"(?ms)^  etiquetas:\n(?P<body>.*?)(?=^  etiquetas-pr:\n)",
+            r"(?ms)^  etiquetas:\n(?P<body>.*)\Z",
             reusable,
         )
         pr_validate = re.search(
             r"(?ms)^  etiquetas-pr:\n(?P<body>.*)\Z",
-            reusable,
+            pr_reusable,
         )
         template_pr = re.search(
             r"(?ms)^  validar-pr:\n(?P<body>.*?)(?=^  sweep:\n)",
@@ -56,9 +57,18 @@ class ReleaseCandidate1011Tests(unittest.TestCase):
         self.assertIn("pull-requests: write", pr_body)
         self.assertIn("pull-requests: write", template_pr_body)
 
-        self.assertEqual(reusable.count("pull-requests: write"), 1)
+        self.assertEqual(reusable.count("pull-requests: write"), 0)
+        self.assertEqual(pr_reusable.count("pull-requests: write"), 1)
         self.assertEqual(template.count("pull-requests: write"), 1)
         self.assertEqual(template.count("pull-requests: read"), 3)
+        self.assertEqual(
+            template.count("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"),
+            4,
+        )
+        self.assertEqual(
+            template.count("uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1"),
+            0,
+        )
         for forbidden in (
             "contents: write",
             "actions: write",
@@ -67,6 +77,7 @@ class ReleaseCandidate1011Tests(unittest.TestCase):
             "secrets: inherit",
         ):
             self.assertNotIn(forbidden, reusable)
+            self.assertNotIn(forbidden, pr_reusable)
             self.assertNotIn(forbidden, template)
 
     def test_candidate_contains_profile_invariant_contract_renewal(self) -> None:
