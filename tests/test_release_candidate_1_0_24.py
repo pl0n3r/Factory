@@ -124,6 +124,22 @@ class ReleaseCandidate1024Tests(unittest.TestCase):
             ),
         )
 
+    def test_candidate_keeps_bounded_public_check_pagination_contract(
+        self,
+    ) -> None:
+        self._run_canonical_targets(
+            "AC-04",
+            (
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_public_check_transport_paginates_bounded_exact_head_evidence",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_public_check_transport_fails_closed_above_bound_or_inconsistent_pages",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_public_check_transport_remains_anonymous_and_bounded",
+                "tests/test_politica_kit.py::T::"
+                "test_rate_limit_fallback_never_applies_with_open_blocking_finding_or_other_phase_or_other_head",
+            ),
+        )
 
 if __name__ == "__main__":
     unittest.main()
