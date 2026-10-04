@@ -111,6 +111,32 @@ No ampliar authority.
         self.assertNotIn('"id":"AC-01"', incomplete.body)
         self.assertIn("AC-01 sin target ejecutable explícito", incomplete.missing)
 
+    def test_accepts_every_canonical_test_target_root(self):
+        for root in ("tests", "metricas", "seguridad", "lecciones", "producto"):
+            target = (
+                f"{root}/test_contract.py::ContractTests::"
+                "test_canonical_target_is_preserved"
+            )
+            body = f"""## Problema
+Formato legacy con target canónico fuera de tests/.
+
+## Trabajo
+Normalizar sin rechazar roots válidos.
+
+## Límites
+No inventar targets.
+
+## Criterios
+- [ ] [AC-01] `{target}`.
+
+### Rutas reclamadas
+- `scripts/normalizar_issue.py`
+"""
+            result = normalize_issue_body(body, task_metadata=TASK_METADATA)
+            self.assertTrue(result.complete, (root, result.missing))
+            criteria = parse_contract(result.body)
+            self.assertEqual(criteria[0].target, target)
+
     def test_incomplete_issue_gets_single_precise_comment_not_silent_failure(self):
         body = """## Problema
 Formato antiguo.
