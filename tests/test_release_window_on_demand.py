@@ -108,6 +108,11 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertIn("workflow_run:", trigger)
         self.assertNotIn("scripts/release_window.py push", WORKFLOW)
 
+    def test_owner_guard_runs_before_checkout(self):
+        checkout = WORKFLOW.index("actions/checkout@")
+        guard = WORKFLOW.index('[[ "$ACTOR" == "$OWNER" ]]')
+        self.assertLess(guard, checkout)
+
     def test_owner_request_opens_single_gate_on_current_head_with_revalidated_evidence(self):
         result = plan_request(request_payload())
         self.assertEqual(result["action"], "create_gate")
