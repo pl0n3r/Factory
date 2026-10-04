@@ -5,7 +5,7 @@ import io
 import json
 import unittest
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts import release_window as rw
