@@ -48,7 +48,7 @@ HEADING_ALIASES = {
 }
 AC_LINE = re.compile(r"^- \[[ xX]\] \[(AC-[0-9]{2})\] (.{1,500})$")
 TEST_IN_TEXT = re.compile(
-    r"(tests/[A-Za-z0-9_/-]+\.py::[A-Za-z_][A-Za-z0-9_]*::test_[A-Za-z0-9_]+)"
+    r"((?:tests|metricas|seguridad|lecciones|producto)/"\n    r"test_[A-Za-z0-9_/-]+\.py::[A-Za-z_][A-Za-z0-9_]*::test_[A-Za-z0-9_]+)"
 )
 CHECK_IN_TEXT = re.compile(r"(?:Check|check)\s+`([^`\r\n]{1,120})`")
 PATH_LINE = re.compile(r"^\s*[-*]\s+`([^\r\n`]+)`\s*$")
