@@ -39,9 +39,11 @@ class T(unittest.TestCase):
         self.assertIn("pull-requests: read", W)
         self.assertIn("issues: write", W)
         self.assertIn("checks: read", W)
+        self.assertEqual(TEMPLATE.count("issues: write"), 1)
+        self.assertIn("checks: read", TEMPLATE)
         for forbidden in ("contents: write", "pull-requests: write", "secrets:"):
             self.assertNotIn(forbidden, W + COMMENT_W + TEMPLATE)
-        self.assertNotIn("issues: write", COMMENT_W + TEMPLATE)
+        self.assertNotIn("issues: write", COMMENT_W)
         for event in ("pull_request_target", "workflow_run", "check_run", "repository_dispatch"):
             self.assertNotIn(event, W + COMMENT_W + TEMPLATE)
 
@@ -151,8 +153,9 @@ class T(unittest.TestCase):
 class PoliticaWorkflowContractTests(unittest.TestCase):
     def test_fallback_comment_is_idempotent_and_records_head_and_time(self):
         self.assertIn("datos.yml?ref=$PR_BASE_SHA", W)
-        self.assertIn("BASE_PHASE_FILE", W)
-        self.assertIn('--phase-file "$BASE_PHASE_FILE"', W)
+        self.assertIn("phase_args=()", W)
+        self.assertIn('phase_args=(--phase-file "$phase_file")', W)
+        self.assertIn('"${phase_args[@]}"', W)
         self.assertIn("check-runs?per_page=100", W)
         self.assertIn("reviewThreads(first:100)", W)
         self.assertIn("comments(first:100){pageInfo{hasNextPage}", W)
