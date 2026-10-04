@@ -186,6 +186,20 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         self.assertIn("canonical=true", SECURITY)
         self.assertIn("decision_materialized=true", SECURITY)
 
+    def test_workflow_uses_per_workflow_exact_head_queries_not_global_bounded_snapshot(self):
+        self.assertNotIn("actions/runs?head_sha=$main_sha&per_page=100", WORKFLOW)
+        for workflow_file in (
+            "factory-ci.yml",
+            "sonar.yml",
+            "codeql-evidence.yml",
+            "reusable-release-watchdog.yml",
+        ):
+            self.assertIn(
+                f"actions/workflows/{workflow_file}/runs?head_sha=$main_sha&per_page=20",
+                WORKFLOW,
+            )
+        self.assertIn("sort_by(.run_id) | reverse | .[0:1]", WORKFLOW)
+
     def test_workflow_resolves_main_sha_before_workflow_run_snapshot(self):
         workflow = WORKFLOW
         assign = workflow.index('main_sha="$(gh api "repos/$REPOSITORY/commits/main"')
