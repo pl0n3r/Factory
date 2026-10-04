@@ -136,6 +136,13 @@ jobs:
             echo "::warning::No se pudo leer datos.yml desde BASE exacta; fallback reviewer deshabilitado."
           fi
 
+          HEAD_COMMIT_JSON="$(gh api "repos/$REPOSITORY/commits/$PR_HEAD_SHA")"
+          HEAD_COMMITTED_AT="$(jq -r '.commit.committer.date // empty' <<<"$HEAD_COMMIT_JSON")"
+          [[ "$HEAD_COMMITTED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+            echo "::error::Timestamp del HEAD exacto inválido"
+            exit 1
+          }
+
           gh api -H "Accept: application/vnd.github+json" \
             "repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100" > "$checks_json"
           jq -e '.total_count <= 100' "$checks_json" >/dev/null || {
@@ -169,7 +176,7 @@ jobs:
             exit 1
           }
 
-          args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA")
+          args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --head-committed-at "$HEAD_COMMITTED_AT")
           [[ -z "${BASE_POLICY_FILE:-}" ]] || args+=(--base-policy-file "$BASE_POLICY_FILE")
           args+=("${phase_args[@]}" --comments-file "$comments_file" --checks-file "$checks_file" --threads-file "$threads_file")
           POLICY_OUTPUT="$(python3 .factory/scripts/politica_kit.py "${args[@]}" < "$reviews_file")"
