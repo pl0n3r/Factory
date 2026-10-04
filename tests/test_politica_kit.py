@@ -55,12 +55,29 @@ def comment(*, comment_id=1, login="coderabbitai[bot]", user_type="Bot",
     })
 
 
-def rate_limit_comment(*, comment_id, created_at, login="coderabbitai[bot]"):
-    return json.dumps({
+def rate_limit_comment(*, comment_id, created_at, login="coderabbitai[bot]",
+                       updated_at=None, body="Review rate limited.", head_sha=None):
+    if head_sha:
+        body += f"\nReviewed exact HEAD {head_sha}."
+    payload = {
         "id": comment_id,
-        "body": "Review rate limited.",
+        "body": body,
         "created_at": created_at,
         "user": {"type": "Bot", "login": login},
+    }
+    if updated_at is not None:
+        payload["updated_at"] = updated_at
+    return json.dumps(payload)
+
+
+def owner_review_retry(*, comment_id=201, created_at="2026-10-04T05:02:00Z",
+                       association="OWNER", body="@coderabbitai review"):
+    return json.dumps({
+        "id": comment_id,
+        "body": body,
+        "created_at": created_at,
+        "author_association": association,
+        "user": {"type": "User", "login": "pl0n3r"},
     })
 
 
@@ -300,6 +317,128 @@ class T(unittest.TestCase):
             "2026-10-04T05:02:00Z",
         )
         self.assertEqual(result["phase"], "construccion")
+
+    def test_in_place_rate_limit_update_plus_owner_retry_passes_in_construction(self):
+        comments = [
+            rate_limit_comment(
+                comment_id=101,
+                created_at="2026-10-04T04:50:00Z",
+                updated_at="2026-10-04T05:03:00Z",
+                body="Review limit reached.",
+                head_sha=HEAD,
+            ),
+            owner_review_retry(),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                conclusion="failure",
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        result = validate_rate_limit_fallback(
+            required_review_bot="coderabbitai[bot]",
+            head_sha=HEAD,
+            head_committed_at="2026-10-04T04:59:00Z",
+            phase="construccion",
+            review_lines=[],
+            comment_lines=comments,
+            check_lines=checks,
+            thread_lines=[],
+        )
+        self.assertEqual(result, (101, "2026-10-04T05:03:00Z"))
+
+    def test_in_place_rate_limit_update_without_owner_retry_stays_blocked(self):
+        comments = [
+            rate_limit_comment(
+                comment_id=101,
+                created_at="2026-10-04T04:50:00Z",
+                updated_at="2026-10-04T05:03:00Z",
+                body="Review limit reached.",
+                head_sha=HEAD,
+            ),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                conclusion="failure",
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        with self.assertRaisesRegex(PolicyError, "OWNER"):
+            validate_rate_limit_fallback(
+                required_review_bot="coderabbitai[bot]",
+                head_sha=HEAD,
+                head_committed_at="2026-10-04T04:59:00Z",
+                phase="construccion",
+                review_lines=[],
+                comment_lines=comments,
+                check_lines=checks,
+                thread_lines=[],
+            )
+
+    def test_in_place_rate_limit_rejects_stale_update_non_owner_retry_open_finding_or_live(self):
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                conclusion="failure",
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        valid_bot = rate_limit_comment(
+            comment_id=101,
+            created_at="2026-10-04T04:50:00Z",
+            updated_at="2026-10-04T05:03:00Z",
+            body="Review limit reached.",
+            head_sha=HEAD,
+        )
+        cases = (
+            {
+                "phase": "construccion",
+                "comments": [
+                    rate_limit_comment(
+                        comment_id=101,
+                        created_at="2026-10-04T04:50:00Z",
+                        updated_at="2026-10-04T05:01:30Z",
+                        body="Review limit reached.",
+                        head_sha=HEAD,
+                    ),
+                    owner_review_retry(),
+                ],
+                "threads": [],
+            },
+            {
+                "phase": "construccion",
+                "comments": [valid_bot, owner_review_retry(association="MEMBER")],
+                "threads": [],
+            },
+            {
+                "phase": "construccion",
+                "comments": [valid_bot, owner_review_retry()],
+                "threads": [review_thread()],
+            },
+            {
+                "phase": "live",
+                "comments": [valid_bot, owner_review_retry()],
+                "threads": [],
+            },
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                with self.assertRaises(PolicyError):
+                    validate_rate_limit_fallback(
+                        required_review_bot="coderabbitai[bot]",
+                        head_sha=HEAD,
+                        head_committed_at="2026-10-04T04:59:00Z",
+                        phase=case["phase"],
+                        review_lines=[],
+                        comment_lines=case["comments"],
+                        check_lines=checks,
+                        thread_lines=case["threads"],
+                    )
 
     def test_rate_limit_fallback_never_applies_with_open_blocking_finding_or_other_phase_or_other_head(self):
         comments = [
