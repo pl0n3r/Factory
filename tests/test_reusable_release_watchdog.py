@@ -351,11 +351,19 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
         self.assertIn("--data-urlencode 'per_page=100'", workflow)
         self.assertIn("(( total_count <= 100 ))", workflow)
 
+    def test_workflow_reactivation_cron_stays_offset_fifteen_minutes_and_keeps_manual_dispatch(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("schedule:", workflow)
+        self.assertIn("cron: '7,22,37,52 * * * *'", workflow)
+        self.assertNotIn("cron: '*/15 * * * *'", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+
     def test_workflow_never_moves_tags_and_keeps_rollback_advisory_only(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("schedule:", workflow)
-        self.assertIn("cron: '*/15 * * * *'", workflow)
+        self.assertIn("cron: '7,22,37,52 * * * *'", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn(
             "python3 -m scripts.reusable_release_watchdog",
