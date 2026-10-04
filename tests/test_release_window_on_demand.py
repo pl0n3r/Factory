@@ -194,10 +194,11 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             "codeql-evidence.yml",
             "reusable-release-watchdog.yml",
         ):
-            self.assertIn(
-                f"actions/workflows/{workflow_file}/runs?head_sha=$main_sha&per_page=20",
-                WORKFLOW,
-            )
+            self.assertIn(f'["{workflow_file}"]', WORKFLOW)
+        self.assertIn(
+            'actions/workflows/$workflow_file/runs?head_sha=$main_sha&per_page=20',
+            WORKFLOW,
+        )
         self.assertIn("sort_by(.run_id) | reverse | .[0:1]", WORKFLOW)
 
     def test_workflow_resolves_main_sha_before_workflow_run_snapshot(self):
