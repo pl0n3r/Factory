@@ -4,6 +4,7 @@ on:
     inputs:
       pr_number: {required: true, type: number}
       required_review_bot: {required: false, type: string, default: ""}
+      factory_ref: {required: false, type: string, default: "v1"}
 permissions:
   contents: read
   pull-requests: read
@@ -22,8 +23,19 @@ jobs:
           EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
           EVENT_BASE: ${{ github.event.pull_request.base.sha }}
           INPUT_PR: ${{ inputs.pr_number }}
+          FACTORY_REF: ${{ inputs.factory_ref }}
         run: |
           set -euo pipefail
+          case "$FACTORY_REF" in
+            v1) ;;
+            *)
+              [[ "$FACTORY_REF" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "::error::factory_ref debe ser v1 o un SHA lowercase exacto de 40 hex"
+                exit 1
+              }
+              ;;
+          esac
+
           case "$EVENT_NAME" in
             pull_request|pull_request_review) ;;
             *) echo "::error::Evento no permitido"; exit 1 ;;
@@ -60,10 +72,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Checkout Factory stable v1
+        if: ${{ inputs.factory_ref == 'v1' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: pl0n3r/factory
           ref: v1
+          path: .factory
+          persist-credentials: false
+
+      - name: Checkout Factory exact SHA
+        if: ${{ inputs.factory_ref != 'v1' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ inputs.factory_ref }}
           path: .factory
           persist-credentials: false
 

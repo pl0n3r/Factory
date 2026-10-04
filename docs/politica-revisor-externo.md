@@ -64,3 +64,23 @@ Los check-runs usados como evidencia se consultan por HEAD exacto mediante `gh a
 La lectura de reviews, comentarios, BASE exacta y reviewThreads continúa usando únicamente permisos read-only. El fallback no eleva el token del caller.
 
 Cualquier ambigüedad —fase ausente, demasiados check-runs/threads para evaluar de forma acotada, evidencia malformada, HEAD distinto, trigger no OWNER, secuencia temporal incoherente o finding abierto— falla cerrado.
+
+
+## Bridge inmutable exact-SHA
+
+El reusable `politica.yml` mantiene compatibilidad histórica con `factory_ref: v1` como valor por defecto. Un consumidor build-ahead puede fijar temporalmente la implementación interna de Factory a un commit inmutable sin mover `Factory@v1`:
+
+```yaml
+with:
+  pr_number: ${{ github.event.pull_request.number }}
+  factory_ref: 0123456789abcdef0123456789abcdef01234567
+```
+
+El bridge acepta únicamente:
+
+- `v1`, para conservar el canal estable histórico;
+- un SHA lowercase exacto de 40 caracteres hexadecimales.
+
+`main`, nombres de branches, tags arbitrarios, SHAs cortos, mayúsculas o refs malformados fallan cerrado **antes** del checkout interno de `pl0n3r/factory`.
+
+El input solo selecciona el `ref` del checkout interno en `.factory`; no cambia permisos, eventos, semántica de Policy, reviewer requerido ni autoridad de publicación. El caller sigue usando el mismo `github.token` read-only. Usar un SHA exacto no publica ni mueve `Factory@v1`; únicamente permite validar un repair inmutable mientras la decisión de promoción del canal estable permanece separada.
