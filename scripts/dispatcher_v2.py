@@ -870,10 +870,37 @@ def select_next(
 
 
 def _candidate_normalization_plan(candidate: Candidate) -> dict[str, object] | None:
-    body = candidate.metadata.get("issue_body")
-    if not isinstance(body, str) or not body.strip():
+    if "issue_body" not in candidate.metadata:
+        # Los candidatos no derivados de GitHub no necesitan contrato de Issue.
         return None
+
+    body = candidate.metadata.get("issue_body")
     comments_raw = candidate.metadata.get("issue_comments", ())
+    if not isinstance(body, str) or not body.strip():
+        dedup_key = f"take-format:{candidate.key}:issue-body-missing"
+        comments = (
+            tuple(str(item) for item in comments_raw)
+            if isinstance(comments_raw, (tuple, list))
+            else ()
+        )
+        marker = f"<!-- factory-format-repair {dedup_key} -->"
+        should_comment = not any(marker in comment for comment in comments)
+        return {
+            "action": "comment_and_skip",
+            "comment": (
+                marker
+                + "\n⛔ Contrato no reservable: el Issue no tiene body legible. "
+                "No se ejecuta /tomar hasta recuperar un contrato ejecutable canónico."
+                if should_comment
+                else None
+            ),
+            "should_comment": should_comment,
+            "missing": ("issue_body legible",),
+            "retry_once": False,
+            "continue_same_cycle": True,
+            "dedup_key": dedup_key,
+        }
+
     comments = (
         tuple(str(item) for item in comments_raw)
         if isinstance(comments_raw, (tuple, list))
