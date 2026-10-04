@@ -101,6 +101,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             "user": {"login": "pl0n3r", "type": "User"},
             "body": rendered["body"],
             "labels": [{"name": "decisión: dueño"}],
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
         }
         comments = []
         events = {"repository": {"full_name": "pl0n3r/Factory"}, "issue": issue,
@@ -129,8 +131,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
                 return {}
         api = FakeAPI()
         self.assertTrue(materialize_decision(events, api, "pl0n3r/Factory"))
-        self.assertEqual(api.issue["state"], "closed")
         self.assertTrue(any("factory-human-decision" in c["body"] for c in api.comments))
+        self.assertEqual(api.issue.get("state"), "closed")
         api.issue["state"] = "open"
         api.issue["labels"] = [{"name": "decisión: dueño"}]
         events["comment"]["body"] = "/decidir A"
