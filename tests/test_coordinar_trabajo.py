@@ -1936,14 +1936,38 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(api.check_runs, [])
 
     def test_issue_without_executable_acceptance_cannot_be_reserved(self) -> None:
-        """El coordinador rechaza trabajo sin contrato AC ejecutable."""
+        """El rechazo de /tomar explica qué falta y cómo escribir el contrato."""
         api = FakeGitHub()
         api.issue_data["body"] = "Issue legacy sin contrato."
-        with self.assertRaisesRegex(
-            CoordinationError,
-            "criterios de aceptación ejecutables",
-        ):
+
+        with self.assertRaises(CoordinationError) as caught:
             reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        message = str(caught.exception)
+        self.assertIn("criterios de aceptación ejecutables", message)
+        self.assertIn("### Contexto", message)
+        self.assertIn("### Contrato ejecutable", message)
+        self.assertIn("- [ ] [AC-01]", message)
+        self.assertIn("factory-acceptance", message)
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_invalid_task_plan_explains_how_to_repair_before_take(self) -> None:
+        """Un factory-plan-task inválido explica marker, campos y rutas."""
+        api = FakeGitHub()
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY
+            + '\n<!-- factory-plan-task {"version":1} -->\n'
+        )
+
+        with self.assertRaises(CoordinationError) as caught:
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+
+        message = str(caught.exception)
+        self.assertIn("Plan de orquestación inválido", message)
+        self.assertIn("factory-plan-task", message)
+        self.assertIn("version=1", message)
+        self.assertIn("### Rutas reclamadas", message)
+        self.assertIn("paths", message)
         self.assertNotIn("trabajo/issue-12", api.branches)
 
     def test_blocked_issue_reports_reason(self) -> None:
