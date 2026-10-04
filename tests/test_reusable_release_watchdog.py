@@ -253,6 +253,32 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
             self.assertEqual(watchdog_main(), 2)
         self.assertIn("payload demasiado grande", stderr.getvalue())
 
+    def test_workflow_filters_startup_failure_before_bounded_actions_evidence(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "--data-urlencode 'status=startup_failure'",
+            workflow,
+        )
+        self.assertIn(
+            '--data-urlencode "created=>=$release_started_at"',
+            workflow,
+        )
+        self.assertIn("--data-urlencode 'per_page=100'", workflow)
+        self.assertLess(
+            workflow.index("--data-urlencode 'status=startup_failure'"),
+            workflow.index("--data-urlencode 'per_page=100'"),
+        )
+
+    def test_workflow_keeps_startup_failure_defense_in_depth_and_total_count_bound(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".workflow_runs[]\n              | select(.conclusion == \"startup_failure\")",
+            workflow,
+        )
+        self.assertIn("(( total_count <= 100 ))", workflow)
+
     def test_workflow_builds_consumer_actions_url_without_encoding_owner_repo_slash(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 

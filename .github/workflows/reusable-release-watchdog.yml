@@ -85,6 +85,7 @@ jobs:
               curl --silent --show-error --get \
                 -H 'Accept: application/vnd.github+json' \
                 --data-urlencode "created=>=$release_started_at" \
+                --data-urlencode 'status=startup_failure' \
                 --data-urlencode 'per_page=100' \
                 --output /tmp/consumer-runs.json \
                 --write-out '%{http_code}' \
