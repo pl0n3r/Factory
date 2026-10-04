@@ -54,9 +54,13 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
-          [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main inválido"; exit 1; }
-          printf 'main_sha=%s\\n' "$main_sha" >> "$GITHUB_OUTPUT"
+          checked_out_sha="$(git rev-parse HEAD)"
+          [[ "$checked_out_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD checkout inválido"; exit 1; }
+          remote_main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
+          [[ "$remote_main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main remoto inválido"; exit 1; }
+          [[ "$checked_out_sha" == "$remote_main_sha" ]] || { echo "::error::main derivó después del checkout"; exit 1; }
+          main_sha="$checked_out_sha"
+          printf 'main_sha=%s\n' "$main_sha" >> "$GITHUB_OUTPUT"
           printf '[]\n' > /tmp/release-issues.json
           for page in 1 2 3 4 5; do
             gh api               "repos/$REPOSITORY/issues?state=all&per_page=100&sort=updated&direction=desc&page=$page"               > /tmp/release-page.json
@@ -143,6 +147,12 @@ jobs:
           # shellcheck disable=SC2153
           main_sha="$MAIN_SHA"
           [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main inválido"; exit 1; }
+          current_main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
+          [[ "$current_main_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD main actual inválido"; exit 1; }
+          if [[ "$current_main_sha" != "$main_sha" ]]; then
+            echo "::notice::main cambió después de la revalidación; no se crea puerta stale"
+            exit 0
+          fi
 
           config_version="$(jq -er '.version' config/version.json)"
           version="$REQUESTED_VERSION"
