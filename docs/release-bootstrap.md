@@ -113,7 +113,7 @@ Mientras exista una puerta vigente o una decisión A exact-SHA todavía no ejecu
 
 La excepción habilita exclusivamente el repair indicado; no publica una release, no crea una decisión humana y no transporta autoridad entre SHAs.
 
-Si el TTL vence, **solo termina el freeze de merges**. Una decisión A v2 válida no caduca por reloj cuando `main` sigue exactamente en el SHA aprobado y la maquinaria de release no derivó; el bootstrap puede reutilizar esa autorización porque el journal continúa ligado al fingerprint del gate y al mismo SHA. Si `main` cambió, la autorización exact-SHA no se transporta y **no se abre ni rearma ninguna puerta automáticamente**. El OWNER debe ejecutar de nuevo `Factory Release Window`; la nueva solicitud se liga al HEAD vigente, revalida exact-main + compatibilidad, retira silenciosamente las puertas stale de la misma versión y vuelve a exigir `/decidir A` o `/decidir B`.
+Si el TTL vence, **solo termina el freeze de merges**; la **hora de expiración** sigue formando parte del diagnóstico cuando un preflight detecta una ventana vencida. Una decisión A v2 válida no caduca por reloj cuando `main` sigue exactamente en el SHA aprobado y la maquinaria de release no derivó; el bootstrap puede reutilizar esa autorización porque el journal continúa ligado al fingerprint del gate y al mismo SHA. Si `main` cambió, la autorización exact-SHA no se transporta y **no se abre ni rearma ninguna puerta automáticamente**. El OWNER debe ejecutar de nuevo `Factory Release Window`; la nueva solicitud se liga al HEAD vigente, revalida exact-main + compatibilidad, retira silenciosamente las puertas stale de la misma versión y vuelve a exigir `/decidir A` o `/decidir B`.
 
 ### Confianza de puertas creadas tras solicitud OWNER
 

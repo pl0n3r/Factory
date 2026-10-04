@@ -467,21 +467,21 @@ class ReleaseWindowTests(unittest.TestCase):
         )
         self.assertEqual(
             workflow.count('select(.user.login == "github-actions[bot]")'),
-            1,
+            2,
         )
         self.assertEqual(
             workflow.count('contains("factory-human-decision")'),
-            1,
+            2,
         )
         self.assertEqual(
             workflow.count('contains("factory-release-executed")'),
-            1,
+            2,
         )
         self.assertEqual(
             workflow.count(
                 '| {user: {login: .user.login}, body: (.body // "")}'
             ),
-            1,
+            2,
         )
         self.assertNotIn(
             "--slurp | jq 'add // []' > /tmp/release-comments.json",
