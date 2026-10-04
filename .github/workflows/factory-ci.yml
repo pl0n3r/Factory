@@ -80,7 +80,7 @@ jobs:
           gh api -X GET search/issues             -f q="repo:$REPOSITORY is:issue \"factory-human-gate\" in:body"             -f per_page=100 > /tmp/release-search.json
           jq '[
                 .items[]
-                | select((.body // "") | contains("\\"factory-release\\""))
+                | select((.body // "") | contains("factory-release"))
                 | {number, state, title, body, updated_at}
               ]'             /tmp/release-search.json > /tmp/release-issues.json
           printf '[]\n' > /tmp/release-gates.json
