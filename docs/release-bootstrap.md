@@ -121,11 +121,11 @@ Si el TTL vence, **solo termina el freeze de merges**. Una decisión A v2 válid
 Una puerta creada por `github-actions[bot]` **no se vuelve confiable por el nombre del actor**. El bootstrap solo admite esa excepción estrecha cuando la evidencia read-only demuestra simultáneamente que:
 
 - el gate actual contiene exactamente un `factory-release-rearm` y un `factory-release-window` válidos, ambos ligados al mismo `expected_sha`;
-- el Issue fue creado dentro de esa ventana y el bootstrap se ejecuta mientras la ventana sigue vigente;
+- el Issue fue creado dentro de esa ventana; después del vencimiento, el bootstrap solo conserva la autoridad si existe una decisión A v2 válida y el SHA/maquinaria siguen compatibles;
 - la cadena `source_issue` es acíclica, tiene como máximo ocho saltos y cada salto intermedio creado por el bot conserva markers canónicos coherentes con el SHA de su propia puerta;
 - la cadena termina en una puerta `factory-release` creada por el OWNER del repositorio con `author_association=OWNER`.
 
-El workflow obtiene esa cadena únicamente mediante `issues: read` dentro del mismo repositorio y la entrega al parser puro; no amplía permisos ni confía en datos derivados del título. Marker ausente/duplicado/malformado, SHA distinto, ventana expirada, ciclo, profundidad excesiva o una cadena que no termina en el OWNER fallan cerrado. Esto permite rearms encadenados sin convertir a `github-actions[bot]` en una identidad globalmente confiable.
+El workflow obtiene esa cadena únicamente mediante `issues: read` dentro del mismo repositorio y la entrega al parser puro; no amplía permisos ni confía en datos derivados del título. Marker ausente/duplicado/malformado, SHA incompatible, creación fuera de ventana, deriva de maquinaria, ciclo, profundidad excesiva o una cadena que no termina en el OWNER fallan cerrado. Esto permite rearms encadenados sin convertir a `github-actions[bot]` en una identidad globalmente confiable.
 
 Una release solo se considera ejecutada cuando el workflow `Release Factory v1.x` termina con éxito y la puerta exact-SHA recibe un marker `factory-release-executed` coincidente. Hasta entonces el resumen diario/nocturno debe mantener visible “release aprobada sin ejecutar”.
 
