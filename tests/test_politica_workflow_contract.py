@@ -169,24 +169,19 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
 
     def test_rate_limit_fallback_reads_public_checks_without_token(self):
         start = W.index(
-            'checks_url_base="https://api.github.com/repos/$REPOSITORY/'
+            'checks_url_base="repos/$REPOSITORY/'
             'commits/$PR_HEAD_SHA/check-runs?per_page=100"'
         )
         end = W.index('owner="${REPOSITORY%%/*}"', start)
         checks_transport = W[start:end]
 
-        self.assertIn("curl --silent --show-error --location", checks_transport)
+        self.assertIn("gh api", checks_transport)
         self.assertIn(
             "X-GitHub-Api-Version: 2022-11-28",
             checks_transport,
         )
-        self.assertIn("--write-out '%{http_code}'", checks_transport)
         self.assertIn(
-            '[[ "$checks_status" == "200" ]]',
-            checks_transport,
-        )
-        self.assertIn(
-            "Página pública de check-runs excede el tamaño permitido",
+            "Página autenticada de check-runs excede el tamaño permitido",
             checks_transport,
         )
         self.assertIn(
@@ -195,14 +190,14 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn('MAX_PUBLIC_CHECKS: "500"', W)
         self.assertIn('"${checks_url_base}&page=$page"', checks_transport)
+        self.assertIn('GH_TOKEN: ${{ github.token }}', W)
+        self.assertNotIn("curl --silent", checks_transport)
         self.assertNotIn("Authorization:", checks_transport)
-        self.assertNotIn("GH_TOKEN", checks_transport)
-        self.assertNotIn("gh api", checks_transport)
 
     def test_public_check_transport_paginates_bounded_exact_head_evidence(self):
         self.assertIn('MAX_PUBLIC_CHECKS: "500"', W)
         self.assertIn(
-            'checks_url_base="https://api.github.com/repos/$REPOSITORY/'
+            'checks_url_base="repos/$REPOSITORY/'
             'commits/$PR_HEAD_SHA/check-runs?per_page=100"',
             W,
         )
@@ -215,23 +210,35 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
     def test_public_check_transport_fails_closed_above_bound_or_inconsistent_pages(self):
         self.assertIn("(( current_total <= MAX_PUBLIC_CHECKS ))", W)
         self.assertIn("total_count cambió entre páginas de check-runs", W)
-        self.assertIn("Evidencia incompleta de check-runs públicos", W)
+        self.assertIn("Evidencia incompleta de check-runs autenticados", W)
         self.assertIn("Se observaron más check-runs que total_count", W)
-        self.assertIn("IDs de check-runs públicos inválidos o duplicados", W)
+        self.assertIn("IDs de check-runs autenticados inválidos o duplicados", W)
         self.assertIn("([.[].id] | unique | length)", W)
 
     def test_public_check_transport_remains_anonymous_and_bounded(self):
-        start = W.index('checks_url_base="https://api.github.com/repos/$REPOSITORY/')
+        start = W.index('checks_url_base="repos/$REPOSITORY/')
         end = W.index('owner="${REPOSITORY%%/*}"', start)
         checks_transport = W[start:end]
-        self.assertIn("curl --silent --show-error --location", checks_transport)
+        self.assertIn("gh api", checks_transport)
         self.assertIn('MAX_PUBLIC_CHECKS: "500"', W)
         self.assertIn("for page in 1 2 3 4 5; do", checks_transport)
-        self.assertIn("Página pública de check-runs excede el tamaño permitido", checks_transport)
+        self.assertIn("Página autenticada de check-runs excede el tamaño permitido", checks_transport)
         self.assertIn('(( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES ))', W)
+        self.assertIn('GH_TOKEN: ${{ github.token }}', W)
+        self.assertNotIn("curl --silent", checks_transport)
         self.assertNotIn("Authorization:", checks_transport)
-        self.assertNotIn("GH_TOKEN", checks_transport)
-        self.assertNotIn("gh api", checks_transport)
+
+    def test_rate_limit_fallback_reads_authenticated_checks_with_github_token(self):
+        self.test_rate_limit_fallback_reads_public_checks_without_token()
+
+    def test_authenticated_check_transport_paginates_bounded_exact_head_evidence(self):
+        self.test_public_check_transport_paginates_bounded_exact_head_evidence()
+
+    def test_authenticated_check_transport_fails_closed_above_bound_or_inconsistent_pages(self):
+        self.test_public_check_transport_fails_closed_above_bound_or_inconsistent_pages()
+
+    def test_authenticated_check_transport_cannot_regress_to_anonymous_curl(self):
+        self.test_public_check_transport_remains_anonymous_and_bounded()
 
     def test_rate_limit_fallback_audit_is_read_only(self):
         self.assertIn("datos.yml?ref=$PR_BASE_SHA", W)

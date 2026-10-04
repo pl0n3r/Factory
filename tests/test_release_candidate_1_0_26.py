@@ -71,6 +71,21 @@ class ReleaseCandidate1026Tests(unittest.TestCase):
             historical,
         )
 
+    def test_candidate_keeps_authenticated_bounded_public_check_transport(self) -> None:
+        self._run_canonical_targets(
+            "AC-04",
+            (
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_rate_limit_fallback_reads_authenticated_checks_with_github_token",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_authenticated_check_transport_paginates_bounded_exact_head_evidence",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_authenticated_check_transport_fails_closed_above_bound_or_inconsistent_pages",
+                "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
+                "test_authenticated_check_transport_cannot_regress_to_anonymous_curl",
+            ),
+        )
+
     def test_candidate_keeps_pr_label_write_split_contract(self) -> None:
         self._run_canonical_targets(
             "AC-03",

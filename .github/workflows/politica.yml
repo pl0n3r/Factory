@@ -139,29 +139,21 @@ jobs:
             exit 1
           }
 
-          checks_url_base="https://api.github.com/repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100"
+          checks_url_base="repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100"
           : > "$checks_file"
           expected_total=""
           observed_count=0
 
           for page in 1 2 3 4 5; do
-            checks_status="$(
-              curl --silent --show-error --location \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                --output "$checks_json" \
-                --write-out '%{http_code}' \
-                "${checks_url_base}&page=$page"
-            )" || {
-              echo "::error::No se pudieron leer check-runs públicos del HEAD exacto"
+            if ! gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${checks_url_base}&page=$page" > "$checks_json"; then
+              echo "::error::No se pudieron leer check-runs autenticados del HEAD exacto"
               exit 1
-            }
-            [[ "$checks_status" == "200" ]] || {
-              echo "::error::Check-runs públicos devolvieron HTTP $checks_status"
-              exit 1
-            }
+            fi
             (( $(wc -c < "$checks_json") <= MAX_EVIDENCE_BYTES )) || {
-              echo "::error::Página pública de check-runs excede el tamaño permitido"
+              echo "::error::Página autenticada de check-runs excede el tamaño permitido"
               exit 1
             }
             jq -e '
@@ -172,13 +164,13 @@ jobs:
               and (.check_runs | type == "array")
               and (.check_runs | length <= 100)
             ' "$checks_json" >/dev/null || {
-              echo "::error::Página pública de check-runs inválida"
+              echo "::error::Página autenticada de check-runs inválida"
               exit 1
             }
 
             current_total="$(jq -r '.total_count' "$checks_json")"
             (( current_total <= MAX_PUBLIC_CHECKS )) || {
-              echo "::error::Check-runs públicos exceden el límite evaluable de $MAX_PUBLIC_CHECKS"
+              echo "::error::Check-runs autenticados exceden el límite evaluable de $MAX_PUBLIC_CHECKS"
               exit 1
             }
             if [[ -z "$expected_total" ]]; then
@@ -204,14 +196,14 @@ jobs:
             exit 1
           }
           (( observed_count == expected_total )) || {
-            echo "::error::Evidencia incompleta de check-runs públicos"
+            echo "::error::Evidencia incompleta de check-runs autenticados"
             exit 1
           }
           jq -s -e '
             all(.[]; ((.id | type) == "number" and .id > 0))
             and (([.[].id] | length) == ([.[].id] | unique | length))
           ' "$checks_file" >/dev/null || {
-            echo "::error::IDs de check-runs públicos inválidos o duplicados"
+            echo "::error::IDs de check-runs autenticados inválidos o duplicados"
             exit 1
           }
 

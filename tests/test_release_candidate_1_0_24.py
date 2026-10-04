@@ -115,7 +115,7 @@ class ReleaseCandidate1024Tests(unittest.TestCase):
                 "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
                 "test_rate_limit_fallback_keeps_legacy_caller_permissions",
                 "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
-                "test_rate_limit_fallback_reads_public_checks_without_token",
+                "test_rate_limit_fallback_reads_authenticated_checks_with_github_token",
                 "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
                 "test_rate_limit_fallback_audit_is_read_only",
                 "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
@@ -134,11 +134,11 @@ class ReleaseCandidate1024Tests(unittest.TestCase):
             "AC-04",
             (
                 "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
-                "test_public_check_transport_paginates_bounded_exact_head_evidence",
+                "test_authenticated_check_transport_paginates_bounded_exact_head_evidence",
                 "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
-                "test_public_check_transport_fails_closed_above_bound_or_inconsistent_pages",
+                "test_authenticated_check_transport_fails_closed_above_bound_or_inconsistent_pages",
                 "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
-                "test_public_check_transport_remains_anonymous_and_bounded",
+                "test_authenticated_check_transport_cannot_regress_to_anonymous_curl",
                 "tests/test_politica_kit.py::T::"
                 "test_rate_limit_fallback_never_applies_with_open_blocking_finding_or_other_phase_or_other_head",
             ),
