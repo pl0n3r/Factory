@@ -39,7 +39,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             "version": "1.0.28",
             "owner_requested": False,
             "actor": "pl0n3r",
-            "checks": CHECKS,
+            "candidate_version": "1.0.28",
+            "workflows": CHECKS,
             "gates": [],
         })
         self.assertEqual(result["action"], "rejected")
@@ -52,7 +53,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             "version": "1.0.28",
             "owner_requested": True,
             "actor": "pl0n3r",
-            "checks": CHECKS,
+            "candidate_version": "1.0.28",
+            "workflows": CHECKS,
             "gates": [],
         })
         self.assertEqual(result["action"], "create_gate")
@@ -68,7 +70,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             "version": "1.0.28",
             "owner_requested": True,
             "actor": "someone-else",
-            "checks": CHECKS,
+            "candidate_version": "1.0.28",
+            "workflows": CHECKS,
             "gates": gates,
         })
         self.assertEqual(rejected["action"], "rejected")
@@ -78,7 +81,8 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
             "version": "1.0.28",
             "owner_requested": True,
             "actor": "pl0n3r",
-            "checks": CHECKS,
+            "candidate_version": "1.0.28",
+            "workflows": CHECKS,
             "gates": gates,
         })
         self.assertEqual(result["action"], "create_gate")
@@ -131,6 +135,27 @@ class ReleaseWindowOnDemandTests(unittest.TestCase):
         api.issue["labels"] = [{"name": "decisión: dueño"}]
         events["comment"]["body"] = "/decidir A"
         self.assertTrue(materialize_decision(events, api, "pl0n3r/Factory"))
+
+    def test_requested_version_must_match_config_candidate(self):
+        result = plan_request({
+            "now": "2026-10-04T19:00:00Z",
+            "main_sha": MAIN_SHA,
+            "version": "1.0.29",
+            "candidate_version": "1.0.28",
+            "owner_requested": True,
+            "actor": "pl0n3r",
+            "workflows": CHECKS,
+            "gates": [],
+        })
+        self.assertEqual(result["action"], "rejected")
+        self.assertEqual(result["reason"], "version_mismatch")
+
+    def test_security_gate_materialization_is_serialized_and_retried(self):
+        from pathlib import Path
+        workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "seguridad.yml").read_text(encoding="utf-8")
+        self.assertIn("human-gate-{0}", workflow)
+        self.assertIn("for attempt in 1 2 3", workflow)
+        self.assertIn("decision_respuesta.py", workflow)
 
 if __name__ == "__main__":
     unittest.main()
