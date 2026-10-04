@@ -64,10 +64,11 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
     def test_template_routes_only_pr_validation_to_write_reusable(self):
         general_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"
         pr_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1"
-        self.assertEqual(TEMPLATE.count(general_ref), 3)
-        self.assertEqual(TEMPLATE.count(pr_ref), 1)
+        self.assertEqual(TEMPLATE.count(general_ref), 4)
+        self.assertEqual(TEMPLATE.count(pr_ref), 0)
         validar_pr = job_block(TEMPLATE, "validar-pr")
-        self.assertIn(pr_ref, validar_pr)
+        self.assertIn(general_ref, validar_pr)
+        self.assertNotIn(pr_ref, validar_pr)
         self.assertEqual(
             job_permissions(TEMPLATE, "validar-pr"),
             {"contents: read", "issues: write", "pull-requests: write"},
