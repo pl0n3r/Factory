@@ -23,6 +23,7 @@ BLOCKED = "estado: bloqueado"
 AVAILABLE = "estado: disponible"
 COMPLETED = "estado: completado"
 DECISION_LABEL = "decisión: dueño"
+TRUSTED_ISSUE_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 DUPLICATE_MARKER = "<!-- factory-human-gate-duplicate"
 DECISION_RE = re.compile(r'^<!-- factory-human-decision (\{[^\n]*\}) -->')
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -186,6 +187,8 @@ def _target_issues(api, repository: str, target_identity: str) -> list[dict]:
     equivalent: list[dict] = []
     for candidate in candidates:
         if not isinstance(candidate, dict) or "pull_request" in candidate:
+            continue
+        if candidate.get("author_association") not in TRUSTED_ISSUE_ASSOCIATIONS:
             continue
         body = candidate.get("body")
         if not isinstance(body, str):
