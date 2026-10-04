@@ -250,6 +250,7 @@ class T(unittest.TestCase):
                 [],
                 "coderabbitai[bot]",
                 HEAD,
+                head_committed_at="2026-10-04T04:59:00Z",
                 comment_lines=comments,
                 check_lines=checks,
                 thread_lines=[],
@@ -286,6 +287,7 @@ class T(unittest.TestCase):
             [],
             "coderabbitai[bot]",
             HEAD,
+            head_committed_at="2026-10-04T04:59:00Z",
             comment_lines=comments,
             check_lines=checks,
             thread_lines=[],
@@ -332,6 +334,18 @@ class T(unittest.TestCase):
             },
             {
                 "phase": "construccion",
+                "check_lines": checks,
+                "thread_lines": [],
+                "review_lines": [
+                    review(
+                        review_id=77,
+                        state="CHANGES_REQUESTED",
+                        body="Finding bloqueante",
+                    )
+                ],
+            },
+            {
+                "phase": "construccion",
                 "check_lines": green_gate_checks(head_sha="b" * 40) + [
                     check(
                         check_id=99,
@@ -350,11 +364,44 @@ class T(unittest.TestCase):
                     validate_rate_limit_fallback(
                         required_review_bot="coderabbitai[bot]",
                         head_sha=HEAD,
+                        head_committed_at="2026-10-04T04:59:00Z",
                         phase=case["phase"],
+                        review_lines=case.get("review_lines", []),
                         comment_lines=comments,
                         check_lines=case["check_lines"],
                         thread_lines=case["thread_lines"],
                     )
+
+    def test_rate_limit_before_head_commit_is_not_exact_head_evidence(self):
+        comments = [
+            rate_limit_comment(
+                comment_id=101,
+                created_at="2026-10-04T04:57:00Z",
+            ),
+            rate_limit_comment(
+                comment_id=102,
+                created_at="2026-10-04T04:58:00Z",
+            ),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                conclusion="failure",
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        with self.assertRaisesRegex(PolicyError, "único rate limit"):
+            validate_rate_limit_fallback(
+                required_review_bot="coderabbitai[bot]",
+                head_sha=HEAD,
+                head_committed_at="2026-10-04T04:59:00Z",
+                phase="construccion",
+                review_lines=[],
+                comment_lines=comments,
+                check_lines=checks,
+                thread_lines=[],
+            )
 
     def test_green_checks_without_required_final_review_fail_closed(self):
         with self.assertRaises(PolicyError):
