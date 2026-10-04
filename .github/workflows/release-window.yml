@@ -61,7 +61,9 @@ jobs:
           done
 
           printf '[]\n' > /tmp/release-gates.json
-
+          gh api "repos/$REPOSITORY/actions/runs?head_sha=$main_sha&per_page=100" \
+            | jq --arg sha "$main_sha" '[.workflow_runs[] | {name,status,conclusion,head_sha:$sha}]' \
+            > /tmp/release-workflows.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
             [[ "$number" =~ ^[1-9][0-9]*$ ]] || {
@@ -97,13 +99,13 @@ jobs:
         run: |
           set -euo pipefail
           main_sha="$(gh api "repos/$REPOSITORY/commits/main" --jq '.sha')"
+          config_version="$(jq -er '.version' config/version.json)"
           version="${{ github.event.inputs.version }}"
-          if [[ -z "$version" ]]; then version="$(jq -er '.version' config/version.json)"; fi
+          if [[ -z "$version" ]]; then version="$config_version"; fi
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           force_rearm=true
-          jq -n --arg now "$now" --arg main_sha "$main_sha" --arg version "$version" --arg actor "${{ github.actor }}" --argjson owner_requested "$([[ "${{ github.actor }}" == "pl0n3r" ]] && echo true || echo false)" --argjson force_rearm "$force_rearm" --slurpfile gates /tmp/release-gates.json --slurpfile checks /tmp/release-checks.json \
-            '{now:$now,main_sha:$main_sha,version:$version,actor:$actor,owner_requested:$owner_requested,force_rearm:$force_rearm,checks:$checks[0],gates:$gates[0]}'             > /tmp/release-window-input.json
-
+          jq -n --arg now "$now" --arg main_sha "$main_sha" --arg version "$version" --arg candidate_version "$config_version" --arg actor "${{ github.actor }}" --argjson owner_requested "$([[ "${{ github.actor }}" == "pl0n3r" ]] && echo true || echo false)" --argjson force_rearm "$force_rearm" --slurpfile gates /tmp/release-gates.json --slurpfile workflows /tmp/release-workflows.json \
+            '{now:$now,main_sha:$main_sha,version:$version,candidate_version:$candidate_version,actor:$actor,owner_requested:$owner_requested,force_rearm:$force_rearm,workflows:$workflows[0],gates:$gates[0]}'             > /tmp/release-window-input.json
           python3 scripts/release_window.py request             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
 
           action="$(jq -r '.action' /tmp/release-window-result.json)"
