@@ -60,9 +60,15 @@ class NormalizationResult:
     dedup_key: str
 
 
+def _heading_level(line: str) -> int:
+    stripped = line.lstrip()
+    hashes = len(stripped) - len(stripped.lstrip("#"))
+    return hashes if hashes and len(stripped) > hashes and stripped[hashes] == " " else 0
+
+
 def _heading_name(line: str) -> str | None:
     stripped = line.strip()
-    if not stripped.startswith("#"):
+    if _heading_level(line) not in {2, 3}:
         return None
     title = stripped.lstrip("#").strip().casefold()
     return HEADING_ALIASES.get(title)
@@ -80,9 +86,13 @@ def _split_sections(body: str) -> tuple[list[str], dict[str, list[str]], list[st
             current = mapped
             sections.setdefault(current, [])
             continue
-        if line.lstrip().startswith("#"):
+        level = _heading_level(line)
+        if level in {2, 3}:
             current = None
             extras.append(line)
+            continue
+        if level > 3 and current is not None:
+            sections[current].append(line)
             continue
         if current is None:
             if not sections:
@@ -184,14 +194,48 @@ def _task_marker(body: str, metadata: dict[str, object] | None) -> tuple[str | N
     if absent:
         return None, tuple(f"metadata {name}" for name in absent)
 
+    epic = metadata["epic"]
+    order = metadata["order"]
+    task_key = metadata["task_key"]
+    owner = metadata["owner"]
+    roles = metadata["roles"]
+    depends_on = metadata["depends_on"]
+    if (
+        isinstance(epic, bool)
+        or not isinstance(epic, int)
+        or epic < 1
+        or isinstance(order, bool)
+        or not isinstance(order, int)
+        or order < 1
+        or not isinstance(task_key, str)
+        or not 1 <= len(task_key) <= 32
+        or not task_key.isascii()
+        or not task_key[0].isalpha()
+        or not task_key[0].isupper()
+        or any(not (char.isupper() or char.isdigit() or char in "_-") for char in task_key)
+        or not isinstance(owner, str)
+        or not owner
+        or not owner.isascii()
+        or any(not (char.isalnum() or char == "-") for char in owner)
+        or not isinstance(roles, list)
+        or not roles
+        or not all(isinstance(role, str) and role.strip() for role in roles)
+        or not isinstance(depends_on, list)
+        or not all(
+            isinstance(number, int) and not isinstance(number, bool) and number > 0
+            for number in depends_on
+        )
+    ):
+        return None, ("metadata factory-plan-task inválida",)
+
     payload = {
         "version": 1,
-        "epic": metadata["epic"],
-        "task_key": metadata["task_key"],
-        "order": metadata["order"],
-        "owner": metadata["owner"],
-        "roles": metadata["roles"],
-        "depends_on": metadata["depends_on"],
+        "epic": epic,
+        "task_key": task_key,
+        "order": order,
+        "owner": owner,
+        "roles": sorted(dict.fromkeys(role.strip() for role in roles)),
+        "depends_on": list(dict.fromkeys(depends_on)),
         "paths": list(paths),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
