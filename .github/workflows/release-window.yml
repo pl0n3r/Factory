@@ -40,6 +40,7 @@ jobs:
           set -euo pipefail
           [[ "$EVENT_NAME" == "workflow_dispatch" ]] || { echo "::error::Solicitud de release no explícita"; exit 1; }
           [[ "$REF_NAME" == "$DEFAULT_BRANCH" ]] || { echo "::error::La solicitud debe ejecutarse sobre la rama principal"; exit 1; }
+          [[ "$ACTOR" == "$OWNER" ]] || { echo "::error::Factory Release Window solo puede solicitarlo el OWNER"; exit 1; }
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
