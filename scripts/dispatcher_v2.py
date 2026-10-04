@@ -868,6 +868,92 @@ def select_next(
     return min(same_class, key=lambda item: _tiebreak(item, aging_threshold=aging_threshold))
 
 
+
+def _candidate_normalization_plan(candidate: Candidate) -> dict[str, object] | None:
+    body = candidate.metadata.get("issue_body")
+    if not isinstance(body, str) or not body.strip():
+        return None
+    comments_raw = candidate.metadata.get("issue_comments", ())
+    comments = (
+        tuple(str(item) for item in comments_raw)
+        if isinstance(comments_raw, (tuple, list))
+        else ()
+    )
+    task_metadata_raw = candidate.metadata.get("normalizer_task_metadata")
+    task_metadata = (
+        task_metadata_raw if isinstance(task_metadata_raw, dict) else None
+    )
+    return plan_issue_normalization(
+        body,
+        existing_comments=comments,
+        task_metadata=task_metadata,
+        state=str(candidate.metadata.get("issue_state", "open")),
+        has_active_reservation=(
+            candidate.metadata.get("has_active_reservation") is True
+        ),
+    )
+
+
+def select_next_action(
+    candidates: Iterable[Candidate],
+    *,
+    fairness_context: RepoFairnessContext | None = None,
+    aging_threshold: int = 3,
+    active_tranche: int | None = None,
+) -> dict[str, object]:
+    """Selecciona trabajo y normaliza formato antes del primer `/tomar` cuando aplica."""
+
+    items = list(candidates)
+    context = fairness_context or RepoFairnessContext()
+    _validate_fairness_context(context)
+    repairs: list[dict[str, object]] = []
+
+    while True:
+        selected = select_next(
+            items,
+            aging_threshold=aging_threshold,
+            active_tranche=active_tranche,
+            fairness_context=context,
+        )
+        if selected is None:
+            return {
+                "action": "none",
+                "selected": None,
+                "repairs": tuple(repairs),
+                "declare_no_work": False,
+            }
+
+        normalization = _candidate_normalization_plan(selected)
+        if normalization is None:
+            return {
+                "action": "take",
+                "selected": selected.key,
+                "repairs": tuple(repairs),
+                "declare_no_work": False,
+            }
+
+        action = normalization.get("action")
+        if action == "edit_and_retry_once":
+            return {
+                "action": "normalize_then_take",
+                "selected": selected.key,
+                "normalization": normalization,
+                "repairs": tuple(repairs),
+                "retry_once": True,
+                "declare_no_work": False,
+            }
+
+        repairs.append(
+            {
+                "key": selected.key,
+                "action": "normalize_issue",
+                "plan": normalization,
+            }
+        )
+        failed = frozenset((*context.failed_take_keys, selected.key))
+        context = replace(context, failed_take_keys=failed)
+
+
 def select_after_take_failure(
     candidates: Iterable[Candidate],
     *,
@@ -893,27 +979,8 @@ def select_after_take_failure(
         "action": "mark_format_repair",
         "dedup_key": f"take-format:{failed_key}",
     }
-    body = failed.metadata.get("issue_body")
-    if isinstance(body, str) and body.strip():
-        comments_raw = failed.metadata.get("issue_comments", ())
-        comments = (
-            tuple(str(item) for item in comments_raw)
-            if isinstance(comments_raw, (tuple, list))
-            else ()
-        )
-        task_metadata_raw = failed.metadata.get("normalizer_task_metadata")
-        task_metadata = (
-            task_metadata_raw if isinstance(task_metadata_raw, dict) else None
-        )
-        normalization = plan_issue_normalization(
-            body,
-            existing_comments=comments,
-            task_metadata=task_metadata,
-            state=str(failed.metadata.get("issue_state", "open")),
-            has_active_reservation=(
-                failed.metadata.get("has_active_reservation") is True
-            ),
-        )
+    normalization = _candidate_normalization_plan(failed)
+    if normalization is not None:
         repair = {
             "action": "normalize_issue",
             "dedup_key": normalization.get(
