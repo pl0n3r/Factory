@@ -48,11 +48,22 @@ class TemplateEtiquetasWorkflowContractTests(unittest.TestCase):
         self.assertEqual(WF.count("pull-requests: read"), 3)
 
     def test_template_keeps_factory_v1_and_least_privilege(self):
+        general_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1"
+        pr_ref = "uses: pl0n3r/factory/.github/workflows/etiquetas-pr.yml@v1"
+
         for name in ("sync", "validar-issue", "validar-pr", "sweep"):
             block = job_block(name)
-            self.assertIn("uses: pl0n3r/factory/.github/workflows/etiquetas.yml@v1", block)
+            self.assertIn(general_ref, block)
             self.assertIn("contents: read", block)
             self.assertIn("issues: write", block)
+
+        pr_block = job_block("validar-pr")
+        self.assertNotIn(pr_ref, pr_block)
+        self.assertIn("contents: read", pr_block)
+        self.assertIn("issues: write", pr_block)
+
+        self.assertEqual(WF.count(general_ref), 4)
+        self.assertEqual(WF.count(pr_ref), 0)
 
         for forbidden in (
             "contents: write",
