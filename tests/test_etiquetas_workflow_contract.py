@@ -126,6 +126,24 @@ class EtiquetasWorkflowContractTests(unittest.TestCase):
             for action in actions:
                 self.assertRegex(action, r"@[0-9a-f]{40}$")
 
+    # Targets históricos consumidos por las regresiones de Factory 1.0.26.
+    # Se conservan como aliases explícitos para que el split no rompa el
+    # contrato de aceptación ya publicado.
+    def test_pr_validate_job_has_minimum_write_authority(self):
+        self.test_pr_write_authority_is_isolated_to_pr_callers_only()
+
+    def test_non_pr_job_remains_read_only(self):
+        self.test_reusable_envelope_is_compatible_with_read_only_issue_sweep_and_sync_callers()
+
+    def test_pr_and_non_pr_jobs_are_mutually_exclusive_and_keep_labels_check_name(self):
+        self.test_reusable_envelope_is_compatible_with_read_only_issue_sweep_and_sync_callers()
+        self.test_general_and_pr_paths_keep_visible_labels_check_name()
+
+    def test_pr_validate_keeps_safe_label_inheritance_without_changing_sweep(self):
+        self.test_validate_pr_keeps_safe_label_inheritance()
+        self.assertIn("Barrer trabajo abierto", GENERAL)
+        self.assertNotIn("Barrer trabajo abierto", PR)
+
 
 if __name__ == "__main__":
     unittest.main()
