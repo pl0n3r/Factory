@@ -79,8 +79,25 @@ jobs:
           )
 
           for repo in "${consumers[@]}"; do
-            encoded_repo="${repo//\//%2F}"
-            curl --fail --silent --show-error --get               -H 'Accept: application/vnd.github+json'               --data-urlencode "created=>=$release_started_at"               --data-urlencode 'per_page=100'               "https://api.github.com/repos/$encoded_repo/actions/runs"               > /tmp/consumer-runs.json
+            actions_url="https://api.github.com/repos/$repo/actions/runs"
+            curl_exit=0
+            http_code="$(
+              curl --silent --show-error --get \
+                -H 'Accept: application/vnd.github+json' \
+                --data-urlencode "created=>=$release_started_at" \
+                --data-urlencode 'per_page=100' \
+                --output /tmp/consumer-runs.json \
+                --write-out '%{http_code}' \
+                "$actions_url"
+            )" || curl_exit=$?
+            if (( curl_exit != 0 )); then
+              echo "::error::No se pudo consultar Actions para $repo ($actions_url; curl exit $curl_exit)."
+              exit "$curl_exit"
+            fi
+            [[ "$http_code" == "200" ]] || {
+              echo "::error::Actions para $repo devolvió HTTP $http_code ($actions_url)."
+              exit 1
+            }
 
             total_count="$(jq -r '.total_count' /tmp/consumer-runs.json)"
             [[ "$total_count" =~ ^[0-9]+$ ]] || {

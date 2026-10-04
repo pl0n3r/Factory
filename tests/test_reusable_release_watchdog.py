@@ -253,15 +253,47 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
             self.assertEqual(watchdog_main(), 2)
         self.assertIn("payload demasiado grande", stderr.getvalue())
 
+    def test_workflow_builds_consumer_actions_url_without_encoding_owner_repo_slash(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn('for repo in "${consumers[@]}"; do', workflow)
+        self.assertIn(
+            'actions_url="https://api.github.com/repos/$repo/actions/runs"',
+            workflow,
+        )
+        self.assertIn('"$actions_url"', workflow)
+        self.assertNotIn("encoded_repo=", workflow)
+        self.assertNotIn("%2F", workflow)
+
+    def test_workflow_failure_message_names_repo_and_url_on_http_error(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("--write-out '%{http_code}'", workflow)
+        self.assertIn(
+            "No se pudo consultar Actions para $repo "
+            "($actions_url; curl exit $curl_exit).",
+            workflow,
+        )
+        self.assertIn(
+            "Actions para $repo devolvió HTTP $http_code ($actions_url).",
+            workflow,
+        )
+
+    def test_workflow_keeps_minimal_permissions_and_evidence_limits(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("contents: read", workflow)
+        self.assertIn("actions: read", workflow)
+        self.assertIn("issues: write", workflow)
+        self.assertIn("--data-urlencode 'per_page=100'", workflow)
+        self.assertIn("(( total_count <= 100 ))", workflow)
+
     def test_workflow_never_moves_tags_and_keeps_rollback_advisory_only(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("schedule:", workflow)
         self.assertIn("cron: '*/15 * * * *'", workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("actions: read", workflow)
-        self.assertIn("issues: write", workflow)
-        self.assertIn("contents: read", workflow)
         self.assertIn(
             "python3 -m scripts.reusable_release_watchdog",
             workflow,
