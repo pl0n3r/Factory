@@ -286,11 +286,18 @@ class MultiGateAPI:
         )
 
 
-def gate_issue(number, *, state="open", body_value=None):
+def gate_issue(
+    number,
+    *,
+    state="open",
+    body_value=None,
+    author_association="OWNER",
+):
     return {
         "number": number,
         "state": state,
         "body": body_value or release_gate_body(),
+        "author_association": author_association,
         "labels": [
             {"name": "prioridad: crítica"},
             {"name": "estado: requiere decisión"},
