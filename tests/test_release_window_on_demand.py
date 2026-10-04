@@ -24,7 +24,7 @@ CHECKS = [
     {"name": "CI factory", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Sonar CI-based", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Evidencia CodeQL", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
-    {"name": "Unattended Watchdog", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
+    {"name": "Vigilar startup_failure de reusables publicados", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
     {"name": "Compatibilidad de consumidores", "status": "completed", "conclusion": "success", "head_sha": MAIN_SHA},
 ]
 
@@ -78,8 +78,6 @@ def request_payload(**changes) -> dict:
         "candidate_version": VERSION,
         "owner_requested": True,
         "actor": "pl0n3r",
-            "owner": "pl0n3r",
-            "owner": "pl0n3r",
         "owner": "pl0n3r",
         "workflows": CHECKS,
         "gates": list(HISTORY),
