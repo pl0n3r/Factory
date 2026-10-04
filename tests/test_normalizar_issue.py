@@ -287,5 +287,66 @@ Sin inventar.
         self.assertTrue(action["retry_once"])
 
 
+    def test_malformed_existing_markers_fail_closed_before_take(self):
+        bad_acceptance = """### Contexto
+Legacy.
+
+### Alcance
+Normalizar.
+
+### Fuera de alcance
+No inventar.
+
+### Criterios de aceptación
+- [ ] [AC-01] `tests/test_normalizar_issue.py::NormalizarIssueTests::test_malformed_existing_markers_fail_closed_before_take`.
+
+### Contrato ejecutable
+<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"test"}]} -->
+
+### Rutas reclamadas
+- `scripts/normalizar_issue.py`
+"""
+        result = normalize_issue_body(
+            bad_acceptance,
+            task_metadata=TASK_METADATA,
+        )
+        self.assertFalse(result.complete)
+        self.assertTrue(
+            any(
+                item.startswith("Contrato ejecutable inválido:")
+                for item in result.missing
+            )
+        )
+
+        bad_task = """### Contexto
+Legacy.
+
+### Alcance
+Normalizar.
+
+### Fuera de alcance
+No inventar.
+
+### Criterios de aceptación
+- [ ] [AC-01] `tests/test_normalizar_issue.py::NormalizarIssueTests::test_malformed_existing_markers_fail_closed_before_take`.
+
+### Contrato ejecutable
+<!-- factory-acceptance {"criteria":[{"id":"AC-01","kind":"test","target":"tests/test_normalizar_issue.py::NormalizarIssueTests::test_malformed_existing_markers_fail_closed_before_take"}],"version":1} -->
+
+<!-- factory-plan-task {"depends_on":[942],"epic":943,"order":1,"owner":"pl0n3r","paths":["scripts/normalizar_issue.py"],"task_key":"ISSUE_NORMALIZER_V1","version":1} -->
+"""
+        result = normalize_issue_body(
+            bad_task,
+            task_metadata=TASK_METADATA,
+        )
+        self.assertFalse(result.complete)
+        self.assertTrue(
+            any(
+                item.startswith("factory-plan-task inválido:")
+                for item in result.missing
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
