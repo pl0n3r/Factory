@@ -29,14 +29,14 @@ def owner_gate_body(sha: str = OLD_SHA) -> str:
     )
 
 
-def approved_comment(body: str) -> dict[str, object]:
+def decision_comment(body: str, option: str) -> dict[str, object]:
     parsed = rw._gate_from_body(body)
     assert parsed is not None
     gate, _, _ = parsed
     marker = json.dumps(
         {
             "gate_sha256": rw._gate_fingerprint(gate),
-            "option": "A",
+            "option": option,
             "version": 2,
         },
         separators=(",", ":"),
@@ -48,11 +48,16 @@ def approved_comment(body: str) -> dict[str, object]:
     }
 
 
+def approved_comment(body: str) -> dict[str, object]:
+    return decision_comment(body, "A")
+
+
 def gate_row(
     *,
     number: int,
     body: str,
     state: str = "closed",
+    decision: str = "A",
 ) -> dict[str, object]:
     return {
         "issue": {
@@ -62,7 +67,7 @@ def gate_row(
             "body": body,
             "updated_at": "2026-10-03T10:10:00Z",
         },
-        "comments": [approved_comment(body)],
+        "comments": [decision_comment(body, decision)],
     }
 
 
@@ -190,6 +195,118 @@ class ReleaseWindowExpiredDecisionTests(unittest.TestCase):
         self.assertIn('EVENT_NAME: ${{ github.event_name }}', workflow)
         self.assertIn('force_rearm=true', workflow)
         self.assertIn('force_rearm:$force_rearm', workflow)
+
+    def test_newer_b_gate_supersedes_older_active_a_window(self) -> None:
+        older = rw._render_gate(
+            VERSION,
+            OLD_SHA,
+            OPENED,
+            source_issue=900,
+        )
+        newer = rw._render_gate(
+            VERSION,
+            NEW_SHA,
+            OPENED,
+            source_issue=951,
+        )
+
+        result = rw.check_pull_request(
+            {
+                "now": "2026-10-03T10:30:00Z",
+                "gates": [
+                    gate_row(number=951, body=older["body"]),
+                    gate_row(
+                        number=954,
+                        body=newer["body"],
+                        decision="B",
+                    ),
+                ],
+                "pr": {"body": ""},
+                "work_issue": {
+                    "number": 943,
+                    "state": "open",
+                    "labels": [{"name": "prioridad: alta"}],
+                },
+            }
+        )
+
+        self.assertEqual(
+            result,
+            {"allowed": True, "reason": "no_active_release_window"},
+        )
+
+    def test_newer_active_a_gate_remains_the_freeze_authority(self) -> None:
+        older = rw._render_gate(
+            VERSION,
+            OLD_SHA,
+            OPENED,
+            source_issue=900,
+        )
+        newer = rw._render_gate(
+            VERSION,
+            NEW_SHA,
+            OPENED,
+            source_issue=951,
+        )
+
+        result = rw.check_pull_request(
+            {
+                "now": "2026-10-03T10:30:00Z",
+                "gates": [
+                    gate_row(number=951, body=older["body"]),
+                    gate_row(number=954, body=newer["body"]),
+                ],
+                "pr": {"body": ""},
+                "work_issue": {
+                    "number": 943,
+                    "state": "open",
+                    "labels": [{"name": "prioridad: alta"}],
+                },
+            }
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "factory_release_window_active")
+        self.assertEqual(result["gate_issue"], 954)
+        self.assertEqual(result["sha"], NEW_SHA)
+
+    def test_latest_gate_is_selected_per_version_not_globally(self) -> None:
+        older_version = rw._render_gate(
+            "1.0.22",
+            OLD_SHA,
+            OPENED,
+            source_issue=900,
+        )
+        newer_version = rw._render_gate(
+            VERSION,
+            NEW_SHA,
+            OPENED,
+            source_issue=951,
+        )
+
+        result = rw.check_pull_request(
+            {
+                "now": "2026-10-03T10:30:00Z",
+                "gates": [
+                    gate_row(number=951, body=older_version["body"]),
+                    gate_row(
+                        number=954,
+                        body=newer_version["body"],
+                        decision="B",
+                    ),
+                ],
+                "pr": {"body": ""},
+                "work_issue": {
+                    "number": 943,
+                    "state": "open",
+                    "labels": [{"name": "prioridad: alta"}],
+                },
+            }
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["gate_issue"], 951)
+        self.assertEqual(result["sha"], OLD_SHA)
 
     def test_expired_window_error_message_names_expiry_and_next_step(self) -> None:
         with self.assertRaises(rb.ReleaseBootstrapError) as raised:
