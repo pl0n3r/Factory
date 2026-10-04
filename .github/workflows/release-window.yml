@@ -83,10 +83,26 @@ jobs:
           done
 
           printf '[]\n' > /tmp/release-gates.json
-          gh api "repos/$REPOSITORY/actions/runs?head_sha=$main_sha&per_page=100" \
-            | jq '[.workflow_runs[] | {name,status,conclusion,head_sha}]' \
-            > /tmp/release-workflows.json
-
+          printf '[]\n' > /tmp/release-workflows.json
+          printf '[]\n' > /tmp/release-workflows.raw
+          declare -A REQUIRED_WORKFLOWS=(
+            ["CI factory"]="factory-ci.yml"
+            ["Sonar CI-based"]="sonar.yml"
+            ["Evidencia CodeQL"]="codeql-evidence.yml"
+            ["Vigilar startup_failure de reusables publicados"]="reusable-release-watchdog.yml"
+          )
+          for workflow_name in "CI factory" "Sonar CI-based" "Evidencia CodeQL" "Vigilar startup_failure de reusables publicados"; do
+            workflow_file="${REQUIRED_WORKFLOWS[$workflow_name]}"
+            gh api "repos/$REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$main_sha&per_page=20" \
+              | jq --arg name "$workflow_name" --arg sha "$main_sha" '
+                  [.workflow_runs[]
+                    | select(.head_sha == $sha)
+                    | {name:$name,status,conclusion,head_sha:.head_sha,run_id:.id}
+                  ] | sort_by(.run_id) | reverse | .[0:1]
+                \
+              >> /tmp/release-workflows.raw
+          done
+          jq -s 'add // []' /tmp/release-workflows.raw > /tmp/release-workflows.json
           python3 -m scripts.reusable_release_preflight --factory-sha "$main_sha"
           jq --arg sha "$main_sha" \
             '. + [{name:"Compatibilidad de consumidores",status:"completed",conclusion:"success",head_sha:$sha}]' \
