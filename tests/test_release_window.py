@@ -436,10 +436,11 @@ class ReleaseWindowTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "factory-ci.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("push:", workflow)
+        self.assertNotIn("push:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("workflow_run:", workflow)
         self.assertIn("Release Factory v1.x", workflow)
-        self.assertIn("python3 scripts/release_window.py push", workflow)
+        self.assertIn("python3 scripts/release_window.py request", workflow)
         self.assertIn("python3 scripts/release_window.py workflow-run", workflow)
         self.assertIn("issues: write", workflow)
         self.assertNotIn("contents: write", workflow)
