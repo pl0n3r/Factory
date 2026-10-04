@@ -114,7 +114,7 @@ Mientras exista una puerta vigente o una decisión A exact-SHA todavía no ejecu
 
 La excepción habilita exclusivamente el repair indicado; no publica una release, no crea una decisión humana y no transporta autoridad entre SHAs.
 
-Si el TTL vence, el freeze deja de bloquear merges, pero la decisión A previa continúa ligada únicamente a su SHA original. Si `main` cambió, `release-window.yml` rearma de forma idempotente una nueva puerta `factory-release` sobre el HEAD vigente con `safe_default=B`; nunca copia el journal A anterior.
+Si el TTL vence, **solo termina el freeze de merges**. Una decisión A v2 válida no caduca por reloj cuando `main` sigue exactamente en el SHA aprobado y la maquinaria de release no derivó; el bootstrap puede reutilizar esa autorización porque el journal continúa ligado al fingerprint del gate y al mismo SHA. Si `main` cambió, la autorización exact-SHA no se transporta: `release-window.yml` rearma de forma idempotente una nueva puerta `factory-release` sobre el HEAD vigente con `safe_default=B` y nunca copia el journal A anterior. Un lanzamiento manual de `Factory Release Window` (`workflow_dispatch`) puede forzar un rearmado limpio de una A vencida y aún no ejecutada aunque el SHA no haya cambiado; la nueva puerta vuelve a requerir `/decidir A` o `/decidir B`. Cuando un preflight rechaza una ventana vencida junto con deriva, el error debe indicar la hora de expiración, que el HEAD derivó y que el siguiente paso es rearmar una puerta nueva.
 
 ### Confianza de puertas rearmadas por automatización
 
