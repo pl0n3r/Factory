@@ -169,7 +169,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
 
     def test_rate_limit_fallback_reads_public_checks_without_token(self):
         start = W.index(
-            'checks_url="https://api.github.com/repos/$REPOSITORY/'
+            'checks_url_base="https://api.github.com/repos/$REPOSITORY/'
             'commits/$PR_HEAD_SHA/check-runs?per_page=100"'
         )
         end = W.index('owner="${REPOSITORY%%/*}"', start)
@@ -186,7 +186,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
             checks_transport,
         )
         self.assertIn(
-            "Payload público de check-runs excede el tamaño permitido",
+            "Página pública de check-runs excede el tamaño permitido",
             checks_transport,
         )
         self.assertIn(
@@ -232,6 +232,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("Authorization:", checks_transport)
         self.assertNotIn("GH_TOKEN", checks_transport)
         self.assertNotIn("gh api", checks_transport)
+
     def test_rate_limit_fallback_audit_is_read_only(self):
         self.assertIn("datos.yml?ref=$PR_BASE_SHA", W)
         self.assertIn("commits/$PR_HEAD_SHA", W)
