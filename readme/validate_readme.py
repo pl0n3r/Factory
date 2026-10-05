@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 from intelligence.derived_views import DerivedViewDriftError, check_drift
 from readme.generate_readme import generate_readme
 
 
 _SUPPORTED_CONTRACT_VERSIONS = {1, 2}
+_OPERATIONAL_COCKPIT_RE = re.compile(r"(?m)^## Operational Cockpit\s*$")
+_MARKDOWN_HTTP_DESTINATION_RE = re.compile(
+    r"\]\((https?://[^)\s]+)\)",
+    re.IGNORECASE,
+)
+_GITHUB_ACTIONS_PATH_RE = re.compile(r"^/[^/]+/[^/]+/actions(?:/.*)?$")
+_GITHUB_RELEASES_PATH_RE = re.compile(r"^/[^/]+/[^/]+/releases(?:/.*)?$")
 
 
 def validate_readme(
@@ -100,13 +109,64 @@ def _validate_v2(
         if token in readme_text:
             raise ValueError(f"README v2 conserva contenido legado: {token}")
 
-    lowered = readme_text.lower()
-    if "github.com/" not in lowered or "/actions" not in lowered:
-        raise ValueError("README v2 debe enlazar estado vivo de GitHub Actions.")
-    if "/releases" not in lowered:
-        raise ValueError("README v2 debe enlazar GitHub Releases.")
-    if "control.condorapp.com.co" not in lowered:
-        raise ValueError("README v2 debe enlazar el Orquestador como detalle operativo.")
+    _validate_live_destinations(readme_text, live_status)
+
+
+def _validate_live_destinations(
+    readme_text: str,
+    live_status: Mapping[str, Any],
+) -> None:
+    raw_allowed_hosts = live_status.get("allowed_hosts")
+    if (
+        not isinstance(raw_allowed_hosts, list)
+        or not raw_allowed_hosts
+        or any(not isinstance(host, str) or not host.strip() for host in raw_allowed_hosts)
+    ):
+        raise ValueError("README Contract v2 requiere allowed_hosts explícitos.")
+    allowed_hosts = {host.strip().lower() for host in raw_allowed_hosts}
+
+    match = _OPERATIONAL_COCKPIT_RE.search(readme_text)
+    if match is None:
+        raise ValueError("README v2 debe declarar Operational Cockpit.")
+    section_tail = readme_text[match.end():]
+    next_section = re.search(r"(?m)^##\s+", section_tail)
+    cockpit = (
+        section_tail[: next_section.start()]
+        if next_section is not None
+        else section_tail
+    )
+
+    destinations = _MARKDOWN_HTTP_DESTINATION_RE.findall(cockpit)
+    if not destinations:
+        raise ValueError("README v2 debe enlazar destinos vivos Markdown reales.")
+
+    parsed_destinations = []
+    for destination in destinations:
+        parsed = urlparse(destination)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme.lower() != "https" or not host:
+            raise ValueError("README v2 exige destinos vivos HTTPS válidos.")
+        if host not in allowed_hosts:
+            raise ValueError(
+                f"README v2 enlaza un host vivo no permitido: {host}."
+            )
+        parsed_destinations.append((host, parsed.path))
+
+    if not any(
+        host == "github.com" and _GITHUB_ACTIONS_PATH_RE.fullmatch(path)
+        for host, path in parsed_destinations
+    ):
+        raise ValueError("README v2 debe enlazar GitHub Actions real.")
+    if not any(
+        host == "github.com" and _GITHUB_RELEASES_PATH_RE.fullmatch(path)
+        for host, path in parsed_destinations
+    ):
+        raise ValueError("README v2 debe enlazar GitHub Releases real.")
+    if not any(
+        host == "control.condorapp.com.co"
+        for host, _path in parsed_destinations
+    ):
+        raise ValueError("README v2 debe enlazar el Orquestador real.")
 
 
 __all__ = ["DerivedViewDriftError", "validate_readme"]
