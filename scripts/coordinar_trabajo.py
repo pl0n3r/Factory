@@ -1115,6 +1115,12 @@ def _revalidated_unblock_evidence(
         return None
     if marker is None or unblock_fingerprint(marker) != fingerprint:
         return None
+    comments = api.issue_comments(number)
+    if (
+        unblock_evidence_exists(comments, fingerprint)
+        and not reblock_evidence_exists(comments, fingerprint)
+    ):
+        return None
     satisfied, evidence = verify_unblock_condition(api, marker)
     return evidence if satisfied and evidence else None
 
