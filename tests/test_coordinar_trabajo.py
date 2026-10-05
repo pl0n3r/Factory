@@ -1421,7 +1421,8 @@ class CoordinacionTests(unittest.TestCase):
 
         self.assertEqual(sweep_satisfied_blocks(api), 1)
         api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
-        self.assertEqual(sweep_satisfied_blocks(api), 1)
+        self.assertEqual(sweep_satisfied_blocks(api), 0)
+        self.assertIn(STATUS_BLOCKED, coordinator.label_names(api.issue_data))
 
         evidence = [
             row for row in api.comments
