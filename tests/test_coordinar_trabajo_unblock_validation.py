@@ -317,6 +317,39 @@ class UnblockValidationTests(unittest.TestCase):
         fingerprint = coordinator.unblock_fingerprint(condition)
         return FakeGitHub(), blocked, fingerprint
 
+    def test_automatic_unblock_state_ignores_untrusted_and_malformed_comments(self) -> None:
+        fingerprint = "f" * 64
+        trusted = coordinator.TRUSTED_MARKER_LOGIN
+        valid_unblock = coordinator._unblock_evidence_comment(
+            fingerprint,
+            "issue:9:closed",
+        )
+        comments = [
+            {"user": None, "body": valid_unblock},
+            {"user": {"login": "otro"}, "body": valid_unblock},
+            {
+                "user": {"login": trusted},
+                "body": (
+                    "<!-- factory-unblock-evidence {bad-json} -->\n"
+                    "<!-- factory-reblock-evidence {bad-json} -->"
+                ),
+            },
+            {
+                "user": {"login": trusted},
+                "body": (
+                    '<!-- factory-unblock-evidence '
+                    '{"version":1,"fingerprint":"wrong","evidence":"ok"} -->\n'
+                    '<!-- factory-reblock-evidence '
+                    '{"version":1,"fingerprint":"wrong","reason":"condition_unsatisfied"} -->'
+                ),
+            },
+        ]
+
+        self.assertEqual(
+            coordinator._automatic_unblock_state(comments, fingerprint),
+            "never",
+        )
+
     def test_manual_reblock_after_auto_unblock_is_not_overridden(self) -> None:
         api, blocked, fingerprint = self._reblock_fake_api()
         api._comments.append(
