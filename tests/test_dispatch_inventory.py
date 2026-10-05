@@ -67,6 +67,8 @@ def _inventory(factory_state):
                 }]
             elif factory_state == "READY":
                 leaves = [_leaf("Factory#ready", "available", priority="critical")]
+            elif factory_state == "RESERVED_ONLY":
+                leaves = [_leaf("Factory#reserved", "reserved", priority="critical")]
             else:
                 raise AssertionError(factory_state)
         snapshots.append({
@@ -170,6 +172,57 @@ class DispatcherV2Tests(unittest.TestCase):
                 [],
                 work_inventory=_inventory("READY"),
             )
+
+    def test_reserved_only_ready_inventory_without_candidate_returns_non_mutating_handoff(self):
+        record = dispatch_record_with_inventory(
+            [],
+            work_inventory=_inventory("RESERVED_ONLY"),
+        )
+        handoff = record["inventory_no_candidate"]
+        action = record["next_action"]
+        self.assertIsNone(record["selected"])
+        self.assertEqual(
+            handoff["reserved_only_projects"],
+            ("pl0n3r/Factory",),
+        )
+        self.assertEqual(action["state"], "READY")
+        self.assertEqual(action["step"], "reserved_inventory")
+        self.assertEqual(action["reason"], "reserved_only_no_selectable_candidate")
+        self.assertEqual(
+            action["reserved_only_projects"],
+            ("pl0n3r/Factory",),
+        )
+        self.assertFalse(action["session_selectable"])
+        self.assertFalse(action["mutates"])
+
+    def test_available_ready_inventory_without_candidate_still_fails_closed(self):
+        with self.assertRaisesRegex(
+            WorkInventoryError,
+            "trabajo disponible sin candidato seleccionado",
+        ):
+            dispatch_record_with_inventory(
+                [],
+                work_inventory=_inventory("READY"),
+            )
+
+    def test_reserved_only_handoff_preserves_canonical_ready_projection(self):
+        inventory = _inventory("RESERVED_ONLY")
+        record = dispatch_record_with_inventory([], work_inventory=inventory)
+        factory = next(
+            project
+            for project in record["work_inventory"]["projects"]
+            if project["repository_ref"] == "pl0n3r/Factory"
+        )
+        action = record["next_action"]
+        self.assertIs(record["work_inventory"], inventory)
+        self.assertEqual(factory["state"], "READY")
+        self.assertEqual(factory["counts"]["available"], 0)
+        self.assertEqual(factory["counts"]["reserved"], 1)
+        self.assertEqual(factory["next_work"], "Factory#reserved")
+        self.assertIsNone(record["selected"])
+        self.assertFalse(action["session_selectable"])
+        self.assertEqual(action["work"]["key"], "factory:work-inventory")
+        self.assertNotEqual(action["work"]["key"], factory["next_work"])
 
     def test_uninterpretable_inventory_state_fails_closed(self):
         inventory = _inventory("NO_WORK")

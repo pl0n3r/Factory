@@ -35,6 +35,8 @@ def dispatch_record_with_inventory(
         return result
 
     project_states: dict[str, str] = {}
+    ready_with_available: list[str] = []
+    reserved_only_projects: list[str] = []
     for project in projection["projects"]:
         repository_ref = str(project["repository_ref"])
         state = str(project["state"])
@@ -42,15 +44,42 @@ def dispatch_record_with_inventory(
             raise WorkInventoryError("estado de inventario no canónico.")
         project_states[repository_ref] = state
 
-    if "READY" in project_states.values():
+        if state != "READY":
+            continue
+
+        counts = project.get("counts")
+        if not isinstance(counts, dict):
+            raise WorkInventoryError("inventario READY sin conteos canónicos.")
+        available = counts.get("available")
+        reserved = counts.get("reserved")
+        if (
+            type(available) is not int
+            or type(reserved) is not int
+            or available < 0
+            or reserved < 0
+        ):
+            raise WorkInventoryError("inventario READY con conteos inválidos.")
+        if available > 0:
+            ready_with_available.append(repository_ref)
+        elif reserved > 0:
+            reserved_only_projects.append(repository_ref)
+        else:
+            raise WorkInventoryError(
+                "inventario READY sin trabajo available/reserved."
+            )
+
+    if ready_with_available:
         raise WorkInventoryError(
-            "inventario READY sin candidato seleccionado; no declarar ausencia."
+            "inventario READY con trabajo disponible sin candidato seleccionado; "
+            "no declarar ausencia."
         )
 
     states_present = tuple(sorted(set(project_states.values())))
+    reserved_only = tuple(sorted(reserved_only_projects))
     result["inventory_no_candidate"] = {
         "project_states": project_states,
         "states_present": states_present,
+        "reserved_only_projects": reserved_only,
     }
 
     state_priority = (
@@ -58,6 +87,7 @@ def dispatch_record_with_inventory(
         "WAITING_DECISION",
         "LIVE_GATED",
         "ALL_BLOCKED",
+        "READY",
         "NO_WORK",
     )
     inventory_state = next(
@@ -69,10 +99,17 @@ def dispatch_record_with_inventory(
             "inventario sin candidato no contiene un estado interpretable."
         )
 
-    result["next_action"] = {
+    if inventory_state == "READY" and not reserved_only:
+        raise WorkInventoryError(
+            "inventario READY sin candidato no demuestra una reserva ajena."
+        )
+
+    action: dict[str, object] = {
         "step": (
             "materialize_inventory"
             if inventory_state == "UNMATERIALIZED_WORK"
+            else "reserved_inventory"
+            if inventory_state == "READY"
             else "inventory_state"
         ),
         "work": {
@@ -83,4 +120,11 @@ def dispatch_record_with_inventory(
         "project_states": project_states,
         "mutates": False,
     }
+    if inventory_state == "READY":
+        action.update({
+            "reason": "reserved_only_no_selectable_candidate",
+            "reserved_only_projects": reserved_only,
+            "session_selectable": False,
+        })
+    result["next_action"] = action
     return result
