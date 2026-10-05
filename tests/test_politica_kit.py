@@ -401,6 +401,253 @@ class T(unittest.TestCase):
         )
         self.assertEqual(result, (101, "2026-10-04T05:03:00Z"))
 
+    def test_rerun_attempt_accepts_owner_retry_and_exact_head_rate_limit_without_visible_old_policy_failure(self):
+        comments = [
+            owner_review_retry(created_at="2026-10-04T05:02:00Z"),
+            rate_limit_comment(
+                comment_id=301,
+                created_at="2026-10-04T05:03:00Z",
+                head_sha=HEAD,
+            ),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                status="in_progress",
+                conclusion=None,
+                completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", delete=False
+        ) as handle:
+            handle.write(json.dumps({"phase": "construccion"}))
+            phase_path = Path(handle.name)
+        self.addCleanup(lambda: phase_path.unlink(missing_ok=True))
+
+        result = validate_required_bot_review_or_fallback(
+            [],
+            "coderabbitai[bot]",
+            HEAD,
+            head_committed_at="2026-10-04T04:59:00Z",
+            comment_lines=comments,
+            check_lines=checks,
+            thread_lines=[],
+            phase_file=phase_path,
+            run_attempt=2,
+        )
+        self.assertTrue(result["review_fallback"])
+        self.assertEqual(result["rate_limit_comment_id"], 301)
+        self.assertEqual(result["rate_limit_created_at"], "2026-10-04T05:03:00Z")
+
+    def test_first_attempt_still_requires_visible_failed_policy_check(self):
+        comments = [
+            owner_review_retry(created_at="2026-10-04T05:02:00Z"),
+            rate_limit_comment(
+                comment_id=301,
+                created_at="2026-10-04T05:03:00Z",
+                head_sha=HEAD,
+            ),
+        ]
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                status="in_progress",
+                conclusion=None,
+            ),
+        ]
+        with self.assertRaises(PolicyError):
+            validate_rate_limit_fallback(
+                required_review_bot="coderabbitai[bot]",
+                head_sha=HEAD,
+                head_committed_at="2026-10-04T04:59:00Z",
+                phase="construccion",
+                review_lines=[],
+                comment_lines=comments,
+                check_lines=checks,
+                thread_lines=[],
+                run_attempt=1,
+            )
+
+    def test_rerun_attempt_without_owner_retry_or_exact_head_rate_limit_fails_closed(self):
+        checks = green_gate_checks() + [
+            check(
+                check_id=99,
+                name=policy.POLICY_CHECK_NAME,
+                status="in_progress",
+                conclusion=None,
+            ),
+        ]
+        valid_owner = owner_review_retry(created_at="2026-10-04T05:02:00Z")
+        valid_rate = rate_limit_comment(
+            comment_id=301,
+            created_at="2026-10-04T05:03:00Z",
+            head_sha=HEAD,
+        )
+        cases = (
+            {
+                "comments": [valid_rate],
+                "reviews": [],
+                "threads": [],
+                "phase": "construccion",
+                "checks": checks,
+            },
+            {
+                "comments": [
+                    owner_review_retry(association="MEMBER"),
+                    valid_rate,
+                ],
+                "reviews": [],
+                "threads": [],
+                "phase": "construccion",
+                "checks": checks,
+            },
+            {
+                "comments": [
+                    valid_owner,
+                    rate_limit_comment(
+                        comment_id=302,
+                        created_at="2026-10-04T05:03:00Z",
+                    ),
+                ],
+                "reviews": [],
+                "threads": [],
+                "phase": "construccion",
+                "checks": checks,
+            },
+            {
+                "comments": [
+                    valid_owner,
+                    rate_limit_comment(
+                        comment_id=303,
+                        created_at="2026-10-04T05:01:00Z",
+                        head_sha=HEAD,
+                    ),
+                ],
+                "reviews": [],
+                "threads": [],
+                "phase": "construccion",
+                "checks": checks,
+            },
+            {
+                "comments": [valid_owner, valid_rate],
+                "reviews": [],
+                "threads": [review_thread()],
+                "phase": "construccion",
+                "checks": checks,
+            },
+            {
+                "comments": [valid_owner, valid_rate],
+                "reviews": [
+                    review(
+                        review_id=77,
+                        state="CHANGES_REQUESTED",
+                        body="Finding bloqueante",
+                    )
+                ],
+                "threads": [],
+                "phase": "construccion",
+                "checks": checks,
+            },
+            {
+                "comments": [valid_owner, valid_rate],
+                "reviews": [],
+                "threads": [],
+                "phase": "live",
+                "checks": checks,
+            },
+            {
+                "comments": [valid_owner, valid_rate],
+                "reviews": [],
+                "threads": [],
+                "phase": "construccion",
+                "checks": checks + [
+                    check(
+                        check_id=120,
+                        name="security / external gate",
+                        conclusion="failure",
+                    )
+                ],
+            },
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                with self.assertRaises(PolicyError):
+                    validate_rate_limit_fallback(
+                        required_review_bot="coderabbitai[bot]",
+                        head_sha=HEAD,
+                        head_committed_at="2026-10-04T04:59:00Z",
+                        phase=case["phase"],
+                        review_lines=case["reviews"],
+                        comment_lines=case["comments"],
+                        check_lines=case["checks"],
+                        thread_lines=case["threads"],
+                        run_attempt=2,
+                    )
+
+    def test_invalid_run_attempt_fails_closed(self):
+        for value in (0, -1, True, "2", None):
+            with self.subTest(value=value):
+                with self.assertRaises(PolicyError):
+                    validate_required_bot_review_or_fallback(
+                        [],
+                        "",
+                        "",
+                        head_committed_at="",
+                        comment_lines=[],
+                        check_lines=[],
+                        thread_lines=[],
+                        phase_file=None,
+                        run_attempt=value,
+                    )
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(policy._run_attempt_from_env(), 1)
+        with patch.dict("os.environ", {"GITHUB_RUN_ATTEMPT": "2"}, clear=True):
+            self.assertEqual(policy._run_attempt_from_env(), 2)
+        for raw in ("", "0", "-1", "abc"):
+            with self.subTest(raw=raw):
+                with patch.dict("os.environ", {"GITHUB_RUN_ATTEMPT": raw}, clear=True):
+                    with self.assertRaises(PolicyError):
+                        policy._run_attempt_from_env()
+
+        class Options:
+            required_review_bot = ""
+            base_policy_file = ""
+            head_sha = ""
+            head_committed_at = ""
+            comments_file = ""
+            checks_file = ""
+            threads_file = ""
+            phase_file = ""
+
+        fake_policy = {"version": 1, "review_round_limit": 3, "decisions": []}
+        with (
+            patch.object(policy, "args", return_value=Options()),
+            patch.object(policy, "load_policy", return_value=fake_policy),
+            patch.object(
+                policy,
+                "validate_required_bot_review_or_fallback",
+                return_value={"review_fallback": False},
+            ) as validator,
+            patch("sys.stdin", __import__("io").StringIO("")),
+            patch("sys.stdout", new_callable=__import__("io").StringIO),
+            patch.dict("os.environ", {"GITHUB_RUN_ATTEMPT": "3"}, clear=True),
+        ):
+            self.assertEqual(policy.main(), 0)
+            self.assertEqual(validator.call_args.kwargs["run_attempt"], 3)
+
+        with (
+            patch.object(policy, "args", return_value=Options()),
+            patch("sys.stdin", __import__("io").StringIO("")),
+            patch("sys.stderr", new_callable=__import__("io").StringIO) as stderr,
+            patch.dict("os.environ", {"GITHUB_RUN_ATTEMPT": "0"}, clear=True),
+        ):
+            self.assertEqual(policy.main(), 1)
+            self.assertIn("GITHUB_RUN_ATTEMPT", stderr.getvalue())
+
     def test_in_place_rate_limit_update_without_owner_retry_stays_blocked(self):
         comments = [
             rate_limit_comment(

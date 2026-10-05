@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import tempfile
@@ -40,6 +41,21 @@ ALLOWED_GATE_CONCLUSIONS = {"success", "neutral", "skipped"}
 
 class PolicyError(ValueError):
     pass
+
+
+def _validate_run_attempt(value: object) -> int:
+    if type(value) is not int or value <= 0:
+        raise PolicyError("GITHUB_RUN_ATTEMPT debe ser un entero positivo.")
+    return value
+
+
+def _run_attempt_from_env() -> int:
+    raw = os.environ.get("GITHUB_RUN_ATTEMPT")
+    if raw is None:
+        return 1
+    if re.fullmatch(r"[1-9][0-9]*", raw) is None:
+        raise PolicyError("GITHUB_RUN_ATTEMPT inválido.")
+    return _validate_run_attempt(int(raw))
 
 
 def _resolve_temp_input(path: Path, *, noun: str) -> Path:
@@ -519,12 +535,13 @@ def _owner_review_retry_comments(
     return sorted(evidence)
 
 
-def _in_place_rate_limit_updates(
+def _exact_head_rate_limit_evidence(
     lines: list[str],
     *,
     required_review_bot: str,
     head_sha: str,
     not_before: str,
+    require_update: bool,
 ) -> list[tuple[str, int]]:
     evidence: list[tuple[str, int]] = []
     for item in parse_comments(lines):
@@ -539,15 +556,55 @@ def _in_place_rate_limit_updates(
         created_at = _parse_iso_timestamp(
             item.get("created_at"), noun="Timestamp original de comentario rate-limit"
         )
-        updated_at = _parse_iso_timestamp(
-            item.get("updated_at"), noun="Timestamp actualizado de comentario rate-limit"
-        )
-        if updated_at < created_at:
+        updated_raw = item.get("updated_at")
+        if require_update:
+            observed_at = _parse_iso_timestamp(
+                updated_raw, noun="Timestamp actualizado de comentario rate-limit"
+            )
+        elif updated_raw is None:
+            observed_at = created_at
+        else:
+            observed_at = _parse_iso_timestamp(
+                updated_raw, noun="Timestamp actualizado de comentario rate-limit"
+            )
+        if observed_at < created_at:
             raise PolicyError("Comentario rate-limit actualizado tiene timestamps incoherentes.")
-        if updated_at <= not_before:
+        if observed_at <= not_before:
             continue
-        evidence.append((updated_at, comment_id))
+        evidence.append((observed_at, comment_id))
     return sorted(evidence)
+
+
+def _in_place_rate_limit_updates(
+    lines: list[str],
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    not_before: str,
+) -> list[tuple[str, int]]:
+    return _exact_head_rate_limit_evidence(
+        lines,
+        required_review_bot=required_review_bot,
+        head_sha=head_sha,
+        not_before=not_before,
+        require_update=True,
+    )
+
+
+def _exact_head_rate_limit_events(
+    lines: list[str],
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    not_before: str,
+) -> list[tuple[str, int]]:
+    return _exact_head_rate_limit_evidence(
+        lines,
+        required_review_bot=required_review_bot,
+        head_sha=head_sha,
+        not_before=not_before,
+        require_update=False,
+    )
 
 
 def validate_rate_limit_fallback(
@@ -560,7 +617,9 @@ def validate_rate_limit_fallback(
     comment_lines: list[str],
     check_lines: list[str],
     thread_lines: list[str],
+    run_attempt: int = 1,
 ) -> tuple[int, str]:
+    run_attempt = _validate_run_attempt(run_attempt)
     if phase != "construccion":
         raise PolicyError("Fallback de reviewer solo permitido en construccion.")
     committed_at = _parse_iso_timestamp(
@@ -585,6 +644,28 @@ def validate_rate_limit_fallback(
         raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
 
     validate_other_gates_green(check_lines, head_sha=head_sha)
+
+    if run_attempt > 1:
+        owner_retries = _owner_review_retry_comments(
+            comment_lines,
+            required_review_bot=required_review_bot,
+            not_before=committed_at,
+        )
+        for retry_at, _retry_id in owner_retries:
+            if retry_at <= committed_at:
+                continue
+            rate_limit_events = _exact_head_rate_limit_events(
+                comment_lines,
+                required_review_bot=required_review_bot,
+                head_sha=head_sha,
+                not_before=retry_at,
+            )
+            if rate_limit_events:
+                return rate_limit_events[0][1], rate_limit_events[0][0]
+        raise PolicyError(
+            "Rerun sin reintento OWNER y rate-limit exact-HEAD posteriores verificables."
+        )
+
     failed_policy_checks: list[str] = []
     for check in parse_checks(check_lines):
         if (
@@ -651,7 +732,9 @@ def validate_required_bot_review_or_fallback(
     check_lines: list[str],
     thread_lines: list[str],
     phase_file: Path | None,
+    run_attempt: int = 1,
 ) -> dict[str, Any]:
+    run_attempt = _validate_run_attempt(run_attempt)
     if required_review_bot == "":
         return {"review_fallback": False}
     if _required_bot_review_satisfied(
@@ -672,6 +755,7 @@ def validate_required_bot_review_or_fallback(
         comment_lines=comment_lines,
         check_lines=check_lines,
         thread_lines=thread_lines,
+        run_attempt=run_attempt,
     )
     return {
         "review_fallback": True,
@@ -719,6 +803,7 @@ def main() -> int:
         return 1
     lines = review_payload.splitlines()
     try:
+        run_attempt = _run_attempt_from_env()
         policy = load_policy()
         base_required = load_reviewer_policy(
             Path(options.base_policy_file) if options.base_policy_file else None
@@ -764,6 +849,7 @@ def main() -> int:
             check_lines=check_lines,
             thread_lines=thread_lines,
             phase_file=Path(options.phase_file) if options.phase_file else None,
+            run_attempt=run_attempt,
         )
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
