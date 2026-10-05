@@ -360,7 +360,8 @@ class UnblockValidationTests(unittest.TestCase):
             coordinator.STATUS_AVAILABLE,
             coordinator.label_names(blocked),
         )
-        self.assertEqual(api.comments, [])
+        self.assertEqual(len(api.comments), 1)
+        self.assertIn("factory-unblock-evidence", api.comments[0][1])
 
     def test_first_auto_unblock_remains_idempotent(self) -> None:
         api, blocked, _fingerprint = self._reblock_fake_api()
