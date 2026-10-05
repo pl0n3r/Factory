@@ -136,6 +136,80 @@ legacy
                 {"progress": 50},
             )
 
+    def test_v2_validator_fails_closed_on_unsafe_contract_shapes(self) -> None:
+        cases = []
+
+        unsupported = copy.deepcopy(self.contract)
+        unsupported["version"] = 3
+        cases.append(("unsupported_version", unsupported))
+
+        missing_live = copy.deepcopy(self.contract)
+        missing_live["live_status"] = None
+        cases.append(("missing_live_status", missing_live))
+
+        missing_compatibility = copy.deepcopy(self.contract)
+        missing_compatibility["compatibility"] = None
+        cases.append(("missing_compatibility", missing_compatibility))
+
+        refresh_commits = copy.deepcopy(self.contract)
+        refresh_commits["live_status"]["commits_for_refresh"] = True
+        cases.append(("refresh_commits", refresh_commits))
+
+        unknown_tables = copy.deepcopy(self.contract)
+        unknown_tables["live_status"]["unknown_placeholder_tables"] = True
+        cases.append(("unknown_tables", unknown_tables))
+
+        progress_rendering = copy.deepcopy(self.contract)
+        progress_rendering["live_status"]["renders_progress_readiness"] = True
+        cases.append(("progress_rendering", progress_rendering))
+
+        incompatible_transition = copy.deepcopy(self.contract)
+        incompatible_transition["compatibility"]["accepted_versions_during_migration"] = [2]
+        cases.append(("incompatible_transition", incompatible_transition))
+
+        generated_status = copy.deepcopy(self.contract)
+        generated_status["content_policy"]["v2_has_generated_status_blocks"] = True
+        cases.append(("generated_status", generated_status))
+
+        no_legacy_blocks = copy.deepcopy(self.contract)
+        no_legacy_blocks["derived_blocks"] = None
+        validate_readme(self.v2_readme, no_legacy_blocks, self.metadata, {}, None)
+
+        for name, contract in cases:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_readme(self.v2_readme, contract, self.metadata, {}, None)
+
+    def test_v2_validator_requires_nonempty_readme_and_live_destinations(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_readme("   ", self.contract, self.metadata, {}, None)
+
+        missing_actions = self.v2_readme.replace(
+            "https://github.com/pl0n3r/Factory/actions",
+            "https://example.test/ci",
+        )
+        with self.assertRaises(ValueError):
+            validate_readme(missing_actions, self.contract, self.metadata, {}, None)
+
+        missing_releases = self.v2_readme.replace(
+            "https://github.com/pl0n3r/Factory/releases/latest",
+            "https://github.com/pl0n3r/Factory/tags",
+        )
+        with self.assertRaises(ValueError):
+            validate_readme(missing_releases, self.contract, self.metadata, {}, None)
+
+        missing_orchestrator = self.v2_readme.replace(
+            "https://control.condorapp.com.co/",
+            "https://github.com/pl0n3r/Factory/issues",
+        )
+        with self.assertRaises(ValueError):
+            validate_readme(
+                missing_orchestrator,
+                self.contract,
+                self.metadata,
+                {},
+                None,
+            )
+
     def test_docs_keep_readme_out_of_readiness_authority_and_define_rollback(self) -> None:
         for token in (
             "GitHub Actions",
