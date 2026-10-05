@@ -162,6 +162,14 @@ control.condorapp.com.co
     def test_v2_validator_accepts_allowlisted_actions_releases_and_orchestrator_links(self) -> None:
         validate_readme(self.v2_readme, self.contract, self.metadata, {}, None)
 
+    def test_v2_validator_rejects_noncanonical_orchestrator_path(self) -> None:
+        wrong_path = self.v2_readme.replace(
+            "https://control.condorapp.com.co/",
+            "https://control.condorapp.com.co/cualquier-cosa",
+        )
+        with self.assertRaises(ValueError):
+            validate_readme(wrong_path, self.contract, self.metadata, {}, None)
+
     def test_v2_validator_rejects_legacy_rendering_and_progress_snapshot(self) -> None:
         with self.assertRaises(ValueError):
             validate_readme(
