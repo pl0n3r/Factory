@@ -18,6 +18,32 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "readme" / "contract.json"
 TEMPLATE_PATH = ROOT / "readme" / "template.md"
 
+LEGACY_TEMPLATE = """# Legacy README v1
+
+## Operational Cockpit
+
+<!-- factory:status:start -->
+| Señal | Estado |
+| --- | --- |
+| main SHA | UNKNOWN |
+| versión | UNKNOWN |
+| CI | UNKNOWN |
+| release | UNKNOWN |
+| health | UNKNOWN |
+| smoke/observer | UNKNOWN |
+| quality/security | UNKNOWN |
+| Issue activo | UNKNOWN |
+| PR activo | UNKNOWN |
+| último release | UNKNOWN |
+<!-- factory:status:end -->
+
+### Progress + Readiness
+
+<!-- factory:progress-readiness:start -->
+legacy progress
+<!-- factory:progress-readiness:end -->
+"""
+
 
 class ReadmeProgressTests(unittest.TestCase):
     def payload(self):
@@ -288,10 +314,10 @@ class ReadmeProgressTests(unittest.TestCase):
         with self.assertRaises(ProgressReadinessError):
             canonical_payload({"version": 1})
 
-
     def readme_inputs(self):
         contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
-        template = TEMPLATE_PATH.read_text(encoding="utf-8")
+        contract["version"] = 1
+        template = LEGACY_TEMPLATE
         metadata = {
             "name": "Factory",
             "tagline": "Gobernanza reproducible",

@@ -1,3 +1,4 @@
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -13,28 +14,142 @@ from readme.validate_readme import validate_readme
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "readme" / "contract.json"
-TEMPLATE = ROOT / "readme" / "template.md"
-DOCS = ROOT / "docs" / "readme-contract.md"
 REUSABLE_WORKFLOW = ROOT / ".github" / "workflows" / "readme.yml"
 TEMPLATE_CALLER = ROOT / "template" / ".github" / "workflows" / "readme-contract.yml"
 TEMPLATE_PROJECT = ROOT / "template" / "readme" / "project.json"
-TEMPLATE_BOOTSTRAP_README = ROOT / "template" / "README.md"
 FACTORY_PROJECT = ROOT / "readme" / "projects" / "factory.json"
 FACTORY_README = ROOT / "README.md"
 DERIVED_VIEWS = ROOT / "config" / "derived_views.json"
+
+LEGACY_TEMPLATE = """# {{project.name}}
+
+> {{project.tagline}}
+
+**Rol en la fábrica:** {{project.role}} · **Fase:** {{project.phase}} · **Roadmap:** {{project.roadmap}}
+
+## Operational Cockpit
+
+<!-- factory:status:start -->
+| Señal | Estado |
+| --- | --- |
+| main SHA | UNKNOWN |
+| versión | UNKNOWN |
+| CI | UNKNOWN |
+| release | UNKNOWN |
+| health | UNKNOWN |
+| smoke/observer | UNKNOWN |
+| quality/security | UNKNOWN |
+| Issue activo | UNKNOWN |
+| PR activo | UNKNOWN |
+| último release | UNKNOWN |
+<!-- factory:status:end -->
+
+### Progress + Readiness
+
+<!-- factory:progress-readiness:start -->
+| Señal | Estado |
+| --- | --- |
+| Target | UNKNOWN |
+| Progress | UNKNOWN |
+| Readiness | UNKNOWN |
+| Evidence freshness | UNKNOWN |
+| Critical blockers | UNKNOWN |
+| Trend | UNKNOWN |
+
+| Dimensión | Progress | Readiness |
+| --- | --- | --- |
+| UNKNOWN | UNKNOWN | UNKNOWN |
+<!-- factory:progress-readiness:end -->
+
+> Este bloque es derivado. UNKNOWN/PENDING significa que falta evidencia canónica; nunca debe sustituirse por GREEN sin evidencia.
+
+## Work Queue
+
+- **NOW:** enlazar el trabajo activo canónico.
+- **NEXT:** enlazar el siguiente trabajo ready.
+- **LATER:** enlazar la planificación posterior.
+- **BLOCKED:** enlazar bloqueos vigentes.
+
+Esta vista resume; no duplica el Roadmap ni actúa como changelog.
+
+## Qué hace el producto
+
+Describe capacidades permanentes y el problema que resuelve. Los detalles efímeros pertenecen al PR, Release o Roadmap.
+
+## Arquitectura en 60 segundos
+
+```mermaid
+flowchart LR
+    U[Usuario / agente] --> P[{{project.name}}]
+    P --> F[Factory contracts]
+```
+
+Mantén aquí solo los límites y dependencias que un lector necesita para orientarse.
+
+## Stack e infraestructura
+
+**Stack declarado:** {{project.stack}}
+
+Documenta runtime, backend/frontend cuando apliquen, datos, hosting, observabilidad y storage desde metadata estable.
+
+## Ciclo de entrega
+
+Issue → reserva → branch → PR → Factory CI → review → merge → release → deploy → smoke → GREEN.
+
+## Calidad y seguridad
+
+Enlaza gates, definición de salud, política de secretos, backup, migraciones y rollback. No publiques secretos ni evidencia sensible.
+
+## Roadmap y fuentes de verdad
+
+- Roadmap: {{project.roadmap}}
+- Decisiones: `decisiones.yml`
+- Contrato local: `AGENTES.md` / `AGENTS.md`
+- Especificaciones y documentación profunda: `docs/`
+
+El README enlaza estas fuentes; no las copia.
+
+## Desarrollo local
+
+Documenta únicamente comandos reales y reproducibles de install, test, build, análisis estático y desarrollo.
+
+## Mapa de la fábrica
+
+- **Factory:** governance/kit.
+- **ControlBot:** control plane privado.
+- **FactoryRunner:** execution plane.
+- **Condor / GrindFlow / BRVTAL:** productos.
+- **AutoFactory:** herramienta local/manual.
+
+Destaca el repositorio actual sin alterar estas responsabilidades.
+"""
+
+LEGACY_DOCS = """README Contract v1.
+Los markers son frontera de escritura.
+`tagline`: propósito breve visible.
+No se versionan manualmente como metadata las señales operativas.
+No conserva una copia completa del Roadmap.
+GitHub Releases para entregas.
+"""
 
 
 class ReadmeContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        """Carga una sola vez los artefactos del contrato para la suite."""
-        cls.contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        cls.template = TEMPLATE.read_text(encoding="utf-8")
-        cls.docs = DOCS.read_text(encoding="utf-8")
+        """Carga un fixture v1 explícito y los consumidores legacy aún vigentes."""
+        canonical_contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        cls.contract = copy.deepcopy(canonical_contract)
+        cls.contract["version"] = 1
+        for section in cls.contract["sections"]:
+            if section["id"] == "operational_cockpit":
+                section["ownership"] = "derived"
+        cls.contract["content_policy"]["readme_is_not"] = ["roadmap", "changelog"]
+        cls.template = LEGACY_TEMPLATE
+        cls.docs = LEGACY_DOCS
         cls.reusable_workflow = REUSABLE_WORKFLOW.read_text(encoding="utf-8")
         cls.template_caller = TEMPLATE_CALLER.read_text(encoding="utf-8")
         cls.template_project = json.loads(TEMPLATE_PROJECT.read_text(encoding="utf-8"))
-        cls.template_bootstrap_readme = TEMPLATE_BOOTSTRAP_README.read_text(encoding="utf-8")
+        cls.template_bootstrap_readme = LEGACY_TEMPLATE
         cls.factory_project = json.loads(FACTORY_PROJECT.read_text(encoding="utf-8"))
         cls.factory_readme = FACTORY_README.read_text(encoding="utf-8")
         cls.derived_views = json.loads(DERIVED_VIEWS.read_text(encoding="utf-8"))
@@ -129,7 +244,6 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("Esta vista resume; no duplica el Roadmap", self.template)
         self.assertIn("No conserva una copia completa del Roadmap", self.docs)
         self.assertIn("GitHub Releases para entregas", self.docs)
-
 
     def test_generation_is_deterministic(self):
         """Mismos inputs generan exactamente el mismo cockpit."""
@@ -229,7 +343,6 @@ class ReadmeContractTests(unittest.TestCase):
                 {"deployment_url": "https://example.test"},
             )
 
-
     def test_factory_metadata_matches_contract_v1(self):
         """Factory declara solo metadata estable y exactamente la exigida por v1."""
         required = set(self.contract["project_metadata"]["required"])
@@ -324,7 +437,6 @@ class ReadmeContractTests(unittest.TestCase):
             self.factory_readme,
         )
 
-
     def test_factory_1_0_7_candidate_includes_readme_contract_reusable(self):
         """Todo candidato >=1.0.7 conserva la capacidad README publicada por @v1."""
         version = json.loads((ROOT / "config" / "version.json").read_text(encoding="utf-8"))
@@ -377,7 +489,7 @@ class ReadmeContractTests(unittest.TestCase):
         validate_project_metadata(self.contract, self.template_project)
 
     def test_template_readme_bootstraps_contract_v1(self):
-        """El README del template nace válido y con cockpit UNKNOWN."""
+        """El fixture legacy v1 sigue siendo válido y fail-closed."""
         for section in self.contract["sections"][1:]:
             self.assertIn(f"## {section['title']}", self.template_bootstrap_readme)
         status = self.contract["derived_blocks"]["status"]

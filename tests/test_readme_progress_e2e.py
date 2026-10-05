@@ -13,8 +13,22 @@ from readme.progress_readiness import (
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "readme" / "projects" / "progress-readiness" / "condor.json"
 CONTRACT = ROOT / "readme" / "contract.json"
-TEMPLATE = ROOT / "readme" / "template.md"
 DOCS = ROOT / "docs" / "readme-progress-readiness.md"
+
+LEGACY_TEMPLATE = """# Legacy README v1
+
+## Operational Cockpit
+
+<!-- factory:status:start -->
+legacy status
+<!-- factory:status:end -->
+
+### Progress + Readiness
+
+<!-- factory:progress-readiness:start -->
+legacy progress
+<!-- factory:progress-readiness:end -->
+"""
 
 
 class ReadmeProgressE2ETests(unittest.TestCase):
@@ -23,7 +37,8 @@ class ReadmeProgressE2ETests(unittest.TestCase):
 
     def readme_inputs(self):
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        template = TEMPLATE.read_text(encoding="utf-8")
+        contract["version"] = 1
+        template = LEGACY_TEMPLATE
         metadata = {
             "name": "Condor",
             "tagline": "SaaS B2B Colombia-first",

@@ -1,19 +1,41 @@
-# README Contract v1
+# README Contract v2
 
-README Contract v1 convierte el README en una **portada operativa**, no en una segunda base de datos. Define una anatomía común para los repos gobernados por Factory y reserva la generación automática a bloques delimitados cuya fuente real vive en otra parte.
+README Contract v2 convierte el README en una **portada corta con enlaces y señales vivas**, no en una segunda base de datos ni en un tablero calculado por commits.
 
-## Límite del sistema
+## Qué cambia
 
-El contrato separa dos clases de contenido:
+Contract v1 reservaba bloques para `Operational Cockpit` y `Progress + Readiness`. Cuando no llegaba evidencia, el generador escribía tablas completas con valores `UNKNOWN`. Como esas señales no tenían un productor vivo común, la portada terminaba mostrando ausencia de datos en lugar de información útil.
 
-1. **Contenido humano estable:** propósito, arquitectura, stack, delivery, calidad, desarrollo y contexto.
-2. **Contenido derivado:** señales operativas que pueden comprobarse contra una fuente canónica.
+Contract v2 elimina esos bloques de los README migrados:
 
-El generador de la fase ENGINE solo podrá modificar bloques declarados en `readme/contract.json`. Todo byte fuera de esos markers pertenece a la narrativa humana y debe preservarse.
+- no renderiza tablas de estado con placeholders;
+- no renderiza `Progress + Readiness`;
+- no calcula progreso ni readiness;
+- no crea commits periódicos para refrescar una portada;
+- conserva narrativa humana estable y enlaza las fuentes que ya son autoridad.
 
-## Anatomía común
+El motor `readme/progress_readiness.py` y sus schemas no cambian. Siguen disponibles como biblioteca para consumidores que tengan evidencia canónica, por ejemplo el Orquestador. Simplemente dejan de formar parte del README v2.
 
-Todo consumidor conserva estas once superficies informativas:
+## Estado vivo
+
+Un README v2 presenta solo señales que pueden actualizarse sin modificar `main`:
+
+1. **GitHub Actions:** insignia del workflow principal sobre `main` y enlace a Actions.
+2. **GitHub Releases:** insignia de la última release y enlace a Releases.
+3. **`/health` público:** opcional. Se añade únicamente si el producto ya expone un endpoint público real. Puede presentarse con una insignia dinámica de Shields que consulte ese endpoint; nunca se inventa un valor alternativo.
+4. **Orquestador de ControlBot:** enlace al detalle operativo global cuando se necesita más contexto.
+
+Si una fuente opcional no existe, no tiene acceso público seguro o no puede demostrarse, **la señal se omite**. La ausencia de señal no significa cero progreso, mala salud, buena salud ni readiness desconocido. El README no tiene autoridad para inferir ninguna de esas cosas.
+
+## Sin commits de refresco
+
+Las insignias de GitHub/Shields se resuelven al visualizar la página. El README no ejecuta cron, no llama producción desde un generador y no hace commits automáticos para cambiar estado.
+
+Esto evita que un cambio puramente visual mueva `main`, dispare de nuevo gates de release o cree ruido de historial.
+
+## Narrativa humana
+
+Se mantienen las once superficies del contrato durante la transición para no romper el check reutilizable:
 
 1. Hero / Project Card.
 2. Operational Cockpit.
@@ -27,72 +49,43 @@ Todo consumidor conserva estas once superficies informativas:
 10. Desarrollo local.
 11. Mapa de la fábrica.
 
-La anatomía es común; el branding, el tono y la profundidad siguen perteneciendo a cada proyecto.
+En v2 deben ser breves. Issues, PRs, Releases, documentación profunda y el Orquestador conservan el detalle temporal.
 
-## Metadata mínima
+## Transición v1 → v2
 
-La metadata estable del proyecto declara:
+La migración es deliberadamente compatible:
 
-- `name`: identidad visible;
-- `tagline`: propósito breve visible en el Hero / Project Card;
-- `role`: papel arquitectónico dentro de la fábrica;
-- `phase`: `construction` o `live`;
-- `roadmap`: referencia al Roadmap canónico;
-- `stack`: descripción estructurada del stack estable.
+- `contract.json.version` es `2`;
+- el contrato conserva internamente la definición de los markers v1 como `legacy_v1_only`;
+- `readme/validate_readme.py` acepta un README v1 mientras todavía contenga sus markers legados y lo valida con el generador v1 existente;
+- un README sin esos markers se trata como v2 y debe usar fuentes vivas;
+- no se retira la compatibilidad v1 hasta que todos los consumidores hayan migrado con sus propios PR.
 
-No se versionan manualmente como metadata de proyecto SHA, versión activa, CI, release, health, smoke, quality, Issue/PR activo ni último release. Esas señales son operativas y deben llegar como evidencia derivada.
+Así, actualizar Factory no invalida de golpe Condor, GrindFlow, BRVTAL, FactoryRunner, ControlBot o AutoFactory.
 
-## Bloques derivados
+## Reglas del validador v2
 
-Contract v1 declara inicialmente un bloque:
+Un README v2 falla cerrado si:
 
-```text
-<!-- factory:status:start -->
-...estado derivado...
-<!-- factory:status:end -->
-```
+- conserva markers o tablas legadas de estado/progreso;
+- intenta volver a renderizar `Progress + Readiness`;
+- el contrato permite commits de refresco;
+- no enlaza GitHub Actions o GitHub Releases;
+- no conserva el enlace al Orquestador para el detalle operativo.
 
-Los markers son frontera de escritura. Una implementación que no encuentre exactamente el bloque esperado debe fallar cerrado; nunca debe ampliar el área editable para “arreglar” un README.
+El `/health` es opcional porque no todos los repos lo exponen de forma pública. Cuando exista, su URL debe ser pública, no contener secretos y representar el estado real del propio producto.
 
-## Estados y evidencia
+## Fuentes permitidas
 
-Las señales derivadas admiten:
+Contract v2 reconoce estas clases de fuente:
 
-- `GREEN`: existe evidencia suficiente y verificable de estado sano;
-- `DEGRADED`: existe evidencia suficiente y verificable de degradación;
-- `PENDING`: la evidencia está en proceso o todavía no es terminal;
-- `UNKNOWN`: no existe evidencia utilizable.
+- `github_actions`;
+- `github_releases`;
+- `public_health` (opcional);
+- `controlbot_orchestrator` (opcional para detalle).
 
-GREEN y DEGRADED requieren evidencia. Ausencia de datos **nunca** equivale a GREEN ni debe ocultar una degradación conocida. El README tampoco convierte un merge o deploy en producción validada sin la evidencia que exija el proyecto.
-
-## Work Queue sin duplicar Roadmap
-
-La cola visible usa únicamente NOW / NEXT / LATER / BLOCKED como resumen y enlaza las fuentes canónicas. No conserva una copia completa del Roadmap ni un historial de releases.
-
-El detalle temporal pertenece a:
-
-- GitHub Issues/Roadmap para planificación;
-- Pull Requests para el cambio en revisión;
-- GitHub Releases para entregas;
-- `docs/` para documentación profunda.
-
-## Compatibilidad y evolución
-
-`contract.json.version` versiona el contrato de información. Cambios incompatibles en secciones, metadata obligatoria o semántica de markers requieren una evolución explícita del contrato.
-
-Los consumidores no deben reinterpretar silenciosamente un contrato nuevo como si fuera v1.
+No son fuentes válidas para la portada: estimaciones inventadas, porcentajes manuales de progreso, snapshots sin provenance, secretos, credenciales, datos privados ni resultados derivados por un commit automático del README.
 
 ## Reversión
 
-La reversión segura es retirar generación/validación y conservar el Markdown resultante como contenido humano normal. Nunca se promueve el README a fuente canónica para poder revertir el mecanismo.
-
-## Seguridad y privacidad
-
-La metadata estable no debe contener secretos, tokens, cookies, credenciales, payloads sensibles ni datos operativos que pertenezcan a otra fuente. El cockpit solo presenta evidencia sanitizada y apta para la portada del repositorio.
-
-## Próximas fases
-
-- **ENGINE (#262):** funciones deterministas de generación y drift validation, reutilizando `intelligence/derived_views.py`.
-- **ENFORCEMENT (#263):** reusable check y bootstrap del template.
-- **FACTORY_ADOPTION (#264):** adopción de referencia en el README de Factory.
-- Rollout a otros repos: trabajo posterior y dirigido en cada repositorio; no forma parte de este slice.
+La reversión es un `revert` del cambio de contrato. Los consumidores que todavía estén en v1 siguen validados durante toda la transición. Un README nunca se convierte en fuente canónica de estado, por lo que revertir su presentación no modifica la realidad operativa.
