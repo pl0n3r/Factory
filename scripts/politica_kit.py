@@ -535,12 +535,13 @@ def _owner_review_retry_comments(
     return sorted(evidence)
 
 
-def _in_place_rate_limit_updates(
+def _exact_head_rate_limit_evidence(
     lines: list[str],
     *,
     required_review_bot: str,
     head_sha: str,
     not_before: str,
+    require_update: bool,
 ) -> list[tuple[str, int]]:
     evidence: list[tuple[str, int]] = []
     for item in parse_comments(lines):
@@ -555,15 +556,39 @@ def _in_place_rate_limit_updates(
         created_at = _parse_iso_timestamp(
             item.get("created_at"), noun="Timestamp original de comentario rate-limit"
         )
-        updated_at = _parse_iso_timestamp(
-            item.get("updated_at"), noun="Timestamp actualizado de comentario rate-limit"
-        )
-        if updated_at < created_at:
+        updated_raw = item.get("updated_at")
+        if require_update:
+            observed_at = _parse_iso_timestamp(
+                updated_raw, noun="Timestamp actualizado de comentario rate-limit"
+            )
+        elif updated_raw is None:
+            observed_at = created_at
+        else:
+            observed_at = _parse_iso_timestamp(
+                updated_raw, noun="Timestamp actualizado de comentario rate-limit"
+            )
+        if observed_at < created_at:
             raise PolicyError("Comentario rate-limit actualizado tiene timestamps incoherentes.")
-        if updated_at <= not_before:
+        if observed_at <= not_before:
             continue
-        evidence.append((updated_at, comment_id))
+        evidence.append((observed_at, comment_id))
     return sorted(evidence)
+
+
+def _in_place_rate_limit_updates(
+    lines: list[str],
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    not_before: str,
+) -> list[tuple[str, int]]:
+    return _exact_head_rate_limit_evidence(
+        lines,
+        required_review_bot=required_review_bot,
+        head_sha=head_sha,
+        not_before=not_before,
+        require_update=True,
+    )
 
 
 def _exact_head_rate_limit_events(
@@ -573,34 +598,13 @@ def _exact_head_rate_limit_events(
     head_sha: str,
     not_before: str,
 ) -> list[tuple[str, int]]:
-    evidence: list[tuple[str, int]] = []
-    for item in parse_comments(lines):
-        identity = _rate_limit_comment_identity(
-            item, required_review_bot=required_review_bot
-        )
-        if identity is None:
-            continue
-        body, comment_id = identity
-        if head_sha not in body:
-            continue
-        created_at = _parse_iso_timestamp(
-            item.get("created_at"), noun="Timestamp original de comentario rate-limit"
-        )
-        observed_at = created_at
-        updated_raw = item.get("updated_at")
-        if updated_raw is not None:
-            updated_at = _parse_iso_timestamp(
-                updated_raw, noun="Timestamp actualizado de comentario rate-limit"
-            )
-            if updated_at < created_at:
-                raise PolicyError(
-                    "Comentario rate-limit actualizado tiene timestamps incoherentes."
-                )
-            observed_at = updated_at
-        if observed_at <= not_before:
-            continue
-        evidence.append((observed_at, comment_id))
-    return sorted(evidence)
+    return _exact_head_rate_limit_evidence(
+        lines,
+        required_review_bot=required_review_bot,
+        head_sha=head_sha,
+        not_before=not_before,
+        require_update=False,
+    )
 
 
 def validate_rate_limit_fallback(
