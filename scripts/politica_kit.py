@@ -34,6 +34,7 @@ MAX_PHASE_BYTES = 512 * 1024
 MAX_EVIDENCE_ITEM_BYTES = 100_000
 RATE_LIMIT_TEXTS = ("Review rate limited", "Review limit reached")
 POLICY_CHECK_NAME = "Factory policy / Validar decisiones y límite de revisión"
+ACCEPTANCE_CHECK_NAME = "acceptance / Criterios de aceptación"
 ALLOWED_GATE_CONCLUSIONS = {"success", "neutral", "skipped"}
 
 
@@ -366,7 +367,7 @@ def validate_other_gates_green(
 
     successful_names: list[str] = []
     for name, check in latest.items():
-        if name == POLICY_CHECK_NAME or name == "Validar":
+        if name in {POLICY_CHECK_NAME, ACCEPTANCE_CHECK_NAME, "Validar"}:
             continue
         status = check.get("status")
         conclusion = check.get("conclusion")
