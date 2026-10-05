@@ -6,39 +6,15 @@
 
 ## Operational Cockpit
 
-<!-- factory:status:start -->
-| Señal | Estado |
-| --- | --- |
-| main SHA | UNKNOWN |
-| versión | UNKNOWN |
-| CI | UNKNOWN |
-| release | UNKNOWN |
-| health | UNKNOWN |
-| smoke/observer | UNKNOWN |
-| quality/security | UNKNOWN |
-| Issue activo | UNKNOWN |
-| PR activo | UNKNOWN |
-| último release | UNKNOWN |
-<!-- factory:status:end -->
+### Estado vivo
 
-### Progress + Readiness
+[![CI main](https://img.shields.io/github/actions/workflow/status/pl0n3r/{{project.name}}/{{live.ci_workflow}}?branch=main&label=CI%20main)](https://github.com/pl0n3r/{{project.name}}/actions)
+[![Release](https://img.shields.io/github/v/release/pl0n3r/{{project.name}}?display_name=tag&label=release)](https://github.com/pl0n3r/{{project.name}}/releases/latest)
 
-<!-- factory:progress-readiness:start -->
-| Señal | Estado |
-| --- | --- |
-| Target | UNKNOWN |
-| Progress | UNKNOWN |
-| Readiness | UNKNOWN |
-| Evidence freshness | UNKNOWN |
-| Critical blockers | UNKNOWN |
-| Trend | UNKNOWN |
+- **Producción:** si el proyecto expone un `/health` público, su migración v2 añade una insignia dinámica que consulta ese endpoint. Si no existe una fuente pública real, la señal se omite.
+- **Detalle operativo:** [Orquestador de ControlBot](https://control.condorapp.com.co/).
 
-| Dimensión | Progress | Readiness |
-| --- | --- | --- |
-| UNKNOWN | UNKNOWN | UNKNOWN |
-<!-- factory:progress-readiness:end -->
-
-> Este bloque es derivado. UNKNOWN/PENDING significa que falta evidencia canónica; nunca debe sustituirse por GREEN sin evidencia.
+Las insignias se actualizan desde sus fuentes al consultar el README. No hay commits periódicos de refresco y la ausencia de una señal no se convierte en progreso, readiness ni estado sintético.
 
 ## Work Queue
 
@@ -51,7 +27,7 @@ Esta vista resume; no duplica el Roadmap ni actúa como changelog.
 
 ## Qué hace el producto
 
-Describe capacidades permanentes y el problema que resuelve. Los detalles efímeros pertenecen al PR, Release o Roadmap.
+Describe en pocas líneas las capacidades permanentes y el problema que resuelve. El detalle efímero pertenece a Issues, PRs, Releases o al Orquestador.
 
 ## Arquitectura en 60 segundos
 
@@ -61,34 +37,35 @@ flowchart LR
     P --> F[Factory contracts]
 ```
 
-Mantén aquí solo los límites y dependencias que un lector necesita para orientarse.
+Mantén solo los límites y dependencias necesarios para orientarse.
 
 ## Stack e infraestructura
 
 **Stack declarado:** {{project.stack}}
 
-Documenta runtime, backend/frontend cuando apliquen, datos, hosting, observabilidad y storage desde metadata estable.
+Resume runtime, datos, hosting y storage estables. El estado operativo vivo pertenece a sus fuentes.
 
 ## Ciclo de entrega
 
-Issue → reserva → branch → PR → Factory CI → review → merge → release → deploy → smoke → GREEN.
+Issue → reserva → branch → PR → Factory CI → review → merge → release → deploy → smoke.
 
 ## Calidad y seguridad
 
-Enlaza gates, definición de salud, política de secretos, backup, migraciones y rollback. No publiques secretos ni evidencia sensible.
+Enlaza gates, política de secretos, backup, migraciones y rollback. No publiques secretos ni conviertas ausencia de evidencia en una afirmación de salud.
 
 ## Roadmap y fuentes de verdad
 
 - Roadmap: {{project.roadmap}}
 - Decisiones: `decisiones.yml`
 - Contrato local: `AGENTES.md` / `AGENTS.md`
-- Especificaciones y documentación profunda: `docs/`
+- Especificaciones: `docs/`
+- Estado vivo: GitHub Actions, GitHub Releases, `/health` público cuando exista y ControlBot.
 
-El README enlaza estas fuentes; no las copia.
+El README enlaza estas fuentes; no las copia ni calcula progreso.
 
 ## Desarrollo local
 
-Documenta únicamente comandos reales y reproducibles de install, test, build, análisis estático y desarrollo.
+Documenta solo comandos reales y reproducibles de install, test, build, análisis estático y desarrollo.
 
 ## Mapa de la fábrica
 
