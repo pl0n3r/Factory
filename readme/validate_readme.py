@@ -163,8 +163,8 @@ def _validate_live_destinations(
     ):
         raise ValueError("README v2 debe enlazar GitHub Releases real.")
     if not any(
-        host == "control.condorapp.com.co"
-        for host, _path in parsed_destinations
+        host == "control.condorapp.com.co" and path == "/"
+        for host, path in parsed_destinations
     ):
         raise ValueError("README v2 debe enlazar el Orquestador real.")
 
