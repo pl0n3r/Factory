@@ -1,9 +1,9 @@
 {
-  "version": 1,
+  "version": 2,
   "contract_id": "factory.readme",
   "sections": [
     {"id": "hero", "title": "Hero / Project Card", "ownership": "human"},
-    {"id": "operational_cockpit", "title": "Operational Cockpit", "ownership": "derived"},
+    {"id": "operational_cockpit", "title": "Operational Cockpit", "ownership": "platform"},
     {"id": "work_queue", "title": "Work Queue", "ownership": "human"},
     {"id": "product", "title": "Qué hace el producto", "ownership": "human"},
     {"id": "architecture", "title": "Arquitectura en 60 segundos", "ownership": "human"},
@@ -19,8 +19,20 @@
     "phase_values": ["construction", "live"],
     "forbidden_operational_fields": ["main_sha", "version", "ci", "release", "health", "smoke", "quality", "active_issue", "active_pr", "last_release"]
   },
+  "live_status": {
+    "ownership": "platform",
+    "refresh_mode": "request_time",
+    "commits_for_refresh": false,
+    "required_sources": ["github_actions", "github_releases"],
+    "optional_sources": ["public_health", "controlbot_orchestrator"],
+    "allowed_hosts": ["github.com", "img.shields.io", "control.condorapp.com.co"],
+    "unknown_placeholder_tables": false,
+    "renders_progress_readiness": false,
+    "missing_optional_source": "omit"
+  },
   "derived_blocks": {
     "status": {
+      "lifecycle": "legacy_v1_only",
       "start_marker": "<!-- factory:status:start -->",
       "end_marker": "<!-- factory:status:end -->",
       "fields": ["main_sha", "version", "ci", "release", "health", "smoke", "quality", "active_issue", "active_pr", "last_release"],
@@ -29,6 +41,7 @@
       "terminal_states_require_evidence": ["GREEN", "DEGRADED"]
     },
     "progress_readiness": {
+      "lifecycle": "legacy_v1_only",
       "start_marker": "<!-- factory:progress-readiness:start -->",
       "end_marker": "<!-- factory:progress-readiness:end -->",
       "fields": ["target", "progress", "readiness", "evidence_freshness", "critical_blockers", "dimensions", "trend"],
@@ -41,14 +54,19 @@
   "content_policy": {
     "generated_only_within_declared_markers": true,
     "preserve_human_content_byte_for_byte": true,
-    "readme_is_not": ["roadmap", "changelog"],
+    "v2_has_generated_status_blocks": false,
+    "v2_forbids_progress_readiness_rendering": true,
+    "readme_is_not": ["roadmap", "changelog", "readiness_authority"],
     "work_queue_labels": ["NOW", "NEXT", "LATER", "BLOCKED"],
     "deep_documentation_root": "docs/",
     "canonical_sources_are_links_not_copies": true
   },
   "compatibility": {
+    "accepted_versions_during_migration": [1, 2],
+    "legacy_v1_markers_supported": true,
+    "v1_retirement_requires_all_consumers_migrated": true,
     "contract_changes_require_versioning": true,
     "unknown_fields_fail_closed": true,
-    "rollback": "Retirar la validación/generación y conservar el Markdown humano; nunca promover el README a fuente canónica."
+    "rollback": "Revertir Contract v2 y conservar los README v1 hasta completar una migración coordinada; nunca promover el README a fuente canónica."
   }
 }
