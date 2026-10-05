@@ -109,6 +109,10 @@ legacy
         )
         self.assertIn("public_health", live["optional_sources"])
         self.assertIn("controlbot_orchestrator", live["optional_sources"])
+        self.assertEqual(
+            set(live["allowed_hosts"]),
+            {"github.com", "img.shields.io", "control.condorapp.com.co"},
+        )
         self.assertFalse(live["commits_for_refresh"])
 
         self.assertIn("img.shields.io/github/actions/workflow/status", self.template)
@@ -117,6 +121,46 @@ legacy
         self.assertIn("/releases/latest", self.template)
         self.assertIn("control.condorapp.com.co", self.template)
         self.assertIn("/health", self.template)
+
+    def test_v2_validator_rejects_spoofed_or_non_allowlisted_live_destinations(self) -> None:
+        plain_text_spoof = """# Demo
+
+## Operational Cockpit
+
+github.com/pl0n3r/Factory/actions
+https://github.com/pl0n3r/Factory/releases/latest
+control.condorapp.com.co
+[CI](https://github.com/pl0n3r/Factory/issues)
+[Release](https://github.com/pl0n3r/Factory/tags)
+[Detalle](https://github.com/pl0n3r/Factory/pulls)
+"""
+        unallowlisted_host = """# Demo
+
+## Operational Cockpit
+
+[CI](https://example.test/github.com/pl0n3r/Factory/actions)
+[Release](https://example.test/github.com/pl0n3r/Factory/releases/latest)
+[Orquestador](https://example.test/control.condorapp.com.co/)
+"""
+        lookalike_host = """# Demo
+
+## Operational Cockpit
+
+[CI](https://github.com.evil.test/pl0n3r/Factory/actions)
+[Release](https://github.com/pl0n3r/Factory/releases/latest)
+[Orquestador](https://control.condorapp.com.co/)
+"""
+
+        for name, readme in (
+            ("plain_text_spoof", plain_text_spoof),
+            ("unallowlisted_host", unallowlisted_host),
+            ("lookalike_host", lookalike_host),
+        ):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_readme(readme, self.contract, self.metadata, {}, None)
+
+    def test_v2_validator_accepts_allowlisted_actions_releases_and_orchestrator_links(self) -> None:
+        validate_readme(self.v2_readme, self.contract, self.metadata, {}, None)
 
     def test_v2_validator_rejects_legacy_rendering_and_progress_snapshot(self) -> None:
         with self.assertRaises(ValueError):
@@ -170,6 +214,14 @@ legacy
         generated_status = copy.deepcopy(self.contract)
         generated_status["content_policy"]["v2_has_generated_status_blocks"] = True
         cases.append(("generated_status", generated_status))
+
+        missing_allowed_hosts = copy.deepcopy(self.contract)
+        missing_allowed_hosts["live_status"]["allowed_hosts"] = []
+        cases.append(("missing_allowed_hosts", missing_allowed_hosts))
+
+        malformed_allowed_hosts = copy.deepcopy(self.contract)
+        malformed_allowed_hosts["live_status"]["allowed_hosts"] = ["github.com", ""]
+        cases.append(("malformed_allowed_hosts", malformed_allowed_hosts))
 
         no_legacy_blocks = copy.deepcopy(self.contract)
         no_legacy_blocks["derived_blocks"] = None
