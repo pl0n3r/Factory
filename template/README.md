@@ -6,35 +6,27 @@
 
 ## Operational Cockpit
 
-<!-- factory:status:start -->
-| Señal | Estado |
-| --- | --- |
-| main SHA | UNKNOWN |
-| versión | UNKNOWN |
-| CI | UNKNOWN |
-| release | UNKNOWN |
-| health | UNKNOWN |
-| smoke/observer | UNKNOWN |
-| quality/security | UNKNOWN |
-| Issue activo | UNKNOWN |
-| PR activo | UNKNOWN |
-| último release | UNKNOWN |
-<!-- factory:status:end -->
+### Estado vivo
 
-> Este bloque es derivado. `UNKNOWN`/`PENDING` significa que falta evidencia canónica; nunca se promueve a `GREEN` sin evidencia.
+- **CI de `main`:** [GitHub Actions](../../actions).
+- **Releases:** [GitHub Releases](../../releases).
+- **Producción:** añadir una insignia de `/health` únicamente cuando exista un endpoint público real para este proyecto.
+- **Detalle operativo:** [Orquestador de ControlBot](https://control.condorapp.com.co/).
+
+El bootstrap del repositorio sustituye estos enlaces por las insignias concretas del workflow/release cuando conoce sus rutas. Si una fuente no existe, se omite: no se rellena con estados sintéticos y no se crean commits periódicos para refrescar el README.
 
 ## Work Queue
 
 - **NOW:** enlaza el trabajo activo canónico.
-- **NEXT:** enlaza el siguiente trabajo `ready`.
+- **NEXT:** enlaza el siguiente trabajo ready.
 - **LATER:** enlaza planificación posterior.
 - **BLOCKED:** enlaza bloqueos vigentes.
 
-Esta vista resume. No duplica roadmap ni changelog.
+Esta vista resume; no duplica roadmap ni changelog.
 
 ## Qué hace el producto
 
-Esta plantilla crea un proyecto consumidor del Factory Kit con CI, coordinación, etiquetas, política y release. Deploy y observación se habilitan cuando el proyecto configura su entorno.
+Describe en pocas líneas qué resuelve el producto y sus capacidades permanentes.
 
 ## Arquitectura en 60 segundos
 
@@ -44,37 +36,35 @@ flowchart LR
     K --> C[CI / coordinación / políticas]
 ```
 
-El proyecto conserva su producto y estado; Factory aporta contratos y automatización reutilizable.
+Factory aporta contratos y automatización reutilizable; el proyecto conserva su producto y su estado.
 
 ## Stack e infraestructura
 
 **Stack declarado:** PHP 8.3 + Factory Kit.
 
-El deploy usa adapters ejecutables fijos en `ops/factory/{build,backup,migrate,deploy,rollback}`.
+Documenta solo runtime, datos, hosting y storage estables. El estado cambiante se consulta en las fuentes vivas.
 
 ## Ciclo de entrega
 
-Issue → reserva → branch → PR → Factory CI → review → merge → release → deploy → smoke → GREEN.
+Issue → reserva → branch → PR → Factory CI → review → merge → release → deploy → smoke.
 
 ## Calidad y seguridad
 
-`public/health.php` nace como stub explícito de construcción: no inventa SHA ni estado de esquema y expone `evidence=construction-stub`. En fase `live` exige un `RELEASE_SHA` real; `schema_up_to_date` solo refleja `SCHEMA_UP_TO_DATE` cuando el proyecto decide reportarlo.
-
-El README Contract se valida en modo read-only y falla cerrado ante drift o metadata inválida.
+`public/health.php` puede comenzar como stub explícito de construcción. Una insignia de producción solo se añade cuando existe un `/health` público que entregue evidencia real. El README no es autoridad de readiness.
 
 ## Roadmap y fuentes de verdad
 
 - Roadmap: GitHub Issues.
 - Decisiones: `decisiones.yml`.
 - Contrato local: `AGENTES.md`.
-- Especificaciones profundas: `docs/`.
-- Factory Kit: `pl0n3r/factory@v1`.
+- Especificaciones: `docs/`.
+- Estado vivo: GitHub Actions, GitHub Releases, `/health` público cuando exista y ControlBot.
 
-El README enlaza estas fuentes; no las copia.
+El README enlaza estas fuentes; no las copia ni calcula progreso.
 
 ## Desarrollo local
 
-Usa únicamente los comandos reales definidos por el proyecto para install, test, build y análisis estático.
+Usa únicamente comandos reales definidos por el proyecto para install, test, build y análisis estático.
 
 ## Mapa de la fábrica
 
