@@ -1115,8 +1115,56 @@ def _revalidated_unblock_evidence(
         return None
     if marker is None or unblock_fingerprint(marker) != fingerprint:
         return None
+    comments = api.issue_comments(number)
+    if (
+        unblock_evidence_exists(comments, fingerprint)
+        and not reblock_evidence_exists(comments, fingerprint)
+    ):
+        return None
     satisfied, evidence = verify_unblock_condition(api, marker)
     return evidence if satisfied and evidence else None
+
+
+def _automatic_unblock_state(
+    comments: list[dict[str, Any]],
+    fingerprint: str,
+    trusted_login: str = TRUSTED_MARKER_LOGIN,
+) -> str:
+    """Devuelve la última transición automática conocida para el fingerprint."""
+    state = "never"
+    for comment in comments:
+        user = comment.get("user")
+        if not isinstance(user, dict) or user.get("login") != trusted_login:
+            continue
+        body = str(comment.get("body") or "")
+        for raw in UNBLOCK_EVIDENCE_RE.findall(body):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(payload, dict)
+                and set(payload) == {"version", "fingerprint", "evidence"}
+                and payload.get("version") == 1
+                and payload.get("fingerprint") == fingerprint
+                and isinstance(payload.get("evidence"), str)
+                and payload["evidence"]
+            ):
+                state = "unblocked"
+        for raw in REBLOCK_EVIDENCE_RE.findall(body):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(payload, dict)
+                and set(payload) == {"version", "fingerprint", "reason"}
+                and payload.get("version") == 1
+                and payload.get("fingerprint") == fingerprint
+                and payload.get("reason") == "condition_unsatisfied"
+            ):
+                state = "reblocked"
+    return state
 
 
 def _apply_verified_unblock(
@@ -1124,15 +1172,17 @@ def _apply_verified_unblock(
     number: int,
     fingerprint: str,
     evidence: str,
-) -> None:
-    """Publica evidencia una vez y cambia el Issue a disponible."""
+) -> bool:
+    """Desbloquea solo una transición automática nueva y deja evidencia."""
     comments = api.issue_comments(number)
-    if not unblock_evidence_exists(comments, fingerprint):
-        api.comment(
-            number,
-            _unblock_evidence_comment(fingerprint, evidence),
-        )
+    if _automatic_unblock_state(comments, fingerprint) == "unblocked":
+        return False
+    api.comment(
+        number,
+        _unblock_evidence_comment(fingerprint, evidence),
+    )
     api.set_status(number, STATUS_AVAILABLE)
+    return True
 
 
 def reblock_evidence_exists(
@@ -1250,8 +1300,12 @@ def sweep_satisfied_blocks(api: GitHub) -> int:
         if candidate is not None:
             number, _marker, fingerprint = candidate
             evidence = _revalidated_unblock_evidence(api, number, fingerprint)
-            if evidence is not None:
-                _apply_verified_unblock(api, number, fingerprint, evidence)
+            if evidence is not None and _apply_verified_unblock(
+                api,
+                number,
+                fingerprint,
+                evidence,
+            ):
                 changed += 1
             continue
 
