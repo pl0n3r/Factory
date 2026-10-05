@@ -23,7 +23,18 @@ LEGACY_TEMPLATE = """# Legacy README v1
 ## Operational Cockpit
 
 <!-- factory:status:start -->
-legacy status
+| Señal | Estado |
+| --- | --- |
+| main SHA | UNKNOWN |
+| versión | UNKNOWN |
+| CI | UNKNOWN |
+| release | UNKNOWN |
+| health | UNKNOWN |
+| smoke/observer | UNKNOWN |
+| quality/security | UNKNOWN |
+| Issue activo | UNKNOWN |
+| PR activo | UNKNOWN |
+| último release | UNKNOWN |
 <!-- factory:status:end -->
 
 ### Progress + Readiness
@@ -302,7 +313,6 @@ class ReadmeProgressTests(unittest.TestCase):
 
         with self.assertRaises(ProgressReadinessError):
             canonical_payload({"version": 1})
-
 
     def readme_inputs(self):
         contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
