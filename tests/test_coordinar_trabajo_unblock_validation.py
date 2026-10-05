@@ -266,5 +266,116 @@ class UnblockValidationTests(unittest.TestCase):
             )
 
 
+    def _reblock_fake_api(
+        self,
+        *,
+        comments: list[dict] | None = None,
+    ):
+        condition = {"version": 1, "kind": "issue_closed", "issue": 9}
+        blocked = {
+            "number": 10,
+            "state": "open",
+            "labels": [{"name": coordinator.STATUS_BLOCKED}],
+            "body": marker(**condition),
+        }
+        target = {
+            "number": 9,
+            "state": "closed",
+            "labels": [],
+            "body": "",
+        }
+
+        class FakeGitHub:
+            def __init__(self) -> None:
+                self.issues = {9: target, 10: blocked}
+                self._comments = list(comments or [])
+                self.comments: list[tuple[int, str]] = []
+
+            def open_issues(self) -> list[dict]:
+                return [blocked]
+
+            def issue(self, number: int) -> dict:
+                return self.issues[number]
+
+            def issue_comments(self, issue_number: int) -> list[dict]:
+                return list(self._comments) if issue_number == 10 else []
+
+            def comment(self, issue_number: int, body: str) -> None:
+                self.comments.append((issue_number, body))
+                self._comments.append(
+                    {
+                        "user": {"login": coordinator.TRUSTED_MARKER_LOGIN},
+                        "body": body,
+                    }
+                )
+
+            def set_status(self, issue_number: int, status: str | None) -> None:
+                self.issues[issue_number]["labels"] = (
+                    [] if status is None else [{"name": status}]
+                )
+
+        fingerprint = coordinator.unblock_fingerprint(condition)
+        return FakeGitHub(), blocked, fingerprint
+
+    def test_manual_reblock_after_auto_unblock_is_not_overridden(self) -> None:
+        api, blocked, fingerprint = self._reblock_fake_api()
+        api._comments.append(
+            {
+                "user": {"login": coordinator.TRUSTED_MARKER_LOGIN},
+                "body": coordinator._unblock_evidence_comment(
+                    fingerprint,
+                    "issue:9:closed",
+                ),
+            }
+        )
+
+        changed = coordinator.sweep_satisfied_blocks(api)
+
+        self.assertEqual(changed, 0)
+        self.assertIn(coordinator.STATUS_BLOCKED, coordinator.label_names(blocked))
+        self.assertEqual(api.comments, [])
+
+    def test_automatic_reblock_allows_future_auto_unblock(self) -> None:
+        api, blocked, fingerprint = self._reblock_fake_api()
+        api._comments.extend(
+            [
+                {
+                    "user": {"login": coordinator.TRUSTED_MARKER_LOGIN},
+                    "body": coordinator._unblock_evidence_comment(
+                        fingerprint,
+                        "issue:9:closed",
+                    ),
+                },
+                {
+                    "user": {"login": coordinator.TRUSTED_MARKER_LOGIN},
+                    "body": coordinator._reblock_evidence_comment(fingerprint),
+                },
+            ]
+        )
+
+        changed = coordinator.sweep_satisfied_blocks(api)
+
+        self.assertEqual(changed, 1)
+        self.assertIn(
+            coordinator.STATUS_AVAILABLE,
+            coordinator.label_names(blocked),
+        )
+        self.assertEqual(api.comments, [])
+
+    def test_first_auto_unblock_remains_idempotent(self) -> None:
+        api, blocked, _fingerprint = self._reblock_fake_api()
+
+        first = coordinator.sweep_satisfied_blocks(api)
+        second = coordinator.sweep_satisfied_blocks(api)
+
+        self.assertEqual((first, second), (1, 0))
+        self.assertIn(
+            coordinator.STATUS_AVAILABLE,
+            coordinator.label_names(blocked),
+        )
+        self.assertEqual(len(api.comments), 1)
+        self.assertIn("factory-unblock-evidence", api.comments[0][1])
+
+
 if __name__ == "__main__":
     unittest.main()
