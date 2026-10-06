@@ -438,6 +438,7 @@ class BootstrapCoordinationTests(unittest.TestCase):
         with mock.patch.object(gateway,"branch_sha",return_value=old_sha), \
              mock.patch.object(gateway,"open_pr",return_value=None), \
              mock.patch.object(gateway,"closed_pr",return_value=legacy_pr), \
+             mock.patch.object(gateway,"commit_matches",return_value=False), \
              mock.patch.object(gateway,"branch_matches",return_value=True):
             with self.assertRaisesRegex(b.BootstrapError,"otra intención"):
                 b.bootstrap(request(),gateway,CALLER,desired)
