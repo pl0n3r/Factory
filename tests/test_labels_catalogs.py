@@ -27,5 +27,17 @@ class LabelCatalogTests(unittest.TestCase):
         for key in ("priority_critical", "state_available", "state_reserved", "state_review", "state_completed"):
             self.assertIn(key, keys)
 
+    def test_planned_state_exists_in_both_catalogs_with_same_semantic_key_and_color(self):
+        es = {item["key"]: item for item in self.load("es")}
+        en = {item["key"]: item for item in self.load("en")}
+
+        self.assertIn("state_planned", es)
+        self.assertIn("state_planned", en)
+        self.assertEqual(es["state_planned"]["color"], en["state_planned"]["color"])
+        self.assertEqual(es["state_planned"]["name"], "estado: planificado")
+        self.assertEqual(en["state_planned"]["name"], "status: planned")
+        self.assertIn("no cuenta como bloqueo", es["state_planned"]["description"])
+        self.assertIn("does not count as blocked", en["state_planned"]["description"])
+
 if __name__ == "__main__":
     unittest.main()
