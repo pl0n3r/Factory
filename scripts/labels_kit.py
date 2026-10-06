@@ -172,8 +172,6 @@ def upsert_plan(
         if old_name not in current:
             continue
         if new_name in current:
-            # Si alias y destino canónico ya coexisten, conservar el canónico.
-            # El bucle normal de catálogo actualizará su metadata si hay drift.
             continue
         if new_name in renamed_targets:
             raise LabelError(
@@ -266,13 +264,12 @@ def planned_state_decision(issue: Any) -> dict[str, Any]:
         raise LabelError("Issue para clasificación planificada demasiado grande.")
 
     names = selected_names(issue.get("labels", []))
+    if "executable" in issue and not isinstance(issue["executable"], bool):
+        raise LabelError("Señal executable inválida para clasificación planificada.")
+    if "has_ready_leaf" in issue and not isinstance(issue["has_ready_leaf"], bool):
+        raise LabelError("Señal has_ready_leaf inválida para clasificación planificada.")
     executable = issue.get("executable") is True
     has_ready_leaf = issue.get("has_ready_leaf") is True
-    dependencies = issue.get("dependencies_open", [])
-    if not isinstance(dependencies, list) or len(dependencies) > 1000:
-        raise LabelError("Dependencias de clasificación planificada inválidas.")
-    if any(not isinstance(item, (str, int)) or isinstance(item, bool) for item in dependencies):
-        raise LabelError("Dependencias de clasificación planificada inválidas.")
 
     lowered_title = title.casefold()
     lowered_body = body.casefold()
@@ -288,6 +285,18 @@ def planned_state_decision(issue: Any) -> dict[str, Any]:
     )
     if executable or has_ready_leaf or any(token in names for token in active_state_tokens):
         return {"planned": False, "reason": "executable_work_exists", "number": number}
+
+    if "dependencies_open" not in issue:
+        return {
+            "planned": False,
+            "reason": "execution_evidence_incomplete",
+            "number": number,
+        }
+    dependencies = issue["dependencies_open"]
+    if not isinstance(dependencies, list) or len(dependencies) > 1000:
+        raise LabelError("Dependencias de clasificación planificada inválidas.")
+    if any(not isinstance(item, (str, int)) or isinstance(item, bool) for item in dependencies):
+        raise LabelError("Dependencias de clasificación planificada inválidas.")
     if dependencies:
         return {"planned": False, "reason": "real_dependency_block", "number": number}
 
