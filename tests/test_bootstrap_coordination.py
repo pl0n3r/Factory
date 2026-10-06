@@ -103,6 +103,99 @@ class BootstrapCoordinationTests(unittest.TestCase):
         with mock.patch.object(gateway,"_request",side_effect=[{"tree":{"sha":"t"}}, {"tree":[{"path":".github","mode":"120000"}]}]):
             with self.assertRaisesRegex(b.BootstrapError,"symlinks"): gateway.tree_info("pl0n3r/Consumer",SHA,paths)
 
+    def test_closed_pr_filters_merged_history_and_fails_closed_on_ambiguous_or_malformed_entries(self):
+        gateway=b.GitHubGateway("token")
+        unmerged={"number":430,"state":"closed","merged_at":None}
+        merged={"number":431,"state":"closed","merged_at":"2026-10-05T00:00:00Z"}
+
+        with mock.patch.object(
+            gateway,
+            "_request",
+            side_effect=[
+                [{"number":430},{"number":431}],
+                unmerged,
+                merged,
+            ],
+        ):
+            self.assertEqual(
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187"),
+                unmerged,
+            )
+
+        with mock.patch.object(gateway,"_request",return_value=[]):
+            self.assertIsNone(
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+            )
+
+        with mock.patch.object(gateway,"_request",return_value={}):
+            with self.assertRaisesRegex(b.BootstrapError,"Estado histórico de PR ambiguo"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+        with mock.patch.object(gateway,"_request",return_value=[{}]):
+            with self.assertRaisesRegex(b.BootstrapError,"PR histórico inválido"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+        with mock.patch.object(
+            gateway,
+            "_request",
+            side_effect=[[{"number":430}],[]],
+        ):
+            with self.assertRaisesRegex(b.BootstrapError,"PR histórico inválido"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+        second_unmerged={"number":431,"state":"closed","merged_at":None}
+        with mock.patch.object(
+            gateway,
+            "_request",
+            side_effect=[
+                [{"number":430},{"number":431}],
+                unmerged,
+                second_unmerged,
+            ],
+        ):
+            with self.assertRaisesRegex(b.BootstrapError,"Estado histórico de PR ambiguo"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+    def test_real_legacy_marker_and_exact_match_accept_closed_unmerged_but_reject_merged(self):
+        req=b.validate_request(request())
+        branch=b.branch_name(req)
+        legacy=self._legacy_pr(req,branch)
+        gateway=b.GitHubGateway("token")
+
+        self.assertIsNotNone(gateway.legacy_marker(req["target_repository"],branch,legacy,req))
+
+        closed=dict(legacy)
+        closed["state"]="closed"
+        closed["merged_at"]=None
+        self.assertIsNotNone(gateway.legacy_marker(req["target_repository"],branch,closed,req))
+
+        merged=dict(closed)
+        merged["merged_at"]="2026-10-05T00:00:00Z"
+        self.assertIsNone(gateway.legacy_marker(req["target_repository"],branch,merged,req))
+
+        unexpected=dict(closed)
+        unexpected["state"]="draft"
+        self.assertIsNone(gateway.legacy_marker(req["target_repository"],branch,unexpected,req))
+
+        old_sha="c"*40
+        legacy_patch=b.legacy_patch(CALLER)
+        with mock.patch.object(gateway,"open_pr",return_value=None), \
+             mock.patch.object(gateway,"closed_pr",return_value=closed), \
+             mock.patch.object(gateway,"branch_sha",return_value=old_sha), \
+             mock.patch.object(gateway,"commit_matches_marker",return_value=True), \
+             mock.patch.object(gateway,"branch_matches",return_value=True):
+            self.assertTrue(
+                gateway.legacy_pr_matches_exact(
+                    req["target_repository"],
+                    branch,
+                    closed["number"],
+                    req,
+                    old_sha,
+                    closed["body"],
+                    legacy_patch,
+                )
+            )
+
     def _generic_consumer_root(self, *caller_paths):
         tmp=tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
