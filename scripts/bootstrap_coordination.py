@@ -617,6 +617,26 @@ class GitHubGateway:
         pr=self.create_pr(name,branch,f"chore(factory): endurecer bootstrap coordinación (#{req['target_issue']})",body)
         return commit["sha"],pr
 
+def historical_patch_for_branch(
+    gateway: Any,
+    name: str,
+    branch: str,
+    branch_sha: str,
+    historical: dict[str,Any] | None,
+    candidates: dict[str,str] | tuple[dict[str,str], ...],
+)->dict[str,str]:
+    if historical is None:
+        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    options=(candidates,) if isinstance(candidates,dict) else candidates
+    matching=[
+        candidate for candidate in options
+        if gateway.commit_matches_marker(name,branch_sha,historical,set(candidate))
+        and gateway.branch_matches(name,branch,candidate)
+    ]
+    if len(matching)!=1:
+        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    return matching[0]
+
 def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: dict[str,str] | tuple[dict[str,str], ...],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
     if bsha is None and gpr is None: return None
     name=req["target_repository"]
@@ -638,16 +658,7 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: 
     if gpr is None:
         raise BootstrapError("La rama bootstrap pertenece a otra intención.")
     historical=gateway.legacy_marker(name,branch,gpr,req)
-    candidates=(legacy,) if isinstance(legacy,dict) else legacy
-    matching=[
-        candidate for candidate in candidates
-        if historical is not None
-        and gateway.commit_matches_marker(name,bsha,historical,set(candidate))
-        and gateway.branch_matches(name,branch,candidate)
-    ]
-    if len(matching)!=1:
-        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
-    legacy=matching[0]
+    legacy=historical_patch_for_branch(gateway,name,branch,bsha,historical,legacy)
     legacy_body=str(gpr.get("body") or "")
 
     replacement=replacement_branch_name(req,patch)
