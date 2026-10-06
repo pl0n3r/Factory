@@ -402,20 +402,46 @@ class BootstrapCoordinationTests(unittest.TestCase):
         return req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway
 
     def test_closed_legacy_bootstrap_branch_is_superseded_by_safe_replacement(self):
-        req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
+        req=b.validate_request(request())
+        desired=b.build_patch(CALLER,b.LEGACY_CALLER_PATH)
+        stale=b.build_patch(CALLER,b.CALLER_PATH)
+        branch=b.branch_name(req)
+        old_sha="c"*40
+        legacy_pr=self._legacy_pr(req,branch)
         legacy_pr["state"]="closed"
         legacy_pr["merged_at"]=None
-        gateway.pr=legacy_pr
+        gateway=FakeGateway(branch=old_sha,pr=legacy_pr,same=True)
+        replacement=b.replacement_branch_name(req,desired)
         with mock.patch.object(gateway,"branch_sha",side_effect=lambda _,v: old_sha if v==branch else None), \
              mock.patch.object(gateway,"open_pr",return_value=None), \
              mock.patch.object(gateway,"closed_pr",return_value=legacy_pr), \
-             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==legacy if v==branch else p==patch):
-            result=b.bootstrap(request(),gateway,CALLER)
+             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==stale if v==branch else p==desired):
+            result=b.bootstrap(request(),gateway,CALLER,desired)
         self.assertEqual(result,{"status":"confirmed","branch":replacement,"pr":100,"created":True})
         self.assertEqual(gateway.deleted,[])
         replacements=[row for row in gateway.created if row[0]=="replacement"]
         self.assertEqual(len(replacements),1)
         self.assertEqual(replacements[0][3],replacement)
+        self.assertEqual(replacements[0][-1],stale)
+        self.assertEqual(set(stale),{b.CALLER_PATH,b.TEST_PATH})
+        self.assertEqual(set(desired),{b.LEGACY_CALLER_PATH,b.TEST_PATH})
+
+    def test_multiple_matching_historical_shapes_fail_closed(self):
+        req=b.validate_request(request())
+        desired=b.build_patch(CALLER,b.LEGACY_CALLER_PATH)
+        branch=b.branch_name(req)
+        old_sha="c"*40
+        legacy_pr=self._legacy_pr(req,branch)
+        legacy_pr["state"]="closed"
+        legacy_pr["merged_at"]=None
+        gateway=FakeGateway(branch=old_sha,pr=legacy_pr,same=True)
+        with mock.patch.object(gateway,"branch_sha",return_value=old_sha), \
+             mock.patch.object(gateway,"open_pr",return_value=None), \
+             mock.patch.object(gateway,"closed_pr",return_value=legacy_pr), \
+             mock.patch.object(gateway,"branch_matches",return_value=True):
+            with self.assertRaisesRegex(b.BootstrapError,"otra intención"):
+                b.bootstrap(request(),gateway,CALLER,desired)
+        self.assertEqual(gateway.created,[])
 
     def test_same_intent_stale_generated_patch_can_be_upgraded(self):
         req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
