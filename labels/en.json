@@ -114,6 +114,12 @@
     "description": "Work stopped by a real dependency."
   },
   {
+    "key": "state_planned",
+    "name": "status: planned",
+    "color": "8250DF",
+    "description": "Plan, epic, or roadmap intentionally not executable; does not count as blocked."
+  },
+  {
     "key": "state_recovery",
     "name": "status: recovery required",
     "color": "D876E3",

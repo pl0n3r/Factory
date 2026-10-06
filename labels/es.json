@@ -114,6 +114,12 @@
     "description": "Trabajo detenido por una dependencia real."
   },
   {
+    "key": "state_planned",
+    "name": "estado: planificado",
+    "color": "8250DF",
+    "description": "Plan, épica o roadmap no ejecutable por diseño; no cuenta como bloqueo."
+  },
+  {
     "key": "state_recovery",
     "name": "estado: requiere recuperación",
     "color": "D876E3",

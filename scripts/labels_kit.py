@@ -47,9 +47,18 @@ MAX_CATALOG_BYTES = 512 * 1024
 WARNING_MARKER = "<!-- factory-label-validation -->"
 AUTO_MARKER = "<!-- factory-auto-unlabeled -->"
 CLOSING_REFERENCE = re.compile(r"\b(?:closes|fixes|resolves)\s+#([1-9][0-9]*)\b", re.IGNORECASE)
+PLANNED_EPIC_MARKER = "<!-- factory-plan-epic"
+PLANNED_TITLE_MARKERS = (
+    "roadmap",
+    "planificación",
+    "planning:",
+    "live readiness",
+)
+
 
 class LabelError(ValueError):
     pass
+
 
 def catalog_for_language(language: str) -> list[dict[str, str]]:
     try:
@@ -58,11 +67,13 @@ def catalog_for_language(language: str) -> list[dict[str, str]]:
         raise LabelError("Idioma de catálogo inválido.") from exc
     return load_catalog(path, root=KIT_ROOT)
 
+
 def aliases_for_language(language: str) -> dict[str, str]:
     try:
         return dict(LEGACY_ALIASES[language])
     except KeyError as exc:
         raise LabelError("Idioma de aliases inválido.") from exc
+
 
 def load_catalog(path: Path, *, root: Path | None = None) -> list[dict[str, str]]:
     try:
@@ -102,6 +113,7 @@ def load_catalog(path: Path, *, root: Path | None = None) -> list[dict[str, str]
             raise LabelError(f"Falta dimensión obligatoria {prefix}")
     return out
 
+
 def selected_names(raw: Any) -> set[str]:
     if not isinstance(raw, list) or len(raw) > 200:
         raise LabelError("La selección de labels debe ser una lista acotada.")
@@ -117,6 +129,7 @@ def selected_names(raw: Any) -> set[str]:
             raise LabelError("Nombre de label fuera del contrato.")
         names.add(name)
     return names
+
 
 def validate_selection(catalog: list[dict[str, str]], names: set[str]) -> None:
     by_dimension = {
@@ -135,6 +148,7 @@ def validate_selection(catalog: list[dict[str, str]], names: set[str]) -> None:
             raise LabelError(
                 f"Debe existir exactamente una etiqueta de {labels[prefix]}; encontradas: {sorted(matches)}"
             )
+
 
 def upsert_plan(
     catalog: list[dict[str, str]],
@@ -158,8 +172,6 @@ def upsert_plan(
         if old_name not in current:
             continue
         if new_name in current:
-            # Si alias y destino canónico ya coexisten, conservar el canónico.
-            # El bucle normal de catálogo actualizará su metadata si hay drift.
             continue
         if new_name in renamed_targets:
             raise LabelError(
@@ -189,11 +201,13 @@ def upsert_plan(
             plan.append({"action": "update", **wanted})
     return plan
 
+
 def _catalog_name(catalog: list[dict[str, str]], key: str) -> str:
     matches = [item["name"] for item in catalog if item["key"] == key]
     if len(matches) != 1:
         raise LabelError(f"Catálogo no contiene exactamente una etiqueta {key}.")
     return matches[0]
+
 
 def _dimension_matches(catalog: list[dict[str, str]], names: set[str], prefix: str) -> set[str]:
     allowed = {item["name"] for item in catalog if item["key"].startswith(prefix)}
@@ -214,11 +228,13 @@ def _unknown_dimension_labels(
         and name.casefold().startswith(tuple(item.casefold() for item in textual_prefixes))
     }
 
+
 def closing_issue_reference(body: str) -> int | None:
     if not isinstance(body, str) or len(body) > 100_000:
         raise LabelError("Body fuera del contrato para referencia de cierre.")
     references = {int(value) for value in CLOSING_REFERENCE.findall(body)}
     return next(iter(references)) if len(references) == 1 else None
+
 
 def linked_issue_names(raw: Any) -> set[str] | None:
     if raw is None:
@@ -230,6 +246,106 @@ def linked_issue_names(raw: Any) -> set[str] | None:
     if raw.get("state") not in {"open", "closed"}:
         return None
     return selected_names(raw.get("labels", []))
+
+
+def planned_state_decision(issue: Any) -> dict[str, Any]:
+    """Clasifica conservadoramente un Issue como planificado o no planificado."""
+
+    if not isinstance(issue, dict):
+        raise LabelError("Issue para clasificación planificada inválido.")
+    number = issue.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        raise LabelError("Issue para clasificación planificada sin número válido.")
+    title = issue.get("title", "")
+    body = issue.get("body", "")
+    if not isinstance(title, str) or not isinstance(body, str):
+        raise LabelError("Issue para clasificación planificada fuera del contrato.")
+    if len(title) > 500 or len(body) > 200_000:
+        raise LabelError("Issue para clasificación planificada demasiado grande.")
+
+    names = selected_names(issue.get("labels", []))
+    if "executable" in issue and not isinstance(issue["executable"], bool):
+        raise LabelError("Señal executable inválida para clasificación planificada.")
+    if "has_ready_leaf" in issue and not isinstance(issue["has_ready_leaf"], bool):
+        raise LabelError("Señal has_ready_leaf inválida para clasificación planificada.")
+    executable = issue.get("executable") is True
+    has_ready_leaf = issue.get("has_ready_leaf") is True
+
+    lowered_title = title.casefold()
+    lowered_body = body.casefold()
+    active_state_tokens = (
+        "estado: disponible",
+        "estado: reservado",
+        "estado: en revisión",
+        "estado: requiere recuperación",
+        "status: available",
+        "status: reserved",
+        "status: in review",
+        "status: recovery required",
+    )
+    if executable or has_ready_leaf or any(token in names for token in active_state_tokens):
+        return {"planned": False, "reason": "executable_work_exists", "number": number}
+
+    if "dependencies_open" not in issue:
+        return {
+            "planned": False,
+            "reason": "execution_evidence_incomplete",
+            "number": number,
+        }
+    dependencies = issue["dependencies_open"]
+    if not isinstance(dependencies, list) or len(dependencies) > 1000:
+        raise LabelError("Dependencias de clasificación planificada inválidas.")
+    if any(not isinstance(item, (str, int)) or isinstance(item, bool) for item in dependencies):
+        raise LabelError("Dependencias de clasificación planificada inválidas.")
+    if dependencies:
+        return {"planned": False, "reason": "real_dependency_block", "number": number}
+
+    marker_match = PLANNED_EPIC_MARKER in lowered_body
+    title_match = any(marker in lowered_title for marker in PLANNED_TITLE_MARKERS)
+    auto_match = title.startswith("[AUTO]") and issue.get("auto_policy_known") is True
+    if marker_match:
+        reason = "factory_plan_epic"
+    elif title_match:
+        reason = "planning_title"
+    elif auto_match:
+        reason = "known_auto_policy"
+    else:
+        return {"planned": False, "reason": "not_planning_shape", "number": number}
+    return {"planned": True, "reason": reason, "number": number}
+
+
+def planned_state_migration_plan(
+    catalog: list[dict[str, str]],
+    issues: Any,
+) -> list[dict[str, Any]]:
+    """Produce únicamente el dry-run idempotente blocked -> planned."""
+
+    if not isinstance(issues, list) or len(issues) > 10_000:
+        raise LabelError("Migración planned requiere una lista acotada de Issues.")
+    blocked_name = _catalog_name(catalog, "state_blocked")
+    planned_name = _catalog_name(catalog, "state_planned")
+    plan: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for issue in issues:
+        decision = planned_state_decision(issue)
+        number = int(decision["number"])
+        if number in seen:
+            raise LabelError("Migración planned contiene Issues duplicados.")
+        seen.add(number)
+        names = selected_names(issue.get("labels", []))
+        if not decision["planned"] or planned_name in names or blocked_name not in names:
+            continue
+        plan.append(
+            {
+                "action": "relabel",
+                "issue": number,
+                "from": blocked_name,
+                "to": planned_name,
+                "reason": decision["reason"],
+            }
+        )
+    return sorted(plan, key=lambda item: int(item["issue"]))
+
 
 def validation_plan(
     catalog: list[dict[str, str]],
@@ -297,6 +413,7 @@ def validation_plan(
         "valid": not missing and not multiple and not unknown,
     }
 
+
 def warning_plan(plan: dict[str, Any], language: str) -> dict[str, str]:
     if language not in CATALOGS:
         raise LabelError("Idioma de warning inválido.")
@@ -337,6 +454,7 @@ def warning_plan(plan: dict[str, Any], language: str) -> dict[str, str]:
         message = "⚠️ Incomplete classification (" + "; ".join(details) + ")."
     return {"action": "warn", "body": WARNING_MARKER + "\n" + message}
 
+
 def sweep_issue_plan(
     catalog: list[dict[str, str]], invalid: list[int], language: str
 ) -> dict[str, Any]:
@@ -376,6 +494,7 @@ def sweep_issue_plan(
         "title": "[AUTO] Unlabeled items",
     }
 
+
 def sweep(catalog: list[dict[str, str]], lines: list[str]) -> list[int]:
     if len(lines) > 10_000:
         raise LabelError("Sweep excede el máximo de Issues permitido.")
@@ -402,6 +521,7 @@ def sweep(catalog: list[dict[str, str]], lines: list[str]) -> list[int]:
             invalid.append(issue["number"])
     return invalid
 
+
 def validation_document_plan(
     catalog: list[dict[str, str]],
     document: Any,
@@ -426,6 +546,7 @@ def validation_document_plan(
     plan["warning"] = warning_plan(plan, language)
     return plan
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -436,11 +557,13 @@ def main() -> int:
             "upsert-plan",
             "closing-reference",
             "plan-validation",
+            "planned-migration",
             "sweep",
             "sweep-plan",
         ),
     )
     parser.add_argument("--language", choices=sorted(CATALOGS), required=True)
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
         catalog = catalog_for_language(args.language)
@@ -471,6 +594,20 @@ def main() -> int:
             plan = validation_document_plan(catalog, json.load(sys.stdin), args.language)
             print(json.dumps(plan, ensure_ascii=False, sort_keys=True))
             return 0
+        if args.command == "planned-migration":
+            if not args.dry_run:
+                raise LabelError(
+                    "La migración planned solo puede ejecutarse como --dry-run en Factory#1048."
+                )
+            plan = planned_state_migration_plan(catalog, json.load(sys.stdin))
+            print(
+                json.dumps(
+                    {"dry_run": True, "changes": plan},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+            return 0
         lines = sys.stdin.readlines()
         invalid = sweep(catalog, lines)
         if args.command == "sweep-plan":
@@ -481,6 +618,7 @@ def main() -> int:
     except (LabelError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
