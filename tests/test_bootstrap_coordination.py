@@ -118,15 +118,27 @@ class BootstrapCoordinationTests(unittest.TestCase):
         patch=b.prepare_delivery_patch(request(),CALLER,root)["patch"]
         self.assertEqual(set(patch),{b.LEGACY_CALLER_PATH,b.TEST_PATH})
         self.assertNotIn(b.CALLER_PATH,patch)
-        self.assertIn(b.LEGACY_CALLER_PATH,patch[b.TEST_PATH])
-        self.assertNotIn(b.CALLER_PATH,patch[b.TEST_PATH])
+        self.assertIn(
+            f'(ROOT / "{b.LEGACY_CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
+        self.assertNotIn(
+            f'(ROOT / "{b.CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
 
     def test_existing_work_coordination_caller_remains_idempotent(self):
         root=self._generic_consumer_root(b.CALLER_PATH)
         patch=b.prepare_delivery_patch(request(),CALLER,root)["patch"]
         self.assertEqual(set(patch),{b.CALLER_PATH,b.TEST_PATH})
-        self.assertIn(b.CALLER_PATH,patch[b.TEST_PATH])
-        self.assertNotIn(b.LEGACY_CALLER_PATH,patch[b.TEST_PATH])
+        self.assertIn(
+            f'(ROOT / "{b.CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
+        self.assertNotIn(
+            f'(ROOT / "{b.LEGACY_CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
 
     def test_multiple_supported_coordination_callers_fail_closed_instead_of_choosing_one(self):
         root=self._generic_consumer_root(b.CALLER_PATH,b.LEGACY_CALLER_PATH)
@@ -138,9 +150,15 @@ class BootstrapCoordinationTests(unittest.TestCase):
             with self.subTest(path=path):
                 patch=b.build_patch(CALLER,path)
                 self.assertEqual(set(patch),{path,b.TEST_PATH})
-                self.assertIn(path,patch[b.TEST_PATH])
+                self.assertIn(
+                    f'(ROOT / "{path}").read_text',
+                    patch[b.TEST_PATH],
+                )
                 other=b.LEGACY_CALLER_PATH if path==b.CALLER_PATH else b.CALLER_PATH
-                self.assertNotIn(other,patch[b.TEST_PATH])
+                self.assertNotIn(
+                    f'(ROOT / "{other}").read_text',
+                    patch[b.TEST_PATH],
+                )
                 b.validate_patch(patch)
         with self.assertRaisesRegex(b.BootstrapError,"no soportada"):
             b.build_patch(CALLER,".github/workflows/evil.yml")
