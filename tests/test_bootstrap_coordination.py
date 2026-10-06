@@ -51,6 +51,8 @@ class FakeGateway:
     def main_sha(self, _): return self.main
     def branch_sha(self, *_): return self.branch
     def open_pr(self, *_): return self.pr
+    def closed_pr(self, *_):
+        return self.pr if isinstance(self.pr,dict) and self.pr.get("state")=="closed" else None
     def file_text(self, *_): return None
     def commit_matches(self, *_): return self.same
     def branch_matches(self, *_): return self.same
@@ -100,6 +102,165 @@ class BootstrapCoordinationTests(unittest.TestCase):
         gateway=b.GitHubGateway("token"); paths=set(patch)
         with mock.patch.object(gateway,"_request",side_effect=[{"tree":{"sha":"t"}}, {"tree":[{"path":".github","mode":"120000"}]}]):
             with self.assertRaisesRegex(b.BootstrapError,"symlinks"): gateway.tree_info("pl0n3r/Consumer",SHA,paths)
+
+    def test_closed_pr_filters_merged_history_and_fails_closed_on_ambiguous_or_malformed_entries(self):
+        gateway=b.GitHubGateway("token")
+        unmerged={"number":430,"state":"closed","merged_at":None}
+        merged={"number":431,"state":"closed","merged_at":"2026-10-05T00:00:00Z"}
+
+        with mock.patch.object(
+            gateway,
+            "_request",
+            side_effect=[
+                [{"number":430},{"number":431}],
+                unmerged,
+                merged,
+            ],
+        ):
+            self.assertEqual(
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187"),
+                unmerged,
+            )
+
+        with mock.patch.object(gateway,"_request",return_value=[]):
+            self.assertIsNone(
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+            )
+
+        with mock.patch.object(gateway,"_request",return_value={}):
+            with self.assertRaisesRegex(b.BootstrapError,"Estado histórico de PR ambiguo"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+        with mock.patch.object(gateway,"_request",return_value=[{}]):
+            with self.assertRaisesRegex(b.BootstrapError,"PR histórico inválido"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+        with mock.patch.object(
+            gateway,
+            "_request",
+            side_effect=[[{"number":430}],[]],
+        ):
+            with self.assertRaisesRegex(b.BootstrapError,"PR histórico inválido"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+        second_unmerged={"number":431,"state":"closed","merged_at":None}
+        with mock.patch.object(
+            gateway,
+            "_request",
+            side_effect=[
+                [{"number":430},{"number":431}],
+                unmerged,
+                second_unmerged,
+            ],
+        ):
+            with self.assertRaisesRegex(b.BootstrapError,"Estado histórico de PR ambiguo"):
+                gateway.closed_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187")
+
+    def test_real_legacy_marker_and_exact_match_accept_closed_unmerged_but_reject_merged(self):
+        req=b.validate_request(request())
+        branch=b.branch_name(req)
+        legacy=self._legacy_pr(req,branch)
+        gateway=b.GitHubGateway("token")
+
+        self.assertIsNotNone(gateway.legacy_marker(req["target_repository"],branch,legacy,req))
+
+        closed=dict(legacy)
+        closed["state"]="closed"
+        closed["merged_at"]=None
+        self.assertIsNotNone(gateway.legacy_marker(req["target_repository"],branch,closed,req))
+
+        merged=dict(closed)
+        merged["merged_at"]="2026-10-05T00:00:00Z"
+        self.assertIsNone(gateway.legacy_marker(req["target_repository"],branch,merged,req))
+
+        unexpected=dict(closed)
+        unexpected["state"]="draft"
+        self.assertIsNone(gateway.legacy_marker(req["target_repository"],branch,unexpected,req))
+
+        old_sha="c"*40
+        legacy_patch=b.legacy_patch(CALLER)
+        with mock.patch.object(gateway,"open_pr",return_value=None), \
+             mock.patch.object(gateway,"closed_pr",return_value=closed), \
+             mock.patch.object(gateway,"branch_sha",return_value=old_sha), \
+             mock.patch.object(gateway,"commit_matches_marker",return_value=True), \
+             mock.patch.object(gateway,"branch_matches",return_value=True):
+            self.assertTrue(
+                gateway.legacy_pr_matches_exact(
+                    req["target_repository"],
+                    branch,
+                    closed["number"],
+                    req,
+                    old_sha,
+                    closed["body"],
+                    legacy_patch,
+                )
+            )
+
+    def _generic_consumer_root(self, *caller_paths):
+        tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root=Path(tmp.name)
+        for path in caller_paths:
+            target=root/path
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_text("# historical caller\n",encoding="utf-8")
+        return root
+
+    def test_existing_legacy_coordinacion_caller_is_replaced_in_place_without_second_workflow(self):
+        root=self._generic_consumer_root(b.LEGACY_CALLER_PATH)
+        patch=b.prepare_delivery_patch(request(),CALLER,root)["patch"]
+        self.assertEqual(set(patch),{b.LEGACY_CALLER_PATH,b.TEST_PATH})
+        self.assertNotIn(b.CALLER_PATH,patch)
+        self.assertIn(
+            f'(ROOT / "{b.LEGACY_CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
+        self.assertNotIn(
+            f'(ROOT / "{b.CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
+
+    def test_existing_work_coordination_caller_remains_idempotent(self):
+        root=self._generic_consumer_root(b.CALLER_PATH)
+        patch=b.prepare_delivery_patch(request(),CALLER,root)["patch"]
+        self.assertEqual(set(patch),{b.CALLER_PATH,b.TEST_PATH})
+        self.assertIn(
+            f'(ROOT / "{b.CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
+        self.assertNotIn(
+            f'(ROOT / "{b.LEGACY_CALLER_PATH}").read_text',
+            patch[b.TEST_PATH],
+        )
+
+    def test_multiple_supported_coordination_callers_fail_closed_instead_of_choosing_one(self):
+        root=self._generic_consumer_root(b.CALLER_PATH,b.LEGACY_CALLER_PATH)
+        with self.assertRaisesRegex(b.BootstrapError,"múltiples callers"):
+            b.prepare_delivery_patch(request(),CALLER,root)
+
+    def test_dynamic_caller_path_stays_inside_closed_allowlist_and_generated_test_reads_same_path(self):
+        for path in (b.CALLER_PATH,b.LEGACY_CALLER_PATH):
+            with self.subTest(path=path):
+                patch=b.build_patch(CALLER,path)
+                self.assertEqual(set(patch),{path,b.TEST_PATH})
+                self.assertIn(
+                    f'(ROOT / "{path}").read_text',
+                    patch[b.TEST_PATH],
+                )
+                other=b.LEGACY_CALLER_PATH if path==b.CALLER_PATH else b.CALLER_PATH
+                self.assertNotIn(
+                    f'(ROOT / "{other}").read_text',
+                    patch[b.TEST_PATH],
+                )
+                b.validate_patch(patch)
+        with self.assertRaisesRegex(b.BootstrapError,"no soportada"):
+            b.build_patch(CALLER,".github/workflows/evil.yml")
+        with self.assertRaisesRegex(b.BootstrapError,"caller ambiguo"):
+            b.validate_patch({
+                b.CALLER_PATH: b.caller_content(CALLER),
+                b.LEGACY_CALLER_PATH: b.caller_content(CALLER),
+                b.TEST_PATH: b.adoption_test(),
+            })
 
     def test_generated_caller_uses_factory_v1_spanish_profile_only(self):
         value=b.caller_content(CALLER)
@@ -239,6 +400,22 @@ class BootstrapCoordinationTests(unittest.TestCase):
         gateway=FakeGateway(branch=old_sha,pr=legacy_pr,same=True)
         replacement=b.replacement_branch_name(req,patch)
         return req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway
+
+    def test_closed_legacy_bootstrap_branch_is_superseded_by_safe_replacement(self):
+        req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
+        legacy_pr["state"]="closed"
+        legacy_pr["merged_at"]=None
+        gateway.pr=legacy_pr
+        with mock.patch.object(gateway,"branch_sha",side_effect=lambda _,v: old_sha if v==branch else None), \
+             mock.patch.object(gateway,"open_pr",return_value=None), \
+             mock.patch.object(gateway,"closed_pr",return_value=legacy_pr), \
+             mock.patch.object(gateway,"branch_matches",side_effect=lambda _,v,p: p==legacy if v==branch else p==patch):
+            result=b.bootstrap(request(),gateway,CALLER)
+        self.assertEqual(result,{"status":"confirmed","branch":replacement,"pr":100,"created":True})
+        self.assertEqual(gateway.deleted,[])
+        replacements=[row for row in gateway.created if row[0]=="replacement"]
+        self.assertEqual(len(replacements),1)
+        self.assertEqual(replacements[0][3],replacement)
 
     def test_same_intent_stale_generated_patch_can_be_upgraded(self):
         req,patch,legacy,branch,old_sha,legacy_pr,replacement,gateway=self._legacy_upgrade_gateway()
