@@ -75,6 +75,163 @@ class LabelsKitTests(unittest.TestCase):
                 },
             )
 
+    def test_planned_is_exclusive_with_other_state_labels(self):
+        validate_selection(
+            self.catalog,
+            {"tipo: mejora", "prioridad: media", "estado: planificado"},
+        )
+        with self.assertRaises(LabelError):
+            validate_selection(
+                self.catalog,
+                {
+                    "tipo: mejora",
+                    "prioridad: media",
+                    "estado: planificado",
+                    "estado: bloqueado",
+                },
+            )
+        en = catalog_for_language("en")
+        validate_selection(
+            en,
+            {"type: enhancement", "priority: medium", "status: planned"},
+        )
+        with self.assertRaises(LabelError):
+            validate_selection(
+                en,
+                {
+                    "type: enhancement",
+                    "priority: medium",
+                    "status: planned",
+                    "status: available",
+                },
+            )
+
+    def test_classifier_never_marks_executable_or_dependency_blocked_issue_as_planned(self):
+        from scripts.labels_kit import planned_state_decision
+
+        base = {
+            "number": 42,
+            "title": "Roadmap: siguiente tramo",
+            "body": "<!-- factory-plan-epic {\"version\":1} -->",
+            "labels": [
+                {"name": "tipo: mejora"},
+                {"name": "prioridad: media"},
+                {"name": "estado: bloqueado"},
+            ],
+            "dependencies_open": [],
+        }
+        self.assertTrue(planned_state_decision(base)["planned"])
+        self.assertEqual(
+            planned_state_decision({**base, "executable": True})["reason"],
+            "executable_work_exists",
+        )
+        self.assertEqual(
+            planned_state_decision({**base, "has_ready_leaf": True})["reason"],
+            "executable_work_exists",
+        )
+        blocked = planned_state_decision(
+            {**base, "dependencies_open": ["Factory#994"]}
+        )
+        self.assertFalse(blocked["planned"])
+        self.assertEqual(blocked["reason"], "real_dependency_block")
+
+    def test_migration_dry_run_reports_changes_and_is_idempotent(self):
+        from scripts.labels_kit import planned_state_migration_plan
+
+        issues = [
+            {
+                "number": 7,
+                "title": "Roadmap: fase futura",
+                "body": "",
+                "labels": [
+                    {"name": "tipo: mejora"},
+                    {"name": "prioridad: media"},
+                    {"name": "estado: bloqueado"},
+                ],
+                "dependencies_open": [],
+            },
+            {
+                "number": 8,
+                "title": "Roadmap: ya migrado",
+                "body": "",
+                "labels": [
+                    {"name": "tipo: mejora"},
+                    {"name": "prioridad: media"},
+                    {"name": "estado: planificado"},
+                ],
+                "dependencies_open": [],
+            },
+            {
+                "number": 9,
+                "title": "Roadmap: dependencia real",
+                "body": "",
+                "labels": [
+                    {"name": "tipo: mejora"},
+                    {"name": "prioridad: media"},
+                    {"name": "estado: bloqueado"},
+                ],
+                "dependencies_open": ["Factory#994"],
+            },
+        ]
+        first = planned_state_migration_plan(self.catalog, issues)
+        self.assertEqual(
+            first,
+            [
+                {
+                    "action": "relabel",
+                    "issue": 7,
+                    "from": "estado: bloqueado",
+                    "to": "estado: planificado",
+                    "reason": "planning_title",
+                }
+            ],
+        )
+        migrated = [
+            {
+                **issue,
+                "labels": [
+                    {"name": "estado: planificado"}
+                    if label.get("name") == "estado: bloqueado" and issue["number"] == 7
+                    else label
+                    for label in issue["labels"]
+                ],
+            }
+            for issue in issues
+        ]
+        self.assertEqual(planned_state_migration_plan(self.catalog, migrated), [])
+
+        stdin = json.dumps(issues)
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "labels_kit.py",
+                    "planned-migration",
+                    "--language",
+                    "es",
+                    "--dry-run",
+                ],
+            ),
+            patch("sys.stdin", io.StringIO(stdin)),
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            self.assertEqual(main(), 0)
+            payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["changes"], first)
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["labels_kit.py", "planned-migration", "--language", "es"],
+            ),
+            patch("sys.stdin", io.StringIO(stdin)),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(main(), 2)
+
     def test_unknown_dimension_like_state_does_not_default_issue_to_available(self):
         cases = (
             (
@@ -450,7 +607,6 @@ class LabelsKitTests(unittest.TestCase):
             root = Path(tmp)
             with self.assertRaises(LabelError):
                 load_catalog(Path("../bad.json"), root=root)
-
 
     def test_invalid_inputs_and_cli_paths_are_covered(self):
         self.assertEqual(closing_issue_reference("Closes #7"), 7)
