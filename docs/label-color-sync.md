@@ -10,6 +10,19 @@
 - No crea, borra, renombra ni reasigna labels, y no cambia descripciones.
 - BRVTAL conserva sus nombres en inglés.
 
+## Estado planificado
+
+`Factory#1048` añade una distinción semántica que no existía en el vocabulario anterior:
+
+- `estado: bloqueado` / `status: blocked`: trabajo que sí está detenido por una dependencia, fallo o condición real pendiente;
+- `estado: planificado` / `status: planned`: plan, épica o roadmap no ejecutable por diseño. No está atascado, no entra al despacho y no debe contarse como bloqueo operativo.
+
+Ambos catálogos usan la key semántica `state_planned` y el mismo color canónico. La exclusividad de la dimensión `state_` se conserva: un Issue no puede ser simultáneamente `planificado` y `bloqueado`, `disponible`, `reservado`, `en revisión`, `requiere recuperación`, `completado` o `cancelado`.
+
+La clasificación a `planificado` debe ser conservadora. Nunca se usa para esconder una hoja ejecutable ni una dependencia abierta real. La migración de Issues existentes se prepara primero como `--dry-run`, es idempotente y solo puede aplicarse después de publicar el kit compatible en `v1` y sincronizar los labels en los consumidores siguiendo `Factory#994`. `Factory#1048` no mueve `v1` ni aplica esa migración.
+
+ControlBot adopta el nuevo estado en una hoja separada (`ControlBot#752`) para que el Orquestador lo muestre aparte de los bloqueos reales. Esa adopción permanece bloqueada hasta completar el orden kit → publicación autorizada → sincronización de labels.
+
 ## Operación
 
 En `Factory#874`, únicamente el owner del repositorio puede crear uno de estos comentarios exactos:
