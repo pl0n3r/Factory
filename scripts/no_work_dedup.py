@@ -41,6 +41,7 @@ class NoWorkPublicationState:
     comment_id: int
     fingerprint: str
     published_at: int
+    observed_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,15 @@ class NoWorkDecision:
     fingerprint: str
     sink: str
     comment_id: int | None
+    reason: str
+    observed_at: int
+    expected_comment_id: int | None
+    expected_fingerprint: str | None
+
+
+@dataclass(frozen=True)
+class NoWorkApplicationDecision:
+    action: Literal["apply", "omit", "recompute"]
     reason: str
 
 
@@ -183,7 +193,21 @@ def _valid_previous(value: object) -> NoWorkPublicationState | None:
         or any(ch not in "0123456789abcdef" for ch in value.fingerprint)
     ):
         raise NoWorkInventoryError("publication_fingerprint_invalid")
-    _valid_now(value.published_at)
+    published_at = _valid_now(value.published_at)
+    observed_at = (
+        published_at
+        if value.observed_at is None
+        else _valid_now(value.observed_at)
+    )
+    if observed_at > published_at:
+        raise NoWorkInventoryError("observation_after_publication")
+    if value.observed_at is None:
+        return NoWorkPublicationState(
+            comment_id=value.comment_id,
+            fingerprint=value.fingerprint,
+            published_at=published_at,
+            observed_at=observed_at,
+        )
     return value
 
 
@@ -191,9 +215,17 @@ def decide_no_work(
     snapshot: object,
     previous: NoWorkPublicationState | None,
     now: int,
+    *,
+    observed_at: int | None = None,
 ) -> NoWorkDecision:
     """Decide create|update|omit sin publicar ni leer GitHub."""
-    observed_at = _valid_now(now)
+    decision_at = _valid_now(now)
+    observation_at = (
+        decision_at if observed_at is None else _valid_now(observed_at)
+    )
+    if observation_at > decision_at:
+        raise NoWorkInventoryError("observation_in_future")
+
     prior = _valid_previous(previous)
     fingerprint = inventory_fingerprint(snapshot)
 
@@ -204,9 +236,12 @@ def decide_no_work(
             CANONICAL_SINK,
             None,
             "canonical_comment_missing",
+            observation_at,
+            None,
+            None,
         )
 
-    if observed_at < prior.published_at:
+    if decision_at < prior.published_at:
         raise NoWorkInventoryError("time_moved_backwards")
 
     if fingerprint != prior.fingerprint:
@@ -216,15 +251,21 @@ def decide_no_work(
             CANONICAL_SINK,
             prior.comment_id,
             "inventory_changed",
+            observation_at,
+            prior.comment_id,
+            prior.fingerprint,
         )
 
-    if observed_at - prior.published_at >= REFRESH_AFTER_SECONDS:
+    if decision_at - prior.published_at >= REFRESH_AFTER_SECONDS:
         return NoWorkDecision(
             "update",
             fingerprint,
             CANONICAL_SINK,
             prior.comment_id,
             "refresh_interval_elapsed",
+            observation_at,
+            prior.comment_id,
+            prior.fingerprint,
         )
 
     return NoWorkDecision(
@@ -233,4 +274,45 @@ def decide_no_work(
         CANONICAL_SINK,
         prior.comment_id,
         "unchanged_within_refresh_interval",
+        observation_at,
+        prior.comment_id,
+        prior.fingerprint,
     )
+
+
+def revalidate_no_work_application(
+    decision: NoWorkDecision,
+    current: NoWorkPublicationState | None,
+) -> NoWorkApplicationDecision:
+    """Revalida el sink canónico releído inmediatamente antes de mutar.
+
+    El caller debe recomputar desde inventario vivo cuando esta función devuelve
+    ``recompute``. ``apply`` es la única autorización para create/update.
+    """
+    if not isinstance(decision, NoWorkDecision):
+        raise NoWorkInventoryError("decision_invalid")
+
+    if decision.action == "omit":
+        return NoWorkApplicationDecision("omit", "decision_already_omit")
+
+    live = _valid_previous(current)
+
+    if decision.action == "create":
+        if live is None:
+            return NoWorkApplicationDecision("apply", "canonical_still_missing")
+        return NoWorkApplicationDecision("recompute", "canonical_created_concurrently")
+
+    if live is None:
+        return NoWorkApplicationDecision("recompute", "canonical_missing_before_update")
+
+    if live.comment_id != decision.expected_comment_id:
+        return NoWorkApplicationDecision("recompute", "comment_id_changed")
+
+    if live.fingerprint != decision.expected_fingerprint:
+        return NoWorkApplicationDecision("recompute", "fingerprint_changed")
+
+    assert live.observed_at is not None
+    if live.observed_at > decision.observed_at:
+        return NoWorkApplicationDecision("recompute", "canonical_observation_newer")
+
+    return NoWorkApplicationDecision("apply", "prewrite_revalidation_passed")
