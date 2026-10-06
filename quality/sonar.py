@@ -44,6 +44,12 @@ _SENSITIVE = re.compile(
     r"(?i)(?:\b(?:password|passwd|secret|token|api[_-]?key|authorization|cookie)"
     r"\b\s*[:=]\s*\S+|bearer\s+[A-Za-z0-9._~+/-]{8,})"
 )
+_CE_SUPERSEDED = re.compile(
+    r"^Report for commit '[0-9a-f]{40}' can(?:'|’)t be processed: "
+    r"a newer report has already been processed, and processing older reports is not supported\. "
+    r"The last processed report was for commit '[0-9a-f]{40}'\.$",
+    re.IGNORECASE,
+)
 _MAX_PAYLOAD_BYTES = 250_000
 _MAX_REFS = 32
 _MAX_CONDITIONS = 100
@@ -223,6 +229,12 @@ def _analysis_freshness(value, sonar, now, refs):
     )
 
 
+def _is_superseded_ce_error(message: str) -> bool:
+    """Acepta solo la forma CE canónica que demuestra un reporte más nuevo procesado."""
+    compact = " ".join(message.split())
+    return _CE_SUPERSEDED.fullmatch(compact) is not None
+
+
 def _ce_task(value, source_at, now, max_age, refs):
     if value is None:
         return _signal(
@@ -238,10 +250,17 @@ def _ce_task(value, source_at, now, max_age, refs):
     if status == "FAILED":
         if not isinstance(message, str) or not message.strip():
             raise SonarEvidenceError("CE task FAILED requiere error_message.")
+        safe_message = _sanitize_message(message)
+        if _is_superseded_ce_error(message):
+            return _signal(
+                "ce_task", "PASS", "ce_task_superseded_by_newer_report",
+                source_at, now, max_age, refs,
+                {"error_message": safe_message},
+            )
         return _signal(
             "ce_task", "FAIL", "ce_task_failed",
             source_at, now, max_age, refs,
-            {"error_message": _sanitize_message(message)}
+            {"error_message": safe_message}
         )
     if message is not None:
         raise SonarEvidenceError("ce_task.error_message solo aplica a FAILED.")
