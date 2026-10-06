@@ -11,6 +11,7 @@ from scripts.no_work_dedup import (
     NoWorkPublicationState,
     decide_no_work,
     inventory_fingerprint,
+    revalidate_no_work_application,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,11 +63,13 @@ def state_after(
     *,
     comment_id: int,
     published_at: int,
+    observed_at: int | None = None,
 ) -> NoWorkPublicationState:
     return NoWorkPublicationState(
         comment_id=comment_id,
         fingerprint=decision.fingerprint,
         published_at=published_at,
+        observed_at=observed_at,
     )
 
 
@@ -229,7 +232,6 @@ class NoWorkDedupTests(unittest.TestCase):
         self.assertIn("0 comentarios nuevos/h", guide)
         self.assertIn("new_no_work_comments_per_hour", guide)
 
-
     def test_invalid_and_inactive_inventory_evidence_is_fail_closed(self):
         base = inventory()
         base_fingerprint = inventory_fingerprint(base)
@@ -281,6 +283,129 @@ class NoWorkDedupTests(unittest.TestCase):
         previous = state_after(first, comment_id=904_999, published_at=10)
         with self.assertRaisesRegex(NoWorkInventoryError, "time_moved_backwards"):
             decide_no_work(base, previous, 9)
+
+    def test_stale_inventory_observation_cannot_replace_newer_canonical_state(self):
+        snapshot = inventory()
+        first = decide_no_work(snapshot, None, 0)
+        previous = state_after(
+            first,
+            comment_id=904_321,
+            published_at=0,
+            observed_at=0,
+        )
+
+        session_b = decide_no_work(
+            snapshot,
+            previous,
+            2_000,
+            observed_at=1_000,
+        )
+        session_a = decide_no_work(
+            snapshot,
+            previous,
+            1_900,
+            observed_at=1_500,
+        )
+        current = state_after(
+            session_a,
+            comment_id=904_321,
+            published_at=1_900,
+            observed_at=1_500,
+        )
+
+        prewrite = revalidate_no_work_application(session_b, current)
+        self.assertEqual(
+            (prewrite.action, prewrite.reason),
+            ("recompute", "canonical_observation_newer"),
+        )
+
+    def test_prewrite_revalidation_requires_same_comment_and_expected_fingerprint(self):
+        base = inventory()
+        first = decide_no_work(base, None, 100)
+        previous = state_after(
+            first,
+            comment_id=904_654,
+            published_at=100,
+            observed_at=100,
+        )
+
+        changed = inventory()
+        changed["repositories"]["FactoryRunner"]["available"] = [1044]
+        decision = decide_no_work(changed, previous, 200, observed_at=190)
+
+        exact = revalidate_no_work_application(decision, previous)
+        self.assertEqual(exact.action, "apply")
+
+        other_comment = NoWorkPublicationState(
+            comment_id=904_655,
+            fingerprint=previous.fingerprint,
+            published_at=150,
+            observed_at=150,
+        )
+        self.assertEqual(
+            revalidate_no_work_application(decision, other_comment).reason,
+            "comment_id_changed",
+        )
+
+        other_fingerprint = NoWorkPublicationState(
+            comment_id=previous.comment_id,
+            fingerprint="f" * 64,
+            published_at=150,
+            observed_at=150,
+        )
+        self.assertEqual(
+            revalidate_no_work_application(decision, other_fingerprint).reason,
+            "fingerprint_changed",
+        )
+
+    def test_equal_or_newer_observation_preserves_create_update_omit_and_single_sink_contract(self):
+        base = inventory()
+        create = decide_no_work(base, None, 100, observed_at=100)
+        self.assertEqual((create.action, create.sink), ("create", CANONICAL_SINK))
+        self.assertEqual(
+            revalidate_no_work_application(create, None).action,
+            "apply",
+        )
+
+        previous = state_after(
+            create,
+            comment_id=904_777,
+            published_at=100,
+            observed_at=100,
+        )
+        omit = decide_no_work(base, previous, 120, observed_at=120)
+        self.assertEqual((omit.action, omit.sink), ("omit", CANONICAL_SINK))
+        self.assertEqual(
+            revalidate_no_work_application(omit, previous).action,
+            "omit",
+        )
+
+        changed = inventory()
+        changed["repositories"]["Factory"]["available"] = [1044]
+        update = decide_no_work(changed, previous, 130, observed_at=130)
+        self.assertEqual(
+            (update.action, update.comment_id, update.sink),
+            ("update", 904_777, CANONICAL_SINK),
+        )
+        self.assertEqual(
+            revalidate_no_work_application(update, previous).action,
+            "apply",
+        )
+
+    def test_inventory_fingerprint_remains_independent_of_observation_timestamp(self):
+        earlier = inventory()
+        later = inventory()
+        earlier["observed_at"] = 1
+        later["observed_at"] = 9_999
+
+        self.assertEqual(
+            inventory_fingerprint(earlier),
+            inventory_fingerprint(later),
+        )
+
+        first = decide_no_work(earlier, None, 10, observed_at=1)
+        second = decide_no_work(later, None, 10_000, observed_at=9_999)
+        self.assertEqual(first.fingerprint, second.fingerprint)
 
 
 if __name__ == "__main__":
