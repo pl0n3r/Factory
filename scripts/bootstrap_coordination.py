@@ -11,9 +11,11 @@ from urllib.request import Request, urlopen
 API, OWNER = "https://api.github.com", "pl0n3r"
 GOVERNANCE_REF = "pl0n3r/factory@v1"
 CALLER_PATH = ".github/workflows/work-coordination.yml"
+LEGACY_CALLER_PATH = ".github/workflows/coordinacion.yml"
+SUPPORTED_CALLER_PATHS = {CALLER_PATH, LEGACY_CALLER_PATH}
 TEST_PATH = "tests/test_factory_coordination_adoption.py"
 CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")
-ALLOWED_PATHS = {CALLER_PATH, TEST_PATH, "AGENTS.md"}
+ALLOWED_PATHS = {*SUPPORTED_CALLER_PATHS, TEST_PATH, "AGENTS.md"}
 GRINDFLOW_REPO = "pl0n3r/GrindFlow"
 VERSION_PATH = "config/version.php"
 PACKAGE_PATH = "package.json"
@@ -128,8 +130,10 @@ def caller_content(template: str) -> str:
     if "profile: es" not in value: raise BootstrapError("No fue posible fijar profile es.")
     return value
 
-def adoption_test() -> str:
-    return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n\n    def test_caller_keeps_hardened_consumer_coordination_contract(self):\n        text = (ROOT / ".github/workflows/work-coordination.yml").read_text(encoding="utf-8")\n        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]", text)\n        self.assertIn("group: coordinacion-${{ github.repository }}", text)\n        self.assertIn("cancel-in-progress: false", text)\n        self.assertIn("queue: max", text)\n        comment = text.split("  comentario:", 1)[1].split("  etiqueta:", 1)[0]\n        self.assertIn("github.event.comment.body == '/tomar'", comment)\n        self.assertIn("contains(github.event.comment.body, '/tomar')", comment)\n        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)\n        routes = {\n            "comentario": "operation: comment",\n            "etiqueta": "operation: label",\n            "pr": "operation: pr",\n            "validar-pr": "operation: validate",\n            "issue": "operation: issue",\n            "sweep": "operation: sweep",\n        }\n        names = list(routes)\n        for index, name in enumerate(names):\n            tail = text.split(f"  {name}:", 1)[1]\n            block = tail.split(f"  {names[index + 1]}:", 1)[0] if index + 1 < len(names) else tail\n            self.assertIn(routes[name], block)\n'''
+def adoption_test(caller_path: str = CALLER_PATH) -> str:
+    if caller_path not in SUPPORTED_CALLER_PATHS:
+        raise BootstrapError("Ruta de caller no soportada.")
+    return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n\n    def test_caller_keeps_hardened_consumer_coordination_contract(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]", text)\n        self.assertIn("group: coordinacion-${{ github.repository }}", text)\n        self.assertIn("cancel-in-progress: false", text)\n        self.assertIn("queue: max", text)\n        comment = text.split("  comentario:", 1)[1].split("  etiqueta:", 1)[0]\n        self.assertIn("github.event.comment.body == '/tomar'", comment)\n        self.assertIn("contains(github.event.comment.body, '/tomar')", comment)\n        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)\n        routes = {\n            "comentario": "operation: comment",\n            "etiqueta": "operation: label",\n            "pr": "operation: pr",\n            "validar-pr": "operation: validate",\n            "issue": "operation: issue",\n            "sweep": "operation: sweep",\n        }\n        names = list(routes)\n        for index, name in enumerate(names):\n            tail = text.split(f"  {name}:", 1)[1]\n            block = tail.split(f"  {names[index + 1]}:", 1)[0] if index + 1 < len(names) else tail\n            self.assertIn(routes[name], block)\n'''.replace("__FACTORY_CALLER_PATH__", caller_path)
 
 def allowed_paths(scope: str | set[str] | None = None) -> set[str]:
     if isinstance(scope, set):
@@ -154,11 +158,14 @@ def validate_patch(patch: Any, scope: str | set[str] | None = None) -> None:
         total += size
         if size > file_limit or total > total_limit:
             raise BootstrapError("Patch excede límites.")
-    if CALLER_PATH not in patch or TEST_PATH not in patch:
-        raise BootstrapError("Patch incompleto.")
+    callers = set(patch) & SUPPORTED_CALLER_PATHS
+    if len(callers) != 1 or TEST_PATH not in patch:
+        raise BootstrapError("Patch incompleto o caller ambiguo.")
 
-def build_patch(template: str) -> dict[str, str]:
-    patch = {CALLER_PATH: caller_content(template), TEST_PATH: adoption_test()}
+def build_patch(template: str, caller_path: str = CALLER_PATH) -> dict[str, str]:
+    if caller_path not in SUPPORTED_CALLER_PATHS:
+        raise BootstrapError("Ruta de caller no soportada.")
+    patch = {caller_path: caller_content(template), TEST_PATH: adoption_test(caller_path)}
     validate_patch(patch)
     return patch
 
@@ -302,6 +309,19 @@ def grindflow_delivery_patch(template: str, consumer_root: Path, expected_main_s
         raise BootstrapError("Patch GrindFlow incompleto.")
     return prepared
 
+def consumer_caller_path(root: Path) -> str:
+    present = [
+        path for path in sorted(SUPPORTED_CALLER_PATHS)
+        if (root / path).exists() or (root / path).is_symlink()
+    ]
+    if len(present) > 1:
+        raise BootstrapError("Consumidor con múltiples callers de coordinación soportados.")
+    if not present:
+        return CALLER_PATH
+    path = present[0]
+    _regular_text(root, path)
+    return path
+
 def prepare_delivery_patch(raw: dict[str,str], template: str, consumer_root: Path) -> dict[str,Any]:
     req=validate_request(raw)
     root=consumer_root.resolve()
@@ -311,7 +331,7 @@ def prepare_delivery_patch(raw: dict[str,str], template: str, consumer_root: Pat
         present={path for path in STRICT_CONTRACT_MARKERS if (root/path).exists()}
         if present==STRICT_CONTRACT_MARKERS:
             raise BootstrapError("Consumidor estricto sin adapter soportado.")
-        patch=build_patch(template)
+        patch=build_patch(template, consumer_caller_path(root))
     allowed=GRINDFLOW_DELIVERY_PATHS if req["target_repository"]==GRINDFLOW_REPO else ALLOWED_PATHS
     validate_patch(patch,allowed)
     return {
@@ -370,6 +390,21 @@ class GitHubGateway:
         value=self._request("GET",f"/repos/{name}/pulls?state=open&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
         if not isinstance(value,list) or len(value)>1: raise BootstrapError("Estado de PR ambiguo.")
         return value[0] if value else None
+    def closed_pr(self,name: str,branch: str)->dict[str,Any]|None:
+        value=self._request("GET",f"/repos/{name}/pulls?state=closed&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
+        if not isinstance(value,list): raise BootstrapError("Estado histórico de PR ambiguo.")
+        candidates=[]
+        for item in value:
+            number=item.get("number") if isinstance(item,dict) else None
+            if not isinstance(number,int):
+                raise BootstrapError("PR histórico inválido.")
+            detail=self._request("GET",f"/repos/{name}/pulls/{number}")
+            if not isinstance(detail,dict):
+                raise BootstrapError("PR histórico inválido.")
+            if detail.get("merged_at") is None:
+                candidates.append(detail)
+        if len(candidates)>1: raise BootstrapError("Estado histórico de PR ambiguo.")
+        return candidates[0] if candidates else None
     def pr_matches(self,name: str,branch: str,pr: Any,req: dict[str,Any])->bool:
         return bool(
             isinstance(pr,dict)
@@ -399,7 +434,8 @@ class GitHubGateway:
         if not (
             isinstance(pr,dict)
             and isinstance(pr.get("number"),int)
-            and pr.get("state","open")=="open"
+            and pr.get("state","open") in ("open","closed")
+            and not (pr.get("state")=="closed" and pr.get("merged_at") is not None)
             and isinstance(pr.get("base"),dict)
             and pr["base"].get("ref")=="main"
             and isinstance(pr.get("head"),dict)
@@ -474,7 +510,7 @@ class GitHubGateway:
         self,name: str,branch: str,number: int,req: dict[str,Any],legacy_sha: str|None=None,
         legacy_body: str|None=None,legacy_patch: dict[str,str]|None=None
     )->bool:
-        pr=self.open_pr(name,branch)
+        pr=self.open_pr(name,branch) or self.closed_pr(name,branch)
         historical=self.legacy_marker(name,branch,pr,req)
         if historical is None or pr.get("number")!=number:
             return False
@@ -595,7 +631,11 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: 
         if not gateway.pr_matches(name,branch,gpr,req): raise BootstrapError("El PR bootstrap pertenece a otra intención.")
         return {"status":"confirmed","branch":branch,"pr":gpr.get("number"),"created":False}
 
-    if bsha is None or gpr is None:
+    if bsha is None:
+        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    if gpr is None:
+        gpr=gateway.closed_pr(name,branch)
+    if gpr is None:
         raise BootstrapError("La rama bootstrap pertenece a otra intención.")
     historical=gateway.legacy_marker(name,branch,gpr,req)
     if historical is None or not gateway.commit_matches_marker(name,bsha,historical,set(legacy)) or not gateway.branch_matches(name,branch,legacy):
