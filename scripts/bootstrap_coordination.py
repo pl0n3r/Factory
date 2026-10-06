@@ -14,8 +14,19 @@ CALLER_PATH = ".github/workflows/work-coordination.yml"
 LEGACY_CALLER_PATH = ".github/workflows/coordinacion.yml"
 SUPPORTED_CALLER_PATHS = {CALLER_PATH, LEGACY_CALLER_PATH}
 TEST_PATH = "tests/test_factory_coordination_adoption.py"
+ACCEPTANCE_PATH = ".github/workflows/aceptacion.yml"
 CALLER_TEMPLATE = Path("governance/template/.github/workflows/coordinacion.yml")
-ALLOWED_PATHS = {*SUPPORTED_CALLER_PATHS, TEST_PATH, "AGENTS.md"}
+ALLOWED_PATHS = {*SUPPORTED_CALLER_PATHS, TEST_PATH, ACCEPTANCE_PATH, "AGENTS.md"}
+BOOTSTRAP_PR_LABELS = (
+    "tipo: infraestructura",
+    "prioridad: alta",
+    "estado: en revisión",
+    "rol: arquitectura",
+    "rol: ingenieria-software",
+    "rol: infraestructura",
+    "rol: seguridad",
+    "rol: qa",
+)
 GRINDFLOW_REPO = "pl0n3r/GrindFlow"
 VERSION_PATH = "config/version.php"
 PACKAGE_PATH = "package.json"
@@ -112,6 +123,49 @@ def guard_bootstrap_validation(value: str) -> str:
         raise BootstrapError("Caller v1 no expone validar-pr con el contrato esperado.")
     return value.replace(validation, guarded, 1)
 
+def guard_bootstrap_acceptance(value: str) -> str:
+    marker = "  bootstrap-acceptance:\n"
+    required = (
+        "uses: pl0n3r/factory/.github/workflows/aceptacion.yml@v1",
+        "issue_number: 0",
+    )
+    if marker in value:
+        if all(token in value for token in required) and value.count("factory/bootstrap-coordination-") == 2:
+            return value
+        raise BootstrapError("Caller de aceptación bootstrap inválido.")
+    canonical = (
+        "jobs:\n"
+        "  acceptance:\n"
+        "    uses: pl0n3r/factory/.github/workflows/aceptacion.yml@v1\n"
+        "    with:\n"
+        "      issue_number: 0\n"
+    )
+    if value.count(canonical) != 1:
+        raise BootstrapError("Caller de aceptación no expone el contrato esperado.")
+    guarded = (
+        "jobs:\n"
+        "  bootstrap-acceptance:\n"
+        "    if: >-\n"
+        "      startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-') &&\n"
+        "      github.event.pull_request.head.repo.full_name == github.repository &&\n"
+        "      github.event.pull_request.author_association == 'OWNER'\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 1\n"
+        "    steps:\n"
+        "      - run: 'true'\n"
+        "  acceptance:\n"
+        "    if: >-\n"
+        "      !(\n"
+        "        startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-') &&\n"
+        "        github.event.pull_request.head.repo.full_name == github.repository &&\n"
+        "        github.event.pull_request.author_association == 'OWNER'\n"
+        "      )\n"
+        "    uses: pl0n3r/factory/.github/workflows/aceptacion.yml@v1\n"
+        "    with:\n"
+        "      issue_number: 0\n"
+    )
+    return value.replace(canonical, guarded, 1)
+
 def caller_content(template: str) -> str:
     required = "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
     if not isinstance(template, str) or len(template.encode()) > MAX_FILE or required not in template or "@main" in template or "coordinar_trabajo.py" in template:
@@ -130,10 +184,16 @@ def caller_content(template: str) -> str:
     if "profile: es" not in value: raise BootstrapError("No fue posible fijar profile es.")
     return value
 
-def adoption_test(caller_path: str = CALLER_PATH) -> str:
+def adoption_test(caller_path: str = CALLER_PATH, acceptance_path: str | None = None) -> str:
     if caller_path not in SUPPORTED_CALLER_PATHS:
         raise BootstrapError("Ruta de caller no soportada.")
-    return '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n\n    def test_caller_keeps_hardened_consumer_coordination_contract(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]", text)\n        self.assertIn("group: coordinacion-${{ github.repository }}", text)\n        self.assertIn("cancel-in-progress: false", text)\n        self.assertIn("queue: max", text)\n        comment = text.split("  comentario:", 1)[1].split("  etiqueta:", 1)[0]\n        self.assertIn("github.event.comment.body == '/tomar'", comment)\n        self.assertIn("contains(github.event.comment.body, '/tomar')", comment)\n        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)\n        routes = {\n            "comentario": "operation: comment",\n            "etiqueta": "operation: label",\n            "pr": "operation: pr",\n            "validar-pr": "operation: validate",\n            "issue": "operation: issue",\n            "sweep": "operation: sweep",\n        }\n        names = list(routes)\n        for index, name in enumerate(names):\n            tail = text.split(f"  {name}:", 1)[1]\n            block = tail.split(f"  {names[index + 1]}:", 1)[0] if index + 1 < len(names) else tail\n            self.assertIn(routes[name], block)\n'''.replace("__FACTORY_CALLER_PATH__", caller_path)
+    if acceptance_path not in (None, ACCEPTANCE_PATH):
+        raise BootstrapError("Ruta de aceptación no soportada.")
+    value = '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n\n    def test_caller_keeps_hardened_consumer_coordination_contract(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]", text)\n        self.assertIn("group: coordinacion-${{ github.repository }}", text)\n        self.assertIn("cancel-in-progress: false", text)\n        self.assertIn("queue: max", text)\n        comment = text.split("  comentario:", 1)[1].split("  etiqueta:", 1)[0]\n        self.assertIn("github.event.comment.body == '/tomar'", comment)\n        self.assertIn("contains(github.event.comment.body, '/tomar')", comment)\n        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)\n        routes = {\n            "comentario": "operation: comment",\n            "etiqueta": "operation: label",\n            "pr": "operation: pr",\n            "validar-pr": "operation: validate",\n            "issue": "operation: issue",\n            "sweep": "operation: sweep",\n        }\n        names = list(routes)\n        for index, name in enumerate(names):\n            tail = text.split(f"  {name}:", 1)[1]\n            block = tail.split(f"  {names[index + 1]}:", 1)[0] if index + 1 < len(names) else tail\n            self.assertIn(routes[name], block)\n'''
+    value = value.replace("__FACTORY_CALLER_PATH__", caller_path)
+    if acceptance_path is not None:
+        value += '''\n    def test_bootstrap_acceptance_is_owner_same_repo_only(self):\n        text = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")\n        self.assertIn("bootstrap-acceptance:", text)\n        self.assertEqual(text.count("factory/bootstrap-coordination-"), 2)\n        self.assertEqual(text.count("github.event.pull_request.head.repo.full_name == github.repository"), 2)\n        self.assertEqual(text.count("github.event.pull_request.author_association == 'OWNER'"), 2)\n        self.assertIn("uses: pl0n3r/factory/.github/workflows/aceptacion.yml@v1", text)\n        self.assertIn("issue_number: 0", text)\n        self.assertIn("- run: 'true'", text)\n'''
+    return value
 
 def allowed_paths(scope: str | set[str] | None = None) -> set[str]:
     if isinstance(scope, set):
@@ -162,10 +222,13 @@ def validate_patch(patch: Any, scope: str | set[str] | None = None) -> None:
     if len(callers) != 1 or TEST_PATH not in patch:
         raise BootstrapError("Patch incompleto o caller ambiguo.")
 
-def build_patch(template: str, caller_path: str = CALLER_PATH) -> dict[str, str]:
+def build_patch(template: str, caller_path: str = CALLER_PATH, acceptance: str | None = None) -> dict[str, str]:
     if caller_path not in SUPPORTED_CALLER_PATHS:
         raise BootstrapError("Ruta de caller no soportada.")
-    patch = {caller_path: caller_content(template), TEST_PATH: adoption_test(caller_path)}
+    acceptance_path = ACCEPTANCE_PATH if acceptance is not None else None
+    patch = {caller_path: caller_content(template), TEST_PATH: adoption_test(caller_path, acceptance_path)}
+    if acceptance is not None:
+        patch[ACCEPTANCE_PATH] = guard_bootstrap_acceptance(acceptance)
     validate_patch(patch)
     return patch
 
@@ -331,7 +394,11 @@ def prepare_delivery_patch(raw: dict[str,str], template: str, consumer_root: Pat
         present={path for path in STRICT_CONTRACT_MARKERS if (root/path).exists()}
         if present==STRICT_CONTRACT_MARKERS:
             raise BootstrapError("Consumidor estricto sin adapter soportado.")
-        patch=build_patch(template, consumer_caller_path(root))
+        acceptance_file=root/ACCEPTANCE_PATH
+        acceptance=None
+        if acceptance_file.exists() or acceptance_file.is_symlink():
+            acceptance=_regular_text(root,ACCEPTANCE_PATH)
+        patch=build_patch(template, consumer_caller_path(root), acceptance)
     allowed=GRINDFLOW_DELIVERY_PATHS if req["target_repository"]==GRINDFLOW_REPO else ALLOWED_PATHS
     validate_patch(patch,allowed)
     return {
@@ -530,13 +597,35 @@ class GitHubGateway:
         return True
     def delete_branch(self,name: str,branch: str)->None:
         self._request("DELETE",f"/repos/{name}/git/refs/heads/{quote(branch,safe='')}")
+    def bootstrap_pr_labels(self,name: str)->list[str]:
+        catalog=self._request("GET",f"/repos/{name}/labels?per_page=100")
+        if not isinstance(catalog,list) or len(catalog)>=100:
+            raise BootstrapError("Catálogo de labels bootstrap ambiguo.")
+        names={row.get("name") for row in catalog if isinstance(row,dict) and isinstance(row.get("name"),str)}
+        if not set(BOOTSTRAP_PR_LABELS).issubset(names):
+            raise BootstrapError("Catálogo de labels bootstrap incompatible.")
+        return list(BOOTSTRAP_PR_LABELS)
+    def classify_bootstrap_pr(self,name: str,number: int)->None:
+        labels=self.bootstrap_pr_labels(name)
+        value=self._request("POST",f"/repos/{name}/issues/{number}/labels",{"labels":labels})
+        applied={row.get("name") for row in value if isinstance(row,dict)} if isinstance(value,list) else set()
+        if not set(labels).issubset(applied):
+            raise BootstrapError("Clasificación de PR bootstrap incompleta.")
     def create_pr(self,name: str,branch: str,title: str,body: str)->int:
+        number=None
         try:
             pr=self._request("POST",f"/repos/{name}/pulls",{"title":title,"head":branch,"base":"main","body":body})
             if not isinstance(pr,dict) or not isinstance(pr.get("base"),dict) or pr["base"].get("ref")!="main" or not isinstance(pr.get("head"),dict) or pr["head"].get("ref")!=branch or not isinstance(pr.get("number"),int):
                 raise BootstrapError("PR bootstrap inválido.")
-            return pr["number"]
+            number=pr["number"]
+            self.classify_bootstrap_pr(name,number)
+            return number
         except (BootstrapError,OSError):
+            if number is not None:
+                try:
+                    self._request("PATCH",f"/repos/{name}/pulls/{number}",{"state":"closed"})
+                except (BootstrapError,OSError):
+                    pass
             try:
                 self.delete_branch(name,branch)
             except (BootstrapError,OSError):
