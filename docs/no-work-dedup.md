@@ -24,6 +24,16 @@ Campos incidentales como timestamps de observación, títulos de PR o texto de U
 cambian la huella. Un repo faltante hace fallar el cálculo en vez de permitir un
 NO_WORK parcial.
 
+## Tiempo de observación vs. tiempo de publicación
+
+`observed_at` identifica cuándo se tomó la fotografía del inventario. Es distinto
+de `published_at`, que identifica cuándo el estado canónico fue escrito en GitHub.
+La huella sigue dependiendo solo del inventario autorizado y nunca del timestamp.
+
+Para compatibilidad, callers existentes que no informan `observed_at` usan el
+momento de decisión/publicación como observación. Los estados históricos sin ese
+campo se normalizan con `observed_at = published_at`.
+
 ## Decisión create | update | omit
 
 Dado el snapshot actual y el estado del comentario canónico:
@@ -37,6 +47,26 @@ Dado el snapshot actual y el estado del comentario canónico:
 
 Después de la creación inicial, la política nunca requiere crear otro comentario
 para NO_WORK. Un incidente como Factory#860 no es un sink alternativo.
+
+## Revalidación justo antes de escribir
+
+Una decisión calculada no autoriza por sí sola el overwrite. Inmediatamente antes
+de `create` o `update`, el caller debe releer el estado canónico y ejecutar
+`revalidate_no_work_application(decision, current)`.
+
+La precondición es fail-closed:
+
+- `apply`: el comentario/fingerprint esperado siguen vigentes y la observación
+  canónica no es más nueva que la decisión;
+- `omit`: la decisión original ya era un no-op;
+- `recompute`: cambió `comment_id`, cambió el fingerprint esperado, apareció o
+  desapareció el comentario concurrentemente, o el canónico contiene una
+  observación más nueva.
+
+Ante `recompute`, el caller no debe escribir con la decisión vieja: debe volver a
+leer inventario vivo, recalcular la decisión y repetir la revalidación. Esto evita
+la carrera A/B donde B observa primero, se demora y luego intenta reemplazar el
+estado publicado por A con evidencia más reciente.
 
 ## Baseline y métrica
 
