@@ -617,7 +617,27 @@ class GitHubGateway:
         pr=self.create_pr(name,branch,f"chore(factory): endurecer bootstrap coordinación (#{req['target_issue']})",body)
         return commit["sha"],pr
 
-def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: dict[str,str],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
+def historical_patch_for_branch(
+    gateway: Any,
+    name: str,
+    branch: str,
+    branch_sha: str,
+    historical: dict[str,Any] | None,
+    candidates: dict[str,str] | tuple[dict[str,str], ...],
+)->dict[str,str]:
+    if historical is None:
+        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    options=(candidates,) if isinstance(candidates,dict) else candidates
+    matching=[
+        candidate for candidate in options
+        if gateway.commit_matches_marker(name,branch_sha,historical,set(candidate))
+        and gateway.branch_matches(name,branch,candidate)
+    ]
+    if len(matching)!=1:
+        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    return matching[0]
+
+def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: dict[str,str] | tuple[dict[str,str], ...],branch: str,bsha: str|None,gpr: dict[str,Any]|None)->dict[str,Any]|None:
     if bsha is None and gpr is None: return None
     name=req["target_repository"]
     if bsha is not None and gateway.commit_matches(name,bsha,req,set(patch)) and gateway.branch_matches(name,branch,patch):
@@ -638,8 +658,7 @@ def reuse_existing(req: dict[str,Any],gateway: Any,patch: dict[str,str],legacy: 
     if gpr is None:
         raise BootstrapError("La rama bootstrap pertenece a otra intención.")
     historical=gateway.legacy_marker(name,branch,gpr,req)
-    if historical is None or not gateway.commit_matches_marker(name,bsha,historical,set(legacy)) or not gateway.branch_matches(name,branch,legacy):
-        raise BootstrapError("La rama bootstrap pertenece a otra intención.")
+    legacy=historical_patch_for_branch(gateway,name,branch,bsha,historical,legacy)
     legacy_body=str(gpr.get("body") or "")
 
     replacement=replacement_branch_name(req,patch)
@@ -681,8 +700,9 @@ def bootstrap(raw: dict[str,str],gateway: Any,template: str,prepared_patch: dict
     if gateway.main_sha(name)!=req["expected_main_sha"]: raise BootstrapError("expected_main_sha no coincide con main.")
     patch = prepared_patch if prepared_patch is not None else build_patch(template)
     validate_patch(patch, name if prepared_patch is not None else None)
-    legacy,branch=legacy_patch(template),branch_name(req)
-    existing=reuse_existing(req,gateway,patch,legacy,branch,gateway.branch_sha(name,branch),gateway.open_pr(name,branch))
+    historical=(legacy_patch(template),build_patch(template,CALLER_PATH))
+    branch=branch_name(req)
+    existing=reuse_existing(req,gateway,patch,historical,branch,gateway.branch_sha(name,branch),gateway.open_pr(name,branch))
     if existing is not None: return existing
     if all(gateway.file_text(name,path,"main")==content for path,content in patch.items()):
         return {"status":"already_bootstrapped","branch":None,"pr":None,"created":False}
