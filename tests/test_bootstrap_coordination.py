@@ -18,6 +18,20 @@ def request(key="b" * 64):
 
 CALLER = """name: Coordinación\non:\n  schedule:\n    - cron: '17 * * * *'\n  workflow_dispatch:\n  pull_request:\n  issues:\n  issue_comment:\njobs:\n  comentario:\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: comment\n  pr:\n    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: pr\n  validar-pr:\n    if: github.event_name == 'pull_request'\n    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1\n    with:\n      operation: validate\n      require_reservation: true\n"""
 
+ACCEPTANCE = """name: Aceptación ejecutable
+on:
+  pull_request:
+permissions:
+  contents: read
+  issues: read
+  checks: read
+jobs:
+  acceptance:
+    uses: pl0n3r/factory/.github/workflows/aceptacion.yml@v1
+    with:
+      issue_number: 0
+"""
+
 def generated_validation_runs(value, *, event_name="pull_request", ref, head_repo, repository, association):
     block=value.split("  validar-pr:",1)[1].split("    uses:",1)[0]
     expression=" ".join(
@@ -27,6 +41,26 @@ def generated_validation_runs(value, *, event_name="pull_request", ref, head_rep
     )
     atoms={
         "github.event_name == 'pull_request'": event_name == "pull_request",
+        "startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')": ref.startswith("factory/bootstrap-coordination-"),
+        "github.event.pull_request.head.repo.full_name == github.repository": head_repo == repository,
+        "github.event.pull_request.author_association == 'OWNER'": association == "OWNER",
+    }
+    for atom,result in atoms.items():
+        expression=expression.replace(atom,str(result))
+    expression=expression.replace("&&"," and ").replace("!(","not (")
+    if "github." in expression or "startsWith(" in expression:
+        raise AssertionError(f"Expresión no evaluada completamente: {expression}")
+    return bool(eval(expression, {"__builtins__": {}}, {}))
+
+
+def generated_acceptance_runs(value, *, ref, head_repo, repository, association):
+    block=value.split("  acceptance:",1)[1].split("    uses:",1)[0]
+    expression=" ".join(
+        line.strip()
+        for line in block.splitlines()
+        if line.strip() and line.strip() != "if: >-"
+    )
+    atoms={
         "startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')": ref.startswith("factory/bootstrap-coordination-"),
         "github.event.pull_request.head.repo.full_name == github.repository": head_repo == repository,
         "github.event.pull_request.author_association == 'OWNER'": association == "OWNER",
@@ -354,6 +388,77 @@ class BootstrapCoordinationTests(unittest.TestCase):
                 association="OWNER",
             )
         )
+
+    def test_bootstrap_acceptance_guard_is_owner_same_repo_only_and_preserves_normal_prs(self):
+        value=b.guard_bootstrap_acceptance(ACCEPTANCE)
+        repo="pl0n3r/Consumer"
+        self.assertFalse(generated_acceptance_runs(
+            value,ref="factory/bootstrap-coordination-187",head_repo=repo,repository=repo,association="OWNER"
+        ))
+        for ref,head_repo,association in (
+            ("trabajo/issue-187",repo,"OWNER"),
+            ("factory/bootstrap-coordination-187",repo,"MEMBER"),
+            ("factory/bootstrap-coordination-187","fork/Consumer","OWNER"),
+        ):
+            with self.subTest(ref=ref,head_repo=head_repo,association=association):
+                self.assertTrue(generated_acceptance_runs(
+                    value,ref=ref,head_repo=head_repo,repository=repo,association=association
+                ))
+
+    def test_bootstrap_acceptance_guard_uses_local_success_sentinel(self):
+        value=b.guard_bootstrap_acceptance(ACCEPTANCE)
+        self.assertIn("  bootstrap-acceptance:",value)
+        self.assertIn("runs-on: ubuntu-latest",value)
+        self.assertIn("timeout-minutes: 1",value)
+        self.assertIn("- run: 'true'",value)
+        self.assertEqual(value.count("issue_number: 0"),1)
+        self.assertEqual(b.guard_bootstrap_acceptance(value),value)
+
+    def test_created_bootstrap_pr_gets_complete_safe_classification_without_closing_target_issue(self):
+        gateway=b.GitHubGateway("token")
+        labels=[{"name":name} for name in b.BOOTSTRAP_PR_LABELS]
+        pr={"number":98,"base":{"ref":"main"},"head":{"ref":"factory/bootstrap-coordination-187"}}
+        calls=[]
+        def request(method,path,payload=None,allow=()):
+            calls.append((method,path,payload))
+            if method=="POST" and path.endswith("/pulls"): return pr
+            if method=="GET" and path.endswith("/labels?per_page=100"): return labels
+            if method=="POST" and path.endswith("/issues/98/labels"): return labels
+            raise AssertionError((method,path,payload))
+        with mock.patch.object(gateway,"_request",side_effect=request):
+            number=gateway.create_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187","title","Bootstrap gobernado para #187")
+        self.assertEqual(number,98)
+        self.assertIn(("POST","/repos/pl0n3r/Consumer/issues/98/labels",{"labels":list(b.BOOTSTRAP_PR_LABELS)}),calls)
+        self.assertFalse(any("/issues/187" in path for _,path,_ in calls))
+        self.assertNotIn("Closes #187",calls[0][2]["body"])
+
+    def test_bootstrap_pr_classification_fails_closed_when_catalog_is_incompatible(self):
+        gateway=b.GitHubGateway("token")
+        pr={"number":98,"base":{"ref":"main"},"head":{"ref":"factory/bootstrap-coordination-187"}}
+        calls=[]
+        def request(method,path,payload=None,allow=()):
+            calls.append((method,path,payload))
+            if method=="POST" and path.endswith("/pulls"): return pr
+            if method=="GET" and path.endswith("/labels?per_page=100"): return [{"name":"prioridad: alta"}]
+            if method=="PATCH" and path.endswith("/pulls/98"): return {"state":"closed"}
+            if method=="DELETE" and "/git/refs/heads/" in path: return None
+            raise AssertionError((method,path,payload))
+        with mock.patch.object(gateway,"_request",side_effect=request):
+            with self.assertRaisesRegex(b.BootstrapError,"incompatible"):
+                gateway.create_pr("pl0n3r/Consumer","factory/bootstrap-coordination-187","title","body")
+        self.assertTrue(any(method=="PATCH" and path.endswith("/pulls/98") for method,path,_ in calls))
+        self.assertTrue(any(method=="DELETE" for method,_,_ in calls))
+
+    def test_factoryrunner_style_legacy_caller_patch_keeps_single_caller_and_bootstrap_acceptance_gate(self):
+        root=self._generic_consumer_root(b.LEGACY_CALLER_PATH)
+        acceptance=root/b.ACCEPTANCE_PATH
+        acceptance.parent.mkdir(parents=True,exist_ok=True)
+        acceptance.write_text(ACCEPTANCE,encoding="utf-8")
+        patch=b.prepare_delivery_patch(request(),CALLER,root)["patch"]
+        self.assertEqual(set(patch),{b.LEGACY_CALLER_PATH,b.TEST_PATH,b.ACCEPTANCE_PATH})
+        self.assertNotIn(b.CALLER_PATH,patch)
+        self.assertIn("bootstrap-acceptance:",patch[b.ACCEPTANCE_PATH])
+        self.assertIn("test_bootstrap_acceptance_is_owner_same_repo_only",patch[b.TEST_PATH])
 
     def test_bootstrap_pins_main_and_writes_only_branch_and_pr(self):
         gateway=FakeGateway(); result=b.bootstrap(request(),gateway,CALLER)
