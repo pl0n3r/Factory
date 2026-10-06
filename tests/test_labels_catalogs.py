@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from scripts.labels_kit import (
+    LabelError,
     catalog_for_language,
     planned_state_decision,
     planned_state_migration_plan,
@@ -65,6 +66,11 @@ class LabelCatalogTests(unittest.TestCase):
             planned_state_migration_plan(catalog_for_language("es"), [raw_issue]),
             [],
         )
+
+        with self.assertRaises(LabelError):
+            planned_state_decision({**raw_issue, "dependencies_open": [], "executable": "yes"})
+        with self.assertRaises(LabelError):
+            planned_state_decision({**raw_issue, "dependencies_open": [], "has_ready_leaf": 1})
 
 
 if __name__ == "__main__":
