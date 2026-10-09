@@ -24,6 +24,30 @@ Campos incidentales como timestamps de observación, títulos de PR o texto de U
 cambian la huella. Un repo faltante hace fallar el cálculo en vez de permitir un
 NO_WORK parcial.
 
+## Metadatos de observación anidados (Factory#1065)
+
+Al construir la huella, las entradas de `reservations` y `blockers` pueden
+llevar `observed_at`, `fetched_at` y `captured_at` como timestamps
+**exclusivamente observacionales**. Se omiten de la proyección, sin cambiar el
+objeto original del caller. Una misma `reservation_id`, dueño, rama, issue,
+claims y estado conserva la misma huella aunque otro agente capture después.
+
+Si el productor necesita etiquetar `updated_at` como hora de observación,
+debe usar el namespace explícito `observation_metadata: {updated_at: ...}`.
+Solo admite `observed_at`, `fetched_at`, `captured_at` y `updated_at`
+con valores temporales escalares válidos. Un `updated_at` ordinario fuera de
+ese namespace **se conserva como material**: puede representar un cambio de
+reserva o bloqueo y nunca se descarta por heurística.
+
+Los campos desconocidos de la entrada también permanecen en la huella, para
+no ocultar cambios materiales. Una metadata declarada como observacional
+pero ambigua o con claves no permitidas falla cerrado con
+`NoWorkInventoryError`: nunca se omiten campos desconocidos de una supuesta
+observación. Cambios de `reservation_id`, `owner`, `issue`, `branch`,
+`active`, `claims` o del motivo/condición de los `blockers` cambian
+la huella. Las reservas inactivas continúan excluidas como antes. El normalizado
+de PR (número, estado abierto, HEAD exacto) no cambia.
+
 ## Tiempo de observación vs. tiempo de publicación
 
 `observed_at` identifica cuándo se tomó la fotografía del inventario. Es distinto
