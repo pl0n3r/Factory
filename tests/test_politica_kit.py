@@ -130,8 +130,8 @@ def sha_less_fixture():
     bot = json.loads(rate_limit_comment(
         comment_id=202, created_at="2026-10-04T05:02:08Z",
         updated_at="2026-10-04T05:02:19Z",
-        body=("<!-- This is an auto-generated reply by CodeRabbit -->\\n"
-              "<!-- CodeRabbit review command invocation: v2:sample -->\\n"
+        body=("<!-- This is an auto-generated reply by CodeRabbit -->\n"
+              "<!-- CodeRabbit review command invocation: v2:sample -->\n"
               "Review rate limited."),
     ))
     comments = [json.dumps(owner), json.dumps(bot), json.dumps(prior)]
