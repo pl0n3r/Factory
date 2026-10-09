@@ -118,7 +118,108 @@ def review_thread(*, resolved=False, login="coderabbitai"):
     })
 
 
+
+def sha_less_fixture():
+    """Secuencia mínima basada en la respuesta real de CodeRabbit (#413)."""
+    owner = json.loads(owner_review_retry(
+        comment_id=201, created_at="2026-10-04T05:02:00Z",
+    ))
+    bot = json.loads(rate_limit_comment(
+        comment_id=202, created_at="2026-10-04T05:02:08Z",
+        updated_at="2026-10-04T05:02:19Z",
+        body=("<!-- This is an auto-generated reply by CodeRabbit -->\n"
+              "<!-- CodeRabbit review command invocation: v2:sample -->\n"
+              "Review rate limited."),
+    ))
+    comments = [json.dumps(owner), json.dumps(bot)]
+    timeline = [
+        {"event": "committed", "sha": "b" * 40},
+        {"event": "committed", "sha": HEAD},
+        {"event": "commented", "id": owner["id"], "body": owner["body"],
+         "created_at": owner["created_at"],
+         "actor": {"login": owner["user"]["login"]}},
+        {"event": "mentioned", "actor": {"login": "coderabbitai"}},
+        {"event": "commented", "id": bot["id"], "body": bot["body"],
+         "created_at": bot["created_at"],
+         "actor": {"login": bot["user"]["login"]}},
+    ]
+    return comments, timeline
+
+
+def sha_less_validate(comments, timeline, *, phase="construccion",
+                      checks=None, reviews=None, threads=None, run_attempt=2):
+    return validate_rate_limit_fallback(
+        required_review_bot="coderabbitai[bot]",
+        head_sha=HEAD,
+        head_committed_at="2026-10-04T04:59:00Z",
+        phase=phase,
+        review_lines=reviews if reviews is not None else [],
+        comment_lines=comments,
+        check_lines=checks if checks is not None else green_gate_checks(),
+        thread_lines=threads if threads is not None else [],
+        timeline_lines=([json.dumps(event) for event in timeline]
+                        if timeline is not None else None),
+        run_attempt=run_attempt,
+    )
+
+
 class T(unittest.TestCase):
+    def test_sha_less_rate_limit_accepts_only_authenticated_timeline_exact_head_owner_retry(self):
+        comments, timeline = sha_less_fixture()
+        self.assertEqual(sha_less_validate(comments, timeline),
+                         (202, "2026-10-04T05:02:08Z"))
+        # La misma respuesta del bot, sin timeline, nunca habilita fallback.
+        with self.assertRaises(PolicyError):
+            sha_less_validate(comments, None)
+        # La ruta alternativa no está disponible en el primer intento.
+        with self.assertRaises(PolicyError):
+            sha_less_validate(comments, timeline, run_attempt=1)
+
+    def test_sha_less_rate_limit_rejects_stale_head_force_push_missing_timeline_and_non_owner(self):
+        comments, events = sha_less_fixture()
+        cases = {}
+        stale = [dict(x) for x in events]
+        stale[1] = {"event": "committed", "sha": "c" * 40}
+        cases["HEAD antiguo"] = (comments, stale)
+        force = [dict(x) for x in events]
+        force.insert(3, {"event": "head_ref_force_pushed", "sha": HEAD})
+        cases["force push"] = (comments, force)
+        previous = [dict(x) for x in events]
+        previous.append({"event": "committed", "sha": HEAD})
+        cases["respuestas anteriores a HEAD"] = (comments, previous)
+        cases["timeline ausente"] = (comments, None)
+        cases["timeline vacía"] = (comments, [])
+        cases["timeline truncada"] = (comments, events[2:])
+        cases["comentario falso"] = (comments, events[:-1] + [
+            {**events[-1], "actor": {"login": "pl0n3r"}}])
+        cases["timestamp incoherente"] = (comments, events[:-1] + [
+            {**events[-1], "created_at": "2026-10-04T05:01:00Z"}])
+        owner = json.loads(comments[0])
+        owner["author_association"] = "MEMBER"
+        cases["reintento no OWNER"] = ([json.dumps(owner), comments[1]], events)
+        bot = json.loads(comments[1])
+        bot["user"]["type"] = "User"
+        cases["respuesta fabricada"] = ([comments[0], json.dumps(bot)], events)
+        for label, (candidate_comments, candidate_timeline) in cases.items():
+            with self.subTest(label=label), self.assertRaises(PolicyError):
+                sha_less_validate(candidate_comments, candidate_timeline)
+
+    def test_sha_less_rate_limit_rejects_live_open_findings_and_red_gates(self):
+        comments, timeline = sha_less_fixture()
+        conditions = (
+            {"phase": "live"},
+            {"threads": [review_thread()]},
+            {"checks": green_gate_checks() + [
+                check(check_id=200, name="CodeQL", conclusion="failure")]},
+            {"reviews": [review(state="CHANGES_REQUESTED")]},
+            {"checks": green_gate_checks() + [
+                check(check_id=200, name="SonarCloud Code Analysis",
+                      status="in_progress", conclusion=None)]},
+        )
+        for args in conditions:
+            with self.subTest(args=args), self.assertRaises(PolicyError):
+                sha_less_validate(comments, timeline, **args)
+
     def test_empty_commented_bot_reviews_do_not_count(self):
         lines = [
             review(review_id=1, body="**Actionable comments posted: 2**"),
