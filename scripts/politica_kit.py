@@ -861,7 +861,6 @@ def validate_rate_limit_fallback(
     thread_lines: list[str],
     timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
-    timeline_lines: list[str] | None = None,
 ) -> tuple[int, str]:
     run_attempt = _validate_run_attempt(run_attempt)
     if phase != "construccion":
@@ -994,7 +993,6 @@ def validate_required_bot_review_or_fallback(
     phase_file: Path | None,
     timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
-    timeline_lines: list[str] | None = None,
 ) -> dict[str, Any]:
     run_attempt = _validate_run_attempt(run_attempt)
     if required_review_bot == "":
@@ -1019,7 +1017,6 @@ def validate_required_bot_review_or_fallback(
         thread_lines=thread_lines,
         timeline_lines=timeline_lines,
         run_attempt=run_attempt,
-        timeline_lines=timeline_lines,
     )
     return {
         "review_fallback": True,
@@ -1055,7 +1052,6 @@ def args() -> argparse.Namespace:
     parser.add_argument("--comments-file", default="")
     parser.add_argument("--checks-file", default="")
     parser.add_argument("--threads-file", default="")
-    parser.add_argument("--timeline-file", default="")
     parser.add_argument("--timeline-file", default="")
     parser.add_argument("--phase-file", default="")
     return parser.parse_args()
@@ -1113,14 +1109,6 @@ def main() -> int:
             if getattr(options, "timeline_file", "")
             else None
         )
-        timeline_lines = (
-            _read_bounded_lines(
-                Path(options.timeline_file),
-                max_bytes=MAX_TIMELINE_BYTES,
-                noun="timeline",
-            )
-            if getattr(options, "timeline_file", "") else None
-        )
         rounds = count_review_rounds(lines)
         validate_rounds(rounds, policy["review_round_limit"])
         review_result = validate_required_bot_review_or_fallback(
@@ -1131,7 +1119,6 @@ def main() -> int:
             comment_lines=comment_lines,
             check_lines=check_lines,
             thread_lines=thread_lines,
-            timeline_lines=timeline_lines,
             phase_file=Path(options.phase_file) if options.phase_file else None,
             run_attempt=run_attempt,
             timeline_lines=timeline_lines,
