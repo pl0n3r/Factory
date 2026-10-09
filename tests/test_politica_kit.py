@@ -118,7 +118,155 @@ def review_thread(*, resolved=False, login="coderabbitai"):
     })
 
 
+
+def sha_less_fixture():
+    """Secuencia reducida de GrindFlow #413, con payloads reales de timeline REST."""
+    prior = json.loads(rate_limit_comment(
+        comment_id=200, created_at="2026-10-04T05:00:00Z",
+    ))
+    owner = json.loads(owner_review_retry(
+        comment_id=201, created_at="2026-10-04T05:02:00Z",
+    ))
+    bot = json.loads(rate_limit_comment(
+        comment_id=202, created_at="2026-10-04T05:02:08Z",
+        updated_at="2026-10-04T05:02:19Z",
+        body=("<!-- This is an auto-generated reply by CodeRabbit -->\n"
+              "<!-- CodeRabbit review command invocation: v2:sample -->\n"
+              "Review rate limited."),
+    ))
+    comments = [json.dumps(owner), json.dumps(bot), json.dumps(prior)]
+
+    def event(item):
+        return {
+            "event": "commented", "id": item["id"], "body": item["body"],
+            "created_at": item["created_at"],
+            "author_association": item.get("author_association", "NONE"),
+            "user": item["user"],
+            "actor": {"login": item["user"]["login"]},
+        }
+
+    timeline = [
+        {"event": "committed", "sha": "b" * 40},
+        {"event": "committed", "sha": HEAD},
+        event(prior),
+        event(owner),
+        {"event": "mentioned", "actor": {"login": "coderabbitai"}},
+        event(bot),
+    ]
+    return comments, timeline
+
+
+def sha_less_validate(comments, timeline, *, phase="construccion",
+                      checks=None, reviews=None, threads=None, run_attempt=2):
+    return validate_rate_limit_fallback(
+        required_review_bot="coderabbitai[bot]",
+        head_sha=HEAD,
+        head_committed_at="2026-10-04T04:59:00Z",
+        phase=phase,
+        review_lines=reviews if reviews is not None else [],
+        comment_lines=comments,
+        check_lines=checks if checks is not None else green_gate_checks(),
+        thread_lines=threads if threads is not None else [],
+        timeline_lines=([json.dumps(event) for event in timeline]
+                        if timeline is not None else None),
+        run_attempt=run_attempt,
+    )
+
+
 class T(unittest.TestCase):
+    def test_sha_less_rate_limit_accepts_only_authenticated_timeline_exact_head_owner_retry(self):
+        comments, timeline = sha_less_fixture()
+        self.assertEqual(sha_less_validate(comments, timeline),
+                         (202, "2026-10-04T05:02:08Z"))
+        # La misma respuesta del bot, sin timeline, nunca habilita fallback.
+        with self.assertRaises(PolicyError):
+            sha_less_validate(comments, None)
+        # La ruta alternativa no está disponible en el primer intento.
+        with self.assertRaises(PolicyError):
+            sha_less_validate(comments, timeline, run_attempt=1)
+
+    def test_sha_less_rate_limit_rejects_stale_head_force_push_missing_timeline_and_non_owner(self):
+        comments, events = sha_less_fixture()
+        cases = {}
+        stale = [dict(x) for x in events]
+        stale[1] = {"event": "committed", "sha": "c" * 40}
+        cases["HEAD antiguo"] = (comments, stale)
+        force = [dict(x) for x in events]
+        force.insert(3, {"event": "head_ref_force_pushed", "sha": HEAD})
+        cases["force push"] = (comments, force)
+        previous = [dict(x) for x in events]
+        previous.append({"event": "committed", "sha": HEAD})
+        cases["respuestas anteriores a HEAD"] = (comments, previous)
+        cases["timeline ausente"] = (comments, None)
+        cases["timeline vacía"] = (comments, [])
+        cases["timeline truncada"] = (comments, events[2:])
+        cases["comentario falso"] = (comments, events[:-1] + [
+            {**events[-1], "actor": {"login": "pl0n3r"}}])
+        cases["timestamp incoherente"] = (comments, events[:-1] + [
+            {**events[-1], "created_at": "2026-10-04T05:01:00Z"}])
+        owner = json.loads(comments[0])
+        owner["author_association"] = "MEMBER"
+        cases["reintento no OWNER"] = ([json.dumps(owner), comments[1]], events)
+        bot = json.loads(comments[1])
+        bot["user"]["type"] = "User"
+        cases["respuesta fabricada"] = ([comments[0], json.dumps(bot)], events)
+        for label, (candidate_comments, candidate_timeline) in cases.items():
+            with self.subTest(label=label), self.assertRaises(PolicyError):
+                sha_less_validate(candidate_comments, candidate_timeline)
+
+    def test_sha_less_rate_limit_rejects_missing_initial_rate_limit_and_ambiguous_triggers(self):
+        comments, events = sha_less_fixture()
+        # Sin rate-limit inicial previo al comando OWNER.
+        no_initial = [e for e in events if e.get("id") != 200]
+        no_initial_comments = [c for c in comments if json.loads(c)["id"] != 200]
+        with self.assertRaises(PolicyError):
+            sha_less_validate(no_initial_comments, no_initial)
+        # Dos comandos OWNER competidores.
+        owner = json.loads(comments[0])
+        second = {**owner, "id": 203, "created_at": "2026-10-04T05:02:03Z"}
+        extra = dict(events[3], id=203, created_at="2026-10-04T05:02:03Z")
+        with self.subTest(label="múltiples OWNER"), self.assertRaises(PolicyError):
+            sha_less_validate(comments + [json.dumps(second)],
+                              events[:4] + [extra] + events[4:])
+        # Trigger OWNER editado después de publicarse.
+        edited = {**owner, "updated_at": "2026-10-04T05:03:00Z"}
+        with self.subTest(label="OWNER editado"), self.assertRaises(PolicyError):
+            sha_less_validate([json.dumps(edited), comments[1], comments[2]], events)
+        # Respuesta fuera de la ventana de 120 s.
+        late = json.loads(comments[1])
+        late["created_at"] = "2026-10-04T05:09:00Z"
+        late_event = dict(events[-1], created_at="2026-10-04T05:09:00Z")
+        with self.subTest(label="respuesta tardía"), self.assertRaises(PolicyError):
+            sha_less_validate([comments[0], json.dumps(late), comments[2]],
+                              events[:-1] + [late_event])
+
+    def test_marker_exact_head_con_rate_limit_en_el_cuerpo_no_cuenta_como_cobertura(self):
+        marker = ('<!-- final_review_risk_coverage:{"sourceCommitId":"' + "b" * 40
+                  + '","coveredCommitId":"' + HEAD + '","kind":"reviewed"} -->')
+        contradictory = {
+            "user": {"type": "Bot", "login": "coderabbitai[bot]"},
+            "body": "Review rate limited.\n" + marker,
+        }
+        from scripts.politica_kit import _comment_has_exact_head_coverage
+        self.assertFalse(_comment_has_exact_head_coverage(
+            contradictory, required_review_bot="coderabbitai[bot]", head_sha=HEAD))
+
+    def test_sha_less_rate_limit_rejects_live_open_findings_and_red_gates(self):
+        comments, timeline = sha_less_fixture()
+        conditions = (
+            {"phase": "live"},
+            {"threads": [review_thread()]},
+            {"checks": green_gate_checks() + [
+                check(check_id=200, name="CodeQL", conclusion="failure")]},
+            {"reviews": [review(state="CHANGES_REQUESTED")]},
+            {"checks": green_gate_checks() + [
+                check(check_id=200, name="SonarCloud Code Analysis",
+                      status="in_progress", conclusion=None)]},
+        )
+        for args in conditions:
+            with self.subTest(args=args), self.assertRaises(PolicyError):
+                sha_less_validate(comments, timeline, **args)
+
     def test_empty_commented_bot_reviews_do_not_count(self):
         lines = [
             review(review_id=1, body="**Actionable comments posted: 2**"),

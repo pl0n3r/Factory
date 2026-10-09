@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,9 @@ MAX_REVIEWS_BYTES = 2_000_000
 MAX_COMMENTS_BYTES = 2_000_000
 MAX_CHECKS_BYTES = 2_000_000
 MAX_THREADS_BYTES = 2_000_000
+MAX_TIMELINE_BYTES = 2_000_000
+MAX_TIMELINE_EVENTS = 500
+MAX_RATE_LIMIT_REPLY_SECONDS = 120
 MAX_PHASE_BYTES = 512 * 1024
 MAX_EVIDENCE_ITEM_BYTES = 100_000
 RATE_LIMIT_TEXTS = ("Review rate limited", "Review limit reached")
@@ -231,6 +235,8 @@ def _comment_has_exact_head_coverage(
         and user.get("login") == required_review_bot
         and isinstance(body, str)
     ):
+        return False
+    if _is_rate_limit_body(body):
         return False
     matches = list(COMMENT_COVERAGE_RE.finditer(body))
     if len(matches) != 1:
@@ -607,6 +613,146 @@ def _exact_head_rate_limit_events(
     )
 
 
+def _sha_less_timeline_retry(
+    *,
+    timeline_lines: list[str],
+    comment_lines: list[str],
+    required_review_bot: str,
+    head_sha: str,
+    head_committed_at: str,
+) -> tuple[int, str]:
+    """Acredita un retry con timeline REST autenticada, nunca solo con texto del PR."""
+    if not SHA_RE.fullmatch(head_sha):
+        raise PolicyError("HEAD inválido para timeline autenticada.")
+    if not timeline_lines or len(timeline_lines) > MAX_TIMELINE_EVENTS:
+        raise PolicyError("Timeline ausente o excede el límite verificable.")
+    timeline = _parse_ndjson(timeline_lines, noun="Timeline")
+    if not timeline or len(timeline) != len(timeline_lines):
+        raise PolicyError("Timeline incompleta o contiene elementos vacíos.")
+    comments = parse_comments(comment_lines)
+    comment_by_id: dict[int, dict[str, Any]] = {}
+    for item in comments:
+        item_id = item.get("id")
+        if type(item_id) is int and item_id > 0:
+            if item_id in comment_by_id:
+                raise PolicyError("Comentarios con IDs repetidos.")
+            comment_by_id[item_id] = item
+
+    last_commit: str | None = None
+    last_commit_index = -1
+    seen_event_ids: set[int] = set()
+    witnessed: list[tuple[int, dict[str, Any]]] = []
+    for index, event in enumerate(timeline):
+        event_type = event.get("event")
+        if not isinstance(event_type, str) or not event_type:
+            raise PolicyError("Evento de timeline inválido.")
+        if event_type == "committed":
+            commit_sha = event.get("sha")
+            if not isinstance(commit_sha, str) or not SHA_RE.fullmatch(commit_sha):
+                raise PolicyError("Commit de timeline sin SHA verificable.")
+            last_commit = commit_sha
+            last_commit_index = index
+        elif event_type in {
+            "head_ref_force_pushed", "head_ref_deleted", "head_ref_restored",
+            "synchronize", "force_pushed",
+        }:
+            # No podemos reconstruir una referencia reescrita sin evidencia adicional.
+            raise PolicyError("Timeline con mutación de HEAD no correlacionable.")
+        elif event_type == "commented":
+            event_id = event.get("id")
+            if type(event_id) is not int or event_id <= 0 or event_id in seen_event_ids:
+                raise PolicyError("Timeline con ID de comentario inválido o duplicado.")
+            seen_event_ids.add(event_id)
+            user = event.get("user")
+            actor = event.get("actor")
+            if not (
+                isinstance(user, dict) and isinstance(actor, dict)
+                and isinstance(user.get("login"), str)
+                and user.get("login") == actor.get("login")
+                and user.get("type") in {"User", "Bot"}
+            ):
+                raise PolicyError("Identidad de comentario de timeline inválida.")
+            timestamp = _parse_iso_timestamp(
+                event.get("created_at"), noun="Timestamp de timeline"
+            )
+            observed = comment_by_id.get(event_id)
+            if observed is None or any(
+                observed.get(field, "NONE" if field == "author_association" else None)
+                != event.get(field, "NONE" if field == "author_association" else None)
+                for field in ("body", "created_at", "author_association")
+            ):
+                raise PolicyError("Comentario no coincide con timeline autenticada.")
+            observed_user = observed.get("user")
+            if not (
+                isinstance(observed_user, dict)
+                and observed_user.get("login") == user["login"]
+                and observed_user.get("type") == user["type"]
+            ):
+                raise PolicyError("Identidad de comentario no coincide con timeline.")
+            witnessed.append((index, event))
+
+    if last_commit != head_sha or last_commit_index < 0:
+        raise PolicyError("Timeline no prueba el último commit del HEAD exacto.")
+
+    previous_rate_limits: list[tuple[int, dict[str, Any]]] = []
+    owner_requests: list[tuple[int, dict[str, Any]]] = []
+    for index, event in witnessed:
+        if index <= last_commit_index:
+            continue
+        user = event["user"]
+        body = event.get("body")
+        timestamp = event["created_at"]
+        if timestamp <= head_committed_at:
+            continue
+        if (
+            user["type"] == "Bot"
+            and user["login"] == required_review_bot
+            and isinstance(body, str) and _is_rate_limit_body(body)
+        ):
+            previous_rate_limits.append((index, event))
+        if (
+            user["type"] == "User"
+            and event.get("author_association") == "OWNER"
+            and isinstance(body, str)
+            and body.strip().lower() == f"@{_normalized_bot_login(required_review_bot)} review"
+        ):
+            owner_requests.append((index, event))
+
+    if len(owner_requests) != 1:
+        raise PolicyError("Timeline requiere exactamente un reintento OWNER del HEAD.")
+    owner_index, owner_event = owner_requests[0]
+    owner_at = owner_event["created_at"]
+    owner_observed = comment_by_id[owner_event["id"]]
+    owner_updated = owner_observed.get("updated_at")
+    if owner_updated is not None and owner_updated != owner_observed.get("created_at"):
+        raise PolicyError("Trigger OWNER editado.")
+    initial = [
+        (i, e) for i, e in previous_rate_limits
+        if i < owner_index and e["created_at"] < owner_at
+    ]
+    replies = [
+        (i, e) for i, e in previous_rate_limits
+        if i > owner_index and e["created_at"] > owner_at
+    ]
+    if not initial:
+        raise PolicyError("Falta rate-limit inicial previo al reintento OWNER.")
+    if len(replies) != 1:
+        raise PolicyError("Se exige una única respuesta rate-limit tras el reintento.")
+    bot_index, bot_event = replies[0]
+    seconds = (
+        datetime.fromisoformat(bot_event["created_at"].replace("Z", "+00:00"))
+        - datetime.fromisoformat(owner_at.replace("Z", "+00:00"))
+    ).total_seconds()
+    if not 0 < seconds <= MAX_RATE_LIMIT_REPLY_SECONDS:
+        raise PolicyError("Respuesta bot fuera de ventana temporal.")
+    if any(
+        e.get("event") in {"committed", "head_ref_force_pushed", "synchronize"}
+        for e in timeline[owner_index + 1:bot_index]
+    ):
+        raise PolicyError("Mutación de HEAD entre reintento y respuesta.")
+    return bot_event["id"], bot_event["created_at"]
+
+
 def validate_rate_limit_fallback(
     *,
     required_review_bot: str,
@@ -617,6 +763,7 @@ def validate_rate_limit_fallback(
     comment_lines: list[str],
     check_lines: list[str],
     thread_lines: list[str],
+    timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
 ) -> tuple[int, str]:
     run_attempt = _validate_run_attempt(run_attempt)
@@ -662,6 +809,14 @@ def validate_rate_limit_fallback(
             )
             if rate_limit_events:
                 return rate_limit_events[0][1], rate_limit_events[0][0]
+        if timeline_lines:
+            return _sha_less_timeline_retry(
+                timeline_lines=timeline_lines,
+                comment_lines=comment_lines,
+                required_review_bot=required_review_bot,
+                head_sha=head_sha,
+                head_committed_at=committed_at,
+            )
         raise PolicyError(
             "Rerun sin reintento OWNER y rate-limit exact-HEAD posteriores verificables."
         )
@@ -732,6 +887,7 @@ def validate_required_bot_review_or_fallback(
     check_lines: list[str],
     thread_lines: list[str],
     phase_file: Path | None,
+    timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
 ) -> dict[str, Any]:
     run_attempt = _validate_run_attempt(run_attempt)
@@ -755,6 +911,7 @@ def validate_required_bot_review_or_fallback(
         comment_lines=comment_lines,
         check_lines=check_lines,
         thread_lines=thread_lines,
+        timeline_lines=timeline_lines,
         run_attempt=run_attempt,
     )
     return {
@@ -791,6 +948,7 @@ def args() -> argparse.Namespace:
     parser.add_argument("--comments-file", default="")
     parser.add_argument("--checks-file", default="")
     parser.add_argument("--threads-file", default="")
+    parser.add_argument("--timeline-file", default="")
     parser.add_argument("--phase-file", default="")
     return parser.parse_args()
 
@@ -838,6 +996,15 @@ def main() -> int:
             if options.threads_file
             else []
         )
+        timeline_lines = (
+            _read_bounded_lines(
+                Path(options.timeline_file),
+                max_bytes=MAX_TIMELINE_BYTES,
+                noun="timeline",
+            )
+            if getattr(options, "timeline_file", "")
+            else None
+        )
         rounds = count_review_rounds(lines)
         validate_rounds(rounds, policy["review_round_limit"])
         review_result = validate_required_bot_review_or_fallback(
@@ -850,6 +1017,7 @@ def main() -> int:
             thread_lines=thread_lines,
             phase_file=Path(options.phase_file) if options.phase_file else None,
             run_attempt=run_attempt,
+            timeline_lines=timeline_lines,
         )
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
