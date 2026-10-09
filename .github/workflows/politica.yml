@@ -105,10 +105,11 @@ jobs:
           checks_file="$(mktemp)"
           checks_json="$(mktemp)"
           threads_file="$(mktemp)"
+          timeline_file="$(mktemp)"
           threads_json="$(mktemp)"
           phase_file="$(mktemp)"
           phase_err="$(mktemp)"
-          trap 'rm -f "$reviews_file" "$comments_file" "$checks_file" "$checks_json" "$threads_file" "$threads_json" "$phase_file" "$phase_err"' EXIT
+          trap 'rm -f "$reviews_file" "$comments_file" "$checks_file" "$checks_json" "$threads_file" "$threads_json" "$timeline_file" "$phase_file" "$phase_err"' EXIT
 
           gh api --paginate "repos/$REPOSITORY/pulls/$PR/reviews?per_page=100" \
             --jq '.[] | @json' > "$reviews_file"
@@ -255,10 +256,73 @@ jobs:
             exit 1
           }
 
+          # Solo reruns: anclar mensajes CodeRabbit sin SHA a la timeline REST
+          # autenticada del PR. Página 6 es centinela de desbordamiento.
+          timeline_args=()
+          if (( GITHUB_RUN_ATTEMPT > 1 )); then
+            : > "$timeline_file"
+            timeline_complete=false
+            for page in 1 2 3 4 5 6; do
+              if ! gh api -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "repos/$REPOSITORY/issues/$PR/timeline?per_page=100&page=$page" \
+                > "$checks_json"; then
+                echo "::error::No se pudo leer timeline autenticada"
+                exit 1
+              fi
+              (( $(wc -c < "$checks_json") <= MAX_EVIDENCE_BYTES )) || {
+                echo "::error::Página de timeline excesiva"
+                exit 1
+              }
+              jq -e 'type == "array" and length <= 100' "$checks_json" >/dev/null || {
+                echo "::error::Página de timeline inválida"
+                exit 1
+              }
+              page_count="$(jq length "$checks_json")"
+              if (( page == 6 )); then
+                (( page_count == 0 )) || { echo "::error::Timeline excede 500 eventos"; exit 1; }
+                timeline_complete=true
+                break
+              fi
+              jq -c '.[]' "$checks_json" >> "$timeline_file"
+              (( $(wc -c < "$timeline_file") <= MAX_EVIDENCE_BYTES )) || {
+                echo "::error::Timeline excede tamaño permitido"
+                exit 1
+              }
+              if (( page_count < 100 )); then
+                timeline_complete=true
+                break
+              fi
+            done
+            [[ "$timeline_complete" == true && -s "$timeline_file" ]] || {
+              echo "::error::Timeline incompleta o vacía"
+              exit 1
+            }
+            jq -s -e '
+              ([.[] | select(.event == "commented") | .id] | all(. != null and type == "number"))
+              and (([.[] | select(.event == "commented") | .id] | length) ==
+                   ([.[] | select(.event == "commented") | .id] | unique | length))
+            ' "$timeline_file" >/dev/null || {
+              echo "::error::IDs de timeline incompletos o duplicados"
+              exit 1
+            }
+            timeline_args=(--timeline-file "$timeline_file")
+          fi
+
           args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --head-committed-at "$HEAD_COMMITTED_AT")
           [[ -z "${BASE_POLICY_FILE:-}" ]] || args+=(--base-policy-file "$BASE_POLICY_FILE")
-          args+=("${phase_args[@]}" --comments-file "$comments_file" --checks-file "$checks_file" --threads-file "$threads_file")
+          args+=("${phase_args[@]}" "${timeline_args[@]}" --comments-file "$comments_file" --checks-file "$checks_file" --threads-file "$threads_file")
           POLICY_OUTPUT="$(python3 .factory/scripts/politica_kit.py "${args[@]}" < "$reviews_file")"
+          # El HEAD puede cambiar entre las lecturas de evidencia y la decisión.
+          PR_JSON_FINAL="$(gh api "repos/$REPOSITORY/pulls/$PR")"
+          [[ "$(jq -r '.head.sha' <<<"$PR_JSON_FINAL")" == "$PR_HEAD_SHA" ]] || {
+            echo "::error::HEAD cambió durante validación de timeline"
+            exit 1
+          }
+          [[ "$(jq -r '.base.sha' <<<"$PR_JSON_FINAL")" == "$PR_BASE_SHA" ]] || {
+            echo "::error::BASE cambió durante validación de timeline"
+            exit 1
+          }
           printf '%s\n' "$POLICY_OUTPUT"
 
           if [[ "$(jq -r '.review_fallback // false' <<<"$POLICY_OUTPUT")" == "true" ]]; then
