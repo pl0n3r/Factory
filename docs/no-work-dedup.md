@@ -35,7 +35,9 @@ claims y estado conserva la misma huella aunque otro agente capture después.
 Si el productor necesita etiquetar `updated_at` como hora de observación,
 debe usar el namespace explícito `observation_metadata: {updated_at: ...}`.
 Solo admite `observed_at`, `fetched_at`, `captured_at` y `updated_at`
-con valores temporales escalares válidos. Un `updated_at` ordinario fuera de
+con valores temporales válidos: epoch Unix como entero no negativo o cadena
+ISO 8601 con zona horaria explícita. Se rechazan cadenas arbitrarias,
+fechas sin zona y tipos ambiguos. Un `updated_at` ordinario fuera de
 ese namespace **se conserva como material**: puede representar un cambio de
 reserva o bloqueo y nunca se descarta por heurística.
 
