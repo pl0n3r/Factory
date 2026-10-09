@@ -23,6 +23,9 @@ from quality.sonar import factory_project_catalog, normalize_sonar_snapshot
 from quality.status import derive_quality_health
 
 AUTO_PREFIX = "[AUTO] Sonar"
+_AUTO_LABELS = ("tipo: calidad", "prioridad: media")
+_AUTO_STATE = {"open": "estado: bloqueado", "closed": "estado: completado"}
+_AUTO_FAMILIES = ("tipo: ", "prioridad: ", "estado: ")
 MARKER_PREFIX = "<!-- factory-sonar-watch "
 _SONAR_PAGE_SIZE = 500
 _MAX_SONAR_ISSUES = 10_000
@@ -81,6 +84,33 @@ def _safe(value: Any, label: str) -> None:
         raise SonarWatchError(f"{label} contiene forma sensible.")
 
 
+def _auto_issue_labels(current: dict[str, Any] | None, *, state: str) -> list[str]:
+    """Clasifica solo Issues del watcher; rechaza metadata gobernada ajena."""
+    if state not in _AUTO_STATE:
+        raise SonarWatchError("estado de Issue automático inválido.")
+    previous = [] if current is None else current.get("labels", [])
+    if not isinstance(previous, list):
+        raise SonarWatchError("labels de Issue automático inválidas.")
+    retained: list[str] = []
+    seen: set[str] = set()
+    owned = {*_AUTO_LABELS, *_AUTO_STATE.values()}
+    for label in previous:
+        if (
+            not isinstance(label, str)
+            or not 1 <= len(label) <= 100
+            or label.strip() != label
+            or label in seen
+        ):
+            raise SonarWatchError("labels de Issue automático inválidas.")
+        seen.add(label)
+        if any(label.startswith(prefix) for prefix in _AUTO_FAMILIES):
+            if label not in owned:
+                raise SonarWatchError("Issue automático tiene clasificación ajena.")
+        else:
+            retained.append(label)
+    return [*_AUTO_LABELS, _AUTO_STATE[state], *retained]
+
+
 def _detail_lines(signal: dict[str, Any]) -> list[str]:
     details = signal.get("details")
     if not isinstance(details, dict):
@@ -137,6 +167,10 @@ def render_issue_body(
         f"(age={freshness['age_seconds']}, max={freshness['max_age_seconds']})  \n"
         f"Origen: [`{origin}`]({origin_url})  \n"
         f"Clases correctivas Quality Health: {classes}\n\n"
+        "Motivo del bloqueo: la evidencia de esta señal aún no demuestra "
+        "un PASS/CURRENT ni una exención NOT_APPLICABLE válida.\n"
+        "Condición de desbloqueo: nueva observación Sonar canónica de "
+        "PASS/CURRENT o NOT_APPLICABLE validada por su contrato.\n\n"
         f"### Evidencia\n\n{refs}\n\n### Detalle\n\n"
         + "\n".join(_detail_lines(signal))
         + "\n\nEste Issue es administrado automáticamente por Factory Sonar Watch. "
@@ -190,6 +224,7 @@ def sync_project(
                     f"`NOT_APPLICABLE` por `{signal['reason']}` "
                     f"según `{source_ref}`. Se cierra sin tratarla como PASS."
                 )
+                labels = _auto_issue_labels(current, state="closed")
                 issues.comment_once(
                     current["number"],
                     marker=comment_marker,
@@ -200,6 +235,7 @@ def sync_project(
                     title=current["title"],
                     body=current["body"],
                     state="closed",
+                    labels=labels,
                 )
                 operations.append({
                     "action": "closed_not_applicable",
@@ -209,18 +245,25 @@ def sync_project(
         fresh_pass = signal["status"] == "PASS" and signal["freshness"]["state"] == "CURRENT"
         if fresh_pass:
             if current is not None and current["state"] != "closed":
-                issues.update(current["number"], title=current["title"], body=current["body"], state="closed")
+                issues.update(
+                    current["number"], title=current["title"], body=current["body"],
+                    state="closed", labels=_auto_issue_labels(current, state="closed"),
+                )
                 operations.append({"action": "closed", "signal": signal["signal"]})
             continue
         title = f"{AUTO_PREFIX} {evidence['project']}: {signal['signal']}"
         body = render_issue_body(
             evidence["project"], signal, sonar, origin_ref, origin_url
         )
+        labels = _auto_issue_labels(current, state="open")
         if current is None:
-            issues.create(title=title, body=body)
+            issues.create(title=title, body=body, labels=labels)
             action = "created"
         else:
-            issues.update(current["number"], title=title, body=body, state="open")
+            issues.update(
+                current["number"], title=title, body=body,
+                state="open", labels=labels,
+            )
             action = "updated"
         operations.append({"action": action, "signal": signal["signal"]})
     return operations
@@ -274,24 +317,35 @@ class GitHubIssues:
                 raise SonarWatchError("paginación GitHub Issues excede límite seguro.")
             for row in rows:
                 if "pull_request" not in row and marker in (row.get("body") or ""):
+                    source_labels = row.get("labels", [])
+                    if not isinstance(source_labels, list) or any(
+                        not isinstance(label, dict)
+                        or not isinstance(label.get("name"), str)
+                        for label in source_labels
+                    ):
+                        raise SonarWatchError("labels de GitHub inválidas.")
                     found.append({
                         "number": row["number"], "title": row["title"],
                         "body": row.get("body") or "", "state": row["state"],
+                        "labels": [label["name"] for label in source_labels],
                     })
             if len(rows) < _GITHUB_PAGE_SIZE:
                 return found
         raise SonarWatchError("paginación GitHub Issues excede límite seguro.")
 
-    def create(self, *, title: str, body: str):
+    def create(self, *, title: str, body: str, labels: list[str]):
         self.http.request(
             f"/repos/{self.repository}/issues", method="POST",
-            payload={"title": title, "body": body},
+            payload={"title": title, "body": body, "labels": labels},
         )
 
-    def update(self, number: int, *, title: str, body: str, state: str):
+    def update(
+        self, number: int, *, title: str, body: str, state: str,
+        labels: list[str],
+    ):
         self.http.request(
             f"/repos/{self.repository}/issues/{number}", method="PATCH",
-            payload={"title": title, "body": body, "state": state},
+            payload={"title": title, "body": body, "state": state, "labels": labels},
         )
 
     def comment(self, number: int, *, body: str):
