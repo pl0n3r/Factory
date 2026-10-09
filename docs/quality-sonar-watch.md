@@ -53,6 +53,8 @@ Permisos GitHub: `contents: read` y `issues: write` únicamente en el job que si
 
 Cada señal usa un marker estable `project + signal -> fingerprint`. Existe como máximo un Issue administrado por proyecto/señal. `FAIL`, `UNKNOWN` o `STALE` actualizan/reabren el mismo Issue; un `PASS` solo lo cierra con freshness `CURRENT`. Una señal `NOT_APPLICABLE` no abre Issue: si existe uno abierto del mismo marker, Sonar Watch añade una sola explicación con razón/source_ref y lo cierra; ejecuciones posteriores no vuelven a comentar ni reabrirlo.
 
+Todo Issue abierto que administra el watcher se crea o reconcilia con `tipo: calidad`, `prioridad: media` y `estado: bloqueado`. Las alertas son observaciones, **no hojas ejecutables**: el cuerpo explica que solo un `PASS/CURRENT` o un `NOT_APPLICABLE` canónico puede desbloquearlas. En cierre verificado, el estado de GitHub pasa a `closed` y la etiqueta a `estado: completado`; el contenido histórico no se reescribe como PASS. Se preservan etiquetas fuera de las familias tipo/prioridad/estado y se rechazan clasificaciones gobernadas contradictorias antes de mutar. Las alertas históricas sin etiquetas se reparan idempotentemente en su próxima observación; no hay backfill manual ni inferencia de HEALTH.
+
 El cuerpo conserva estado, razón, freshness, referencias opacas y un origen validado `https://sonarcloud.io/project/overview?id=<sonar_key>`.
 
 Quality Gate incluye condiciones fallidas; CE task conserva `error_message` saneado; deuda histórica pagina issues y hotspots con límites seguros.

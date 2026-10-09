@@ -97,12 +97,12 @@ class FakeIssues:
     def find(self, marker):
         return [row.copy() for row in self.rows if marker in row["body"]]
 
-    def create(self, *, title, body):
+    def create(self, *, title, body, labels):
         self.calls.append(("create", title))
 
-    def update(self, number, *, title, body, state):
+    def update(self, number, *, title, body, state, labels):
         row = next(item for item in self.rows if item["number"] == number)
-        row.update({"title": title, "body": body, "state": state})
+        row.update({"title": title, "body": body, "state": state, "labels": list(labels)})
         self.calls.append(("update", number, state))
 
     def comment_once(self, number, *, marker, body):
@@ -152,6 +152,10 @@ class SonarSupersededCeTests(unittest.TestCase):
         )
 
         self.assertEqual(issues.rows[0]["state"], "closed")
+        self.assertEqual(
+            issues.rows[0]["labels"],
+            ["tipo: calidad", "prioridad: media", "estado: completado"],
+        )
         self.assertIn({"action": "closed", "signal": "ce_task"}, operations)
         self.assertNotIn("create", [call[0] for call in issues.calls])
 

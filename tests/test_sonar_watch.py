@@ -83,18 +83,19 @@ class FakeIssues:
             if marker in row["body"]
         ]
 
-    def create(self, *, title, body):
+    def create(self, *, title, body, labels):
         row = {
             "number": self.next_number,
             "title": title,
             "body": body,
             "state": "open",
+            "labels": list(labels),
         }
         self.next_number += 1
         self.rows.append(row)
         self.calls.append(("create", row["number"]))
 
-    def update(self, number, *, title, body, state):
+    def update(self, number, *, title, body, state, labels):
         row = next(
             item for item in self.rows
             if item["number"] == number
@@ -103,6 +104,7 @@ class FakeIssues:
             "title": title,
             "body": body,
             "state": state,
+            "labels": list(labels),
         })
         self.calls.append(("update", number, state))
 
@@ -139,6 +141,102 @@ def sync(raw, api):
 
 
 class SonarWatchTests(unittest.TestCase):
+    def test_auto_alert_creation_has_canonical_labels_and_block_reason(self):
+        api = FakeIssues()
+        raw = snapshot()
+        raw["visibility"] = "private"
+        sync(raw, api)
+        row = api.find(sonar_watch.issue_marker("factory", "visibility"))[0]
+        self.assertEqual(
+            row["labels"],
+            ["tipo: calidad", "prioridad: media", "estado: bloqueado"],
+        )
+        self.assertIn("Motivo del bloqueo:", row["body"])
+        self.assertIn("Condición de desbloqueo:", row["body"])
+        self.assertIn("PASS/CURRENT", row["body"])
+
+    def test_reconcile_unlabeled_auto_alert_without_duplicates(self):
+        api = FakeIssues()
+        raw = snapshot()
+        raw["visibility"] = "private"
+        marker = sonar_watch.issue_marker("factory", "visibility")
+        api.rows.append({
+            "number": 1, "title": "legacy", "body": marker,
+            "state": "open", "labels": ["auditoría: conservar"],
+        })
+        api.next_number = 2
+        sync(raw, api)
+        sync(raw, api)
+        rows = api.find(marker)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["labels"], [
+            "tipo: calidad", "prioridad: media",
+            "estado: bloqueado", "auditoría: conservar",
+        ])
+        self.assertFalse(any(call[0] == "create" for call in api.calls))
+        api.rows[0]["labels"].append("estado: reservado")
+        with self.assertRaisesRegex(sonar_watch.SonarWatchError, "clasificación ajena"):
+            sync(raw, api)
+        self.assertEqual(api.rows[0]["state"], "open")
+
+    def test_terminal_signals_do_not_fake_readiness_or_pass(self):
+        api = FakeIssues()
+        failing = snapshot()
+        failing["analysis"]["coverage_available"] = False
+        sync(failing, api)
+        sync(snapshot(), api)
+        coverage = api.find(sonar_watch.issue_marker("factory", "coverage"))[0]
+        self.assertEqual(coverage["state"], "closed")
+        self.assertIn("estado: completado", coverage["labels"])
+        self.assertNotIn("estado: disponible", coverage["labels"])
+
+        configs = {
+            row["project"]: row for row in sonar_watch.load_runtime_config()
+        }
+        cfg = configs["brvtal"]
+        legacy = FakeIssues()
+        marker = sonar_watch.issue_marker("brvtal", "coverage")
+        legacy.rows.append({
+            "number": 1, "title": "legacy", "body": marker + "\nSTALE",
+            "state": "open",
+        })
+        legacy.next_number = 2
+        raw = snapshot("brvtal")
+        raw["analysis"]["method"] = "automatic"
+        raw["analysis"]["coverage_available"] = False
+        raw["organization"] = None
+        sonar_watch.sync_project(
+            contract=cfg["contract"], snapshot=raw, observed_at=NOW,
+            project_ref=cfg["github_repo"], origin_ref="sonar:brvtal",
+            origin_url=f"https://sonarcloud.io/project/overview?id={cfg['sonar_key']}",
+            issues=legacy,
+        )
+        row = legacy.find(marker)[0]
+        self.assertEqual(row["state"], "closed")
+        self.assertIn("estado: completado", row["labels"])
+        self.assertIn("STALE", row["body"])
+        self.assertNotIn("PASS", row["body"])
+        self.assertEqual(len(legacy.comments.get(1, [])), 1)
+        self.assertIn("NOT_APPLICABLE", legacy.comments[1][0])
+
+    def test_issue_api_transports_labels_for_create_and_update(self):
+        github = sonar_watch.GitHubIssues(
+            repository="pl0n3r/Factory", token="read-only-github-token",
+        )
+        calls = []
+        github.http.request = lambda path, **kw: calls.append((path, kw))
+        labels = ["tipo: calidad", "prioridad: media", "estado: bloqueado"]
+        github.create(title="watch", body="marker", labels=labels)
+        github.update(
+            1, title="watch", body="marker", state="open", labels=labels,
+        )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1]["method"], "POST")
+        self.assertEqual(calls[0][1]["payload"]["labels"], labels)
+        self.assertEqual(calls[1][1]["method"], "PATCH")
+        self.assertEqual(calls[1][1]["payload"]["labels"], labels)
+        self.assertEqual(calls[1][1]["payload"]["state"], "open")
+
     def test_workflow_is_scheduled_manual_and_minimum_privilege(self):
         text = (
             ROOT / ".github" / "workflows" / "sonar-watch.yml"
@@ -1153,7 +1251,7 @@ class SonarWatchTests(unittest.TestCase):
         original_update = api.update
         failed_once = {"value": False}
 
-        def fail_first_close(number, *, title, body, state):
+        def fail_first_close(number, *, title, body, state, labels):
             if state == "closed" and not failed_once["value"]:
                 failed_once["value"] = True
                 raise RuntimeError("simulated partial PATCH failure")
@@ -1162,6 +1260,7 @@ class SonarWatchTests(unittest.TestCase):
                 title=title,
                 body=body,
                 state=state,
+                labels=labels,
             )
 
         api.update = fail_first_close
