@@ -74,6 +74,104 @@ def state_after(
 
 
 class NoWorkDedupTests(unittest.TestCase):
+    def test_nested_observation_timestamps_do_not_change_fingerprint(self):
+        """Cambiar la hora de captura no convierte una lease igual en trabajo nuevo."""
+        baseline = inventory_fingerprint(inventory())
+        fingerprints = []
+        for timestamp in ("2026-10-09T21:00:00Z", "2026-10-09T21:01:00Z"):
+            snapshot = inventory()
+            lease = snapshot["repositories"]["ControlBot"]["reservations"][0]
+            lease.update({
+                "observed_at": timestamp,
+                "fetched_at": timestamp,
+                "observation_metadata": {"updated_at": timestamp},
+            })
+            blocker = snapshot["repositories"]["Factory"]["blockers"][0]
+            blocker.update({
+                "captured_at": timestamp,
+                "observation_metadata": {"updated_at": timestamp},
+            })
+            fingerprints.append(inventory_fingerprint(snapshot))
+            # Calcular huella no altera el inventario recibido.
+            self.assertEqual(lease["observed_at"], timestamp)
+            self.assertEqual(blocker["captured_at"], timestamp)
+        self.assertEqual(fingerprints, [baseline, baseline])
+
+    def test_nested_reservation_identity_and_blocker_semantics_change_fingerprint(self):
+        baseline = inventory_fingerprint(inventory())
+        reservation_cases = (
+            ("reservation_id", "different-lease"),
+            ("owner", "another-agent"),
+            ("issue", 999),
+            ("branch", "trabajo/issue-999"),
+            ("active", False),
+            ("claims", ["scripts/different.py"]),
+            ("updated_at", "2026-10-09T21:00:00Z"),
+            ("unknown_material_field", "new-domain-signal"),
+        )
+        for field, value in reservation_cases:
+            with self.subTest(reservation=field):
+                snapshot = inventory()
+                snapshot["repositories"]["ControlBot"]["reservations"][0][field] = value
+                self.assertNotEqual(inventory_fingerprint(snapshot), baseline)
+
+        for field, value in (
+            ("reason", "different-gate"),
+            ("condition", "unblock-condition-changed"),
+            ("issue", 999),
+        ):
+            with self.subTest(blocker=field):
+                snapshot = inventory()
+                snapshot["repositories"]["Factory"]["blockers"][0][field] = value
+                self.assertNotEqual(inventory_fingerprint(snapshot), baseline)
+
+        ambiguous = inventory()
+        ambiguous["repositories"]["ControlBot"]["reservations"][0][
+            "observation_metadata"
+        ] = {"reservation_id": "do-not-hide-materiality"}
+        with self.assertRaisesRegex(NoWorkInventoryError, "observation_metadata_invalid"):
+            inventory_fingerprint(ambiguous)
+
+        invalid_timestamp = inventory()
+        invalid_timestamp["repositories"]["Factory"]["blockers"][0][
+            "observed_at"
+        ] = {"not": "a-timestamp"}
+        with self.assertRaisesRegex(NoWorkInventoryError, "observation_timestamp_invalid"):
+            inventory_fingerprint(invalid_timestamp)
+
+        for bad in ("not-an-instant", "2026-10-09T21:00:00", "", True, -1):
+            with self.subTest(invalid_timestamp=bad):
+                invalid = inventory()
+                invalid["repositories"]["ControlBot"]["reservations"][0][
+                    "observed_at"
+                ] = bad
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "observation_timestamp_invalid"
+                ):
+                    inventory_fingerprint(invalid)
+
+        valid_epoch = inventory()
+        valid_epoch["repositories"]["ControlBot"]["reservations"][0][
+            "observed_at"
+        ] = 1_760_044_800
+        self.assertEqual(inventory_fingerprint(valid_epoch), baseline)
+
+    def test_no_work_docs_define_nested_incidental_metadata(self):
+        guide = (ROOT / "docs" / "no-work-dedup.md").read_text(encoding="utf-8")
+        for signal in (
+            "observation_metadata",
+            "observed_at",
+            "captured_at",
+            "fetched_at",
+            "updated_at",
+            "reservation_id",
+            "blockers",
+        ):
+            with self.subTest(signal=signal):
+                self.assertIn(signal, guide)
+        self.assertIn("ambigu", guide.lower())
+        self.assertIn("campos desconocidos", guide.lower())
+
     def test_ten_identical_cycles_create_one_comment(self):
         snapshot = inventory()
         previous = None

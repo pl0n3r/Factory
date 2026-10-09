@@ -8,6 +8,7 @@ devuelve este módulo.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import json
 from typing import Literal
@@ -30,6 +31,11 @@ REPO_FIELDS = (
     "blockers",
     "pull_requests",
 )
+
+# Son campos del acto de observar, no de la lease ni de su bloqueo.
+OBSERVATION_FIELDS = frozenset({"observed_at", "fetched_at", "captured_at"})
+# `updated_at` es material salvo si viene explícitamente en este namespace.
+OBSERVATION_METADATA_KEYS = OBSERVATION_FIELDS | {"updated_at"}
 
 
 class NoWorkInventoryError(ValueError):
@@ -84,6 +90,44 @@ def _stable(value: object) -> object:
     raise NoWorkInventoryError("inventory_value_invalid")
 
 
+def _observation_timestamp(value: object) -> bool:
+    if type(value) is int:
+        return value >= 0
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        instant = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return instant.tzinfo is not None and instant.utcoffset() is not None
+
+
+def _material_entry(value: object, *, noun: str) -> object:
+    """Omite solo metadata observacional reconocida de reservas/bloqueos.
+
+    Cualquier campo de dominio desconocido se conserva en la huella; nunca se
+    borra `updated_at` si no se clasifica expresamente como observación.
+    """
+    if not isinstance(value, dict):
+        return value
+    for key in OBSERVATION_FIELDS:
+        if key in value and not _observation_timestamp(value[key]):
+            raise NoWorkInventoryError(f"observation_timestamp_invalid:{noun}:{key}")
+    if "observation_metadata" in value:
+        metadata = value["observation_metadata"]
+        if not isinstance(metadata, dict) or any(
+            not isinstance(key, str)
+            or key not in OBSERVATION_METADATA_KEYS
+            or not _observation_timestamp(timestamp)
+            for key, timestamp in metadata.items()
+        ):
+            raise NoWorkInventoryError(f"observation_metadata_invalid:{noun}")
+    return {
+        key: item for key, item in value.items()
+        if key not in OBSERVATION_FIELDS and key != "observation_metadata"
+    }
+
+
 def _repo_state(name: str, value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise NoWorkInventoryError(f"repository_state_invalid:{name}")
@@ -101,7 +145,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
     for reservation in value["reservations"]:
         if isinstance(reservation, dict) and reservation.get("active") is False:
             continue
-        live_reservations.append(reservation)
+        live_reservations.append(_material_entry(reservation, noun=f"reservation:{name}"))
 
     open_prs = []
     for pr in value["pull_requests"]:
@@ -134,7 +178,10 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         "available": _stable(value["available"]),
         "recovery": _stable(value["recovery"]),
         "reservations": _stable(live_reservations),
-        "blockers": _stable(value["blockers"]),
+        "blockers": _stable([
+            _material_entry(blocker, noun=f"blocker:{name}")
+            for blocker in value["blockers"]
+        ]),
         "pull_requests": _stable(open_prs),
     }
 
