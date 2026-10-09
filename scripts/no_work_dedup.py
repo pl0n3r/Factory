@@ -8,6 +8,7 @@ devuelve este módulo.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import json
 from typing import Literal
@@ -90,9 +91,15 @@ def _stable(value: object) -> object:
 
 
 def _observation_timestamp(value: object) -> bool:
-    return (isinstance(value, str) and bool(value.strip())) or (
-        type(value) is int and value >= 0
-    )
+    if type(value) is int:
+        return value >= 0
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        instant = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return instant.tzinfo is not None and instant.utcoffset() is not None
 
 
 def _material_entry(value: object, *, noun: str) -> object:
