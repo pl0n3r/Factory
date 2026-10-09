@@ -164,7 +164,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         self.assertIn('<= MAX_EVIDENCE_BYTES', W)
         self.assertIn('IDs de timeline incompletos o duplicados', W)
         self.assertIn('timeline_args=(--timeline-file "$timeline_file")', W)
-        self.assertIn('"\${timeline_args[@]}"', W)
+        self.assertIn('"${timeline_args[@]}"', W)
         self.assertIn('PR_JSON_FINAL=', W)
         self.assertIn('HEAD cambió durante validación de timeline', W)
         self.assertIn('BASE cambió durante validación de timeline', W)
