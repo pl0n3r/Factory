@@ -214,6 +214,43 @@ class T(unittest.TestCase):
             with self.subTest(label=label), self.assertRaises(PolicyError):
                 sha_less_validate(candidate_comments, candidate_timeline)
 
+    def test_sha_less_rate_limit_rejects_missing_initial_rate_limit_and_ambiguous_triggers(self):
+        comments, events = sha_less_fixture()
+        # Sin rate-limit inicial previo al comando OWNER.
+        no_initial = [e for e in events if e.get("id") != 200]
+        no_initial_comments = [c for c in comments if json.loads(c)["id"] != 200]
+        with self.assertRaises(PolicyError):
+            sha_less_validate(no_initial_comments, no_initial)
+        # Dos comandos OWNER competidores.
+        owner = json.loads(comments[0])
+        second = {**owner, "id": 203, "created_at": "2026-10-04T05:02:03Z"}
+        extra = dict(events[3], id=203, created_at="2026-10-04T05:02:03Z")
+        with self.subTest(label="múltiples OWNER"), self.assertRaises(PolicyError):
+            sha_less_validate(comments + [json.dumps(second)],
+                              events[:4] + [extra] + events[4:])
+        # Trigger OWNER editado después de publicarse.
+        edited = {**owner, "updated_at": "2026-10-04T05:03:00Z"}
+        with self.subTest(label="OWNER editado"), self.assertRaises(PolicyError):
+            sha_less_validate([json.dumps(edited), comments[1], comments[2]], events)
+        # Respuesta fuera de la ventana de 120 s.
+        late = json.loads(comments[1])
+        late["created_at"] = "2026-10-04T05:09:00Z"
+        late_event = dict(events[-1], created_at="2026-10-04T05:09:00Z")
+        with self.subTest(label="respuesta tardía"), self.assertRaises(PolicyError):
+            sha_less_validate([comments[0], json.dumps(late), comments[2]],
+                              events[:-1] + [late_event])
+
+    def test_marker_exact_head_con_rate_limit_en_el_cuerpo_no_cuenta_como_cobertura(self):
+        marker = ('<!-- final_review_risk_coverage:{"sourceCommitId":"' + "b" * 40
+                  + '","coveredCommitId":"' + HEAD + '","kind":"reviewed"} -->')
+        contradictory = {
+            "user": {"type": "Bot", "login": "coderabbitai[bot]"},
+            "body": "Review rate limited.\n" + marker,
+        }
+        from scripts.politica_kit import _comment_has_exact_head_coverage
+        self.assertFalse(_comment_has_exact_head_coverage(
+            contradictory, required_review_bot="coderabbitai[bot]", head_sha=HEAD))
+
     def test_sha_less_rate_limit_rejects_live_open_findings_and_red_gates(self):
         comments, timeline = sha_less_fixture()
         conditions = (

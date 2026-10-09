@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime
 import re
 import sys
 import tempfile
@@ -33,8 +32,6 @@ MAX_REVIEWS_BYTES = 2_000_000
 MAX_COMMENTS_BYTES = 2_000_000
 MAX_CHECKS_BYTES = 2_000_000
 MAX_THREADS_BYTES = 2_000_000
-MAX_TIMELINE_BYTES = 2_000_000
-MAX_TIMELINE_EVENTS = 500
 MAX_TIMELINE_BYTES = 2_000_000
 MAX_TIMELINE_EVENTS = 500
 MAX_RATE_LIMIT_REPLY_SECONDS = 120
@@ -238,6 +235,8 @@ def _comment_has_exact_head_coverage(
         and user.get("login") == required_review_bot
         and isinstance(body, str)
     ):
+        return False
+    if _is_rate_limit_body(body):
         return False
     matches = list(COMMENT_COVERAGE_RE.finditer(body))
     if len(matches) != 1:
@@ -614,111 +613,6 @@ def _exact_head_rate_limit_events(
     )
 
 
-def _sha_less_timeline_rate_limit(
-    timeline_lines: list[str],
-    comment_lines: list[str],
-    *,
-    required_review_bot: str,
-    head_sha: str,
-    head_committed_at: str,
-) -> tuple[int, str] | None:
-    """Correlaciona una respuesta bot sin SHA con el último commit exacto del PR.
-
-    El workflow obtiene la timeline autenticada de este PR y verifica HEAD
-    antes y después. Eventos committed carecen de created_at: se usa su orden.
-    """
-    if not 1 <= len(timeline_lines) <= MAX_TIMELINE_EVENTS:
-        raise PolicyError("Timeline ausente, incompleta o excesiva.")
-    events: list[dict[str, Any]] = []
-    seen: set[int] = set()
-    for line in timeline_lines:
-        if len(line.encode("utf-8")) > MAX_EVIDENCE_ITEM_BYTES:
-            raise PolicyError("Evento timeline demasiado grande.")
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise PolicyError("JSON de timeline inválido.") from exc
-        if not isinstance(item, dict) or not isinstance(item.get("event"), str):
-            raise PolicyError("Evento timeline inválido.")
-        if item["event"] == "commented":
-            ident = item.get("id")
-            if type(ident) is not int or ident <= 0 or ident in seen:
-                raise PolicyError("Comentario timeline sin ID único.")
-            seen.add(ident)
-        events.append(item)
-
-    commits = [i for i, event in enumerate(events) if event["event"] == "committed"]
-    if not commits:
-        raise PolicyError("Timeline no contiene commit exacto.")
-    anchor = commits[-1]
-    if events[anchor].get("sha") != head_sha:
-        raise PolicyError("Último commit timeline distinto de HEAD.")
-    # Cualquier cambio de ref o evento desconocido después de HEAD falla cerrado.
-    harmless = {
-        "commented", "mentioned", "reviewed", "cross-referenced",
-        "labeled", "unlabeled", "assigned", "unassigned",
-        "review_requested", "review_request_removed", "referenced",
-    }
-    if any(event["event"] not in harmless for event in events[anchor + 1:]):
-        raise PolicyError("Timeline ambigua o con mutación de HEAD.")
-
-    comments = parse_comments(comment_lines)
-    indexed = {c["id"]: c for c in comments
-               if type(c.get("id")) is int and c["id"] > 0}
-    if len(indexed) != len(comments):
-        raise PolicyError("Comentarios con IDs ausentes o duplicados.")
-    command = f"@{_normalized_bot_login(required_review_bot)} review"
-    retry: tuple[str, int] | None = None
-    last_time = head_committed_at
-    for event in events[anchor + 1:]:
-        if event["event"] != "commented":
-            continue
-        comment_id = event["id"]
-        comment = indexed.get(comment_id)
-        if comment is None:
-            raise PolicyError("Comentario timeline no existe en API de PR.")
-        when = _parse_iso_timestamp(event.get("created_at"), noun="Timeline")
-        if (when != _parse_iso_timestamp(comment.get("created_at"), noun="Comentario")
-                or when < last_time):
-            raise PolicyError("Timeline tiene fechas no monotónicas.")
-        last_time = when
-        actor = event.get("actor")
-        user = comment.get("user")
-        if (not isinstance(actor, dict) or not isinstance(user, dict)
-                or actor.get("login") != user.get("login")
-                or event.get("body") != comment.get("body")):
-            raise PolicyError("Identidad o cuerpo difiere entre timeline y PR.")
-        body = comment.get("body")
-        if not isinstance(body, str):
-            raise PolicyError("Body timeline inválido.")
-        if (body.strip().lower() == command
-                and comment.get("author_association") == "OWNER"
-                and user.get("type") == "User" and when > head_committed_at):
-            updated = comment.get("updated_at")
-            if updated is not None and updated != when:
-                raise PolicyError("Trigger OWNER editado.")
-            retry = (when, comment_id)
-            continue
-        if retry is None or when <= retry[0]:
-            continue
-        if _rate_limit_comment_identity(
-            comment, required_review_bot=required_review_bot
-        ) is None:
-            continue
-        updated = comment.get("updated_at")
-        if updated is not None and _parse_iso_timestamp(
-            updated, noun="Actualización CodeRabbit"
-        ) < when:
-            raise PolicyError("Comentario bot con actualización inválida.")
-        delay = (datetime.fromisoformat(when.replace("Z", "+00:00")) -
-                 datetime.fromisoformat(retry[0].replace("Z", "+00:00"))).total_seconds()
-        if 0 < delay <= MAX_RATE_LIMIT_REPLY_SECONDS:
-            return comment_id, when
-        raise PolicyError("Respuesta bot fuera de ventana temporal.")
-    return None
-
-
-
 def _sha_less_timeline_retry(
     *,
     timeline_lines: list[str],
@@ -783,7 +677,8 @@ def _sha_less_timeline_retry(
             )
             observed = comment_by_id.get(event_id)
             if observed is None or any(
-                observed.get(field) != event.get(field)
+                observed.get(field, "NONE" if field == "author_association" else None)
+                != event.get(field, "NONE" if field == "author_association" else None)
                 for field in ("body", "created_at", "author_association")
             ):
                 raise PolicyError("Comentario no coincide con timeline autenticada.")
@@ -823,29 +718,39 @@ def _sha_less_timeline_retry(
         ):
             owner_requests.append((index, event))
 
-    for owner_index, owner_event in owner_requests:
-        owner_at = owner_event["created_at"]
-        if not any(
-            prior_index < owner_index and prior["created_at"] < owner_at
-            and prior["id"] != owner_event["id"]
-            for prior_index, prior in previous_rate_limits
-        ):
-            continue
-        for bot_index, bot_event in previous_rate_limits:
-            if bot_index <= owner_index or bot_event["created_at"] <= owner_at:
-                continue
-            seconds = (
-                datetime.fromisoformat(bot_event["created_at"].replace("Z", "+00:00"))
-                - datetime.fromisoformat(owner_at.replace("Z", "+00:00"))
-            ).total_seconds()
-            if not 0 < seconds <= 120:
-                continue
-            if any(
-                event.get("event") in {"committed", "head_ref_force_pushed", "synchronize"}
-                for event in timeline[owner_index + 1:bot_index]
-            ):
-                continue
-            return bot_event["id"], bot_event["created_at"]
+    if len(owner_requests) != 1:
+        raise PolicyError("Timeline requiere exactamente un reintento OWNER del HEAD.")
+    owner_index, owner_event = owner_requests[0]
+    owner_at = owner_event["created_at"]
+    owner_observed = comment_by_id[owner_event["id"]]
+    owner_updated = owner_observed.get("updated_at")
+    if owner_updated is not None and owner_updated != owner_observed.get("created_at"):
+        raise PolicyError("Trigger OWNER editado.")
+    initial = [
+        (i, e) for i, e in previous_rate_limits
+        if i < owner_index and e["created_at"] < owner_at
+    ]
+    replies = [
+        (i, e) for i, e in previous_rate_limits
+        if i > owner_index and e["created_at"] > owner_at
+    ]
+    if not initial:
+        raise PolicyError("Falta rate-limit inicial previo al reintento OWNER.")
+    if len(replies) != 1:
+        raise PolicyError("Se exige una única respuesta rate-limit tras el reintento.")
+    bot_index, bot_event = replies[0]
+    seconds = (
+        datetime.fromisoformat(bot_event["created_at"].replace("Z", "+00:00"))
+        - datetime.fromisoformat(owner_at.replace("Z", "+00:00"))
+    ).total_seconds()
+    if not 0 < seconds <= MAX_RATE_LIMIT_REPLY_SECONDS:
+        raise PolicyError("Respuesta bot fuera de ventana temporal.")
+    if any(
+        e.get("event") in {"committed", "head_ref_force_pushed", "synchronize"}
+        for e in timeline[owner_index + 1:bot_index]
+    ):
+        raise PolicyError("Mutación de HEAD entre reintento y respuesta.")
+    return bot_event["id"], bot_event["created_at"]
     raise PolicyError("Timeline no acredita retry OWNER y rate-limit vinculados al HEAD.")
 
 
@@ -905,14 +810,6 @@ def validate_rate_limit_fallback(
             )
             if rate_limit_events:
                 return rate_limit_events[0][1], rate_limit_events[0][0]
-        if timeline_lines is not None:
-            result = _sha_less_timeline_rate_limit(
-                timeline_lines, comment_lines,
-                required_review_bot=required_review_bot,
-                head_sha=head_sha, head_committed_at=committed_at,
-            )
-            if result is not None:
-                return result
         if timeline_lines:
             return _sha_less_timeline_retry(
                 timeline_lines=timeline_lines,
