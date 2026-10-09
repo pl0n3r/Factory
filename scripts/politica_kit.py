@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,9 @@ MAX_REVIEWS_BYTES = 2_000_000
 MAX_COMMENTS_BYTES = 2_000_000
 MAX_CHECKS_BYTES = 2_000_000
 MAX_THREADS_BYTES = 2_000_000
+MAX_TIMELINE_BYTES = 2_000_000
+MAX_TIMELINE_EVENTS = 500
+MAX_RATE_LIMIT_REPLY_SECONDS = 120
 MAX_PHASE_BYTES = 512 * 1024
 MAX_EVIDENCE_ITEM_BYTES = 100_000
 RATE_LIMIT_TEXTS = ("Review rate limited", "Review limit reached")
@@ -607,6 +611,110 @@ def _exact_head_rate_limit_events(
     )
 
 
+def _sha_less_timeline_rate_limit(
+    timeline_lines: list[str],
+    comment_lines: list[str],
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    head_committed_at: str,
+) -> tuple[int, str] | None:
+    """Correlaciona una respuesta bot sin SHA con el último commit exacto del PR.
+
+    El workflow obtiene la timeline autenticada de este PR y verifica HEAD
+    antes y después. Eventos committed carecen de created_at: se usa su orden.
+    """
+    if not 1 <= len(timeline_lines) <= MAX_TIMELINE_EVENTS:
+        raise PolicyError("Timeline ausente, incompleta o excesiva.")
+    events: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for line in timeline_lines:
+        if len(line.encode("utf-8")) > MAX_EVIDENCE_ITEM_BYTES:
+            raise PolicyError("Evento timeline demasiado grande.")
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise PolicyError("JSON de timeline inválido.") from exc
+        if not isinstance(item, dict) or not isinstance(item.get("event"), str):
+            raise PolicyError("Evento timeline inválido.")
+        if item["event"] == "commented":
+            ident = item.get("id")
+            if type(ident) is not int or ident <= 0 or ident in seen:
+                raise PolicyError("Comentario timeline sin ID único.")
+            seen.add(ident)
+        events.append(item)
+
+    commits = [i for i, event in enumerate(events) if event["event"] == "committed"]
+    if not commits:
+        raise PolicyError("Timeline no contiene commit exacto.")
+    anchor = commits[-1]
+    if events[anchor].get("sha") != head_sha:
+        raise PolicyError("Último commit timeline distinto de HEAD.")
+    # Cualquier cambio de ref o evento desconocido después de HEAD falla cerrado.
+    harmless = {
+        "commented", "mentioned", "reviewed", "cross-referenced",
+        "labeled", "unlabeled", "assigned", "unassigned",
+        "review_requested", "review_request_removed", "referenced",
+    }
+    if any(event["event"] not in harmless for event in events[anchor + 1:]):
+        raise PolicyError("Timeline ambigua o con mutación de HEAD.")
+
+    comments = parse_comments(comment_lines)
+    indexed = {c["id"]: c for c in comments
+               if type(c.get("id")) is int and c["id"] > 0}
+    if len(indexed) != len(comments):
+        raise PolicyError("Comentarios con IDs ausentes o duplicados.")
+    command = f"@{_normalized_bot_login(required_review_bot)} review"
+    retry: tuple[str, int] | None = None
+    last_time = head_committed_at
+    for event in events[anchor + 1:]:
+        if event["event"] != "commented":
+            continue
+        comment_id = event["id"]
+        comment = indexed.get(comment_id)
+        if comment is None:
+            raise PolicyError("Comentario timeline no existe en API de PR.")
+        when = _parse_iso_timestamp(event.get("created_at"), noun="Timeline")
+        if (when != _parse_iso_timestamp(comment.get("created_at"), noun="Comentario")
+                or when < last_time):
+            raise PolicyError("Timeline tiene fechas no monotónicas.")
+        last_time = when
+        actor = event.get("actor")
+        user = comment.get("user")
+        if (not isinstance(actor, dict) or not isinstance(user, dict)
+                or actor.get("login") != user.get("login")
+                or event.get("body") != comment.get("body")):
+            raise PolicyError("Identidad o cuerpo difiere entre timeline y PR.")
+        body = comment.get("body")
+        if not isinstance(body, str):
+            raise PolicyError("Body timeline inválido.")
+        if (body.strip().lower() == command
+                and comment.get("author_association") == "OWNER"
+                and user.get("type") == "User" and when > head_committed_at):
+            updated = comment.get("updated_at")
+            if updated is not None and updated != when:
+                raise PolicyError("Trigger OWNER editado.")
+            retry = (when, comment_id)
+            continue
+        if retry is None or when <= retry[0]:
+            continue
+        if _rate_limit_comment_identity(
+            comment, required_review_bot=required_review_bot
+        ) is None:
+            continue
+        updated = comment.get("updated_at")
+        if updated is not None and _parse_iso_timestamp(
+            updated, noun="Actualización CodeRabbit"
+        ) < when:
+            raise PolicyError("Comentario bot con actualización inválida.")
+        delay = (datetime.fromisoformat(when.replace("Z", "+00:00")) -
+                 datetime.fromisoformat(retry[0].replace("Z", "+00:00"))).total_seconds()
+        if 0 < delay <= MAX_RATE_LIMIT_REPLY_SECONDS:
+            return comment_id, when
+        raise PolicyError("Respuesta bot fuera de ventana temporal.")
+    return None
+
+
 def validate_rate_limit_fallback(
     *,
     required_review_bot: str,
@@ -617,6 +725,7 @@ def validate_rate_limit_fallback(
     comment_lines: list[str],
     check_lines: list[str],
     thread_lines: list[str],
+    timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
 ) -> tuple[int, str]:
     run_attempt = _validate_run_attempt(run_attempt)
@@ -662,6 +771,14 @@ def validate_rate_limit_fallback(
             )
             if rate_limit_events:
                 return rate_limit_events[0][1], rate_limit_events[0][0]
+        if timeline_lines is not None:
+            result = _sha_less_timeline_rate_limit(
+                timeline_lines, comment_lines,
+                required_review_bot=required_review_bot,
+                head_sha=head_sha, head_committed_at=committed_at,
+            )
+            if result is not None:
+                return result
         raise PolicyError(
             "Rerun sin reintento OWNER y rate-limit exact-HEAD posteriores verificables."
         )
@@ -732,6 +849,7 @@ def validate_required_bot_review_or_fallback(
     check_lines: list[str],
     thread_lines: list[str],
     phase_file: Path | None,
+    timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
 ) -> dict[str, Any]:
     run_attempt = _validate_run_attempt(run_attempt)
@@ -755,6 +873,7 @@ def validate_required_bot_review_or_fallback(
         comment_lines=comment_lines,
         check_lines=check_lines,
         thread_lines=thread_lines,
+        timeline_lines=timeline_lines,
         run_attempt=run_attempt,
     )
     return {
@@ -791,6 +910,7 @@ def args() -> argparse.Namespace:
     parser.add_argument("--comments-file", default="")
     parser.add_argument("--checks-file", default="")
     parser.add_argument("--threads-file", default="")
+    parser.add_argument("--timeline-file", default="")
     parser.add_argument("--phase-file", default="")
     return parser.parse_args()
 
@@ -838,6 +958,15 @@ def main() -> int:
             if options.threads_file
             else []
         )
+        timeline_lines = (
+            _read_bounded_lines(
+                Path(options.timeline_file),
+                max_bytes=MAX_TIMELINE_BYTES,
+                noun="timeline",
+            )
+            if getattr(options, "timeline_file", "")
+            else None
+        )
         rounds = count_review_rounds(lines)
         validate_rounds(rounds, policy["review_round_limit"])
         review_result = validate_required_bot_review_or_fallback(
@@ -848,6 +977,7 @@ def main() -> int:
             comment_lines=comment_lines,
             check_lines=check_lines,
             thread_lines=thread_lines,
+            timeline_lines=timeline_lines,
             phase_file=Path(options.phase_file) if options.phase_file else None,
             run_attempt=run_attempt,
         )
