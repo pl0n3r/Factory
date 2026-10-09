@@ -139,6 +139,23 @@ class NoWorkDedupTests(unittest.TestCase):
         with self.assertRaisesRegex(NoWorkInventoryError, "observation_timestamp_invalid"):
             inventory_fingerprint(invalid_timestamp)
 
+        for bad in ("not-an-instant", "2026-10-09T21:00:00", "", True, -1):
+            with self.subTest(invalid_timestamp=bad):
+                invalid = inventory()
+                invalid["repositories"]["ControlBot"]["reservations"][0][
+                    "observed_at"
+                ] = bad
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "observation_timestamp_invalid"
+                ):
+                    inventory_fingerprint(invalid)
+
+        valid_epoch = inventory()
+        valid_epoch["repositories"]["ControlBot"]["reservations"][0][
+            "observed_at"
+        ] = 1_760_044_800
+        self.assertEqual(inventory_fingerprint(valid_epoch), baseline)
+
     def test_no_work_docs_define_nested_incidental_metadata(self):
         guide = (ROOT / "docs" / "no-work-dedup.md").read_text(encoding="utf-8")
         for signal in (
