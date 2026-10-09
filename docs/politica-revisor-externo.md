@@ -33,6 +33,44 @@ CodeRabbit también puede **reutilizar y editar el mismo comentario canónico** 
 
 El simple hecho de que un comentario del bot tenga un `updated_at` reciente **no** cuenta como reintento. Sin el trigger OWNER posterior al fallo de Policy, el fallback permanece bloqueado. Un usuario no OWNER tampoco puede producir esa evidencia.
 
+### Respuesta CodeRabbit sin SHA: timeline autenticada (solo rerun)
+
+En un **rerun** (`GITHUB_RUN_ATTEMPT > 1`) durante `construccion`, CodeRabbit
+puede emitir una respuesta `Review rate limited` sin el SHA en el cuerpo.
+Ese texto, por sí solo, **no constituye revisión ni permite fallback**.
+
+El reusable consulta directamente la timeline REST del **mismo PR** mediante
+`github.token`, con permisos de lectura, 100 eventos por página, máximo 500
+eventos y 2 MB; una sexta página solo puede estar vacía. El archivo temporal
+se elimina al terminar. Ningún contenido del PR candidato determina esa
+lectura. Antes de aceptar el resultado se vuelven a consultar HEAD y BASE.
+
+La alternativa requiere **toda** esta correlación adicional:
+
+1. La timeline está completa, contiene un último evento `committed` cuyo SHA
+   es el HEAD exacto y no registra force-push ni una mutación ambigua de HEAD.
+   Los eventos `committed` no contienen `created_at`: se usa el **orden
+   auténtico de eventos**, sin inventar timestamps.
+2. Existe un primer comentario de **`coderabbitai[bot]` real**, con
+   `user.type=Bot`, `actor.login` concordante, ID y cuerpo idénticos a
+   `issues/{PR}/comments`, informando rate-limit después de ese HEAD.
+3. Más tarde, un comentario **`OWNER`** con el cuerpo literal
+   `@coderabbitai review`, tipo `User` e identidad concordante solicita
+   otro intento en el mismo HEAD.
+4. Una **segunda respuesta distinta** del bot, posterior a ese comando y
+   emitida como máximo 120 segundos después, vuelve a informar rate-limit.
+   Todos los comentarios de la secuencia se cotejan por ID, actor, texto y
+   timestamp con los comentarios REST autenticados del mismo PR.
+5. No hay `committed`, `head_ref_force_pushed` ni `synchronize` que
+   invalide la secuencia; los demás checks exact-HEAD siguen verdes, sin
+   `CHANGES_REQUESTED` ni threads abiertos.
+
+Una sola respuesta, actor no OWNER, bot falsificado, timeline vacía, truncada,
+ambigua, reescrita, en otro HEAD o una carrera de refs **fallan cerrado**.
+El comportamiento de primer intento y la ruta histórica con SHA permanecen
+intactos. `live` nunca admite esta excepción. No se modifica `Factory@v1`
+ni se autoriza go-live, publicación o merge por esta evidencia.
+
 ## Qué no permite
 
 - No permite cambiar el HEAD para provocar otra ronda.
