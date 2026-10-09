@@ -120,28 +120,38 @@ def review_thread(*, resolved=False, login="coderabbitai"):
 
 
 def sha_less_fixture():
-    """Secuencia mínima basada en la respuesta real de CodeRabbit (#413)."""
+    """Secuencia reducida de GrindFlow #413, con payloads reales de timeline REST."""
+    prior = json.loads(rate_limit_comment(
+        comment_id=200, created_at="2026-10-04T05:00:00Z",
+    ))
     owner = json.loads(owner_review_retry(
         comment_id=201, created_at="2026-10-04T05:02:00Z",
     ))
     bot = json.loads(rate_limit_comment(
         comment_id=202, created_at="2026-10-04T05:02:08Z",
         updated_at="2026-10-04T05:02:19Z",
-        body=("<!-- This is an auto-generated reply by CodeRabbit -->\n"
-              "<!-- CodeRabbit review command invocation: v2:sample -->\n"
+        body=("<!-- This is an auto-generated reply by CodeRabbit -->\\n"
+              "<!-- CodeRabbit review command invocation: v2:sample -->\\n"
               "Review rate limited."),
     ))
-    comments = [json.dumps(owner), json.dumps(bot)]
+    comments = [json.dumps(owner), json.dumps(bot), json.dumps(prior)]
+
+    def event(item):
+        return {
+            "event": "commented", "id": item["id"], "body": item["body"],
+            "created_at": item["created_at"],
+            "author_association": item.get("author_association", "NONE"),
+            "user": item["user"],
+            "actor": {"login": item["user"]["login"]},
+        }
+
     timeline = [
         {"event": "committed", "sha": "b" * 40},
         {"event": "committed", "sha": HEAD},
-        {"event": "commented", "id": owner["id"], "body": owner["body"],
-         "created_at": owner["created_at"],
-         "actor": {"login": owner["user"]["login"]}},
+        event(prior),
+        event(owner),
         {"event": "mentioned", "actor": {"login": "coderabbitai"}},
-        {"event": "commented", "id": bot["id"], "body": bot["body"],
-         "created_at": bot["created_at"],
-         "actor": {"login": bot["user"]["login"]}},
+        event(bot),
     ]
     return comments, timeline
 
