@@ -751,7 +751,6 @@ def _sha_less_timeline_retry(
     ):
         raise PolicyError("Mutación de HEAD entre reintento y respuesta.")
     return bot_event["id"], bot_event["created_at"]
-    raise PolicyError("Timeline no acredita retry OWNER y rate-limit vinculados al HEAD.")
 
 
 def validate_rate_limit_fallback(
