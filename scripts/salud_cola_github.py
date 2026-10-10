@@ -16,6 +16,15 @@ REPOSITORIES = (
 MAX_PAGE = 100
 PAGE_SIZE = 100
 MAX_LABELS = 40
+# Explicit state vocabulary shared with the snapshot adapter, including the
+# recovery label. Unknown workflow prefixes must never be hidden.
+STATE_LABELS = frozenset((
+    "estado: disponible", "estado: reservado", "estado: bloqueado",
+    "estado: planificado", "estado: en revisión",
+    "estado: requiere recuperación",
+    "status: available", "status: reserved", "status: blocked",
+    "status: planned", "status: in review", "status: recovery required",
+))
 _REL = re.compile(r'<([^<>]+)>;\s*rel="(next|prev|first|last)"')
 
 
@@ -28,7 +37,10 @@ def _int(value: object, minimum: int, maximum: int) -> bool:
 
 
 def _page_from_url(url: object, repo: str) -> int:
-    if type(url) is not str or len(url) > 900:
+    if (type(url) is not str or len(url) > 900
+            or any(ord(char) < 32 or ord(char) == 127 for char in url)):
+        # urlsplit silently strips CR/LF/TAB (and leading C0) in Python.
+        # Check the captured, unmodified URL before parsing components.
         raise GitHubPageError("invalid_request_url")
     try:
         u = urlsplit(url)
@@ -58,7 +70,8 @@ def _link_has_next(header: object, repo: str, page: int) -> bool:
             # A non-first page should carry at least its prev relation.
             raise GitHubPageError("incomplete_link")
         return False
-    if type(header) is not str or len(header) > 4000:
+    if (type(header) is not str or len(header) > 4000
+            or any(ord(char) < 32 or ord(char) == 127 for char in header)):
         raise GitHubPageError("invalid_link")
     links: dict[str, int] = {}
     for part in header.split(","):
@@ -132,7 +145,14 @@ def parse_github_issue_page(repo: object, requested_page: object,
             label = item.get("name")
             if type(label) is not str or not 1 <= len(label) <= 100:
                 raise GitHubPageError("invalid_labels")
-            names.append(label)
+            if label in STATE_LABELS:
+                names.append(label)
+            elif label.startswith(("estado:", "status:")):
+                # Never silently discard an unknown workflow status if
+                # another label could otherwise make the Issue actionable.
+                raise GitHubPageError("unknown_status_label")
+            # Other labels are arbitrary user-editable text: omit entirely.
+
         is_pr = "pull_request" in raw
         if is_pr and (type(raw["pull_request"]) is not dict
                       or not raw["pull_request"]):

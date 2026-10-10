@@ -44,6 +44,12 @@ class GitHubPageTests(unittest.TestCase):
             url(1) + "&extra=1",
             url(1) + "#fragment",
             url(1).replace("page=1", "page=01"),
+            "\n" + url(1),
+            url(1).replace("/repos", "/re\npos"),
+            url(1) + "\r",
+            url(1).replace("api.github.com", "api.github.com\t"),
+            "\x00" + url(1),
+            url(1) + "\x7f",
         )
         for request in bad_urls:
             with self.subTest(request=request), self.assertRaises(GitHubPageError):
@@ -81,6 +87,9 @@ class GitHubPageTests(unittest.TestCase):
             (1, link(2, "next", repo="Condor")),
             (1, '<https://evil.example/path?page=2>; rel="next"'),
             (1, link(2, "weird")),
+            (1, link(2, "next").replace("/repos", "/re\npos")),
+            (1, link(2, "next").replace("api.github.com", "api.github.com\t")),
+            (1, link(2, "next") + "\r"),
             (1, "junk"),
             (2, None),
             (2, link(3, "next")),
@@ -94,10 +103,14 @@ class GitHubPageTests(unittest.TestCase):
 
     def test_projection_excludes_pr_and_private_text(self):
         payload = [
-            {"number": 17, "state": "open", "labels": [{"name": "estado: disponible", "color": "123456"}],
+            {"number": 17, "state": "open",
+             "labels": [{"name": "estado: disponible", "color": "123456"},
+                        {"name": "contact_email=alice@example.invalid"}],
              "title": "password=SECRET", "body": "TOKEN:SECRET",
              "user": {"login": "private-user"}, "html_url": "https://private.example"},
-            {"number": 18, "state": "open", "labels": [], "pull_request": {"url": "https://private.example"},
+            {"number": 18, "state": "open",
+             "labels": [{"name": "tracking=private-user"}],
+             "pull_request": {"url": "https://private.example"},
              "body": "api_key=SECRET", "user": {"login": "private-user"}},
         ]
         result = parse(items=payload)
@@ -110,6 +123,14 @@ class GitHubPageTests(unittest.TestCase):
         self.assertNotIn("SECRET", json.dumps(result))
         self.assertNotIn("private-user", json.dumps(result))
         self.assertNotIn("private.example", json.dumps(result))
+        self.assertNotIn("alice@example.invalid", json.dumps(result))
+        self.assertNotIn("contact_email=", json.dumps(result))
+        # The recovery status is canonical but remains non-dispatchable until
+        # sibling contracts add the sixth category in Factory #1102.
+        recovered = parse(items=[{"number": 19, "state": "open",
+            "labels": [{"name": "status: recovery required"}]}])
+        self.assertEqual(recovered["issues"][0]["labels"],
+                         ["status: recovery required"])
         # The sibling snapshot normalizer excludes records flagged pull_request.
         self.assertEqual(sum(not row["pull_request"] for row in result["issues"]), 1)
 
@@ -128,6 +149,12 @@ class GitHubPageTests(unittest.TestCase):
             [{"number": 42, "state": "closed", "labels": [{"name": "estado: disponible"}]}],
             [{"number": 42, "labels": [{"name": "estado: disponible"}]}],
             [{"number": 42, "state": True, "labels": [{"name": "estado: disponible"}]}],
+            [{"number": 42, "state": "open",
+              "labels": [{"name": "estado: disponible"},
+                         {"name": "estado: etiqueta inventada"}]}],
+            [{"number": 42, "state": "open",
+              "labels": [{"name": "status: available"},
+                         {"name": "status: unauthorized"}]}],
             [{"number": 1, "state": "open", "labels": {}}],
             [{"number": 1, "labels": [42]}],
             [{"number": 1, "labels": [{"color": "fff"}]}],
