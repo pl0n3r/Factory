@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -224,10 +225,17 @@ def topological_order(tasks: list[PlannedTask]) -> list[PlannedTask]:
     return result
 
 
+def _collision_key(path: str) -> str:
+    """Identidad conservadora de un archivo en sistemas multiplataforma."""
+    return unicodedata.normalize(
+        "NFC", unicodedata.normalize("NFC", path).casefold()
+    )
+
+
 def _claim_parts(path: str) -> tuple[tuple[str, ...], bool]:
     is_dir = path.endswith("/")
     base = path[:-1] if is_dir else path
-    return tuple(base.split("/")), is_dir
+    return tuple(_collision_key(part) for part in base.split("/")), is_dir
 
 
 def claims_overlap(left: str, right: str) -> bool:
@@ -240,6 +248,154 @@ def claims_overlap(left: str, right: str) -> bool:
     if right_dir and len(right_parts) < len(left_parts):
         return left_parts[: len(right_parts)] == right_parts
     return False
+
+
+
+def verified_changed_file_overlap(
+    left_claims: tuple[str, ...],
+    right_claims: tuple[str, ...],
+    *,
+    left_files: list[str] | None,
+    right_files: list[str] | None,
+    left_head: str,
+    right_head: str,
+    left_evidence_head: str,
+    right_evidence_head: str,
+    left_complete: bool,
+    right_complete: bool,
+    other_issue: int,
+    other_lease: str,
+) -> dict[str, object]:
+    """Análisis puro y puntual; no concede ni amplía una reserva."""
+    def result(safe: bool, reason: str, files: list[str] | None = None) -> dict[str, object]:
+        return {"safe": safe, "reason": reason, "files": files or [],
+                "other_issue": other_issue, "other_lease": other_lease}
+
+    if (
+        type(other_issue) is not int or other_issue < 1
+        or not isinstance(other_lease, str) or not other_lease
+        or not isinstance(left_claims, (tuple, list))
+        or not isinstance(right_claims, (tuple, list))
+        or not left_claims or not right_claims
+    ):
+        return result(False, "identity_or_claims_invalid")
+    try:
+        left = tuple(_valid_path(path) for path in left_claims)
+        right = tuple(_valid_path(path) for path in right_claims)
+    except (PlanError, TypeError):
+        return result(False, "claims_invalid")
+
+    if not any(claims_overlap(a, b) for a in left for b in right):
+        return result(True, "declared_claims_disjoint")
+
+    heads = (left_head, right_head, left_evidence_head, right_evidence_head)
+    if any(not isinstance(s, str) or len(s) not in (40, 64) or
+           any(c not in "0123456789abcdef" for c in s) for s in heads):
+        return result(False, "sha_missing_or_invalid")
+    if (left_head != left_evidence_head or right_head != right_evidence_head
+            or left_complete is not True or right_complete is not True):
+        return result(False, "diff_stale_or_incomplete")
+
+    if (not isinstance(left_files, list) or not isinstance(right_files, list)
+            or not left_files or not right_files
+            or len(left_files) > 500 or len(right_files) > 500):
+        return result(False, "changed_files_missing_or_excessive")
+    try:
+        lf = tuple(_valid_path(path) for path in left_files)
+        rf = tuple(_valid_path(path) for path in right_files)
+    except (PlanError, TypeError):
+        return result(False, "changed_files_invalid")
+    if (any(path.endswith("/") for path in (*lf, *rf))
+            or len({_collision_key(p) for p in lf}) != len(lf)
+            or len({_collision_key(p) for p in rf}) != len(rf)):
+        return result(False, "changed_files_noncanonical")
+    if (any(not any(claims_overlap(path, c) for c in left) for path in lf)
+            or any(not any(claims_overlap(path, c) for c in right) for path in rf)):
+        return result(False, "changed_file_outside_claim")
+
+    left_keys = {_collision_key(p) for p in lf}
+    right_keys = {_collision_key(p) for p in rf}
+    collisions = sorted(
+        {p for p in lf if _collision_key(p) in right_keys}
+        | {p for p in rf if _collision_key(p) in left_keys}
+    )
+    if collisions:
+        return result(False, "shared_changed_files", collisions)
+    return result(True, "verified_disjoint_changed_files")
+
+
+
+def verified_new_file_claim_against_active_diff(
+    candidate_paths: list[str] | tuple[str, ...],
+    active_paths: list[str] | tuple[str, ...],
+    *,
+    active_files: list[str] | None,
+    active_head: str,
+    evidence_head: str,
+    diff_complete: bool,
+    active_issue: int,
+    active_lease: str,
+) -> dict[str, object]:
+    """Prueba conservadora de archivos exactos frente a una lease V3.
+
+    Solo una propuesta con claims por ARCHIVO puede usarse antes de que exista
+    su rama: no infiere futuros archivos modificados por un claim de directorio.
+    """
+    def outcome(safe: bool, reason: str, collisions: list[str] | None = None):
+        return {
+            "safe": safe, "reason": reason, "files": collisions or [],
+            "active_issue": active_issue, "active_lease": active_lease,
+            "active_head": active_head,
+        }
+
+    if (
+        type(active_issue) is not int or active_issue < 1
+        or not isinstance(active_lease, str) or not active_lease
+        or not isinstance(candidate_paths, (tuple, list)) or not candidate_paths
+        or not isinstance(active_paths, (tuple, list)) or not active_paths
+    ):
+        return outcome(False, "identity_or_claims_missing")
+    try:
+        candidate = tuple(_valid_path(p) for p in candidate_paths)
+        active = tuple(_valid_path(p) for p in active_paths)
+    except (PlanError, TypeError):
+        return outcome(False, "claims_invalid")
+    if (
+        any(p.endswith("/") for p in candidate)
+        or len({_collision_key(p) for p in candidate}) != len(candidate)
+    ):
+        return outcome(False, "candidate_requires_exact_unique_files")
+    if (
+        not isinstance(active_head, str) or len(active_head) not in (40, 64)
+        or any(c not in "0123456789abcdef" for c in active_head)
+        or evidence_head != active_head or diff_complete is not True
+    ):
+        return outcome(False, "diff_sha_stale_or_incomplete")
+    if (
+        not isinstance(active_files, list) or not active_files
+        or len(active_files) > 3000
+    ):
+        return outcome(False, "diff_missing_or_unbounded")
+    try:
+        changed = tuple(_valid_path(p) for p in active_files)
+    except (PlanError, TypeError):
+        return outcome(False, "diff_files_invalid")
+    if (
+        any(p.endswith("/") for p in changed)
+        or len({_collision_key(p) for p in changed}) != len(changed)
+        or any(not any(claims_overlap(p, c) for c in active) for p in changed)
+    ):
+        return outcome(False, "changed_files_outside_active_claims")
+    candidate_keys = {_collision_key(p) for p in candidate}
+    changed_keys = {_collision_key(p) for p in changed}
+    collisions = sorted(
+        {p for p in candidate if _collision_key(p) in changed_keys}
+        | {p for p in changed if _collision_key(p) in candidate_keys}
+    )
+    if collisions:
+        return outcome(False, "file_already_modified_by_active_branch", collisions)
+    return outcome(True, "candidate_files_disjoint_from_verified_active_diff")
+
 
 
 def expand_derived_claims(
@@ -472,6 +628,7 @@ def reservation_blockers(
     active_task_snapshots: dict[int, dict[str, Any]] | None = None,
     active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None,
     active_reservation_numbers: set[int] | None = None,
+    verified_file_independence: set[int] | None = None,
 ) -> list[str]:
     marker = parse_task_marker(str(current_issue.get("body") or ""))
     active_others = _active_other_issues(current_issue, open_issues)
@@ -570,7 +727,7 @@ def reservation_blockers(
             for right in other_marker["paths"]
             if claims_overlap(left, right)
         })
-        if overlap:
+        if overlap and other_number not in (verified_file_independence or set()):
             blockers.append(
                 f"colisión con tarea activa #{other_number}: " + ", ".join(overlap)
             )
