@@ -75,7 +75,9 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
         items = release_gate_issues()
         result = self.run_parser(page(items[:100]), page(items[100:]))
         self.assertEqual(result.returncode, 0, result.stderr)
-        selected = json.loads(result.stdout)
+        complete = json.loads(result.stdout)
+        self.assertEqual(len(complete), 116)
+        selected = [row for row in complete if "factory-release" in row["body"]]
         self.assertEqual({row["number"] for row in selected}, {895, 896})
         self.assertTrue(all(set(row) == {
             "number", "state", "title", "body", "updated_at"
@@ -134,12 +136,9 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             "factory-human-decision",
             "python3 scripts/release_window.py pr-check",
             "| {number, state, title, body, updated_at}",
+            '("number", "state", "title", "body", "updated_at")',
         ):
-            # El último valor es reemplazado por la proyección equivalente en Python.
-            if required == "| {number, state, title, body, updated_at}":
-                self.assertIn('("number", "state", "title", "body", "updated_at")', job)
-            else:
-                self.assertIn(required, job)
+            self.assertIn(required, job)
         self.assertEqual(rw.MAX_ROWS, 200)
         self.assertNotIn("> /tmp/release-search.json", job)
 
