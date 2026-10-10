@@ -595,17 +595,8 @@ class T(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "tests"):
             policy.validate_other_gates_green(checks, head_sha=HEAD)
 
-    def test_rate_limit_plus_failed_retry_passes_in_construction_when_other_gates_green(self):
-        comments = [
-            rate_limit_comment(
-                comment_id=101,
-                created_at="2026-10-04T05:00:00Z",
-            ),
-            rate_limit_comment(
-                comment_id=102,
-                created_at="2026-10-04T05:02:00Z",
-            ),
-        ]
+    def test_first_attempt_sha_less_rate_limits_cannot_prove_exact_head(self):
+        """AC-06 (#1072): dos rate limits + FAILURE no demuestran causalidad."""
         checks = green_gate_checks() + [
             check(
                 check_id=99,
@@ -621,23 +612,33 @@ class T(unittest.TestCase):
             phase_path = Path(handle.name)
         self.addCleanup(lambda: phase_path.unlink(missing_ok=True))
 
-        result = validate_required_bot_review_or_fallback(
-            [],
-            "coderabbitai[bot]",
-            HEAD,
-            head_committed_at="2026-10-04T04:59:00Z",
-            comment_lines=comments,
-            check_lines=checks,
-            thread_lines=[],
-            phase_file=phase_path,
-        )
-        self.assertTrue(result["review_fallback"])
-        self.assertEqual(result["rate_limit_comment_id"], 102)
-        self.assertEqual(
-            result["rate_limit_created_at"],
-            "2026-10-04T05:02:00Z",
-        )
-        self.assertEqual(result["phase"], "construccion")
+        # Ni siquiera un HEAD explícito en ambos cuerpos reemplaza un
+        # reintento OWNER auténtico: no atribuir la respuesta al trigger.
+        for label, shown_head in (("sin SHA", None), ("con SHA, sin OWNER", HEAD)):
+            comments = [
+                rate_limit_comment(
+                    comment_id=101, created_at="2026-10-04T05:00:00Z",
+                    head_sha=shown_head,
+                ),
+                rate_limit_comment(
+                    comment_id=102, created_at="2026-10-04T05:02:00Z",
+                    head_sha=shown_head,
+                ),
+            ]
+            with self.subTest(label=label), self.assertRaisesRegex(
+                PolicyError, "reintento OWNER"
+            ):
+                validate_required_bot_review_or_fallback(
+                    [],
+                    "coderabbitai[bot]",
+                    HEAD,
+                    head_committed_at="2026-10-04T04:59:00Z",
+                    comment_lines=comments,
+                    check_lines=checks,
+                    thread_lines=[],
+                    phase_file=phase_path,
+                    run_attempt=1,
+                )
 
     def test_in_place_rate_limit_update_plus_owner_retry_passes_in_construction(self):
         comments = [

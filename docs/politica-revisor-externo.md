@@ -15,13 +15,15 @@ La policy solo acepta el fallback cuando se cumplen **todas** estas condiciones:
 
 Un único rate limit sin reintento verificable nunca basta.
 
-### Dos formas válidas de demostrar el reintento
+### Cómo acreditar el reintento sin aceptar causalidad supuesta
 
-El camino histórico sigue siendo válido cuando el reviewer crea comentarios separados:
-
-1. comentario `Review rate limited` posterior al commit HEAD;
-2. Policy falla sobre ese HEAD;
-3. un segundo comentario rate-limited del reviewer aparece después del fallo.
+**Compatibilidad endurecida (Factory #1064 / #1072):** el camino histórico que
+aceptaba dos comentarios separados `Review rate limited` alrededor de un
+`Factory policy` fallido en el primer intento queda **denegado**. Aunque los
+dos mensajes sean del bot real y mencionen el SHA, su orden no acredita por
+sí solo un comando de reintento OWNER ni un vínculo causal entre ese comando,
+la respuesta y el HEAD. El primer intento debe fallar cerrado si solo ofrece
+esta secuencia. No se modifica la vía principal de revisión formal exact-HEAD.
 
 CodeRabbit también puede **reutilizar y editar el mismo comentario canónico** en vez de crear un segundo comentario. Para ese caso, la policy exige una cadena más explícita:
 

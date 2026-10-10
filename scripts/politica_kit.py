@@ -881,14 +881,9 @@ def validate_rate_limit_fallback(
         required_review_bot=required_review_bot,
         not_before=committed_at,
     )
-    if len(rate_limits) >= 2:
-        for first_at, _first_id in rate_limits:
-            for failed_at in sorted(failed_policy_checks):
-                if failed_at < first_at:
-                    continue
-                for retry_at, retry_id in rate_limits:
-                    if retry_at > failed_at:
-                        return retry_id, retry_at
+    # Dos mensajes del bot (incluso separados por un FAILURE de Policy)
+    # no vinculan causalmente el retry OWNER ni la respuesta al HEAD exacto.
+    # Solo la ruta con trigger OWNER y SHA explícito de abajo puede permitirlo.
 
     for failed_at in sorted(failed_policy_checks):
         owner_retries = _owner_review_retry_comments(
@@ -913,7 +908,7 @@ def validate_rate_limit_fallback(
             "Un único rate limit no habilita fallback sin reintento OWNER verificable."
         )
     raise PolicyError(
-        "Falta un reintento rate-limited posterior a un fallo de policy sobre el HEAD exacto."
+        "Dos rate limits no prueban reintento OWNER ni vínculo causal exact-HEAD."
     )
 
 
