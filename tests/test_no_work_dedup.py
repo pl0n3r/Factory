@@ -111,6 +111,10 @@ class NoWorkDedupTests(unittest.TestCase):
             {"issue": 1121, "reservation_id": None, "active": False},
             {"issue": 1121, "issue_number": 1122,
              "reservation_id": "valid", "active": True},
+            {"issue": 1, "issue_number": True,
+             "reservation_id": "alias", "active": True},
+            {"issue": 1, "issue_number": 1.0,
+             "reservation_id": "alias", "active": True},
         )
         for entry in invalid_entries:
             with self.subTest(entry=repr(entry)):

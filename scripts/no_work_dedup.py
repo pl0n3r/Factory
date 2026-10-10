@@ -158,8 +158,12 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
             raise NoWorkInventoryError(f"reservation_invalid:{name}:active")
         issue_id = reservation.get("issue", reservation.get("issue_number"))
         if type(issue_id) is not int or issue_id <= 0 or (
-            "issue" in reservation and "issue_number" in reservation
-            and reservation["issue"] != reservation["issue_number"]
+            "issue_number" in reservation
+            and (
+                type(reservation["issue_number"]) is not int
+                or reservation["issue_number"] <= 0
+                or reservation["issue_number"] != issue_id
+            )
         ):
             raise NoWorkInventoryError(f"reservation_invalid:{name}:issue")
         reservation_id = reservation.get("reservation_id")
