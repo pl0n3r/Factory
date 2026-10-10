@@ -35,13 +35,17 @@ jobs:
     steps:
       - id: route
         shell: bash
-        env:
-          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           python3 - <<'PY'
+          import json
           import os
 
-          parts = os.environ["COMMENT_BODY"].strip().split(maxsplit=1)
+          # GITHUB_EVENT_PATH contiene el payload del evento en el runner.
+          # Evita pasar el cuerpo por env o imprimirlo en el log del paso.
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as source:
+              event = json.load(source)
+          body = event.get("comment", {}).get("body", "")
+          parts = body.strip().split(maxsplit=1) if isinstance(body, str) else []
           supported = {
               "/tomar", "/liberar-forzado", "/adoptar-contrato-huerfana",
               "/liberar", "/transferir", "/migrar-contrato",
