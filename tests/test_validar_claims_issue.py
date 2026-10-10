@@ -66,7 +66,7 @@ class ValidarClaimsIssueTests(unittest.TestCase):
             groups = report["proposed_groups"]
             self.assertEqual([len(group) for group in groups], [6, 6, 2])
             self.assertTrue(all(len(g) <= MAX_PATHS_PER_LEAF for g in groups))
-            self.assertEqual([path for group in groups for path in group], paths)
+            self.assertEqual([path for group in groups for path in group], sorted(paths))
         self.assertFalse(inspect_claim_paths(paths[:6])["needs_partition"])
 
     def test_bounds_and_unknown_fail_closed(self):
