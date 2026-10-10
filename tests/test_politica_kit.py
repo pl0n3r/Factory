@@ -448,6 +448,60 @@ class T(unittest.TestCase):
     def test_required_bot_review_on_exact_head_passes(self):
         validate_required_bot_review([review()], "coderabbitai[bot]", HEAD)
 
+    def test_required_bot_rate_limit_review_is_not_substantive_coverage(self):
+        # Una respuesta de cuota como COMMENTED no prueba revisión del HEAD.
+        bodies = (
+            "Review rate limited.",
+            "Auto-generated CodeRabbit reply: Review rate limited.",
+            "Review limit reached.",
+        )
+        for body in bodies:
+            with self.subTest(body=body), self.assertRaises(PolicyError):
+                validate_required_bot_review(
+                    [review(body=body)], "coderabbitai[bot]", HEAD
+                )
+        # No se debe perder la vía legítima de review sustantiva.
+        validate_required_bot_review(
+            [review(body="Hallazgo sustantivo en este HEAD.")],
+            "coderabbitai[bot]", HEAD,
+        )
+
+    def test_required_bot_changes_requested_exact_head_vetoes_all_coverage(self):
+        blocking = review(
+            review_id=21, state="CHANGES_REQUESTED",
+            body="Hallazgo bloqueante sin resolver",
+        )
+        approved = review(review_id=22, state="APPROVED", body="")
+        commented = review(review_id=23, body="Revisión sustantiva")
+        combinations = (
+            [commented, blocking],
+            [blocking, commented],
+            [approved, blocking],
+            [blocking, approved],
+        )
+        for lines in combinations:
+            with self.subTest(states=[json.loads(line)["state"] for line in lines]):
+                with self.assertRaisesRegex(PolicyError, "CHANGES_REQUESTED"):
+                    validate_required_bot_review(
+                        lines, "coderabbitai[bot]", HEAD
+                    )
+                with self.assertRaisesRegex(PolicyError, "CHANGES_REQUESTED"):
+                    validate_required_bot_review(
+                        lines, "coderabbitai[bot]", HEAD,
+                        comment_lines=[comment(comment_id=301)],
+                    )
+        # Otra identidad o un SHA anterior no pueden vetar el HEAD vigente.
+        validate_required_bot_review(
+            [review(review_id=24, state="CHANGES_REQUESTED",
+                    login="other-bot"), commented],
+            "coderabbitai[bot]", HEAD,
+        )
+        validate_required_bot_review(
+            [review(review_id=25, state="CHANGES_REQUESTED",
+                    commit_id="b" * 40), commented],
+            "coderabbitai[bot]", HEAD,
+        )
+
     def test_required_bot_comment_coverage_on_exact_head_passes(self):
         validate_required_bot_review(
             [],
