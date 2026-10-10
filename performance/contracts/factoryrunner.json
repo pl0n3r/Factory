@@ -3,16 +3,16 @@
   "project": "factoryrunner",
   "surfaces": [
     {
-      "id": "ci.node.job_log",
-      "label": "FactoryRunner CI Node job: lapso entre primeras y ultimas lineas del log",
+      "id": "ci.workflow",
+      "label": "FactoryRunner CI GitHub Actions workflow elapsed (not product runtime)",
       "metrics": [
         {
-          "id": "log_span",
-          "label": "Tramo de log observado en un job CI, no duracion total ni runtime",
+          "id": "workflow_elapsed",
+          "label": "Observed run_started_at to updated_at, including GitHub Actions overhead",
           "baseline": {
-            "value": 6.769,
+            "value": 124,
             "unit": "s",
-            "observed_at": "2026-10-10T05:19:59Z"
+            "observed_at": "2026-10-10T05:21:43Z"
           },
           "budget": {
             "operator": "lte",
@@ -20,16 +20,16 @@
             "unit": "s"
           },
           "window": {
-            "duration_seconds": 1,
+            "duration_seconds": 124,
             "min_samples": 1
           },
           "freshness": {
             "max_age_seconds": 604800
           },
           "evidence": {
-            "source": "github_actions_job",
-            "ref": "github:pl0n3r/FactoryRunner/actions/runs/38027128700/job/114140263203",
-            "observed_at": "2026-10-10T05:19:59Z"
+            "source": "github_actions",
+            "ref": "github:pl0n3r/FactoryRunner/actions/runs/38027128700/attempts/1",
+            "observed_at": "2026-10-10T05:21:43Z"
           },
           "allowed_actions": [
             "observe",

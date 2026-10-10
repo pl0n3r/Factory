@@ -3,16 +3,16 @@
   "project": "autofactory",
   "surfaces": [
     {
-      "id": "ci.node.job_log",
-      "label": "AutoFactory CI Node test: lapso entre primeras y ultimas lineas del log",
+      "id": "ci.workflow",
+      "label": "AutoFactory CI GitHub Actions workflow elapsed (not product runtime)",
       "metrics": [
         {
-          "id": "log_span",
-          "label": "Tramo de log observado en un job CI, no duracion total ni runtime",
+          "id": "workflow_elapsed",
+          "label": "Observed run_started_at to updated_at, including GitHub Actions overhead",
           "baseline": {
-            "value": 22.683,
+            "value": 30,
             "unit": "s",
-            "observed_at": "2026-10-10T09:24:03Z"
+            "observed_at": "2026-10-10T09:24:05Z"
           },
           "budget": {
             "operator": "lte",
@@ -20,16 +20,16 @@
             "unit": "s"
           },
           "window": {
-            "duration_seconds": 1,
+            "duration_seconds": 30,
             "min_samples": 1
           },
           "freshness": {
             "max_age_seconds": 604800
           },
           "evidence": {
-            "source": "github_actions_job",
-            "ref": "github:pl0n3r/AutoFactory/actions/runs/38041222908/job/114181699104",
-            "observed_at": "2026-10-10T09:24:03Z"
+            "source": "github_actions",
+            "ref": "github:pl0n3r/AutoFactory/actions/runs/38041222908/attempts/1",
+            "observed_at": "2026-10-10T09:24:05Z"
           },
           "allowed_actions": [
             "observe",
