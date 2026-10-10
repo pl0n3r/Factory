@@ -90,9 +90,9 @@ class PlanIncidenteColaTests(unittest.TestCase):
                 diagnostic["blocked_cause_totals"]["dependency"] = 6
                 diagnostic["blocked_cause_totals"][cause] = 1
                 diagnostic["roadmap_candidates"] = []
-                report = report_from_diagnosis(
+                adapted = report_from_diagnosis(
                     diagnostic, {"limit": 5000, "remaining": 5000})
-                plan = plan_incidente_cola(report)
+                plan = plan_incidente_cola(adapted)
                 self.assertEqual(plan["action"], "create")
                 self.assertEqual(plan["roadmap_candidates"], [])
                 self.assertEqual(plan["blocked_cause_totals"][cause], 1)
