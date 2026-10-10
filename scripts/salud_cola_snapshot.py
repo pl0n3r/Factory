@@ -59,7 +59,7 @@ def _state(labels: object) -> str:
             # Sibling diagnose_queue currently has no recovery count: refuse a
             # misleading complete snapshot until both contracts are upgraded.
             raise SnapshotError("recovery_status_unrepresentable")
-        elif label.startswith(("estado:", "status:")):
+        elif label.casefold().startswith(("estado:", "status:")):
             raise SnapshotError("unknown_status_label")
     if len(found) != 1:
         raise SnapshotError("ambiguous_status")
