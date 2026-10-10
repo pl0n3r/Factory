@@ -4,7 +4,7 @@
   "surfaces": [
     {
       "id": "ci.production_smoke",
-      "label": "GrindFlow main production-smoke GitHub Actions job duration; not web TTFB",
+      "label": "GrindFlow main production-smoke GitHub Actions job duration",
       "metrics": [
         {
           "id": "job_duration",
