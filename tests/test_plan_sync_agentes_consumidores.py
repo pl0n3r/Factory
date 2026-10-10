@@ -100,23 +100,23 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
         # A literal example inside a fenced Markdown block is never
         # considered a managed sync section, even with exact markers.
         for opening, closing in (
-            ("\`\`\`markdown", "\`\`\`"),
+            ("```markdown", "```"),
             ("~~~markdown", "~~~"),
-            ("\`\`\`\`text", "\`\`\`\`"),
+            ("````text", "````"),
         ):
             document = consumers()
             document[REPOSITORIES[0]] = (
-                "# AGENTES.md\\n## Ejemplo local\\n" + opening + "\\n"
-                "<!-- factory-principios-sync:start -->\\n"
-                "Ejemplo literal, no administrado\\n"
-                "<!-- factory-principios-sync:end -->\\n"
-                + closing + "\\n"
+                "# AGENTES.md\n## Ejemplo local\n" + opening + "\n"
+                "<!-- factory-principios-sync:start -->\n"
+                "Ejemplo literal, no administrado\n"
+                "<!-- factory-principios-sync:end -->\n"
+                + closing + "\n"
             )
             with self.subTest(opening=opening):
                 with self.assertRaisesRegex(SyncPlanError, "invalid_sync_markers"):
                     plan_sync(template(), document)
         valid_fence = consumers()
-        valid_fence[REPOSITORIES[0]] += "\`\`\`text\\nUna regla local\\n\`\`\`\\n"
+        valid_fence[REPOSITORIES[0]] += "```text\nUna regla local\n```\n"
         self.assertEqual(plan_sync(template(), valid_fence)["consumers"][0]["action"],
                          "insert")
 
