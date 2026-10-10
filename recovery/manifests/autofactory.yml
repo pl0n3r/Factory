@@ -1,0 +1,39 @@
+# factory-recovery-evidence {"version":1,"status":"DECLARED_NOT_MEASURED","observed_rpo":"UNKNOWN","observed_rto":"UNKNOWN","operational_readiness":"UNKNOWN","source":"https://github.com/pl0n3r/Factory/issues/305"}
+# Targets only: no backup, encryption, restore or RPO/RTO has been verified.
+{
+  "version": 1,
+  "project": "autofactory",
+  "target": {
+    "rpo_minutes": 15,
+    "rto_minutes": 60
+  },
+  "protection": {
+    "copies": 3,
+    "media_types": 2,
+    "offsite_copies": 1,
+    "immutable_copies": 1,
+    "undetected_restore_failures": 0
+  },
+  "retention": {
+    "hourly": 24,
+    "daily": 7,
+    "weekly": 8,
+    "monthly": 12
+  },
+  "sources": {
+    "database": "NOT_APPLICABLE",
+    "media": "NOT_APPLICABLE",
+    "repository": "REQUIRED"
+  },
+  "offsite": {
+    "object_storage": "REQUIRED",
+    "cold_copy": "NOT_APPLICABLE"
+  },
+  "encryption": {
+    "required": true,
+    "key_material": "EXTERNAL_ONLY"
+  },
+  "restore_drill": {
+    "cadence_days": 7
+  }
+}
