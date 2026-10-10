@@ -53,17 +53,23 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(result["state"], "queue_empty")
         self.assertEqual(result["open_total"], 7)
         self.assertFalse(result["publication_allowed"])
+        self.assertFalse(result["can_dispatch"])
         queue["repositories"][0]["counts"].update(available=1, blocked=0)
         queue["repositories"][0]["blockers"] = []
         self.assertEqual(diagnose_queue(queue)["state"], "below_capacity")
         self.assertEqual(diagnose_queue(queue)["reason"], "fewer_ready_than_capacity")
+        self.assertTrue(diagnose_queue(queue)["can_dispatch"])
         queue["agent_capacity"] = None
         self.assertEqual(diagnose_queue(queue)["state"], "unknown_capacity")
         self.assertEqual(diagnose_queue(queue)["reason"], "capacity_not_observed")
+        self.assertFalse(diagnose_queue(queue)["can_dispatch"])
         queue["agent_capacity"] = 1
         self.assertEqual(diagnose_queue(queue)["state"], "healthy")
+        self.assertTrue(diagnose_queue(queue)["can_dispatch"])
         queue["agent_capacity"] = 0
-        self.assertEqual(diagnose_queue(queue)["state"], "healthy")
+        self.assertEqual(diagnose_queue(queue)["state"], "below_capacity")
+        self.assertEqual(diagnose_queue(queue)["reason"], "zero_execution_capacity")
+        self.assertFalse(diagnose_queue(queue)["can_dispatch"])
         queue["agent_capacity"] = None
         queue["repositories"][0]["counts"].update(available=0, blocked=1)
         queue["repositories"][0]["blockers"] = [{"number": 17, "cause": "unknown", "roadmap": True}]
@@ -75,6 +81,7 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(deferred["reason"], "rate_limit_below_20_percent")
         self.assertEqual(deferred["blocked_cause_totals"]["dependency"], 7)
         self.assertFalse(deferred["publication_allowed"])
+        self.assertFalse(deferred["can_dispatch"])
         self.assertEqual(diagnose_queue(inventory(remaining=1000))["state"], "queue_empty")
         self.assertEqual(diagnose_queue(inventory(remaining=0))["roadmap_candidates"], [])
         for path, value in (("agent_capacity", True), ("agent_capacity", -1),
@@ -122,6 +129,12 @@ class SaludColaTests(unittest.TestCase):
                          "unknown")
         self.assertTrue(all(x["issue"] != 109 or x["repository"] != "Factory"
                             for x in report["roadmap_candidates"]))
+        # An item marked planned must not become an actionable roadmap leaf.
+        queue["repositories"][0]["blockers"][0]["cause"] = "planned"
+        report = diagnose_queue(queue)
+        self.assertEqual(report["blocked_cause_totals"]["planned"], 1)
+        self.assertFalse(any(x["issue"] == 109 and x["repository"] == "Factory"
+                             for x in report["roadmap_candidates"]))
         self.assertTrue(all(set(x) == {"repository", "issue", "cause"}
                             for x in result["roadmap_candidates"]))
         bad = copy.deepcopy(queue)
@@ -134,7 +147,7 @@ class SaludColaTests(unittest.TestCase):
         big = inventory()
         for row in big["repositories"]:
             row["blockers"] = [
-                {"number": i + 1, "cause": "planned", "roadmap": True}
+                {"number": i + 1, "cause": "claims", "roadmap": True}
                 for i in range(10)
             ]
             row["counts"]["blocked"] = 10
@@ -142,7 +155,7 @@ class SaludColaTests(unittest.TestCase):
         report = diagnose_queue(big)
         self.assertEqual(len(report["roadmap_candidates"]), 32)
         self.assertEqual(report["omitted_candidates"], 38)
-        self.assertEqual(report["blocked_cause_totals"]["planned"], 70)
+        self.assertEqual(report["blocked_cause_totals"]["claims"], 70)
         self.assertEqual(sum(report["blocked_cause_totals"].values()), 70)
         self.assertEqual(len(report["repositories"]["Factory"]["blocked_reasons"]), 10)
         # Refuse massive output rather than silently truncating causes.

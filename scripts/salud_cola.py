@@ -84,8 +84,9 @@ def diagnose_queue(snapshot: object) -> dict:
             seen_issues.add(n)
             cause_counts[cause] += 1
             safe_blockers.append({"issue": n, "cause": cause, "roadmap": roadmap})
-            # A human decision or UNKNOWN is evidence, never an executable leaf.
-            if roadmap and cause not in ("human_gate", "unknown"):
+            # Only actionable decomposition causes may suggest a roadmap leaf.
+            # Plans, human gates and UNKNOWN are evidence, not executable work.
+            if roadmap and cause in ("dependency", "claims"):
                 candidates.append({"repository": name, "issue": n, "cause": cause})
         by_repo[name] = {
             "open_issues": row["open_issues"],
@@ -109,6 +110,9 @@ def diagnose_queue(snapshot: object) -> dict:
         state = "queue_empty"
     elif capacity is None:
         state = "unknown_capacity"
+    elif capacity == 0:
+        # A positive queue with zero execution capacity cannot be healthy.
+        state = "below_capacity"
     elif total_available < capacity:
         state = "below_capacity"
     else:
@@ -118,9 +122,12 @@ def diagnose_queue(snapshot: object) -> dict:
         "budget_deferred": "rate_limit_below_20_percent",
         "queue_empty": "zero_available",
         "unknown_capacity": "capacity_not_observed",
-        "below_capacity": "fewer_ready_than_capacity",
+        "below_capacity": ("zero_execution_capacity" if capacity == 0
+                           else "fewer_ready_than_capacity"),
         "healthy": "reported_capacity_sufficient",
     }[state]
+    can_dispatch = (state != "budget_deferred" and total_available > 0
+                    and capacity is not None and capacity > 0)
 
     sorted_candidates = sorted(
         candidates, key=lambda x: (REPOSITORIES.index(x["repository"]), x["issue"])
@@ -134,4 +141,4 @@ def diagnose_queue(snapshot: object) -> dict:
             "roadmap_candidates": selected,
             "omitted_candidates": 0 if state == "budget_deferred"
             else len(sorted_candidates) - len(selected),
-            "publication_allowed": False}
+            "can_dispatch": can_dispatch, "publication_allowed": False}
