@@ -8,7 +8,7 @@ Diseñar todo trabajo para ejecutarse en paralelo; serializar solo por dependenc
 
 ## Principio 1 — cola saludable sin inventar disponibilidad
 
-Una cola con cero hojas disponible en los siete repositorios exige inventario completo y escalera no ociosa; no da permiso de convertir bloqueos en trabajo listo. Diferenciar disponible, reservado, en revisión, bloqueado y planificado; todo bloqueo lleva causa y condición verificable de salida. La ausencia de candidatos se informa sin fabricar readiness. Fuentes: [Factory #1082](https://github.com/pl0n3r/Factory/issues/1082) y [ControlBot #760](https://github.com/pl0n3r/ControlBot/issues/760).
+Una cola con cero hojas disponible en los siete repositorios exige inventario completo y escalera no ociosa; no da permiso de convertir bloqueos en trabajo listo. Diferenciar disponible, reservado, en revisión, bloqueado y planificado; todo bloqueo lleva causa y condición verificable de salida. El catálogo oficial incluye además `estado: requiere recuperación` / `status: recovery required` como **sexto estado** disjunto: una lease inactiva requiere recuperación canónica, **no es disponible**, no cuenta como blocked/planned ni habilita despacho o roadmap automático. Mientras #1098/#1100 solo admitan cinco estados, un snapshot con recovery falla cerrado; el conteo funcional propio depende de [Factory #1102](https://github.com/pl0n3r/Factory/issues/1102). La ausencia de candidatos se informa sin fabricar readiness. Fuentes: [Factory #1082](https://github.com/pl0n3r/Factory/issues/1082) y [ControlBot #760](https://github.com/pl0n3r/ControlBot/issues/760).
 
 ## Principio 2 — hojas pequeñas y reversibles
 
@@ -40,7 +40,7 @@ Antes de reabrir, reparar, cerrar o reservar por supuesta brecha, comprobar main
 
 ## Salud de cola y utilización — contrato, no monitor implementado
 
-Reportar por repositorio y global conteos separados de disponible, reservado, en revisión, bloqueado y planificado; identificar causa y fuente de cada bloqueo. **Utilización = agentes activos verificados / capacidad de agentes disponible verificada**. Sin evidencia autenticada de agentes activos, capacidad, heartbeat y frescura, marcar UNKNOWN / no calculable, nunca 0 % o 100 %. Una regla heurística como ≈4 chats por cuenta Plus no es un denominador medido. Un PR, una reserva o updated_at no acreditan que un agente esté activo. El workflow salud-cola está fuera de esta hoja.
+Reportar por repositorio y global conteos separados de disponible, reservado, en revisión, bloqueado y planificado; identificar causa y fuente de cada bloqueo. El `estado: requiere recuperación` / `status: recovery required` es un **sexto estado** canónico que **no es disponible**, blocked ni planned; una hoja pendiente de recuperar no acredita trabajo ejecutable, capacidad libre ni candidato roadmap. Contarlo por separado solo tras integrar el contrato de [Factory #1102](https://github.com/pl0n3r/Factory/issues/1102) en #1098/#1100; antes, rechazar snapshots que no puedan representar recovery, sin fabricar GREEN o `queue_empty`. **Utilización = agentes activos verificados / capacidad de agentes disponible verificada**. Sin evidencia autenticada de agentes activos, capacidad, heartbeat y frescura, marcar UNKNOWN / no calculable, nunca 0 % o 100 %. Una regla heurística como ≈4 chats por cuenta Plus no es un denominador medido. Un PR, una reserva o updated_at no acreditan que un agente esté activo. El workflow salud-cola está fuera de esta hoja.
 
 ## Límite de esta entrega
 

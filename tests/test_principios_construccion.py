@@ -45,6 +45,20 @@ class PrincipiosConstruccionTests(unittest.TestCase):
             self.assertIn(term, self.doc)
         self.assertIn("**no** se excluyen del arbitraje", self.doc)
         self.assertIn("no acreditan que un agente esté activo", self.doc)
+        # La taxonomía de recuperación es canónica, pero la integración
+        # de su sexto conteo permanece bloqueada tras #1098 y #1100.
+        parts = (
+            self.doc.split("## Principio 1 — ", 1)[1].split(
+                "## Principio 2 — ", 1)[0],
+            self.doc.split("## Salud de cola y utilización — ", 1)[1].split(
+                "## Límite de esta entrega", 1)[0],
+        )
+        for part in parts:
+            with self.subTest(section=part[:45]):
+                for term in ("estado: requiere recuperación",
+                             "status: recovery required", "sexto estado",
+                             "no es disponible", "Factory #1102"):
+                    self.assertIn(term, part)
 
     def test_leccion_jsonl_trazable_y_sin_secretos(self):
         lines = LESSON.read_text(encoding="utf-8").splitlines()
