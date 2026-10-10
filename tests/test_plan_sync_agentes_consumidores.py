@@ -77,6 +77,18 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
                     plan_sync(template() + suffix, consumers())
         self.assertEqual(plan_sync(template(), consumers())["status"], "planned")
 
+        # Unicode con sustitutos sueltos no debe escapar como error Unicode
+        # sin tipificar, tanto en fuente como en uno de los consumidores.
+        for bad_text in ("\ud800", "\udfff"):
+            with self.subTest(kind="source", bad_text=ascii(bad_text)):
+                with self.assertRaisesRegex(SyncPlanError, "invalid_document"):
+                    plan_sync(template() + bad_text, consumers())
+            docs = consumers()
+            docs[REPOSITORIES[0]] += bad_text
+            with self.subTest(kind="consumer", bad_text=ascii(bad_text)):
+                with self.assertRaisesRegex(SyncPlanError, "invalid_document"):
+                    plan_sync(template(), docs)
+
         # The original is under budget but the projected principles are not.
         oversized_projection = consumers()
         prefix = "# AGENTES.md\n"
