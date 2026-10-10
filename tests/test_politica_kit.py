@@ -240,7 +240,8 @@ class T(unittest.TestCase):
             sha_less_validate(no_initial_comments, no_initial)
         # Dos comandos OWNER competidores.
         owner = json.loads(comments[0])
-        second = {**owner, "id": 203, "created_at": "2026-10-04T05:02:03Z"}
+        second = {**owner, "id": 203, "created_at": "2026-10-04T05:02:03Z",
+                  "updated_at": "2026-10-04T05:02:03Z"}
         extra = dict(events[3], id=203, created_at="2026-10-04T05:02:03Z")
         with self.subTest(label="múltiples OWNER"), self.assertRaisesRegex(PolicyError, "exactamente un reintento OWNER"):
             sha_less_validate(comments + [json.dumps(second)],
@@ -252,6 +253,7 @@ class T(unittest.TestCase):
         # Respuesta fuera de la ventana de 120 s.
         late = json.loads(comments[1])
         late["created_at"] = "2026-10-04T05:09:00Z"
+        late["updated_at"] = late["created_at"]
         late_event = dict(events[-1], created_at="2026-10-04T05:09:00Z")
         with self.subTest(label="respuesta tardía"), self.assertRaisesRegex(PolicyError, "fuera de ventana temporal"):
             sha_less_validate([comments[0], json.dumps(late), comments[2]],
