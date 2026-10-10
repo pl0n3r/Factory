@@ -48,8 +48,8 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             "  coordinacion:", 1
         )[0]
         marker = (
-            "python3 - /tmp/release-search-p1.json "
-            "/tmp/release-search-p2.json <<'PY' > /tmp/release-search-verified.json"
+            "python3 - /tmp/release-search-p1-${pass}.json "
+            "/tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json"
         )
         assert job.count(marker) == 1, "Fragmento de lectura paginada ausente"
         cls.parser = textwrap.dedent(
@@ -119,6 +119,38 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Search Issues incompleta", result.stderr)
 
+    def test_two_complete_reads_reject_set_drift_even_if_count_stays_116(self) -> None:
+        """Una página 1 obsoleta + página 2 nueva puede ocultar un gate."""
+        items = release_gate_issues()
+        changed = items[1:] + [{
+            "number": 20001, "state": "closed", "title": "Nuevo",
+            "body": "Sin puerta", "updated_at": "2026-10-09T01:00:00Z",
+        }]
+        mixed = self.run_parser(page(items[:100]), page(changed[100:]))
+        stable = self.run_parser(page(changed[:100]), page(changed[100:]))
+        self.assertEqual(mixed.returncode, 0, mixed.stderr)
+        self.assertEqual(stable.returncode, 0, stable.stderr)
+        # Unicidad y total no bastan: el conjunto mixto omitió items[100].
+        mixed_ids = {i["number"] for i in json.loads(mixed.stdout)}
+        stable_ids = {i["number"] for i in json.loads(stable.stdout)}
+        self.assertNotEqual(mixed_ids, stable_ids)
+        self.assertNotIn(items[100]["number"], mixed_ids)
+        self.assertIn(items[100]["number"], stable_ids)
+        self.assertIn(
+            "cmp -s /tmp/release-search-verified-1.json /tmp/release-search-verified-2.json",
+            WORKFLOW,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            first_file = Path(tmp) / "first.json"
+            second_file = Path(tmp) / "second.json"
+            first_file.write_text(mixed.stdout, encoding="utf-8")
+            second_file.write_text(stable.stdout, encoding="utf-8")
+            comparison = subprocess.run(
+                ["cmp", "-s", str(first_file), str(second_file)],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+        self.assertNotEqual(comparison.returncode, 0)
+
     def test_factory_ci_preserves_bounded_release_projection_and_gate_validation(self) -> None:
         """AC-03: las páginas y los comentarios se leen sin omitir seguridad."""
         job = WORKFLOW.split("  release_window:", 1)[1].split(
@@ -129,6 +161,8 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             "-f sort=created -f order=asc",
             "(.total_count >= 0 and .total_count <= 200)",
             "incomplete_results", "conteo incompleto",
+            "for pass in 1 2; do",
+            "Search Issues cambió entre dos lecturas completas",
             'select(.user.login == "github-actions[bot]")',
             "| {user: {login: .user.login}, body: (.body // \"\")}",
             "factory-human-gate-duplicate",
