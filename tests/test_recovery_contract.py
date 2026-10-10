@@ -68,5 +68,67 @@ class RecoveryContractTests(unittest.TestCase):
             self.assertNotIn("supersecretvalue", str(ctx.exception))
 
 
+    def test_version_requires_strict_integer_one(self):
+        valid = manifest()
+        self.assertEqual(validate_recovery_manifest(valid)["version"], 1)
+        self.assertIs(type(validate_recovery_manifest(valid)["version"]), int)
+        for invalid in (True, False, 1.0, 0.0, "1", None, 2, -1):
+            with self.subTest(version=repr(invalid)):
+                value = manifest()
+                value["version"] = invalid
+                with self.assertRaises(RecoveryContractError) as ctx:
+                    validate_recovery_manifest(value)
+                self.assertEqual(str(ctx.exception), "version debe ser 1.")
+                with self.assertRaises(RecoveryContractError):
+                    canonical_recovery_manifest(value)
+
+    def test_protection_numbers_reject_bool_and_float_aliases(self):
+        expected = manifest()["protection"]
+        self.assertEqual(validate_recovery_manifest(manifest())["protection"], expected)
+        for key, number in expected.items():
+            # True == 1, False == 0, and integer-valued floats compare equal
+            # to their canonical integers; all are invalid JSON Schema types.
+            for invalid in (True, False, float(number), str(number), None):
+                with self.subTest(field=key, invalid=repr(invalid)):
+                    value = manifest()
+                    value["protection"][key] = invalid
+                    with self.assertRaises(RecoveryContractError) as ctx:
+                        validate_recovery_manifest(value)
+                    self.assertEqual(
+                        str(ctx.exception),
+                        "protection debe cumplir exactamente 3-2-1-1-0.",
+                    )
+        for key, number in expected.items():
+            value = manifest()
+            value["protection"][key] = number + 1
+            with self.subTest(field=key, invalid="noncanonical"):
+                with self.assertRaises(RecoveryContractError):
+                    validate_recovery_manifest(value)
+
+    def test_valid_manifest_remains_canonical_after_strict_type_checks(self):
+        value = manifest()
+        before = json.dumps(
+            value, sort_keys=True, ensure_ascii=False, allow_nan=False,
+            separators=(",", ":"),
+        )
+        after = canonical_recovery_manifest(value)
+        self.assertEqual(before, after)
+        self.assertEqual(validate_recovery_manifest(value), value)
+        reordered = copy.deepcopy(value)
+        reordered["protection"] = dict(reversed(list(value["protection"].items())))
+        self.assertEqual(canonical_recovery_manifest(reordered), after)
+        import hashlib
+        self.assertEqual(
+            hashlib.sha256(after.encode("utf-8")).hexdigest(),
+            hashlib.sha256(before.encode("utf-8")).hexdigest(),
+        )
+        secret = "token=private-secret-sentinel"
+        hostile = manifest()
+        hostile["project"] = secret
+        with self.assertRaises(RecoveryContractError) as ctx:
+            validate_recovery_manifest(hostile)
+        self.assertNotIn(secret, str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

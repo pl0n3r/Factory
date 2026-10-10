@@ -28,7 +28,7 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         "sources", "offsite", "encryption", "restore_drill",
     }
     data = _map(payload, fields, "manifest")
-    if data["version"] != VERSION:
+    if type(data["version"]) is not int or data["version"] != VERSION:
         raise RecoveryContractError("version debe ser 1.")
     project = data["project"]
     if not isinstance(project, str) or _PROJECT.fullmatch(project) is None:
@@ -45,7 +45,8 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         "copies": 3, "media_types": 2, "offsite_copies": 1,
         "immutable_copies": 1, "undetected_restore_failures": 0,
     }
-    if dict(protection) != expected:
+    if any(type(protection[key]) is not int or protection[key] != expected[key]
+           for key in expected):
         raise RecoveryContractError("protection debe cumplir exactamente 3-2-1-1-0.")
 
     retention = _nonnegative_map(
