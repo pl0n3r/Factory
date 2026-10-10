@@ -957,6 +957,13 @@ def validate_required_bot_review_or_fallback(
     run_attempt = _validate_run_attempt(run_attempt)
     if required_review_bot == "":
         return {"review_fallback": False}
+    # La ruta primaria también debe respetar los findings abiertos. La vía
+    # fallback ya veta estos hilos; una review sustantiva no puede omitirlos.
+    if _has_open_blocking_finding(
+        thread_lines,
+        required_review_bot=required_review_bot,
+    ):
+        raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
     if _required_bot_review_satisfied(
         lines,
         required_review_bot,
