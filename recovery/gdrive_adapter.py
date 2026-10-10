@@ -93,6 +93,10 @@ class GDriveColdCopy:
             raise ColdCopyError("invalid_manifest") from None
         if checked["offsite"]["cold_copy"] != "google_drive":
             raise ColdCopyError("cold_copy_not_enabled")
+        # El adaptador build-ahead NO debe despachar hacia un transporte
+        # arbitrario; un subclass podría sobreescribir métodos con I/O real.
+        if type(transport) is not FakeDriveTransport:
+            raise ColdCopyError("fake_transport_required")
         self.project = checked["project"]
         self.namespace = "recovery:" + self.project
         self.transport = transport

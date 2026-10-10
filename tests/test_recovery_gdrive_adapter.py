@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import unittest
+from unittest.mock import patch
 
 from recovery.gdrive_adapter import (
     ColdCopyError, FakeDriveTransport, GDriveColdCopy,
@@ -105,14 +106,14 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
         sensitive = "VERY_PRIVATE_OAUTH_TOKEN_NOT_REAL"
         secrets = Secrets(sensitive)
 
-        class FailingTransport(FakeDriveTransport):
-            def put_if_absent(self, *args):
-                raise RuntimeError(sensitive)
-
-        drive = instance(transport=FailingTransport(), secrets=secrets)
+        drive = instance(transport=FakeDriveTransport(), secrets=secrets)
         data = b"fake-only"
-        with self.assertRaises(ColdCopyError) as observed:
-            drive.upload("snap", data, sha(data), retention_days=1)
+        with patch.object(
+            FakeDriveTransport, "put_if_absent",
+            side_effect=RuntimeError(sensitive),
+        ):
+            with self.assertRaises(ColdCopyError) as observed:
+                drive.upload("snap", data, sha(data), retention_days=1)
         self.assertNotIn(sensitive, str(observed.exception))
         self.assertIsNone(observed.exception.__cause__)
         fake = FakeDriveTransport()
@@ -132,6 +133,46 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
             bad.upload("snap", data, sha(data), retention_days=1)
         self.assertNotIn(sensitive, str(error.exception))
         self.assertIsNone(error.exception.__cause__)
+
+        # Ningún objeto con API parecida puede sustituir el fake incorporado.
+        # En particular, el constructor falla ANTES de consultar secretos.
+        class SpyTransport:
+            calls = 0
+
+            def put_if_absent(self, *args):
+                self.calls += 1
+                raise AssertionError("unexpected_transport_call")
+
+            def read(self, *args):
+                self.calls += 1
+                raise AssertionError("unexpected_transport_call")
+
+            def read_with_expiry(self, *args):
+                self.calls += 1
+                raise AssertionError("unexpected_transport_call")
+
+            def purge_expired(self, *args):
+                self.calls += 1
+                raise AssertionError("unexpected_transport_call")
+
+        class UnsafeSubclass(FakeDriveTransport):
+            def put_if_absent(self, *args):
+                raise AssertionError("subclass_must_not_run")
+
+        for untrusted in (SpyTransport(), UnsafeSubclass()):
+            with self.subTest(transport=type(untrusted).__name__):
+                gated_secrets = Secrets()
+                with self.assertRaisesRegex(
+                    ColdCopyError, "fake_transport_required",
+                ):
+                    GDriveColdCopy(
+                        manifest(), transport=untrusted,
+                        secret_provider=gated_secrets,
+                        credential_ref="gdrive-cold-copy", now=NOW,
+                    )
+                self.assertEqual(gated_secrets.calls, 0)
+                if isinstance(untrusted, SpyTransport):
+                    self.assertEqual(untrusted.calls, 0)
 
     def test_fake_roundtrip_and_retention_namespace(self):
         fake = FakeDriveTransport()
