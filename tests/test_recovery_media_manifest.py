@@ -22,6 +22,15 @@ class RecoveryMediaManifestTests(unittest.TestCase):
         second = plan_media_backup("grindflow", [item], evidence)
         self.assertEqual(second["pending_uploads"], [])
         self.assertFalse(second["external_io_performed"])
+        # Two assets may refer to the same immutable object; it is copied once.
+        reused = asset("asset_B")
+        reused["object_key"] = item["object_key"]
+        once = plan_media_backup("grindflow", [item, reused])
+        self.assertEqual(len(once["entries"]), 2)
+        self.assertEqual(len(once["pending_uploads"]), 1)
+        reused["byte_size"] = 19
+        with self.assertRaises(MediaManifestError):
+            plan_media_backup("grindflow", [item, reused])
         evidence[0]["sha256"] = SHA2
         with self.assertRaises(MediaManifestError):
             plan_media_backup("grindflow", [item], evidence)
