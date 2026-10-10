@@ -212,7 +212,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
             'checks_url_base="repos/$REPOSITORY/'
             'commits/$PR_HEAD_SHA/check-runs?per_page=100"'
         )
-        end = W.index('owner="${REPOSITORY%%/*}"', start)
+        end = W.index('(( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES ))', start)
         checks_transport = W[start:end]
 
         self.assertIn("gh api", checks_transport)
@@ -257,7 +257,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
 
     def test_public_check_transport_remains_anonymous_and_bounded(self):
         start = W.index('checks_url_base="repos/$REPOSITORY/')
-        end = W.index('owner="${REPOSITORY%%/*}"', start)
+        end = W.index('(( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES ))', start)
         checks_transport = W[start:end]
         self.assertIn("gh api", checks_transport)
         self.assertIn('MAX_PUBLIC_CHECKS: "500"', W)
