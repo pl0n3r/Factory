@@ -224,6 +224,17 @@ class PlanIncidenteColaTests(unittest.TestCase):
             report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
         # A malicious diagnostic reason may raise in __ne__; only fixed
         # private error codes are allowed at the trust boundary.
+        class HostileVersion:
+            def __ne__(self, other):
+                raise RuntimeError("private-version-sentinel")
+        invalid = report()
+        invalid["version"] = HostileVersion()
+        with self.assertRaisesRegex(IncidentPlanError, "invalid_version"):
+            plan_incidente_cola(invalid)
+        invalid = upstream_diagnosis()
+        invalid["version"] = HostileVersion()
+        with self.assertRaisesRegex(IncidentPlanError, "invalid_version"):
+            report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
         class HostileState:
             def __eq__(self, other):
                 raise RuntimeError("synthetic-private-sentinel")

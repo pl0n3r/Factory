@@ -39,7 +39,7 @@ def plan_incidente_cola(report: object, previous: object = None) -> dict:
             "roadmap_candidates", "repositories"}
     if not _exact(report, keys):
         raise IncidentPlanError("invalid_report")
-    if report["version"] != 1 or type(report["version"]) is not int:
+    if type(report["version"]) is not int or report["version"] != 1:
         raise IncidentPlanError("invalid_version")
     if report["complete"] is not True:
         raise IncidentPlanError("incomplete_inventory")
@@ -183,6 +183,8 @@ def report_from_diagnosis(diagnosis: object, rate_limit: object) -> dict:
             or (diagnosis["agent_capacity"] is not None
                 and not _int(diagnosis["agent_capacity"], 0, 1000))):
         raise IncidentPlanError("invalid_diagnosis")
+    if type(diagnosis["version"]) is not int or diagnosis["version"] != 1:
+        raise IncidentPlanError("invalid_version")
     # Fail closed before any equality against an untrusted state object.
     if type(diagnosis["state"]) is not str or diagnosis["state"] not in STATES:
         raise IncidentPlanError("invalid_diagnosis_state")
