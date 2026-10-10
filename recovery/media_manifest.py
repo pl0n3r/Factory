@@ -46,7 +46,7 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
             raise MediaManifestError("Conflicting immutable object evidence.")
 
     entries, upload, restore = [], [], []
-    seen_assets, keys = set(), {}
+    seen_assets, keys, upload_keys = set(), {}, set()
     for asset in assets:
         if (not isinstance(asset, Mapping) or set(asset) != {
             "asset_id", "object_key", "sha256", "byte_size", "metadata_key", "preview_keys"
@@ -60,12 +60,12 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
                 or not isinstance(asset["preview_keys"], list) or len(asset["preview_keys"]) > 32
                 or any(not _object_key(p) for p in asset["preview_keys"])):
             raise MediaManifestError("Invalid media asset values.")
-        if ident in seen_assets or (key in keys and keys[key] != digest):
+        if ident in seen_assets or (key in keys and keys[key] != (digest, asset["byte_size"])):
             raise MediaManifestError("Duplicate asset or conflicting immutable key.")
         if key in proven and proven[key] != digest:
             raise MediaManifestError("Immutable backup checksum drift.")
         seen_assets.add(ident)
-        keys[key] = digest
+        keys[key] = (digest, asset["byte_size"])
         row = {"asset_id": ident, "object_key": key, "sha256": digest,
                "byte_size": asset["byte_size"], "metadata_key": asset["metadata_key"],
                "preview_keys": sorted(set(asset["preview_keys"]))}
@@ -73,7 +73,8 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
         restore.append({"asset_id": ident, "original_object_key": key,
                         "metadata_object_key": row["metadata_key"],
                         "regenerate_previews": row["preview_keys"]})
-        if key not in proven:
+        if key not in proven and key not in upload_keys:
+            upload_keys.add(key)
             upload.append({"object_key": key, "sha256": digest, "byte_size": row["byte_size"]})
     return {"version": 1, "project": project,
             "entries": sorted(entries, key=lambda item: item["asset_id"]),
