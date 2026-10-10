@@ -274,7 +274,22 @@ def _required_bot_review_satisfied(
         raise PolicyError("Reviewer-bot requerido inválido.")
     if not SHA_RE.fullmatch(head_sha):
         raise PolicyError("HEAD requerido inválido.")
-    for review in parse_reviews(lines):
+    reviews = parse_reviews(lines)
+    # Un CHANGES_REQUESTED exact-HEAD del bot exigido veta toda la cobertura,
+    # incluso si otras reviews o comentarios de ese bot son sustantivos.
+    for review in reviews:
+        user = review.get("user")
+        if (
+            isinstance(user, dict)
+            and user.get("type") == "Bot"
+            and user.get("login") == required_review_bot
+            and review.get("commit_id") == head_sha
+            and review.get("state") == "CHANGES_REQUESTED"
+        ):
+            raise PolicyError(
+                "Existe CHANGES_REQUESTED bloqueante del reviewer sobre el HEAD exacto."
+            )
+    for review in reviews:
         user = review.get("user")
         if (
             isinstance(user, dict)
@@ -283,6 +298,11 @@ def _required_bot_review_satisfied(
             and review.get("commit_id") == head_sha
             and review.get("state") != "CHANGES_REQUESTED"
             and review_counts_as_round(review)
+            and not (
+                review.get("state") == "COMMENTED"
+                and isinstance(review.get("body"), str)
+                and _is_rate_limit_body(review["body"])
+            )
         ):
             return True
     for comment in parse_comments(comment_lines or []):
