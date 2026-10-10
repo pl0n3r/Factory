@@ -16,6 +16,11 @@ def link(page, relation, repo="Factory"):
     return f'<{url(page, repo)}>; rel="{relation}"'
 
 
+def full_items(count=100):
+    return [{"number": n + 1, "state": "open", "labels": []}
+            for n in range(count)]
+
+
 def parse(*, repo="Factory", page=1, request=None, status=200,
           header=None, items=None):
     return parse_github_issue_page(
@@ -56,8 +61,15 @@ class GitHubPageTests(unittest.TestCase):
                             link(3, "next"), link(3, "last")])
         final = ", ".join([link(1, "first"), link(2, "prev"),
                            link(3, "last")])
-        self.assertTrue(parse(header=first)["has_next"])
-        self.assertTrue(parse(page=2, header=middle)["has_next"])
+        self.assertTrue(parse(header=first, items=full_items())["has_next"])
+        self.assertTrue(parse(page=2, header=middle, items=full_items())["has_next"])
+        for count in (0, 1, 99):
+            with self.subTest(underfilled=count):
+                with self.assertRaisesRegex(GitHubPageError, "nonterminal_page_underfilled"):
+                    parse(header=first, items=full_items(count))
+        # A terminal page legitimately has any size from zero through 100.
+        for count in (0, 1, 99, 100):
+            self.assertFalse(parse(items=full_items(count))["has_next"])
         self.assertFalse(parse(page=3, header=final)["has_next"])
         self.assertFalse(parse()["has_next"])
         bad = (
@@ -82,10 +94,10 @@ class GitHubPageTests(unittest.TestCase):
 
     def test_projection_excludes_pr_and_private_text(self):
         payload = [
-            {"number": 17, "labels": [{"name": "estado: disponible", "color": "123456"}],
+            {"number": 17, "state": "open", "labels": [{"name": "estado: disponible", "color": "123456"}],
              "title": "password=SECRET", "body": "TOKEN:SECRET",
              "user": {"login": "private-user"}, "html_url": "https://private.example"},
-            {"number": 18, "labels": [], "pull_request": {"url": "https://private.example"},
+            {"number": 18, "state": "open", "labels": [], "pull_request": {"url": "https://private.example"},
              "body": "api_key=SECRET", "user": {"login": "private-user"}},
         ]
         result = parse(items=payload)
@@ -102,7 +114,8 @@ class GitHubPageTests(unittest.TestCase):
         self.assertEqual(sum(not row["pull_request"] for row in result["issues"]), 1)
 
     def test_invalid_payload_fails_closed(self):
-        baseline = {"number": 1, "labels": [{"name": "status: blocked"}]}
+        baseline = {"number": 1, "state": "open",
+                    "labels": [{"name": "status: blocked"}]}
         bad_payloads = (
             {},
             "not an array",
@@ -112,7 +125,10 @@ class GitHubPageTests(unittest.TestCase):
             [{"number": True, "labels": []}],
             [{"number": -1, "labels": []}],
             [baseline, baseline.copy()],
-            [{"number": 1, "labels": {}}],
+            [{"number": 42, "state": "closed", "labels": [{"name": "estado: disponible"}]}],
+            [{"number": 42, "labels": [{"name": "estado: disponible"}]}],
+            [{"number": 42, "state": True, "labels": [{"name": "estado: disponible"}]}],
+            [{"number": 1, "state": "open", "labels": {}}],
             [{"number": 1, "labels": [42]}],
             [{"number": 1, "labels": [{"color": "fff"}]}],
             [{"number": 1, "labels": [{"name": 3}]}],

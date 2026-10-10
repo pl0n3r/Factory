@@ -106,11 +106,19 @@ def parse_github_issue_page(repo: object, requested_page: object,
     has_next = _link_has_next(link_header, repo, actual_page)
     if type(payload) is not list or len(payload) > PAGE_SIZE:
         raise GitHubPageError("invalid_payload")
+    # With per_page=100, a nonterminal page MUST be full; otherwise the
+    # declared 'next' chain could conceal omitted issue records.
+    if has_next and len(payload) != PAGE_SIZE:
+        raise GitHubPageError("nonterminal_page_underfilled")
     issues: list[dict] = []
     seen: set[int] = set()
     for raw in payload:
         if type(raw) is not dict:
             raise GitHubPageError("invalid_issue")
+        # An open-query request is not proof of a coherent response row.
+        # A closed or state-less issue must never become available downstream.
+        if type(raw.get("state")) is not str or raw["state"] != "open":
+            raise GitHubPageError("invalid_issue_state")
         number, labels = raw.get("number"), raw.get("labels")
         if not _int(number, 1, 100000000) or number in seen:
             raise GitHubPageError("invalid_or_duplicate_issue")
