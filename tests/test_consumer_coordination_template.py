@@ -113,14 +113,15 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
 
     def test_event_comment_body_is_not_logged_or_executed(self):
         # Se ejecuta el Python real del YAML; el comentario no va en el shell.
-        for body in (
-            "No ejecuté /tomar;\n\$(echo should-not-run)",
-            "/tomar \$(echo should-not-run)",
-            "/renovar-contrato \"\$(echo should-not-run)\"",
-            "/tomar\n\$(touch /tmp/coord-no-exec)",
-        ):
+        cases = (
+            ("No ejecuté /tomar;\n$(echo should-not-run)", False),
+            ("/tomar $(echo should-not-run)", True),
+            ('/renovar-contrato "$(echo should-not-run)"', True),
+            ("/tomar\n$(touch /tmp/coord-no-exec)", True),
+        )
+        for body, expected_route in cases:
             with self.subTest(body=body):
-                routes_comment(body)
+                self.assertEqual(routes_comment(body), expected_route)
         preflight = job_block(text(), "preflight_comentario", "comentario")
         self.assertNotIn("COMMENT_BODY", preflight)
         self.assertNotIn("github.event.comment.body", preflight)
