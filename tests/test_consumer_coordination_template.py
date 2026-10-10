@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -31,13 +32,19 @@ def routes_comment(body: str) -> bool:
     """Ejecuta el clasificador real embebido en el workflow, sin red ni shell."""
     with tempfile.TemporaryDirectory() as temp:
         output = Path(temp) / "github_output"
-        env = {**os.environ, "COMMENT_BODY": body, "GITHUB_OUTPUT": str(output)}
+        event_file = Path(temp) / "event.json"
+        event_file.write_text(json.dumps({"comment": {"body": body}}), encoding="utf-8")
+        env = {**os.environ, "GITHUB_EVENT_PATH": str(event_file),
+               "GITHUB_OUTPUT": str(output)}
+        env.pop("COMMENT_BODY", None)
         result = subprocess.run(
             [sys.executable, "-c", preflight_python()],
             env=env, capture_output=True, text=True, timeout=5, check=False,
         )
         if result.returncode:
             raise AssertionError(result.stderr)
+        if result.stdout or result.stderr:
+            raise AssertionError("El preflight no debe registrar el comentario")
         return output.read_text(encoding="utf-8") == "route=true\n"
 
 
@@ -104,6 +111,20 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
         self.assertNotIn("contains(github.event.comment.body", comment)
         self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)
 
+    def test_event_comment_body_is_not_logged_or_executed(self):
+        # Se ejecuta el Python real del YAML; el comentario no va en el shell.
+        for body in (
+            "No ejecuté /tomar;\n\$(echo should-not-run)",
+            "/tomar \$(echo should-not-run)",
+            "/renovar-contrato \"\$(echo should-not-run)\"",
+            "/tomar\n\$(touch /tmp/coord-no-exec)",
+        ):
+            with self.subTest(body=body):
+                routes_comment(body)
+        preflight = job_block(text(), "preflight_comentario", "comentario")
+        self.assertNotIn("COMMENT_BODY", preflight)
+        self.assertNotIn("github.event.comment.body", preflight)
+
     def test_trimmed_real_commands_route_and_malformed_fail_closed(self):
         coordinator.configure_profile("es")
         uuid = "efd30204-fc16-4dca-8534-aa6e4d35bc57"
@@ -150,7 +171,9 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
             )
         self.assertIn("permissions:\n      contents: read", preflight)
         self.assertIn("timeout-minutes: 2", preflight)
-        self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", preflight)
+        self.assertIn('os.environ["GITHUB_EVENT_PATH"]', preflight)
+        self.assertNotIn("COMMENT_BODY", preflight)
+        self.assertNotIn("github.event.comment.body", preflight)
         self.assertNotIn("echo ${{ github.event.comment.body }}", preflight)
         self.assertIn("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1", comment)
         for scope in ("contents", "issues", "pull-requests", "checks"):
