@@ -66,6 +66,15 @@ class ControlBotPerformanceContractTests(unittest.TestCase):
         self.assertEqual(metric["evidence"]["ref"],
                          f"github:pl0n3r/ControlBot/actions/runs/{CI_RUNS[-1][0]}")
         self.assertEqual(metric["window"]["min_samples"], len(CI_RUNS))
+        # El detector exige ventana observada completa: tres resultados dentro
+        # del intervalo real, no una declaración nominal de siete días.
+        first_end = min(utc_timestamp(ended) for _, _, _, ended in CI_RUNS)
+        last_end = max(utc_timestamp(ended) for _, _, _, ended in CI_RUNS)
+        coverage_seconds = int((last_end - first_end).total_seconds())
+        self.assertEqual(coverage_seconds, 18_111)
+        self.assertEqual(metric["window"]["duration_seconds"], coverage_seconds)
+        self.assertEqual(metric["window"]["min_samples"], 3)
+        self.assertNotEqual(metric["window"]["duration_seconds"], 604_800)
         self.assertEqual(metric["freshness"]["max_age_seconds"], 604800)
 
     def test_unmeasured_public_surfaces_remain_unknown_without_fabrication(self):

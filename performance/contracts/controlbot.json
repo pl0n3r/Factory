@@ -8,7 +8,7 @@
       "metrics": [
         {
           "id": "workflow_elapsed",
-          "label": "Elapsed run_started_at to updated_at (includes Actions bookkeeping)",
+          "label": "GitHub Actions workflow elapsed per push/main (3 real CI runs within 5h 1m 51s)",
           "baseline": {
             "value": 114,
             "unit": "s",
@@ -20,7 +20,7 @@
             "unit": "s"
           },
           "window": {
-            "duration_seconds": 604800,
+            "duration_seconds": 18111,
             "min_samples": 3
           },
           "freshness": {
