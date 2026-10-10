@@ -39,16 +39,22 @@ class ValidarClaimsIssueTests(unittest.TestCase):
     def test_shared_files_remain_real_collisions(self):
         paths = [
             "src/safe.py", "README.md", "config/version.php",
+            "config/version.json",
             "package-lock.json", "internal/Makefile",
         ]
         report = inspect_claim_paths(paths)
         self.assertTrue(report["valid"])
         self.assertEqual(report["reason_codes"], [])
         self.assertEqual(report["shared_integration_paths"], [
-            "README.md", "config/version.php", "package-lock.json",
+            "README.md", "config/version.json", "config/version.php",
+            "package-lock.json",
         ])
         self.assertFalse(report["can_reserve"])
         self.assertFalse(report["needs_partition"])
+        self.assertIn("apps/alpha/config/version.json", inspect_claim_paths(
+            ["apps/alpha/config/version.json"])["shared_integration_paths"])
+        self.assertEqual(inspect_claim_paths(
+            ["config/other.json"])["shared_integration_paths"], [])
         self.assertEqual(report["proposed_groups"], [])
         # A filename without an extension may be a file OR a directory;
         # this helper cannot assert reality or skip independent tree checks.

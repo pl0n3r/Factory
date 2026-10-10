@@ -55,9 +55,10 @@ def _path_problem(path: object) -> str | None:
 
 def _shared(path: str) -> bool:
     lower = path.lower()
-    return lower.rsplit("/", 1)[-1] in _SHARED_NAMES or lower.endswith(
-        "/config/version.php"
-    ) or lower == "config/version.php"
+    return lower.rsplit("/", 1)[-1] in _SHARED_NAMES or any(
+        lower == version_path or lower.endswith("/" + version_path)
+        for version_path in ("config/version.php", "config/version.json")
+    )
 
 
 def inspect_claim_paths(paths: object) -> dict[str, object]:
