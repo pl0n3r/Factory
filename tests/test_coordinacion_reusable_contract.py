@@ -25,6 +25,52 @@ def job_blocks(workflow: str) -> dict[str, str]:
     }
 
 
+def strict_caller_fixture(value: str) -> str:
+    """Fuerza el contrato preflight en un template legacy, sin depender de otra rama."""
+    if "\n  preflight_comentario:\n" in value:
+        return value
+    prefix, comment = value.split("  comentario:\n", 1)
+    old_guard, remainder = comment.split("    # El reusable", 1)
+    if "github.event_name == 'issue_comment'" not in old_guard:
+        raise AssertionError("Falta el guard legacy del comentario")
+    preflight = """  preflight_comentario:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      github.event.sender.login == github.event.comment.user.login
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      route: DOLLAR_SIGN{{ steps.route.outputs.route }}
+    steps:
+      - id: route
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as source:
+              event = json.load(source)
+          body = event.get("comment", {}).get("body", "")
+          parts = body.strip().split(maxsplit=1) if isinstance(body, str) else []
+          supported = {"/tomar", "/renovar-contrato"}
+          route = bool(parts and parts[0] in supported)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"route={str(route).lower()}\n")
+          PY
+
+""".replace("DOLLAR_SIGN", "$")
+    strict_guard = """    needs: preflight_comentario
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      github.event.sender.login == github.event.comment.user.login &&
+      needs.preflight_comentario.outputs.route == 'true'
+"""
+    return prefix + preflight + "  comentario:\n" + strict_guard + "    # El reusable" + remainder
+
+
 def permissions(block: str) -> dict[str, str]:
     match = re.search(r"(?m)^    permissions:\n((?:      [^\n]+\n)+)", block)
     if not match:
@@ -124,7 +170,15 @@ class T(unittest.TestCase):
 
     def test_template_supports_contract_renewal_command(self):
         """El caller antiguo y el preflight estricto conservan renovación v2."""
-        jobs = job_blocks(TEMPLATE)
+        for variant, template in (
+            ("legacy_actual", TEMPLATE),
+            ("preflight_estricto", strict_caller_fixture(TEMPLATE)),
+        ):
+            with self.subTest(variant=variant):
+                self.assert_template_renewal_contract(template)
+
+    def assert_template_renewal_contract(self, template: str):
+        jobs = job_blocks(template)
         comment = jobs["comentario"]
         self.assertIn("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1", comment)
         self.assertIn("operation: comment", comment)
