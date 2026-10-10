@@ -43,6 +43,15 @@ def _principles(template: object) -> str:
     next_section = re.search(r"^## [^#\n]", source[match.end():], re.M)
     end = match.end() + next_section.start() if next_section else len(source)
     content = source[start:end].strip("\n")
+    # Contract v1 only permits the exact approved footer texts. Without an
+    # explicit end marker, arbitrary unheaded lines after the footer would
+    # otherwise be projected into every consumer.
+    footer = content.split("### Límite explícito del template", 1)[-1].strip()
+    if footer not in (
+        "Este texto no sincroniza ni modifica consumidores.",
+        "Este texto no sincroniza ni modifica consumidores, no constituye aprobación humana o revisión independiente y no activa el orquestador. Ningún cambio queda listo para merge, release, `Factory@v1`, despliegue o live sin CI, revisión independiente, protección de rama y autoridad comprobadas. Se prohíben acceso a datos reales, gasto, compra, credenciales, permisos nuevos y borrados irreversibles sin su puerta legítima.",
+    ):
+        raise SyncPlanError("invalid_principles_source")
     headings = re.findall(r"^### (Regla 0|Principio [1-8]) — ", content, re.M)
     all_subsections = re.findall(r"^### [^\n]+", content, re.M)
     if (len(all_subsections) != 10
