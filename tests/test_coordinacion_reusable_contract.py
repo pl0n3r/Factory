@@ -1,4 +1,9 @@
 import re, unittest
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 from pathlib import Path
 
 R = Path(__file__).resolve().parents[1]
@@ -117,11 +122,43 @@ class T(unittest.TestCase):
             )
 
     def test_template_supports_contract_renewal_command(self):
-        """El caller enruta la renovación v2 que ya soporta el coordinador."""
-        self.assertIn(
-            "startsWith(github.event.comment.body, '/renovar-contrato ')",
-            TEMPLATE,
-        )
+        """El caller antiguo y el preflight estricto conservan renovación v2."""
+        jobs = job_blocks(TEMPLATE)
+        comment = jobs["comentario"]
+        self.assertIn("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1", comment)
+        self.assertIn("operation: comment", comment)
+        self.assertIn("github.event.issue.pull_request == null", comment)
+        self.assertIn("github.event.sender.login == github.event.comment.user.login", comment)
+        if "preflight_comentario" in jobs:
+            preflight = jobs["preflight_comentario"]
+            self.assertIn("needs: preflight_comentario", comment)
+            self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)
+            self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", preflight)
+            self.assertIn('"/renovar-contrato"', preflight)
+            self.assertNotIn("contains(github.event.comment.body", comment)
+
+            # Ejecutar el Python real del preflight: una mención en prosa
+            # no puede convertirse en comando, pero el primer token sí enruta.
+            embedded = preflight.split("python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+            script = textwrap.dedent(embedded)
+            with tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "route"
+                for body, expected in (
+                    ("Nota informativa sobre /renovar-contrato UUID", "route=false\n"),
+                    (" /renovar-contrato 12345678-abcd-1234-abcd-123456789abc ", "route=true\n"),
+                ):
+                    with self.subTest(body=body):
+                        result = subprocess.run(
+                            [sys.executable, "-c", script],
+                            env={**os.environ, "COMMENT_BODY": body, "GITHUB_OUTPUT": str(output)},
+                            text=True, capture_output=True, timeout=5, check=False,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(output.read_text(encoding="utf-8"), expected)
+                        output.unlink()
+        else:
+            # Soportar el caller v1 previo sin exigir el contains inseguro.
+            self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)
         self.assertIn('("/renovar-contrato ", "renovar-contrato")', SCRIPT)
 
     def test_merged_pr_validation_is_neutral(self):
