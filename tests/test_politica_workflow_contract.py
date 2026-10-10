@@ -84,6 +84,27 @@ class T(unittest.TestCase):
         self.assertNotIn("issues: write", W)
         self.assertNotIn("issue_comment", W)
 
+    def test_primary_review_reads_blocking_threads_and_rechecks_refs(self):
+        # Ninguna aceptación de review primaria debe saltar findings ni
+        # la relectura exacta de las referencias antes del exit 0.
+        primary = W.split("          if (( PRIMARY_STATUS == 0 )); then", 1)[1].split(
+            "          fi", 1
+        )[0]
+        self.assertLess(W.index("gh api graphql"), W.index("PRIMARY_OUTPUT="))
+        self.assertIn('primary_args+=(--threads-file "$threads_file")', W)
+        self.assertLess(
+            W.index('(( $(wc -c < "$threads_file") <= MAX_EVIDENCE_BYTES ))'),
+            W.index("PRIMARY_OUTPUT="),
+        )
+        self.assertIn('PR_JSON_PRIMARY_FINAL="$(gh api "repos/$REPOSITORY/pulls/$PR")"', primary)
+        self.assertIn('HEAD cambió durante validación de review primaria', primary)
+        self.assertIn('BASE cambió durante validación de review primaria', primary)
+        self.assertLess(
+            primary.index("PR_JSON_PRIMARY_FINAL="),
+            primary.index('exit 0'),
+        )
+        self.assertEqual(W.count("gh api graphql"), 1)
+
     def test_comment_revalidation_never_executes_consumer_code(self):
         self.assertIn("repository: pl0n3r/factory", COMMENT_W)
         self.assertIn("path: .factory", COMMENT_W)
@@ -191,7 +212,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
             'checks_url_base="repos/$REPOSITORY/'
             'commits/$PR_HEAD_SHA/check-runs?per_page=100"'
         )
-        end = W.index('owner="${REPOSITORY%%/*}"', start)
+        end = W.index('(( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES ))', start)
         checks_transport = W[start:end]
 
         self.assertIn("gh api", checks_transport)
@@ -236,7 +257,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
 
     def test_public_check_transport_remains_anonymous_and_bounded(self):
         start = W.index('checks_url_base="repos/$REPOSITORY/')
-        end = W.index('owner="${REPOSITORY%%/*}"', start)
+        end = W.index('(( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES ))', start)
         checks_transport = W[start:end]
         self.assertIn("gh api", checks_transport)
         self.assertIn('MAX_PUBLIC_CHECKS: "500"', W)

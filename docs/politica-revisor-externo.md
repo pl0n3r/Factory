@@ -15,13 +15,15 @@ La policy solo acepta el fallback cuando se cumplen **todas** estas condiciones:
 
 Un único rate limit sin reintento verificable nunca basta.
 
-### Dos formas válidas de demostrar el reintento
+### Cómo acreditar el reintento sin aceptar causalidad supuesta
 
-El camino histórico sigue siendo válido cuando el reviewer crea comentarios separados:
-
-1. comentario `Review rate limited` posterior al commit HEAD;
-2. Policy falla sobre ese HEAD;
-3. un segundo comentario rate-limited del reviewer aparece después del fallo.
+**Compatibilidad endurecida (Factory #1064 / #1072):** el camino histórico que
+aceptaba dos comentarios separados `Review rate limited` alrededor de un
+`Factory policy` fallido en el primer intento queda **denegado**. Aunque los
+dos mensajes sean del bot real y mencionen el SHA, su orden no acredita por
+sí solo un comando de reintento OWNER ni un vínculo causal entre ese comando,
+la respuesta y el HEAD. El primer intento debe fallar cerrado si solo ofrece
+esta secuencia. No se modifica la vía principal de revisión formal exact-HEAD.
 
 CodeRabbit también puede **reutilizar y editar el mismo comentario canónico** en vez de crear un segundo comentario. Para ese caso, la policy exige una cadena más explícita:
 
@@ -33,7 +35,9 @@ CodeRabbit también puede **reutilizar y editar el mismo comentario canónico** 
 
 El simple hecho de que un comentario del bot tenga un `updated_at` reciente **no** cuenta como reintento. Sin el trigger OWNER posterior al fallo de Policy, el fallback permanece bloqueado. Un usuario no OWNER tampoco puede producir esa evidencia.
 
-### Respuesta CodeRabbit sin SHA: timeline autenticada (solo rerun)
+**Corrección de seguridad posterior (Factory #1064):** estos requisitos son necesarios, **no suficientes**. El SHA presente en el body y el orden por `created_at`/`updated_at` no identifican cuál comando causó la respuesta del bot, ni qué cambió en una edición in-place. Mientras CodeRabbit no proporcione un vínculo causal **autenticado** entre `bot → trigger OWNER → HEAD`, ambas variantes con SHA (primer intento y rerun) **fallan cerrado**, aun si todos los demás checks son verdes. El extractor tampoco reconoce un HEAD como subcadena de un identificador hexadecimal mayor. La vía positiva para avanzar sigue siendo una revisión real, formal o sustantiva, exact-HEAD verificada por su contrato, no el simple rate-limit. No equivale a eliminar la revisión externa.
+
+### Respuesta CodeRabbit sin SHA: timeline autenticada no prueba causalidad
 
 En un **rerun** (`GITHUB_RUN_ATTEMPT > 1`) durante `construccion`, CodeRabbit
 puede emitir una respuesta `Review rate limited` sin el SHA en el cuerpo.
@@ -45,7 +49,7 @@ eventos y 2 MB; una sexta página solo puede estar vacía. El archivo temporal
 se elimina al terminar. Ningún contenido del PR candidato determina esa
 lectura. Antes de aceptar el resultado se vuelven a consultar HEAD y BASE.
 
-La alternativa requiere **toda** esta correlación adicional:
+El validador inspecciona estas **condiciones necesarias pero insuficientes** para descartar evidencia temporal inconsistente:
 
 1. La timeline está completa, contiene un último evento `committed` cuyo SHA
    es el HEAD exacto y no registra force-push ni una mutación ambigua de HEAD.
@@ -54,22 +58,48 @@ La alternativa requiere **toda** esta correlación adicional:
 2. Existe un primer comentario de **`coderabbitai[bot]` real**, con
    `user.type=Bot`, `actor.login` concordante, ID y cuerpo idénticos a
    `issues/{PR}/comments`, informando rate-limit después de ese HEAD.
+   Se exige `updated_at == created_at`: un rate-limit inicial editado, o
+   sin timestamp de integridad, no demuestra que ese texto ya existiera.
 3. Más tarde, un comentario **`OWNER`** con el cuerpo literal
    `@coderabbitai review`, tipo `User` e identidad concordante solicita
-   otro intento en el mismo HEAD.
+   otro intento en el mismo HEAD. Tanto la ruta con SHA como la SHA-less
+   exigen `updated_at == created_at` para este trigger: un comentario
+   editado o sin timestamp verificable nunca acredita una petición.
 4. Una **segunda respuesta distinta** del bot, posterior a ese comando y
    emitida como máximo 120 segundos después, vuelve a informar rate-limit.
    Todos los comentarios de la secuencia se cotejan por ID, actor, texto y
    timestamp con los comentarios REST autenticados del mismo PR.
-5. No hay `committed`, `head_ref_force_pushed` ni `synchronize` que
+5. Entre la primera respuesta rate-limited y el comando del OWNER existe
+   un check `Factory policy / Validar decisiones y límite de revisión` en
+   estado `completed/failure`, sobre el mismo HEAD exacto. Un rerun de Actions
+   por sí solo no acredita este fallo; se exige también en el camino con SHA.
+6. No hay otro comando literal `@coderabbitai review` ni
+   `@coderabbitai full review` de un usuario competidor entre OWNER y la
+   segunda respuesta del bot, aunque sea MEMBER. Ambos pueden disparar
+   otra revisión; eventos legítimos de `mentioned` no invalidan la secuencia.
+7. La segunda respuesta del bot tiene `updated_at == created_at`; un texto
+   editado o sin timestamp de integridad verificable falla cerrado.
+8. No hay `committed`, `head_ref_force_pushed` ni `synchronize` que
    invalide la secuencia; los demás checks exact-HEAD siguen verdes, sin
    `CHANGES_REQUESTED` ni threads abiertos.
 
-Una sola respuesta, actor no OWNER, bot falsificado, timeline vacía, truncada,
-ambigua, reescrita, en otro HEAD o una carrera de refs **fallan cerrado**.
-El comportamiento de primer intento y la ruta histórica con SHA permanecen
-intactos. `live` nunca admite esta excepción. No se modifica `Factory@v1`
-ni se autoriza go-live, publicación o merge por esta evidencia.
+**La timeline REST no incluye un vínculo autenticado e inequívoco entre el
+comando OWNER, el comentario de respuesta del bot y el HEAD/ref durante toda
+la ventana.** Dos historias (respuesta a OWNER o respuesta independiente de
+otra invocación) pueden producir exactamente los mismos registros. Tampoco
+la ausencia de eventos de mutación prueba una historia íntegra de ref.
+Por ello, **el fallback SHA-less falla cerrado incluso cuando se cumplen
+las ocho comprobaciones temporales anteriores**. La presencia de un marker
+de invocación opaco del bot no constituye un enlace al comando OWNER.
+
+Una sola respuesta, solicitud competidora, respuesta editada, ausencia de fallo
+previo de Policy, actor no OWNER, bot falsificado, timeline vacía, truncada,
+ambigua, reescrita, en otro HEAD o una carrera de refs también fallan cerrado.
+La revisión exact-HEAD mantiene sus criterios. El fallback con SHA explícito
+permanece **denegado sin vínculo causal autenticado**, incluso tras verificar
+bot, OWNER, SHA y timestamps. `live` nunca admite la excepción.
+No se modifica `Factory@v1` ni se autoriza go-live, publicación o merge
+por esta evidencia.
 
 ## Qué no permite
 
