@@ -35,6 +35,8 @@ CodeRabbit también puede **reutilizar y editar el mismo comentario canónico** 
 
 El simple hecho de que un comentario del bot tenga un `updated_at` reciente **no** cuenta como reintento. Sin el trigger OWNER posterior al fallo de Policy, el fallback permanece bloqueado. Un usuario no OWNER tampoco puede producir esa evidencia.
 
+**Corrección de seguridad posterior (Factory #1064):** estos requisitos son necesarios, **no suficientes**. El SHA presente en el body y el orden por `created_at`/`updated_at` no identifican cuál comando causó la respuesta del bot, ni qué cambió en una edición in-place. Mientras CodeRabbit no proporcione un vínculo causal **autenticado** entre `bot → trigger OWNER → HEAD`, ambas variantes con SHA (primer intento y rerun) **fallan cerrado**, aun si todos los demás checks son verdes. El extractor tampoco reconoce un HEAD como subcadena de un identificador hexadecimal mayor. La vía positiva para avanzar sigue siendo una revisión real, formal o sustantiva, exact-HEAD verificada por su contrato, no el simple rate-limit. No equivale a eliminar la revisión externa.
+
 ### Respuesta CodeRabbit sin SHA: timeline autenticada no prueba causalidad
 
 En un **rerun** (`GITHUB_RUN_ATTEMPT > 1`) durante `construccion`, CodeRabbit
@@ -93,8 +95,9 @@ de invocación opaco del bot no constituye un enlace al comando OWNER.
 Una sola respuesta, solicitud competidora, respuesta editada, ausencia de fallo
 previo de Policy, actor no OWNER, bot falsificado, timeline vacía, truncada,
 ambigua, reescrita, en otro HEAD o una carrera de refs también fallan cerrado.
-La revisión formal exact-HEAD y el fallback con SHA explícito siguen sujetos
-a sus propios criterios y checks. `live` nunca admite la excepción.
+La revisión exact-HEAD mantiene sus criterios. El fallback con SHA explícito
+permanece **denegado sin vínculo causal autenticado**, incluso tras verificar
+bot, OWNER, SHA y timestamps. `live` nunca admite la excepción.
 No se modifica `Factory@v1` ni se autoriza go-live, publicación o merge
 por esta evidencia.
 

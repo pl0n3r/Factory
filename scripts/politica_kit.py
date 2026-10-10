@@ -559,7 +559,8 @@ def _exact_head_rate_limit_evidence(
         if identity is None:
             continue
         body, comment_id = identity
-        if head_sha not in body:
+        if re.search(rf"(?<![0-9a-f]){re.escape(head_sha)}(?![0-9a-f])", body) is None:
+            # Una cadena hexadecimal mayor no es el token del HEAD exacto.
             continue
         created_at = _parse_iso_timestamp(
             item.get("created_at"), noun="Timestamp original de comentario rate-limit"
@@ -862,7 +863,11 @@ def validate_rate_limit_fallback(
                 not_before=retry_at,
             )
             if rate_limit_events:
-                return rate_limit_events[0][1], rate_limit_events[0][0]
+                # Un SHA en texto y una hora posterior no prueban a qué
+                # solicitud respondió el bot (ni la integridad del ref).
+                raise PolicyError(
+                    "Rate-limit con SHA sin vínculo causal autenticado bot→OWNER→HEAD."
+                )
         if timeline_lines:
             return _sha_less_timeline_retry(
                 timeline_lines=timeline_lines,
@@ -901,7 +906,11 @@ def validate_rate_limit_fallback(
                 not_before=retry_at,
             )
             if updates:
-                return updates[0][1], updates[0][0]
+                # updated_at solo describe el comentario actual; no revela
+                # qué contenido cambió ni qué trigger provocó esa edición.
+                raise PolicyError(
+                    "Rate-limit con SHA sin vínculo causal autenticado bot→OWNER→HEAD."
+                )
 
     if len(rate_limits) < 2:
         raise PolicyError(

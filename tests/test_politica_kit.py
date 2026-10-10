@@ -646,7 +646,7 @@ class T(unittest.TestCase):
         """AC-06: nombre actual explícito; reutiliza regresión fail-closed histórica."""
         self.test_rate_limit_plus_failed_retry_passes_in_construction_when_other_gates_green()
 
-    def test_in_place_rate_limit_update_plus_owner_retry_passes_in_construction(self):
+    def test_in_place_rate_limit_update_plus_owner_retry_fails_without_causal_proof(self):
         comments = [
             rate_limit_comment(
                 comment_id=101,
@@ -665,17 +665,17 @@ class T(unittest.TestCase):
                 completed_at="2026-10-04T05:01:00Z",
             ),
         ]
-        result = validate_rate_limit_fallback(
-            required_review_bot="coderabbitai[bot]",
-            head_sha=HEAD,
-            head_committed_at="2026-10-04T04:59:00Z",
-            phase="construccion",
-            review_lines=[],
-            comment_lines=comments,
-            check_lines=checks,
-            thread_lines=[],
-        )
-        self.assertEqual(result, (101, "2026-10-04T05:03:00Z"))
+        with self.assertRaisesRegex(PolicyError, "vínculo causal autenticado"):
+            validate_rate_limit_fallback(
+                required_review_bot="coderabbitai[bot]",
+                head_sha=HEAD,
+                head_committed_at="2026-10-04T04:59:00Z",
+                phase="construccion",
+                review_lines=[],
+                comment_lines=comments,
+                check_lines=checks,
+                thread_lines=[],
+            )
 
     def test_rerun_attempt_requires_visible_prior_policy_failure_on_exact_head(self):
         comments = [
@@ -722,10 +722,60 @@ class T(unittest.TestCase):
                   status="completed", conclusion="failure",
                   completed_at="2026-10-04T05:01:00Z"),
         ]
-        result = evaluate(verified)
-        self.assertTrue(result["review_fallback"])
-        self.assertEqual(result["rate_limit_comment_id"], 301)
-        self.assertEqual(result["rate_limit_created_at"], "2026-10-04T05:03:00Z")
+        with self.assertRaisesRegex(PolicyError, "vínculo causal autenticado"):
+            evaluate(verified)
+
+    def test_explicit_head_comment_must_contain_full_sha_token(self):
+        """Un SHA de 40 chars dentro de 41 hex no acredita el HEAD."""
+        bot = rate_limit_comment(
+            comment_id=301,
+            created_at="2026-10-04T05:03:00Z",
+            body="Review rate limited. Identifier " + HEAD + "b",
+        )
+        # Inspecciona directamente el extractor; otros gates no deben ocultar
+        # que un subfragmento de identificador no es prueba exact-HEAD.
+        self.assertEqual(
+            policy._exact_head_rate_limit_events(
+                [bot], required_review_bot="coderabbitai[bot]",
+                head_sha=HEAD, not_before="2026-10-04T05:02:00Z",
+            ),
+            [],
+        )
+
+    def test_explicit_head_fallback_cannot_attribute_competing_member_request(self):
+        """Comentario nuevo con SHA, miembro competidor y OWNER: no aceptar."""
+        checks = green_gate_checks() + [
+            check(
+                check_id=99, name=policy.POLICY_CHECK_NAME,
+                conclusion="failure", completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        owner = owner_review_retry(comment_id=201)
+        member = owner_review_retry(
+            comment_id=202, created_at="2026-10-04T05:02:10Z",
+            association="MEMBER", body="@coderabbitai full review",
+        )
+        for attempt in (1, 2):
+            with self.subTest(run_attempt=attempt):
+                rate = rate_limit_comment(
+                    comment_id=301,
+                    created_at="2026-10-04T05:03:00Z",
+                    head_sha=HEAD,
+                )
+                with self.assertRaisesRegex(
+                    PolicyError, "vínculo causal autenticado",
+                ):
+                    validate_rate_limit_fallback(
+                        required_review_bot="coderabbitai[bot]",
+                        head_sha=HEAD,
+                        head_committed_at="2026-10-04T04:59:00Z",
+                        phase="construccion",
+                        review_lines=[],
+                        comment_lines=[owner, member, rate],
+                        check_lines=checks,
+                        thread_lines=[],
+                        run_attempt=attempt,
+                    )
 
     def test_first_attempt_still_requires_visible_failed_policy_check(self):
         comments = [
