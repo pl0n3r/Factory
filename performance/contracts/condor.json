@@ -32,14 +32,14 @@
             "observed_at": "2026-10-06T09:30:45Z"
           },
           "allowed_actions": [
-            "observe",
-            "diagnose",
             "benchmark",
-            "measure_before_after"
+            "diagnose",
+            "measure_before_after",
+            "observe"
           ],
           "escalation_conditions": [
-            "capacity_budget",
-            "architecture_change"
+            "architecture_change",
+            "capacity_budget"
           ]
         }
       ]
