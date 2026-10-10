@@ -71,3 +71,20 @@ class RecoveryMediaManifestTests(unittest.TestCase):
                 with self.assertRaises(MediaManifestError) as caught:
                     plan_media_backup("grindflow", assets, verified)
                 self.assertNotIn("sensitive-mapping-sentinel", str(caught.exception))
+
+    def test_unrelated_evidence_does_not_inflate_verified_copy_count(self):
+        """Coverage counts only planned immutable objects, not orphan proofs."""
+        evidence = [{
+            "project": "grindflow", "object_key": "objects/orphan.bin",
+            "sha256": SHA1, "evidence_ref": "verified_orphan_001",
+            "immutable": True,
+        }]
+        empty = plan_media_backup("grindflow", [], evidence)
+        self.assertEqual(empty["verified_copy_count"], 0)
+        pending = plan_media_backup("grindflow", [asset()], evidence)
+        self.assertEqual(pending["verified_copy_count"], 0)
+        self.assertEqual(len(pending["pending_uploads"]), 1)
+        matched = [{**evidence[0], "object_key": asset()["object_key"]}]
+        verified = plan_media_backup("grindflow", [asset()], evidence + matched)
+        self.assertEqual(verified["verified_copy_count"], 1)
+        self.assertEqual(verified["pending_uploads"], [])

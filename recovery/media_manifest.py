@@ -79,4 +79,4 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
             "entries": sorted(entries, key=lambda item: item["asset_id"]),
             "pending_uploads": sorted(upload, key=lambda item: item["object_key"]),
             "restore_plan": sorted(restore, key=lambda item: item["asset_id"]),
-            "verified_copy_count": len(proven), "external_io_performed": False}
+            "verified_copy_count": len(set(proven) & set(keys)), "external_io_performed": False}

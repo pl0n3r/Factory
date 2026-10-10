@@ -102,3 +102,29 @@ class RecoveryEncryptionTests(unittest.TestCase):
             with self.assertRaises(EncryptionContractError) as caught:
                 call()
             self.assertNotIn("sensitive-backend-sentinel", str(caught.exception))
+
+    def test_restored_fake_plaintext_obeys_seal_size_limit(self):
+        """A fake cannot return larger plaintext than seal_backup permits."""
+        keys = FakeKeys()
+
+        class ExpandingFake(OpaqueInMemoryFake):
+            def __init__(self, output):
+                super().__init__()
+                self.output = output
+
+            def open(self, token, key, aad):
+                return self.output
+
+        for length in (8_000_000, 8_000_001):
+            with self.subTest(restored_bytes=length):
+                fake = ExpandingFake(b"x" * length)
+                artifact = seal_backup("grindflow", "epoch1", b"tiny", keys, fake)
+                if length == 8_000_000:
+                    self.assertEqual(
+                        len(open_backup("grindflow", artifact, keys, fake)), length
+                    )
+                else:
+                    with self.assertRaises(EncryptionContractError) as caught:
+                        open_backup("grindflow", artifact, keys, fake)
+                    self.assertEqual(str(caught.exception), "Decrypt simulation failed.")
+                    self.assertIsNone(caught.exception.__cause__)
