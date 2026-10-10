@@ -24,6 +24,7 @@ if __package__:
         MAX_PATHS,
         MAX_TASKS,
         _valid_path,
+        _collision_key,
         parallel_compatibility_evidence,
         parse_task_marker,
         reservation_blockers,
@@ -38,6 +39,7 @@ else:
         MAX_PATHS,
         MAX_TASKS,
         _valid_path,
+        _collision_key,
         parallel_compatibility_evidence,
         parse_task_marker,
         reservation_blockers,
@@ -987,10 +989,16 @@ def file_overlaps(
     current_files: set[str],
     others: dict[int, set[str]],
 ) -> dict[int, list[str]]:
-    """Calcula solapamientos exactos de archivos contra otros PR."""
+    """Compara archivos usando identidad conservadora NFC + casefold.
+
+    Conservar los nombres originales del PR actual en los diagnósticos.
+    """
     collisions: dict[int, list[str]] = {}
     for pr_number, files in others.items():
-        overlap = sorted(current_files & files)
+        other_keys = {_collision_key(path) for path in files}
+        overlap = sorted(
+            path for path in current_files if _collision_key(path) in other_keys
+        )
         if overlap:
             collisions[pr_number] = overlap
     return collisions
