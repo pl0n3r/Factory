@@ -68,6 +68,15 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
                 with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
                     plan_sync(source, consumers())
 
+        # Unheaded text appended to the final section must not leak into
+        # the projected content; a canonical footer still works.
+        for suffix in ("\nCLAVE_FAKE=solo-test\n",
+                       "\n\ncontact_email=private@example.invalid\n"):
+            with self.subTest(suffix=suffix):
+                with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
+                    plan_sync(template() + suffix, consumers())
+        self.assertEqual(plan_sync(template(), consumers())["status"], "planned")
+
         # The original is under budget but the projected principles are not.
         oversized_projection = consumers()
         prefix = "# AGENTES.md\n"
