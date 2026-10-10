@@ -141,6 +141,34 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
             bad.upload("snap", data, data_digest, retention_days=1)
         self.assertNotIn(sensitive, str(error.exception))
         self.assertIsNone(error.exception.__cause__)
+        self.assertIsNone(error.exception.__context__)
+
+        # Una falla dentro del propio fake también debe salir SIN cadena
+        # sensible, incluso cuando el error interno contiene un sentinel.
+        class ExplodingObjects(dict):
+            def __contains__(self, _position):
+                raise RuntimeError(sensitive)
+
+        failing_fake = FakeDriveTransport()
+        failing_fake.objects = ExplodingObjects()
+        failing_drive = instance(transport=failing_fake, secrets=Secrets())
+        with self.assertRaisesRegex(
+            ColdCopyError, "cold_copy_transport_unavailable",
+        ) as transport_error:
+            failing_drive.upload("snap", data, data_digest, retention_days=1)
+        self.assertNotIn(sensitive, str(transport_error.exception))
+        self.assertIsNone(transport_error.exception.__cause__)
+        self.assertIsNone(transport_error.exception.__context__)
+
+        invalid = manifest()
+        invalid["project"] = "token=VERY_PRIVATE_OAUTH_TOKEN_NOT_REAL"
+        with self.assertRaisesRegex(ColdCopyError, "invalid_manifest") as manifest_error:
+            GDriveColdCopy(
+                invalid, transport=FakeDriveTransport(), secret_provider=Secrets(),
+                credential_ref="gdrive-cold-copy", now=NOW,
+            )
+        self.assertIsNone(manifest_error.exception.__cause__)
+        self.assertIsNone(manifest_error.exception.__context__)
 
         # Ningún objeto con API parecida puede sustituir el fake incorporado.
         # En particular, el constructor falla ANTES de consultar secretos.

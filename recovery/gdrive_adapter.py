@@ -98,7 +98,11 @@ class GDriveColdCopy:
         try:
             checked = validate_recovery_manifest(manifest)
         except (RecoveryContractError, TypeError, ValueError):
-            raise ColdCopyError("invalid_manifest") from None
+            checked = None
+        # Elevar errores sanitizados FUERA del handler: "from None" oculta
+        # la traza estándar, pero deja el error original en __context__.
+        if checked is None:
+            raise ColdCopyError("invalid_manifest")
         if checked["offsite"]["cold_copy"] != "google_drive":
             raise ColdCopyError("cold_copy_not_enabled")
         # El adaptador build-ahead NO debe despachar hacia un transporte
@@ -128,14 +132,19 @@ class GDriveColdCopy:
                 or any(getattr(FakeDriveTransport, name, None) is not original
                        for name, original in _FAKE_METHODS.items())):
             raise ColdCopyError("fake_transport_required")
-        # No material del proveedor entra en errores, evidencia ni estado persistido.
+        # No retener errores del proveedor ni de la operación fake en la
+        # cadena __context__/__cause__ de un ColdCopyError. La elevación
+        # sanitizada se realiza después de abandonar el bloque except.
         try:
             secret = self.secret_provider.resolve(self.credential_ref)
             if type(secret) is not str or not secret:
                 raise ValueError("invalid_secret")
-            return getattr(fake, method)(*args, secret)
+            result = getattr(fake, method)(*args, secret)
         except Exception:
-            raise ColdCopyError("cold_copy_transport_unavailable") from None
+            pass
+        else:
+            return result
+        raise ColdCopyError("cold_copy_transport_unavailable")
 
     def upload(self, object_ref: str, payload: bytes, expected_sha256: str,
                *, retention_days: int) -> dict[str, object]:
