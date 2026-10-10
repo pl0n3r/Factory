@@ -1,0 +1,96 @@
+"""AC-01..04 del lint puro de claims de Issues de Factory #1107."""
+from __future__ import annotations
+
+import unittest
+
+from scripts.validar_claims_issue import (
+    MAX_INPUT_PATHS,
+    MAX_PATHS_PER_LEAF,
+    inspect_claim_paths,
+)
+
+
+class ValidarClaimsIssueTests(unittest.TestCase):
+    def test_rejects_directory_globs_and_invalid_paths(self):
+        samples = (
+            (["src/"], "directory_claim"),
+            (["docs/"], "directory_claim"),
+            (["src/**"], "glob_claim"),
+            (["*.py"], "glob_claim"),
+            (["/root/a.py"], "invalid_path"),
+            (["../secret.py"], "invalid_path"),
+            (["src/../escape.py"], "invalid_path"),
+            (["src//a.py"], "invalid_path"),
+            (["src/./a.py"], "invalid_path"),
+            (["a\\b.py"], "invalid_path"),
+            (["src/a.py\n"], "invalid_path"),
+            (["a.py", "a.py"], "duplicate_path"),
+        )
+        for paths, code in samples:
+            with self.subTest(paths=paths):
+                report = inspect_claim_paths(paths)
+                self.assertFalse(report["valid"])
+                self.assertIn(code, report["reason_codes"])
+                self.assertEqual(report["proposed_groups"], [])
+                self.assertFalse(report["can_reserve"])
+        both = inspect_claim_paths(["src/", "*.py"])
+        self.assertEqual(both["reason_codes"], ["directory_claim", "glob_claim"])
+
+    def test_shared_files_remain_real_collisions(self):
+        paths = [
+            "src/safe.py", "README.md", "config/version.php",
+            "package-lock.json", "internal/Makefile",
+        ]
+        report = inspect_claim_paths(paths)
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["reason_codes"], [])
+        self.assertEqual(report["shared_integration_paths"], [
+            "README.md", "config/version.php", "package-lock.json",
+        ])
+        self.assertFalse(report["can_reserve"])
+        self.assertFalse(report["needs_partition"])
+        self.assertEqual(report["proposed_groups"], [])
+        # A filename without an extension may be a file OR a directory;
+        # this helper cannot assert reality or skip independent tree checks.
+        self.assertTrue(inspect_claim_paths(["Dockerfile"])["valid"])
+        self.assertFalse(inspect_claim_paths(["Dockerfile"])["can_reserve"])
+
+    def test_excessive_claims_produce_advisory_partitions(self):
+        paths = [f"src/module_{n:02d}.py" for n in range(14)]
+        for sample in (paths, list(reversed(paths))):
+            report = inspect_claim_paths(sample)
+            self.assertFalse(report["valid"])
+            self.assertEqual(report["reason_codes"], ["too_many_paths"])
+            self.assertTrue(report["needs_partition"])
+            self.assertFalse(report["can_reserve"])
+            groups = report["proposed_groups"]
+            self.assertEqual([len(group) for group in groups], [6, 6, 2])
+            self.assertTrue(all(len(g) <= MAX_PATHS_PER_LEAF for g in groups))
+            self.assertEqual([path for group in groups for path in group], paths)
+        self.assertFalse(inspect_claim_paths(paths[:6])["needs_partition"])
+
+    def test_bounds_and_unknown_fail_closed(self):
+        for payload in (None, {}, [], "src/a.py", [True], [None], [42],
+                        [object()], ["x" * 241],
+                        [f"src/f_{n}.py" for n in range(MAX_INPUT_PATHS + 1)]):
+            with self.subTest(kind=type(payload).__name__):
+                report = inspect_claim_paths(payload)
+                self.assertFalse(report["valid"])
+                self.assertFalse(report["can_reserve"])
+                self.assertEqual(report["proposed_groups"], [])
+                self.assertEqual(report["shared_integration_paths"], [])
+                self.assertEqual(report["reason_codes"], ["invalid_input_size"]
+                                 if type(payload) is not list or len(payload) == 0
+                                 or len(payload) > MAX_INPUT_PATHS
+                                 else ["invalid_path"])
+        leaked = inspect_claim_paths(["private-mail@example.test", "src/"])
+        self.assertFalse(leaked["valid"])
+        self.assertNotIn("private-mail", repr(leaked))
+        self.assertEqual(set(leaked), {
+            "valid", "reason_codes", "needs_partition", "proposed_groups",
+            "shared_integration_paths", "can_reserve",
+        })
+
+
+if __name__ == "__main__":
+    unittest.main()
