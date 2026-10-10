@@ -97,6 +97,29 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(SyncPlanError, "invalid_document"):
             plan_sync(template(), oversized_projection)
+        # A literal example inside a fenced Markdown block is never
+        # considered a managed sync section, even with exact markers.
+        for opening, closing in (
+            ("\`\`\`markdown", "\`\`\`"),
+            ("~~~markdown", "~~~"),
+            ("\`\`\`\`text", "\`\`\`\`"),
+        ):
+            document = consumers()
+            document[REPOSITORIES[0]] = (
+                "# AGENTES.md\\n## Ejemplo local\\n" + opening + "\\n"
+                "<!-- factory-principios-sync:start -->\\n"
+                "Ejemplo literal, no administrado\\n"
+                "<!-- factory-principios-sync:end -->\\n"
+                + closing + "\\n"
+            )
+            with self.subTest(opening=opening):
+                with self.assertRaisesRegex(SyncPlanError, "invalid_sync_markers"):
+                    plan_sync(template(), document)
+        valid_fence = consumers()
+        valid_fence[REPOSITORIES[0]] += "\`\`\`text\\nUna regla local\\n\`\`\`\\n"
+        self.assertEqual(plan_sync(template(), valid_fence)["consumers"][0]["action"],
+                         "insert")
+
         # Partial or malformed reserved markers must never be treated as absent.
         for broken_marker in (
             "<!-- factory-principios-sync:start",
