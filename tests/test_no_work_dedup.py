@@ -74,6 +74,101 @@ def state_after(
 
 
 class NoWorkDedupTests(unittest.TestCase):
+    def test_available_and_recovery_reject_malformed_issue_ids(self):
+        valid = inventory()
+        valid["repositories"]["Factory"]["available"] = [1121, 904]
+        reference = inventory_fingerprint(valid)
+        valid["repositories"]["Factory"]["available"].reverse()
+        self.assertEqual(inventory_fingerprint(valid), reference)
+
+        invalid_values = (True, False, 0, -1, 1.0, "904", None, {}, [1])
+        for field in ("available", "recovery"):
+            for bad in invalid_values:
+                with self.subTest(field=field, bad=repr(bad)):
+                    candidate = inventory()
+                    candidate["repositories"]["Factory"][field] = [bad]
+                    with self.assertRaisesRegex(
+                        NoWorkInventoryError, "issue_ids_invalid"
+                    ):
+                        inventory_fingerprint(candidate)
+            duplicate = inventory()
+            duplicate["repositories"]["Factory"][field] = [1121, 1121]
+            with self.assertRaisesRegex(
+                NoWorkInventoryError, "issue_ids_duplicate"
+            ):
+                inventory_fingerprint(duplicate)
+
+    def test_live_reservations_require_valid_identity_and_active_bool(self):
+        invalid_entries = (
+            "lease-plain-text",
+            True,
+            {},
+            {"issue": 1121, "reservation_id": "valid", "active": 1},
+            {"issue": 1121, "reservation_id": "valid"},
+            {"issue": True, "reservation_id": "valid", "active": True},
+            {"issue": 0, "reservation_id": "valid", "active": True},
+            {"issue": 1121, "reservation_id": "", "active": True},
+            {"issue": 1121, "reservation_id": None, "active": False},
+            {"issue": 1121, "issue_number": 1122,
+             "reservation_id": "valid", "active": True},
+        )
+        for entry in invalid_entries:
+            with self.subTest(entry=repr(entry)):
+                candidate = inventory()
+                candidate["repositories"]["ControlBot"]["reservations"] = [entry]
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "reservation_invalid"
+                ):
+                    inventory_fingerprint(candidate)
+
+        baseline = inventory_fingerprint(inventory())
+        inactive = inventory()
+        inactive["repositories"]["ControlBot"]["reservations"].append(
+            {"issue_number": 1121, "reservation_id": "old", "active": False}
+        )
+        self.assertEqual(inventory_fingerprint(inactive), baseline)
+        active = inventory()
+        active["repositories"]["ControlBot"]["reservations"].append(
+            {"issue_number": 1121, "reservation_id": "new", "active": True}
+        )
+        self.assertNotEqual(inventory_fingerprint(active), baseline)
+
+    def test_valid_inventory_and_scalar_blockers_keep_existing_fingerprint(self):
+        base = inventory()
+        fingerprint = inventory_fingerprint(base)
+        self.assertEqual(inventory_fingerprint(base), fingerprint)
+
+        with_blockers = inventory()
+        with_blockers["repositories"]["Factory"]["blockers"].extend(
+            [904, {"issue": 1121, "reason": "coordination"}]
+        )
+        first = inventory_fingerprint(with_blockers)
+        with_blockers["repositories"]["Factory"]["blockers"].reverse()
+        self.assertEqual(inventory_fingerprint(with_blockers), first)
+
+        for bad in (True, False, 0, -4, "904", None):
+            candidate = inventory()
+            candidate["repositories"]["Factory"]["blockers"] = [bad]
+            with self.subTest(blocker=repr(bad)):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "blocker_invalid"
+                ):
+                    inventory_fingerprint(candidate)
+
+        decision = decide_no_work(base, None, 100)
+        self.assertEqual((decision.action, decision.sink),
+                         ("create", CANONICAL_SINK))
+        stored = state_after(decision, comment_id=904_123, published_at=100)
+        self.assertEqual(decide_no_work(base, stored, 101).action, "omit")
+        self.assertEqual(
+            decide_no_work(base, stored, 1900).action, "update"
+        )
+        self.assertEqual(
+            revalidate_no_work_application(decide_no_work(base, stored, 1900),
+                                           stored).action,
+            "apply",
+        )
+
     def test_nested_observation_timestamps_do_not_change_fingerprint(self):
         """Cambiar la hora de captura no convierte una lease igual en trabajo nuevo."""
         baseline = inventory_fingerprint(inventory())

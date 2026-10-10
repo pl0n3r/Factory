@@ -141,11 +141,39 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         if not isinstance(value[field], list):
             raise NoWorkInventoryError(f"repository_field_invalid:{name}:{field}")
 
+    for field in ("available", "recovery"):
+        issue_ids = value[field]
+        if any(type(item) is not int or item <= 0 for item in issue_ids):
+            raise NoWorkInventoryError(f"issue_ids_invalid:{name}:{field}")
+        if len(set(issue_ids)) != len(issue_ids):
+            raise NoWorkInventoryError(f"issue_ids_duplicate:{name}:{field}")
+
+    # Las reservas V3 pueden usar "issue" o "issue_number" según el caller.
+    # La forma inválida no debe producir una huella publicable.
     live_reservations = []
     for reservation in value["reservations"]:
-        if isinstance(reservation, dict) and reservation.get("active") is False:
+        if not isinstance(reservation, dict):
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:shape")
+        if type(reservation.get("active")) is not bool:
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:active")
+        issue_id = reservation.get("issue", reservation.get("issue_number"))
+        if type(issue_id) is not int or issue_id <= 0 or (
+            "issue" in reservation and "issue_number" in reservation
+            and reservation["issue"] != reservation["issue_number"]
+        ):
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:issue")
+        reservation_id = reservation.get("reservation_id")
+        if not isinstance(reservation_id, str) or not reservation_id.strip():
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:reservation_id")
+        if not reservation["active"]:
             continue
         live_reservations.append(_material_entry(reservation, noun=f"reservation:{name}"))
+
+    for blocker in value["blockers"]:
+        if not isinstance(blocker, dict) and (
+            type(blocker) is not int or blocker <= 0
+        ):
+            raise NoWorkInventoryError(f"blocker_invalid:{name}")
 
     open_prs = []
     for pr in value["pull_requests"]:
