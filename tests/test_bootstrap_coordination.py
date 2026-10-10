@@ -1120,7 +1120,9 @@ class BootstrapCoordinationTests(unittest.TestCase):
             preflight=caller.split("  preflight_comentario:\n",1)[1].split("  comentario:\n",1)[0]
             self.assertIn("needs: preflight_comentario",comment)
             self.assertIn("needs.preflight_comentario.outputs.route == 'true'",comment)
-            self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}",preflight)
+            self.assertIn('os.environ["GITHUB_EVENT_PATH"]',preflight)
+            self.assertNotIn("COMMENT_BODY",preflight)
+            self.assertNotIn("github.event.comment.body",preflight)
             self.assertIn('"/tomar"',preflight)
             self.assertIn('"/renovar-contrato"',preflight)
             self.assertNotIn("contains(github.event.comment.body",comment)
