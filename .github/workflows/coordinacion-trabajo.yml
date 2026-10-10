@@ -173,6 +173,29 @@ jobs:
                               lease.get("reservation_id") or "")
           claims = lease.get("task_paths")
           assert isinstance(claims, list) and claims, "missing V3 paths"
+
+          def issue_authority():
+              """A marker alone does not prove that its Issue still owns a live lease."""
+              record = get(f"/repos/{repo}/issues/{issue}")
+              labels = record.get("labels") if isinstance(record, dict) else None
+              assigned = record.get("assignees") if isinstance(record, dict) else None
+              assert isinstance(labels, list) and isinstance(assigned, list), "issue authority missing"
+              names = [label.get("name") for label in labels if isinstance(label, dict)]
+              statuses = [name for name in names if isinstance(name, str)
+                          and name.startswith(("estado: ", "status: "))]
+              owner = lease.get("owner")
+              assert (record.get("number") == issue
+                      and record.get("state") == "open"
+                      and statuses in (["estado: reservado"], ["estado: en revisión"])
+                      and isinstance(owner, str) and bool(owner)
+                      and len(assigned) == 1
+                      and isinstance(assigned[0], dict)
+                      and assigned[0].get("login") == owner
+                      and isinstance(record.get("updated_at"), str)
+                      and bool(record["updated_at"])), "issue authority invalid"
+              return (record["updated_at"], tuple(statuses), owner)
+
+          initial_issue = issue_authority()
           
           def canonical(path, directory=False):
               assert isinstance(path, str) and path
@@ -219,7 +242,8 @@ jobs:
           assert ((after.get("head") or {}).get("sha") == expected
                   and (after.get("base") or {}).get("sha") == base.get("sha")
                   and after.get("changed_files") == count
-                  and latest_lease() == lease), "PR or lease changed during validation"
+                  and latest_lease() == lease
+                  and issue_authority() == initial_issue), "PR, issue or lease changed during validation"
           ref = quote(branch, safe="")
           actual = get(f"/repos/{repo}/git/ref/heads/{ref}")
           assert (actual.get("object") or {}).get("sha") == expected, "branch drift"
