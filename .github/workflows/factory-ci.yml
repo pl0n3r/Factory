@@ -190,6 +190,9 @@ jobs:
                 | select((.body // "") | contains("factory-release"))
                 | {number, state, title, body, updated_at}
               ]' /tmp/release-search-verified-2.json > /tmp/release-issues.json
+          # Materializar antes del bucle: Bash no propaga fallos de jq dentro de <(...).
+          # -s exige una única raíz JSON array; [] es un inventario válido.
+          jq -s -c 'if length == 1 and (.[0] | type) == "array" then .[0][] else error("invalid_release_inventory") end' /tmp/release-issues.json > /tmp/release-issues.jsonl
           printf '[]\n' > /tmp/release-gates.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
@@ -197,21 +200,42 @@ jobs:
               echo "::error::Issue de release inválido"
               exit 1
             }
-            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq '
-              add // []
+            gh api --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" | jq -s -e '
+              def valid_comment:
+                if type != "object" then false
+                elif (.id | type) != "number" then false
+                elif (.user | type) != "object" then false
+                else (.id > 0 and (.id | floor) == .id
+                      and (.user.login | type) == "string"
+                      and (.body | type) == "string")
+                end;
+              if (length == 0 or length > 10 or any(.[]; type != "array")) then
+                error("invalid_comment_pages")
+              elif (any(.[]; length > 100) or
+                    (length > 1 and any(.[0:-1][]; length != 100)) or
+                    (.[-1] | length) == 100) then
+                error("incomplete_comment_pages")
+              else . end
+              | add
+              | if (length > 1000 or any(.[]; valid_comment | not)) then
+                  error("invalid_comment_shape")
+                else . end
+              | if ([.[].id] | unique | length) != length then
+                  error("duplicate_comment_id")
+                else . end
               | map(
                   select(.user.login == "github-actions[bot]")
                   | select(
-                      ((.body // "") | contains("factory-human-decision"))
-                      or ((.body // "") | contains("factory-release-executed"))
-                      or ((.body // "") | contains("factory-human-gate-duplicate"))
+                      (.body | contains("factory-human-decision"))
+                      or (.body | contains("factory-release-executed"))
+                      or (.body | contains("factory-human-gate-duplicate"))
                     )
                   | {user: {login: .user.login}, body: (.body // "")}
                 )
             ' > /tmp/release-comments.json
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
-          done < <(jq -c '.[]' /tmp/release-issues.json)
+          done < /tmp/release-issues.jsonl
 
           gh api "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
           gh api "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
