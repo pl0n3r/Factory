@@ -84,23 +84,24 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
         fake = FakeDriveTransport()
         drive = instance(transport=fake, allow=True)
         payload = b"verified-content"
+        payload_digest = sha(payload)
         with self.assertRaisesRegex(ColdCopyError, "source_checksum_mismatch"):
             drive.upload("snap", payload, "0" * 64, retention_days=7)
         self.assertFalse(fake.objects)
-        evidence = drive.upload("snap", payload, sha(payload), retention_days=7)
+        evidence = drive.upload("snap", payload, payload_digest, retention_days=7)
         fake.objects[(drive.namespace, evidence["object_id"])]["content"] = b"corrupt"
         with self.assertRaisesRegex(ColdCopyError, "remote_checksum_mismatch"):
             drive.materialize_fake(
-                "snap", sha(payload), purpose="offline_restore_test",
+                "snap", payload_digest, purpose="offline_restore_test",
             )
         with self.assertRaisesRegex(ColdCopyError, "invalid_checksum"):
             drive.materialize_fake("snap", "z" * 64, purpose="offline_restore_test")
         for value in (True, -1, 366):
             with self.subTest(retention=value), self.assertRaises(ColdCopyError):
-                drive.upload("snap", payload, sha(payload), retention_days=value)
+                drive.upload("snap", payload, payload_digest, retention_days=value)
         for bad in ("../escape", "folder/name", "x" * 129):
             with self.subTest(ref=bad), self.assertRaises(ColdCopyError):
-                drive.upload(bad, payload, sha(payload), retention_days=1)
+                drive.upload(bad, payload, payload_digest, retention_days=1)
 
     def test_secret_material_never_enters_error_or_evidence(self):
         sensitive = "VERY_PRIVATE_OAUTH_TOKEN_NOT_REAL"
@@ -108,6 +109,7 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
 
         drive = instance(transport=FakeDriveTransport(), secrets=secrets)
         data = b"fake-only"
+        data_digest = sha(data)
         # Sustituir un método de la clase no puede convertir este fake en
         # emisor externo; se rechaza incluso antes de pedir credenciales.
         with patch.object(
@@ -118,13 +120,13 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ColdCopyError, "fake_transport_required",
             ) as observed:
-                drive.upload("snap", data, sha(data), retention_days=1)
+                drive.upload("snap", data, data_digest, retention_days=1)
             self.assertEqual(secrets.calls, before)
         self.assertNotIn(sensitive, str(observed.exception))
         self.assertIsNone(observed.exception.__cause__)
         fake = FakeDriveTransport()
         safe = instance(transport=fake, secrets=secrets)
-        evidence = safe.upload("snap", data, sha(data), retention_days=1)
+        evidence = safe.upload("snap", data, data_digest, retention_days=1)
         encoded = json.dumps(evidence, sort_keys=True)
         self.assertNotIn(sensitive, encoded)
         self.assertNotIn(data.decode(), encoded)
@@ -136,7 +138,7 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
 
         bad = instance(transport=FakeDriveTransport(), secrets=FailingSecrets())
         with self.assertRaises(ColdCopyError) as error:
-            bad.upload("snap", data, sha(data), retention_days=1)
+            bad.upload("snap", data, data_digest, retention_days=1)
         self.assertNotIn(sensitive, str(error.exception))
         self.assertIsNone(error.exception.__cause__)
 
@@ -165,6 +167,7 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
             def put_if_absent(self, *args):
                 raise AssertionError("subclass_must_not_run")
 
+        valid_manifest = manifest()
         for untrusted in (SpyTransport(), UnsafeSubclass()):
             with self.subTest(transport=type(untrusted).__name__):
                 gated_secrets = Secrets()
@@ -172,7 +175,7 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
                     ColdCopyError, "fake_transport_required",
                 ):
                     GDriveColdCopy(
-                        manifest(), transport=untrusted,
+                        valid_manifest, transport=untrusted,
                         secret_provider=gated_secrets,
                         credential_ref="gdrive-cold-copy", now=NOW,
                     )
@@ -192,14 +195,14 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
             AssertionError("instance_override_reached")
         )
         with self.assertRaisesRegex(ColdCopyError, "fake_transport_required"):
-            drive.upload("snap", data, sha(data), retention_days=1)
+            drive.upload("snap", data, data_digest, retention_days=1)
         self.assertEqual(creds.calls, 0)
         self.assertEqual(transport.writes, 0)
         del transport.put_if_absent
 
         drive._fake_transport = SpyTransport()
         with self.assertRaisesRegex(ColdCopyError, "fake_transport_required"):
-            drive.upload("snap", data, sha(data), retention_days=1)
+            drive.upload("snap", data, data_digest, retention_days=1)
         self.assertEqual(creds.calls, 0)
         self.assertEqual(drive._fake_transport.calls, 0)
 
@@ -208,12 +211,13 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
         first = instance("condor", transport=fake, allow=True)
         second = instance("grindflow", transport=fake, allow=True)
         content = b"fake-test-ciphertext"
-        one = first.upload("nightly", content, sha(content), retention_days=1)
-        two = second.upload("nightly", content, sha(content), retention_days=7)
+        content_digest = sha(content)
+        one = first.upload("nightly", content, content_digest, retention_days=1)
+        two = second.upload("nightly", content, content_digest, retention_days=7)
         self.assertNotEqual(one["namespace"], two["namespace"])
         self.assertEqual(len(fake.objects), 2)
         self.assertEqual(first.materialize_fake(
-            "nightly", sha(content), purpose="offline_restore_test"), content)
+            "nightly", content_digest, purpose="offline_restore_test"), content)
         aged = GDriveColdCopy(
             manifest("condor"), transport=fake, secret_provider=Secrets(),
             credential_ref="gdrive-cold-copy", now=NOW + timedelta(days=2),
@@ -222,21 +226,21 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
         # La copia aún existe en memoria, pero ya venció: ni el retry
         # idempotente ni el restore pueden declarar evidencia positiva.
         with self.assertRaisesRegex(ColdCopyError, "expired_remote_copy"):
-            aged.upload("nightly", content, sha(content), retention_days=7)
+            aged.upload("nightly", content, content_digest, retention_days=7)
         with self.assertRaisesRegex(ColdCopyError, "expired_remote_copy"):
             aged.materialize_fake(
-                "nightly", sha(content), purpose="offline_restore_test")
+                "nightly", content_digest, purpose="offline_restore_test")
         self.assertEqual(fake.writes, 2)
         with self.assertRaisesRegex(ColdCopyError, "restore_not_authorized"):
-            second.materialize_fake("nightly", sha(content), purpose="live_restore")
+            second.materialize_fake("nightly", content_digest, purpose="live_restore")
         without_approval = instance("condor", transport=fake)
         with self.assertRaisesRegex(ColdCopyError, "restore_not_authorized"):
             without_approval.materialize_fake(
-                "nightly", sha(content), purpose="offline_restore_test")
+                "nightly", content_digest, purpose="offline_restore_test")
         self.assertEqual(first.expire_fake(at=NOW + timedelta(days=2)), 1)
         self.assertEqual(len(fake.objects), 1)
         self.assertEqual(second.materialize_fake(
-            "nightly", sha(content), purpose="offline_restore_test"), content)
+            "nightly", content_digest, purpose="offline_restore_test"), content)
         self.assertEqual(second.expire_fake(at=NOW + timedelta(days=2)), 0)
         self.assertEqual(second.expire_fake(at=NOW + timedelta(days=8)), 1)
         self.assertFalse(fake.objects)
