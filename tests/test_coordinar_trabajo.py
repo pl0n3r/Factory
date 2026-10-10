@@ -2741,6 +2741,23 @@ class CoordinacionTests(unittest.TestCase):
             {10: ["src/a.php"], 12: ["README.md"]},
         )
 
+    def test_file_overlap_detects_casefold_and_unicode_aliases(self) -> None:
+        """Un alias multiplataforma no puede eludir la exclusión entre PRs."""
+        for current, other in (
+            ("src/Cache.php", "src/cache.php"),
+            ("docs/café.md", "docs/cafe\u0301.md"),
+            ("src/Straße.php", "src/STRASSE.php"),
+        ):
+            with self.subTest(current=current, other=other):
+                self.assertEqual(
+                    file_overlaps({current}, {43: {other}}),
+                    {43: [current]},
+                )
+        self.assertEqual(
+            file_overlaps({"src/Cache.php"}, {43: {"src/unrelated.php"}}),
+            {},
+        )
+
     def test_validate_pull_rejects_open_pr_overlap(self) -> None:
         """Rechaza un PR que pisa archivos de otro PR abierto."""
         api = FakeGitHub()
@@ -3988,19 +4005,20 @@ class ExactHeadPullFileEvidenceTests(unittest.TestCase):
 class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
     """La puerta real de PR usa archivos+HEAD y falla cerrado sobre drift."""
 
-    def _validate(self, *, same_file=False, drift=False, incomplete=False):
+    def _validate(self, *, same_file=False, drift=False, incomplete=False,
+                  left_file="src/first.py", right_file=None):
         api = GitHub("pl0n3r/Factory", token="fake-test-token")
         proofs = {
             42: {
                 "head_sha": "a" * 40,
                 "base_sha": "b" * 40,
-                "files": ["src/first.py"],
+                "files": [left_file],
                 "complete": True,
             },
             43: {
                 "head_sha": "c" * 40,
                 "base_sha": "b" * 40,
-                "files": ["src/first.py" if same_file else "src/second.py"],
+                "files": [left_file if same_file else (right_file or "src/second.py")],
                 "complete": True,
             },
         }
@@ -4038,6 +4056,19 @@ class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("PR #43", errors[0])
         self.assertIn("src/first.py", errors[0])
+
+    def test_exact_pr_collision_blocks_canonical_path_aliases(self) -> None:
+        """La vía real de validación trata casefold y NFC como colisión."""
+        cases = (
+            ("src/Cache.php", "src/cache.php"),
+            ("docs/café.md", "docs/cafe\u0301.md"),
+        )
+        for left, right in cases:
+            with self.subTest(left=left, right=right):
+                errors = self._validate(left_file=left, right_file=right)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("PR #43", errors[0])
+                self.assertIn(left, errors[0])
 
     def test_exact_pr_collision_rechecks_all_heads(self) -> None:
         with self.assertRaisesRegex(CoordinationError, "SHA cambió"):
