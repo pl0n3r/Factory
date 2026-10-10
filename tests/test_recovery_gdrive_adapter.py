@@ -1,0 +1,163 @@
+"""Regresiones herméticas de Google Drive cold-copy FAKE, Factory #1089."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import unittest
+
+from recovery.gdrive_adapter import (
+    ColdCopyError, FakeDriveTransport, GDriveColdCopy,
+)
+
+NOW = datetime(2026, 10, 10, tzinfo=timezone.utc)
+
+
+def manifest(project="condor"):
+    return {
+        "version": 1, "project": project,
+        "target": {"rpo_minutes": 15, "rto_minutes": 60},
+        "protection": {
+            "copies": 3, "media_types": 2, "offsite_copies": 1,
+            "immutable_copies": 1, "undetected_restore_failures": 0,
+        },
+        "retention": {"hourly": 24, "daily": 7, "weekly": 8, "monthly": 12},
+        "sources": {
+            "database": "REQUIRED", "media": "NOT_APPLICABLE",
+            "repository": "REQUIRED",
+        },
+        "offsite": {"object_storage": "REQUIRED", "cold_copy": "google_drive"},
+        "encryption": {"required": True, "key_material": "EXTERNAL_ONLY"},
+        "restore_drill": {"cadence_days": 7},
+    }
+
+
+def sha(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+class Secrets:
+    def __init__(self, value="DUMMY_SECRET_NOT_REAL"):
+        self.value = value
+        self.calls = 0
+
+    def resolve(self, name: str) -> str:
+        self.calls += 1
+        if name != "gdrive-cold-copy":
+            raise ValueError(self.value)
+        return self.value
+
+
+def instance(project="condor", *, transport=None, secrets=None, allow=False):
+    return GDriveColdCopy(
+        manifest(project),
+        transport=transport if transport is not None else FakeDriveTransport(),
+        secret_provider=secrets if secrets is not None else Secrets(),
+        credential_ref="gdrive-cold-copy", now=NOW,
+        restore_authorizer=(lambda _request: True) if allow else None,
+    )
+
+
+class RecoveryGDriveAdapterTests(unittest.TestCase):
+    def test_upload_is_idempotent_by_digest(self):
+        fake = FakeDriveTransport()
+        drive = instance(transport=fake)
+        payload = b"encrypted-fake-bytes-only"
+        first = drive.upload("snapshot-001", payload, sha(payload), retention_days=7)
+        second = drive.upload("snapshot-001", payload, sha(payload), retention_days=30)
+        self.assertEqual(first, second)
+        self.assertEqual(fake.writes, 1)
+        self.assertEqual(len(fake.objects), 1)
+        self.assertEqual(first["source_sha256"], first["remote_sha256"])
+        self.assertEqual(first["evidence"], "FAKE_VERIFIED_ONLY")
+        self.assertFalse(first["real_restore_authorized"])
+        different = drive.upload(
+            "snapshot-001", payload + b"-changed", sha(payload + b"-changed"),
+            retention_days=7,
+        )
+        self.assertNotEqual(first["object_id"], different["object_id"])
+        self.assertEqual(fake.writes, 2)
+        self.assertEqual(drive.namespace, "recovery:condor")
+
+    def test_source_and_remote_checksums_must_match(self):
+        fake = FakeDriveTransport()
+        drive = instance(transport=fake, allow=True)
+        payload = b"verified-content"
+        with self.assertRaisesRegex(ColdCopyError, "source_checksum_mismatch"):
+            drive.upload("snap", payload, "0" * 64, retention_days=7)
+        self.assertFalse(fake.objects)
+        evidence = drive.upload("snap", payload, sha(payload), retention_days=7)
+        fake.objects[(drive.namespace, evidence["object_id"])]["content"] = b"corrupt"
+        with self.assertRaisesRegex(ColdCopyError, "remote_checksum_mismatch"):
+            drive.materialize_fake(
+                "snap", sha(payload), purpose="offline_restore_test",
+            )
+        with self.assertRaisesRegex(ColdCopyError, "invalid_checksum"):
+            drive.materialize_fake("snap", "z" * 64, purpose="offline_restore_test")
+        for value in (True, -1, 366):
+            with self.subTest(retention=value), self.assertRaises(ColdCopyError):
+                drive.upload("snap", payload, sha(payload), retention_days=value)
+        for bad in ("../escape", "folder/name", "x" * 129):
+            with self.subTest(ref=bad), self.assertRaises(ColdCopyError):
+                drive.upload(bad, payload, sha(payload), retention_days=1)
+
+    def test_secret_material_never_enters_error_or_evidence(self):
+        sensitive = "VERY_PRIVATE_OAUTH_TOKEN_NOT_REAL"
+        secrets = Secrets(sensitive)
+
+        class FailingTransport(FakeDriveTransport):
+            def put_if_absent(self, *args):
+                raise RuntimeError(sensitive)
+
+        drive = instance(transport=FailingTransport(), secrets=secrets)
+        data = b"fake-only"
+        with self.assertRaises(ColdCopyError) as observed:
+            drive.upload("snap", data, sha(data), retention_days=1)
+        self.assertNotIn(sensitive, str(observed.exception))
+        self.assertIsNone(observed.exception.__cause__)
+        fake = FakeDriveTransport()
+        safe = instance(transport=fake, secrets=secrets)
+        evidence = safe.upload("snap", data, sha(data), retention_days=1)
+        encoded = json.dumps(evidence, sort_keys=True)
+        self.assertNotIn(sensitive, encoded)
+        self.assertNotIn(data.decode(), encoded)
+        self.assertGreater(secrets.calls, 0)
+
+        class FailingSecrets:
+            def resolve(self, _name):
+                raise RuntimeError(sensitive)
+
+        bad = instance(transport=FakeDriveTransport(), secrets=FailingSecrets())
+        with self.assertRaises(ColdCopyError) as error:
+            bad.upload("snap", data, sha(data), retention_days=1)
+        self.assertNotIn(sensitive, str(error.exception))
+        self.assertIsNone(error.exception.__cause__)
+
+    def test_fake_roundtrip_and_retention_namespace(self):
+        fake = FakeDriveTransport()
+        first = instance("condor", transport=fake, allow=True)
+        second = instance("grindflow", transport=fake, allow=True)
+        content = b"fake-test-ciphertext"
+        one = first.upload("nightly", content, sha(content), retention_days=1)
+        two = second.upload("nightly", content, sha(content), retention_days=7)
+        self.assertNotEqual(one["namespace"], two["namespace"])
+        self.assertEqual(len(fake.objects), 2)
+        self.assertEqual(first.materialize_fake(
+            "nightly", sha(content), purpose="offline_restore_test"), content)
+        with self.assertRaisesRegex(ColdCopyError, "restore_not_authorized"):
+            second.materialize_fake("nightly", sha(content), purpose="live_restore")
+        without_approval = instance("condor", transport=fake)
+        with self.assertRaisesRegex(ColdCopyError, "restore_not_authorized"):
+            without_approval.materialize_fake(
+                "nightly", sha(content), purpose="offline_restore_test")
+        self.assertEqual(first.expire_fake(at=NOW + timedelta(days=2)), 1)
+        self.assertEqual(len(fake.objects), 1)
+        self.assertEqual(second.materialize_fake(
+            "nightly", sha(content), purpose="offline_restore_test"), content)
+        self.assertEqual(second.expire_fake(at=NOW + timedelta(days=2)), 0)
+        self.assertEqual(second.expire_fake(at=NOW + timedelta(days=8)), 1)
+        self.assertFalse(fake.objects)
+
+
+if __name__ == "__main__":
+    unittest.main()
