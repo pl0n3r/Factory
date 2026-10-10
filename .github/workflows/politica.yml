@@ -127,15 +127,47 @@ jobs:
             exit 1
           }
 
+          owner="${REPOSITORY%%/*}"
+          repo_name="${REPOSITORY#*/}"
+          # shellcheck disable=SC2016
+          gh api graphql \
+            -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{author{login}}}}}}}}' \
+            -F owner="$owner" -F repo="$repo_name" -F pr="$PR" > "$threads_json"
+          jq -e '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false' "$threads_json" >/dev/null || {
+            echo "::error::Review threads exceden el límite evaluable"
+            exit 1
+          }
+          jq -e '[.data.repository.pullRequest.reviewThreads.nodes[].comments.pageInfo.hasNextPage] | all(. == false)' "$threads_json" >/dev/null || {
+            echo "::error::Comentarios de review thread exceden el límite evaluable"
+            exit 1
+          }
+          jq -c '.data.repository.pullRequest.reviewThreads.nodes[]' "$threads_json" > "$threads_file"
+
+          (( $(wc -c < "$threads_file") <= MAX_EVIDENCE_BYTES )) || {
+            echo "::error::Threads exceden el tamaño permitido"
+            exit 1
+          }
+
           primary_args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA")
           [[ -z "${BASE_POLICY_FILE:-}" ]] || primary_args+=(--base-policy-file "$BASE_POLICY_FILE")
           primary_args+=(--comments-file "$comments_file")
+          primary_args+=(--threads-file "$threads_file")
 
           set +e
           PRIMARY_OUTPUT="$(python3 .factory/scripts/politica_kit.py "${primary_args[@]}" < "$reviews_file" 2>&1)"
           PRIMARY_STATUS=$?
           set -e
           if (( PRIMARY_STATUS == 0 )); then
+            # No aceptar evidencia primaria de HEAD/BASE que cambió al validar.
+            PR_JSON_PRIMARY_FINAL="$(gh api "repos/$REPOSITORY/pulls/$PR")"
+            [[ "$(jq -r '.head.sha' <<<"$PR_JSON_PRIMARY_FINAL")" == "$PR_HEAD_SHA" ]] || {
+              echo "::error::HEAD cambió durante validación de review primaria"
+              exit 1
+            }
+            [[ "$(jq -r '.base.sha' <<<"$PR_JSON_PRIMARY_FINAL")" == "$PR_BASE_SHA" ]] || {
+              echo "::error::BASE cambió durante validación de review primaria"
+              exit 1
+            }
             printf '%s\n' "$PRIMARY_OUTPUT"
             exit 0
           fi
@@ -231,31 +263,10 @@ jobs:
             exit 1
           }
 
-          owner="${REPOSITORY%%/*}"
-          repo_name="${REPOSITORY#*/}"
-          # shellcheck disable=SC2016
-          gh api graphql \
-            -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{author{login}}}}}}}}' \
-            -F owner="$owner" -F repo="$repo_name" -F pr="$PR" > "$threads_json"
-          jq -e '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false' "$threads_json" >/dev/null || {
-            echo "::error::Review threads exceden el límite evaluable"
-            exit 1
-          }
-          jq -e '[.data.repository.pullRequest.reviewThreads.nodes[].comments.pageInfo.hasNextPage] | all(. == false)' "$threads_json" >/dev/null || {
-            echo "::error::Comentarios de review thread exceden el límite evaluable"
-            exit 1
-          }
-          jq -c '.data.repository.pullRequest.reviewThreads.nodes[]' "$threads_json" > "$threads_file"
-
           (( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES )) || {
             echo "::error::Checks exceden el tamaño permitido"
             exit 1
           }
-          (( $(wc -c < "$threads_file") <= MAX_EVIDENCE_BYTES )) || {
-            echo "::error::Threads exceden el tamaño permitido"
-            exit 1
-          }
-
           # Solo reruns: anclar mensajes CodeRabbit sin SHA a la timeline REST
           # autenticada del PR. Página 6 es centinela de desbordamiento.
           timeline_args=()
