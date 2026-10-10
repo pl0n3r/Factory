@@ -326,6 +326,102 @@ class ParallelCoordinationTests(unittest.TestCase):
             with self.subTest(files=files):
                 self.assertEqual(unique(files), expected)
 
+
+    def test_claims_pr_workflow_requires_live_issue_authority(self) -> None:
+        """Ejecuta el Python real del gate con API sintética y sin red."""
+        import io
+        import json
+        import os
+        from unittest import mock
+        from urllib.parse import urlsplit
+
+        workflow = Path(".github/workflows/coordinacion-trabajo.yml").read_text(
+            encoding="utf-8"
+        )
+        opener = "          python3 - <<'PY'\n"
+        self.assertEqual(workflow.count(opener), 1)
+        inline = workflow.split(opener, 1)[1].split("          PY\n", 1)[0]
+        script = "\n".join(line[10:] for line in inline.splitlines()) + "\n"
+        sha = "a" * 40
+        marker = {
+            "version": 3, "active": True,
+            "branch": "trabajo/issue-1081", "owner": "pl0n3r",
+            "reservation_id": "123e4567-e89b-12d3-a456-426614174000",
+            "task_paths": ["tests/test_parallel_coordination.py"],
+        }
+        issue_path = "/repos/pl0n3r/Factory/issues/1081"
+        pr_path = "/repos/pl0n3r/Factory/pulls/1083"
+        scenarios = (
+            ("valid", {}, False, True),
+            ("closed", {"state": "closed"}, False, False),
+            ("blocked", {"labels": [{"name": "estado: bloqueado"}]}, False, False),
+            ("conflict", {"labels": [
+                {"name": "estado: en revisión"}, {"name": "status: blocked"},
+            ]}, False, False),
+            ("missing_owner", {"assignees": []}, False, False),
+            ("wrong_owner", {"assignees": [{"login": "otro"}]}, False, False),
+            ("race_after_diff", {}, True, False),
+        )
+        for name, updates, race, accepted in scenarios:
+            with self.subTest(case=name):
+                reads = [0]
+
+                def fake_urlopen(request, timeout=0):
+                    address = urlsplit(request.full_url)
+                    url = address.path
+                    if url == pr_path:
+                        value = {
+                            "state": "open", "changed_files": 1,
+                            "head": {
+                                "ref": "trabajo/issue-1081", "sha": sha,
+                                "repo": {"full_name": "pl0n3r/Factory"},
+                            },
+                            "base": {"ref": "main", "sha": "b" * 40},
+                        }
+                    elif url == issue_path:
+                        reads[0] += 1
+                        value = {
+                            "number": 1081, "state": "open",
+                            "updated_at": "2026-10-10T12:00:00Z",
+                            "labels": [{"name": "estado: en revisión"}],
+                            "assignees": [{"login": "pl0n3r"}],
+                        }
+                        value.update(updates)
+                        if race and reads[0] > 1:
+                            value["labels"] = [{"name": "estado: bloqueado"}]
+                    elif url == issue_path + "/comments":
+                        value = [{"user": {"login": "github-actions[bot]"},
+                                  "body": "<!-- condor-reserva "
+                                  + json.dumps(marker, separators=(",", ":"))
+                                  + " -->"}]
+                    elif url == pr_path + "/files":
+                        value = [{"filename": "tests/test_parallel_coordination.py",
+                                  "status": "modified"}]
+                    elif url == "/repos/pl0n3r/Factory/git/ref/heads/trabajo%2Fissue-1081":
+                        value = {"object": {"sha": sha}}
+                    else:
+                        self.fail("Unexpected authenticated REST path: " + url)
+                    return io.BytesIO(json.dumps(value).encode("utf-8"))
+
+                env = {
+                    "GH_TOKEN": "fake-only", "REPOSITORIO": "pl0n3r/Factory",
+                    "PR": "1083", "EXPECTED_HEAD": sha,
+                }
+                with mock.patch.dict(os.environ, env), mock.patch(
+                    "urllib.request.urlopen", side_effect=fake_urlopen
+                ):
+                    if accepted:
+                        exec(compile(script, "<inline-claims-pr>", "exec"),
+                             {"__name__": "__main__"})
+                        self.assertEqual(reads[0], 2)
+                    else:
+                        with self.assertRaisesRegex(
+                            AssertionError, "issue authority invalid"
+                        ):
+                            exec(compile(script, "<inline-claims-pr>", "exec"),
+                                 {"__name__": "__main__"})
+                        self.assertGreaterEqual(reads[0], 1)
+
     def test_partial_active_issue_does_not_globally_block_next_disjoint_issue(self) -> None:
         """AC-06: un label activo huérfano sin reserva confiable no bloquea el siguiente leaf."""
         orphan = planned_issue(
