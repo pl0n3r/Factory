@@ -44,7 +44,10 @@ def _principles(template: object) -> str:
     end = match.end() + next_section.start() if next_section else len(source)
     content = source[start:end].strip("\n")
     headings = re.findall(r"^### (Regla 0|Principio [1-8]) — ", content, re.M)
-    if (headings != ["Regla 0"] + [f"Principio {x}" for x in range(1, 9)]
+    all_subsections = re.findall(r"^### [^\n]+", content, re.M)
+    if (len(all_subsections) != 10
+            or all_subsections[-1] != "### Límite explícito del template"
+            or headings != ["Regla 0"] + [f"Principio {x}" for x in range(1, 9)]
             or content.count("### Límite explícito del template") != 1
             or "no otorga permisos de ejecución" not in source
             or "no sincroniza ni modifica consumidores" not in content):
