@@ -80,8 +80,11 @@ jobs:
           # Search Issues entrega máximo 100 filas por página; jamás decidir un freeze
           # desde un snapshot truncado (incluidos duplicados sin su canónico).
           query="repo:$REPOSITORY is:issue \"factory-human-gate\" in:body"
+          # Dos consultas completas independientes evitan aceptar una mezcla
+          # de páginas por un desplazamiento del índice entre lecturas.
+          for pass in 1 2; do
           gh api -X GET search/issues -f q="$query" -f per_page=100 -f page=1 \
-            -f sort=created -f order=asc > /tmp/release-search-p1.json
+            -f sort=created -f order=asc > /tmp/release-search-p1-${pass}.json
           total_count="$(jq -er '
             if (.incomplete_results == false)
                and ((.total_count | type) == "number")
@@ -91,14 +94,14 @@ jobs:
             then .total_count
             else error("Search Issues parcial, inválida o >200")
             end
-          ' /tmp/release-search-p1.json)"
+          ' /tmp/release-search-p1-${pass}.json)"
           if (( total_count > 100 )); then
             gh api -X GET search/issues -f q="$query" -f per_page=100 -f page=2 \
-              -f sort=created -f order=asc > /tmp/release-search-p2.json
+              -f sort=created -f order=asc > /tmp/release-search-p2-${pass}.json
           else
-            printf 'null\n' > /tmp/release-search-p2.json
+            printf 'null\n' > /tmp/release-search-p2-${pass}.json
           fi
-          python3 - /tmp/release-search-p1.json /tmp/release-search-p2.json <<'PY' > /tmp/release-search-verified.json
+          python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json
           import json
           import sys
           from pathlib import Path
@@ -163,11 +166,18 @@ jobs:
               fail("conteo incompleto")
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
+          done
+          # Comparar filas completas, no solo cardinalidad ni IDs.
+          # Cualquier variación del índice, bodies o metadatos niega el freeze.
+          cmp -s /tmp/release-search-verified-1.json /tmp/release-search-verified-2.json || {
+            echo "::error::Search Issues cambió entre dos lecturas completas"
+            exit 1
+          }
           jq '[
                 .[]
                 | select((.body // "") | contains("factory-release"))
                 | {number, state, title, body, updated_at}
-              ]' /tmp/release-search-verified.json > /tmp/release-issues.json
+              ]' /tmp/release-search-verified-2.json > /tmp/release-issues.json
           printf '[]\n' > /tmp/release-gates.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
