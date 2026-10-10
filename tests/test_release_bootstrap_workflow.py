@@ -181,6 +181,11 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         result = self._extract_latest_gate_sha(gate)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), sha)
+        # Mismo SHA en diferente representación hexadecimal: único valor.
+        mixed_case = gate.replace("main@" + sha, "main@" + sha.upper(), 1)
+        mixed_result = self._extract_latest_gate_sha(mixed_case)
+        self.assertEqual(mixed_result.returncode, 0, mixed_result.stderr)
+        self.assertEqual(mixed_result.stdout.strip(), sha)
 
     def test_latest_rejects_distinct_shas_in_gate_body(self):
         """AC-02: no aceptar puerta sin baseline ni con SHAs contradictorios."""
@@ -189,7 +194,12 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
             "1.0.28", sha, datetime(2026, 10, 9, tzinfo=timezone.utc),
             source_issue=1014,
         )["body"]
-        for invalid in ("sin main@SHA", gate + "\nmain@" + "b" * 40):
+        for invalid in (
+            "sin main@SHA",
+            gate + "\nmain@" + "b" * 40,
+            # Segundo valor distinto en HEX mayúsculas jamás debe ignorarse.
+            gate + "\nmain@" + "B" * 40,
+        ):
             with self.subTest(body=invalid[-50:]):
                 result = self._extract_latest_gate_sha(invalid)
                 self.assertNotEqual(result.returncode, 0)
