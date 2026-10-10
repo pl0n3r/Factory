@@ -327,6 +327,23 @@ class ParallelCoordinationTests(unittest.TestCase):
                 self.assertEqual(unique(files), expected)
 
 
+    def test_claims_pr_workflow_does_not_skip_fork_prs(self) -> None:
+        """Un fork debe fallar por identidad, no satisfacer un check omitido."""
+        workflow = Path(".github/workflows/coordinacion-trabajo.yml").read_text(
+            encoding="utf-8"
+        )
+        job = workflow.split("\n  claims-pr:\n", 1)[1].split(
+            "\n  estado-pr:\n", 1
+        )[0]
+        predicate = job.split("    if: >-\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        self.assertIn("github.event_name == 'pull_request'", predicate)
+        self.assertIn("github.event.action != 'closed'", predicate)
+        self.assertNotIn("head.repo.full_name", predicate)
+        self.assertIn('(head.get("repo") or {}).get("full_name") == repo', job)
+        self.assertNotIn("actions/checkout", job)
+
     def test_claims_pr_workflow_requires_live_issue_authority(self) -> None:
         """Ejecuta el Python real del gate con API sintética y sin red."""
         import io
@@ -361,6 +378,7 @@ class ParallelCoordinationTests(unittest.TestCase):
             ("missing_owner", {"assignees": []}, False, False),
             ("wrong_owner", {"assignees": [{"login": "otro"}]}, False, False),
             ("race_after_diff", {}, True, False),
+            ("fork", {}, False, False),
         )
         for name, updates, race, accepted in scenarios:
             with self.subTest(case=name):
@@ -374,7 +392,10 @@ class ParallelCoordinationTests(unittest.TestCase):
                             "state": "open", "changed_files": 1,
                             "head": {
                                 "ref": "trabajo/issue-1081", "sha": sha,
-                                "repo": {"full_name": "pl0n3r/Factory"},
+                                "repo": {"full_name": (
+                                    "other/repository" if name == "fork"
+                                    else "pl0n3r/Factory"
+                                )},
                             },
                             "base": {"ref": "main", "sha": "b" * 40},
                         }
@@ -416,11 +437,16 @@ class ParallelCoordinationTests(unittest.TestCase):
                         self.assertEqual(reads[0], 2)
                     else:
                         with self.assertRaisesRegex(
-                            AssertionError, "issue authority invalid"
+                            AssertionError,
+                            "PR identity mismatch" if name == "fork"
+                            else "issue authority invalid",
                         ):
                             exec(compile(script, "<inline-claims-pr>", "exec"),
                                  {"__name__": "__main__"})
-                        self.assertGreaterEqual(reads[0], 1)
+                        if name == "fork":
+                            self.assertEqual(reads[0], 0)
+                        else:
+                            self.assertGreaterEqual(reads[0], 1)
 
     def test_partial_active_issue_does_not_globally_block_next_disjoint_issue(self) -> None:
         """AC-06: un label activo huérfano sin reserva confiable no bloquea el siguiente leaf."""

@@ -103,8 +103,7 @@ jobs:
     name: Validar claims V3 del PR
     if: >-
       github.event_name == 'pull_request' &&
-      github.event.action != 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.action != 'closed'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -112,6 +111,7 @@ jobs:
       issues: read
       pull-requests: read
     steps:
+      # Incluye forks: el script rechaza su identidad con FAILURE, no SKIPPED.
       # Consulta metadatos autenticados, nunca ejecuta archivos del PR.
       - name: Validar scope V3 por API confiable y HEAD exacto
         env:
