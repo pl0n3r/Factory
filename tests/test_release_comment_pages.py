@@ -30,12 +30,17 @@ class ReleaseCommentPagesTests(unittest.TestCase):
         self.assertEqual(len(matches), 1, "Falta la tubería canónica real")
         return matches[0]
 
-    def _run_pages(self, pages: list[object]) -> tuple[subprocess.CompletedProcess[str], object]:
+    def _run_pages(
+        self, pages: list[object], *, gh_exit_code: int = 0
+    ) -> tuple[subprocess.CompletedProcess[str], object]:
         self.assertIsNotNone(shutil.which("jq"), "CI necesita jq para probar la tubería real")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fake_gh = root / "gh"
-            fake_gh.write_text('#!/bin/sh\ncat "$TEST_COMMENT_PAGES"\n', encoding="utf-8")
+            fake_gh.write_text(
+                '#!/bin/sh\ncat "$TEST_COMMENT_PAGES"\nexit "$TEST_GH_EXIT_CODE"\n',
+                encoding="utf-8",
+            )
             fake_gh.chmod(0o755)
             fixture = root / "pages.jsonl"
             fixture.write_text(
@@ -50,6 +55,7 @@ class ReleaseCommentPagesTests(unittest.TestCase):
             env.update({
                 "PATH": directory + os.pathsep + env.get("PATH", ""),
                 "TEST_COMMENT_PAGES": str(fixture),
+                "TEST_GH_EXIT_CODE": str(gh_exit_code),
                 "REPOSITORY": "pl0n3r/Factory",
                 "number": "1070",
             })
@@ -116,6 +122,23 @@ class ReleaseCommentPagesTests(unittest.TestCase):
                 self.assertIsNone(filtered)
                 self.assertNotIn("private body", result.stderr)
 
+        # Un HTTP 403 con stdout JSON válido nunca puede acreditar un gate.
+        one, filtered = self._run_pages(
+            [[comment(1, "github-actions[bot]", "factory-human-decision")]],
+            gh_exit_code=22,
+        )
+        self.assertNotEqual(one.returncode, 0, "HTTP 403 no puede acreditar un gate")
+        self.assertIsNone(filtered)
+
+        # Tampoco una segunda página completa si gh termina sin éxito.
+        first = [comment(n, "human", "body") for n in range(1, 101)]
+        two, filtered = self._run_pages(
+            [first, [comment(101, "github-actions[bot]", "factory-release-executed")]],
+            gh_exit_code=22,
+        )
+        self.assertNotEqual(two.returncode, 0, "API parcial no es evidencia")
+        self.assertIsNone(filtered)
+
     def test_workflow_contains_strict_paginated_comment_read(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         self.assertEqual(len(COMMAND_PATTERN.findall(source)), 1)
@@ -131,6 +154,7 @@ class ReleaseCommentPagesTests(unittest.TestCase):
             "\n  coordinacion:", 1
         )[0]
         self.assertIn("issues: read", release_job)
+        self.assertIn("set -euo pipefail", release_job)
         self.assertNotIn("issues: write", release_job)
         self.assertIn("scripts/release_window.py pr-check", release_job)
         self.assertIn("cmp -s /tmp/release-search-verified-1.json", release_job)
