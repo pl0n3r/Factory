@@ -35,19 +35,7 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         raise RecoveryContractError("project inválido.")
 
     target = _positive_map(data["target"], {"rpo_minutes", "rto_minutes"}, "target")
-    protection = _map(
-        data["protection"],
-        {"copies", "media_types", "offsite_copies", "immutable_copies",
-         "undetected_restore_failures"},
-        "protection",
-    )
-    expected = {
-        "copies": 3, "media_types": 2, "offsite_copies": 1,
-        "immutable_copies": 1, "undetected_restore_failures": 0,
-    }
-    if any(type(protection[key]) is not int or protection[key] != expected[key]
-           for key in expected):
-        raise RecoveryContractError("protection debe cumplir exactamente 3-2-1-1-0.")
+    protection = _validated_protection(data["protection"])
 
     retention = _nonnegative_map(
         data["retention"], {"hourly", "daily", "weekly", "monthly"}, "retention"
@@ -80,7 +68,7 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
 
     return {
         "version": VERSION, "project": project, "target": target,
-        "protection": expected, "retention": retention,
+        "protection": protection, "retention": retention,
         "sources": normalized_sources,
         "offsite": {
             "object_storage": "REQUIRED", "cold_copy": offsite["cold_copy"]
@@ -88,6 +76,19 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         "encryption": {"required": True, "key_material": "EXTERNAL_ONLY"},
         "restore_drill": {"cadence_days": cadence},
     }
+
+
+def _validated_protection(value: Any) -> dict[str, int]:
+    """Enforce exact JSON integer constants, never bool or float aliases."""
+    expected = {
+        "copies": 3, "media_types": 2, "offsite_copies": 1,
+        "immutable_copies": 1, "undetected_restore_failures": 0,
+    }
+    protection = _map(value, set(expected), "protection")
+    if any(type(protection[key]) is not int or protection[key] != expected[key]
+           for key in expected):
+        raise RecoveryContractError("protection debe cumplir exactamente 3-2-1-1-0.")
+    return expected
 
 
 def canonical_recovery_manifest(payload: Any) -> str:
