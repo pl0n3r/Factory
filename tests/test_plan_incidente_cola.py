@@ -203,6 +203,15 @@ class PlanIncidenteColaTests(unittest.TestCase):
         invalid["blocked_cause_totals"]["claims"] = False  # False == 0 in Python
         with self.assertRaisesRegex(IncidentPlanError, "inconsistent_diagnosis_causes"):
             report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
+        # A malicious diagnostic reason may raise in __ne__; only fixed
+        # private error codes are allowed at the trust boundary.
+        class HostileReason:
+            def __ne__(self, other):
+                raise RuntimeError("private-reason-sentinel")
+        invalid = upstream_diagnosis()
+        invalid["reason"] = HostileReason()
+        with self.assertRaisesRegex(IncidentPlanError, "invalid_diagnosis_state"):
+            report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
         invalid = upstream_diagnosis()
         invalid["available_total"] = "private-value"
         with self.assertRaisesRegex(IncidentPlanError, "invalid_diagnosis"):
