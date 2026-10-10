@@ -213,8 +213,7 @@ def report_from_diagnosis(diagnosis: object, rate_limit: object) -> dict:
                                      blocker["roadmap"])
             if (not _int(issue, 1, 100000000) or issue in ids
                     or type(cause) is not str or cause not in CAUSES
-                    or type(roadmap) is not bool
-                    or (roadmap and cause in ("unknown", "human_gate", "planned"))):
+                    or type(roadmap) is not bool):
                 raise IncidentPlanError("invalid_diagnosis_blocker")
             ids.add(issue)
             found[cause] += 1
