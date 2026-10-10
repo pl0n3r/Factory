@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "project": "autofactory",
+  "surfaces": [
+    {
+      "id": "ci.node.job_log",
+      "label": "AutoFactory CI Node test: lapso entre primeras y ultimas lineas del log",
+      "metrics": [
+        {
+          "id": "log_span",
+          "label": "Tramo de log observado en un job CI, no duracion total ni runtime",
+          "baseline": {
+            "value": 22.683,
+            "unit": "s",
+            "observed_at": "2026-10-10T09:24:03Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 120,
+            "unit": "s"
+          },
+          "window": {
+            "duration_seconds": 1,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_actions_job",
+            "ref": "github:pl0n3r/AutoFactory/actions/runs/38041222908/job/114181699104",
+            "observed_at": "2026-10-10T09:24:03Z"
+          },
+          "allowed_actions": [
+            "observe",
+            "diagnose",
+            "benchmark"
+          ],
+          "escalation_conditions": [
+            "capacity_budget"
+          ]
+        }
+      ]
+    }
+  ]
+}
