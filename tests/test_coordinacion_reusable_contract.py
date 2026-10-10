@@ -57,7 +57,7 @@ def strict_caller_fixture(value: str) -> str:
           supported = {"/tomar", "/renovar-contrato"}
           route = bool(parts and parts[0] in supported)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"route={str(route).lower()}\n")
+              output.write(f"route={str(route).lower()}\\n")
           PY
 
 """.replace("DOLLAR_SIGN", "$")
