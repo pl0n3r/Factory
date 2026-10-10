@@ -33,7 +33,7 @@ CodeRabbit también puede **reutilizar y editar el mismo comentario canónico** 
 
 El simple hecho de que un comentario del bot tenga un `updated_at` reciente **no** cuenta como reintento. Sin el trigger OWNER posterior al fallo de Policy, el fallback permanece bloqueado. Un usuario no OWNER tampoco puede producir esa evidencia.
 
-### Respuesta CodeRabbit sin SHA: timeline autenticada (solo rerun)
+### Respuesta CodeRabbit sin SHA: timeline autenticada no prueba causalidad
 
 En un **rerun** (`GITHUB_RUN_ATTEMPT > 1`) durante `construccion`, CodeRabbit
 puede emitir una respuesta `Review rate limited` sin el SHA en el cuerpo.
@@ -45,7 +45,7 @@ eventos y 2 MB; una sexta página solo puede estar vacía. El archivo temporal
 se elimina al terminar. Ningún contenido del PR candidato determina esa
 lectura. Antes de aceptar el resultado se vuelven a consultar HEAD y BASE.
 
-La alternativa requiere **toda** esta correlación adicional:
+El validador inspecciona estas **condiciones necesarias pero insuficientes** para descartar evidencia temporal inconsistente:
 
 1. La timeline está completa, contiene un último evento `committed` cuyo SHA
    es el HEAD exacto y no registra force-push ni una mutación ambigua de HEAD.
@@ -79,13 +79,22 @@ La alternativa requiere **toda** esta correlación adicional:
    invalide la secuencia; los demás checks exact-HEAD siguen verdes, sin
    `CHANGES_REQUESTED` ni threads abiertos.
 
+**La timeline REST no incluye un vínculo autenticado e inequívoco entre el
+comando OWNER, el comentario de respuesta del bot y el HEAD/ref durante toda
+la ventana.** Dos historias (respuesta a OWNER o respuesta independiente de
+otra invocación) pueden producir exactamente los mismos registros. Tampoco
+la ausencia de eventos de mutación prueba una historia íntegra de ref.
+Por ello, **el fallback SHA-less falla cerrado incluso cuando se cumplen
+las ocho comprobaciones temporales anteriores**. La presencia de un marker
+de invocación opaco del bot no constituye un enlace al comando OWNER.
+
 Una sola respuesta, solicitud competidora, respuesta editada, ausencia de fallo
 previo de Policy, actor no OWNER, bot falsificado, timeline vacía, truncada,
-ambigua, reescrita, en otro HEAD o una carrera de refs **fallan cerrado**.
-El primer intento y la ruta histórica con SHA conservan sus garantías,
-con el endurecimiento de integridad de los triggers OWNER. `live` nunca
-admite esta excepción. No se modifica `Factory@v1`
-ni se autoriza go-live, publicación o merge por esta evidencia.
+ambigua, reescrita, en otro HEAD o una carrera de refs también fallan cerrado.
+La revisión formal exact-HEAD y el fallback con SHA explícito siguen sujetos
+a sus propios criterios y checks. `live` nunca admite la excepción.
+No se modifica `Factory@v1` ni se autoriza go-live, publicación o merge
+por esta evidencia.
 
 ## Qué no permite
 
