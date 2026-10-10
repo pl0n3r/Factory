@@ -8,6 +8,8 @@ from scripts.orquestador_kit import (
     parse_task_marker,
     reservation_blockers,
     task_marker_fingerprint,
+    verified_changed_file_overlap,
+    verified_new_file_claim_against_active_diff,
 )
 
 
@@ -345,6 +347,209 @@ class ParallelCoordinationTests(unittest.TestCase):
         )
 
         self.assertEqual(blockers, [])
+
+
+    def _changed_proof(self, left, right, *, left_claims=("src/",),
+                       right_claims=("src/",), **override):
+        baseline = {
+            "left_files": left,
+            "right_files": right,
+            "left_head": "a" * 40,
+            "right_head": "b" * 40,
+            "left_evidence_head": "a" * 40,
+            "right_evidence_head": "b" * 40,
+            "left_complete": True,
+            "right_complete": True,
+            "other_issue": 754,
+            "other_lease": "a6206a44-ba69-455a-86ed-a0a3728e601d",
+        }
+        baseline.update(override)
+        return verified_changed_file_overlap(left_claims, right_claims, **baseline)
+
+    def test_verified_disjoint_files_inside_directory_claim_can_run_in_parallel(self) -> None:
+        """AC-01: únicamente la prueba exact-SHA completa distingue archivos."""
+        evidence = self._changed_proof(["src/activity.php"], ["src/collector.php"])
+        self.assertEqual(evidence["reason"], "verified_disjoint_changed_files")
+        self.assertTrue(evidence["safe"])
+        self.assertEqual(evidence["files"], [])
+
+    def test_case_and_unicode_aliases_are_file_collisions(self) -> None:
+        """Un filesystem insensible a case/NFC no puede crear falsas disjunciones."""
+        names = (
+            ("src/Cache.php", "src/cache.php"),
+            ("src/Café.php", "src/Cafe\u0301.php"),
+            ("src/Straße.php", "src/STRASSE.php"),
+        )
+        for left, right in names:
+            with self.subTest(left=left, right=right):
+                for claims in (
+                    {"left_claims": ("src/",), "right_claims": ("src/",)},
+                    {"left_claims": (left,), "right_claims": (right,)},
+                ):
+                    evidence = self._changed_proof([left], [right], **claims)
+                    self.assertFalse(evidence["safe"], evidence)
+                    self.assertEqual(evidence["reason"], "shared_changed_files")
+                    self.assertEqual(set(evidence["files"]), {left, right})
+                check = verified_new_file_claim_against_active_diff(
+                    [left], ["src/"], active_files=[right],
+                    active_head="a" * 40, evidence_head="a" * 40,
+                    diff_complete=True, active_issue=754,
+                    active_lease="a6206a44-ba69-455a-86ed-a0a3728e601d",
+                )
+                self.assertFalse(check["safe"], check)
+                self.assertEqual(check["reason"], "file_already_modified_by_active_branch")
+
+    def test_canonical_aliases_in_one_diff_fail_closed(self) -> None:
+        """Dos grafías del mismo path no son dos cambios independientes."""
+        left, alias = "src/Cache.php", "src/cache.php"
+        result = self._changed_proof([left, alias], ["src/other.php"])
+        self.assertFalse(result["safe"], result)
+        self.assertEqual(result["reason"], "changed_files_noncanonical")
+        verdict = verified_new_file_claim_against_active_diff(
+            [left, alias], ["src/"], active_files=["src/other.php"],
+            active_head="a" * 40, evidence_head="a" * 40,
+            diff_complete=True, active_issue=754,
+            active_lease="a6206a44-ba69-455a-86ed-a0a3728e601d",
+        )
+        self.assertFalse(verdict["safe"], verdict)
+        self.assertEqual(verdict["reason"], "candidate_requires_exact_unique_files")
+        verdict = verified_new_file_claim_against_active_diff(
+            ["src/other.php"], ["src/"], active_files=[left, alias],
+            active_head="a" * 40, evidence_head="a" * 40,
+            diff_complete=True, active_issue=754,
+            active_lease="a6206a44-ba69-455a-86ed-a0a3728e601d",
+        )
+        self.assertFalse(verdict["safe"], verdict)
+        self.assertEqual(verdict["reason"], "changed_files_outside_active_claims")
+
+    def test_identical_changed_file_remains_exclusive(self) -> None:
+        """AC-02: dos líneas con el mismo archivo no se desbloquean."""
+        evidence = self._changed_proof(["src/activity.php"], ["src/activity.php"])
+        self.assertFalse(evidence["safe"])
+        self.assertEqual(evidence["reason"], "shared_changed_files")
+        self.assertEqual(evidence["files"], ["src/activity.php"])
+
+    def test_collision_names_file_and_active_lease(self) -> None:
+        """AC-03: el diagnóstico señala archivo, Issue y UUID de reserva."""
+        evidence = self._changed_proof(
+            ["src/collector.php", "src/activity.php"], ["src/collector.php"]
+        )
+        self.assertFalse(evidence["safe"])
+        self.assertEqual(evidence["files"], ["src/collector.php"])
+        self.assertEqual(evidence["other_issue"], 754)
+        self.assertEqual(
+            evidence["other_lease"], "a6206a44-ba69-455a-86ed-a0a3728e601d"
+        )
+
+    def test_missing_truncated_or_stale_diff_fails_closed(self) -> None:
+        """AC-04: identidad y cardinalidad del diff son autoridad obligatoria."""
+        cases = (
+            {"left_files": None},
+            {"right_files": []},
+            {"left_complete": False},
+            {"right_complete": False},
+            {"left_evidence_head": "c" * 40},
+            {"right_evidence_head": "c" * 40},
+            {"left_evidence_head": None},
+            {"right_files": ["src/outside.php"], "right_claims": ("src/other/",)},
+            {"left_files": ["src/activity.php", "src/activity.php"]},
+        )
+        for override in cases:
+            left_claims = override.pop("left_claims", ("src/",))
+            right_claims = override.pop("right_claims", ("src/",))
+            with self.subTest(override=override):
+                evidence = self._changed_proof(
+                    ["src/activity.php"], ["src/other.php"],
+                    left_claims=left_claims, right_claims=right_claims, **override
+                )
+                self.assertFalse(evidence["safe"], evidence)
+
+    def test_version_and_lockfile_overlap_needs_serial_merge_evidence(self) -> None:
+        """AC-05: README/lock/version NO son excepciones implícitas."""
+        for path in ("config/version.php", "README.md", "package-lock.json"):
+            with self.subTest(path=path):
+                result = self._changed_proof(
+                    [path], [path], left_claims=(path,), right_claims=(path,)
+                )
+                self.assertFalse(result["safe"])
+                self.assertEqual(result["files"], [path])
+
+    def test_same_file_nonoverlapping_hunks_require_merge_train_authority(self) -> None:
+        """AC-06: el arbitraje por archivo no finge conocer hunks o rebase."""
+        result = self._changed_proof(
+            ["src/collector.php"], ["src/collector.php"],
+            left_claims=("src/collector.php",),
+            right_claims=("src/collector.php",),
+        )
+        self.assertFalse(result["safe"])
+        self.assertEqual(result["reason"], "shared_changed_files")
+
+
+    def _candidate_preflight(self, candidate, changed, **kw):
+        values = dict(
+            active_files=changed,
+            active_head="a" * 40,
+            evidence_head="a" * 40,
+            diff_complete=True,
+            active_issue=754,
+            active_lease="29f4ed31-828d-450a-ba83-3887b03f27b7",
+        )
+        values.update(kw)
+        return verified_new_file_claim_against_active_diff(
+            candidate, ["src/"], **values
+        )
+
+    def test_candidate_file_lease_v3_allows_verified_disjoint_active_diff(self) -> None:
+        result = self._candidate_preflight(
+            ["src/missing.php"], ["src/current.php", "src/other.php"]
+        )
+        self.assertTrue(result["safe"])
+        self.assertEqual(
+            result["reason"], "candidate_files_disjoint_from_verified_active_diff"
+        )
+        self.assertEqual(result["active_issue"], 754)
+
+    def test_candidate_file_lease_v3_rejects_modified_same_file(self) -> None:
+        result = self._candidate_preflight(["src/current.php"], ["src/current.php"])
+        self.assertFalse(result["safe"])
+        self.assertEqual(result["files"], ["src/current.php"])
+
+    def test_candidate_file_lease_v3_rejects_directory_candidate(self) -> None:
+        result = self._candidate_preflight(["src/"], ["src/current.php"])
+        self.assertFalse(result["safe"])
+        self.assertEqual(result["reason"], "candidate_requires_exact_unique_files")
+
+    def test_candidate_file_lease_v3_rejects_stale_and_absent_diff(self) -> None:
+        cases = (
+            {"active_files": None},
+            {"active_files": []},
+            {"evidence_head": "b" * 40},
+            {"diff_complete": False},
+            {"active_files": ["other/file.php"]},
+            {"active_files": ["src/current.php", "src/current.php"]},
+            {"active_lease": ""},
+        )
+        for override in cases:
+            with self.subTest(override=override):
+                result = self._candidate_preflight(
+                    ["src/next.php"], ["src/current.php"], **override
+                )
+                self.assertFalse(result["safe"], result)
+
+    def test_candidate_file_lease_v3_never_exempts_version_or_lock_conflict(self) -> None:
+        for path in ("README.md", "package-lock.json", "config/version.php"):
+            with self.subTest(path=path):
+                result = verified_new_file_claim_against_active_diff(
+                    [path], [path],
+                    active_files=[path],
+                    active_head="a" * 40,
+                    evidence_head="a" * 40,
+                    diff_complete=True,
+                    active_issue=136,
+                    active_lease="40ff674a-ce7a-410e-80d1-979b75ca9385",
+                )
+                self.assertFalse(result["safe"])
+                self.assertEqual(result["files"], [path])
 
 
 if __name__ == "__main__":

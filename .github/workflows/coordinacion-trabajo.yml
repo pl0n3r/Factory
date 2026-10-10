@@ -5,7 +5,7 @@ on:
     - cron: '17 * * * *'
   workflow_dispatch:
   pull_request:
-    types: [opened, ready_for_review, converted_to_draft, closed]
+    types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, closed]
   issues:
     types: [labeled, closed, reopened, edited]
   issue_comment:
@@ -98,6 +98,133 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/coordinar_trabajo.py label-event             --repo "$REPOSITORIO"             --issue "$ISSUE"             --actor "$ACTOR"             --label "$LABEL"
+
+  claims-pr:
+    name: Validar claims V3 del PR
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      # Consulta metadatos autenticados, nunca ejecuta archivos del PR.
+      - name: Validar scope V3 por API confiable y HEAD exacto
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, unicodedata
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
+          
+          repo, number = os.environ["REPOSITORIO"], int(os.environ["PR"])
+          expected = os.environ["EXPECTED_HEAD"]
+          token = os.environ["GH_TOKEN"]
+          
+          def get(path):
+              req = Request("https://api.github.com" + path, headers={
+                  "Authorization": "Bearer " + token,
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              })
+              with urlopen(req, timeout=15) as response:
+                  return json.load(response)
+          
+          pr_path = f"/repos/{repo}/pulls/{number}"
+          before = get(pr_path)
+          head, base = before.get("head") or {}, before.get("base") or {}
+          branch = head.get("ref") or ""
+          match = re.fullmatch(r"trabajo/issue-([1-9][0-9]*)", branch)
+          assert (before.get("state") == "open" and match
+                  and head.get("sha") == expected and base.get("ref") == "main"
+                  and (head.get("repo") or {}).get("full_name") == repo), "PR identity mismatch"
+          issue = int(match.group(1))
+          count = before.get("changed_files")
+          assert type(count) is int and 1 <= count <= 3000, "missing or excessive diff"
+          
+          def latest_lease():
+              selected = None
+              for page in range(1, 51):
+                  comments = get(f"/repos/{repo}/issues/{issue}/comments?per_page=100&page={page}")
+                  assert isinstance(comments, list), "unreadable comments"
+                  for comment in comments:
+                      if (comment.get("user") or {}).get("login") != "github-actions[bot]":
+                          continue
+                      markers = re.findall(r"<!-- condor-reserva (\{[^{}]*\}) -->", comment.get("body") or "")
+                      if markers:
+                          assert len(markers) == 1, "duplicate reservation marker"
+                          selected = json.loads(markers[0])
+                  if len(comments) < 100:
+                      return selected
+              raise RuntimeError("reservation comments exceed read bound")
+          
+          lease = latest_lease()
+          assert isinstance(lease, dict) and lease.get("version") == 3
+          assert lease.get("active") is True and lease.get("branch") == branch
+          assert re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}",
+                              lease.get("reservation_id") or "")
+          claims = lease.get("task_paths")
+          assert isinstance(claims, list) and claims, "missing V3 paths"
+          
+          def canonical(path, directory=False):
+              assert isinstance(path, str) and path
+              assert not path.startswith(("/", "./")) and "\x00" not in path
+              assert all(part not in ("", ".", "..") for part in path.rstrip("/").split("/"))
+              if directory:
+                  assert path.endswith("/")
+              return unicodedata.normalize("NFC", path.casefold())
+          
+          files = []
+          seen_rows = 0
+          for page in range(1, 31):
+              rows = get(f"/repos/{repo}/pulls/{number}/files?per_page=100&page={page}")
+              assert isinstance(rows, list) and 1 <= len(rows) <= 100, "diff truncated"
+              for row in rows:
+                  name = row.get("filename")
+                  canonical(name)
+                  assert not name.endswith("/"), "invalid diff filename"
+                  files.append(name)
+                  if row.get("status") == "renamed":
+                      old = row.get("previous_filename")
+                      canonical(old)
+                      files.append(old)
+              seen_rows += len(rows)
+              assert seen_rows <= count, "diff exceeds declared changed_files"
+              if seen_rows == count:
+                  break
+              assert len(rows) == 100, "diff truncated before expected count"
+          assert seen_rows == count and len(set(files)) == len(files), "incomplete or duplicate diff"
+          
+          def covered(filename):
+              f = canonical(filename)
+              for claim in claims:
+                  c = canonical(claim)
+                  if claim.endswith("/"):
+                      if f.startswith(c):
+                          return True
+                  elif f == c:
+                      return True
+              return False
+          
+          assert all(covered(path) for path in files), "PR edits outside V3 task_paths"
+          after = get(pr_path)
+          assert ((after.get("head") or {}).get("sha") == expected
+                  and (after.get("base") or {}).get("sha") == base.get("sha")
+                  and after.get("changed_files") == count
+                  and latest_lease() == lease), "PR or lease changed during validation"
+          ref = quote(branch, safe="")
+          actual = get(f"/repos/{repo}/git/ref/heads/{ref}")
+          assert (actual.get("object") or {}).get("sha") == expected, "branch drift"
+          print(f"PR #{number}: exact-HEAD diff contained by V3 claims ({len(files)} paths)")
+          PY
 
   estado-pr:
     name: Sincronizar estado desde PR

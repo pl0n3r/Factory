@@ -113,7 +113,12 @@ class FakeGitHub:
     def issue(self, number: int) -> dict:
         """Devuelve el Issue falso o una dependencia configurada."""
         if number == 12:
-            return self.issue_data
+            return {
+                **self.issue_data,
+                "assignees": [
+                    {"login": login} for login in sorted(self.assignees)
+                ],
+            }
         if number in self.related_issues:
             return self.related_issues[number]
         raise AssertionError(f"Issue falso desconocido: {number}")
@@ -358,6 +363,36 @@ class WorkflowCoordinacionTests(unittest.TestCase):
             block.append(line)
 
         return "\n".join(block)
+
+    def test_pr_synchronize_revalidates_scope_read_only(self) -> None:
+        """Cada push en PR interno se inspecciona sin token de escritura."""
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github" / "workflows" / "coordinacion-trabajo.yml"
+        ).read_text(encoding="utf-8")
+        events = self.yaml_block(workflow, "pull_request:", 2)
+        for action in ("opened", "synchronize", "reopened", "edited"):
+            self.assertIn(action, events)
+        job = self.yaml_block(workflow, "claims-pr:", 2)
+        self.assertIn("github.event.action != 'closed'", job)
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            job,
+        )
+        permissions = self.yaml_block(job, "permissions:", 4)
+        for permission in ("contents: read", "issues: read", "pull-requests: read"):
+            self.assertIn(permission, permissions)
+        self.assertNotIn("write", permissions)
+        self.assertNotIn("actions/checkout", job)
+        self.assertNotIn("persist-credentials", job)
+        self.assertIn("python3 - <<'PY'", job)
+        self.assertIn("https://api.github.com", job)
+        self.assertIn("latest_lease()", job)
+        self.assertIn("task_paths", job)
+        self.assertIn(
+            "EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}",
+            job,
+        )
 
     def test_issue_comment_routes_only_supported_commands_to_coordinator(self) -> None:
         """El job correcto recibe el evento, identidad y argumentos esperados."""
@@ -2868,6 +2903,42 @@ class CoordinacionTests(unittest.TestCase):
                 payload = self._reservation_payload_for_version(version)
                 self.assertFalse(coordinator.valid_reservation_payload(payload))
 
+    def test_v3_reservation_rejects_invalid_or_duplicate_claims(self) -> None:
+        """Una lease no debe tener autoridad sobre rutas que el plan rechaza."""
+        valid = self._reservation_payload_for_version(3)
+        for paths in (
+            ["../secrets.txt"], ["/etc/passwd"], ["src/../other.py"],
+            ["src//file.py"], ["src/./"], ["src/file.py", "src/file.py"],
+            ["src/glob*.py"], ["src/path\\\\file.py"], ["./README.md"],
+            ["docs/x.md"] * 51, [42],
+        ):
+            with self.subTest(paths=paths):
+                payload = {**valid, "task_paths": paths}
+                self.assertFalse(coordinator.valid_reservation_payload(payload))
+                body = (
+                    f"<!-- {coordinator.PROFILE.marker} "
+                    f"{json.dumps(payload, separators=(',', ':'))} -->"
+                )
+                self.assertIsNone(coordinator.reservation_from_text(body))
+        for dependencies in ([12, 12], [12, True], [1.0], [-1], [1] * 51):
+            with self.subTest(dependencies=dependencies):
+                payload = {**valid, "task_depends_on": dependencies}
+                self.assertFalse(coordinator.valid_reservation_payload(payload))
+
+    def test_v3_reservation_keeps_canonical_file_and_directory_claims(self) -> None:
+        payload = self._reservation_payload_for_version(3)
+        payload["task_paths"] = ["src/", "docs/README.md"]
+        payload["task_depends_on"] = [12, 13]
+        self.assertTrue(coordinator.valid_reservation_payload(payload))
+        body = (
+            f"<!-- {coordinator.PROFILE.marker} "
+            f"{json.dumps(payload, separators=(',', ':'))} -->"
+        )
+        self.assertEqual(
+            coordinator.reservation_from_text(body)["task_paths"],
+            ["src/", "docs/README.md"],
+        )
+
     def test_reservation_versions_v1_v2_v3_remain_canonical(self) -> None:
         """AC-03: los tres contratos enteros existentes conservan compatibilidad."""
         for version in (1, 2, 3):
@@ -3694,6 +3765,799 @@ class CoordinationTests(unittest.TestCase):
                     f"<!-- condor-reserva-id: {SESSION_B} -->",
                     updated,
                 )
+
+
+
+
+class V3ClaimScopePRTests(unittest.TestCase):
+    """Un push posterior no puede ampliar archivos sin nueva autoridad V3."""
+
+    def make_api(self, files=None, claims=None):
+        api = FakeGitHub()
+        sha = "a" * 40
+        api.branches["trabajo/issue-12"] = sha
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "body": f"Closes #12\\n<!-- condor-reserva-id: {SESSION_A} -->",
+            "head": {"ref": "trabajo/issue-12", "sha": sha},
+            "base": {"ref": "main", "sha": "b" * 40},
+        }
+        body = reservation_marker(
+            "pl0n3r", SESSION_A, "trabajo/issue-12", True, "tomar",
+            "c" * 64, task_snapshot={
+                "task_marker_sha256": "d" * 64,
+                "task_paths": claims or ["src/", "docs/README.md"],
+                "task_depends_on": [],
+            },
+        )
+        api.comments.append({
+            "user": {"login": BOT}, "body": body,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        proof = {
+            "complete": True, "head_sha": sha, "base_sha": "b" * 40,
+            "files": files if files is not None else [
+                "src/core.py", "docs/README.md"
+            ],
+        }
+        return api, proof
+
+    def test_file_and_directory_claims_allow_only_scoped_diff(self) -> None:
+        api, proof = self.make_api()
+        with patch.object(api, "pull_files_exact_head",
+                          return_value=proof, create=True):
+            coordinator.validate_pr_claims(api, 15)
+        self.assertEqual(api.status_history, [])
+        self.assertEqual(api.assignees, set())
+
+    def test_push_with_unclaimed_file_or_rename_source_fails_closed(self) -> None:
+        for unclaimed in ("secrets/.env", "src2/Config.php"):
+            with self.subTest(unclaimed=unclaimed):
+                api, proof = self.make_api(
+                    files=["src/core.py", unclaimed],
+                )
+                with patch.object(api, "pull_files_exact_head",
+                                  return_value=proof, create=True):
+                    with self.assertRaisesRegex(
+                        CoordinationError, "fuera de la lease V3"
+                    ):
+                        coordinator.validate_pr_claims(api, 15)
+
+    def test_empty_or_stale_proof_and_untrusted_lease_fail_closed(self) -> None:
+        for changed in ({"files": []}, {"head_sha": "e" * 40},
+                        {"complete": False}):
+            with self.subTest(changed=changed):
+                api, proof = self.make_api()
+                proof.update(changed)
+                with patch.object(api, "pull_files_exact_head",
+                                  return_value=proof, create=True):
+                    with self.assertRaisesRegex(
+                        CoordinationError, "Diff exact-HEAD"
+                    ):
+                        coordinator.validate_pr_claims(api, 15)
+        api, proof = self.make_api()
+        api.comments[-1]["user"]["login"] = "untrusted"
+        with patch.object(api, "pull_files_exact_head",
+                          return_value=proof, create=True):
+            with self.assertRaisesRegex(CoordinationError, "sin lease V3"):
+                coordinator.validate_pr_claims(api, 15)
+
+    def test_push_or_lease_rotation_during_read_fails_closed(self) -> None:
+        for mode in ("head", "lease", "branch"):
+            with self.subTest(mode=mode):
+                api, proof = self.make_api()
+                def read_proof(number):
+                    if mode == "head":
+                        api.pulls[15]["head"]["sha"] = "e" * 40
+                    elif mode == "lease":
+                        api.comments[-1]["body"] = api.comments[-1]["body"].replace(
+                            SESSION_A, SESSION_B
+                        )
+                    else:
+                        api.branches["trabajo/issue-12"] = "e" * 40
+                    return proof
+                with patch.object(api, "pull_files_exact_head",
+                                  side_effect=read_proof, create=True):
+                    with self.assertRaisesRegex(
+                        CoordinationError,
+                        "Diff exact-HEAD|cambió durante validación",
+                    ):
+                        coordinator.validate_pr_claims(api, 15)
+
+
+class ExactHeadPullFileEvidenceTests(unittest.TestCase):
+    """Pruebas HTTP simuladas de diff de PR paginado exact-HEAD (#1081)."""
+
+    def _read(self, pages, *, metadata=None, after=None):
+        api = GitHub("pl0n3r/Factory", token="fake-test-token")
+        first = {
+            "number": 42, "state": "open",
+            "base": {"ref": "main", "sha": "b" * 40},
+            "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40},
+            "changed_files": sum(len(page) for page in pages if isinstance(page, list)),
+        }
+        if metadata:
+            first.update(metadata)
+        observed = [first, first if after is None else after]
+        calls = []
+
+        def fake_pull(number):
+            self.assertEqual(number, 42)
+            return observed.pop(0)
+
+        def fake_request(method, path):
+            self.assertEqual(method, "GET")
+            calls.append(path)
+            self.assertIn("per_page=100", path)
+            self.assertEqual(len(calls), int(path.split("page=")[-1]))
+            return pages[len(calls) - 1] if len(calls) <= len(pages) else []
+
+        with patch.object(api, "pull", side_effect=fake_pull), patch.object(
+            api, "request", side_effect=fake_request
+        ):
+            return api.pull_files_exact_head(42)
+
+    def test_evidence_paginates_100_plus_last_page_exact_sha(self) -> None:
+        first = [
+            {"filename": f"src/page_{i:03}.py", "status": "modified"}
+            for i in range(100)
+        ]
+        evidence = self._read([first, [{"filename": "src/final.py", "status": "added"}]])
+        self.assertTrue(evidence["complete"])
+        self.assertEqual(evidence["head_sha"], "a" * 40)
+        self.assertEqual(len(evidence["files"]), 101)
+        self.assertIn("src/final.py", evidence["files"])
+
+    def test_evidence_accepts_exact_100_file_page_without_empty_page(self) -> None:
+        rows = [{"filename": f"src/{i}.py"} for i in range(100)]
+        evidence = self._read([rows])
+        self.assertEqual(len(evidence["files"]), 100)
+
+    def test_rename_includes_source_and_destination_for_collision(self) -> None:
+        evidence = self._read([[
+            {"filename": "src/new.py", "status": "renamed",
+             "previous_filename": "src/old.py"}
+        ]])
+        self.assertEqual(evidence["files"], ["src/new.py", "src/old.py"])
+
+    def test_missing_rename_source_or_invalid_path_fails_closed(self) -> None:
+        bad = (
+            {"filename": "src/new.py", "status": "renamed"},
+            {"filename": "../secret.py"},
+            {"filename": "src/a\x00.py"},
+            {"filename": "src/a.py", "status": "renamed",
+             "previous_filename": "/invalid.py"},
+        )
+        for item in bad:
+            with self.subTest(item=item), self.assertRaises(CoordinationError):
+                self._read([[item]])
+
+    def test_literal_glob_backslash_and_long_filenames_are_valid(self) -> None:
+        long_name = "src/" + "x" * 250 + ".tsx"
+        names = ["pages/[id].tsx", "src/thing{a}*?.py",
+                 r"src/back\slash.py", long_name]
+        evidence = self._read([[{"filename": value} for value in names]])
+        self.assertEqual(evidence["files"], sorted(names))
+
+    def test_zero_changed_files_is_complete_empty_evidence(self) -> None:
+        evidence = self._read([], metadata={"changed_files": 0})
+        self.assertTrue(evidence["complete"])
+        self.assertEqual(evidence["files"], [])
+
+    def test_truncated_duplicate_or_invalid_page_fails_closed(self) -> None:
+        cases = (
+            [[{"filename": "src/a.py"}]],
+            [[{"filename": "src/a.py"}, {"filename": "src/a.py"}]],
+            [[{"filename": "src/a.py"}], None],
+        )
+        for pages in cases:
+            with self.subTest(pages=pages):
+                if len(pages) == 1 and len(pages[0]) == 1:
+                    meta = {"changed_files": 2}
+                else:
+                    meta = {"changed_files": 2}
+                with self.assertRaises(CoordinationError):
+                    self._read(pages, metadata=meta)
+
+    def test_missing_metadata_and_sha_swap_fail_closed(self) -> None:
+        row = [{"filename": "src/a.py"}]
+        with self.assertRaises(CoordinationError):
+            self._read([row], metadata={"changed_files": None})
+        with self.assertRaises(CoordinationError):
+            self._read([row], metadata={"changed_files": 3001})
+        stale = {
+            "number": 42, "state": "open",
+            "base": {"ref": "main", "sha": "b" * 40},
+            "head": {"ref": "trabajo/issue-1081", "sha": "c" * 40},
+            "changed_files": 1,
+        }
+        with self.assertRaisesRegex(CoordinationError, "HEAD/BASE"):
+            self._read([row], after=stale)
+        moved_base = {
+            **stale, "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40},
+            "base": {"ref": "dev", "sha": "b" * 40},
+        }
+        with self.assertRaisesRegex(CoordinationError, "HEAD/BASE"):
+            self._read([row], after=moved_base)
+
+
+
+class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
+    """La puerta real de PR usa archivos+HEAD y falla cerrado sobre drift."""
+
+    def _validate(self, *, same_file=False, drift=False, incomplete=False):
+        api = GitHub("pl0n3r/Factory", token="fake-test-token")
+        proofs = {
+            42: {
+                "head_sha": "a" * 40,
+                "base_sha": "b" * 40,
+                "files": ["src/first.py"],
+                "complete": True,
+            },
+            43: {
+                "head_sha": "c" * 40,
+                "base_sha": "b" * 40,
+                "files": ["src/first.py" if same_file else "src/second.py"],
+                "complete": True,
+            },
+        }
+
+        def fake_evidence(number):
+            if incomplete:
+                raise CoordinationError("diff incompleto")
+            return proofs[number]
+
+        def fake_pull(number):
+            head = proofs[number]["head_sha"]
+            if number == 42 and drift:
+                head = "d" * 40
+            return {
+                "state": "open",
+                "head": {"sha": head, "ref": f"trabajo/issue-{number}"},
+                "base": {"ref": "main", "sha": "b" * 40},
+            }
+
+        with patch.object(api, "pull_files_exact_head", side_effect=fake_evidence), (
+            patch.object(
+                api, "open_pulls", return_value=[
+                    {"number": 42, "base": {"ref": "main"}},
+                    {"number": 43, "base": {"ref": "main"}},
+                ]
+            )
+        ), patch.object(api, "pull", side_effect=fake_pull):
+            return coordinator.collision_validation_errors(api, 42)
+
+    def test_exact_pr_collision_allows_fully_disjoint_changed_files(self) -> None:
+        self.assertEqual(self._validate(), [])
+
+    def test_exact_pr_collision_blocks_same_changed_file(self) -> None:
+        errors = self._validate(same_file=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("PR #43", errors[0])
+        self.assertIn("src/first.py", errors[0])
+
+    def test_exact_pr_collision_rechecks_all_heads(self) -> None:
+        with self.assertRaisesRegex(CoordinationError, "SHA cambió"):
+            self._validate(drift=True)
+
+    def test_exact_pr_collision_fails_closed_on_missing_diff(self) -> None:
+        with self.assertRaisesRegex(CoordinationError, "diff incompleto"):
+            self._validate(incomplete=True)
+
+
+
+
+class GranularReservePreflightTests(unittest.TestCase):
+    """El /tomar todavía no se amplía: prueba la fuente exacta de permisos."""
+
+    def _check(self, *, changed=None, branch_sha=None, lease_version=3,
+               include_snapshot=True, sha_in_pr=None,
+               head_repo="pl0n3r/Factory", pr_state="open"):
+        api = FakeGitHub()
+        api.repo = "pl0n3r/Factory"
+        observed = "a" * 40
+        api.branches["trabajo/issue-50"] = branch_sha or observed
+        api.pulls[51] = {
+            "number": 51, "state": pr_state,
+            "head": {"ref": "trabajo/issue-50", "sha": sha_in_pr or observed,
+                     "repo": {"full_name": head_repo}},
+            "base": {"ref": "main", "sha": "b" * 40},
+        }
+        lease = {
+            "version": lease_version, "active": True,
+            "branch": "trabajo/issue-50",
+            "reservation_id": SESSION_A,
+        }
+        other = {50: {"paths": ["src/"], "depends_on": []}} if include_snapshot else {}
+        files = changed if changed is not None else ["src/current.php"]
+        def proof(number):
+            self.assertEqual(number, 51)
+            return {
+                "head_sha": observed, "base_sha": "b" * 40,
+                "files": files, "complete": True,
+            }
+        with patch.object(api, "pull_files_exact_head", side_effect=proof, create=True):
+            return coordinator.verified_parallel_file_evidence(
+                api,
+                {"paths": ["src/next.php"], "depends_on": []},
+                {50: lease}, other,
+            )
+
+    def test_granular_preflight_accepts_disjoint_file_with_v3_pr(self) -> None:
+        safe, notes, pins = self._check()
+        self.assertEqual(safe, {50})
+        self.assertEqual(pins[50], (SESSION_A, "a" * 40, 51, "b" * 40))
+        self.assertIn("PR #51@", notes[0])
+
+    def test_granular_preflight_denies_same_file(self) -> None:
+        safe, notes, pins = self._check(changed=["src/next.php"])
+        self.assertEqual((safe, notes, pins), (set(), [], {}))
+
+    def test_granular_preflight_fails_closed_legacy_lease_without_snapshot(self) -> None:
+        safe, notes, pins = self._check(lease_version=2, include_snapshot=False)
+        self.assertEqual((safe, notes, pins), (set(), [], {}))
+
+    def test_granular_preflight_denies_fork_or_closed_pr(self) -> None:
+        for override in (
+            {"head_repo": "unauthorized/fork"},
+            {"head_repo": None},
+            {"pr_state": "closed"},
+        ):
+            with self.subTest(override=override):
+                safe, notes, pins = self._check(**override)
+                self.assertEqual((safe, notes, pins), (set(), [], {}))
+
+    def test_granular_preflight_denies_branch_sha_or_pr_sha_drift(self) -> None:
+        for override in ({"branch_sha": "c" * 40}, {"sha_in_pr": "c" * 40}):
+            with self.subTest(override=override):
+                safe, notes, pins = self._check(**override)
+                self.assertEqual((safe, notes, pins), (set(), [], {}))
+
+
+
+class GranularReserveWorkIntegrationTests(unittest.TestCase):
+    """La concesión real exige V3, exact-HEAD y una segunda comprobación."""
+
+    def _ready_api(self, *, legacy=False, candidate_paths=None, changed=None):
+        from scripts.orquestador_kit import PlannedTask, build_task_marker
+
+        def issue_body(number, paths):
+            task = PlannedTask(
+                key=f"LEAF_{number}", title=f"Leaf {number}", owner="pl0n3r",
+                paths=tuple(paths), depends_on=(),
+            )
+            marker = build_task_marker(
+                epic=12, task=task, order=number,
+                roles=["ingenieria-software"], dependency_issues=[],
+            )
+            return (
+                VALID_ACCEPTANCE_BODY
+                + "\n### Rutas reclamadas\n"
+                + "\n".join(f"- {p}" for p in paths)
+                + "\n" + marker
+            )
+
+        api = FakeGitHub()
+        api.repo = "pl0n3r/Factory"
+        api.issue_data["body"] = issue_body(12, candidate_paths or ["src/next.php"])
+        active_body = issue_body(50, ["src/"])
+        active_issue = {
+            "number": 50, "state": "open", "state_reason": None,
+            "labels": [{"name": STATUS_RESERVED}], "body": active_body,
+        }
+        api.open_issue_data = [api.issue_data, active_issue]
+        active_sha = "a" * 40
+        api.branches["trabajo/issue-50"] = active_sha
+        api.pulls[51] = {
+            "number": 51, "state": "open",
+            "head": {
+                "ref": "trabajo/issue-50", "sha": active_sha,
+                "repo": {"full_name": api.repo},
+            },
+            "base": {"ref": "main", "sha": "b" * 40},
+        }
+        active_marker = coordinator.parse_task_marker(active_body)
+        lease = coordinator.reservation_marker(
+            "pl0n3r", SESSION_A, "trabajo/issue-50", True, "tomar",
+            contract_fingerprint(active_body),
+            None if legacy else active_marker,
+        )
+        trusted = [{
+            "body": lease, "user": {"login": BOT},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }]
+        original_comments = api.issue_comments
+
+        def issue_comments(number):
+            return trusted if number == 50 else original_comments(number)
+
+        def diff_reader(number):
+            self.assertEqual(number, 51)
+            return {
+                "head_sha": active_sha, "base_sha": "b" * 40,
+                "complete": True,
+                "files": changed if changed is not None else ["src/current.php"],
+            }
+        return api, issue_comments, diff_reader
+
+    def test_tomar_rechecks_unpinned_active_lease_uuid_after_branch(self) -> None:
+        """Una rotación ajena no conserva autoridad solo por ser el mismo Issue."""
+        api, previous_comments, exact_diff = self._ready_api(
+            candidate_paths=["docs/next.md"]
+        )
+        mutated = False
+        original_create = api.create_branch
+
+        def rotated_comments(number):
+            rows = previous_comments(number)
+            if number != 50 or not mutated:
+                return rows
+            return [
+                {**row, "body": row["body"].replace(SESSION_A, SESSION_B)}
+                for row in rows
+            ]
+
+        def rotate_after_branch(branch, sha):
+            nonlocal mutated
+            created = original_create(branch, sha)
+            mutated = True
+            return created
+
+        with patch.object(api, "issue_comments", side_effect=rotated_comments), (
+            patch.object(api, "pull_files_exact_head", side_effect=exact_diff,
+                         create=True)
+        ), patch.object(api, "create_branch", side_effect=rotate_after_branch):
+            with self.assertRaisesRegex(
+                CoordinationError, "Lease #50 cambió"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.status_history, [])
+        self.assertEqual(api.assignees, set())
+
+    def test_tomar_denies_ambiguous_available_with_other_statuses(self) -> None:
+        """Un label disponible no oculta reservado, revisión ni estado inglés."""
+        for other_status in (
+            STATUS_RESERVED, STATUS_REVIEW, STATUS_CANCELLED,
+            "status: reserved", "status: in review",
+        ):
+            with self.subTest(other_status=other_status):
+                api = FakeGitHub()
+                api.issue_data["labels"].append({"name": other_status})
+                with self.assertRaisesRegex(
+                    CoordinationError, "no está disponible"
+                ):
+                    reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertEqual(api.comments, [])
+
+    def test_tomar_rechecks_dual_state_after_branch_creation(self) -> None:
+        """Aparece 'reservado' sin desaparecer 'disponible': no conceder."""
+        for other_status in (STATUS_RESERVED, STATUS_REVIEW, "status: reserved"):
+            with self.subTest(other_status=other_status):
+                api = FakeGitHub()
+                original_create = api.create_branch
+
+                def add_other_status(branch, sha):
+                    created = original_create(branch, sha)
+                    api.issue_data["labels"].append({"name": other_status})
+                    return created
+
+                with patch.object(api, "create_branch", side_effect=add_other_status):
+                    with self.assertRaisesRegex(
+                        CoordinationError, "candidato cambió"
+                    ):
+                        reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.assignees, set())
+                self.assertEqual(api.status_history, [])
+
+    def test_tomar_rechecks_candidate_even_without_parallel_pins(self) -> None:
+        """Un cambio tras crear la rama no puede terminar en una lease."""
+        for change in ("blocked", "recovery", "closed", "contract"):
+            with self.subTest(change=change):
+                api = FakeGitHub()
+                original_create = api.create_branch
+
+                def change_after_branch(branch, sha):
+                    created = original_create(branch, sha)
+                    if change == "blocked":
+                        api.set_status(12, STATUS_BLOCKED)
+                    elif change == "recovery":
+                        api.set_status(12, STATUS_RECOVERY)
+                    elif change == "closed":
+                        api.issue_data["state"] = "closed"
+                    else:
+                        api.issue_data["body"] = (
+                            VALID_ACCEPTANCE_BODY.replace(
+                                "El gate base pasa.", "El contrato cambió."
+                            )
+                        )
+                    return created
+
+                with patch.object(api, "create_branch",
+                                  side_effect=change_after_branch):
+                    with self.assertRaisesRegex(
+                        CoordinationError, "candidato cambió"
+                    ):
+                        reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.assignees, set())
+                if change in ("blocked", "recovery"):
+                    self.assertEqual(api.status_history, [
+                        STATUS_BLOCKED if change == "blocked" else STATUS_RECOVERY
+                    ])
+                else:
+                    self.assertEqual(api.status_history, [])
+
+    def test_tomar_rechecks_dependency_after_creating_branch(self) -> None:
+        """Una dependencia reabierta invalida un plan inicialmente válido."""
+        from scripts.orquestador_kit import PlannedTask, build_task_marker
+
+        api = FakeGitHub()
+        task = PlannedTask(
+            key="DEPENDENT_12", title="Trabajo dependiente",
+            owner="pl0n3r", paths=("docs/next.md",), depends_on=(26,),
+        )
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY
+            + "\n### Rutas reclamadas\n- docs/next.md\n"
+            + build_task_marker(
+                epic=12, task=task, order=12,
+                roles=["ingenieria-software"], dependency_issues=[26],
+            )
+        )
+        dependency = {
+            "number": 26, "state": "closed", "state_reason": "completed",
+            "labels": [{"name": STATUS_COMPLETED}],
+            "body": "Dependencia finalizada.",
+        }
+        api.related_issues[26] = dependency
+        original_create = api.create_branch
+
+        def reopen_after_branch(branch, sha):
+            created = original_create(branch, sha)
+            dependency["state"] = "open"
+            dependency["labels"] = [{"name": STATUS_BLOCKED}]
+            return created
+
+        with patch.object(api, "create_branch",
+                          side_effect=reopen_after_branch):
+            with self.assertRaisesRegex(
+                CoordinationError, "Dependencia #26 cambió"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.status_history, [])
+
+    def test_tomar_rechecks_completed_dependency_reason_before_publishing(self) -> None:
+        """Closed + completed no es igual a closed + not_planned."""
+        from scripts.orquestador_kit import PlannedTask, build_task_marker
+
+        api = FakeGitHub()
+        task = PlannedTask(
+            key="DEPENDENT_REASON_12", title="Dependencia con motivo",
+            owner="pl0n3r", paths=("docs/next.md",), depends_on=(26,),
+        )
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY
+            + "\n### Rutas reclamadas\n- docs/next.md\n"
+            + build_task_marker(
+                epic=12, task=task, order=12,
+                roles=["ingenieria-software"], dependency_issues=[26],
+            )
+        )
+        dependency = {
+            "number": 26, "state": "closed", "state_reason": "completed",
+            "labels": [{"name": STATUS_COMPLETED}],
+            "body": "Dependencia finalizada.",
+        }
+        api.related_issues[26] = dependency
+        original_create = api.create_branch
+
+        def reason_changed_after_branch(branch, sha):
+            created = original_create(branch, sha)
+            dependency["state_reason"] = "not_planned"
+            return created
+
+        with patch.object(api, "create_branch",
+                          side_effect=reason_changed_after_branch):
+            with self.assertRaisesRegex(
+                CoordinationError, "Dependencia #26 cambió"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.status_history, [])
+        self.assertEqual(api.assignees, set())
+
+    def test_tomar_rejects_future_collision_even_when_current_diff_is_disjoint(self) -> None:
+        # La lease src/ puede editar src/next.php después de leer el PR.
+        api, comments, diff = self._ready_api()
+        with patch.object(api, "issue_comments", side_effect=comments), (
+            patch.object(api, "pull_files_exact_head", side_effect=diff, create=True)
+        ):
+            with self.assertRaisesRegex(CoordinationError, "colisión con tarea activa"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.status_history, [])
+
+    def test_tomar_still_denies_legacy_v2_without_snapshot(self) -> None:
+        api, comments, diff = self._ready_api(legacy=True)
+        with patch.object(api, "issue_comments", side_effect=comments), (
+            patch.object(api, "pull_files_exact_head", side_effect=diff, create=True)
+        ):
+            with self.assertRaisesRegex(CoordinationError, "sin claims fijados"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_tomar_denies_same_file_modified_by_active_branch(self) -> None:
+        api, comments, diff = self._ready_api(changed=["src/next.php"])
+        with patch.object(api, "issue_comments", side_effect=comments), (
+            patch.object(api, "pull_files_exact_head", side_effect=diff, create=True)
+        ):
+            with self.assertRaisesRegex(CoordinationError, "colisión con tarea activa"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_tomar_denies_directory_scoped_candidate(self) -> None:
+        api, comments, diff = self._ready_api(candidate_paths=["src/"])
+        with patch.object(api, "issue_comments", side_effect=comments), (
+            patch.object(api, "pull_files_exact_head", side_effect=diff, create=True)
+        ):
+            with self.assertRaisesRegex(CoordinationError, "colisión con tarea activa"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+
+    def test_failed_comment_preserves_preexisting_assignee(self) -> None:
+        """Un actor asignado antes de /tomar no se retira en el rollback."""
+        api = FakeGitHub()
+        api.assignees.add("pl0n3r")
+        api.fail_comment = True
+        with self.assertRaisesRegex(CoordinationError, "fallo simulado"):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertEqual(api.assignees, {"pl0n3r"})
+        self.assertEqual(api.status_history, [STATUS_RESERVED, STATUS_AVAILABLE])
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_failed_comment_does_not_reopen_other_sessions_block(self) -> None:
+        """Bloqueado por otra sesión se preserva pese a la excepción."""
+        api = FakeGitHub()
+        original_comment = api.comment
+
+        def other_session_blocks(number, body):
+            api.set_status(12, STATUS_BLOCKED)
+            raise CoordinationError("fallo después del bloqueo")
+
+        with patch.object(api, "comment", side_effect=other_session_blocks):
+            with self.assertRaisesRegex(CoordinationError, "después del bloqueo"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertEqual(api.status_history, [STATUS_RESERVED, STATUS_BLOCKED])
+        self.assertEqual(api.assignees, {"pl0n3r"})
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_failed_comment_does_not_delete_changed_branch(self) -> None:
+        """No borrar un HEAD que avanzó de forma concurrente."""
+        api = FakeGitHub()
+
+        def third_party_advances(number, body):
+            api.branches["trabajo/issue-12"] = "e" * 40
+            raise CoordinationError("fallo con commit ajeno")
+
+        with patch.object(api, "comment", side_effect=third_party_advances):
+            with self.assertRaisesRegex(CoordinationError, "commit ajeno"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertEqual(api.branches["trabajo/issue-12"], "e" * 40)
+        # Sin autoridad sobre el HEAD avanzado tampoco se publica disponible.
+        self.assertEqual(api.status_history, [STATUS_RESERVED])
+        self.assertEqual(api.assignees, {"pl0n3r"})
+
+    def test_ambiguous_posted_marker_preserves_live_reservation(self) -> None:
+        """Un timeout después de publicar no permite borrar la lease."""
+        api = FakeGitHub()
+        original_comment = api.comment
+
+        def posted_but_timeout(number, body):
+            original_comment(number, body)
+            raise CoordinationError("timeout tras publicar")
+
+        with patch.object(api, "comment", side_effect=posted_but_timeout):
+            with self.assertRaisesRegex(CoordinationError, "timeout tras publicar"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.status_history, [STATUS_RESERVED])
+        self.assertEqual(api.assignees, {"pl0n3r"})
+        self.assertIsNotNone(active_reservation(api, 12))
+
+    def test_pre_publish_success_still_rejects_candidate_head_drift(self) -> None:
+        """Preflight OK no autoriza registrar una rama que otro actor avanzó."""
+        api = FakeGitHub()
+
+        def advance_during_successful_preflight():
+            api.branches["trabajo/issue-12"] = "f" * 40
+
+        with self.assertRaisesRegex(
+            CoordinationError, "HEAD de rama candidata cambió"
+        ):
+            coordinator.reserve_available_work(
+                api, 12, "pl0n3r", "trabajo/issue-12",
+                contract_fingerprint(VALID_ACCEPTANCE_BODY),
+                pre_publish_check=advance_during_successful_preflight,
+            )
+        self.assertEqual(api.branches["trabajo/issue-12"], "f" * 40)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.status_history, [])
+        self.assertEqual(api.assignees, set())
+
+    def test_pre_publish_failure_preserves_concurrent_branch_commit(self) -> None:
+        """La limpieza de una reserva no borra un HEAD ajeno posterior."""
+        api = FakeGitHub()
+
+        def failed_recheck():
+            api.branches["trabajo/issue-12"] = "f" * 40
+            raise CoordinationError("preflight inválido")
+
+        with self.assertRaisesRegex(CoordinationError, "preflight inválido"):
+            coordinator.reserve_available_work(
+                api, 12, "pl0n3r", "trabajo/issue-12",
+                contract_fingerprint(VALID_ACCEPTANCE_BODY),
+                pre_publish_check=failed_recheck,
+            )
+        self.assertEqual(api.branches["trabajo/issue-12"], "f" * 40)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.assignees, set())
+        self.assertEqual(api.status_history, [])
+
+    def test_failed_initial_assignee_read_deletes_only_own_branch(self) -> None:
+        """Un fallo temporal al leer assignees no fabrica una reserva."""
+        api = FakeGitHub()
+        original_issue = api.issue
+        reads = 0
+
+        def transient_issue(number):
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                raise CoordinationError("lectura de assignees fallida")
+            return original_issue(number)
+
+        with patch.object(api, "issue", side_effect=transient_issue):
+            with self.assertRaisesRegex(
+                CoordinationError, "lectura de assignees fallida"
+            ):
+                coordinator.reserve_available_work(
+                    api, 12, "pl0n3r", "trabajo/issue-12",
+                    contract_fingerprint(VALID_ACCEPTANCE_BODY),
+                )
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.assignees, set())
+        self.assertEqual(api.status_history, [])
+
+    def test_pre_publish_failure_preserves_blocked_status_and_assignee(self) -> None:
+        api = FakeGitHub()
+        api.assignees.add("pl0n3r")
+
+        def concurrent_block():
+            api.set_status(12, STATUS_BLOCKED)
+            raise CoordinationError("Issue candidato cambió durante /tomar.")
+
+        with self.assertRaisesRegex(CoordinationError, "candidato cambió"):
+            coordinator.reserve_available_work(
+                api, 12, "pl0n3r", "trabajo/issue-12",
+                contract_fingerprint(VALID_ACCEPTANCE_BODY),
+                pre_publish_check=concurrent_block,
+            )
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.status_history, [STATUS_BLOCKED])
+        self.assertEqual(api.assignees, {"pl0n3r"})
+        self.assertEqual(api.comments, [])
 
 
 
