@@ -33,7 +33,7 @@ def _validate_text(raw: object) -> str:
 
 def _principles(template: object) -> str:
     source = _validate_text(template)
-    if source.count(HEADING) != 1 or BEGIN in source or END in source:
+    if source.count(HEADING) != 1 or "factory-principios-sync" in source:
         raise SyncPlanError("invalid_principles_source")
     pattern = re.compile(r"^## Principios de construcción de la fábrica\s*$", re.M)
     match = pattern.search(source)
@@ -56,6 +56,11 @@ def _principles(template: object) -> str:
 
 
 def _render_consumer(existing: str, principles: str) -> tuple[str, str]:
+    # Reserved sync identifiers must be complete, standalone marker lines.
+    # A truncated delimiter cannot be treated as an empty, unsynced file.
+    if any("factory-principios-sync" in line and line not in (BEGIN, END)
+           for line in existing.splitlines()):
+        raise SyncPlanError("invalid_sync_markers")
     if existing.count(BEGIN) != existing.count(END) or existing.count(BEGIN) > 1:
         raise SyncPlanError("invalid_sync_markers")
     if BEGIN not in existing:
