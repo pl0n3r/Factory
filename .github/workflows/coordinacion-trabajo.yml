@@ -201,7 +201,7 @@ jobs:
               if seen_rows == count:
                   break
               assert len(rows) == 100, "diff truncated before expected count"
-          assert seen_rows == count and len(set(files)) == len(files), "incomplete or duplicate diff"
+          assert seen_rows == count and len({canonical(path) for path in files}) == len(files), "incomplete or duplicate diff"
           
           def covered(filename):
               f = canonical(filename)

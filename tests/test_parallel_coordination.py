@@ -1,4 +1,5 @@
 import unittest
+import unicodedata
 from pathlib import Path
 
 from scripts.orquestador_kit import (
@@ -298,6 +299,32 @@ class ParallelCoordinationTests(unittest.TestCase):
             template,
         )
 
+
+    def test_claims_pr_workflow_deduplicates_canonical_filenames(self) -> None:
+        """El gate API-only rechaza alias casefold/NFC dentro del mismo diff."""
+        workflow = Path(".github/workflows/coordinacion-trabajo.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'return unicodedata.normalize("NFC", path.casefold())', workflow
+        )
+        self.assertIn(
+            'len({canonical(path) for path in files}) == len(files)', workflow
+        )
+
+        def unique(files: list[str]) -> bool:
+            return len({
+                unicodedata.normalize("NFC", path.casefold()) for path in files
+            }) == len(files)
+
+        for files, expected in (
+            (["src/a.php", "src/b.php"], True),
+            (["src/Cache.php", "src/cache.php"], False),
+            (["docs/café.md", "docs/cafe\u0301.md"], False),
+            (["src/a.php", "src/a.php"], False),
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(unique(files), expected)
 
     def test_partial_active_issue_does_not_globally_block_next_disjoint_issue(self) -> None:
         """AC-06: un label activo huérfano sin reserva confiable no bloquea el siguiente leaf."""
