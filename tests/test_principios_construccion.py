@@ -43,7 +43,7 @@ class PrincipiosConstruccionTests(unittest.TestCase):
                      "VALIDATED_IN_PRODUCTION", "updated_at",
                      "agentes activos verificados / capacidad de agentes disponible verificada"):
             self.assertIn(term, self.doc)
-        self.assertIn("no** se excluyen del arbitraje", self.doc)
+        self.assertIn("**no** se excluyen del arbitraje", self.doc)
         self.assertIn("no acreditan que un agente esté activo", self.doc)
 
     def test_leccion_jsonl_trazable_y_sin_secretos(self):

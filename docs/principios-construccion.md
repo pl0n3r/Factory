@@ -16,7 +16,7 @@ Descomponer tramos amplios en hojas con ruta crítica explícita, riesgo acotado
 
 ## Principio 3 — claims verificados por archivo
 
-Preferir claims estrechos por archivo. Una lease activa sobre un directorio no se ignora por prometer editar archivos distintos: el árbitro necesita pruebas completas de diff exact-SHA y dependencias. Si el diff está ausente, truncado, stale, ambiguo o cambió el SHA, falla cerrado. README.md, config/version.php, package.json, package-lock.json y otros lockfiles compartidos son colisiones reales; no** se excluyen del arbitraje por comodidad sin un merge-train probado y autoridad explícita. Ni siquiera hunks distintos del mismo archivo permiten paralelismo automático. Fuente: [Factory #1081](https://github.com/pl0n3r/Factory/issues/1081).
+Preferir claims estrechos por archivo. Una lease activa sobre un directorio no se ignora por prometer editar archivos distintos: el árbitro necesita pruebas completas de diff exact-SHA y dependencias. Si el diff está ausente, truncado, stale, ambiguo o cambió el SHA, falla cerrado. README.md, config/version.php, package.json, package-lock.json y otros lockfiles compartidos son colisiones reales; **no** se excluyen del arbitraje por comodidad sin un merge-train probado y autoridad explícita. Ni siquiera hunks distintos del mismo archivo permiten paralelismo automático. Fuente: [Factory #1081](https://github.com/pl0n3r/Factory/issues/1081).
 
 ## Principio 4 — estados, CI y observación
 
