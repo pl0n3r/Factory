@@ -114,6 +114,12 @@ class ReleaseCommentPagesTests(unittest.TestCase):
                                "body": None}]],
             "too_many_per_page": [[comment(n, "human", "x") for n in range(1, 102)]],
             "too_many_pages": [first for _ in range(11)],
+            # Sin prueba de terminalidad, el último lote de 100 falla cerrado.
+            "terminal_full_page_unverified": [first],
+            "ten_terminal_full_pages_unverified": [
+                [comment(page * 100 + n, "human", "x") for n in range(1, 101)]
+                for page in range(10)
+            ],
         }
         for name, pages in cases.items():
             with self.subTest(name=name):
@@ -149,6 +155,7 @@ class ReleaseCommentPagesTests(unittest.TestCase):
         self.assertIn("invalid_comment_shape", command)
         self.assertIn("duplicate_comment_id", command)
         self.assertIn("incomplete_comment_pages", command)
+        self.assertIn("(.[-1] | length) == 100", command)
         self.assertIn("factory-human-gate-duplicate", command)
         release_job = source.split("\n  release_window:", 1)[1].split(
             "\n  coordinacion:", 1

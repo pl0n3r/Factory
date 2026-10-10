@@ -209,7 +209,8 @@ jobs:
               if (length == 0 or length > 10 or any(.[]; type != "array")) then
                 error("invalid_comment_pages")
               elif (any(.[]; length > 100) or
-                    (length > 1 and any(.[0:-1][]; length != 100))) then
+                    (length > 1 and any(.[0:-1][]; length != 100)) or
+                    (.[-1] | length) == 100) then
                 error("incomplete_comment_pages")
               else . end
               | add
