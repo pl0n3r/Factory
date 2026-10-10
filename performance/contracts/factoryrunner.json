@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "project": "factoryrunner",
+  "surfaces": [
+    {
+      "id": "ci.workflow",
+      "label": "FactoryRunner CI GitHub Actions workflow elapsed (not product runtime)",
+      "metrics": [
+        {
+          "id": "workflow_elapsed",
+          "label": "Observed run_started_at to updated_at, including GitHub Actions overhead",
+          "baseline": {
+            "value": 124,
+            "unit": "s",
+            "observed_at": "2026-10-10T05:21:43Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 120,
+            "unit": "s"
+          },
+          "window": {
+            "duration_seconds": 124,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_actions",
+            "ref": "github:pl0n3r/FactoryRunner/actions/runs/38027128700/attempts/1",
+            "observed_at": "2026-10-10T05:21:43Z"
+          },
+          "allowed_actions": [
+            "observe",
+            "diagnose",
+            "benchmark"
+          ],
+          "escalation_conditions": [
+            "capacity_budget"
+          ]
+        }
+      ]
+    }
+  ]
+}
