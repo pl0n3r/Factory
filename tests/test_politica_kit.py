@@ -363,6 +363,37 @@ class T(unittest.TestCase):
                 include_policy_failure=False,
             )
 
+    def test_rate_limit_sha_token_hex_case_and_boundaries(self):
+        # A-F mayúsculas también son dígitos hex: no aceptar SHA parcial.
+        for body in (
+            "Review rate limited. B" + HEAD,
+            "Review rate limited. " + HEAD + "F",
+            "Review rate limited. 9" + HEAD,
+            "Review rate limited. " + HEAD + "0",
+        ):
+            with self.subTest(body=body):
+                evidence = policy._exact_head_rate_limit_events(
+                    [rate_limit_comment(
+                        comment_id=501, created_at="2026-10-04T05:03:00Z",
+                        body=body,
+                    )],
+                    required_review_bot="coderabbitai[bot]",
+                    head_sha=HEAD,
+                    not_before="2026-10-04T05:00:00Z",
+                )
+                self.assertEqual(evidence, [])
+        # Un SHA completo en mayúsculas sí corresponde al mismo HEAD.
+        evidence = policy._exact_head_rate_limit_events(
+            [rate_limit_comment(
+                comment_id=502, created_at="2026-10-04T05:03:00Z",
+                body="Review rate limited. " + HEAD.upper(),
+            )],
+            required_review_bot="coderabbitai[bot]",
+            head_sha=HEAD,
+            not_before="2026-10-04T05:00:00Z",
+        )
+        self.assertEqual(evidence, [("2026-10-04T05:03:00Z", 502)])
+
     def test_marker_exact_head_con_rate_limit_en_el_cuerpo_no_cuenta_como_cobertura(self):
         marker = ('<!-- final_review_risk_coverage:{"sourceCommitId":"' + "b" * 40
                   + '","coveredCommitId":"' + HEAD + '","kind":"reviewed"} -->')
