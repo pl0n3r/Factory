@@ -62,10 +62,15 @@ se abrió la puerta. La opción A de la puerta debe identificar la versión de f
 inequívoca, por ejemplo `Publicar Factory 1.0.23`. El contexto conserva un único
 **valor SHA** `main@<SHA>` como baseline de deriva; no es una autorización para saltar
 validaciones. El modo `latest` admite que la puerta generada por Release Window
-repita ese mismo `main@<SHA>` en contexto y efecto, pero rechaza si aparecen
-dos o más valores SHA diferentes (o ninguno). Esta deduplicación solo afecta la
-extracción del baseline: mantiene intactos la decisión humana, el fingerprint
-de la puerta, la versión autorizada y la revalidación exact-main.
+repita ese mismo `main@<SHA>` en contexto y efecto. El preflight extrae las
+referencias `main@` con exactamente 40 caracteres hexadecimales (`0-9`, `a-f`,
+`A-F`) y normaliza cada SHA a minúsculas **antes** de contar valores distintos.
+Por eso, dos referencias al mismo SHA, incluso con mayúsculas y minúsculas
+mezcladas, constituyen un único valor; un SHA diferente, aunque solo figure en
+mayúsculas, o ninguna referencia válida hacen fallar cerrado la puerta.
+Esta deduplicación solo afecta la extracción del baseline: mantiene intactos la
+decisión humana, el fingerprint de la puerta, la versión autorizada y la
+revalidación exact-main.
 
 El bootstrap acepta dos formas de `expected_sha`:
 
