@@ -92,6 +92,10 @@ class SaludColaSnapshotTests(unittest.TestCase):
             lambda x: x["pages"][0]["issues"][0].update(
                 labels=["estado: disponible", "estado: bloqueado"]),
             lambda x: x["pages"][0]["issues"][0].update(labels=["status: snoozed"]),
+            lambda x: x["pages"][0]["issues"][0].update(
+                labels=["estado: requiere recuperación"]),
+            lambda x: x["pages"][0]["issues"][0].update(
+                labels=["status: recovery required"]),
             lambda x: x["pages"][0]["issues"][0].update(labels=["estado: disponible"] * 2),
             lambda x: x["pages"][0]["issues"][0].update(pull_request="false"),
         ]
@@ -115,6 +119,14 @@ class SaludColaSnapshotTests(unittest.TestCase):
             {"number": 12, "cause": "claims", "roadmap": True},
         ])
         self.assertNotIn("password", json.dumps(data))
+        # A typed cause does not grant permission to promote uncertain work.
+        for cause in ("unknown", "human_gate", "planned"):
+            with self.subTest(unpromotable_cause=cause):
+                broken = copy.deepcopy(raw)
+                broken[0]["pages"][0]["issues"][0]["blocker"] = {
+                    "cause": cause, "roadmap": True}
+                with self.assertRaisesRegex(SnapshotError, "invalid_blocker"):
+                    assemble_inventory(broken, 4, {"limit": 5000, "remaining": 1000})
         for change in (
             lambda i: i.update(body="password=PRIVATE"),
             lambda i: i.update(blocker={"cause": "token=PRIVATE", "roadmap": True}),

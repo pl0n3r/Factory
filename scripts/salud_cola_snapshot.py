@@ -54,6 +54,11 @@ def _state(labels: object) -> str:
         seen.add(label)
         if label in LABEL_STATE:
             found.append(LABEL_STATE[label])
+        elif label in ("estado: requiere recuperación", "status: recovery required"):
+            # A recovery lease is neither ordinary 'blocked' nor 'available'.
+            # Sibling diagnose_queue currently has no recovery count: refuse a
+            # misleading complete snapshot until both contracts are upgraded.
+            raise SnapshotError("recovery_status_unrepresentable")
         elif label.startswith(("estado:", "status:")):
             raise SnapshotError("unknown_status_label")
     if len(found) != 1:
@@ -134,7 +139,11 @@ def assemble_inventory(reports: object, agent_capacity: object,
                     if (not _shape(evidence, {"cause", "roadmap"})
                             or type(evidence["cause"]) is not str
                             or evidence["cause"] not in CAUSES
-                            or type(evidence["roadmap"]) is not bool):
+                            or type(evidence["roadmap"]) is not bool
+                            or (evidence["roadmap"] and evidence["cause"]
+                                in ("unknown", "planned", "human_gate"))):
+                        # Unknown/planned/human-only work cannot be promoted,
+                        # even when the external snapshot asserts roadmap=True.
                         raise SnapshotError("invalid_blocker")
                     blocked.append({"number": n, "cause": evidence["cause"],
                                     "roadmap": evidence["roadmap"]})
