@@ -24,9 +24,14 @@ class SyncPlanError(ValueError):
 
 
 def _validate_text(raw: object) -> str:
-    if (not isinstance(raw, str) or not raw
-            or len(raw.encode("utf-8")) > MAX_DOCUMENT_BYTES
-            or "\x00" in raw or "\r" in raw):
+    if not isinstance(raw, str) or not raw or "\x00" in raw or "\r" in raw:
+        raise SyncPlanError("invalid_document")
+    try:
+        size = len(raw.encode("utf-8"))
+    except UnicodeError:
+        # Even malformed Unicode must fail closed with a stable, private code.
+        raise SyncPlanError("invalid_document") from None
+    if size > MAX_DOCUMENT_BYTES:
         raise SyncPlanError("invalid_document")
     return raw
 
