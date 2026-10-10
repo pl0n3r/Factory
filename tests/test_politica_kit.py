@@ -429,6 +429,17 @@ class T(unittest.TestCase):
         ]
         self.assertEqual(count_review_rounds(lines), 1)
 
+    def test_rate_limit_reviews_do_not_consume_rounds(self):
+        samples = [
+            review(review_id=1, body="Review rate limited."),
+            review(review_id=2, body="review rate limited."),
+            review(review_id=3, body="REVIEW LIMIT REACHED."),
+        ]
+        self.assertEqual(count_review_rounds(samples), 0)
+        substantive = review(review_id=4, body="Hallazgo sustantivo")
+        self.assertEqual(count_review_rounds(samples + [substantive]), 1)
+        validate_rounds(count_review_rounds(samples + [substantive]), 3)
+
     def test_substantive_and_terminal_bot_reviews_count(self):
         lines = [
             review(review_id=1, login="review-bot", body="Hallazgo accionable"),
@@ -452,8 +463,11 @@ class T(unittest.TestCase):
         # Una respuesta de cuota como COMMENTED no prueba revisión del HEAD.
         bodies = (
             "Review rate limited.",
+            "review rate limited.",
+            "Review Rate Limited.",
             "Auto-generated CodeRabbit reply: Review rate limited.",
             "Review limit reached.",
+            "REVIEW LIMIT REACHED.",
         )
         for body in bodies:
             with self.subTest(body=body), self.assertRaises(PolicyError):

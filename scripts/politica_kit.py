@@ -201,7 +201,8 @@ def review_counts_as_round(review: dict[str, Any]) -> bool:
     if state in {"APPROVED", "CHANGES_REQUESTED"}:
         return True
     body = review.get("body")
-    return state == "COMMENTED" and isinstance(body, str) and bool(body.strip())
+    return (state == "COMMENTED" and isinstance(body, str) and bool(body.strip())
+            and not _is_rate_limit_body(body))
 
 
 def count_review_rounds(lines: list[str]) -> int:
@@ -485,7 +486,8 @@ def _has_open_blocking_finding(
 
 
 def _is_rate_limit_body(body: str) -> bool:
-    return any(text in body for text in RATE_LIMIT_TEXTS)
+    folded = body.casefold()
+    return any(text.casefold() in folded for text in RATE_LIMIT_TEXTS)
 
 
 def _rate_limit_comment_identity(
