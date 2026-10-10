@@ -160,3 +160,45 @@ def parse_github_issue_page(repo: object, requested_page: object,
         issues.append({"number": number, "labels": names,
                        "pull_request": is_pr, "blocker": None})
     return {"page_number": actual_page, "has_next": has_next, "issues": issues}
+
+
+def parse_github_issue_sequence(repo: object, responses: object) -> dict:
+    """Verifica continuidad y 'last' estable entre capturas REST completas.
+
+    Los elementos representan respuestas HTTP ya autenticadas por un caller.
+    Comparar last/next/prev NO hace que el listado sea atómico: el collector
+    futuro debe hacer comprobaciones de estabilidad interlecturas antes de
+    usar el inventario como fuente de despachos o incidentes.
+    """
+    if type(responses) is not list or not 1 <= len(responses) <= MAX_PAGE:
+        raise GitHubPageError("invalid_page_sequence")
+    pages: list[dict] = []
+    seen_numbers: set[int] = set()
+    for n, raw in enumerate(responses, start=1):
+        if (type(raw) is not dict or set(raw) !=
+                {"request_url", "status_code", "link_header", "payload"}):
+            raise GitHubPageError("invalid_page_capture")
+        result = parse_github_issue_page(
+            repo, n, raw["request_url"], raw["status_code"],
+            raw["link_header"], raw["payload"],
+        )
+        if result["has_next"] is not (n < len(responses)):
+            raise GitHubPageError("incomplete_page_sequence")
+        header = raw["link_header"]
+        declared_last = None
+        if header:
+            # Each relation was syntax-checked by parse_github_issue_page.
+            for part in header.split(","):
+                match = _REL.fullmatch(part.strip())
+                if match and match.group(2) == "last":
+                    declared_last = _page_from_url(match.group(1), repo)
+        if (n == 1 and len(responses) > 1 and declared_last is None):
+            raise GitHubPageError("missing_last_relation")
+        if declared_last is not None and declared_last != len(responses):
+            raise GitHubPageError("inconsistent_last_relation")
+        for issue in result["issues"]:
+            if issue["number"] in seen_numbers:
+                raise GitHubPageError("cross_page_duplicate_issue")
+            seen_numbers.add(issue["number"])
+        pages.append(result)
+    return {"name": repo, "pages": pages}

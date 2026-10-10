@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import unittest
 
-from scripts.salud_cola_github import GitHubPageError, parse_github_issue_page
+from scripts.salud_cola_github import (
+    GitHubPageError, parse_github_issue_page, parse_github_issue_sequence,
+)
 
 
 def url(page=1, repo="Factory"):
@@ -100,6 +102,54 @@ class GitHubPageTests(unittest.TestCase):
         for page, header in bad:
             with self.subTest(page=page, header=header), self.assertRaises(GitHubPageError):
                 parse(page=page, header=header)
+
+
+    def test_page_sequence_reconciles_last_and_duplicate_issues(self):
+        def capture(n, items, header):
+            return {"request_url": url(n), "status_code": 200,
+                    "link_header": header, "payload": items}
+
+        first = capture(1, full_items(),
+                        ", ".join((link(2, "next"), link(2, "last"))))
+        second = capture(2, [{"number": 101, "state": "open", "labels": []}],
+                         ", ".join((link(1, "first"), link(1, "prev"))))
+        batch = parse_github_issue_sequence("Factory", [first, second])
+        self.assertEqual(set(batch), {"name", "pages"})
+        self.assertEqual([p["page_number"] for p in batch["pages"]], [1, 2])
+        self.assertEqual([p["has_next"] for p in batch["pages"]], [True, False])
+        self.assertEqual(sum(len(p["issues"]) for p in batch["pages"]), 101)
+        self.assertEqual(parse_github_issue_sequence("Factory", [
+            capture(1, [], None)])["pages"][0]["has_next"], False)
+
+        # A caller cannot declare the snapshot complete if the first
+        # authenticated Link announced four pages but only two were read.
+        mismatched_first = capture(1, full_items(),
+                                    ", ".join((link(2, "next"), link(4, "last"))))
+        changed_last = capture(2, second["payload"],
+                               ", ".join((link(1, "prev"), link(3, "last"))))
+        missing_last = capture(1, full_items(), link(2, "next"))
+        duplicated_issue = capture(2, [{"number": 1, "state": "open", "labels": []}],
+                                   link(1, "prev"))
+        cases = (
+            [mismatched_first, second],
+            [first, changed_last],
+            [missing_last, second],
+            [first],  # Missing a page announced by next.
+            [first, duplicated_issue],
+            [second],  # Requesting page 2 as the first capture.
+            [first, second, second],
+            [{"request_url": url(1), "status_code": 200,
+              "link_header": None}],  # Missing payload.
+        )
+        for case in cases:
+            with self.subTest(case=str(case)[:100]):
+                with self.assertRaises(GitHubPageError):
+                    parse_github_issue_sequence("Factory", case)
+
+        for incomplete in ([], {}, [True]):
+            with self.subTest(incomplete=incomplete):
+                with self.assertRaises(GitHubPageError):
+                    parse_github_issue_sequence("Factory", incomplete)
 
     def test_projection_excludes_pr_and_private_text(self):
         payload = [
