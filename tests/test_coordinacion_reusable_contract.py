@@ -1,4 +1,5 @@
 import re, unittest
+import json
 import os
 import subprocess
 import sys
@@ -133,7 +134,9 @@ class T(unittest.TestCase):
             preflight = jobs["preflight_comentario"]
             self.assertIn("needs: preflight_comentario", comment)
             self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)
-            self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", preflight)
+            self.assertIn('os.environ["GITHUB_EVENT_PATH"]', preflight)
+            self.assertNotIn("COMMENT_BODY", preflight)
+            self.assertNotIn("github.event.comment.body", preflight)
             self.assertIn('"/renovar-contrato"', preflight)
             self.assertNotIn("contains(github.event.comment.body", comment)
 
@@ -148,12 +151,24 @@ class T(unittest.TestCase):
                     (" /renovar-contrato 12345678-abcd-1234-abcd-123456789abc ", "route=true\n"),
                 ):
                     with self.subTest(body=body):
+                        event_path = Path(tmp) / "event.json"
+                        event_path.write_text(
+                            json.dumps({"comment": {"body": body}}), encoding="utf-8"
+                        )
+                        env = {
+                            **os.environ,
+                            "GITHUB_EVENT_PATH": str(event_path),
+                            "GITHUB_OUTPUT": str(output),
+                        }
+                        env.pop("COMMENT_BODY", None)
                         result = subprocess.run(
                             [sys.executable, "-c", script],
-                            env={**os.environ, "COMMENT_BODY": body, "GITHUB_OUTPUT": str(output)},
+                            env=env,
                             text=True, capture_output=True, timeout=5, check=False,
                         )
                         self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertEqual(result.stderr, "")
                         self.assertEqual(output.read_text(encoding="utf-8"), expected)
                         output.unlink()
         else:
