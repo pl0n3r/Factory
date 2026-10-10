@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "project": "condor",
+  "surfaces": [
+    {
+      "id": "ci.validation",
+      "label": "Condor CI workflow wall duration (not production latency)",
+      "metrics": [
+        {
+          "id": "workflow_wall_seconds",
+          "label": "Successful CI workflow wall duration across three push runs",
+          "baseline": {
+            "value": 122,
+            "unit": "s",
+            "observed_at": "2026-10-06T09:30:45Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 300,
+            "unit": "s"
+          },
+          "window": {
+            "duration_seconds": 1500,
+            "min_samples": 3
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_actions",
+            "ref": "github:pl0n3r/Condor/actions/runs/37443207734",
+            "observed_at": "2026-10-06T09:30:45Z"
+          },
+          "allowed_actions": [
+            "benchmark",
+            "diagnose",
+            "measure_before_after",
+            "observe"
+          ],
+          "escalation_conditions": [
+            "architecture_change",
+            "capacity_budget"
+          ]
+        }
+      ]
+    }
+  ]
+}
