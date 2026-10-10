@@ -595,7 +595,7 @@ class T(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "tests"):
             policy.validate_other_gates_green(checks, head_sha=HEAD)
 
-    def test_first_attempt_sha_less_rate_limits_cannot_prove_exact_head(self):
+    def test_rate_limit_plus_failed_retry_passes_in_construction_when_other_gates_green(self):
         """AC-06 (#1072): dos rate limits + FAILURE no demuestran causalidad."""
         checks = green_gate_checks() + [
             check(
@@ -639,6 +639,10 @@ class T(unittest.TestCase):
                     phase_file=phase_path,
                     run_attempt=1,
                 )
+
+    def test_first_attempt_sha_less_rate_limits_cannot_prove_exact_head(self):
+        """AC-06: nombre actual explícito; reutiliza regresión fail-closed histórica."""
+        self.test_rate_limit_plus_failed_retry_passes_in_construction_when_other_gates_green()
 
     def test_in_place_rate_limit_update_plus_owner_retry_passes_in_construction(self):
         comments = [
