@@ -230,7 +230,12 @@ def report_from_diagnosis(diagnosis: object, rate_limit: object) -> dict:
         rows.append({"name": name, "open_issues": row["open_issues"],
                      "available": counts["available"],
                      "blocked": counts["blocked"]})
-    if diagnosis["blocked_cause_totals"] != totals:
+    reported_causes = diagnosis["blocked_cause_totals"]
+    if (not _exact(reported_causes, set(CAUSES))
+            or any(not _int(reported_causes[c], 0, 7 * MAX_ISSUES)
+                   for c in CAUSES)
+            or reported_causes != totals):
+        # bool == int in Python, but bool is never a valid count.
         raise IncidentPlanError("inconsistent_diagnosis_causes")
     raw_candidates = diagnosis["roadmap_candidates"]
     if type(raw_candidates) is not list or len(raw_candidates) > MAX_CANDIDATES:
