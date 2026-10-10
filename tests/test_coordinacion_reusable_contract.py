@@ -188,6 +188,8 @@ class T(unittest.TestCase):
             preflight = jobs["preflight_comentario"]
             self.assertIn("needs: preflight_comentario", comment)
             self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)
+            self.assertIn("outputs:\n      route: ${{ steps.route.outputs.route }}", preflight)
+            self.assertIn("- id: route", preflight)
             self.assertIn('os.environ["GITHUB_EVENT_PATH"]', preflight)
             self.assertNotIn("COMMENT_BODY", preflight)
             self.assertNotIn("github.event.comment.body", preflight)
@@ -202,7 +204,10 @@ class T(unittest.TestCase):
                 output = Path(tmp) / "route"
                 for body, expected in (
                     ("Nota informativa sobre /renovar-contrato UUID", "route=false\n"),
+                    ("No ejecuté /tomar", "route=false\n"),
                     (" /renovar-contrato 12345678-abcd-1234-abcd-123456789abc ", "route=true\n"),
+                    ("/tomar", "route=true\n"),
+                    (" \n/tomar\t", "route=true\n"),
                 ):
                     with self.subTest(body=body):
                         event_path = Path(tmp) / "event.json"
