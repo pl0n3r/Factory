@@ -51,6 +51,11 @@ def _page_from_url(url: object, repo: str) -> int:
             or u.path != f"/repos/pl0n3r/{repo}/issues"
             or u.fragment or len(query) != 3):
         raise GitHubPageError("invalid_request_url")
+    # parse_qsl silently decodes percent-encoded query keys/values. The
+    # canonical REST contract forbids encoded aliases (page=%31, etc.),
+    # even when they would decode to the expected parameters.
+    if "%" in u.query or "+" in u.query:
+        raise GitHubPageError("invalid_request_url")
     params = dict(query)
     if (len(params) != 3 or set(params) != {"state", "per_page", "page"}
             or params["state"] != "open" or params["per_page"] != "100"):
