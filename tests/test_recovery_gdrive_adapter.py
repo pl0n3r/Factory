@@ -162,11 +162,14 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
 
         invalid = manifest()
         invalid["project"] = "token=VERY_PRIVATE_OAUTH_TOKEN_NOT_REAL"
+        manifest_fake = FakeDriveTransport()
+        manifest_secrets = Secrets()
         with self.assertRaisesRegex(ColdCopyError, "invalid_manifest") as manifest_error:
             GDriveColdCopy(
-                invalid, transport=FakeDriveTransport(), secret_provider=Secrets(),
+                invalid, transport=manifest_fake, secret_provider=manifest_secrets,
                 credential_ref="gdrive-cold-copy", now=NOW,
             )
+        self.assertEqual(manifest_secrets.calls, 0)
         self.assertIsNone(manifest_error.exception.__cause__)
         self.assertIsNone(manifest_error.exception.__context__)
 
