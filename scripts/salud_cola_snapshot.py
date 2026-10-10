@@ -2,7 +2,8 @@
 """Normalizador puro de páginas verificadas de Issues para salud de cola.
 
 Sin HTTP, disco, tokens, escritura de GitHub ni permiso de despacho.
-El caller verifica headers Link y transport antes de suministrar has_next.
+El caller verifica headers Link y transporte, además del ordinal de
+cada página, antes de suministrar has_next/page_number.
 """
 from __future__ import annotations
 
@@ -72,9 +73,9 @@ def assemble_inventory(reports: object, agent_capacity: object,
                        rate_limit: object) -> dict:
     """Prepara la forma exacta de diagnose_queue sin inferir causas ni readiness.
 
-    Cada reporte declara páginas ordenadas, has_next para *cada* página.
-    El consumidor debe calcular has_next desde la respuesta HTTP verificada.
-    Un flag declarativo en esta función no prueba integridad del transporte.
+    Cada reporte declara page_number contiguos y has_next por página.
+    El consumidor debe derivar esos datos del HTTP/Link verificados; esta
+    comprobación pura no prueba integridad ni autenticidad del transporte.
     """
     if agent_capacity is not None and not _int(agent_capacity, 1000):
         raise SnapshotError("invalid_capacity")
@@ -98,9 +99,11 @@ def assemble_inventory(reports: object, agent_capacity: object,
         counts = {state: 0 for state in STATES}
         blocked: list[dict] = []
         for index, page in enumerate(pages):
-            if not _shape(page, {"issues", "has_next"}):
+            if not _shape(page, {"issues", "has_next", "page_number"}):
                 raise SnapshotError("invalid_page")
-            if (type(page["has_next"]) is not bool
+            if (not _int(page["page_number"], MAX_PAGES, 1)
+                    or page["page_number"] != index + 1
+                    or type(page["has_next"]) is not bool
                     or page["has_next"] is not (index < len(pages) - 1)):
                 raise SnapshotError("incomplete_pagination")
             items = page["issues"]

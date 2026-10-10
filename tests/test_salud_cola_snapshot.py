@@ -16,7 +16,8 @@ def issue(number, label, *, blocker=None, pull_request=False):
 
 
 def reports():
-    return [{"name": name, "pages": [{"issues": [], "has_next": False}]}
+    return [{"name": name, "pages": [{"page_number": 1, "issues": [],
+                                         "has_next": False}]}
             for name in REPOSITORIES]
 
 
@@ -33,10 +34,17 @@ class SaludColaSnapshotTests(unittest.TestCase):
             lambda x: x[0].update(name="unlisted"),
             lambda x: x[0].update(pages=[]),
             lambda x: x[0]["pages"][0].update(has_next=True),
-            lambda x: x[0].update(pages=[{"issues": [], "has_next": False},
-                                          {"issues": [], "has_next": False}]),
-            lambda x: x[0].update(pages=[{"issues": [], "has_next": True},
-                                          {"issues": [], "has_next": True}]),
+            lambda x: x[0].update(pages=[{"page_number": 1, "issues": [], "has_next": False},
+                                          {"page_number": 2, "issues": [], "has_next": False}]),
+            lambda x: x[0].update(pages=[{"page_number": 1, "issues": [], "has_next": True},
+                                          {"page_number": 2, "issues": [], "has_next": True}]),
+            # A missing page 2 cannot be hidden between pages 1 and 3.
+            lambda x: x[0].update(pages=[{"page_number": 1, "issues": [], "has_next": True},
+                                          {"page_number": 3, "issues": [], "has_next": False}]),
+            lambda x: x[0]["pages"][0].update(page_number=2),
+            lambda x: x[0]["pages"][0].update(page_number=0),
+            lambda x: x[0]["pages"][0].update(page_number=True),
+            lambda x: x[0]["pages"][0].pop("page_number"),
         ):
             with self.subTest(mutate=mutate):
                 raw = reports()
@@ -46,8 +54,10 @@ class SaludColaSnapshotTests(unittest.TestCase):
 
         raw = reports()
         raw[0]["pages"] = [
-            {"issues": [issue(1, "estado: disponible")], "has_next": True},
-            {"issues": [issue(2, "status: blocked")], "has_next": False},
+            {"page_number": 1, "issues": [issue(1, "estado: disponible")],
+             "has_next": True},
+            {"page_number": 2, "issues": [issue(2, "status: blocked")],
+             "has_next": False},
         ]
         data = assemble_inventory(raw, 4, {"limit": 5000, "remaining": 4000})
         self.assertEqual(data["repositories"][0]["open_issues"], 2)
@@ -55,6 +65,7 @@ class SaludColaSnapshotTests(unittest.TestCase):
     def test_issue_state_mapping_and_pr_exclusion(self):
         raw = reports()
         raw[0]["pages"] = [{
+            "page_number": 1,
             "has_next": False,
             "issues": [
                 issue(1, "estado: disponible"),
