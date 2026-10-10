@@ -26,6 +26,9 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(set(result["repositories"]), set(REPOSITORIES))
         self.assertEqual(result["open_total"], 7)
         self.assertEqual(result["available_total"], 0)
+        self.assertEqual(result["repositories"]["Factory"]["blocked_reasons"], [
+            {"issue": 17, "cause": "dependency", "roadmap": True}
+        ])
         for mutate in (
             lambda x: x["repositories"].pop(),
             lambda x: x["repositories"][-1].update(name="Factory"),
@@ -90,6 +93,20 @@ class SaludColaTests(unittest.TestCase):
                          {"repository": "Factory", "issue": 109, "cause": "claims"})
         self.assertEqual(len(result["roadmap_candidates"]), 6)
         self.assertNotIn("private", json.dumps(result))
+        # Report ALL blockers, but never suggest human-only or unknown work.
+        queue["repositories"][0]["blockers"][0]["cause"] = "human_gate"
+        report = diagnose_queue(queue)
+        self.assertEqual(report["repositories"]["Factory"]["blocked_reasons"], [
+            {"issue": 109, "cause": "human_gate", "roadmap": True}
+        ])
+        self.assertTrue(all(x["issue"] != 109 or x["repository"] != "Factory"
+                            for x in report["roadmap_candidates"]))
+        queue["repositories"][0]["blockers"][0]["cause"] = "unknown"
+        report = diagnose_queue(queue)
+        self.assertEqual(report["repositories"]["Factory"]["blocked_reasons"][0]["cause"],
+                         "unknown")
+        self.assertTrue(all(x["issue"] != 109 or x["repository"] != "Factory"
+                            for x in report["roadmap_candidates"]))
         self.assertTrue(all(set(x) == {"repository", "issue", "cause"}
                             for x in result["roadmap_candidates"]))
         bad = copy.deepcopy(queue)
@@ -110,6 +127,17 @@ class SaludColaTests(unittest.TestCase):
         report = diagnose_queue(big)
         self.assertEqual(len(report["roadmap_candidates"]), 32)
         self.assertEqual(report["omitted_candidates"], 38)
+        self.assertEqual(len(report["repositories"]["Factory"]["blocked_reasons"]), 10)
+        # Refuse massive output rather than silently truncating causes.
+        huge = inventory()
+        for i in range(2):
+            row = huge["repositories"][i]
+            row["blockers"] = [{"number": n + 1, "cause": "claims", "roadmap": False}
+                               for n in range(5001)]
+            row["counts"]["blocked"] = 5001
+            row["open_issues"] = 5001
+        with self.assertRaisesRegex(QueueHealthError, "blocker_report_too_large"):
+            diagnose_queue(huge)
 
 
 if __name__ == "__main__":

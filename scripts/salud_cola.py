@@ -49,6 +49,7 @@ def diagnose_queue(snapshot: object) -> dict:
     seen_repos: set[str] = set()
     by_repo: dict[str, dict] = {}
     candidates: list[dict] = []
+    reported_blockers = 0
     for row in rows:
         if not _exact(row, {"name", "complete", "open_issues", "counts", "blockers"}):
             raise QueueHealthError("invalid_repository")
@@ -66,7 +67,11 @@ def diagnose_queue(snapshot: object) -> dict:
         blockers = row["blockers"]
         if type(blockers) is not list or len(blockers) != counts["blocked"]:
             raise QueueHealthError("incomplete_blockers")
+        reported_blockers += len(blockers)
+        if reported_blockers > MAX_ISSUES:
+            raise QueueHealthError("blocker_report_too_large")
         seen_issues: set[int] = set()
+        safe_blockers: list[dict] = []
         for blocked in blockers:
             if not _exact(blocked, {"number", "cause", "roadmap"}):
                 raise QueueHealthError("invalid_blocker")
@@ -76,10 +81,15 @@ def diagnose_queue(snapshot: object) -> dict:
                     or type(roadmap) is not bool):
                 raise QueueHealthError("invalid_blocker")
             seen_issues.add(n)
-            if roadmap:
+            safe_blockers.append({"issue": n, "cause": cause, "roadmap": roadmap})
+            # A human decision or UNKNOWN is evidence, never an executable leaf.
+            if roadmap and cause not in ("human_gate", "unknown"):
                 candidates.append({"repository": name, "issue": n, "cause": cause})
-        by_repo[name] = {"open_issues": row["open_issues"],
-                         "counts": {state: counts[state] for state in STATES}}
+        by_repo[name] = {
+            "open_issues": row["open_issues"],
+            "counts": {state: counts[state] for state in STATES},
+            "blocked_reasons": sorted(safe_blockers, key=lambda entry: entry["issue"]),
+        }
 
     if seen_repos != set(REPOSITORIES):
         raise QueueHealthError("incomplete_inventory")
