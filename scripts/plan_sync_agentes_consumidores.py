@@ -75,6 +75,23 @@ def _render_consumer(existing: str, principles: str) -> tuple[str, str]:
     if any("factory-principios-sync" in line and line not in (BEGIN, END)
            for line in existing.splitlines()):
         raise SyncPlanError("invalid_sync_markers")
+    # A Markdown example is local documentation, not a managed block. Never
+    # replace literal sync markers occurring inside fenced code examples.
+    fence_char = None
+    fence_width = 0
+    for line in existing.splitlines():
+        if fence_char is None:
+            opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+            if opening is not None:
+                fence_char = opening.group(1)[0]
+                fence_width = len(opening.group(1))
+        else:
+            if "factory-principios-sync" in line:
+                raise SyncPlanError("invalid_sync_markers")
+            closing = re.fullmatch(r" {0,3}(`{3,}|~{3,})[ \\t]*", line)
+            if (closing is not None and closing.group(1)[0] == fence_char
+                    and len(closing.group(1)) >= fence_width):
+                fence_char = None
     if existing.count(BEGIN) != existing.count(END) or existing.count(BEGIN) > 1:
         raise SyncPlanError("invalid_sync_markers")
     if BEGIN not in existing:
