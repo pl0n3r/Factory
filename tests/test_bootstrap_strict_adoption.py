@@ -48,7 +48,7 @@ STRICT_PREFLIGHT = """  preflight_comentario:
               event = json.load(source)
           body = event.get("comment", {}).get("body", "")
           parts = body.strip().split(maxsplit=1) if isinstance(body, str) else []
-          supported = {"/tomar", "/renovar-contrato"}
+          supported = {"/tomar", "/liberar-forzado", "/adoptar-contrato-huerfana", "/liberar", "/transferir", "/migrar-contrato", "/renovar-contrato"}
           route = bool(parts and parts[0] in supported)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"route={str(route).lower()}\\n")
@@ -186,6 +186,35 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 self.assertNotEqual(mutated, strict)
                 result = self.run_generated(mutated)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertIn("FAIL", result.stderr)
+
+
+    def test_strict_generated_adoption_catches_preflight_regressions(self):
+        strict = consumer_caller(strict=True)
+        # The generated test must reject any of the seven missing commands.
+        for command in ("/tomar", "/liberar-forzado", "/adoptar-contrato-huerfana",
+                        "/liberar", "/transferir", "/migrar-contrato",
+                        "/renovar-contrato"):
+            with self.subTest(removed_command=command):
+                mutated = strict.replace('"' + command + '"', '"removed-command"', 1)
+                self.assertNotEqual(mutated, strict)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL", result.stderr)
+        # The preflight job itself must enforce authorization and resources.
+        for before, after in (
+            ("github.event_name == 'issue_comment'", "github.event_name == 'issues'"),
+            ("github.event.issue.pull_request == null", "github.event.issue.pull_request != null"),
+            ("github.event.sender.login == github.event.comment.user.login",
+             "github.event.sender.login != github.event.comment.user.login"),
+            ("      contents: read", "      contents: write"),
+            ("    timeout-minutes: 2", "    timeout-minutes: 25"),
+        ):
+            with self.subTest(preflight_guard=before):
+                mutated = strict.replace(before, after, 1)
+                self.assertNotEqual(mutated, strict)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("FAIL", result.stderr)
 
 
