@@ -779,7 +779,13 @@ def _sha_less_timeline_retry(
         for e in timeline[owner_index + 1:bot_index]
     ):
         raise PolicyError("Mutación de HEAD entre reintento y respuesta.")
-    return bot_event["id"], bot_event["created_at"]
+    # REST autentica eventos, no el vínculo causal entre el trigger OWNER,
+    # la respuesta del bot y la historia íntegra de refs. Dos causas distintas
+    # pueden producir exactamente el mismo snapshot: nunca promoverlo a review.
+    raise PolicyError(
+        "Timeline SHA-less no vincula causalmente el rate-limit al trigger OWNER "
+        "ni demuestra integridad histórica del HEAD exacto."
+    )
 
 
 def validate_rate_limit_fallback(
