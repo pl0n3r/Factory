@@ -99,6 +99,9 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
         items = release_gate_issues()
         first = page(items[:100])
         second = page(items[100:])
+        def changed_last(**fields: object) -> dict[str, object]:
+            return page(items[100:115] + [{**items[115], **fields}])
+
         invalid_cases = {
             "sin segunda página": (first, None),
             "segunda truncada": (first, page(items[100:115])),
@@ -108,6 +111,13 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             "id repetido": (first, page(items[100:115] + [items[0]])),
             "id ausente": (first, page(items[100:115] + [{**items[115], "number": None}])),
             "body ausente": (first, page(items[100:115] + [{**items[115], "body": None}])),
+            "título nulo": (first, changed_last(title=None)),
+            "título vacío": (first, changed_last(title="  ")),
+            "fecha nula": (first, changed_last(updated_at=None)),
+            "fecha tipo array": (first, changed_last(updated_at=[])),
+            "fecha imposible": (first, changed_last(updated_at="2026-02-30T00:00:00Z")),
+            "fecha no UTC": (first, changed_last(updated_at="2026-10-09T00:00:00+00:00")),
+            "fecha no canónica": (first, changed_last(updated_at="2026-1-09T00:00:00Z")),
             "total excedido": ({**first, "total_count": 201}, second),
             "total booleano": ({**first, "total_count": True}, second),
             "página inicial incompleta": ({**first, "incomplete_results": True}, second),
@@ -151,7 +161,9 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             )
         self.assertNotEqual(comparison.returncode, 0)
 
-    def _run_real_release_window_shell(self, *, drifting: bool):
+    def _run_real_release_window_shell(
+        self, *, drifting: bool, malformed: str | None = None,
+    ):
         """Ejecuta el run:| real con gh simulado y centinela de pr-check."""
         import os
 
@@ -177,6 +189,14 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             # Las puertas de release se excluyen de este fixture: esta prueba
             # se centra en el orden entre snapshot, cmp y el evaluador.
             initial = [{**item, "body": "Sin puerta"} for item in items]
+            if malformed is not None:
+                field, bad_value = {
+                    "title": ("title", None),
+                    "updated_at_null": ("updated_at", None),
+                    "updated_at_array": ("updated_at", []),
+                    "updated_at_date": ("updated_at", "2026-02-30T00:00:00Z"),
+                }[malformed]
+                initial[4] = {**initial[4], field: bad_value}
             changed = initial[1:] + [{
                 "number": 20001, "state": "closed", "title": "Nuevo",
                 "body": "Sin puerta", "updated_at": "2026-10-09T01:00:00Z",
@@ -268,6 +288,18 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
         self.assertIn("Search Issues cambió entre dos lecturas completas", result.stdout)
         self.assertEqual(calls, ["page=1", "page=2", "page=1", "page=2"])
         self.assertFalse(called, "El evaluador no puede recibir un snapshot mezclado")
+
+    def test_release_window_shell_malformed_issue_metadata_never_reaches_evaluator(self) -> None:
+        """Datos inválidos, estables en ambas lecturas, bloquean pr-check."""
+        for malformed in ("title", "updated_at_null", "updated_at_array", "updated_at_date"):
+            with self.subTest(malformed=malformed):
+                result, called, calls = self._run_real_release_window_shell(
+                    drifting=False, malformed=malformed,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("Search Issues incompleta", result.stderr)
+                self.assertEqual(calls, ["page=1", "page=2"])
+                self.assertFalse(called, "Nunca evaluar freeze con metadata inválida")
 
     def test_release_window_shell_stable_reaches_evaluator(self) -> None:
         """Dos pasadas idénticas mantienen operativo el camino normal."""

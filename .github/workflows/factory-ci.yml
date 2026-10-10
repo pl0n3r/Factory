@@ -104,6 +104,7 @@ jobs:
           python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json
           import json
           import sys
+          from datetime import datetime
           from pathlib import Path
 
           PAGE_SIZE = 100
@@ -152,12 +153,23 @@ jobs:
                   if type(number) is not int or number < 1 or number in seen:
                       fail("ID ausente, inválido o duplicado")
                   seen.add(number)
+                  title = item.get("title")
+                  updated_at = item.get("updated_at")
                   if (
                       item.get("pull_request") is not None
                       or item.get("state") not in ("open", "closed")
                       or not isinstance(item.get("body"), str)
+                      or not isinstance(title, str)
+                      or not title.strip()
+                      or not isinstance(updated_at, str)
                   ):
                       fail("Issue no canónico o malformado")
+                  try:
+                      timestamp = datetime.strptime(updated_at, "%Y-%m-%dT%H:%M:%SZ")
+                      if timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") != updated_at:
+                          fail("updated_at no es UTC ISO-8601 canónico")
+                  except ValueError:
+                      fail("updated_at no es UTC ISO-8601 canónico")
                   selected.append({
                       key: item.get(key)
                       for key in ("number", "state", "title", "body", "updated_at")
