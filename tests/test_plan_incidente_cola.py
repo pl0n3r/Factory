@@ -200,6 +200,10 @@ class PlanIncidenteColaTests(unittest.TestCase):
         with self.assertRaisesRegex(IncidentPlanError, "incomplete_candidates"):
             report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
         invalid = upstream_diagnosis()
+        invalid["blocked_cause_totals"]["claims"] = False  # False == 0 in Python
+        with self.assertRaisesRegex(IncidentPlanError, "inconsistent_diagnosis_causes"):
+            report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
+        invalid = upstream_diagnosis()
         invalid["available_total"] = "private-value"
         with self.assertRaisesRegex(IncidentPlanError, "invalid_diagnosis"):
             report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
