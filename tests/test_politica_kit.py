@@ -242,18 +242,18 @@ class T(unittest.TestCase):
         owner = json.loads(comments[0])
         second = {**owner, "id": 203, "created_at": "2026-10-04T05:02:03Z"}
         extra = dict(events[3], id=203, created_at="2026-10-04T05:02:03Z")
-        with self.subTest(label="múltiples OWNER"), self.assertRaises(PolicyError):
+        with self.subTest(label="múltiples OWNER"), self.assertRaisesRegex(PolicyError, "exactamente un reintento OWNER"):
             sha_less_validate(comments + [json.dumps(second)],
                               events[:4] + [extra] + events[4:])
         # Trigger OWNER editado después de publicarse.
         edited = {**owner, "updated_at": "2026-10-04T05:03:00Z"}
-        with self.subTest(label="OWNER editado"), self.assertRaises(PolicyError):
+        with self.subTest(label="OWNER editado"), self.assertRaisesRegex(PolicyError, "Trigger OWNER editado"):
             sha_less_validate([json.dumps(edited), comments[1], comments[2]], events)
         # Respuesta fuera de la ventana de 120 s.
         late = json.loads(comments[1])
         late["created_at"] = "2026-10-04T05:09:00Z"
         late_event = dict(events[-1], created_at="2026-10-04T05:09:00Z")
-        with self.subTest(label="respuesta tardía"), self.assertRaises(PolicyError):
+        with self.subTest(label="respuesta tardía"), self.assertRaisesRegex(PolicyError, "fuera de ventana temporal"):
             sha_less_validate([comments[0], json.dumps(late), comments[2]],
                               events[:-1] + [late_event])
 
@@ -271,20 +271,20 @@ class T(unittest.TestCase):
                 "author_association": "MEMBER", "user": member["user"],
                 "actor": {"login": "another-member"},
             }
-            with self.subTest(command=command), self.assertRaises(PolicyError):
+            with self.subTest(command=command), self.assertRaisesRegex(PolicyError, "Solicitud competidora"):
                 sha_less_validate(
                     comments + [json.dumps(member)],
                     timeline[:4] + [member_event] + timeline[4:],
                 )
         edited = json.loads(comments[1])
         edited["updated_at"] = "2026-10-04T05:03:00Z"
-        with self.subTest("respuesta bot editada"), self.assertRaises(PolicyError):
+        with self.subTest("respuesta bot editada"), self.assertRaisesRegex(PolicyError, "Respuesta de CodeRabbit editada"):
             sha_less_validate(
                 [comments[0], json.dumps(edited), comments[2]], timeline,
             )
         missing_timestamp = dict(edited)
         del missing_timestamp["updated_at"]
-        with self.subTest("respuesta sin timestamp de edición"), self.assertRaises(PolicyError):
+        with self.subTest("respuesta sin timestamp de edición"), self.assertRaisesRegex(PolicyError, "Respuesta de CodeRabbit editada"):
             sha_less_validate(
                 [comments[0], json.dumps(missing_timestamp), comments[2]], timeline,
             )
@@ -293,19 +293,19 @@ class T(unittest.TestCase):
         comments, timeline = sha_less_fixture()
         initial = json.loads(comments[2])
         initial["updated_at"] = "2026-10-04T05:02:30Z"
-        with self.subTest("rate-limit inicial editado"), self.assertRaises(PolicyError):
+        with self.subTest("rate-limit inicial editado"), self.assertRaisesRegex(PolicyError, "Rate-limit inicial editado"):
             sha_less_validate(
                 [comments[0], comments[1], json.dumps(initial)], timeline,
             )
         del initial["updated_at"]
-        with self.subTest("rate-limit inicial sin timestamp"), self.assertRaises(PolicyError):
+        with self.subTest("rate-limit inicial sin timestamp"), self.assertRaisesRegex(PolicyError, "Rate-limit inicial editado"):
             sha_less_validate(
                 [comments[0], comments[1], json.dumps(initial)], timeline,
             )
 
         owner = json.loads(comments[0])
         del owner["updated_at"]
-        with self.subTest("trigger owner sin timestamp"), self.assertRaises(PolicyError):
+        with self.subTest("trigger owner sin timestamp"), self.assertRaisesRegex(PolicyError, "Trigger OWNER editado"):
             sha_less_validate(
                 [json.dumps(owner), comments[1], comments[2]], timeline,
             )
