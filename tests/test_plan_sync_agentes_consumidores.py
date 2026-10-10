@@ -54,6 +54,20 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
                 plan_sync(template(), bad)
         with self.assertRaises(SyncPlanError):
             plan_sync("# AGENTES.md\n", consumers())
+        # Un template que añade reglas privadas como subsección tras el
+        # límite o antes de él no contiene exclusivamente los principios.
+        for source in (
+            template() + "\n### Reglas privadas posteriores\nCLAVE_FAKE=solo-test\n",
+            template().replace(
+                "### Límite explícito del template",
+                "### Reglas privadas anteriores\nCLAVE_FAKE=solo-test\n\n"
+                "### Límite explícito del template",
+            ),
+        ):
+            with self.subTest(location=source.find("Reglas privadas")):
+                with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
+                    plan_sync(source, consumers())
+
         # The original is under budget but the projected principles are not.
         oversized_projection = consumers()
         prefix = "# AGENTES.md\n"
