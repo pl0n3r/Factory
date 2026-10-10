@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import re
-from collections.abc import Mapping
 
 _IDENT = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
 
@@ -18,11 +17,16 @@ class EncryptionContractError(ValueError):
 
 
 def _validated(project: object, key_ref: object, backend: object) -> None:
-    if (not isinstance(project, str) or _IDENT.fullmatch(project) is None
-            or not isinstance(key_ref, str) or _IDENT.fullmatch(key_ref) is None
-            or getattr(backend, "simulation_only", None) is not True
-            or not callable(getattr(backend, "seal", None))
-            or not callable(getattr(backend, "open", None))):
+    if (type(project) is not str or _IDENT.fullmatch(project) is None
+            or type(key_ref) is not str or _IDENT.fullmatch(key_ref) is None):
+        raise EncryptionContractError("Untrusted key or crypto backend.")
+    try:
+        allowed = (getattr(backend, "simulation_only", None) is True
+                   and callable(getattr(backend, "seal", None))
+                   and callable(getattr(backend, "open", None)))
+    except Exception:
+        raise EncryptionContractError("Untrusted key or crypto backend.") from None
+    if not allowed:
         raise EncryptionContractError("Untrusted key or crypto backend.")
 
 
@@ -43,16 +47,29 @@ def seal_backup(project: str, key_ref: str, data: bytes, keys: object, backend: 
             "simulation_only": True, "external_transfer_allowed": False}
 
 
-def open_backup(project: str, artifact: Mapping, keys: object, backend: object) -> bytes:
+def open_backup(project: str, artifact: dict, keys: object, backend: object) -> bytes:
     """Requires the historical key handle even after the active key rotates."""
-    if not isinstance(artifact, Mapping) or set(artifact) != {
-        "version", "project", "key_ref", "payload_b64",
-        "simulation_only", "external_transfer_allowed"
-    } or artifact["version"] != 1 or artifact["project"] != project or artifact["simulation_only"] is not True or artifact["external_transfer_allowed"] is not False:
+    # An arbitrary Mapping can execute untrusted __iter__/__getitem__ code.
+    if (type(project) is not str or _IDENT.fullmatch(project) is None
+            or type(artifact) is not dict or len(artifact) != 6
+            or any(type(key) is not str for key in artifact)
+            or set(artifact) != {
+                "version", "project", "key_ref", "payload_b64",
+                "simulation_only", "external_transfer_allowed"
+            }):
+        raise EncryptionContractError("Invalid sealed artifact.")
+    # bool compares equal to 1; accept only the integer schema version.
+    if (type(artifact["version"]) is not int or artifact["version"] != 1
+            or type(artifact["project"]) is not str
+            or artifact["project"] != project
+            or type(artifact["key_ref"]) is not str
+            or type(artifact["payload_b64"]) is not str
+            or artifact["simulation_only"] is not True
+            or artifact["external_transfer_allowed"] is not False):
         raise EncryptionContractError("Invalid sealed artifact.")
     _validated(project, artifact["key_ref"], backend)
     payload = artifact["payload_b64"]
-    if not isinstance(payload, str) or len(payload) > 16_000_000:
+    if len(payload) > 16_000_000:
         raise EncryptionContractError("Invalid sealed artifact.")
     try:
         sealed = base64.b64decode(payload, validate=True)

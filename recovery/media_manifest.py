@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 
 _ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\Z")
 _SHA = re.compile(r"[a-f0-9]{64}\Z")
@@ -36,7 +35,7 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
         raise MediaManifestError("Invalid verification evidence.")
     proven = {}
     for row in verified:
-        if (not isinstance(row, Mapping) or set(row) != {"project", "object_key", "sha256", "evidence_ref", "immutable"}
+        if ( type(row) is not dict or any(type(key) is not str for key in row) or set(row) != {"project", "object_key", "sha256", "evidence_ref", "immutable"}
                 or row["project"] != project or not _object_key(row["object_key"])
                 or not isinstance(row["sha256"], str) or _SHA.fullmatch(row["sha256"]) is None
                 or not _identity(row["evidence_ref"]) or row["immutable"] is not True):
@@ -48,7 +47,7 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
     entries, upload, restore = [], [], []
     seen_assets, keys, upload_keys = set(), {}, set()
     for asset in assets:
-        if (not isinstance(asset, Mapping) or set(asset) != {
+        if (type(asset) is not dict or any(type(key) is not str for key in asset) or set(asset) != {
             "asset_id", "object_key", "sha256", "byte_size", "metadata_key", "preview_keys"
         }):
             raise MediaManifestError("Invalid media asset shape.")

@@ -1,5 +1,6 @@
 """Executable acceptance for Factory #1090: pure media backup manifest."""
 import unittest
+from collections.abc import Mapping
 from recovery.media_manifest import MediaManifestError, plan_media_backup
 
 SHA1 = "1" * 64
@@ -55,3 +56,18 @@ class RecoveryMediaManifestTests(unittest.TestCase):
         hostile = asset(); hostile["object_key"] = "../../private"
         with self.assertRaises(MediaManifestError):
             plan_media_backup("grindflow", [hostile])
+
+        class MaliciousMapping(Mapping):
+            def __len__(self):
+                return 6
+            def __iter__(self):
+                raise RuntimeError("sensitive-mapping-sentinel")
+            def __getitem__(self, key):
+                raise RuntimeError("sensitive-mapping-sentinel")
+
+        for assets, verified in (([MaliciousMapping()], []),
+                                 ([asset()], [MaliciousMapping()])):
+            with self.subTest(source="assets" if not verified else "verified"):
+                with self.assertRaises(MediaManifestError) as caught:
+                    plan_media_backup("grindflow", assets, verified)
+                self.assertNotIn("sensitive-mapping-sentinel", str(caught.exception))
