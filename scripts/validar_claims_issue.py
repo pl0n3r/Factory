@@ -7,6 +7,7 @@ esta biblioteca se usa solo en la preparación de nuevas hojas.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 MAX_PATHS_PER_LEAF = 6
 MAX_INPUT_PATHS = 64
@@ -16,7 +17,8 @@ _GLOBS = frozenset("*?[]{}")
 _SHARED_NAMES = frozenset({
     "readme.md", "package.json", "package-lock.json", "yarn.lock",
     "pnpm-lock.yaml", "composer.lock", "poetry.lock", "cargo.lock",
-    "gemfile.lock", "uv.lock", "pipfile.lock",
+    "gemfile.lock", "uv.lock", "pipfile.lock", "bun.lock", "bun.lockb",
+    "npm-shrinkwrap.json",
 })
 
 
@@ -74,20 +76,24 @@ def inspect_claim_paths(paths: object) -> dict[str, object]:
 
     errors: set[str] = set()
     seen: set[str] = set()
+    accepted: list[str] = []
     for path in paths:
         problem = _path_problem(path)
         if problem is not None:
             errors.add(problem)
             continue
-        if path in seen:
+        # Cross-platform aliases must never appear as independent claims.
+        key = unicodedata.normalize("NFC", path).casefold()
+        if key in seen:
             errors.add("duplicate_path")
-        seen.add(path)
+        seen.add(key)
+        accepted.append(path)
 
     if errors:
         # La entrada no confiable no reaparece en ningún error ni en propuestas.
         return _report(valid=False, reason_codes=sorted(errors))
 
-    ordered = sorted(seen)
+    ordered = sorted(accepted)
     shared = [path for path in ordered if _shared(path)]
     if len(ordered) > MAX_PATHS_PER_LEAF:
         groups = [
