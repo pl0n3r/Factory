@@ -176,6 +176,17 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                     result = self.run_generated(mutated)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("FAIL", result.stderr)
+        strict = consumer_caller(strict=True)
+        for before, after in (
+            ("route: ${{ steps.route.outputs.route }}", "route: ${{ steps.wrong.outputs.route }}"),
+            ("- id: route", "- id: wrong"),
+        ):
+            with self.subTest(missing_preflight_binding=before):
+                mutated = strict.replace(before, after, 1)
+                self.assertNotEqual(mutated, strict)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("FAIL", result.stderr)
 
 
 if __name__ == "__main__":
