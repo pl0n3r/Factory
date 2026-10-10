@@ -502,6 +502,31 @@ class T(unittest.TestCase):
             "coderabbitai[bot]", HEAD,
         )
 
+    def test_primary_exact_head_review_cannot_bypass_open_bot_findings(self):
+        # La vía primaria debe aplicar el mismo veto de hilos que fallback.
+        with self.assertRaisesRegex(PolicyError, "finding bloqueante abierto"):
+            validate_required_bot_review_or_fallback(
+                [review()], "coderabbitai[bot]", HEAD,
+                comment_lines=[], check_lines=[],
+                thread_lines=[review_thread()],
+                phase_file=None,
+            )
+        # La cobertura canónica tampoco permite saltar un finding abierto.
+        with self.assertRaisesRegex(PolicyError, "finding bloqueante abierto"):
+            validate_required_bot_review_or_fallback(
+                [], "coderabbitai[bot]", HEAD,
+                comment_lines=[comment()], check_lines=[],
+                thread_lines=[review_thread()],
+                phase_file=None,
+            )
+        result = validate_required_bot_review_or_fallback(
+            [review()], "coderabbitai[bot]", HEAD,
+            comment_lines=[], check_lines=[],
+            thread_lines=[review_thread(resolved=True)],
+            phase_file=None,
+        )
+        self.assertEqual(result, {"review_fallback": False})
+
     def test_required_bot_comment_coverage_on_exact_head_passes(self):
         validate_required_bot_review(
             [],
