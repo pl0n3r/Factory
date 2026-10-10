@@ -76,6 +76,24 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(SyncPlanError, "invalid_document"):
             plan_sync(template(), oversized_projection)
+        # Partial or malformed reserved markers must never be treated as absent.
+        for broken_marker in (
+            "<!-- factory-principios-sync:start",
+            "<!-- factory-principios-sync:end",
+            "<!-- factory-principios-sync:star -->",
+            "<!-- factory-principios-sync:start --> junk",
+            "prefix <!-- factory-principios-sync:end -->",
+            "<!-- factory-principios-sync:start -->\n"
+            "<!-- factory-principios-sync:en -->",
+        ):
+            docs = consumers()
+            docs[REPOSITORIES[0]] = "# AGENTES.md\n" + broken_marker + "\n"
+            with self.subTest(broken_marker=broken_marker):
+                with self.assertRaisesRegex(SyncPlanError, "invalid_sync_markers"):
+                    plan_sync(template(), docs)
+        with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
+            plan_sync(template() + "\n<!-- factory-principios-sync:star -->\n", consumers())
+
         for content in (
             "# AGENTES.md\n<!-- factory-principios-sync:start -->\n",
             "# AGENTES.md\n## Principios de construcción de la fábrica\n",
