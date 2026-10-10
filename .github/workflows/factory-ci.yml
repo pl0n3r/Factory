@@ -197,16 +197,36 @@ jobs:
               echo "::error::Issue de release inválido"
               exit 1
             }
-            gh api --paginate               "repos/$REPOSITORY/issues/$number/comments?per_page=100"               --slurp | jq '
-              add // []
+            gh api --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" | jq -s -e '
+              def valid_comment:
+                if type != "object" then false
+                elif (.id | type) != "number" then false
+                elif (.user | type) != "object" then false
+                else (.id > 0 and (.id | floor) == .id
+                      and (.user.login | type) == "string"
+                      and (.body | type) == "string")
+                end;
+              if (length == 0 or length > 10 or any(.[]; type != "array")) then
+                error("invalid_comment_pages")
+              elif (any(.[]; length > 100) or
+                    (length > 1 and any(.[0:-1][]; length != 100))) then
+                error("incomplete_comment_pages")
+              else . end
+              | add
+              | if (length > 1000 or any(.[]; valid_comment | not)) then
+                  error("invalid_comment_shape")
+                else . end
+              | if ([.[].id] | unique | length) != length then
+                  error("duplicate_comment_id")
+                else . end
               | map(
                   select(.user.login == "github-actions[bot]")
                   | select(
-                      ((.body // "") | contains("factory-human-decision"))
-                      or ((.body // "") | contains("factory-release-executed"))
-                      or ((.body // "") | contains("factory-human-gate-duplicate"))
+                      (.body | contains("factory-human-decision"))
+                      or (.body | contains("factory-release-executed"))
+                      or (.body | contains("factory-human-gate-duplicate"))
                     )
-                  | {user: {login: .user.login}, body: (.body // "")}
+                  | {user: {login: .user.login}, body: .body}
                 )
             ' > /tmp/release-comments.json
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
