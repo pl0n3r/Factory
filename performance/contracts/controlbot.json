@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "project": "controlbot",
+  "surfaces": [
+    {
+      "id": "ci.validation",
+      "label": "ControlBot CI workflow envelope; not a production endpoint",
+      "metrics": [
+        {
+          "id": "workflow_elapsed",
+          "label": "Elapsed run_started_at to updated_at (includes Actions bookkeeping)",
+          "baseline": {
+            "value": 114,
+            "unit": "s",
+            "observed_at": "2026-10-05T16:45:45Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 300,
+            "unit": "s"
+          },
+          "window": {
+            "duration_seconds": 604800,
+            "min_samples": 3
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_actions",
+            "ref": "github:pl0n3r/ControlBot/actions/runs/37343055211",
+            "observed_at": "2026-10-05T16:45:45Z"
+          },
+          "allowed_actions": [
+            "observe",
+            "diagnose",
+            "benchmark",
+            "measure_before_after"
+          ],
+          "escalation_conditions": [
+            "architecture_change",
+            "capacity_budget"
+          ]
+        }
+      ]
+    }
+  ]
+}
