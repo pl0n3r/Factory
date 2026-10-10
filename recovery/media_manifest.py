@@ -75,6 +75,11 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
         if key not in proven and key not in upload_keys:
             upload_keys.add(key)
             upload.append({"object_key": key, "sha256": digest, "byte_size": row["byte_size"]})
+    # All keys share one remote namespace. Metadata must not alias
+    # immutable originals, including originals declared by later assets.
+    metadata_keys = {asset["metadata_key"] for asset in assets}
+    if metadata_keys.intersection(keys):
+        raise MediaManifestError("Conflicting original and metadata keys.")
     return {"version": 1, "project": project,
             "entries": sorted(entries, key=lambda item: item["asset_id"]),
             "pending_uploads": sorted(upload, key=lambda item: item["object_key"]),
