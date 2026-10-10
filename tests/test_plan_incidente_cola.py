@@ -224,6 +224,13 @@ class PlanIncidenteColaTests(unittest.TestCase):
             report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
         # A malicious diagnostic reason may raise in __ne__; only fixed
         # private error codes are allowed at the trust boundary.
+        class HostileState:
+            def __eq__(self, other):
+                raise RuntimeError("synthetic-private-sentinel")
+        invalid = upstream_diagnosis()
+        invalid["state"] = HostileState()
+        with self.assertRaisesRegex(IncidentPlanError, "invalid_diagnosis_state"):
+            report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
         class HostileReason:
             def __ne__(self, other):
                 raise RuntimeError("private-reason-sentinel")
@@ -240,6 +247,31 @@ class PlanIncidenteColaTests(unittest.TestCase):
         with self.assertRaisesRegex(IncidentPlanError, "unverified_candidate"):
             report_from_diagnosis(invalid, {"limit": 5000, "remaining": 5000})
 
+    def test_global_blockers_limit_matches_upstream(self):
+        # #1098 permits at most 10,000 blockers ACROSS all seven repos.
+        def diagnosis_for(factory_blockers):
+            diag = upstream_diagnosis()
+            entry = diag["repositories"]["Factory"]
+            entry["blocked_reasons"] = [
+                {"issue": n, "cause": "dependency", "roadmap": False}
+                for n in range(1, factory_blockers + 1)
+            ]
+            entry["counts"]["blocked"] = factory_blockers
+            entry["open_issues"] = factory_blockers
+            entry["blocked_cause_counts"]["dependency"] = factory_blockers
+            diag["open_total"] = factory_blockers + 6
+            diag["blocked_cause_totals"]["dependency"] = factory_blockers + 6
+            diag["roadmap_candidates"] = []
+            diag["omitted_candidates"] = 0
+            return diag
+
+        valid = report_from_diagnosis(
+            diagnosis_for(9994), {"limit": 5000, "remaining": 5000})
+        self.assertEqual(valid["open_total"], 10000)
+        self.assertFalse(plan_incidente_cola(valid)["can_publish"])
+        with self.assertRaisesRegex(IncidentPlanError, "blocker_report_too_large"):
+            report_from_diagnosis(
+                diagnosis_for(9995), {"limit": 5000, "remaining": 5000})
 
 if __name__ == "__main__":
     unittest.main()
