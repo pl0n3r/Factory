@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DIRECTORY = ROOT / "recovery" / "manifests"
 PROJECTS = ("autofactory", "brvtal", "condor", "controlbot", "grindflow")
 PREFIX = "# factory-recovery-evidence "
+LEGEND = "# Targets only: no backup, encryption, restore or RPO/RTO has been verified."
 SOURCE = "https://github.com/pl0n3r/Factory/issues/305"
 SOURCE_PROFILES = {
     "autofactory": ("NOT_APPLICABLE", "NOT_APPLICABLE", "REQUIRED", "NOT_APPLICABLE"),
@@ -38,13 +39,13 @@ def _parse(text):
     marker = json.loads(lines[0][len(PREFIX):], object_pairs_hook=_unique_keys)
     if not isinstance(marker, dict):
         raise ValueError("invalid evidence marker")
-    if [x for x in lines if x.startswith(PREFIX)] != [lines[0]]:
-        raise ValueError("duplicate evidence marker")
-    if any(line.startswith("#") and not line.startswith("# ") for line in lines[1:]):
-        raise ValueError("unknown YAML comment")
-    payload = json.loads("\n".join(line for line in lines[1:]
-                                   if not line.lstrip().startswith("#")),
-                         object_pairs_hook=_unique_keys)
+    # Exactly one canonical header and one fixed informational legend.
+    # Never silently discard an indented YAML comment or contradictory status.
+    if len(lines) < 3 or lines[1] != LEGEND:
+        raise ValueError("invalid recovery legend")
+    if any(line.lstrip().startswith("#") for line in lines[2:]):
+        raise ValueError("unexpected YAML comment")
+    payload = json.loads("\n".join(lines[2:]), object_pairs_hook=_unique_keys)
     return marker, payload
 
 
@@ -95,7 +96,7 @@ class RecoveryManifestsTests(unittest.TestCase):
                 })
                 self.assertNotIn("observed_rpo", payload)
                 self.assertNotIn("operational_readiness", payload)
-                self.assertTrue(text.splitlines()[1].startswith("# Targets only"))
+                self.assertEqual(text.splitlines()[1], LEGEND)
 
     def test_rejects_invalid_manifest_and_requires_all_projects(self):
         paths = {p.stem for p in DIRECTORY.glob("*.yml")}
@@ -106,6 +107,20 @@ class RecoveryManifestsTests(unittest.TestCase):
             _parse(template.replace(PREFIX, "# missing-evidence ", 1))
         with self.assertRaises(ValueError):
             _parse(template + "\n" + template.splitlines()[0] + "\n")
+        # The exact bug in QA: an indented second recovery marker was
+        # previously skipped both by duplicate detection and JSON parsing.
+        adversarial_comments = (
+            '  # factory-recovery-evidence {"status":"VALIDATED_IN_PRODUCTION",'
+            '"operational_readiness":"GREEN"}',
+            '  # operational_readiness=GREEN',
+            '# unexpected recovery status override',
+            '   ' + LEGEND,
+        )
+        for extra in adversarial_comments:
+            with self.subTest(extra=extra):
+                modified = template.replace(LEGEND, LEGEND + "\n" + extra, 1)
+                with self.assertRaises(ValueError):
+                    _parse(modified)
         with self.assertRaises(ValueError):
             _parse(template.replace('"project": "condor"',
                                     '"project": "condor", "project": "condor"', 1))
