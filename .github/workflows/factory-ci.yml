@@ -98,7 +98,7 @@ jobs:
           else
             printf 'null\n' > /tmp/release-search-p2.json
           fi
-          python3 - /tmp/release-search-p1.json /tmp/release-search-p2.json <<'PY' > /tmp/release-issues.json
+          python3 - /tmp/release-search-p1.json /tmp/release-search-p2.json <<'PY' > /tmp/release-search-verified.json
           import json
           import sys
           from pathlib import Path
@@ -155,15 +155,19 @@ jobs:
                       or not isinstance(item.get("body"), str)
                   ):
                       fail("Issue no canónico o malformado")
-                  if "factory-release" in item["body"]:
-                      selected.append({
-                          key: item.get(key)
-                          for key in ("number", "state", "title", "body", "updated_at")
-                      })
+                  selected.append({
+                      key: item.get(key)
+                      for key in ("number", "state", "title", "body", "updated_at")
+                  })
           if len(seen) != count:
               fail("conteo incompleto")
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
+          jq '[
+                .[]
+                | select((.body // "") | contains("factory-release"))
+                | {number, state, title, body, updated_at}
+              ]' /tmp/release-search-verified.json > /tmp/release-issues.json
           printf '[]\n' > /tmp/release-gates.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
