@@ -26,6 +26,9 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(set(result["repositories"]), set(REPOSITORIES))
         self.assertEqual(result["open_total"], 7)
         self.assertEqual(result["available_total"], 0)
+        self.assertEqual(result["reason"], "zero_available")
+        self.assertEqual(result["blocked_cause_totals"]["dependency"], 7)
+        self.assertEqual(result["repositories"]["Factory"]["blocked_cause_counts"]["dependency"], 1)
         self.assertEqual(result["repositories"]["Factory"]["blocked_reasons"], [
             {"issue": 17, "cause": "dependency", "roadmap": True}
         ])
@@ -53,8 +56,10 @@ class SaludColaTests(unittest.TestCase):
         queue["repositories"][0]["counts"].update(available=1, blocked=0)
         queue["repositories"][0]["blockers"] = []
         self.assertEqual(diagnose_queue(queue)["state"], "below_capacity")
+        self.assertEqual(diagnose_queue(queue)["reason"], "fewer_ready_than_capacity")
         queue["agent_capacity"] = None
         self.assertEqual(diagnose_queue(queue)["state"], "unknown_capacity")
+        self.assertEqual(diagnose_queue(queue)["reason"], "capacity_not_observed")
         queue["agent_capacity"] = 1
         self.assertEqual(diagnose_queue(queue)["state"], "healthy")
         queue["agent_capacity"] = 0
@@ -65,7 +70,11 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(diagnose_queue(queue)["state"], "queue_empty")
 
     def test_rate_limit_and_untrusted_inputs_fail_closed(self):
-        self.assertEqual(diagnose_queue(inventory(remaining=999))["state"], "budget_deferred")
+        deferred = diagnose_queue(inventory(remaining=999))
+        self.assertEqual(deferred["state"], "budget_deferred")
+        self.assertEqual(deferred["reason"], "rate_limit_below_20_percent")
+        self.assertEqual(deferred["blocked_cause_totals"]["dependency"], 7)
+        self.assertFalse(deferred["publication_allowed"])
         self.assertEqual(diagnose_queue(inventory(remaining=1000))["state"], "queue_empty")
         self.assertEqual(diagnose_queue(inventory(remaining=0))["roadmap_candidates"], [])
         for path, value in (("agent_capacity", True), ("agent_capacity", -1),
@@ -92,6 +101,10 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(result["roadmap_candidates"][0],
                          {"repository": "Factory", "issue": 109, "cause": "claims"})
         self.assertEqual(len(result["roadmap_candidates"]), 6)
+        # Even a blocker excluded from roadmap remains in the cause summary.
+        self.assertEqual(result["blocked_cause_totals"]["dependency"], 6)
+        self.assertEqual(result["blocked_cause_totals"]["claims"], 1)
+        self.assertEqual(sum(result["blocked_cause_totals"].values()), 7)
         self.assertNotIn("private", json.dumps(result))
         # Report ALL blockers, but never suggest human-only or unknown work.
         queue["repositories"][0]["blockers"][0]["cause"] = "human_gate"
@@ -99,6 +112,8 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(report["repositories"]["Factory"]["blocked_reasons"], [
             {"issue": 109, "cause": "human_gate", "roadmap": True}
         ])
+        self.assertEqual(report["blocked_cause_totals"]["human_gate"], 1)
+        self.assertEqual(report["repositories"]["Factory"]["blocked_cause_counts"]["human_gate"], 1)
         self.assertTrue(all(x["issue"] != 109 or x["repository"] != "Factory"
                             for x in report["roadmap_candidates"]))
         queue["repositories"][0]["blockers"][0]["cause"] = "unknown"
@@ -127,6 +142,8 @@ class SaludColaTests(unittest.TestCase):
         report = diagnose_queue(big)
         self.assertEqual(len(report["roadmap_candidates"]), 32)
         self.assertEqual(report["omitted_candidates"], 38)
+        self.assertEqual(report["blocked_cause_totals"]["planned"], 70)
+        self.assertEqual(sum(report["blocked_cause_totals"].values()), 70)
         self.assertEqual(len(report["repositories"]["Factory"]["blocked_reasons"]), 10)
         # Refuse massive output rather than silently truncating causes.
         huge = inventory()

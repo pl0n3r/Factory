@@ -72,6 +72,7 @@ def diagnose_queue(snapshot: object) -> dict:
             raise QueueHealthError("blocker_report_too_large")
         seen_issues: set[int] = set()
         safe_blockers: list[dict] = []
+        cause_counts = {cause: 0 for cause in sorted(CAUSES)}
         for blocked in blockers:
             if not _exact(blocked, {"number", "cause", "roadmap"}):
                 raise QueueHealthError("invalid_blocker")
@@ -81,6 +82,7 @@ def diagnose_queue(snapshot: object) -> dict:
                     or type(roadmap) is not bool):
                 raise QueueHealthError("invalid_blocker")
             seen_issues.add(n)
+            cause_counts[cause] += 1
             safe_blockers.append({"issue": n, "cause": cause, "roadmap": roadmap})
             # A human decision or UNKNOWN is evidence, never an executable leaf.
             if roadmap and cause not in ("human_gate", "unknown"):
@@ -89,12 +91,17 @@ def diagnose_queue(snapshot: object) -> dict:
             "open_issues": row["open_issues"],
             "counts": {state: counts[state] for state in STATES},
             "blocked_reasons": sorted(safe_blockers, key=lambda entry: entry["issue"]),
+            "blocked_cause_counts": cause_counts,
         }
 
     if seen_repos != set(REPOSITORIES):
         raise QueueHealthError("incomplete_inventory")
     total_available = sum(r["counts"]["available"] for r in by_repo.values())
     total_open = sum(r["open_issues"] for r in by_repo.values())
+    total_causes = {
+        cause: sum(by_repo[name]["blocked_cause_counts"][cause] for name in REPOSITORIES)
+        for cause in sorted(CAUSES)
+    }
     # Multiplication rather than float avoids truncation at the 20% threshold.
     if budget["remaining"] * 5 < budget["limit"]:
         state = "budget_deferred"
@@ -107,13 +114,22 @@ def diagnose_queue(snapshot: object) -> dict:
     else:
         state = "healthy"
 
+    reason = {
+        "budget_deferred": "rate_limit_below_20_percent",
+        "queue_empty": "zero_available",
+        "unknown_capacity": "capacity_not_observed",
+        "below_capacity": "fewer_ready_than_capacity",
+        "healthy": "reported_capacity_sufficient",
+    }[state]
+
     sorted_candidates = sorted(
         candidates, key=lambda x: (REPOSITORIES.index(x["repository"]), x["issue"])
     )
     # During budget deferral there is no grounded trigger to publish or act on.
     selected = [] if state == "budget_deferred" else sorted_candidates[:MAX_CANDIDATES]
-    return {"version": 1, "state": state, "available_total": total_available,
-            "open_total": total_open, "agent_capacity": capacity,
+    return {"version": 1, "state": state, "reason": reason,
+            "available_total": total_available, "open_total": total_open,
+            "agent_capacity": capacity, "blocked_cause_totals": total_causes,
             "repositories": {name: by_repo[name] for name in REPOSITORIES},
             "roadmap_candidates": selected,
             "omitted_candidates": 0 if state == "budget_deferred"
