@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -14,6 +19,26 @@ def text():
 def job_block(value: str, name: str, next_name: str | None = None) -> str:
     tail = value.split(f"  {name}:", 1)[1]
     return tail.split(f"  {next_name}:", 1)[0] if next_name else tail
+
+
+def preflight_python() -> str:
+    block = job_block(text(), "preflight_comentario", "comentario")
+    shell = textwrap.dedent(block.split("run: |", 1)[1])
+    return shell.split("python3 - <<'PY'\n", 1)[1].split("\nPY", 1)[0]
+
+
+def routes_comment(body: str) -> bool:
+    """Ejecuta el clasificador real embebido en el workflow, sin red ni shell."""
+    with tempfile.TemporaryDirectory() as temp:
+        output = Path(temp) / "github_output"
+        env = {**os.environ, "COMMENT_BODY": body, "GITHUB_OUTPUT": str(output)}
+        result = subprocess.run(
+            [sys.executable, "-c", preflight_python()],
+            env=env, capture_output=True, text=True, timeout=5, check=False,
+        )
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        return output.read_text(encoding="utf-8") == "route=true\n"
 
 
 class ConsumerCoordinationTemplateTests(unittest.TestCase):
@@ -56,18 +81,87 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
         self.assertNotIn("github.run_id", concurrency)
 
     def test_comment_routing_matches_parser_whitespace_fail_closed(self):
-        value = text()
-        comment = job_block(value, "comentario", "etiqueta")
-        self.assertIn("github.event_name == 'issue_comment'", comment)
-        self.assertIn("github.event.sender.login == github.event.comment.user.login", comment)
-        self.assertIn("github.event.comment.body == '/tomar'", comment)
-        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)
-        self.assertIn("contains(github.event.comment.body, '/tomar')", comment)
-        self.assertIn("contains(github.event.comment.body, '/renovar-contrato ')", comment)
         coordinator.configure_profile("es")
         self.assertEqual(coordinator.parse_comment_command(" \n/tomar\t"), ("tomar", None))
+        self.assertTrue(routes_comment(" \n/tomar\t"))
         with self.assertRaises(coordinator.CoordinationError):
             coordinator.parse_comment_command("comentario ordinario")
+        self.assertFalse(routes_comment("comentario ordinario"))
+
+    def test_embedded_commands_in_prose_are_skipped_without_red_jobs(self):
+        for body in (
+            "No ejecuté /tomar",
+            "El ejemplo /renovar-contrato UUID es textual",
+            "  Ejemplo: /liberar-forzado  ",
+            "Estado del QA: /transferir UUID citado solamente",
+            "texto\n/tomar",
+            "texto que contiene /adoptar-contrato-huerfana",
+            "",
+        ):
+            with self.subTest(body=body):
+                self.assertFalse(routes_comment(body))
+        comment = job_block(text(), "comentario", "etiqueta")
+        self.assertNotIn("contains(github.event.comment.body", comment)
+        self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)
+
+    def test_trimmed_real_commands_route_and_malformed_fail_closed(self):
+        coordinator.configure_profile("es")
+        uuid = "efd30204-fc16-4dca-8534-aa6e4d35bc57"
+        accepted = (
+            ("/tomar", ("tomar", None)),
+            ("\n /tomar \t", ("tomar", None)),
+            ("/liberar-forzado", ("liberar-forzado", None)),
+            ("/adoptar-contrato-huerfana", ("adoptar-contrato-huerfana", None)),
+            ("/liberar " + uuid, ("liberar", uuid)),
+            ("/transferir " + uuid.upper(), ("transferir", uuid)),
+            ("/migrar-contrato " + uuid, ("migrar-contrato", uuid)),
+            ("/renovar-contrato \t" + uuid.upper(), ("renovar-contrato", uuid)),
+        )
+        for body, parsed in accepted:
+            with self.subTest(body=body):
+                self.assertTrue(routes_comment(body))
+                self.assertEqual(coordinator.parse_comment_command(body), parsed)
+        for body in (
+            "/tomar no-es-comando-valido",
+            "/tomar\ntexto",
+            "/liberar",
+            "/renovar-contrato NO-UUID",
+            "/migrar-contrato",
+            "/transferir texto",
+            "/adoptar-contrato-huerfana argumento",
+        ):
+            with self.subTest(malformed=body):
+                self.assertTrue(routes_comment(body))
+                with self.assertRaises(coordinator.CoordinationError):
+                    coordinator.parse_comment_command(body)
+        self.assertFalse(routes_comment("/tomarlo"))
+        self.assertFalse(routes_comment("/renovar-contrato-ejemplo"))
+
+    def test_comment_routing_preserves_permissions_and_pr_guard(self):
+        value = text()
+        preflight = job_block(value, "preflight_comentario", "comentario")
+        comment = job_block(value, "comentario", "etiqueta")
+        for block in (preflight, comment):
+            self.assertIn("github.event_name == 'issue_comment'", block)
+            self.assertIn("github.event.issue.pull_request == null", block)
+            self.assertIn(
+                "github.event.sender.login == github.event.comment.user.login",
+                block,
+            )
+        self.assertIn("permissions:\n      contents: read", preflight)
+        self.assertIn("timeout-minutes: 2", preflight)
+        self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", preflight)
+        self.assertNotIn("echo ${{ github.event.comment.body }}", preflight)
+        self.assertIn("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1", comment)
+        for scope in ("contents", "issues", "pull-requests", "checks"):
+            self.assertIn(f"      {scope}: write", comment)
+        concurrency = value.split("concurrency:", 1)[1].split("jobs:", 1)[0]
+        self.assertIn("group: coordinacion-${{ github.repository }}", concurrency)
+        self.assertIn("cancel-in-progress: false", concurrency)
+        self.assertIn("queue: max", concurrency)
+        for event in ("schedule:", "workflow_dispatch:", "pull_request:",
+                      "issues:", "issue_comment:"):
+            self.assertIn(event, value)
 
     def test_all_routes_keep_expected_events_conditions_and_operations(self):
         value = text()
