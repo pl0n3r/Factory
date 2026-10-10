@@ -182,14 +182,22 @@ def sha_less_validate(comments, timeline, *, phase="construccion",
 
 
 class T(unittest.TestCase):
-    def test_sha_less_rate_limit_accepts_only_authenticated_timeline_exact_head_owner_retry(self):
+    def test_sha_less_rate_limit_rejects_unverifiable_timeline_without_causal_proof(self):
+        # El fixture auténtico es temporalmente coherente, pero no aporta una
+        # relación causal comprobable trigger OWNER -> bot -> HEAD/ref íntegra.
         comments, timeline = sha_less_fixture()
-        self.assertEqual(sha_less_validate(comments, timeline),
-                         (202, "2026-10-04T05:02:08Z"))
-        # La misma respuesta del bot, sin timeline, nunca habilita fallback.
+        with self.assertRaisesRegex(PolicyError, "no vincula causalmente"):
+            sha_less_validate(comments, timeline)
+        # Un evento inocuo entre OWNER y bot no convierte correlación en prueba.
+        another_timeline = list(timeline)
+        another_timeline.insert(-1, {
+            "event": "mentioned", "actor": {"login": "coderabbitai"},
+        })
+        with self.assertRaisesRegex(PolicyError, "no vincula causalmente"):
+            sha_less_validate(comments, another_timeline)
+        # La ausencia de timeline y el primer intento continúan bloqueados.
         with self.assertRaises(PolicyError):
             sha_less_validate(comments, None)
-        # Sin fallo previo de Policy, el primer intento tampoco puede usar fallback.
         with self.assertRaises(PolicyError):
             sha_less_validate(comments, timeline, run_attempt=1,
                               include_policy_failure=False)
