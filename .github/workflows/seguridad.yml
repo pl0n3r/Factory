@@ -71,7 +71,19 @@ jobs:
 
   materializar-respuesta:
     name: Materializar decisión explícita
-    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      github.event.issue.state == 'open' &&
+      github.event.comment.author_association == 'OWNER' &&
+      github.event.comment.user.type != 'Bot' &&
+      github.event.sender.login == github.event.comment.user.login &&
+      (
+        github.event.comment.body == '/decidir A' ||
+        github.event.comment.body == '/decidir B' ||
+        github.event.comment.body == '/decidir C' ||
+        github.event.comment.body == '/decidir D'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
