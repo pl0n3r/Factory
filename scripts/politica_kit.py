@@ -559,7 +559,7 @@ def _exact_head_rate_limit_evidence(
         if identity is None:
             continue
         body, comment_id = identity
-        if re.search(rf"(?<![0-9a-f]){re.escape(head_sha)}(?![0-9a-f])", body) is None:
+        if re.search(rf"(?<![0-9a-fA-F]){re.escape(head_sha)}(?![0-9a-fA-F])", body, flags=re.IGNORECASE) is None:
             # Una cadena hexadecimal mayor no es el token del HEAD exacto.
             continue
         created_at = _parse_iso_timestamp(
