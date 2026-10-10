@@ -98,6 +98,19 @@ class NoWorkDedupTests(unittest.TestCase):
             ):
                 inventory_fingerprint(duplicate)
 
+        contradictory = inventory()
+        contradictory["repositories"]["Factory"]["available"] = [1121]
+        contradictory["repositories"]["Factory"]["recovery"] = [1121]
+        with self.assertRaisesRegex(NoWorkInventoryError, "issue_state_conflict"):
+            inventory_fingerprint(contradictory)
+
+        distinct = inventory()
+        distinct["repositories"]["Factory"]["available"] = [904, 1121]
+        distinct["repositories"]["Factory"]["recovery"] = [1102]
+        stable = inventory_fingerprint(distinct)
+        distinct["repositories"]["Factory"]["available"].reverse()
+        self.assertEqual(inventory_fingerprint(distinct), stable)
+
     def test_live_reservations_require_valid_identity_and_active_bool(self):
         invalid_entries = (
             "lease-plain-text",
@@ -137,6 +150,21 @@ class NoWorkDedupTests(unittest.TestCase):
         )
         self.assertNotEqual(inventory_fingerprint(active), baseline)
 
+        for conflict in (
+            {"issue_number": 1121, "reservation_id": "another", "active": True},
+            {"issue_number": 1122, "reservation_id": "new", "active": True},
+        ):
+            duplicate = inventory()
+            duplicate["repositories"]["ControlBot"]["reservations"] = [
+                {"issue_number": 1121, "reservation_id": "new", "active": True},
+                conflict,
+            ]
+            with self.subTest(conflict=conflict):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "reservation_duplicate"
+                ):
+                    inventory_fingerprint(duplicate)
+
     def test_valid_inventory_and_scalar_blockers_keep_existing_fingerprint(self):
         base = inventory()
         fingerprint = inventory_fingerprint(base)
@@ -149,6 +177,25 @@ class NoWorkDedupTests(unittest.TestCase):
         first = inventory_fingerprint(with_blockers)
         with_blockers["repositories"]["Factory"]["blockers"].reverse()
         self.assertEqual(inventory_fingerprint(with_blockers), first)
+
+        for bad_state in ("UNKNOWN", "OPEN", "merged", "", True, None):
+            candidate = inventory()
+            candidate["repositories"]["Condor"]["pull_requests"][0]["state"] = bad_state
+            with self.subTest(pr_state=repr(bad_state)):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "pull_request_state_invalid"
+                ):
+                    inventory_fingerprint(candidate)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(candidate, None, 100)
+        known_closed = inventory()
+        known_closed["repositories"]["Condor"]["pull_requests"][0]["state"] = "closed"
+        known_closed["repositories"]["Condor"]["pull_requests"] = []
+        closed_baseline = inventory_fingerprint(known_closed)
+        known_closed["repositories"]["Condor"]["pull_requests"].append({
+            "number": 448, "state": "closed", "head_sha": "a" * 40
+        })
+        self.assertEqual(inventory_fingerprint(known_closed), closed_baseline)
 
         for bad in (True, False, 0, -4, "904", None):
             candidate = inventory()

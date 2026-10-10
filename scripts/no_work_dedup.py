@@ -147,10 +147,14 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
             raise NoWorkInventoryError(f"issue_ids_invalid:{name}:{field}")
         if len(set(issue_ids)) != len(issue_ids):
             raise NoWorkInventoryError(f"issue_ids_duplicate:{name}:{field}")
+    if set(value["available"]) & set(value["recovery"]):
+        raise NoWorkInventoryError(f"issue_state_conflict:{name}")
 
     # Las reservas V3 pueden usar "issue" o "issue_number" según el caller.
     # La forma inválida no debe producir una huella publicable.
     live_reservations = []
+    active_issue_ids = set()
+    active_reservation_ids = set()
     for reservation in value["reservations"]:
         if not isinstance(reservation, dict):
             raise NoWorkInventoryError(f"reservation_invalid:{name}:shape")
@@ -171,6 +175,10 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
             raise NoWorkInventoryError(f"reservation_invalid:{name}:reservation_id")
         if not reservation["active"]:
             continue
+        if issue_id in active_issue_ids or reservation_id in active_reservation_ids:
+            raise NoWorkInventoryError(f"reservation_duplicate:{name}")
+        active_issue_ids.add(issue_id)
+        active_reservation_ids.add(reservation_id)
         live_reservations.append(_material_entry(reservation, noun=f"reservation:{name}"))
 
     for blocker in value["blockers"]:
@@ -184,10 +192,10 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         if not isinstance(pr, dict):
             raise NoWorkInventoryError(f"pull_request_invalid:{name}")
         state = pr.get("state")
-        if state != "open":
-            if isinstance(state, str):
-                continue
+        if state not in ("open", "closed"):
             raise NoWorkInventoryError(f"pull_request_state_invalid:{name}")
+        if state == "closed":
+            continue
         number = pr.get("number")
         head_sha = pr.get("head_sha")
         if type(number) is not int or number <= 0:
