@@ -51,7 +51,8 @@ def _would_run(payload: dict) -> bool:
         node: object = payload
         for part in match.group(0).split("."):
             node = node.get(part) if isinstance(node, dict) else None
-        return repr(node)
+        # Una entidad GitHub presente no es null; no evaluar literales dict/list.
+        return repr('PRESENT_OBJECT') if isinstance(node, (dict, list)) else repr(node)
 
     expression = re.sub(
         r"\bgithub(?:\.[A-Za-z_][A-Za-z0-9_]*)+\b", lookup, expression
