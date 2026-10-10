@@ -1,11 +1,13 @@
 """Regresiones puras de la frontera GitHub REST de Factory #1104."""
 from __future__ import annotations
 
+import copy
 import json
 import unittest
 
 from scripts.salud_cola_github import (
     GitHubPageError, parse_github_issue_page, parse_github_issue_sequence,
+    require_stable_github_sweeps,
 )
 
 
@@ -157,6 +159,56 @@ class GitHubPageTests(unittest.TestCase):
             with self.subTest(incomplete=incomplete):
                 with self.assertRaises(GitHubPageError):
                     parse_github_issue_sequence("Factory", incomplete)
+
+
+    def test_two_stable_sweeps_reject_issue_drift(self):
+        def capture(n, items, header):
+            return {"request_url": url(n), "status_code": 200,
+                    "link_header": header, "payload": items}
+        first = capture(1, full_items(),
+                        ", ".join((link(2, "next"), link(2, "last"))))
+        second = capture(2, [{"number": 101, "state": "open",
+                               "labels": [{"name": "estado: reservado"}]}],
+                         link(1, "prev"))
+        initial = [first, second]
+        stable = copy.deepcopy(initial)
+        result = require_stable_github_sweeps("Factory", initial, stable)
+        self.assertEqual(set(result), {"name", "pages"})
+        self.assertEqual(sum(len(p["issues"]) for p in result["pages"]), 101)
+
+        # Same count but a different Issue, status, label, PR type or order
+        # must be treated as drift instead of a complete actionable snapshot.
+        mutations = (
+            lambda pages: pages[0]["payload"][0].update(number=300),
+            lambda pages: pages[0]["payload"][0].update(
+                labels=[{"name": "estado: disponible"}]),
+            lambda pages: pages[1]["payload"][0].update(
+                labels=[{"name": "estado: disponible"}]),
+            lambda pages: pages[0]["payload"][0].update(
+                pull_request={"url": "https://example.invalid/pr"}),
+            lambda pages: pages[0]["payload"].reverse(),
+            lambda pages: pages[1]["payload"].append(
+                {"number": 102, "state": "open", "labels": []}),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(initial)
+                mutation(changed)
+                with self.assertRaisesRegex(GitHubPageError, "unstable_issue_sweeps"):
+                    require_stable_github_sweeps("Factory", initial, changed)
+
+        # The helper must never accept an incomplete second sweep or
+        # an impossible data source even if the first sweep is complete.
+        partial = copy.deepcopy(initial)[:1]
+        with self.assertRaises(GitHubPageError):
+            require_stable_github_sweeps("Factory", initial, partial)
+        with self.assertRaises(GitHubPageError):
+            require_stable_github_sweeps("UnknownRepo", initial, stable)
+        # Source-only free text is intentionally excluded from comparisons.
+        texts_only = copy.deepcopy(initial)
+        texts_only[0]["payload"][0]["title"] = "private changed title"
+        self.assertEqual(require_stable_github_sweeps(
+            "Factory", initial, texts_only), result)
 
     def test_projection_excludes_pr_and_private_text(self):
         payload = [

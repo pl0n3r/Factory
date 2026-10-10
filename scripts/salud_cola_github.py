@@ -207,3 +207,20 @@ def parse_github_issue_sequence(repo: object, responses: object) -> dict:
             seen_numbers.add(issue["number"])
         pages.append(result)
     return {"name": repo, "pages": pages}
+
+
+def require_stable_github_sweeps(repo: object, first: object,
+                                 second: object) -> dict:
+    """Compara DOS barridos completos y regresa solo la proyección estable.
+
+    Un mismo número de Issues no basta: se comparan IDs, orden, estado,
+    etiquetas de coordinación y bandera PR de todas las páginas.
+    No crea evidencia de atomicidad GitHub; un actor externo debe verificar
+    que ambas lecturas se hicieron en una ventana fiable y con rate-limit.
+    """
+    before = parse_github_issue_sequence(repo, first)
+    after = parse_github_issue_sequence(repo, second)
+    if before != after:
+        raise GitHubPageError("unstable_issue_sweeps")
+    # Normalized output matches the closed shape expected by #1100.
+    return after
