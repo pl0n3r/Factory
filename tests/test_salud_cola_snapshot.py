@@ -92,6 +92,13 @@ class SaludColaSnapshotTests(unittest.TestCase):
             lambda x: x["pages"][0]["issues"][0].update(
                 labels=["estado: disponible", "estado: bloqueado"]),
             lambda x: x["pages"][0]["issues"][0].update(labels=["status: snoozed"]),
+            # Prefixes with case variants are still state evidence, never harmless labels.
+            lambda x: x["pages"][0]["issues"][0].update(
+                labels=["estado: disponible", "Estado: bloqueado"]),
+            lambda x: x["pages"][0]["issues"][0].update(
+                labels=["status: available", "STATUS: BLOCKED"]),
+            lambda x: x["pages"][0]["issues"][0].update(
+                labels=["Estado: disponible"]),
             lambda x: x["pages"][0]["issues"][0].update(
                 labels=["estado: requiere recuperación"]),
             lambda x: x["pages"][0]["issues"][0].update(
