@@ -537,6 +537,8 @@ def _owner_review_retry_comments(
         )
         if created_at < not_before:
             continue
+        if item.get("updated_at") != item.get("created_at"):
+            raise PolicyError("Trigger OWNER editado o sin timestamp de integridad.")
         evidence.append((created_at, comment_id))
     return sorted(evidence)
 
@@ -620,6 +622,7 @@ def _sha_less_timeline_retry(
     required_review_bot: str,
     head_sha: str,
     head_committed_at: str,
+    policy_failure_times: list[str],
 ) -> tuple[int, str]:
     """Acredita un retry con timeline REST autenticada, nunca solo con texto del PR."""
     if not SHA_RE.fullmatch(head_sha):
@@ -723,9 +726,8 @@ def _sha_less_timeline_retry(
     owner_index, owner_event = owner_requests[0]
     owner_at = owner_event["created_at"]
     owner_observed = comment_by_id[owner_event["id"]]
-    owner_updated = owner_observed.get("updated_at")
-    if owner_updated is not None and owner_updated != owner_observed.get("created_at"):
-        raise PolicyError("Trigger OWNER editado.")
+    if owner_observed.get("updated_at") != owner_observed.get("created_at"):
+        raise PolicyError("Trigger OWNER editado o sin timestamp de integridad.")
     initial = [
         (i, e) for i, e in previous_rate_limits
         if i < owner_index and e["created_at"] < owner_at
@@ -736,9 +738,36 @@ def _sha_less_timeline_retry(
     ]
     if not initial:
         raise PolicyError("Falta rate-limit inicial previo al reintento OWNER.")
+    if any(
+        comment_by_id[event["id"]].get("updated_at") != event["created_at"]
+        for _index, event in initial
+    ):
+        raise PolicyError("Rate-limit inicial editado o sin timestamp de integridad.")
+    if not any(
+        first["created_at"] <= failed_at < owner_at
+        for _initial_index, first in initial
+        for failed_at in policy_failure_times
+    ):
+        raise PolicyError("Falta FAILURE previo de Policy entre rate-limit y retry OWNER.")
     if len(replies) != 1:
         raise PolicyError("Se exige una única respuesta rate-limit tras el reintento.")
     bot_index, bot_event = replies[0]
+    bot_observed = comment_by_id[bot_event["id"]]
+    if bot_observed.get("updated_at") != bot_observed.get("created_at"):
+        raise PolicyError("Respuesta de CodeRabbit editada o sin timestamp íntegro.")
+    bot_handle = _normalized_bot_login(required_review_bot)
+    review_commands = {
+        f"@{bot_handle} review",
+        f"@{bot_handle} full review",
+    }
+    if any(
+        owner_index < index < bot_index
+        and event["user"]["type"] == "User"
+        and isinstance(event.get("body"), str)
+        and event["body"].strip().lower() in review_commands
+        for index, event in witnessed
+    ):
+        raise PolicyError("Solicitud competidora impide atribuir respuesta CodeRabbit.")
     seconds = (
         datetime.fromisoformat(bot_event["created_at"].replace("Z", "+00:00"))
         - datetime.fromisoformat(owner_at.replace("Z", "+00:00"))
@@ -792,14 +821,33 @@ def validate_rate_limit_fallback(
 
     validate_other_gates_green(check_lines, head_sha=head_sha)
 
+    failed_policy_checks: list[str] = []
+    for check in parse_checks(check_lines):
+        if (
+            check.get("name") == POLICY_CHECK_NAME
+            and check.get("head_sha") == head_sha
+            and check.get("status") == "completed"
+            and check.get("conclusion") == "failure"
+        ):
+            failed_policy_checks.append(
+                _parse_iso_timestamp(
+                    check.get("completed_at"),
+                    noun="Timestamp de policy failure",
+                )
+            )
+
     if run_attempt > 1:
+        if not failed_policy_checks:
+            raise PolicyError("Rerun sin FAILURE previo de Policy sobre el HEAD exacto.")
         owner_retries = _owner_review_retry_comments(
             comment_lines,
             required_review_bot=required_review_bot,
             not_before=committed_at,
         )
         for retry_at, _retry_id in owner_retries:
-            if retry_at <= committed_at:
+            if retry_at <= committed_at or not any(
+                failed_at < retry_at for failed_at in failed_policy_checks
+            ):
                 continue
             rate_limit_events = _exact_head_rate_limit_events(
                 comment_lines,
@@ -816,25 +864,11 @@ def validate_rate_limit_fallback(
                 required_review_bot=required_review_bot,
                 head_sha=head_sha,
                 head_committed_at=committed_at,
+                policy_failure_times=failed_policy_checks,
             )
         raise PolicyError(
             "Rerun sin reintento OWNER y rate-limit exact-HEAD posteriores verificables."
         )
-
-    failed_policy_checks: list[str] = []
-    for check in parse_checks(check_lines):
-        if (
-            check.get("name") == POLICY_CHECK_NAME
-            and check.get("head_sha") == head_sha
-            and check.get("status") == "completed"
-            and check.get("conclusion") == "failure"
-        ):
-            failed_policy_checks.append(
-                _parse_iso_timestamp(
-                    check.get("completed_at"),
-                    noun="Timestamp de policy failure",
-                )
-            )
 
     rate_limits = _rate_limit_comments(
         comment_lines,

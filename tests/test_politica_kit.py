@@ -63,19 +63,20 @@ def rate_limit_comment(*, comment_id, created_at, login="coderabbitai[bot]",
         "id": comment_id,
         "body": body,
         "created_at": created_at,
+        "updated_at": created_at if updated_at is None else updated_at,
         "user": {"type": "Bot", "login": login},
     }
-    if updated_at is not None:
-        payload["updated_at"] = updated_at
     return json.dumps(payload)
 
 
 def owner_review_retry(*, comment_id=201, created_at="2026-10-04T05:02:00Z",
-                       association="OWNER", body="@coderabbitai review"):
+                       association="OWNER", body="@coderabbitai review",
+                       updated_at=None):
     return json.dumps({
         "id": comment_id,
         "body": body,
         "created_at": created_at,
+        "updated_at": created_at if updated_at is None else updated_at,
         "author_association": association,
         "user": {"type": "User", "login": "pl0n3r"},
     })
@@ -129,7 +130,7 @@ def sha_less_fixture():
     ))
     bot = json.loads(rate_limit_comment(
         comment_id=202, created_at="2026-10-04T05:02:08Z",
-        updated_at="2026-10-04T05:02:19Z",
+        updated_at="2026-10-04T05:02:08Z",
         body=("<!-- This is an auto-generated reply by CodeRabbit -->\n"
               "<!-- CodeRabbit review command invocation: v2:sample -->\n"
               "Review rate limited."),
@@ -157,7 +158,14 @@ def sha_less_fixture():
 
 
 def sha_less_validate(comments, timeline, *, phase="construccion",
-                      checks=None, reviews=None, threads=None, run_attempt=2):
+                      checks=None, reviews=None, threads=None, run_attempt=2,
+                      include_policy_failure=True):
+    check_rows = checks if checks is not None else green_gate_checks()
+    if include_policy_failure:
+        check_rows = [*check_rows, check(
+            check_id=9, name=policy.POLICY_CHECK_NAME, conclusion="failure",
+            completed_at="2026-10-04T05:01:00Z",
+        )]
     return validate_rate_limit_fallback(
         required_review_bot="coderabbitai[bot]",
         head_sha=HEAD,
@@ -165,7 +173,7 @@ def sha_less_validate(comments, timeline, *, phase="construccion",
         phase=phase,
         review_lines=reviews if reviews is not None else [],
         comment_lines=comments,
-        check_lines=checks if checks is not None else green_gate_checks(),
+        check_lines=check_rows,
         thread_lines=threads if threads is not None else [],
         timeline_lines=([json.dumps(event) for event in timeline]
                         if timeline is not None else None),
@@ -181,9 +189,10 @@ class T(unittest.TestCase):
         # La misma respuesta del bot, sin timeline, nunca habilita fallback.
         with self.assertRaises(PolicyError):
             sha_less_validate(comments, None)
-        # La ruta alternativa no está disponible en el primer intento.
+        # Sin fallo previo de Policy, el primer intento tampoco puede usar fallback.
         with self.assertRaises(PolicyError):
-            sha_less_validate(comments, timeline, run_attempt=1)
+            sha_less_validate(comments, timeline, run_attempt=1,
+                              include_policy_failure=False)
 
     def test_sha_less_rate_limit_rejects_stale_head_force_push_missing_timeline_and_non_owner(self):
         comments, events = sha_less_fixture()
@@ -239,6 +248,110 @@ class T(unittest.TestCase):
         with self.subTest(label="respuesta tardía"), self.assertRaises(PolicyError):
             sha_less_validate([comments[0], json.dumps(late), comments[2]],
                               events[:-1] + [late_event])
+
+    def test_sha_less_rate_limit_rejects_competing_member_and_edited_bot(self):
+        comments, timeline = sha_less_fixture()
+        for command in ("@coderabbitai review", "@coderabbitai full review"):
+            member = json.loads(owner_review_retry(
+                comment_id=203, created_at="2026-10-04T05:02:03Z",
+                association="MEMBER", body=command,
+            ))
+            member["user"]["login"] = "another-member"
+            member_event = {
+                "event": "commented", "id": 203,
+                "body": member["body"], "created_at": member["created_at"],
+                "author_association": "MEMBER", "user": member["user"],
+                "actor": {"login": "another-member"},
+            }
+            with self.subTest(command=command), self.assertRaises(PolicyError):
+                sha_less_validate(
+                    comments + [json.dumps(member)],
+                    timeline[:4] + [member_event] + timeline[4:],
+                )
+        edited = json.loads(comments[1])
+        edited["updated_at"] = "2026-10-04T05:03:00Z"
+        with self.subTest("respuesta bot editada"), self.assertRaises(PolicyError):
+            sha_less_validate(
+                [comments[0], json.dumps(edited), comments[2]], timeline,
+            )
+        missing_timestamp = dict(edited)
+        del missing_timestamp["updated_at"]
+        with self.subTest("respuesta sin timestamp de edición"), self.assertRaises(PolicyError):
+            sha_less_validate(
+                [comments[0], json.dumps(missing_timestamp), comments[2]], timeline,
+            )
+
+    def test_sha_less_retry_rejects_edited_initial_bot_and_unverified_owner(self):
+        comments, timeline = sha_less_fixture()
+        initial = json.loads(comments[2])
+        initial["updated_at"] = "2026-10-04T05:02:30Z"
+        with self.subTest("rate-limit inicial editado"), self.assertRaises(PolicyError):
+            sha_less_validate(
+                [comments[0], comments[1], json.dumps(initial)], timeline,
+            )
+        del initial["updated_at"]
+        with self.subTest("rate-limit inicial sin timestamp"), self.assertRaises(PolicyError):
+            sha_less_validate(
+                [comments[0], comments[1], json.dumps(initial)], timeline,
+            )
+
+        owner = json.loads(comments[0])
+        del owner["updated_at"]
+        with self.subTest("trigger owner sin timestamp"), self.assertRaises(PolicyError):
+            sha_less_validate(
+                [json.dumps(owner), comments[1], comments[2]], timeline,
+            )
+
+    def test_exact_head_retry_rejects_edited_or_unverified_owner_command(self):
+        checks = green_gate_checks() + [
+            check(
+                check_id=99, name=policy.POLICY_CHECK_NAME,
+                conclusion="failure", completed_at="2026-10-04T05:01:00Z",
+            ),
+        ]
+        bot = rate_limit_comment(
+            comment_id=301, created_at="2026-10-04T05:03:00Z",
+            head_sha=HEAD,
+        )
+        edited_owner = owner_review_retry(updated_at="2026-10-04T05:04:00Z")
+        without_timestamp = json.loads(owner_review_retry())
+        del without_timestamp["updated_at"]
+        for owner in (edited_owner, json.dumps(without_timestamp)):
+            with self.subTest(owner=owner), self.assertRaises(PolicyError):
+                validate_rate_limit_fallback(
+                    required_review_bot="coderabbitai[bot]",
+                    head_sha=HEAD,
+                    head_committed_at="2026-10-04T04:59:00Z",
+                    phase="construccion", review_lines=[],
+                    comment_lines=[owner, bot], check_lines=checks,
+                    thread_lines=[], run_attempt=2,
+                )
+
+    def test_sha_less_rate_limit_requires_prior_policy_failure_on_exact_head(self):
+        comments, timeline = sha_less_fixture()
+        with self.subTest("sin FAILURE previo"), self.assertRaises(PolicyError):
+            sha_less_validate(comments, timeline, include_policy_failure=False)
+        late_failure = check(
+            check_id=9, name=policy.POLICY_CHECK_NAME,
+            conclusion="failure", completed_at="2026-10-04T05:02:30Z",
+        )
+        with self.subTest("FAILURE después de respuesta"), self.assertRaises(PolicyError):
+            sha_less_validate(
+                comments, timeline,
+                checks=green_gate_checks() + [late_failure],
+                include_policy_failure=False,
+            )
+        wrong_head_failure = check(
+            check_id=9, name=policy.POLICY_CHECK_NAME,
+            head_sha="b" * 40, conclusion="failure",
+            completed_at="2026-10-04T05:01:00Z",
+        )
+        with self.subTest("FAILURE en SHA ajeno"), self.assertRaises(PolicyError):
+            sha_less_validate(
+                comments, timeline,
+                checks=green_gate_checks() + [wrong_head_failure],
+                include_policy_failure=False,
+            )
 
     def test_marker_exact_head_con_rate_limit_en_el_cuerpo_no_cuenta_como_cobertura(self):
         marker = ('<!-- final_review_risk_coverage:{"sourceCommitId":"' + "b" * 40
@@ -549,7 +662,7 @@ class T(unittest.TestCase):
         )
         self.assertEqual(result, (101, "2026-10-04T05:03:00Z"))
 
-    def test_rerun_attempt_accepts_owner_retry_and_exact_head_rate_limit_without_visible_old_policy_failure(self):
+    def test_rerun_attempt_requires_visible_prior_policy_failure_on_exact_head(self):
         comments = [
             owner_review_retry(created_at="2026-10-04T05:02:00Z"),
             rate_limit_comment(
@@ -574,17 +687,27 @@ class T(unittest.TestCase):
             phase_path = Path(handle.name)
         self.addCleanup(lambda: phase_path.unlink(missing_ok=True))
 
-        result = validate_required_bot_review_or_fallback(
-            [],
-            "coderabbitai[bot]",
-            HEAD,
-            head_committed_at="2026-10-04T04:59:00Z",
-            comment_lines=comments,
-            check_lines=checks,
-            thread_lines=[],
-            phase_file=phase_path,
-            run_attempt=2,
-        )
+        def evaluate(evidence):
+            return validate_required_bot_review_or_fallback(
+                [],
+                "coderabbitai[bot]",
+                HEAD,
+                head_committed_at="2026-10-04T04:59:00Z",
+                comment_lines=comments,
+                check_lines=evidence,
+                thread_lines=[],
+                phase_file=phase_path,
+                run_attempt=2,
+            )
+
+        with self.assertRaisesRegex(PolicyError, "FAILURE previo"):
+            evaluate(checks)
+        verified = checks + [
+            check(check_id=100, name=policy.POLICY_CHECK_NAME,
+                  status="completed", conclusion="failure",
+                  completed_at="2026-10-04T05:01:00Z"),
+        ]
+        result = evaluate(verified)
         self.assertTrue(result["review_fallback"])
         self.assertEqual(result["rate_limit_comment_id"], 301)
         self.assertEqual(result["rate_limit_created_at"], "2026-10-04T05:03:00Z")

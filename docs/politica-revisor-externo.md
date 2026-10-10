@@ -54,21 +54,37 @@ La alternativa requiere **toda** esta correlación adicional:
 2. Existe un primer comentario de **`coderabbitai[bot]` real**, con
    `user.type=Bot`, `actor.login` concordante, ID y cuerpo idénticos a
    `issues/{PR}/comments`, informando rate-limit después de ese HEAD.
+   Se exige `updated_at == created_at`: un rate-limit inicial editado, o
+   sin timestamp de integridad, no demuestra que ese texto ya existiera.
 3. Más tarde, un comentario **`OWNER`** con el cuerpo literal
    `@coderabbitai review`, tipo `User` e identidad concordante solicita
-   otro intento en el mismo HEAD.
+   otro intento en el mismo HEAD. Tanto la ruta con SHA como la SHA-less
+   exigen `updated_at == created_at` para este trigger: un comentario
+   editado o sin timestamp verificable nunca acredita una petición.
 4. Una **segunda respuesta distinta** del bot, posterior a ese comando y
    emitida como máximo 120 segundos después, vuelve a informar rate-limit.
    Todos los comentarios de la secuencia se cotejan por ID, actor, texto y
    timestamp con los comentarios REST autenticados del mismo PR.
-5. No hay `committed`, `head_ref_force_pushed` ni `synchronize` que
+5. Entre la primera respuesta rate-limited y el comando del OWNER existe
+   un check `Factory policy / Validar decisiones y límite de revisión` en
+   estado `completed/failure`, sobre el mismo HEAD exacto. Un rerun de Actions
+   por sí solo no acredita este fallo; se exige también en el camino con SHA.
+6. No hay otro comando literal `@coderabbitai review` ni
+   `@coderabbitai full review` de un usuario competidor entre OWNER y la
+   segunda respuesta del bot, aunque sea MEMBER. Ambos pueden disparar
+   otra revisión; eventos legítimos de `mentioned` no invalidan la secuencia.
+7. La segunda respuesta del bot tiene `updated_at == created_at`; un texto
+   editado o sin timestamp de integridad verificable falla cerrado.
+8. No hay `committed`, `head_ref_force_pushed` ni `synchronize` que
    invalide la secuencia; los demás checks exact-HEAD siguen verdes, sin
    `CHANGES_REQUESTED` ni threads abiertos.
 
-Una sola respuesta, actor no OWNER, bot falsificado, timeline vacía, truncada,
+Una sola respuesta, solicitud competidora, respuesta editada, ausencia de fallo
+previo de Policy, actor no OWNER, bot falsificado, timeline vacía, truncada,
 ambigua, reescrita, en otro HEAD o una carrera de refs **fallan cerrado**.
-El comportamiento de primer intento y la ruta histórica con SHA permanecen
-intactos. `live` nunca admite esta excepción. No se modifica `Factory@v1`
+El primer intento y la ruta histórica con SHA conservan sus garantías,
+con el endurecimiento de integridad de los triggers OWNER. `live` nunca
+admite esta excepción. No se modifica `Factory@v1`
 ni se autoriza go-live, publicación o merge por esta evidencia.
 
 ## Qué no permite
