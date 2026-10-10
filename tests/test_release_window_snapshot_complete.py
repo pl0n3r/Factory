@@ -151,6 +151,131 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             )
         self.assertNotEqual(comparison.returncode, 0)
 
+    def _run_real_release_window_shell(self, *, drifting: bool):
+        """Ejecuta el run:| real con gh simulado y centinela de pr-check."""
+        import os
+
+        job = WORKFLOW.split("  release_window:", 1)[1].split(
+            "  coordinacion:", 1
+        )[0]
+        self.assertEqual(job.count("        run: |\n"), 1)
+        actual_step = textwrap.dedent(job.split("        run: |\n", 1)[1])
+        self.assertTrue(actual_step.startswith("set -euo pipefail\n"))
+        self.assertIn("python3 scripts/release_window.py pr-check", actual_step)
+
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            bin_dir = base / "bin"
+            bin_dir.mkdir()
+            sentinel = base / "pr-check-was-called"
+            # Mantiene el shell de producción y cambia solo el prefijo /tmp
+            # para impedir colisiones entre pruebas ejecutadas en paralelo.
+            actual_step = actual_step.replace(
+                "/tmp/release-", str(base / "release-")
+            )
+            items = release_gate_issues()
+            # Las puertas de release se excluyen de este fixture: esta prueba
+            # se centra en el orden entre snapshot, cmp y el evaluador.
+            initial = [{**item, "body": "Sin puerta"} for item in items]
+            changed = initial[1:] + [{
+                "number": 20001, "state": "closed", "title": "Nuevo",
+                "body": "Sin puerta", "updated_at": "2026-10-09T01:00:00Z",
+            }]
+            # En el caso adverso, primera lectura mezcla páginas T0/T1:
+            # cuenta 116 y no hay IDs repetidos, pero omite una fila.
+            if drifting:
+                pages = [
+                    page(initial[:100]), page(changed[100:]),
+                    page(changed[:100]), page(changed[100:]),
+                ]
+            else:
+                pages = [
+                    page(initial[:100]), page(initial[100:]),
+                    page(initial[:100]), page(initial[100:]),
+                ]
+            (base / "pages.json").write_text(json.dumps(pages), encoding="utf-8")
+            (base / "calls.json").write_text("[]", encoding="utf-8")
+
+            gh_script = textwrap.dedent("""\
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                root = Path(os.environ["FAKE_GH_DIR"])
+                args = sys.argv[1:]
+                if args and args[0] == "api" and "search/issues" in args:
+                    log_path = root / "calls.json"
+                    calls = json.loads(log_path.read_text(encoding="utf-8"))
+                    index = len(calls)
+                    pages = json.loads((root / "pages.json").read_text(encoding="utf-8"))
+                    if index >= len(pages):
+                        raise SystemExit("Unexpected extra Search Issues request")
+                    expected = "page=" + str((index % 2) + 1)
+                    if expected not in args:
+                        raise SystemExit("Invalid pagination order")
+                    calls.append(expected)
+                    log_path.write_text(json.dumps(calls), encoding="utf-8")
+                    print(json.dumps(pages[index]))
+                elif args[:1] == ["api"] and any("/pulls/" in v for v in args):
+                    print(json.dumps({"number": 1077, "body": ""}))
+                elif args[:1] == ["api"] and any("/issues/" in v for v in args):
+                    print(json.dumps({"number": 1075, "state": "open", "labels": []}))
+                else:
+                    raise SystemExit("Unexpected API endpoint: " + repr(args))
+            """)
+            py_script = textwrap.dedent("""\
+                import os
+                import sys
+                from pathlib import Path
+
+                if sys.argv[1:3] == ["scripts/release_window.py", "pr-check"]:
+                    Path(os.environ["EVAL_SENTINEL"]).write_text("reached")
+                    print('{"allowed":true,"reason":"test_stub"}')
+                else:
+                    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+            """)
+            for name, script in (("gh", gh_script), ("python3", py_script)):
+                executable = bin_dir / name
+                executable.write_text(
+                    "#!" + sys.executable + "\n" + script,
+                    encoding="utf-8",
+                )
+                executable.chmod(0o755)
+
+            env = {
+                **os.environ,
+                "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+                "FAKE_GH_DIR": str(base),
+                "EVAL_SENTINEL": str(sentinel),
+                "REPOSITORY": "pl0n3r/Factory",
+                "PR": "1077",
+                "HEAD_REF": "trabajo/issue-1075",
+                "GH_TOKEN": "test-token-not-real",
+            }
+            result = subprocess.run(
+                ["bash", "-e", "-c", actual_step],
+                cwd=ROOT, env=env, capture_output=True, text=True,
+                timeout=25, check=False,
+            )
+            calls = json.loads((base / "calls.json").read_text(encoding="utf-8"))
+            return result, sentinel.exists(), calls
+
+    def test_release_window_shell_aborts_before_evaluator_on_drift(self) -> None:
+        """Dos pasadas inconsistentes nunca alcanzan pr-check."""
+        result, called, calls = self._run_real_release_window_shell(drifting=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Search Issues cambió entre dos lecturas completas", result.stdout)
+        self.assertEqual(calls, ["page=1", "page=2", "page=1", "page=2"])
+        self.assertFalse(called, "El evaluador no puede recibir un snapshot mezclado")
+
+    def test_release_window_shell_stable_reaches_evaluator(self) -> None:
+        """Dos pasadas idénticas mantienen operativo el camino normal."""
+        result, called, calls = self._run_real_release_window_shell(drifting=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ["page=1", "page=2", "page=1", "page=2"])
+        self.assertTrue(called, "El evaluador debe ejecutarse con evidencia estable")
+
     def test_factory_ci_preserves_bounded_release_projection_and_gate_validation(self) -> None:
         """AC-03: las páginas y los comentarios se leen sin omitir seguridad."""
         job = WORKFLOW.split("  release_window:", 1)[1].split(
