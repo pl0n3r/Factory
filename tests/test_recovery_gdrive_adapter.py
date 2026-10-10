@@ -144,6 +144,19 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
         self.assertEqual(len(fake.objects), 2)
         self.assertEqual(first.materialize_fake(
             "nightly", sha(content), purpose="offline_restore_test"), content)
+        aged = GDriveColdCopy(
+            manifest("condor"), transport=fake, secret_provider=Secrets(),
+            credential_ref="gdrive-cold-copy", now=NOW + timedelta(days=2),
+            restore_authorizer=lambda _request: True,
+        )
+        # La copia aún existe en memoria, pero ya venció: ni el retry
+        # idempotente ni el restore pueden declarar evidencia positiva.
+        with self.assertRaisesRegex(ColdCopyError, "expired_remote_copy"):
+            aged.upload("nightly", content, sha(content), retention_days=7)
+        with self.assertRaisesRegex(ColdCopyError, "expired_remote_copy"):
+            aged.materialize_fake(
+                "nightly", sha(content), purpose="offline_restore_test")
+        self.assertEqual(fake.writes, 2)
         with self.assertRaisesRegex(ColdCopyError, "restore_not_authorized"):
             second.materialize_fake("nightly", sha(content), purpose="live_restore")
         without_approval = instance("condor", transport=fake)

@@ -60,6 +60,16 @@ class FakeDriveTransport:
             raise KeyError("object_not_found")
         return bytes(self.objects[(namespace, key)]["content"])
 
+    def read_with_expiry(self, namespace: str, key: str,
+                         _credential: str) -> tuple[bytes, datetime]:
+        # Leer contenido y retención del mismo registro para no acreditar
+        # como recuperable una copia vencida que aún no fue purgada.
+        position = (namespace, key)
+        if position not in self.objects:
+            raise KeyError("object_not_found")
+        entry = self.objects[position]
+        return bytes(entry["content"]), entry["expiry"]
+
     def purge_expired(self, namespace: str, current: datetime,
                       _credential: str) -> int:
         doomed = [
@@ -121,6 +131,10 @@ class GDriveColdCopy:
         if not isinstance(stored_expiry, datetime):
             raise ColdCopyError("invalid_remote_evidence")
         stored_expiry = _utc(stored_expiry)
+        if stored_expiry <= self.now:
+            # Idempotencia NO debe certificar retención caducada. Purgar o
+            # renovar requiere una acción explícita; no sobreescribir en silencio.
+            raise ColdCopyError("expired_remote_copy")
         remote = self._transport("read", self.namespace, key)
         if type(remote) is not bytes or _digest(remote) != source_digest:
             raise ColdCopyError("remote_checksum_mismatch")
@@ -154,10 +168,17 @@ class GDriveColdCopy:
             allowed = False
         if not allowed:
             raise ColdCopyError("restore_not_authorized")
-        content = self._transport(
-            "read", self.namespace, ref + ":" + expected_sha256,
+        record = self._transport(
+            "read_with_expiry", self.namespace, ref + ":" + expected_sha256,
         )
-        if type(content) is not bytes or _digest(content) != expected_sha256:
+        if (type(record) is not tuple or len(record) != 2
+                or type(record[0]) is not bytes
+                or not isinstance(record[1], datetime)):
+            raise ColdCopyError("invalid_remote_evidence")
+        content, expiry = record
+        if _utc(expiry) <= self.now:
+            raise ColdCopyError("expired_remote_copy")
+        if _digest(content) != expected_sha256:
             raise ColdCopyError("remote_checksum_mismatch")
         return content
 
