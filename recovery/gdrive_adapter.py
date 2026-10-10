@@ -81,6 +81,14 @@ class FakeDriveTransport:
         return len(doomed)
 
 
+# Opciones cerradas: mantener referencias a los métodos auténticos impide
+# reemplazos en la clase o en la instancia antes de consultar secretos.
+_FAKE_METHODS = {
+    name: getattr(FakeDriveTransport, name)
+    for name in ("put_if_absent", "read", "read_with_expiry", "purge_expired")
+}
+
+
 class GDriveColdCopy:
     """Orquesta bytes simulados; el proveedor real NO está implementado."""
 
@@ -99,19 +107,33 @@ class GDriveColdCopy:
             raise ColdCopyError("fake_transport_required")
         self.project = checked["project"]
         self.namespace = "recovery:" + self.project
-        self.transport = transport
+        self._fake_transport = transport
         self.secret_provider = secret_provider
         self.credential_ref = _reference(credential_ref)
         self.now = _utc(now)
         self.restore_authorizer = restore_authorizer
 
+    @property
+    def transport(self) -> FakeDriveTransport:
+        """Vista de solo lectura del fake inyectado; no permite cambiar proveedor."""
+        return self._fake_transport
+
     def _transport(self, method: str, *args: object) -> Any:
+        # Comprobar cada operación ANTES de resolver secretos. No confiar en
+        # la comprobación del constructor: el runtime Python es mutable.
+        fake = self._fake_transport
+        if (type(fake) is not FakeDriveTransport
+                or method not in _FAKE_METHODS
+                or any(name in vars(fake) for name in _FAKE_METHODS)
+                or any(getattr(FakeDriveTransport, name, None) is not original
+                       for name, original in _FAKE_METHODS.items())):
+            raise ColdCopyError("fake_transport_required")
         # No material del proveedor entra en errores, evidencia ni estado persistido.
         try:
             secret = self.secret_provider.resolve(self.credential_ref)
             if type(secret) is not str or not secret:
                 raise ValueError("invalid_secret")
-            return getattr(self.transport, method)(*args, secret)
+            return getattr(fake, method)(*args, secret)
         except Exception:
             raise ColdCopyError("cold_copy_transport_unavailable") from None
 

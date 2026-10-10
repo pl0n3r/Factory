@@ -108,12 +108,18 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
 
         drive = instance(transport=FakeDriveTransport(), secrets=secrets)
         data = b"fake-only"
+        # Sustituir un método de la clase no puede convertir este fake en
+        # emisor externo; se rechaza incluso antes de pedir credenciales.
         with patch.object(
             FakeDriveTransport, "put_if_absent",
             side_effect=RuntimeError(sensitive),
         ):
-            with self.assertRaises(ColdCopyError) as observed:
+            before = secrets.calls
+            with self.assertRaisesRegex(
+                ColdCopyError, "fake_transport_required",
+            ) as observed:
                 drive.upload("snap", data, sha(data), retention_days=1)
+            self.assertEqual(secrets.calls, before)
         self.assertNotIn(sensitive, str(observed.exception))
         self.assertIsNone(observed.exception.__cause__)
         fake = FakeDriveTransport()
@@ -173,6 +179,29 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
                 self.assertEqual(gated_secrets.calls, 0)
                 if isinstance(untrusted, SpyTransport):
                     self.assertEqual(untrusted.calls, 0)
+
+        # Se comprueba de nuevo el trust boundary antes de CADA operación.
+        # La vista pública no admite reemplazos tras construir el adaptador.
+        transport = FakeDriveTransport()
+        creds = Secrets()
+        drive = instance(transport=transport, secrets=creds)
+        with self.assertRaises(AttributeError):
+            drive.transport = SpyTransport()
+        self.assertIs(drive.transport, transport)
+        transport.put_if_absent = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("instance_override_reached")
+        )
+        with self.assertRaisesRegex(ColdCopyError, "fake_transport_required"):
+            drive.upload("snap", data, sha(data), retention_days=1)
+        self.assertEqual(creds.calls, 0)
+        self.assertEqual(transport.writes, 0)
+        del transport.put_if_absent
+
+        drive._fake_transport = SpyTransport()
+        with self.assertRaisesRegex(ColdCopyError, "fake_transport_required"):
+            drive.upload("snap", data, sha(data), retention_days=1)
+        self.assertEqual(creds.calls, 0)
+        self.assertEqual(drive._fake_transport.calls, 0)
 
     def test_fake_roundtrip_and_retention_namespace(self):
         fake = FakeDriveTransport()
