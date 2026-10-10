@@ -1111,9 +1111,24 @@ class BootstrapCoordinationTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false",caller)
         self.assertIn("queue: max",caller)
         comment=caller.split("  comentario:",1)[1].split("  etiqueta:",1)[0]
-        self.assertIn("github.event.comment.body == '/tomar'",comment)
-        self.assertIn("contains(github.event.comment.body, '/tomar')",comment)
-        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')",comment)
+        self.assertIn("github.event_name == 'issue_comment'",comment)
+        self.assertIn("github.event.issue.pull_request == null",comment)
+        self.assertIn("github.event.sender.login == github.event.comment.user.login",comment)
+        self.assertIn("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1",comment)
+        self.assertIn("operation: comment",comment)
+        if "  preflight_comentario:\n" in caller:
+            preflight=caller.split("  preflight_comentario:\n",1)[1].split("  comentario:\n",1)[0]
+            self.assertIn("needs: preflight_comentario",comment)
+            self.assertIn("needs.preflight_comentario.outputs.route == 'true'",comment)
+            self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}",preflight)
+            self.assertIn('"/tomar"',preflight)
+            self.assertIn('"/renovar-contrato"',preflight)
+            self.assertNotIn("contains(github.event.comment.body",comment)
+        else:
+            # Legacy @v1 caller: accept the historical exact-command routing,
+            # but never require its broad unsafe substring-matching expression.
+            self.assertIn("github.event.comment.body == '/tomar'",comment)
+            self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')",comment)
         self.assertIn("profile: es",caller)
         self.assertIn("require_reservation: true",caller)
         self.assertNotIn("@main",caller)
