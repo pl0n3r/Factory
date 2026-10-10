@@ -78,6 +78,25 @@ class PlanIncidenteColaTests(unittest.TestCase):
         self.assertEqual(plan_incidente_cola(envelope), one)
         self.assertEqual(set(envelope["repositories"][0]),
                          {"name", "open_issues", "available", "blocked"})
+        # #1098 preserva roadmap=True en causas no accionables, pero
+        # jamás las promueve a roadmap_candidates ni a capacidad disponible.
+        for cause in ("human_gate", "planned", "unknown"):
+            with self.subTest(non_actionable_cause=cause):
+                diagnostic = upstream_diagnosis()
+                item = diagnostic["repositories"]["Factory"]
+                item["blocked_reasons"][0]["cause"] = cause
+                item["blocked_cause_counts"]["dependency"] = 0
+                item["blocked_cause_counts"][cause] = 1
+                diagnostic["blocked_cause_totals"]["dependency"] = 6
+                diagnostic["blocked_cause_totals"][cause] = 1
+                diagnostic["roadmap_candidates"] = []
+                report = report_from_diagnosis(
+                    diagnostic, {"limit": 5000, "remaining": 5000})
+                plan = plan_incidente_cola(report)
+                self.assertEqual(plan["action"], "create")
+                self.assertEqual(plan["roadmap_candidates"], [])
+                self.assertEqual(plan["blocked_cause_totals"][cause], 1)
+                self.assertFalse(plan["can_publish"])
 
     def test_deduplicates_previous_incident_without_writes(self):
         original = plan_incidente_cola(report())
