@@ -145,6 +145,58 @@ class ReleaseCommentPagesTests(unittest.TestCase):
         self.assertNotEqual(two.returncode, 0, "API parcial no es evidencia")
         self.assertIsNone(filtered)
 
+
+    def test_release_issue_inventory_read_failure_stops_before_gate(self):
+        """Run the exact workflow inventory reader; zero items remain valid."""
+        source = WORKFLOW.read_text(encoding="utf-8")
+        release = source.split("\n  release_window:", 1)[1].split(
+            "\n  coordinacion:", 1
+        )[0]
+        matches = re.findall(
+            r"(?m)^\s+(jq -s -c '[^\n]+' /tmp/release-issues\.json"
+            r" > /tmp/release-issues\.jsonl)$",
+            release,
+        )
+        self.assertEqual(len(matches), 1, "Falta lector materializado único")
+        self.assertNotIn("done < <(", release)
+        self.assertIn("done < /tmp/release-issues.jsonl", release)
+        self.assertLess(
+            release.index("jq -s -c 'if length == 1"),
+            release.index("printf '[]"),
+            "La validación debe ocurrir antes de crear gates vacíos",
+        )
+        self.assertIsNotNone(shutil.which("jq"), "Prueba de jq real obligatoria")
+        scenarios = [
+            ("empty_valid", "[]\n", True, []),
+            ("one_valid", '[{"number":7}]\n', True, ['{"number":7}']),
+            ("truncated", "[\n", False, None),
+            ("wrong_root", "{}\n", False, None),
+            ("null_root", "null\n", False, None),
+            ("two_roots", "[]\n[]\n", False, None),
+            ("missing_file", None, False, None),
+        ]
+        for name, payload, accepted, expected in scenarios:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                input_file = Path(directory) / "release-issues.json"
+                output_file = Path(directory) / "release-issues.jsonl"
+                if payload is not None:
+                    input_file.write_text(payload, encoding="utf-8")
+                command = matches[0].replace(
+                    "/tmp/release-issues.jsonl", str(output_file)
+                ).replace("/tmp/release-issues.json", str(input_file))
+                process = subprocess.run(
+                    ["bash", "-c", "set -euo pipefail\n" + command + "\necho GATES_MAY_RUN"],
+                    cwd=ROOT, capture_output=True, text=True, check=False, timeout=10,
+                )
+                self.assertEqual(process.returncode == 0, accepted, process.stderr)
+                self.assertEqual("GATES_MAY_RUN" in process.stdout, accepted)
+                if accepted:
+                    self.assertEqual(
+                        output_file.read_text(encoding="utf-8").splitlines(), expected
+                    )
+                else:
+                    self.assertNotIn("GATES_MAY_RUN", process.stdout)
+
     def test_workflow_contains_strict_paginated_comment_read(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         self.assertEqual(len(COMMAND_PATTERN.findall(source)), 1)

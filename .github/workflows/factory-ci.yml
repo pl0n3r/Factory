@@ -190,6 +190,9 @@ jobs:
                 | select((.body // "") | contains("factory-release"))
                 | {number, state, title, body, updated_at}
               ]' /tmp/release-search-verified-2.json > /tmp/release-issues.json
+          # Materializar antes del bucle: Bash no propaga fallos de jq dentro de <(...).
+          # -s exige una única raíz JSON array; [] es un inventario válido.
+          jq -s -c 'if length == 1 and (.[0] | type) == "array" then .[0][] else error("invalid_release_inventory") end' /tmp/release-issues.json > /tmp/release-issues.jsonl
           printf '[]\n' > /tmp/release-gates.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
@@ -232,7 +235,7 @@ jobs:
             ' > /tmp/release-comments.json
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
-          done < <(jq -c '.[]' /tmp/release-issues.json)
+          done < /tmp/release-issues.jsonl
 
           gh api "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
           gh api "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
