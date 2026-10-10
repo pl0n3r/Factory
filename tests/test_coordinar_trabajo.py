@@ -374,10 +374,11 @@ class WorkflowCoordinacionTests(unittest.TestCase):
         for action in ("opened", "synchronize", "reopened", "edited"):
             self.assertIn(action, events)
         job = self.yaml_block(workflow, "claims-pr:", 2)
-        self.assertIn("github.event.action != 'closed'", job)
+        predicate = self.yaml_block(job, "if: >-", 4)
+        self.assertIn("github.event.action != 'closed'", predicate)
+        self.assertNotIn("head.repo.full_name", predicate)
         self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            job,
+            '(head.get("repo") or {}).get("full_name") == repo', job
         )
         permissions = self.yaml_block(job, "permissions:", 4)
         for permission in ("contents: read", "issues: read", "pull-requests: read"):
