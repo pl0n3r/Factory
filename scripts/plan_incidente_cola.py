@@ -275,6 +275,7 @@ def report_from_diagnosis(diagnosis: object, rate_limit: object) -> dict:
     }
     if (type(diagnosis["state"]) is not str
             or diagnosis["state"] not in expected_reason
+            or type(diagnosis["reason"]) is not str
             or diagnosis["reason"] != expected_reason[diagnosis["state"]]):
         raise IncidentPlanError("invalid_diagnosis_state")
     should_dispatch = (diagnosis["state"] != "budget_deferred"
