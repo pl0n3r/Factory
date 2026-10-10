@@ -226,7 +226,7 @@ jobs:
                       or (.body | contains("factory-release-executed"))
                       or (.body | contains("factory-human-gate-duplicate"))
                     )
-                  | {user: {login: .user.login}, body: .body}
+                  | {user: {login: .user.login}, body: (.body // "")}
                 )
             ' > /tmp/release-comments.json
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
