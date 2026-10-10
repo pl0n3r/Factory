@@ -504,7 +504,11 @@ class GitHub:
             if expected_count:
                 raise CoordinationError(f"PR #{number}: diff excede 3000 archivos.")
 
-        if len(filenames) != expected_count or len(set(filenames)) != len(filenames):
+        logical_paths = [_collision_key(path) for path in (*filenames, *aliases)]
+        if (
+            len(filenames) != expected_count
+            or len(set(logical_paths)) != len(logical_paths)
+        ):
             raise CoordinationError(
                 f"PR #{number}: diff incompleto, duplicado o inconsistente."
             )
