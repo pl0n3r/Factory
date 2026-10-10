@@ -9,6 +9,8 @@ from unittest import mock
 
 from scripts import bootstrap_coordination as b
 
+from test_coordinacion_reusable_contract import strict_caller_fixture
+
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 
@@ -1094,7 +1096,17 @@ class BootstrapCoordinationTests(unittest.TestCase):
                 )
 
     def test_grindflow_regeneration_inherits_hardened_consumer_caller(self):
-        template=(ROOT/"template/.github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+        template = (ROOT / "template/.github/workflows/coordinacion.yml").read_text(
+            encoding="utf-8"
+        )
+        for variant, candidate in (
+            ("caller_actual", template),
+            ("preflight_estricto", strict_caller_fixture(template)),
+        ):
+            with self.subTest(variant=variant):
+                self.assert_grindflow_caller_contract(candidate)
+
+    def assert_grindflow_caller_contract(self, template: str):
         tmp,root=self._grindflow_fixture("0.1.144")
         self.addCleanup(tmp.cleanup)
         completed=lambda args,**kwargs: subprocess.CompletedProcess(
