@@ -3940,6 +3940,28 @@ class ExactHeadPullFileEvidenceTests(unittest.TestCase):
         ]])
         self.assertEqual(evidence["files"], ["src/new.py", "src/old.py"])
 
+    def test_case_and_unicode_aliases_in_one_diff_fail_closed(self) -> None:
+        """El lector exact-HEAD no reduce aliases incompatibles entre sistemas."""
+        duplicates = (
+            ("src/Cache.php", "src/cache.php"),
+            ("docs/café.md", "docs/cafe\u0301.md"),
+            ("src/Straße.php", "src/STRASSE.php"),
+        )
+        for first, second in duplicates:
+            with self.subTest(first=first, second=second):
+                rows = [{"filename": first}, {"filename": second}]
+                with self.assertRaisesRegex(CoordinationError, "duplicado"):
+                    self._read([rows])
+
+                # Rename cuenta como una fila, pero dos identidades de path.
+                rename = [{
+                    "filename": first,
+                    "status": "renamed",
+                    "previous_filename": second,
+                }]
+                with self.assertRaisesRegex(CoordinationError, "duplicado"):
+                    self._read([rename])
+
     def test_missing_rename_source_or_invalid_path_fails_closed(self) -> None:
         bad = (
             {"filename": "src/new.py", "status": "renamed"},
