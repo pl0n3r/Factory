@@ -20,7 +20,7 @@
             "unit": "s"
           },
           "window": {
-            "duration_seconds": 1,
+            "duration_seconds": 38,
             "min_samples": 1
           },
           "freshness": {

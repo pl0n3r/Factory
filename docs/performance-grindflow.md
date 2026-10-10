@@ -7,6 +7,7 @@
 - Proyecto `grindflow`; `main@3c137b21654d30bc5ce123853e58934d973ce4b5`.
 - [GrindFlow Production Smoke #38010129128](https://github.com/pl0n3r/GrindFlow/actions/runs/38010129128), job `production-smoke #114087986892`, `completed/success`.
 - GitHub Actions Jobs REST: `started_at=2026-10-10T00:41:39Z` y `completed_at=2026-10-10T00:42:17Z`. Duración observada **38 s**; mide el **job completo**, no TTFB ni latencia de una ruta específica.
+- Ventana de la muestra: **38 s**, igual al intervalo iniciado→completado del job; una única observación, no una tendencia ni 38 s de latencia web.
 - Budget inicial de seguimiento: **≤120 s** por job completado. Es un umbral técnico provisional, **no un SLA comercial ni un RTO**. Una ejecución aislada no acredita percentiles ni tendencias.
 
 ## Superficies pendientes de medición

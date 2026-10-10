@@ -59,6 +59,9 @@ class GrindflowPerformanceContractTests(unittest.TestCase):
             .total_seconds()
         )
         self.assertEqual(metric["baseline"]["value"], seconds)
+        self.assertEqual(seconds, 38)
+        self.assertEqual(metric["window"]["duration_seconds"], seconds)
+        self.assertEqual(metric["window"]["min_samples"], 1)
         doc = DOC.read_text(encoding="utf-8")
         for phrase in (RUN_ID, JOB_ID, STARTED_AT, COMPLETED_AT, MAIN_SHA,
                        "Landing pública", "Login", "Composer", "Library", "UNKNOWN",
@@ -72,7 +75,9 @@ class GrindflowPerformanceContractTests(unittest.TestCase):
         metric = self.metric()
         self.assertNotIn("ttfb", json.dumps(original).lower())
         self.assertNotIn("public.home", json.dumps(original).lower())
-        self.assertEqual(metric["window"], {"duration_seconds": 1, "min_samples": 1})
+        # Una observación de job dura 38 segundos: no declarar una ventana
+        # arbitraria de 1 segundo que no cubre la medición real.
+        self.assertEqual(metric["window"], {"duration_seconds": 38, "min_samples": 1})
         self.assertEqual(metric["freshness"], {"max_age_seconds": 604800})
         # El schema no permite UNKNOWN numérico: nunca reemplazarlo por 0.
         invalid = copy.deepcopy(original)
