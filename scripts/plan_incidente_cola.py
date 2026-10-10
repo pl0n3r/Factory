@@ -183,6 +183,9 @@ def report_from_diagnosis(diagnosis: object, rate_limit: object) -> dict:
             or (diagnosis["agent_capacity"] is not None
                 and not _int(diagnosis["agent_capacity"], 0, 1000))):
         raise IncidentPlanError("invalid_diagnosis")
+    # Fail closed before any equality against an untrusted state object.
+    if type(diagnosis["state"]) is not str or diagnosis["state"] not in STATES:
+        raise IncidentPlanError("invalid_diagnosis_state")
     states = ("available", "reserved", "blocked", "planned", "in_review")
     by_repo = diagnosis["repositories"]
     if type(by_repo) is not dict or set(by_repo) != set(REPOSITORIES):
@@ -190,6 +193,7 @@ def report_from_diagnosis(diagnosis: object, rate_limit: object) -> dict:
     rows = []
     totals = {cause: 0 for cause in CAUSES}
     confirmed_candidates = set()
+    total_blockers = 0
     for name in REPOSITORIES:
         row = by_repo[name]
         if not _exact(row, {"open_issues", "counts", "blocked_reasons",
@@ -204,6 +208,9 @@ def report_from_diagnosis(diagnosis: object, rate_limit: object) -> dict:
         reasons = row["blocked_reasons"]
         if type(reasons) is not list or len(reasons) != counts["blocked"]:
             raise IncidentPlanError("invalid_diagnosis_blockers")
+        total_blockers += len(reasons)
+        if total_blockers > MAX_ISSUES:
+            raise IncidentPlanError("blocker_report_too_large")
         found = {c: 0 for c in CAUSES}
         ids = set()
         for blocker in reasons:
