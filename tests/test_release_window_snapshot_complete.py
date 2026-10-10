@@ -49,7 +49,7 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
         )[0]
         marker = (
             "python3 - /tmp/release-search-p1.json "
-            "/tmp/release-search-p2.json <<'PY' > /tmp/release-issues.json"
+            "/tmp/release-search-p2.json <<'PY' > /tmp/release-search-verified.json"
         )
         assert job.count(marker) == 1, "Fragmento de lectura paginada ausente"
         cls.parser = textwrap.dedent(
