@@ -136,6 +136,7 @@ class T(unittest.TestCase):
             ("return ['version'=>'1.0.1']; const version='1.0.2';",
              "version"),
             ("return ['version'=>'1.0.1';", "version"),
+            ("return ['version'=>'1.0.1']", "version"),
             ("/* unterminated ", "version"),
             ("return ['version'=>123];", "version"),
             ("return ['version'=>'1.0.1']; <<<HEREDOC", "version"),
