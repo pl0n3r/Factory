@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from scripts import release_window as rw
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "factory-ci.yml"
@@ -189,22 +191,47 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertNotIn("Retry-After: 0", helper)
 
     def test_complete_exact_head_snapshot_never_reuses_stale_human_gates(self):
-        body_real = '<!-- factory-human-gate {"category":"factory-release"} -->'
-        body_window_bad = '<!-- factory-release-window bad-marker -->'
+        now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+        valid_window = rw._render_gate(
+            "1.0.23", "4" * 40, now, source_issue=900,
+        )["body"]
+        valid_legacy = "\n".join(
+            line for line in valid_window.splitlines()
+            if "factory-release-window" not in line
+            and "factory-release-rearm" not in line
+        )
+        # JSON válido cuya categoría requiere decodificar un escape.
+        escaped_legacy = valid_legacy.replace(
+            '"factory-release"', r'"factory-\u0072elease"',
+        )
+        self.assertNotEqual(escaped_legacy, valid_legacy)
         rows = [
             {"number": 1, "body": "This issue mentions factory-release in narrative only"},
-            {"number": 2, "body": body_real},
-            {"number": 3, "body": body_window_bad},
+            {"number": 2, "body": '<!-- factory-human-gate {"category":"factory-release"} -->'},
+            {"number": 3, "body": "<!-- factory-release-window bad-marker -->"},
             {"number": 4, "body": '<!-- factory-human-gate {"category":"operations"} -->'},
-            # JSON permite caracteres escapados: la categoría sigue siendo
-            # factory-release aunque la subcadena literal no aparezca.
-            {"number": 5, "body": '<!-- factory-human-gate {"category":"factory-\\u0072elease"} -->'},
+            {"number": 5, "body": escaped_legacy},
+            {"number": 6, "body": valid_legacy},
+            {"number": 7, "body": valid_window},
+            {"number": 8, "body": "<!-- factory-human-gate {broken factory-release} -->"},
         ]
-        self.assertEqual(_candidate_numbers(rows), [2, 3, 5])
-        # Un snapshot actualizado se reevalúa íntegro, sin caché de decisiones.
-        rows[1]["body"] = "No marker; the decision has changed"
-        rows[2]["body"] = "Window marker removed"
-        rows[4]["body"] = "Legacy gate removed"
+        # Debe coincidir con gate_records: los legacy malformados sin ventana
+        # se ignoran; el window-intent malformado NUNCA se ignora.
+        self.assertEqual(_candidate_numbers(rows), [3, 5, 6, 7])
+        for number in (2, 5, 6, 8):
+            item = rows[number - 1]
+            record = {
+                "issue": {
+                    "number": number, "state": "closed", "title": "gate",
+                    "body": item["body"], "updated_at": "2026-10-03T09:55:00Z",
+                },
+                "comments": [],
+            }
+            expected = 1 if number in (5, 6) else 0
+            self.assertEqual(len(rw.gate_records([record])), expected)
+        # Snapshot nuevo: no retener puertas ni decisiones previas.
+        for item in rows:
+            item["body"] = "Marcador eliminado, sin ventana"
         self.assertEqual(_candidate_numbers(rows), [])
         workflow = _workflow()
         first = workflow.index("cmp -s /tmp/release-search-verified-1.json")
