@@ -30,6 +30,13 @@ class CaptureError(ValueError):
     """An event cannot be used as a trustworthy lesson candidate."""
 
 
+def _validate_run_provenance(event: dict[str, Any]) -> None:
+    """Validate optional execution SHA without confusing it with event identity."""
+    run_sha = event.get("run_sha")
+    if "run_sha" in event and (type(run_sha) is not str or not SHA.fullmatch(run_sha)):
+        raise CaptureError("invalid_run_provenance")
+
+
 def _parse(event: Any) -> dict[str, Any]:
     if type(event) is not dict or set(event) not in (KEYS, KEYS | {"run_sha"}):
         raise CaptureError("invalid_event_envelope")
@@ -41,12 +48,8 @@ def _parse(event: Any) -> dict[str, Any]:
             or type(event["event_id"]) is not str or not EVENT_ID.fullmatch(event["event_id"])
             or type(event["event"]) is not str or event["event"] not in EVENTS):
         raise CaptureError("invalid_identity")
-    # Runner context is evidence of execution, NOT business event identity.
-    # It must be well-formed, but redelivery across main SHAs must not split
-    # or conflict with an authenticated closure business identity.
-    if "run_sha" in event and (type(event["run_sha"]) is not str
-                               or not SHA.fullmatch(event["run_sha"])):
-        raise CaptureError("invalid_run_provenance")
+    # Runner SHA is execution context only, not a business event identifier.
+    _validate_run_provenance(event)
     # Defense in depth: same GitHub merge must never have two business IDs.
     # This is a structural consistency check, not source authentication.
     if (event["event"] == "pr_merged"
