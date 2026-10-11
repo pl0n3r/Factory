@@ -150,6 +150,84 @@ class RecoveryContractTests(unittest.TestCase):
                 with self.assertRaises(RecoveryContractError):
                     validate_recovery_manifest(value)
 
+    def test_encryption_required_is_strict_json_boolean(self):
+        # AC-01: Python 1 == True y 1.0 == True, pero JSON Schema no los iguala.
+        pristine = manifest()
+        for validate in (validate_recovery_manifest, canonical_recovery_manifest):
+            with self.subTest(validator=validate.__name__, value=True):
+                result = validate(copy.deepcopy(pristine))
+                normalized = json.loads(result) if isinstance(result, str) else result
+                self.assertIs(type(normalized["encryption"]["required"]), bool)
+                self.assertIs(normalized["encryption"]["required"], True)
+            for alias in (1, 1.0):
+                case = copy.deepcopy(pristine)
+                case["encryption"]["required"] = alias
+                with self.subTest(validator=validate.__name__, alias=repr(alias)):
+                    with self.assertRaisesRegex(
+                        RecoveryContractError,
+                        "encryption debe ser obligatorio con key material externo",
+                    ) as caught:
+                        validate(case)
+                    self.assertIsNone(caught.exception.__cause__)
+
+    def test_encryption_aliases_fail_closed_on_both_entrypoints(self):
+        # AC-02: ningún alias o forma JSON mal tipada debe convertirse en True.
+        invalid = (1, 1.0, 0, 0.0, False, "true", "True", None, [], {}, [True])
+        for alias in invalid:
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["encryption"]["required"] = copy.deepcopy(alias)
+                with self.subTest(value=repr(alias), validator=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertEqual(
+                        str(caught.exception),
+                        "encryption debe ser obligatorio con key material externo.",
+                    )
+                    self.assertIsNone(caught.exception.__cause__)
+                    self.assertIsNone(caught.exception.__context__)
+
+        for wrong in ("true", 1, None, [], {}):
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["encryption"]["key_material"] = copy.deepcopy(wrong)
+                with self.subTest(key_material=repr(wrong), fn=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertEqual(
+                        str(caught.exception),
+                        "encryption debe ser obligatorio con key material externo.",
+                    )
+
+        for malformed in (None, [], {}, {"required": True},
+                          {"required": True, "key_material": "EXTERNAL_ONLY", "extra": 1}):
+            case = manifest()
+            case["encryption"] = copy.deepcopy(malformed)
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                with self.subTest(shape=repr(malformed), fn=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertNotIn("token=", str(caught.exception))
+
+    def test_encryption_canonical_true_preserves_existing_manifest(self):
+        # AC-03: validez y byte-string canónico no cambian con el hardening.
+        valid = manifest()
+        baseline = json.dumps(
+            valid, ensure_ascii=False, sort_keys=True, allow_nan=False,
+            separators=(",", ":"),
+        )
+        self.assertEqual(canonical_recovery_manifest(valid), baseline)
+        self.assertEqual(validate_recovery_manifest(valid), valid)
+        reordered = copy.deepcopy(valid)
+        reordered["encryption"] = {
+            "key_material": "EXTERNAL_ONLY", "required": True,
+        }
+        self.assertEqual(canonical_recovery_manifest(reordered), baseline)
+        self.assertIs(
+            type(validate_recovery_manifest(reordered)["encryption"]["required"]),
+            bool,
+        )
+
     def test_valid_manifest_remains_canonical_after_strict_type_checks(self):
         value = manifest()
         before = json.dumps(
