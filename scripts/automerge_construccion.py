@@ -13,7 +13,14 @@ FIELDS = frozenset({
     "gates", "reviews", "author", "blocking_threads", "paths",
     "freeze_active", "human_gate_required", "inventory_complete",
     "api_remaining", "api_minimum", "observed_at", "expires_at", "now",
+    "owner_waiver", "reservation", "review_bot",
 })
+REQUIRED_CHECKS = frozenset({
+    "CI factory", "Sonar CI-based", "Evidencia CodeQL",
+    "CodeRabbit", "Criterios de aceptación", "Validar coordinación", "Seguridad",
+})
+WAIVER_SOURCE = ("pl0n3r/Factory", 1139, 6107503429, "pl0n3r")
+UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\\Z")
 SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy",
              "secrets", "puertas-humanas", "production", "deploy")
 SENSITIVE_PREFIXES = (".github/", "config/", "credentials/", "agentes/roles/",
@@ -86,6 +93,74 @@ def _paths_status(paths: Any) -> str:
     return "ok"
 
 
+
+def _reservation_status(value: Any, head: str, now: datetime) -> str:
+    """Valida el contrato del dato atestado por el caller, no llama GitHub."""
+    expected = {"version", "active", "source", "reservation_id", "owner",
+                "branch", "head_sha", "verified_at", "expires_at"}
+    if not isinstance(value, dict) or set(value) != expected:
+        return "incomplete_evidence"
+    if (type(value["version"]) is not int or value["version"] != 3
+            or type(value["active"]) is not bool or not value["active"]
+            or value["source"] != "verified_github_issue_comment"
+            or value["owner"] != "pl0n3r"
+            or not isinstance(value["reservation_id"], str)
+            or UUID.fullmatch(value["reservation_id"]) is None
+            or not isinstance(value["branch"], str)
+            or re.fullmatch(r"trabajo/issue-[1-9][0-9]*", value["branch"]) is None
+            or value["head_sha"] != head):
+        return "incomplete_evidence"
+    verified, until = _utc(value["verified_at"]), _utc(value["expires_at"])
+    if (verified is None or until is None or not (verified <= now <= until)
+            or until - verified > timedelta(minutes=5)
+            or until == verified):
+        return "stale_evidence"
+    return "ok"
+
+
+def _review_bot_status(value: Any, head: str) -> str:
+    expected = {"provider", "result", "head_sha", "final_review",
+                "blocking_findings", "trusted"}
+    if not isinstance(value, dict) or set(value) != expected:
+        return "incomplete_evidence"
+    if (value["provider"] != "coderabbitai[bot]"
+            or value["result"] != "success"
+            or value["head_sha"] != head
+            or value["final_review"] != "complete"
+            or type(value["blocking_findings"]) is not int
+            or value["blocking_findings"] != 0
+            or type(value["trusted"]) is not bool or not value["trusted"]):
+        return "reviews_blocked"
+    return "ok"
+
+
+def _waiver_status(value: Any, head: str, now: datetime) -> str:
+    """Pin de decisión pública; la autenticidad REST se valida fuera de este motor.
+
+    Un snapshot autocertificado NO autoriza fusión: salida es sólo diagnóstica.
+    """
+    expected = {"source", "repo", "issue", "comment_id", "author",
+                "scope", "verified_at", "expires_at", "head_sha",
+                "mvp_declared", "verification"}
+    if not isinstance(value, dict) or set(value) != expected:
+        return "independent_approval_missing"
+    if ((value["repo"], value["issue"], value["comment_id"], value["author"])
+            != WAIVER_SOURCE
+            or value["source"] != "github_issue_comment"
+            or value["verification"] != "authenticated_github_rest"
+            or value["scope"] != "construccion"
+            or value["head_sha"] != head
+            or type(value["mvp_declared"]) is not bool
+            or value["mvp_declared"]):
+        return "independent_approval_missing"
+    verified, until = _utc(value["verified_at"]), _utc(value["expires_at"])
+    if (verified is None or until is None or not (verified <= now <= until)
+            or until - verified > timedelta(minutes=5)
+            or until == verified):
+        return "stale_evidence"
+    return "ok"
+
+
 def evaluate(snapshot: Any) -> Decision:
     """Evalúa evidencia sintética no confiable; *eligible* solo es diagnóstico."""
     if not isinstance(snapshot, dict) or set(snapshot) != FIELDS:
@@ -129,6 +204,13 @@ def evaluate(snapshot: Any) -> Decision:
     if remaining < minimum:
         return _deny("insufficient_budget")
 
+    reservation_status = _reservation_status(snapshot["reservation"], head, now)
+    if reservation_status != "ok":
+        return _deny(reservation_status)
+    review_bot_status = _review_bot_status(snapshot["review_bot"], head)
+    if review_bot_status != "ok":
+        return _deny(review_bot_status)
+
     gates = snapshot["gates"]
     if not isinstance(gates, dict) or set(gates) != {"acceptance", "coordination", "security"}:
         return _deny("incomplete_evidence")
@@ -153,6 +235,9 @@ def evaluate(snapshot: Any) -> Decision:
         names.add(name)
         if check["conclusion"] != "success" or check["head_sha"] != head:
             return _deny("checks_not_green")
+
+    if not REQUIRED_CHECKS.issubset(names):
+        return _deny("incomplete_evidence")
 
     if type(snapshot["blocking_threads"]) is not int or snapshot["blocking_threads"] < 0:
         return _deny("invalid_snapshot")
@@ -185,6 +270,10 @@ def evaluate(snapshot: Any) -> Decision:
                 and reviewer != author.casefold()):
             approved = True
     if not approved:
-        return _deny("independent_approval_missing")
+        waiver_status = _waiver_status(snapshot["owner_waiver"], head, now)
+        if waiver_status != "ok":
+            return _deny(waiver_status)
+        if any(review["state"] == "DISMISSED" for review in reviews):
+            return _deny("reviews_blocked")
     return Decision(True, "eligible_diagnostic_only")
 
