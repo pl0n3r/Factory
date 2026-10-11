@@ -417,12 +417,44 @@ class GitHub:
         return self.paginate(f"/repos/{self.repo}/pulls?state=closed")
 
     def open_issues(self) -> list[dict[str, Any]]:
-        """Obtiene Issues abiertos, sin incluir Pull Requests."""
-        return [
-            issue
-            for issue in self.paginate(f"/repos/{self.repo}/issues?state=open")
-            if not issue.get("pull_request")
-        ]
+        """Inventario REST estricto: jamás tratar un prefijo como completo.
+
+        GitHub mezcla Issues y PRs en /issues; validar las filas ANTES de
+        filtrar y recorrer todas las páginas para no perder leases V3.
+        """
+        items: list[dict[str, Any]] = []
+        seen_numbers: set[int] = set()
+        for page in range(1, 32):
+            payload = self.request(
+                "GET",
+                f"/repos/{self.repo}/issues?state=open&per_page=100&page={page}",
+            )
+            if not isinstance(payload, list) or len(payload) > 100:
+                raise CoordinationError(
+                    f"Inventario de Issues incompleto: página {page} inválida."
+                )
+            for row in payload:
+                if not isinstance(row, dict):
+                    raise CoordinationError(
+                        f"Inventario de Issues incompleto: fila en página {page} inválida."
+                    )
+                number = row.get("number")
+                if type(number) is not int or number < 1 or number in seen_numbers:
+                    raise CoordinationError(
+                        f"Inventario de Issues incompleto: ID duplicado o inválido en página {page}."
+                    )
+                seen_numbers.add(number)
+                if row.get("state") != "open":
+                    raise CoordinationError(
+                        f"Inventario de Issues incompleto: estado inválido en página {page}."
+                    )
+                if not row.get("pull_request"):
+                    items.append(row)
+            if len(payload) < 100:
+                return items
+        raise CoordinationError(
+            "Inventario de Issues incompleto: más de 3100 filas paginadas."
+        )
 
     def pull_files_exact_head(self, number: int) -> dict[str, Any]:
         """Lee todos los filenames autenticados con snapshot HEAD/BASE inmutable.
@@ -2040,8 +2072,8 @@ def recovery_issue_numbers(api: GitHub) -> list[int]:
 
 
 def parallel_file_grants_enabled() -> bool:
-    """Interruptor del paralelismo por archivo verificado (activo por defecto)."""
-    return os.getenv("CONDOR_PARALLEL_FILE_GRANTS", "1").strip() != "0"
+    """Permitir grants de archivo solo con opt-in explícito (fail-closed)."""
+    return os.getenv("CONDOR_PARALLEL_FILE_GRANTS", "0").strip() == "1"
 
 
 def verified_parallel_file_evidence(
@@ -2161,6 +2193,14 @@ def reserve_work(
         )
         return None
 
+    # Comprobar el presupuesto antes de la primera lectura de comentarios,
+    # incluida la lease del candidato. Un prefijo no concede autoridad.
+    open_issues = api.open_issues()
+    if len(open_issues) > 64:
+        raise CoordinationError(
+            "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
+        )
+
     branch = branch_for_issue(issue_number)
     current = (
         active_reservation(api, issue_number)
@@ -2216,7 +2256,6 @@ def reserve_work(
             if task_marker is not None
             else None
         )
-        open_issues = api.open_issues()
         active_task_snapshots: dict[int, dict[str, Any]] | None = None
         active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None
         active_reservation_numbers: set[int] | None = None
@@ -2225,20 +2264,13 @@ def reserve_work(
             active_task_snapshots = {}
             active_dependency_states = {}
             active_reservation_numbers = set()
-            active_statuses = {
-                STATUS_RESERVED,
-                STATUS_REVIEW,
-                STATUS_RECOVERY,
-                "status: reserved",
-                "status: in review",
-                "status: recovery required",
-            }
+            # La autoridad la da el marker confiable V3, NO el label.
+            # Incluir también leases activas escondidas por AVAILABLE/BLOCKED.
             for other in open_issues:
                 other_number = other.get("number")
                 if (
                     not isinstance(other_number, int)
                     or other_number == issue_number
-                    or not (label_names(other) & active_statuses)
                 ):
                     continue
                 other_reservation = active_reservation(api, other_number)
@@ -2257,18 +2289,25 @@ def reserve_work(
         verified, verified_notes, pins = verified_parallel_file_evidence(
             api, task_marker, active_reservations, active_task_snapshots or {},
         )
+        # El árbitro reusable opera sobre labels; proyectar sólo en memoria
+        # las leases genuinas para que ningún estado visible oculte un claim.
+        # El Issue/labels reales y el API de GitHub no se modifican.
+        arbitration_issues = [
+            {**other, "labels": [{"name": STATUS_RESERVED}]}
+            if other.get("number") in (active_reservation_numbers or set())
+            else other
+            for other in open_issues
+        ]
         plan_blockers = reservation_blockers(
             issue,
-            open_issues,
+            arbitration_issues,
             actor,
             dependency_states,
             active_task_snapshots,
             active_dependency_states,
             active_reservation_numbers,
-            # La independencia por archivo solo se concede con diff exact-SHA
-            # completo de una lease V3 y archivos exactos del candidato; cada
-            # pin se revalida en el PR (validate_pr_claims) y un cambio de SHA
-            # vuelve a bloquear. CONDOR_PARALLEL_FILE_GRANTS=0 la desactiva.
+            # Solo opt-in explícito con evidencia exact-SHA completa; sin
+            # flag, la exclusividad tradicional permanece intacta.
             verified_file_independence=(
                 verified if parallel_file_grants_enabled() else set()
             ),
@@ -2289,7 +2328,7 @@ def reserve_work(
 
     parallel_evidence = parallel_compatibility_evidence(
         issue,
-        open_issues,
+        arbitration_issues,
         active_task_snapshots,
     )
     parallel_evidence.extend(verified_notes)
@@ -2327,31 +2366,30 @@ def reserve_work(
                 raise CoordinationError(
                     f"Dependencia #{dep} cambió durante /tomar."
                 )
-        statuses = {
-            STATUS_RESERVED, STATUS_REVIEW, STATUS_RECOVERY,
-            "status: reserved", "status: in review", "status: recovery required",
-        }
-        current_active = {
-            other["number"] for other in api.open_issues()
-            if isinstance(other.get("number"), int)
-            and other["number"] != issue_number
-            and label_names(other) & statuses
-            and active_reservation(api, other["number"]) is not None
-        }
-        if current_active != active_reservation_numbers:
+        # Segunda lectura sin prefiltrado de estados: carrera de activación
+        # o rotación bajo label AVAILABLE/BLOCKED también niega el nuevo grant.
+        fresh_issues = api.open_issues()
+        if len(fresh_issues) > 64:
+            raise CoordinationError(
+                "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
+            )
+        # Un único barrido conserva el snapshot completo de identidad de las
+        # reservas sin multiplicar GET de comentarios de leases activas.
+        current_reservations = {}
+        for other in fresh_issues:
+            other_number = other.get("number")
+            if not isinstance(other_number, int) or other_number == issue_number:
+                continue
+            snapshot = active_reservation(api, other_number)
+            if snapshot is not None:
+                current_reservations[other_number] = snapshot
+        if set(current_reservations) != active_reservation_numbers:
             raise CoordinationError("Cola activa cambió durante /tomar.")
-        # Una lease ajena puede rotar o ampliar claims aunque no existan
-        # pins de diff: comparar siempre la autoridad inicial de la cola.
+        # Conservar la identidad V3 ENTERA: UUID sin cambios no basta si
+        # cambian owner, branch, fingerprints, claims o dependencias.
         for number, initial in active_reservations.items():
-            latest_lease = active_reservation(api, number)
-            if (
-                latest_lease is None
-                or latest_lease.get("reservation_id") != initial.get("reservation_id")
-                or latest_lease.get("version") != initial.get("version")
-                or latest_lease.get("active") is not True
-                or reservation_task_marker(latest_lease)
-                != active_task_snapshots.get(number)
-            ):
+            latest_lease = current_reservations.get(number)
+            if latest_lease != initial:
                 raise CoordinationError(
                     f"Lease #{number} cambió durante /tomar."
                 )
@@ -2368,7 +2406,7 @@ def reserve_work(
                         f"Dependencia #{dep} de lease #{number} cambió durante /tomar."
                     )
         for number, pinned in pins.items():
-            latest_lease = active_reservation(api, number)
+            latest_lease = current_reservations.get(number)
             if (
                 latest_lease is None
                 or latest_lease.get("reservation_id") != pinned[0]

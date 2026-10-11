@@ -603,6 +603,265 @@ class EstadoCoordinacionTests(unittest.TestCase):
 class CoordinacionTests(unittest.TestCase):
     """Cubre contratos de reserva, sesión, transición y colisiones."""
 
+    def test_v3_inventory_pagination_rejects_partial_pages(self):
+        """No conceder V3 desde prefijos REST o filas no autenticables."""
+        api = FakeGitHub()
+        rest = GitHub("pl0n3r/Factory", "token-prueba")
+        rows = [
+            {"number": n + 100, "state": "open",
+             "labels": [{"name": STATUS_AVAILABLE}],
+             "body": VALID_ACCEPTANCE_BODY}
+            for n in range(60)
+        ]
+        rows.extend(
+            {"number": n + 1000, "state": "open",
+             "pull_request": {"url": "https://example.invalid/pull/1"}}
+            for n in range(40)
+        )
+        self.assertEqual(len(rows), 100)
+
+        for mode in ("second_page_not_list", "malformed_row"):
+            with self.subTest(mode=mode):
+                paths = []
+                def response(method, path, payload=None, allow=()):
+                    paths.append(path)
+                    self.assertEqual(method, "GET")
+                    if path.endswith("page=1"):
+                        if mode == "malformed_row":
+                            return [*rows[:15], "fila-invalida"]
+                        return rows
+                    if path.endswith("page=2"):
+                        return {"message": "error"}
+                    self.fail(f"GET inesperado: {path}")
+
+                with patch.object(rest, "request", side_effect=response), (
+                    patch.object(api, "open_issues", side_effect=rest.open_issues)
+                ):
+                    with self.assertRaisesRegex(
+                        CoordinationError, r"Inventario de Issues incompleto"
+                    ):
+                        reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.assignees, set())
+                self.assertEqual(
+                    len(paths), 2 if mode == "second_page_not_list" else 1
+                )
+
+        def valid_response(method, path, payload=None, allow=()):
+            return rows if path.endswith("page=1") else []
+        with patch.object(rest, "request", side_effect=valid_response):
+            self.assertEqual(len(rest.open_issues()), 60)
+
+
+    def test_hidden_v3_immutable_identity_drift_fails_closed(self):
+        """A igual UUID/paths, un cambio de identidad se detecta bajo lock."""
+        api_factory = self._hidden_v3_fixture
+        for field, value in (
+            ("owner", "otro-titular"),
+            ("branch", "trabajo/issue-999"),
+            ("acceptance_sha256", "f" * 64),
+            ("task_marker_sha256", "e" * 64),
+        ):
+            with self.subTest(field=field):
+                api, original_comments = api_factory(STATUS_AVAILABLE)
+                # El candidato es disjunto; solo la rotación de autoridad
+                # posterior a la primera lectura debe bloquearlo.
+                api.issue_data["body"] = api.issue_data["body"].replace(
+                    "src/same.php", "docs/disjoint.md"
+                )
+                activated = False
+                create_original = api.create_branch
+
+                def start_branch(name, sha):
+                    nonlocal activated
+                    result = create_original(name, sha)
+                    if name == "trabajo/issue-12":
+                        activated = True
+                    return result
+
+                def drifting_comments(number):
+                    rows = original_comments(number)
+                    if number != 50 or not activated:
+                        return rows
+                    row = dict(rows[0])
+                    marker = json.loads(
+                        row["body"].split("<!-- condor-reserva ", 1)[1]
+                        .split(" -->", 1)[0]
+                    )
+                    marker[field] = value
+                    row["body"] = (
+                        "<!-- condor-reserva "
+                        + json.dumps(marker, separators=(",", ":"), sort_keys=True)
+                        + " -->"
+                    )
+                    return [row]
+
+                with patch.object(api, "issue_comments", side_effect=drifting_comments), (
+                    patch.object(api, "create_branch", side_effect=start_branch)
+                ):
+                    with self.assertRaisesRegex(
+                        CoordinationError, r"Lease #50 cambió"
+                    ):
+                        reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.assignees, set())
+
+    def test_v3_inventory_read_budget_is_bounded_and_fails_closed(self):
+        """10 Issues se verifican, 100 no gastan API ni conceden sesión."""
+        small, trusted = self._hidden_v3_fixture(STATUS_BLOCKED)
+        for num in range(60, 69):
+            small.open_issue_data.append({
+                "number": num, "state": "open",
+                "labels": [{"name": STATUS_AVAILABLE}],
+                "body": VALID_ACCEPTANCE_BODY,
+            })
+        calls = []
+        def measured_comments(number):
+            calls.append(number)
+            return trusted(number)
+        with patch.object(small, "issue_comments", side_effect=measured_comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"colisión con tarea activa #50"
+            ):
+                reserve_work(small, 12, "pl0n3r", "OWNER")
+        # 10 consultas de otras hojas, más el preflight de Issue #12.
+        self.assertEqual(len([number for number in calls if number != 12]), 10)
+        self.assertEqual(calls.count(12), 1)
+        self.assertEqual(small.comments, [])
+
+        large, trusted_large = self._hidden_v3_fixture(STATUS_AVAILABLE)
+        for num in range(60, 159):
+            large.open_issue_data.append({
+                "number": num, "state": "open",
+                "labels": [{"name": STATUS_AVAILABLE}],
+                "body": VALID_ACCEPTANCE_BODY,
+            })
+        comment_calls = []
+        def counted_comments(number):
+            comment_calls.append(number)
+            return trusted_large(number)
+        with patch.object(large, "issue_comments", side_effect=counted_comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"presupuesto seguro de 64 Issues"
+            ):
+                reserve_work(large, 12, "pl0n3r", "OWNER")
+        # El presupuesto se comprueba antes de leer cualquier lease,
+        # incluida la del candidato.
+        self.assertEqual(comment_calls, [])
+        self.assertNotIn("trabajo/issue-12", large.branches)
+        self.assertEqual(large.comments, [])
+
+
+    def _hidden_v3_fixture(self, visible_status):
+        """Construye un claim V3 ajeno, autenticado, sin confiar en su label."""
+        from scripts.orquestador_kit import PlannedTask, build_task_marker
+
+        def body(number):
+            task = PlannedTask(
+                key=f"LEAF_{number}", title=f"Hoja {number}",
+                owner="pl0n3r", paths=("src/same.php",), depends_on=(),
+            )
+            marker = build_task_marker(
+                epic=1081, task=task, order=number,
+                roles=["ingenieria-software"], dependency_issues=[],
+            )
+            return (
+                VALID_ACCEPTANCE_BODY + "\n### Rutas reclamadas\n"
+                "- src/same.php\n" + marker
+            )
+
+        api = FakeGitHub()
+        api.repo = "pl0n3r/Factory"
+        api.issue_data["body"] = body(12)
+        other_body = body(50)
+        other = {
+            "number": 50, "state": "open", "state_reason": None,
+            "labels": [{"name": visible_status}], "body": other_body,
+        }
+        api.open_issue_data = [api.issue_data, other]
+        api.branches["trabajo/issue-50"] = "a" * 40
+        trusted = [{
+            "user": {"login": BOT},
+            "body": coordinator.reservation_marker(
+                "pl0n3r", SESSION_A, "trabajo/issue-50", True, "tomar",
+                contract_fingerprint(other_body),
+                coordinator.parse_task_marker(other_body),
+            ),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }]
+        original = api.issue_comments
+
+        def comments(number):
+            return trusted if number == 50 else original(number)
+
+        return api, comments
+
+    def test_available_label_does_not_hide_active_v3_overlap(self):
+        """El label disponible nunca borra el claim V3 activo ajeno."""
+        api, comments = self._hidden_v3_fixture(STATUS_AVAILABLE)
+        with patch.object(api, "issue_comments", side_effect=comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"colisión con tarea activa #50"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.assignees, set())
+
+    def test_blocked_label_does_not_hide_active_v3_overlap(self):
+        """Bloqueado con lease V3 retiene el claim, sin marker no lo crea."""
+        api, comments = self._hidden_v3_fixture(STATUS_BLOCKED)
+        with patch.object(api, "issue_comments", side_effect=comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"colisión con tarea activa #50"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+
+        plain_api, original_comments = self._hidden_v3_fixture(STATUS_BLOCKED)
+        def no_other_marker(number):
+            return [] if number == 50 else original_comments(number)
+        with patch.object(
+            plain_api, "issue_comments", side_effect=no_other_marker
+        ):
+            session = reserve_work(plain_api, 12, "pl0n3r", "OWNER")
+        self.assertIsNotNone(session)
+        self.assertIn("trabajo/issue-12", plain_api.branches)
+
+    def test_hidden_lease_recheck_prevents_second_grant(self):
+        """Una lease oculta aparecida tras crear rama invalida el preflight."""
+        api, other_comments = self._hidden_v3_fixture(STATUS_AVAILABLE)
+        original_create = api.create_branch
+        branch_started = False
+
+        def create_branch(name, sha):
+            nonlocal branch_started
+            created = original_create(name, sha)
+            if name == "trabajo/issue-12":
+                branch_started = True
+            return created
+
+        def comments(number):
+            if number == 50 and not branch_started:
+                return []
+            return other_comments(number)
+
+        with patch.object(api, "issue_comments", side_effect=comments), (
+            patch.object(api, "create_branch", side_effect=create_branch)
+        ):
+            with self.assertRaisesRegex(
+                CoordinationError, r"Cola activa cambió durante /tomar"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.assignees, set())
+
+
     def test_issue_from_branch(self) -> None:
         """Extrae Issue únicamente de ramas canónicas."""
         self.assertEqual(issue_from_branch("trabajo/issue-12"), 12)
@@ -4433,9 +4692,8 @@ class GranularReserveWorkIntegrationTests(unittest.TestCase):
         self.assertEqual(api.status_history, [])
         self.assertEqual(api.assignees, set())
 
-    def test_tomar_rejects_future_collision_when_parallel_file_grants_are_disabled(self) -> None:
-        # Con el interruptor apagado se conserva el comportamiento fail-closed:
-        # la lease src/ puede editar src/next.php después de leer el PR.
+    def test_tomar_rejects_future_collision_even_when_current_diff_is_disjoint(self) -> None:
+        # Sin opt-in, src/ conserva exclusividad aunque su diff actual sea disjunto.
         api, comments, diff = self._ready_api()
         with patch.dict(os.environ, {"CONDOR_PARALLEL_FILE_GRANTS": "0"}), (
             patch.object(api, "issue_comments", side_effect=comments)
@@ -4445,9 +4703,18 @@ class GranularReserveWorkIntegrationTests(unittest.TestCase):
         self.assertNotIn("trabajo/issue-12", api.branches)
         self.assertEqual(api.status_history, [])
 
+    def test_tomar_rejects_parallel_flag_without_explicit_optin(self) -> None:
+        # Valores erróneos no amplían permisos inadvertidamente.
+        api, comments, diff = self._ready_api()
+        with patch.dict(os.environ, {"CONDOR_PARALLEL_FILE_GRANTS": "yes"}), (
+            patch.object(api, "issue_comments", side_effect=comments)
+        ), patch.object(api, "pull_files_exact_head", side_effect=diff, create=True):
+            with self.assertRaisesRegex(CoordinationError, "colisión con tarea activa"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
     def test_tomar_grants_parallel_exact_file_when_active_diff_is_verified_disjoint(self) -> None:
-        # AC-01 de #1081: archivo exacto del candidato disjunto del diff exact-SHA
-        # completo de una lease V3; un solapamiento posterior lo detecta el PR.
+        # Opt-in: solo archivos exactos con diff exact-SHA completo y disjunto.
         api, comments, diff = self._ready_api()
         with patch.dict(os.environ, {"CONDOR_PARALLEL_FILE_GRANTS": "1"}), (
             patch.object(api, "issue_comments", side_effect=comments)

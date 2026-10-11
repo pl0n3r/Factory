@@ -107,8 +107,6 @@ La puerta de **validación de PR** consulta `GitHub.pull_files_exact_head`, que 
 
 **Comprobación de regresión:** `tests/test_parallel_coordination.py` cubre seis criterios de conflictos y denegación; `tests/test_coordinar_trabajo.py::ExactHeadPullFileEvidenceTests` y `ExactHeadPullCollisionIntegrationTests` ejercitan paginación, el borde de 100 archivos, renombrados, SHA obsoleto y denegación de PR. El `Validar` agregado exact-HEAD y la revisión independiente siguen siendo obligatorios para fusionar esta capacidad.
 
-## Reservas paralelas por archivo verificado (Factory #1081)
+## Paralelismo de reservas por archivo verificado (Factory #1081)
 
-Una tarea cuyo claim son **archivos exactos** puede reservarse en paralelo con una lease V3 activa que reclama un directorio más amplio, siempre que el diff **exact-SHA completo** del PR activo pruebe que no toca esos archivos (`verified_parallel_file_evidence`). El grant queda fijado a UUID y SHA y vuelve a bloquear ante cualquier cambio de SHA. Si después ambos PR terminan modificando el mismo archivo, `Validar coordinación` falla en el segundo (`collision_validation_errors`) y se reordenan. Los archivos de versión, README y lockfiles nunca se eximen.
-
-El interruptor es `CONDOR_PARALLEL_FILE_GRANTS` (por defecto `1`; `0` restaura el modo fail-closed anterior).
+El experimento es **opt-in**: `CONDOR_PARALLEL_FILE_GRANTS=1` permite una reserva con archivos exactos frente a una lease V3 de directorio amplio **solo** si el PR activo aporta diff completo, SHA/UUID auténticos y archivos disjuntos. Por defecto el flag está apagado (`0`); cualquier otro valor mantiene el veto. El coordinador vuelve a comprobar autoridad y SHA antes de publicar el grant. Cambios posteriores que toquen el mismo archivo deben ser rechazados por el check exact-SHA de claims del PR, y no dan autorización para fusionar con colisiones. Versiones, README, lockfiles y mismo archivo nunca se eximen sin merge-train probado. Sin evidencia completa la reserva falla cerrado; no habilitar el opt-in operativo antes de completar gates y revisión de seguridad.
