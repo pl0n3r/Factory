@@ -301,6 +301,29 @@ class T(unittest.TestCase):
   self.assertEqual(run.returncode,0,run.stdout+run.stderr)
   self.assertNotIn("release create",trace)
 
+ def test_created_tag_object_requires_exact_identity_before_ref_post(self):
+  step=self._step_body("tag")
+  self.assertLess(step.index('gh api "repos/$REPOSITORY/git/tags/$object"'),
+                  step.index('gh api --include --silent --method POST "repos/$REPOSITORY/git/refs"'))
+  for label,params in (
+    ("wrong annotation name",{"remote_name":"v1.0.28"}),
+    ("empty annotation name",{"remote_name":""}),
+    ("wrong target SHA",{"remote_target":"b"*40}),
+    ("empty target",{"remote_target":""}),
+    ("unreadable tag object",{"remote_target":"API_ERROR"}),
+  ):
+   with self.subTest(case=label):
+    run,trace,created,_=self._execute_step("tag",**params)
+    self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+    self.assertIn("git/tags/",trace)
+    self.assertNotIn("git/refs",trace)
+    self.assertFalse(created)
+  run,trace,created,_=self._execute_step("tag")
+  self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertIn("git/tags/",trace)
+  self.assertIn("git/refs",trace)
+  self.assertFalse(created)
+
  def test_tag_creation_response_requires_sha_before_ref_post(self):
   for value in ("","null","abc","not-a-sha"):
    with self.subTest(value=value):

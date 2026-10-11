@@ -130,6 +130,12 @@ jobs:
           object="$(gh api --method POST "repos/$REPOSITORY/git/tags" -f tag="$TAG" -f message="Release $TAG — $TARGET_SHA" -f object="$TARGET_SHA" -f type=commit --jq '.sha')"
           [[ "$object" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Objeto de tag sin SHA válido"; exit 1; }
           verify_remote_main
+          # Validar identidad semántica del objeto ANTES de mutar refs/tags.
+          tag_record="$(gh api "repos/$REPOSITORY/git/tags/$object" --jq '[.tag, .object.type, .object.sha] | @tsv')"
+          if [[ "$tag_record" != "$TAG"$'\t'commit$'\t'"$TARGET_SHA" ]]; then
+            echo "::error::Objeto tag creado no corresponde al nombre, tipo o commit aprobados"
+            exit 1
+          fi
           if response="$(gh api --include --silent --method POST "repos/$REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" 2>&1)"; then
             exit 0
           fi
