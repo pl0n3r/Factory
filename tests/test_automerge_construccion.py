@@ -77,7 +77,11 @@ class AutoMergeConstruccionTests(unittest.TestCase):
                      "secrets/token.env", "docs/puertas-humanas.md",
                      "config/production.yml", "deploy/prod.py",
                      ".github/workflows/ci.yml",
-                     "scripts/coordinar_trabajo.py"):
+                     "scripts/coordinar_trabajo.py",
+                     "scripts/automerge_construccion.py",
+                     "scripts/unattended_kill_switch.py",
+                     ".github/dependabot.yml", "config/credentials.yml",
+                     "CODEOWNERS", "docs/CODEOWNERS"):
             with self.subTest(path=path):
                 self.deny("paths", [path])
 
@@ -103,6 +107,15 @@ class AutoMergeConstruccionTests(unittest.TestCase):
                            ("reviews", [{"author": "x", "state": [], "trusted": True,
                                          "head_sha": HEAD}])):
             self.deny(key, value)
+        for key, value in (
+            ("paths", ["scripts/feature.py", "SCRIPTS/FEATURE.PY"]),
+            ("paths", ["scripts/feature.py"] * 129),
+            ("paths", ["a" * 241]),
+            ("required_checks", evidence()["required_checks"] * 129),
+            ("reviews", evidence()["reviews"] * 129),
+        ):
+            with self.subTest(oversized_or_duplicate=key):
+                self.deny(key, value)
         secret = evidence()
         secret["phase"] = "SECRET=do-not-expose"
         self.assertNotIn("do-not-expose", repr(evaluate(secret).public()))

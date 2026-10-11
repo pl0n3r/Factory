@@ -16,9 +16,12 @@ FIELDS = frozenset({
 })
 SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy",
              "secrets", "puertas-humanas", "production", "deploy")
-SENSITIVE_PREFIXES = (".github/workflows/", ".github/actions/")
+SENSITIVE_PREFIXES = (".github/", "config/", "credentials/")
 SENSITIVE_FILES = frozenset({"scripts/coordinar_trabajo.py", "scripts/orquestar_fabrica.py",
-                             "scripts/aceptacion_kit.py", "scripts/validar_claims_issue.py"})
+                             "scripts/aceptacion_kit.py", "scripts/validar_claims_issue.py",
+                             "scripts/automerge_construccion.py",
+                             "scripts/unattended_kill_switch.py",
+                             "codeowners", "docs/codeowners"})
 
 
 @dataclass(frozen=True)
@@ -52,14 +55,20 @@ def _utc(value: Any) -> datetime | None:
 
 
 def _paths_status(paths: Any) -> str:
-    if not isinstance(paths, list) or not paths:
+    if type(paths) is not list or not paths or len(paths) > 128:
         return "invalid_snapshot"
+    seen: set[str] = set()
     for path in paths:
-        if (not isinstance(path, str) or not path or path != path.strip()
-                or "\\" in path or "\x00" in path or path.startswith("/")
+        if (type(path) is not str or not path or len(path) > 240
+                or path != path.strip() or "\\" in path
+                or path.startswith(("/", "~"))
+                or any(ord(char) < 32 or ord(char) == 127 for char in path)
                 or any(part in ("", ".", "..") for part in path.split("/"))):
             return "invalid_snapshot"
         normalized = path.casefold()
+        if normalized in seen:
+            return "invalid_snapshot"
+        seen.add(normalized)
         if (any(word in normalized for word in SENSITIVE)
                 or any(normalized.startswith(prefix) for prefix in SENSITIVE_PREFIXES)
                 or normalized in SENSITIVE_FILES
@@ -124,6 +133,8 @@ def evaluate(snapshot: Any) -> Decision:
     checks = snapshot["required_checks"]
     if not isinstance(checks, list) or not checks:
         return _deny("incomplete_evidence")
+    if len(checks) > 128:
+        return _deny("invalid_snapshot")
     names: set[str] = set()
     for check in checks:
         if not isinstance(check, dict) or set(check) != {"name", "conclusion", "head_sha"}:
@@ -140,7 +151,8 @@ def evaluate(snapshot: Any) -> Decision:
     if snapshot["blocking_threads"]:
         return _deny("blocking_threads")
     author, reviews = snapshot["author"], snapshot["reviews"]
-    if not isinstance(author, str) or not author or not isinstance(reviews, list):
+    if (not isinstance(author, str) or not author or not isinstance(reviews, list)
+            or len(reviews) > 128):
         return _deny("invalid_snapshot")
     approved = False
     for review in reviews:
