@@ -81,11 +81,32 @@ class RecoveryNoteProof:
     author: str | None
 
 
+@dataclass(frozen=True)
+class RecoveryLabelProof:
+    """Evento labeled de API paginada, atribuible al mismo UUID V3.
+
+    El timeline no lleva UUID por sí solo: el Port autenticado debe
+    correlacionarlo con la nota y reserva vigentes, y rechazar carreras,
+    reetiquetados o event histories incompletos.
+    """
+    complete: bool
+    authenticated: bool
+    count: int
+    owner: str
+    reservation_id: str
+    branch: str
+    branch_sha: str
+    label: str
+    created_at: datetime | None
+    author: str | None
+
+
 class Port(Protocol):
     def read(self, issue: int) -> Snapshot: ...
     def lock(self, group: str) -> Any: ...
     def append(self, issue: int, body: str, expected: Snapshot) -> None: ...
     def recovery_note(self, issue: int, expected: Snapshot) -> RecoveryNoteProof: ...
+    def recovery_label(self, issue: int, expected: Snapshot) -> RecoveryLabelProof: ...
     def status(self, issue: int, state: str, expected: Snapshot) -> None: ...
 
 
@@ -209,6 +230,32 @@ def _note_ok(proof: Any, s: Snapshot) -> bool:
         return False
 
 
+def _recovery_label_ok(note: Any, label: Any, s: Snapshot) -> bool:
+    """Gracia desde evento RECOVERY efectivo, nunca desde nota previa."""
+    if (s.status != RECOVERY or not _note_ok(note, s)
+            or note.count != 1 or type(label) is not RecoveryLabelProof):
+        return False
+    if (type(label.complete) is not bool
+            or type(label.authenticated) is not bool
+            or not label.complete or not label.authenticated
+            or type(label.count) is not int or label.count != 1
+            or label.owner != s.owner or label.reservation_id != s.reservation_id
+            or label.branch != s.branch or label.branch_sha != s.branch_sha
+            or label.label != RECOVERY or label.author != "github-actions[bot]"):
+        return False
+    at, comment_at, now = (_utc(label.created_at),
+                           _utc(note.created_at), _utc(s.now))
+    if at is None or comment_at is None or now is None:
+        return False
+    return (comment_at <= at <= now
+            and _utc(s.recovery_since) == at)
+
+
+def _recovery_proven(port: Port, issue: int, s: Snapshot) -> bool:
+    return _recovery_label_ok(port.recovery_note(issue, s),
+                              port.recovery_label(issue, s), s)
+
+
 def _same(a: Snapshot, b: Snapshot) -> bool:
     return (_identity(a) == _identity(b) and a.fingerprint == b.fingerprint
             and a.status == b.status and a.marker == b.marker
@@ -299,6 +346,8 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                         and _eligible(locked, "release")
                         and _eligible(current, "release")):
                     return Result("unknown", "partial_reconciliation_drift")
+                if not _recovery_proven(port, issue, current):
+                    return Result("unknown", "recovery_label_untrusted")
                 port.status(issue, AVAILABLE, current)
                 final = port.read(issue)
                 if not _released_ok(current, final):
@@ -358,12 +407,17 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                         or confirmed.marker != after.marker
                         or confirmed.last_activity_at != after.last_activity_at
                         or _utc(confirmed.now) < _utc(after.now)
-                        or _utc(confirmed.recovery_since) != _utc(proof.created_at)):
+                        or not _recovery_label_ok(
+                            proof, port.recovery_label(issue, confirmed),
+                            confirmed)):
                     return Result(action, "unverified_recovery_since", True)
                 return Result(action, "recovery_marked", True)
+            if not _recovery_proven(port, issue, current):
+                return Result("unknown", "recovery_label_untrusted")
             port.append(issue, _release_marker(current), current)
             after = port.read(issue)
-            if not _postappend(current, after, action):
+            if (not _postappend(current, after, action)
+                    or not _recovery_proven(port, issue, after)):
                 return Result(action, "partial_marker_only")
             port.status(issue, AVAILABLE, after)
             final = port.read(issue)

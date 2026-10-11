@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from scripts.lease_release_executor import (
-    AVAILABLE, RECOVERY, RecoveryNoteProof, Snapshot, execute,
+    AVAILABLE, RECOVERY, RecoveryLabelProof, RecoveryNoteProof, Snapshot, execute,
 )
 
 START = datetime(2026, 10, 11, 10, tzinfo=timezone.utc)
@@ -42,7 +42,12 @@ class FakePort:
         self.noop_available = False
         self.locked_clock_drift = None  # (locked_read_ordinal, absolute_minute)
         self.locked_reads = 0
-        self.note_at = None
+        self.note_at = item.recovery_since if item.status == RECOVERY else None
+        self.label_at = item.recovery_since if item.status == RECOVERY else None
+        self.label_complete = True
+        self.label_authenticated = True
+        self.label_author = "github-actions[bot]"
+        self.label_count = None
         self.note_complete = True
         self.note_authenticated = True
         self.note_author = "github-actions[bot]"
@@ -85,6 +90,17 @@ class FakePort:
             created_at=self.note_at if found else None,
             author=self.note_author if found else None)
 
+    def recovery_label(self, issue, expected):
+        assert self.locked and issue == 1191
+        count = int(self.label_at is not None) if self.label_count is None else self.label_count
+        return RecoveryLabelProof(
+            complete=self.label_complete, authenticated=self.label_authenticated,
+            count=count, owner=expected.owner,
+            reservation_id=expected.reservation_id, branch=expected.branch,
+            branch_sha=expected.branch_sha, label=RECOVERY,
+            created_at=self.label_at if count else None,
+            author=self.label_author if count else None)
+
     def append(self, issue, body, expected):
         assert self.locked and expected is self.item
         self.writes.append(("comment", body))
@@ -101,9 +117,11 @@ class FakePort:
         if status == AVAILABLE and self.noop_available:
             return  # ACK without persistence: release must not report success.
         self.writes.append(("status", status))
+        if status == RECOVERY:
+            self.label_at = self.item.now
         self.item = replace(
             self.item, status=status,
-            recovery_since=(self.note_at if status == RECOVERY else
+            recovery_since=(self.label_at if status == RECOVERY else
                             None if status == AVAILABLE else
                             self.item.recovery_since))
 
@@ -176,8 +194,8 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertEqual(port.item.status, RECOVERY)
         self.assertEqual(len(port.writes), 2)
         self.assertEqual(port.item.recovery_since, START + timedelta(minutes=41))
-        # End-to-end: la gracia se cuenta desde la nota bot, nunca desde
-        # el primer preflight. A los 9 minutos no puede liberar.
+        # La gracia se cuenta desde la etiqueta RECOVERY auténtica, no
+        # desde el primer preflight ni desde un comentario anticipado.
         port.item = replace(port.item, now=START + timedelta(minutes=50))
         before = len(port.writes)
         self.assertFalse(execute(1191, port, decision,
@@ -296,7 +314,57 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertEqual(len(recover.writes), 2)
         self.assertEqual(recover.writes[0][0], "comment")
         self.assertEqual(recover.writes[1], ("status", RECOVERY))
-        self.assertEqual(recover.item.recovery_since, recover.note_at)
+        self.assertEqual(recover.item.recovery_since, recover.label_at)
+        # Falla etiqueta a +41 y reintenta a +61: no liberar hasta +71.
+        late = FakePort(snapshot(recovery=False))
+        late.fail_status = True
+        self.assertEqual(execute(1191, late, decision,
+                                 feature_enabled=True, dry_run=False).reason,
+                         "port_failure_or_partial_write")
+        original_note = late.note_at
+        late.fail_status = False
+        late.item = replace(late.item, now=START + timedelta(minutes=61))
+        self.assertEqual(execute(1191, late, decision,
+                                 feature_enabled=True, dry_run=False).reason,
+                         "recovery_marked")
+        self.assertEqual(late.note_at, original_note)
+        self.assertEqual(late.label_at, START + timedelta(minutes=61))
+        self.assertEqual(late.item.recovery_since, late.label_at)
+        count = len(late.writes)
+        self.assertFalse(execute(1191, late, decision,
+                                 feature_enabled=True, dry_run=False).wrote)
+        self.assertEqual(len(late.writes), count)
+        late.item = replace(late.item, now=START + timedelta(minutes=70))
+        self.assertFalse(execute(1191, late, decision,
+                                 feature_enabled=True, dry_run=False).wrote)
+        late.item = replace(late.item, now=START + timedelta(minutes=71))
+        self.assertEqual(execute(1191, late, decision,
+                                 feature_enabled=True, dry_run=False).reason,
+                         "released")
+        # No permitir release con nota/etiqueta inconsistente o API parcial.
+        for kind in ("no_note", "no_label", "wrong_actor", "partial_timeline",
+                     "untrusted_timeline", "duplicate_label", "old_since"):
+            with self.subTest(untrusted_label=kind):
+                port = FakePort(snapshot())
+                if kind == "no_note":
+                    port.note_at = None
+                elif kind == "no_label":
+                    port.label_at = None
+                elif kind == "wrong_actor":
+                    port.label_author = "malicious-user"
+                elif kind == "partial_timeline":
+                    port.label_complete = False
+                elif kind == "untrusted_timeline":
+                    port.label_authenticated = False
+                elif kind == "duplicate_label":
+                    port.label_count = 2
+                else:
+                    port.item = replace(port.item,
+                        recovery_since=START + timedelta(minutes=31))
+                result = execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertFalse(result.wrote)
+                self.assertEqual(port.writes, [])
         # Actor dudoso, consulta incompleta, más de una nota => fail closed.
         for attr, value in (("note_author", "attacker"),
                             ("note_complete", False),
