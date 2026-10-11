@@ -1,6 +1,7 @@
 """Factory 1143: comprobaciones offline del observador de lectura."""
 import json
 import re
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -20,7 +21,16 @@ def load():
     if match is None:
         raise AssertionError("embedded script missing")
     scope = {"__name__": "offline_fixture"}
-    exec(compile(textwrap.dedent(match.group(1)), str(WORKFLOW), "exec"), scope)
+    # Acceptance runner removes its temporary sys.path after importing this module.
+    root = str(WORKFLOW.parents[2])
+    added = root not in sys.path
+    if added:
+        sys.path.insert(0, root)
+    try:
+        exec(compile(textwrap.dedent(match.group(1)), str(WORKFLOW), "exec"), scope)
+    finally:
+        if added:
+            sys.path.remove(root)
     return scope
 
 
