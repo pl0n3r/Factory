@@ -1,0 +1,133 @@
+name: Retrospectiva diaria (candidato seguro)
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+concurrency:
+  group: factory-retro-diaria
+  cancel-in-progress: false
+jobs:
+  candidato:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Preflight canónico de pausa y SHA, antes de checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" == "pl0n3r/Factory" ]] || exit 1
+          [[ "$REF_NAME" == "refs/heads/main" ]] || exit 1
+          [[ "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" ]] || exit 1
+          gh api repos/pl0n3r/Factory/issues/767 > /tmp/retro-switch.json
+          gh api repos/pl0n3r/Factory/commits/main --jq '.sha' > /tmp/retro-main.sha
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          raw = json.loads(pathlib.Path('/tmp/retro-switch.json').read_text())
+          body = raw.get('body')
+          matches = re.findall(r'<!--\s*factory-unattended-kill-switch\s+(.*?)\s*-->', body if type(body) is str else '', re.S)
+          assert raw.get('number') == 767 and raw.get('state') == 'closed'
+          assert raw.get('user', {}).get('login') == 'pl0n3r' and len(matches) == 1
+          marker = json.loads(matches[0])
+          assert marker == {'version': 1, 'state': 'RUNNING', 'owner': 'pl0n3r'}
+          sha = pathlib.Path('/tmp/retro-main.sha').read_text().strip()
+          assert re.fullmatch(r'[0-9a-f]{40}', sha) and sha == os.environ['EVENT_SHA']
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Evaluar candidato de retrospectiva sin publicación
+        run: |
+          python3 - <<'PY'
+          # RETRO_GATE_BEGIN
+          import re
+          from scripts.retro_diaria import EVENT_KINDS, evaluate_retro_daily
+
+          SHA = re.compile(r'[0-9a-f]{40}\Z')
+          UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z')
+
+          def publication_candidate(evidence):
+              """Pure decision; NEVER authorizes a write to GitHub."""
+              deny = {'status': 'UNKNOWN', 'publication_allowed': False}
+              if type(evidence) is not dict:
+                  return deny
+              if (evidence.get('event_name') not in ('schedule', 'workflow_dispatch')
+                      or evidence.get('repository') != 'pl0n3r/Factory'
+                      or evidence.get('ref') != 'refs/heads/main'
+                      or evidence.get('phase') != 'construccion'
+                      or evidence.get('kill_switch') != 'RUNNING'):
+                  return deny
+              run_sha = evidence.get('run_sha')
+              if type(run_sha) is not str or SHA.fullmatch(run_sha) is None:
+                  return deny
+              quota = evidence.get('quota')
+              if (type(quota) is not dict or type(quota.get('limit')) is not int
+                      or type(quota.get('remaining')) is not int
+                      or quota['limit'] <= 0 or quota['remaining'] < 0
+                      or quota['remaining'] > quota['limit']
+                      or quota['remaining'] * 5 < quota['limit']):
+                  return deny
+              lease = evidence.get('lease')
+              if (type(lease) is not dict or lease.get('verified') is not True
+                      or lease.get('active') is not True
+                      or lease.get('owner') != 'pl0n3r'
+                      or type(lease.get('reservation_id')) is not str
+                      or UUID.fullmatch(lease['reservation_id']) is None):
+                  return deny
+              sources = evidence.get('sources')
+              events = evidence.get('events')
+              if type(sources) is not list or not sources:
+                  return deny
+              # A source is only complete when authenticated, terminal at its
+              # exact SHA and when all event classes have been inventoried.
+              ids, repositories = set(), set()
+              for source in sources:
+                  if type(source) is not dict:
+                      return deny
+                  identity = source.get('id')
+                  repo = source.get('repo')
+                  sha = source.get('sha')
+                  if (type(identity) is not str or not identity
+                          or type(repo) is not str or not repo
+                          or type(sha) is not str or SHA.fullmatch(sha) is None
+                          or source.get('authenticated') is not True
+                          or source.get('complete') is not True
+                          or source.get('status') != 'completed'
+                          or source.get('conclusion') != 'success'
+                          or source.get('head_sha') != sha
+                          or source.get('event_kinds') != sorted(EVENT_KINDS)
+                          or identity in ids or repo.casefold() in repositories):
+                      return deny
+                  ids.add(identity)
+                  repositories.add(repo.casefold())
+              retro = evaluate_retro_daily(events=events, sources=sources, now=evidence.get('now'))
+              if retro.get('status') != 'READY':
+                  return deny
+              # Build-ahead only: source authentication is the privileged caller's
+              # responsibility. Never infer authorization from a JSON flag.
+              return {'status': 'CANDIDATE', 'publication_allowed': False,
+                      'counts_by_repo': retro['counts_by_repo'],
+                      'window_start': retro['window_start'],
+                      'window_end': retro['window_end']}
+          # RETRO_GATE_END
+          # No collector/Port authenticated is wired yet; fail closed by design.
+          # In particular a scheduled run MUST NOT fabricate sources or lease.
+          import json, os
+          print(json.dumps(publication_candidate({
+              'event_name': os.getenv('GITHUB_EVENT_NAME'),
+              'repository': os.getenv('GITHUB_REPOSITORY'),
+              'ref': os.getenv('GITHUB_REF'),
+              'run_sha': os.getenv('GITHUB_SHA'),
+              'phase': 'construccion',
+              'kill_switch': 'UNKNOWN',
+              'quota': None, 'lease': None, 'sources': [], 'events': [],
+          }), sort_keys=True))
+          PY
