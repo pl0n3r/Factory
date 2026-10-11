@@ -228,19 +228,19 @@ jobs:
             echo "::error::Search Issues cambió entre dos lecturas completas"
             exit 1
           }
-          # Se conserva la proyección acotada original, cubierta por las
-          # pruebas de payload y paginación. Una segunda fase omite únicamente
-          # narrativas que el mismo evaluador jamás interpreta como gate.
+          # Proyectar TODAS las filas verificadas antes de seleccionar gates.
+          # El parser canónico decide qué Issues necesitan comentarios, incluso
+          # cuando "factory-release" está escapado en JSON (p. ej. \u0072).
+          # Nunca usar un filtro textual previo que descarte markers válidos.
           jq '[
                 .[]
-                | select((.body // "") | contains("factory-release"))
                 | {number, state, title, body, updated_at}
-              ]' /tmp/release-search-verified-2.json > /tmp/release-issues-prefilter.json
+              ]' /tmp/release-search-verified-2.json > /tmp/release-issues-projected.json
           # RELEASE_GATE_CANDIDATES_START
           # El parser canónico solo examina Issues con ventana explícita o
           # marker de release (incluidos los malformados, para fallar cerrado).
           # Un texto narrativo "factory-release" NO requiere leer comentarios.
-          python3 - /tmp/release-issues-prefilter.json <<'PY' > /tmp/release-issues.json
+          python3 - /tmp/release-issues-projected.json <<'PY' > /tmp/release-issues.json
           import json
           import sys
           from pathlib import Path
