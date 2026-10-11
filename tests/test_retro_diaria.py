@@ -78,6 +78,23 @@ class RetroDailyTests(unittest.TestCase):
         self.assertEqual(conflict["reason"], "conflicting_duplicate_event")
         self.assertNotIn("counts_by_repo", conflict)
 
+    def test_refactor_preserves_source_and_event_failure_reasons(self):
+        original = event("e1", "2026-10-11T08:00:00Z")
+        cases = [
+            ([SOURCE, False], [original], "invalid_source"),
+            ([{**SOURCE, "complete": 1}], [original], "unauthenticated_or_incomplete_source"),
+            ([SOURCE, dict(SOURCE)], [original], "ambiguous_source_identity"),
+            ([SOURCE], [False], "invalid_event"),
+            ([SOURCE], [{**original, "source_id": "unknown"}], "invalid_event_identity"),
+            ([SOURCE], [{**original, "occurred_at": "invalid"}], "invalid_event_time"),
+            ([SOURCE], [original, {**original, "kind": "incident_closed"}],
+             "conflicting_duplicate_event"),
+        ]
+        for sources, events, reason in cases:
+            with self.subTest(reason=reason):
+                result = evaluate_retro_daily(sources=sources, events=events, now=NOW)
+                self.assertEqual(result, {"status": "UNKNOWN", "reason": reason})
+
     def test_missing_authenticated_evidence_fails_closed(self):
         good = [event("new", "2026-10-11T08:00:00Z")]
         scenarios = [
