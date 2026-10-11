@@ -184,6 +184,8 @@ jobs:
           }
           # RELEASE_REMOTE_TAG_GUARD_END
           verify_remote_main
+          # También validar el tag en la ruta idempotente de HTTP 200.
+          verify_remote_tag
           # RELEASE_STATUS_EXACT_GUARD_BEGIN
           # Probe the authenticated REST endpoint: errors are not evidence of absence.
           probe_rc=0

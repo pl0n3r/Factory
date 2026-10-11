@@ -259,3 +259,18 @@ class T(unittest.TestCase):
   self.assertIn("releases/tags/",trace)
   self.assertNotIn("release create",trace)
   self.assertTrue(created)
+
+
+ def test_existing_release_must_revalidate_remote_tag(self):
+  # A REST 200 is not proof that the existing remote tag matches TARGET_SHA.
+  run,trace,created,_=self._execute_step("release",release_status="200",
+                                         remote_target="b"*40)
+  self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertIn("git/ref/tags/",trace)
+  self.assertIn("git/tags/",trace)
+  self.assertNotIn("release create",trace)
+  run,trace,created,_=self._execute_step("release",release_status="200")
+  self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertIn("git/ref/tags/",trace)
+  self.assertNotIn("release create",trace)
+  self.assertTrue(created)
