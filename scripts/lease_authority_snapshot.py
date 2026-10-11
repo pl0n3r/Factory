@@ -58,16 +58,23 @@ def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _path(path: Any) -> bool:
-    if not isinstance(path, str) or not path or len(path) > 256:
+    # Mismo límite y metacaracteres excluidos por orquestador_kit._valid_path.
+    if not isinstance(path, str) or not 1 <= len(path) <= 240:
         return False
-    if (path != path.strip() or path.startswith("/") or "\\" in path
+    if (path != path.strip() or path.startswith(("/", "./")) or "\\" in path
+        or any(char in path for char in ("*", "?", "[", "]", "{", "}"))
         or any(ord(char) < 32 or ord(char) == 127 for char in path)):
         return False
-    parts = path.split("/")
-    # Un sufijo / es un claim de directorio válido, no una omisión de ruta.
-    if parts[-1] == "":
-        parts.pop()
+    base = path[:-1] if path.endswith("/") else path
+    parts = base.split("/")
     return bool(parts) and all(p not in ("", ".", "..") for p in parts)
+
+
+def _owner(login: Any) -> bool:
+    return (isinstance(login, str) and 1 <= len(login) <= 39 and login.isascii()
+            and not login.startswith("-") and not login.endswith("-")
+            and "--" not in login
+            and all(char.isalnum() or char == "-" for char in login))
 
 
 def _marker_payload(body: str, number: int) -> dict[str, Any]:
@@ -88,8 +95,8 @@ def _marker_payload(body: str, number: int) -> dict[str, Any]:
                 BASE_KEYS if version == 1 else frozenset())
     if not expected or set(marker) != expected:
         _reject("marker_esquema")
-    if (type(marker["active"]) is not bool or not isinstance(marker["owner"], str)
-        or not marker["owner"] or not isinstance(marker["reason"], str)
+    if (type(marker["active"]) is not bool or not _owner(marker["owner"])
+        or not isinstance(marker["reason"], str)
         or not marker["reason"] or marker["branch"] != f"trabajo/issue-{number}"):
         _reject("marker_identidad")
     uid = marker["reservation_id"]
