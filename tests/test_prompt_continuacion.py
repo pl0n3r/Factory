@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCUMENT = ROOT / "template" / "docs" / "PROMPT-CONTINUACION.md"
+SECRET_PREFIX_RE = re.compile(r"(?i)\b(?:gh[pousr]_|github_pat_|sk-[A-Za-z0-9]{8})")
 
 
 class PromptContinuacionTests(unittest.TestCase):
@@ -44,8 +45,19 @@ class PromptContinuacionTests(unittest.TestCase):
         self.assertIn("reserva ajena", qa)
 
         self.assertNotIn("NO MERGE", text)
-        self.assertNotRegex(text, r"(?i)\b(?:ghp_|github_pat_|sk-[A-Za-z0-9]{8})")
+        self.assertNotRegex(text, SECRET_PREFIX_RE)
         self.assertNotRegex(text, r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
+
+    def test_privacy_guard_rejects_synthetic_token_prefixes(self) -> None:
+        # Fixtures sintéticos: comprueban el detector, nunca contienen secretos reales.
+        synthetic = (
+            "ghp_TESTFIXTURE", "gho_TESTFIXTURE", "ghu_TESTFIXTURE",
+            "ghs_TESTFIXTURE", "ghr_TESTFIXTURE", "github_pat_TESTFIXTURE",
+            "sk-TESTFIXTURE123",
+        )
+        for candidate in synthetic:
+            with self.subTest(token_prefix=candidate.split("_")[0]):
+                self.assertRegex(candidate, SECRET_PREFIX_RE)
 
     def test_scope_and_operational_gates_remain_explicit(self) -> None:
         text = DOCUMENT.read_text(encoding="utf-8")
