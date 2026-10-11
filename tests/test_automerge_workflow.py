@@ -1,8 +1,13 @@
 """Factory 1143: comprobaciones offline del observador de lectura."""
+import json
 import re
+import tempfile
 import textwrap
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/automerge-construccion.yml"
 HEAD = "a" * 40
@@ -109,6 +114,21 @@ class AutoMergeWorkflowTests(unittest.TestCase):
         self.assertEqual(set(result), {"repository", "pr_number", "head_sha", "eligible", "reason"})
         self.assertEqual(result["reason"], "human_gate_required")
         self.assertNotIn("Authorization", str(result))
+        with tempfile.TemporaryDirectory() as tmp:
+            event_path = Path(tmp) / "event.json"
+            event_path.write_text(json.dumps(evt()), encoding="utf-8")
+            def api_failure(*_args):
+                raise ValueError("unavailable API")
+            module["simulate"] = api_failure
+            output = StringIO()
+            with patch.dict(module["os"].environ, {"GH_EVENT": str(event_path)}):
+                with redirect_stdout(output):
+                    module["main"]()
+            rejected = json.loads(output.getvalue())
+            self.assertEqual(rejected["pr_number"], 9)
+            self.assertEqual(rejected["head_sha"], HEAD)
+            self.assertFalse(rejected["eligible"])
+            self.assertEqual(rejected["reason"], "incomplete_evidence")
 
     def test_workflow_is_idempotent_non_mutating_and_offline_testable(self):
         module = load()
