@@ -87,6 +87,32 @@ class RecoveryContractTests(unittest.TestCase):
                     self.assertNotIn("token=", str(error.exception))
 
 
+    def test_nonstring_catalog_enums_fail_closed_without_typeerror(self):
+        # AC-03: cadenas de catálogo incorrectas producen solo el error público.
+        for field in ("database", "media", "repository"):
+            for invalid in ([], {}, None, 0, True):
+                for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                    value = manifest()
+                    value["sources"][field] = invalid
+                    with self.subTest(source=field, invalid=repr(invalid), fn=validator.__name__):
+                        with self.assertRaisesRegex(
+                            RecoveryContractError, "sources contiene estado fuera del catálogo"
+                        ) as caught:
+                            validator(value)
+                        self.assertIsNone(caught.exception.__cause__)
+        for invalid in ([], {}, None, 0, True):
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                value = manifest()
+                value["offsite"]["cold_copy"] = invalid
+                with self.subTest(cold_copy=repr(invalid), fn=validator.__name__):
+                    with self.assertRaisesRegex(
+                        RecoveryContractError, "offsite incompatible con contrato 3-2-1-1-0"
+                    ) as caught:
+                        validator(value)
+                    self.assertIsNone(caught.exception.__cause__)
+        self.assertEqual(validate_recovery_manifest(manifest()), manifest())
+
+
     def test_version_requires_strict_integer_one(self):
         valid = manifest()
         self.assertEqual(validate_recovery_manifest(valid)["version"], 1)

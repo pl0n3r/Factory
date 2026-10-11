@@ -47,14 +47,15 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
     normalized_sources = {}
     for key in ("database", "media", "repository"):
         value = sources[key]
-        if value not in SOURCE_STATES:
+        if not _valid_catalog_value(value, SOURCE_STATES):
             raise RecoveryContractError("sources contiene estado fuera del catálogo.")
         normalized_sources[key] = value
     if "REQUIRED" not in normalized_sources.values():
         raise RecoveryContractError("al menos una source debe ser REQUIRED.")
 
     offsite = _map(data["offsite"], {"object_storage", "cold_copy"}, "offsite")
-    if offsite["object_storage"] != "REQUIRED" or offsite["cold_copy"] not in COLD_COPY:
+    if (offsite["object_storage"] != "REQUIRED"
+            or not _valid_catalog_value(offsite["cold_copy"], COLD_COPY)):
         raise RecoveryContractError("offsite incompatible con contrato 3-2-1-1-0.")
 
     encryption = _map(data["encryption"], {"required", "key_material"}, "encryption")
@@ -76,6 +77,11 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         "encryption": {"required": True, "key_material": "EXTERNAL_ONLY"},
         "restore_drill": {"cadence_days": cadence},
     }
+
+
+def _valid_catalog_value(value: Any, allowed: frozenset[str]) -> bool:
+    """Rechaza enums JSON no-string antes de consultar un frozenset."""
+    return type(value) is str and value in allowed
 
 
 def _validated_protection(value: Any) -> dict[str, int]:
