@@ -77,7 +77,8 @@ def _candidate_numbers(rows: list[dict]) -> list[int]:
         return [entry["number"] for entry in json.loads(result.stdout)]
 
 
-def _fake_gh_error(*, phase: str, message: str, partial_stdout: str = "") -> tuple[subprocess.CompletedProcess[str], int]:
+def _fake_gh_error(*, phase: str, message: str, partial_stdout: str = "",
+                   piped: bool = False) -> tuple[subprocess.CompletedProcess[str], int]:
     """Ejecuta el wrapper shell real con gh fake y cuenta llamadas efectivas."""
     helper = _block(HELPER_START, HELPER_END)
     with tempfile.TemporaryDirectory() as tmp:
@@ -93,10 +94,22 @@ def _fake_gh_error(*, phase: str, message: str, partial_stdout: str = "") -> tup
             encoding="utf-8",
         )
         fake.chmod(0o755)
+        counter = {
+            "search": "search_calls", "comments": "comments_calls_min",
+            "metadata": "metadata_calls",
+        }[phase]
+        request = (
+            'gh api --paginate "repos/fake/issues/1/comments?per_page=100" '
+            '| cat > "$FAKE_GH_OUTPUT"\n'
+            if piped else
+            f"release_gh_api {phase} --paginate 'repos/fake/issues/1/comments?per_page=100' > \"$FAKE_GH_OUTPUT\"\n"
+        )
         shell = (
             "set -euo pipefail\n"
             + helper + "\n"
-            + f"release_gh_api {phase} --paginate 'repos/fake/issues/1/comments?per_page=100' > \"$FAKE_GH_OUTPUT\"\n"
+            + "search_calls=0\ncomments_calls_min=0\nmetadata_calls=0\n"
+            + f"{counter}=1\n"
+            + request
             + "echo INVALID_SUCCESS\n"
         )
         env = dict(os.environ, FAKE_GH_COUNT=str(count),
@@ -119,6 +132,9 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, 1)
         self.assertIn("release_api_quota_exhausted phase=comments", result.stderr)
+        self.assertIn("release_api_budget_min search=0 comments=1 metadata=0", result.stderr)
+        self.assertIn("failed_phase=comments", result.stderr)
+        self.assertIn("minimum_attempts_paginate_may_expand", result.stderr)
         self.assertIn("fail_closed=true", result.stderr)
         self.assertNotIn("INVALID_SUCCESS", result.stdout)
         self.assertNotIn("fake failure", result.stderr)
@@ -130,11 +146,32 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertNotEqual(search.returncode, 0)
         self.assertEqual(search_calls, 1)
         self.assertIn("release_api_quota_exhausted phase=search", search.stderr)
+        self.assertIn("release_api_budget_min search=1 comments=0 metadata=0", search.stderr)
+        self.assertIn("failed_phase=search", search.stderr)
 
         unknown, calls = _fake_gh_error(phase="metadata", message="HTTP 403 Forbidden")
         self.assertNotEqual(unknown.returncode, 0)
         self.assertEqual(calls, 1)
         self.assertIn("release_api_transport_failure phase=metadata", unknown.stderr)
+        self.assertIn("release_api_budget_min search=0 comments=0 metadata=1", unknown.stderr)
+        self.assertIn("failed_phase=metadata", unknown.stderr)
+
+    def test_comment_pipeline_quota_failure_stays_fail_closed(self):
+        # El gh del workflow corre en el lado izquierdo de una tubería.
+        # Bajo pipefail, el contador heredado y el error deben sobrevivir.
+        result, calls = _fake_gh_error(
+            phase="comments",
+            message="gh: secondary rate limit exceeded (HTTP 429)",
+            partial_stdout='[{"id":1,"body":"sensitive"}]',
+            piped=True,
+        )
+        self.assertEqual(calls, 1)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release_api_quota_exhausted phase=comments", result.stderr)
+        self.assertIn("release_api_budget_min search=0 comments=1 metadata=0", result.stderr)
+        self.assertIn("failed_phase=comments", result.stderr)
+        self.assertNotIn("sensitive", result.stderr)
+        self.assertNotIn("INVALID_SUCCESS", result.stdout)
 
     def test_bounded_secondary_backoff_and_reset_deadline(self):
         # Sin Retry-After verificable, ningún reintento automático es seguro;
@@ -185,7 +222,13 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         workflow = _workflow()
         helper = _block(HELPER_START, HELPER_END)
         self.assertIn("release_api_budget_min search=", workflow)
-        self.assertIn("comments=$comments_calls_min metadata=2", workflow)
+        self.assertIn("comments=$comments_calls_min metadata=$metadata_calls", workflow)
+        self.assertIn("failed_phase=$phase", helper)
+        self.assertIn("minimum_attempts_paginate_may_expand", helper)
+        self.assertIn("metadata_calls=0", workflow)
+        self.assertIn("metadata_calls=$((metadata_calls + 1))", workflow)
+        self.assertIn("search_calls=$((search_calls + 1))", workflow)
+        self.assertIn("comments_calls_min=$((comments_calls_min + 1))", workflow)
         self.assertIn("rm -f \"$error_file\"", helper)
         self.assertNotIn('cat "$error_file"', helper)
         self.assertNotIn('echo "$GH_TOKEN"', helper)
