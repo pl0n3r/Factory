@@ -489,7 +489,7 @@ class T(unittest.TestCase):
         ]
         with self.assertRaisesRegex(PolicyError, "Check pendiente"):
             policy.validate_other_gates_green(pending, head_sha=HEAD)
-        with self.assertRaisesRegex(PolicyError, "exact-HEAD"):
+        with self.assertRaisesRegex(PolicyError, "HEAD distinto"):
             policy.validate_other_gates_green(
                 green_gate_checks(head_sha="b" * 40), head_sha=HEAD,
             )
