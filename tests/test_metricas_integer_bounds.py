@@ -37,6 +37,76 @@ def fixture(task_id="factory#1", **updates):
 
 
 class MetricIntegerBoundsTests(unittest.TestCase):
+    def test_int_subclass_is_rejected_before_comparison(self):
+        class AliasInt(int):
+            def __lt__(self, other):
+                return False
+
+            def __gt__(self, other):
+                return False
+
+        hostile = AliasInt(10**500)
+        for field in ("commits", "incidents_after", "tokens_input", "agent_minutes"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValidationError) as caught:
+                    validate_record(fixture(**{field: hostile}), "synthetic")
+                self.assertIn(field, str(caught.exception))
+                self.assertNotIn(str(int(hostile)), str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+
+    def test_hostile_int_comparators_never_execute(self):
+        called = []
+
+        class ExplodingInt(int):
+            def __lt__(self, other):
+                called.append("lt")
+                raise AssertionError("secret-compare")
+
+            def __gt__(self, other):
+                called.append("gt")
+                raise AssertionError("secret-compare")
+
+            def __eq__(self, other):
+                called.append("eq")
+                raise AssertionError("secret-compare")
+
+        hostile = ExplodingInt(10**500)
+        for field in ("commits", "incidents_after", "tokens_input", "agent_minutes"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValidationError) as caught:
+                    validate_record(fixture(**{field: hostile}), "synthetic")
+                self.assertEqual(called, [])
+                self.assertNotIn("secret-compare", str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertIsNone(caught.exception.__context__)
+
+    def test_native_integer_boundaries_remain_stable(self):
+        for field in self.METRIC_FIELDS:
+            for valid in (0, MAX_METRIC_INTEGER):
+                with self.subTest(field=field, value=valid):
+                    output = validate_record(fixture(**{field: valid}), "native")
+                    self.assertIs(type(output[field]), int)
+                    self.assertEqual(output[field], valid)
+            with self.subTest(field=field, value="beyond"):
+                with self.assertRaises(ValidationError):
+                    validate_record(fixture(**{field: MAX_METRIC_INTEGER + 1}), "native")
+        for invalid in (False, True, 1.5, "2", -1):
+            with self.subTest(type=type(invalid).__name__):
+                with self.assertRaises(ValidationError):
+                    validate_record(fixture(commits=invalid), "native")
+
+        left = validate_record(fixture("factory#1", commits=MAX_METRIC_INTEGER), "valid")
+        right = validate_record(fixture("factory#2", commits=0), "valid")
+        a = aggregate([left, right], min_samples=3)
+        b = aggregate([right, left], min_samples=3)
+        self.assertEqual(a, b)
+        self.assertEqual(a["task_types"]["backend"]["configurations"][0]["commits_avg"],
+                         MAX_METRIC_INTEGER / 2)
+        self.assertIsNone(a["task_types"]["backend"]["recommendation"])
+        self.assertEqual(json.dumps(a, sort_keys=True, allow_nan=False),
+                         json.dumps(b, sort_keys=True, allow_nan=False))
+
     METRIC_FIELDS = (
         "commits", "rework_commits", "incidents_after",
         "tokens_input", "tokens_output", "ci_minutes", "agent_minutes",
