@@ -219,6 +219,22 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
 
 
 
+        # Event subscription, exact preflight condition and job-scoped profile.
+        for name, mutated in (
+            ("missing_issue_comment", strict.replace("  issue_comment:\n", "", 1)),
+            ("preflight_or_true", strict.replace(
+                "github.event.sender.login == github.event.comment.user.login\n    runs-on:",
+                "github.event.sender.login == github.event.comment.user.login || true\n    runs-on:", 1)),
+            ("comment_profile_wrong", strict.replace(
+                "      profile: es", "      profile: en", 1).replace(
+                "      operation: label", "      operation: label\n      profile: es", 1)),
+        ):
+            with self.subTest(unsafe_metadata=name):
+                self.assertNotEqual(mutated, strict)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL", result.stderr)
+
         # Negative mutations: unknown slash commands, case-folding and
         # additional write scopes must not pass consumer adoption tests.
         for name, mutated in (
