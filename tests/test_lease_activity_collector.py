@@ -111,6 +111,9 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         a = API(); a.race = True; cases.append(a)
         a = API(); a.checks.append(copy.deepcopy(a.checks[0])); cases.append(a)
         a = API(); a.comments[0]["body"] = "<!-- condor-reserva SECRET -->"; cases.append(a)
+        a = API(); a.comments[0]["updated_at"] = "2026-10-11T07:00:00Z"; cases.append(a)
+        a = API(); a.comments[0]["updated_at"] = "2026-10-11T10:01:00Z"; cases.append(a)
+        a = API(); a.comments[0]["updated_at"] = "not-a-date"; cases.append(a)
         a = API(); a.issue["labels"].append({"name": "estado: en revisión"}); cases.append(a)
         a = API(); a.comments[1]["user"] = None; cases.append(a)
         a = API(); a.commits[0]["author"] = None; cases.append(a)
@@ -124,6 +127,15 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     collect_activity(case, 21, now=NOW),
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
+
+    def test_edited_reservation_marker_updates_activity_clock(self):
+        api = API()
+        api.comments[0]["updated_at"] = "2026-10-11T09:50:00Z"
+        api.issue["updated_at"] = "2026-10-11T09:50:00Z"
+        api.checks[0]["status"] = "completed"
+        result = collect_activity(api, 21, now=NOW)
+        self.assertTrue(result["evidence_complete"])
+        self.assertEqual(result["last_activity_at"], "2026-10-11T09:50:00Z")
 
     def test_only_verified_owner_activity_and_active_checks_extend_window(self):
         api = API()

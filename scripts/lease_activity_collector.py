@@ -139,7 +139,12 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                     marker = reservation_from_text(body)
                     if marker is None:
                         raise IncompleteEvidence()
-                    trusted.append((c["id"], marker, _time(c.get("created_at"), now)))
+                    created = _time(c.get("created_at"), now)
+                    edited = c.get("updated_at")
+                    updated = _time(edited, now) if edited is not None else created
+                    if updated < created:
+                        raise IncompleteEvidence()
+                    trusted.append((c["id"], marker, updated))
         if not trusted:
             raise IncompleteEvidence()
         trusted.sort(key=lambda x: x[0])
