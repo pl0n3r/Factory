@@ -39,6 +39,7 @@ class FakePort:
         self.locked = False
         self.drift = None
         self.fail_status = False
+        self.noop_available = False
         self.locked_clock_drift = None  # (locked_read_ordinal, absolute_minute)
         self.locked_reads = 0
         self.note_at = None
@@ -97,10 +98,14 @@ class FakePort:
         assert self.locked and expected is self.item
         if self.fail_status:
             raise RuntimeError("partial")
+        if status == AVAILABLE and self.noop_available:
+            return  # ACK without persistence: release must not report success.
         self.writes.append(("status", status))
         self.item = replace(
             self.item, status=status,
-            recovery_since=self.note_at if status == RECOVERY else self.item.recovery_since)
+            recovery_since=(self.note_at if status == RECOVERY else
+                            None if status == AVAILABLE else
+                            self.item.recovery_since))
 
 
 def decision(s):
@@ -125,6 +130,23 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
                              dry_run=False)
             self.assertFalse(answer.wrote)
             self.assertEqual(port.writes, [])
+        for marker_delta in (
+            {"reason": ""},
+            {"reason": None},
+            {"reason": "tomar", "unexpected_field": "x"},
+            {"task_paths": [""]},
+            {"task_paths": []},
+            {"task_depends_on": [True]},
+        ):
+            with self.subTest(invalid_marker=marker_delta):
+                initial = snapshot()
+                malformed = replace(initial, marker={
+                    **initial.marker, **marker_delta})
+                port = FakePort(malformed)
+                result = execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "untrusted_snapshot")
+                self.assertEqual(port.writes, [])
         # Identidad canónica de Coordinación: minúsculas, UUID v1..v5
         # y variante RFC 4122. Actualizar también el marker para que
         # el negativo no dependa de una discrepancia entre ambos campos.
@@ -243,6 +265,21 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertEqual(len(failed.writes), 2)
         self.assertEqual(failed.item.status, AVAILABLE)
         self.assertEqual(failed.item.branch_sha, "a" * 40)
+        # Port.status puede devolver None/ACK sin persistir la etiqueta.
+        # Ni release normal ni reconciliación parcial pueden informar éxito.
+        for partial in (False, True):
+            with self.subTest(noop_available=partial):
+                port = FakePort(snapshot())
+                if partial:
+                    port.item = replace(port.item, marker={
+                        **port.item.marker, "active": False,
+                        "reason": "auto-inactivity-release"})
+                port.noop_available = True
+                result = execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "unverified_release")
+                self.assertFalse(result.wrote)
+                self.assertEqual(port.item.status, RECOVERY)
         # Reintento de nota de recuperación ya publicada tras fallo de
         # etiqueta: debe reconciliar sin duplicar el comentario.
         recover = FakePort(snapshot(recovery=False))

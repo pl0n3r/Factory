@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
@@ -140,7 +140,14 @@ def _trusted(s: Any, *, allow_partial: bool = False) -> bool:
     elif s.recovery_since is not None:
         return False
     m = s.marker
-    if type(m) is not dict or type(m.get("version")) is not int or m["version"] != 3:
+    required = {
+        "version", "owner", "reservation_id", "branch", "active",
+        "reason", "acceptance_sha256", "task_marker_sha256",
+        "task_paths", "task_depends_on",
+    }
+    if (type(m) is not dict or set(m) != required
+            or type(m.get("version")) is not int or m["version"] != 3
+            or type(m.get("reason")) is not str or not m["reason"]):
         return False
     if (m.get("owner") != s.owner or m.get("reservation_id") != s.reservation_id
             or m.get("branch") != s.branch):
@@ -150,7 +157,7 @@ def _trusted(s: Any, *, allow_partial: bool = False) -> bool:
     if (any(type(m.get(k)) is not str or HEX.fullmatch(m[k]) is None
             for k in ("acceptance_sha256", "task_marker_sha256"))
             or type(m.get("task_paths")) is not list or not m["task_paths"]
-            or any(type(p) is not str for p in m["task_paths"])
+            or any(type(p) is not str or not p for p in m["task_paths"])
             or type(m.get("task_depends_on")) is not list
             or any(type(x) is not int or x <= 0 for x in m["task_depends_on"])):
         return False
@@ -208,6 +215,29 @@ def _same(a: Snapshot, b: Snapshot) -> bool:
             and a.last_activity_at == b.last_activity_at
             and a.recovery_since == b.recovery_since and a.phase == b.phase
             and _utc(a.now) <= _utc(b.now))
+
+
+def _released_ok(before: Snapshot, confirmed: Any) -> bool:
+    """Verifica el estado terminal disponible después del CAS de etiqueta.
+
+    AVAILABLE no pertenece al conjunto ACTIVE; se autentica un equivalente
+    RECOVERY solo para validar esquema/identidad sin admitir como activa la
+    reserva efectivamente liberada.
+    """
+    if (type(confirmed) is not Snapshot or confirmed.status != AVAILABLE
+            or confirmed.recovery_since is not None):
+        return False
+    expected_marker = dict(before.marker)
+    expected_marker.update(active=False, reason="auto-inactivity-release")
+    if confirmed.marker != expected_marker:
+        return False
+    probe = replace(confirmed, status=RECOVERY,
+                    recovery_since=before.recovery_since)
+    return (_trusted(probe, allow_partial=True)
+            and _identity(confirmed) == _identity(before)
+            and confirmed.phase == before.phase
+            and confirmed.last_activity_at == before.last_activity_at
+            and _utc(confirmed.now) >= _utc(before.now))
 
 
 def _release_marker(s: Snapshot) -> str:
@@ -270,6 +300,9 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                         and _eligible(current, "release")):
                     return Result("unknown", "partial_reconciliation_drift")
                 port.status(issue, AVAILABLE, current)
+                final = port.read(issue)
+                if not _released_ok(current, final):
+                    return Result("release", "unverified_release")
                 return Result("release", "partial_reconciled", True)
         action = getattr(decide(first), "action", None)
         if not _eligible(first, action):
@@ -333,6 +366,9 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
             if not _postappend(current, after, action):
                 return Result(action, "partial_marker_only")
             port.status(issue, AVAILABLE, after)
+            final = port.read(issue)
+            if not _released_ok(after, final):
+                return Result(action, "unverified_release")
             return Result(action, "released", True)
     except Exception:
         # Si hubo escritura parcial no borrar rama ni forzar rollback. Un
