@@ -339,6 +339,10 @@ def decide_no_work(
 
     prior = _valid_previous(previous)
     fingerprint = inventory_fingerprint(snapshot)
+    # A PAUSED snapshot is valid audit evidence, never publication authority.
+    # The caller's global kill-switch preflight remains independently required.
+    if snapshot["kill_switch"]["state"] != "RUNNING":
+        raise NoWorkInventoryError("kill_switch_paused")
 
     if prior is None:
         return NoWorkDecision(

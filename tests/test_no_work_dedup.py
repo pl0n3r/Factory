@@ -615,6 +615,27 @@ class NoWorkDedupTests(unittest.TestCase):
         with self.assertRaisesRegex(NoWorkInventoryError, "time_moved_backwards"):
             decide_no_work(base, previous, 9)
 
+    def test_paused_kill_switch_never_produces_publication_decisions(self):
+        active = inventory()
+        paused = inventory()
+        paused["kill_switch"]["state"] = "PAUSED"
+
+        # Preserve the audit fingerprint for valid PAUSED evidence without
+        # offering an actionable create/update/omit NO_WORK decision.
+        self.assertNotEqual(
+            inventory_fingerprint(paused), inventory_fingerprint(active)
+        )
+        first = decide_no_work(active, None, 10)
+        prior = state_after(first, comment_id=904_901, published_at=10)
+        for previous in (None, prior):
+            with self.subTest(previous=previous):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "kill_switch_paused"
+                ):
+                    decide_no_work(paused, previous, 100)
+        self.assertEqual(decide_no_work(active, None, 100).action, "create")
+        self.assertEqual(decide_no_work(active, prior, 100).action, "omit")
+
     def test_stale_inventory_observation_cannot_replace_newer_canonical_state(self):
         snapshot = inventory()
         first = decide_no_work(snapshot, None, 0)
