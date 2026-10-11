@@ -443,6 +443,28 @@ class OrquestarFabricaTests(unittest.TestCase):
             )
         )
 
+    def test_blocked_task_with_active_lease_cannot_be_rewritten(self):
+        for has_lease in (False, True):
+            with self.subTest(has_lease=has_lease):
+                api = FakeGitHub()
+                number = sync_plan(api, 3)["issues"]["B"]
+                api.issues[number]["labels"] = [{"name": "estado: bloqueado"}]
+                if has_lease:
+                    api.comments.append({
+                        "id": 9, "user": {"login": "github-actions[bot]"},
+                        "body": reservation_marker(
+                            "pl0n3r", "12345678-1234-1234-1234-123456789abc",
+                            f"trabajo/issue-{number}", True, "tomar"),
+                    })
+                api.issues[number]["comments"] = len(api.comments)
+                api.requests.clear()
+                if has_lease:
+                    with self.assertRaisesRegex(PlanError, "reserva V3 activa"):
+                        sync_plan(api, 3)
+                    self.assertFalse(api.requests)
+                else:
+                    self.assertEqual(sync_plan(api, 3)["issues"]["B"], number)
+
     def test_reservation_appears_after_inventory_and_aborts_before_writes(self):
         api = FakeGitHub()
         numbers = sync_plan(api, 3)["issues"]

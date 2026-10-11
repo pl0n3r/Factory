@@ -495,6 +495,21 @@ def _verify_snapshot_unchanged(api: GitHub, snapshot: dict[str, Any]) -> None:
         or ("updated_at" in snapshot and actual.get("updated_at") != snapshot["updated_at"])
     ):
         raise PlanError(f"Issue #{number}: cambió durante la sincronización.")
+    if "estado: bloqueado" in label_names(actual):
+        # Una etiqueta bloqueada no revoca por sí sola la reserva V3.
+        comments = _verified_pages(api, f"/repos/{api.repo}/issues/{number}/comments")
+        if type(actual.get("comments")) is not int or len(comments) != actual["comments"]:
+            raise PlanError(f"Issue #{number}: reserva no verificable.")
+        for comment in comments:
+            user = comment.get("user")
+            body = comment.get("body")
+            if (isinstance(user, dict) and user.get("login") == "github-actions[bot]"
+                    and isinstance(body, str) and "<!-- condor-reserva" in body
+                    and reservation_from_text(body) is None):
+                raise PlanError(f"Issue #{number}: reserva ambigua.")
+        reservation = latest_reservation(comments)
+        if reservation is not None and reservation.get("active"):
+            raise PlanError(f"Issue #{number}: reserva V3 activa bajo bloqueo.")
 
 
 def _upsert_issue(
