@@ -286,6 +286,7 @@ class T(unittest.TestCase):
   for label,settings in (
     ("changed tag",{"remote_target":"b"*40}),
     ("wrong URL",{"view_url":"https://example.invalid/wrong"}),
+    ("different tag capitalization",{"view_url":"https://github.com/pl0n3r/Factory/releases/tag/V1.0.29"}),
     ("empty URL",{"view_url":""}),
     ("null URL",{"view_url":"null"}),
   ):
