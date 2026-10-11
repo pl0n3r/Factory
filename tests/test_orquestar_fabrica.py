@@ -550,6 +550,56 @@ class OrquestarFabricaTests(unittest.TestCase):
                 self.assertFalse(api.requests)
                 self.assertEqual(api.next_issue, next_issue)
 
+    def test_report_missing_existing_task_is_rejected_before_writes(self):
+        api = FakeGitHub()
+        result = sync_plan(api, 3)
+        task_b = result["issues"]["B"]
+        report = api.comments[0]
+        report["body"] = "\n".join(
+            line for line in report["body"].splitlines()
+            if f"#{task_b} · B" not in line
+        )
+        api.requests.clear()
+        before = json.dumps(api.issues, sort_keys=True)
+        with self.assertRaisesRegex(PlanError, "Reporte anterior incompleto"):
+            sync_plan(api, 3)
+        self.assertFalse(api.requests)
+        self.assertEqual(before, json.dumps(api.issues, sort_keys=True))
+
+    def test_report_second_read_truncation_cannot_duplicate_comment(self):
+        api = FakeGitHub()
+        sync_plan(api, 3)
+        original = api.comments[0]
+        api.comments = [
+            {"id": 1000 + idx, "user": {"login": "someone"},
+             "body": "unrelated"} for idx in range(100)
+        ] + [original]
+        request = api.request
+        page_two_reads = 0
+
+        def flaky_request(method, path, payload=None):
+            nonlocal page_two_reads
+            if (method == "GET"
+                    and "/issues/3/comments?per_page=100&page=2" in path):
+                page_two_reads += 1
+                if page_two_reads == 2:
+                    return {"message": "incomplete second read"}
+            return request(method, path, payload)
+
+        api.request = flaky_request
+        api.requests.clear()
+        with self.assertRaises(PlanError):
+            sync_plan(api, 3)
+        self.assertEqual(page_two_reads, 2)
+        self.assertEqual(sum(
+            "<!-- factory-plan-report:3 -->" in entry["body"]
+            for entry in api.comments
+        ), 1)
+        self.assertFalse(any(
+            method == "PATCH" and "/issues/comments/" in path
+            for method, path, _ in api.requests
+        ))
+
     def test_global_issue_inventory_must_be_complete_and_unambiguous(self):
         api = FakeGitHub()
         for number in range(100, 199):

@@ -315,6 +315,8 @@ def _verify_reported_issues(
         seen.add(key)
         if existing[key].get("number") != int(number_text):
             raise PlanError("Identidad de hoja contradice el reporte anterior.")
+    if seen != set(existing):
+        raise PlanError("Reporte anterior incompleto para hojas existentes.")
 
 
 def _inherited_labels(epic: dict[str, Any]) -> list[str]:
@@ -539,7 +541,10 @@ def _upsert_issue(
 
 def _upsert_report(api: GitHub, epic: int, body: str) -> None:
     marker = f"{REPORT_PREFIX}{epic} -->"
-    for comment in api.issue_comments(epic):
+    # La segunda lectura tampoco puede aceptar prefijos truncados silenciosamente.
+    comments = _verified_pages(api, f"/repos/{api.repo}/issues/{epic}/comments")
+    matches: list[int] = []
+    for comment in comments:
         user = comment.get("user")
         if (
             isinstance(comment.get("body"), str)
@@ -548,14 +553,19 @@ def _upsert_report(api: GitHub, epic: int, body: str) -> None:
             and user.get("login") == "github-actions[bot]"
         ):
             comment_id = comment.get("id")
-            if isinstance(comment_id, int):
-                api.request(
-                    "PATCH",
-                    f"/repos/{api.repo}/issues/comments/{comment_id}",
-                    {"body": body},
-                )
-                return
-    api.comment(epic, body)
+            if type(comment_id) is not int or comment_id <= 0:
+                raise PlanError("Reporte anterior sin identidad válida.")
+            matches.append(comment_id)
+    if len(matches) > 1:
+        raise PlanError("Reportes de autoridad duplicados para el épico.")
+    if matches:
+        api.request(
+            "PATCH",
+            f"/repos/{api.repo}/issues/comments/{matches[0]}",
+            {"body": body},
+        )
+    else:
+        api.comment(epic, body)
 
 
 def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
