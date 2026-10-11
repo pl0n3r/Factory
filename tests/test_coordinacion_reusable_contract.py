@@ -1,4 +1,10 @@
 import re, unittest
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
 from pathlib import Path
 
 R = Path(__file__).resolve().parents[1]
@@ -17,6 +23,52 @@ def job_blocks(workflow: str) -> dict[str, str]:
         if index + 1 < len(matches) else jobs[match.start():]
         for index, match in enumerate(matches)
     }
+
+
+def strict_caller_fixture(value: str) -> str:
+    """Fuerza el contrato preflight en un template legacy, sin depender de otra rama."""
+    if "\n  preflight_comentario:\n" in value:
+        return value
+    prefix, comment = value.split("  comentario:\n", 1)
+    old_guard, remainder = comment.split("    # El reusable", 1)
+    if "github.event_name == 'issue_comment'" not in old_guard:
+        raise AssertionError("Falta el guard legacy del comentario")
+    preflight = """  preflight_comentario:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      github.event.sender.login == github.event.comment.user.login
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      route: DOLLAR_SIGN{{ steps.route.outputs.route }}
+    steps:
+      - id: route
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as source:
+              event = json.load(source)
+          body = event.get("comment", {}).get("body", "")
+          parts = body.strip().split(maxsplit=1) if isinstance(body, str) else []
+          supported = {"/tomar", "/renovar-contrato"}
+          route = bool(parts and parts[0] in supported)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"route={str(route).lower()}\\n")
+          PY
+
+""".replace("DOLLAR_SIGN", "$")
+    strict_guard = """    needs: preflight_comentario
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      github.event.sender.login == github.event.comment.user.login &&
+      needs.preflight_comentario.outputs.route == 'true'
+"""
+    return prefix + preflight + "  comentario:\n" + strict_guard + "    # El reusable" + remainder
 
 
 def permissions(block: str) -> dict[str, str]:
@@ -117,11 +169,84 @@ class T(unittest.TestCase):
             )
 
     def test_template_supports_contract_renewal_command(self):
-        """El caller enruta la renovación v2 que ya soporta el coordinador."""
-        self.assertIn(
-            "startsWith(github.event.comment.body, '/renovar-contrato ')",
-            TEMPLATE,
-        )
+        """El caller antiguo y el preflight estricto conservan renovación v2."""
+        for variant, template in (
+            ("legacy_actual", TEMPLATE),
+            ("preflight_estricto", strict_caller_fixture(TEMPLATE)),
+        ):
+            with self.subTest(variant=variant):
+                self.assert_template_renewal_contract(template)
+
+    def test_strict_preflight_rejects_permission_escalation(self):
+        strict = strict_caller_fixture(TEMPLATE)
+        old = "      contents: read\n    outputs:"
+        self.assertIn(old, strict)
+        for injected in ("      issues: write\n", "      pull-requests: write\n",
+                         "      contents: write\n"):
+            with self.subTest(extra_permission=injected.strip()):
+                bad = strict.replace(old, "      contents: read\n" + injected + "    outputs:", 1)
+                with self.assertRaises(AssertionError):
+                    self.assert_template_renewal_contract(bad)
+
+    def assert_template_renewal_contract(self, template: str):
+        jobs = job_blocks(template)
+        comment = jobs["comentario"]
+        self.assertIn("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1", comment)
+        self.assertIn("operation: comment", comment)
+        self.assertIn("github.event.issue.pull_request == null", comment)
+        self.assertIn("github.event.sender.login == github.event.comment.user.login", comment)
+        if "preflight_comentario" in jobs:
+            preflight = jobs["preflight_comentario"]
+            # Validar el mapa completo, no solo la presencia de contents:read.
+            grants = preflight.split("    permissions:\n", 1)[1].split("    outputs:\n", 1)[0]
+            self.assertEqual("      contents: read\n", grants)
+            self.assertIn("needs: preflight_comentario", comment)
+            self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)
+            self.assertIn("outputs:\n      route: ${{ steps.route.outputs.route }}", preflight)
+            self.assertIn("- id: route", preflight)
+            self.assertIn('os.environ["GITHUB_EVENT_PATH"]', preflight)
+            self.assertNotIn("COMMENT_BODY", preflight)
+            self.assertNotIn("github.event.comment.body", preflight)
+            self.assertIn('"/renovar-contrato"', preflight)
+            self.assertNotIn("contains(github.event.comment.body", comment)
+
+            # Ejecutar el Python real del preflight: una mención en prosa
+            # no puede convertirse en comando, pero el primer token sí enruta.
+            embedded = preflight.split("python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+            script = textwrap.dedent(embedded)
+            with tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "route"
+                for body, expected in (
+                    ("Nota informativa sobre /renovar-contrato UUID", "route=false\n"),
+                    ("No ejecuté /tomar", "route=false\n"),
+                    (" /renovar-contrato 12345678-abcd-1234-abcd-123456789abc ", "route=true\n"),
+                    ("/tomar", "route=true\n"),
+                    (" \n/tomar\t", "route=true\n"),
+                ):
+                    with self.subTest(body=body):
+                        event_path = Path(tmp) / "event.json"
+                        event_path.write_text(
+                            json.dumps({"comment": {"body": body}}), encoding="utf-8"
+                        )
+                        env = {
+                            **os.environ,
+                            "GITHUB_EVENT_PATH": str(event_path),
+                            "GITHUB_OUTPUT": str(output),
+                        }
+                        env.pop("COMMENT_BODY", None)
+                        result = subprocess.run(
+                            [sys.executable, "-c", script],
+                            env=env,
+                            text=True, capture_output=True, timeout=5, check=False,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertEqual(result.stderr, "")
+                        self.assertEqual(output.read_text(encoding="utf-8"), expected)
+                        output.unlink()
+        else:
+            # Soportar el caller v1 previo sin exigir el contains inseguro.
+            self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)
         self.assertIn('("/renovar-contrato ", "renovar-contrato")', SCRIPT)
 
     def test_merged_pr_validation_is_neutral(self):

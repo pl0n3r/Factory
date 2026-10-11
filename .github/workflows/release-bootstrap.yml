@@ -109,10 +109,14 @@ jobs:
           body = gate.get("body")
           if not isinstance(body, str):
               raise SystemExit("gate sin body")
-          targets = re.findall(r"\bmain@([0-9a-f]{40})\b", body)
+          # SHA es hexadecimal case-insensitive; normalizar antes de contar valores.
+          targets = {
+              sha.lower()
+              for sha in re.findall(r"\bmain@([0-9a-fA-F]{40})\b", body)
+          }
           if len(targets) != 1:
               raise SystemExit("gate sin main@SHA único")
-          print(targets[0])
+          print(next(iter(targets)))
           PY
             )"
             if [[ "$gate_sha" != "$resolved_sha" ]]; then
