@@ -17,6 +17,7 @@ from uuid import UUID
 BOT = "github-actions[bot]"
 PREFIX = "<!-- condor-reserva "
 MARKER = re.compile(r"\A<!-- condor-reserva (\{[^\r\n]*\}) -->")
+SUSPECT_MARKER = re.compile(r"<!--\s*condor-reserva\b", re.IGNORECASE)
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 ACTIVE_LABELS = frozenset({
     "estado: reservado", "estado: en revisión", "estado: requiere recuperación",
@@ -132,7 +133,7 @@ def _last_bot_marker(comments: Any, issue_number: int) -> dict[str, Any] | None:
         user, body = comment.get("user"), comment.get("body")
         if not isinstance(user, dict) or not isinstance(body, str):
             _reject("comentario_invalido")
-        if user.get("login") == BOT and (PREFIX in body or "<!-- condor-reserva" in body):
+        if user.get("login") == BOT and SUSPECT_MARKER.search(body):
             last_body = body
     return _marker_payload(last_body, issue_number) if last_body is not None else None
 
