@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
+from unicodedata import normalize
 
 LOCK_GROUP = "factory-coordination"
 AVAILABLE = "estado: disponible"
@@ -128,9 +129,36 @@ def _utc(value: Any) -> datetime | None:
     if not isinstance(value, datetime) or value.tzinfo is None:
         return None
     try:
+        # tzinfo sin offset no acredita un instante UTC; astimezone() lo
+        # trataría como hora local, dependiente del runner.
+        if value.utcoffset() is None:
+            return None
         return value.astimezone(timezone.utc)
-    except (OverflowError, ValueError):
+    except (OverflowError, ValueError, TypeError):
         return None
+
+
+def _claim_path_ok(path: Any) -> bool:
+    """Gramática de paths V3; nunca aceptar aliases o rutas ambiguas."""
+    if type(path) is not str or not 1 <= len(path) <= 240:
+        return False
+    if (path != path.strip() or path.startswith(("/", "./")) or "\\" in path
+            or any(char in path for char in "*?[]{}")
+            or any(ord(char) < 32 or ord(char) == 127 for char in path)):
+        return False
+    base = path[:-1] if path.endswith("/") else path
+    return all(piece not in ("", ".", "..") for piece in base.split("/"))
+
+
+def _claim_paths_disjoint(paths: list[str]) -> bool:
+    folded = [normalize("NFC", path).casefold() for path in paths]
+    for pos, left in enumerate(folded):
+        for right in folded[pos + 1:]:
+            if (left == right or
+                    (left.endswith("/") and right.startswith(left)) or
+                    (right.endswith("/") and left.startswith(right))):
+                return False
+    return True
 
 
 def _identity(s: Snapshot) -> tuple[Any, ...]:
@@ -187,14 +215,24 @@ def _trusted(s: Any, *, allow_partial: bool = False) -> bool:
     if (m.get("owner") != s.owner or m.get("reservation_id") != s.reservation_id
             or m.get("branch") != s.branch):
         return False
-    if type(m.get("active")) is not bool or (not allow_partial and not m["active"]):
+    if type(m.get("active")) is not bool:
+        return False
+    if m["active"]:
+        # Un marker de liberación no puede conservar exclusividad V3.
+        if m["reason"] in ("liberar", "auto-inactivity-release"):
+            return False
+    elif not allow_partial or m["reason"] != "auto-inactivity-release":
         return False
     if (any(type(m.get(k)) is not str or HEX.fullmatch(m[k]) is None
             for k in ("acceptance_sha256", "task_marker_sha256"))
-            or type(m.get("task_paths")) is not list or not m["task_paths"]
-            or any(type(p) is not str or not p for p in m["task_paths"])
+            or type(m.get("task_paths")) is not list
+            or not 1 <= len(m["task_paths"]) <= 50
+            or any(not _claim_path_ok(p) for p in m["task_paths"])
+            or not _claim_paths_disjoint(m["task_paths"])
             or type(m.get("task_depends_on")) is not list
-            or any(type(x) is not int or x <= 0 for x in m["task_depends_on"])):
+            or len(m["task_depends_on"]) > 50
+            or any(type(x) is not int or x <= 0 for x in m["task_depends_on"])
+            or len(set(m["task_depends_on"])) != len(m["task_depends_on"])):
         return False
     return True
 

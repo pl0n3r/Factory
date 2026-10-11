@@ -2,7 +2,7 @@
 import unittest
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from types import SimpleNamespace
 
 from scripts.lease_release_executor import (
@@ -31,6 +31,15 @@ def snapshot(*, recovery=True):
         changes_requested=False, owner_recovered=False,
         rate_remaining=60, rate_limit=100,
     )
+
+
+class UndefinedOffset(tzinfo):
+    """Fecha con tzinfo nominal pero sin offset verificable."""
+    def utcoffset(self, dt):
+        return None
+
+    def dst(self, dt):
+        return None
 
 
 class FakePort:
@@ -186,6 +195,58 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
                                  feature_enabled=True, dry_run=False)
                 self.assertEqual(result.reason, "untrusted_snapshot")
                 self.assertEqual(isolated.writes, [])
+
+    def test_claim_integrity_and_utc_offset_fail_closed(self):
+        """No liberar con timezone indeterminado ni claims V3 ambiguos."""
+        for field in ("now", "last_activity_at", "recovery_since"):
+            with self.subTest(untrusted_clock=field):
+                broken = replace(snapshot(), **{
+                    field: START.replace(tzinfo=UndefinedOffset())})
+                fake = FakePort(broken)
+                result = execute(1191, fake, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "untrusted_snapshot")
+                self.assertEqual(fake.writes, [])
+
+        bad_markers = (
+            {"reason": "liberar"},
+            {"reason": "auto-inactivity-release"},
+            {"task_paths": ["scripts/x.py", "scripts/x.py"]},
+            {"task_paths": ["DOCS/file.md", "docs/file.md"]},
+            {"task_paths": ["docs/", "docs/file.md"]},
+            {"task_paths": ["scripts/café.py", "scripts/cafe\u0301.py"]},
+            {"task_paths": ["../outside.py"]},
+            {"task_depends_on": [1190, 1190]},
+        )
+        for delta in bad_markers:
+            with self.subTest(ambiguous_v3=delta):
+                base = snapshot()
+                fake = FakePort(replace(base, marker={**base.marker, **delta}))
+                result = execute(1191, fake, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "untrusted_snapshot")
+                self.assertEqual(fake.writes, [])
+
+        for reason in ("liberar", "tomar"):
+            with self.subTest(inactive_reason=reason):
+                base = snapshot()
+                fake = FakePort(replace(base, marker={
+                    **base.marker, "active": False, "reason": reason}))
+                result = execute(1191, fake, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "untrusted_snapshot")
+                self.assertEqual(fake.writes, [])
+
+        good = snapshot()
+        fake = FakePort(replace(good, marker={
+            **good.marker,
+            "task_paths": ["scripts/a.py", "docs/b.md"],
+            "task_depends_on": [1175, 1190],
+        }))
+        self.assertEqual(
+            execute(1191, fake, decision, feature_enabled=True).reason,
+            "dry_run")
+        self.assertEqual(fake.writes, [])
 
     def test_mark_recovery_and_release_revalidate_under_shared_lock(self):
         port = FakePort(snapshot(recovery=False))
