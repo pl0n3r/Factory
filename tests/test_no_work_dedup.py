@@ -784,6 +784,34 @@ class NoWorkDedupTests(unittest.TestCase):
             "fingerprint_changed",
         )
 
+    def test_prewrite_rejects_tampered_decision_authority(self):
+        from dataclasses import replace
+
+        snapshot = inventory()
+        created = decide_no_work(snapshot, None, 100)
+        previous = state_after(created, comment_id=904_450, published_at=100)
+        update = decide_no_work(snapshot, previous, 1900)
+        omitted = decide_no_work(snapshot, previous, 101)
+        self.assertEqual(revalidate_no_work_application(created, None).action, "apply")
+        self.assertEqual(revalidate_no_work_application(update, previous).action, "apply")
+        self.assertEqual(revalidate_no_work_application(omitted, previous).action, "omit")
+
+        tampered = (
+            (replace(created, action="delete"), "decision_action_invalid", None),
+            (replace(created, sink="pl0n3r/Other#904"), "decision_sink_invalid", None),
+            (replace(created, observed_at=True), "decision_provenance_invalid", None),
+            (replace(created, fingerprint="not-a-sha"), "decision_provenance_invalid", None),
+            (replace(created, comment_id=123), "decision_provenance_invalid", None),
+            (replace(update, expected_comment_id=None), "decision_provenance_invalid", previous),
+            (replace(update, expected_published_at=True), "decision_provenance_invalid", previous),
+            (replace(update, expected_fingerprint="bad"), "decision_provenance_invalid", previous),
+            (replace(omitted, sink="pl0n3r/Other#904"), "decision_sink_invalid", previous),
+        )
+        for decision, expected, live in tampered:
+            with self.subTest(action=decision.action, expected=expected):
+                with self.assertRaisesRegex(NoWorkInventoryError, expected):
+                    revalidate_no_work_application(decision, live)
+
     def test_prewrite_rejects_concurrent_refresh_with_same_fingerprint(self):
         snapshot = inventory()
         first = decide_no_work(snapshot, None, 100)

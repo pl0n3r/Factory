@@ -424,6 +424,39 @@ def revalidate_no_work_application(
     """
     if not isinstance(decision, NoWorkDecision):
         raise NoWorkInventoryError("decision_invalid")
+    # Frozen dataclasses are not runtime-validated. A hand-built or corrupted
+    # decision must never authorize a write to a different sink/action.
+    if decision.action not in ("create", "update", "omit"):
+        raise NoWorkInventoryError("decision_action_invalid")
+    if decision.sink != CANONICAL_SINK:
+        raise NoWorkInventoryError("decision_sink_invalid")
+    if (
+        type(decision.observed_at) is not int or decision.observed_at < 0
+        or not isinstance(decision.fingerprint, str)
+        or len(decision.fingerprint) != 64
+        or any(ch not in "0123456789abcdef" for ch in decision.fingerprint)
+    ):
+        raise NoWorkInventoryError("decision_provenance_invalid")
+    if decision.action == "create":
+        if any(field is not None for field in (
+            decision.comment_id, decision.expected_comment_id,
+            decision.expected_fingerprint, decision.expected_published_at,
+        )):
+            raise NoWorkInventoryError("decision_provenance_invalid")
+    else:
+        if (
+            type(decision.comment_id) is not int or decision.comment_id <= 0
+            or decision.comment_id != decision.expected_comment_id
+            or not isinstance(decision.expected_fingerprint, str)
+            or len(decision.expected_fingerprint) != 64
+            or any(
+                ch not in "0123456789abcdef"
+                for ch in decision.expected_fingerprint
+            )
+            or type(decision.expected_published_at) is not int
+            or decision.expected_published_at < 0
+        ):
+            raise NoWorkInventoryError("decision_provenance_invalid")
 
     if decision.action == "omit":
         return NoWorkApplicationDecision("omit", "decision_already_omit")
