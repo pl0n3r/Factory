@@ -28,7 +28,12 @@ def _block(start: str, end: str) -> str:
     body = _workflow()
     if body.count(start) != 1 or body.count(end) != 1:
         raise AssertionError("La implementación del gate debe tener un bloque único.")
-    return textwrap.dedent(body[body.index(start):body.index(end) + len(end)])
+    lines = body.splitlines()
+    begin = next(i for i, line in enumerate(lines) if start in line)
+    finish = next(i for i, line in enumerate(lines) if end in line)
+    if finish <= begin:
+        raise AssertionError("Delimitadores del workflow desordenados.")
+    return textwrap.dedent("\n".join(lines[begin:finish + 1]))
 
 
 def _candidate_script() -> str:
@@ -61,18 +66,26 @@ def _fake_gh_error(*, phase: str, message: str, partial_stdout: str = "") -> tup
     with tempfile.TemporaryDirectory() as tmp:
         count = Path(tmp) / "calls.txt"
         output = Path(tmp) / "partial.json"
+        fake = Path(tmp) / "gh"
+        fake.write_text(
+            '#!/bin/sh\n'
+            'printf "called\\n" >> "$FAKE_GH_COUNT"\n'
+            'printf "%s\\n" "$FAKE_GH_MESSAGE" >&2\n'
+            'printf "%s" "$FAKE_GH_PARTIAL"\n'
+            'exit 1\n',
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
         shell = (
             "set -euo pipefail\n"
             + helper + "\n"
-            + "gh() { printf 'called\\n' >> \"$FAKE_GH_COUNT\"; "
-            + "printf '%s\\n' \"$FAKE_GH_MESSAGE\" >&2; "
-            + "printf '%s' \"$FAKE_GH_PARTIAL\"; return 1; }\n"
             + f"release_gh_api {phase} --paginate 'repos/fake/issues/1/comments?per_page=100' > \"$FAKE_GH_OUTPUT\"\n"
             + "echo INVALID_SUCCESS\n"
         )
         env = dict(os.environ, FAKE_GH_COUNT=str(count),
                    FAKE_GH_MESSAGE=message, FAKE_GH_PARTIAL=partial_stdout,
                    FAKE_GH_OUTPUT=str(output))
+        env["PATH"] = tmp + os.pathsep + env.get("PATH", "")
         result = subprocess.run(["bash", "-c", shell], cwd=ROOT, env=env,
                                 text=True, capture_output=True, check=False)
         calls = count.read_text(encoding="utf-8").count("called") if count.exists() else 0
@@ -139,10 +152,12 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         first = workflow.index("cmp -s /tmp/release-search-verified-1.json")
         selector = workflow.index(CANDIDATES_START)
         self.assertLess(first, selector)
-        self.assertIn("release_gh_api comments --paginate", workflow)
+        self.assertIn("gh api --paginate", workflow)
         self.assertIn("incomplete_comment_pages", workflow)
         self.assertIn("factory-release-window", workflow)
-        self.assertNotIn("select((.body // \"\") | contains(\"factory-release\"))", workflow)
+        self.assertIn("select((.body // \"\") | contains(\"factory-release\"))", workflow)
+        self.assertLess(workflow.index("release-issues-prefilter.json"),
+                        workflow.index(CANDIDATES_START))
 
     def test_report_excludes_comment_bodies_and_tokens(self):
         workflow = _workflow()
