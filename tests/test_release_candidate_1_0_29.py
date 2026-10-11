@@ -108,8 +108,8 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         # autenticada; el gate externo debe volver a comparar HEAD + tag.
         observed = {
             "tag_sha": "7be20fda7a60fd1371af3aa03f3f2ac6d03ec281",
-            "main_sha": "fe0b8d9070461ec4c989f315d19d949221f7fd47",
-            "ahead_by": 26,
+            "main_sha": "d65edc22aea6bf8d8b06e7ab2d49fea0f3fc6a70",
+            "ahead_by": 27,
             "status": "ahead",
             "files": list(self._known_compare_paths())
         }
@@ -256,10 +256,10 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         }:
             raise ValueError("invalid_compare_envelope")
         if (observation["tag_sha"] != "7be20fda7a60fd1371af3aa03f3f2ac6d03ec281"
-                or observation["main_sha"] != "fe0b8d9070461ec4c989f315d19d949221f7fd47"
+                or observation["main_sha"] != "d65edc22aea6bf8d8b06e7ab2d49fea0f3fc6a70"
                 or observation["tag_sha"] == observation["main_sha"]
                 or type(observation["ahead_by"]) is not int
-                or observation["ahead_by"] != 26
+                or observation["ahead_by"] != 27
                 or observation["status"] != "ahead"):
             raise ValueError("unverified_compare_identity")
         files = observation["files"]
