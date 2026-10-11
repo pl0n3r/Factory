@@ -387,6 +387,27 @@ class AutoMergeConstruccionTests(unittest.TestCase):
         positive = evidence()
         self.assertEqual(evaluate(positive).reason, "eligible_diagnostic_only")
 
+    def test_reservation_uuid_matches_coordinator_version_and_variant(self):
+        base = evidence()
+        self.assertEqual(evaluate(base).reason, "eligible_diagnostic_only")
+        canonical = copy.deepcopy(base)
+        canonical["reservation"]["reservation_id"] = (
+            "11111111-1111-4111-8111-111111111111"
+        )
+        self.assertEqual(evaluate(canonical).reason, "eligible_diagnostic_only")
+        for invalid_uuid in (
+            "00000000-0000-0000-0000-000000000000",
+            "11111111-1111-7111-8111-111111111111",
+            "11111111-1111-4111-0111-111111111111",
+            "11111111-1111-4111-c111-111111111111",
+            "00000000-0000-4000-8000-00000000000z",
+        ):
+            with self.subTest(uuid=invalid_uuid):
+                candidate = copy.deepcopy(base)
+                candidate["reservation"]["reservation_id"] = invalid_uuid
+                self.assertEqual(evaluate(candidate).public(),
+                                 {"eligible": False, "reason": "incomplete_evidence"})
+
 
 if __name__ == "__main__":
     unittest.main()
