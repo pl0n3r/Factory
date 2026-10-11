@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import Any
 
@@ -103,6 +104,49 @@ def _invalid_marker_epic(body: str) -> int | None:
     return value
 
 
+def _verified_pages(api: GitHub, path: str) -> list[dict[str, Any]]:
+    """Lee páginas completas; jamás convierte una respuesta anómala en fin de colección."""
+    result: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for page in range(1, 21):
+        sep = "&" if "?" in path else "?"
+        payload = api.request("GET", f"{path}{sep}per_page=100&page={page}")
+        if not isinstance(payload, list) or len(payload) > 100:
+            raise PlanError("Colección de autoridad incompleta o inválida.")
+        for value in payload:
+            if (
+                not isinstance(value, dict)
+                or type(value.get("id")) is not int
+                or value["id"] <= 0
+                or value["id"] in seen
+            ):
+                raise PlanError("Colección de autoridad ambigua o duplicada.")
+            seen.add(value["id"])
+            result.append(value)
+        if len(payload) < 100:
+            return result
+    raise PlanError("Colección de autoridad excede límite verificable.")
+
+
+def _linked_open_pull(pulls: list[dict[str, Any]], issue: int) -> bool:
+    """Niega aislamiento si un PR abierto alude al Issue o conserva su rama."""
+    reference = re.compile(rf"(?<![0-9])#{issue}(?![0-9])")
+    linked_branch = {f"trabajo/issue-{issue}", f"work/issue-{issue}"}
+    for pull in pulls:
+        head = pull.get("head")
+        if not isinstance(head, dict) or not isinstance(head.get("ref"), str):
+            raise PlanError("PR abierto sin procedencia de rama verificable.")
+        if head["ref"] in linked_branch:
+            return True
+        for field in ("title", "body"):
+            value = pull.get(field)
+            if value is not None and not isinstance(value, str):
+                raise PlanError("PR abierto con referencia ambigua.")
+            if isinstance(value, str) and reference.search(value):
+                return True
+    return False
+
+
 def _existing_tasks(
     issues: list[dict[str, Any]],
     epic: int,
@@ -135,11 +179,10 @@ def _existing_tasks(
                 and not _active(issue)
                 and api is not None
             ):
-                comments = api.issue_comments(issue_number)
-                if not isinstance(comments, list):
-                    raise PlanError(
-                        f"Issue #{issue_number}: reserva ajena no verificable."
-                    ) from exc
+                comments = _verified_pages(
+                    api, f"/repos/{api.repo}/issues/{issue_number}/comments"
+                )
+                pulls = _verified_pages(api, f"/repos/{api.repo}/pulls?state=open")
                 for comment in comments:
                     user = comment.get("user") if isinstance(comment, dict) else None
                     payload = str(comment.get("body") or "") if isinstance(comment, dict) else ""
@@ -156,6 +199,7 @@ def _existing_tasks(
                 if (
                     (reservation is None or reservation.get("active") is False)
                     and api.branch_sha(branch_for_issue(issue_number)) is None
+                    and not _linked_open_pull(pulls, issue_number)
                 ):
                     if warnings is not None:
                         warnings.append(
