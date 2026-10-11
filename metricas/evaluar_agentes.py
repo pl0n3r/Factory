@@ -29,6 +29,7 @@ MAX_INPUT_FILES = 500
 MAX_INPUT_FILE_BYTES = 2_000_000
 MAX_INPUT_LINE_CHARS = 100_000
 MAX_RECORDS = 100_000
+MAX_METRIC_INTEGER = 1_000_000_000_000
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = REPO_ROOT / "metricas" / "datos"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "artifacts"
@@ -62,6 +63,10 @@ def _integer(
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValidationError(f"{where}: campo {field} debe ser entero >= 0.")
+    if value > MAX_METRIC_INTEGER:
+        raise ValidationError(
+            f"{where}: campo {field} supera el máximo {MAX_METRIC_INTEGER}."
+        )
     return value
 
 
