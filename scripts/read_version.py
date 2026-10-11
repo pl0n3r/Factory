@@ -123,6 +123,8 @@ def _php_array_candidates(tokens: list[tuple[str, str]], key: str) -> list[str]:
             j += 1
         if depth:
             raise VersionError("Array PHP sin cerrar.")
+        if j >= len(tokens) or tokens[j] != ("symbol", ";"):
+            raise VersionError("Return PHP sin terminador.")
     return found
 
 
