@@ -8,7 +8,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Any, Iterator
@@ -655,6 +655,127 @@ def main() -> int:
         f"tipos de tarea: {len(report['task_types'])}."
     )
     return 0
+
+
+
+# Capa offline de observación de producto. El caller debe autenticar las fuentes:
+# este módulo NO consulta APIs ni da por auténtica una bandera auto-declarada.
+PRODUCT_REPOS = (
+    "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+    "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+    "pl0n3r/FactoryRunner",
+)
+PRODUCT_MAX_AGE = timedelta(hours=1)
+PRODUCT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _product_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value or len(value) > 40:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _unknown_product(reason: str) -> dict[str, Any]:
+    # Nunca retornar recuentos vacíos/0 cuando hay un hueco de evidencia.
+    return {"status": "UNKNOWN", "reason": reason, "publication_allowed": False}
+
+
+def summarize_product_day(
+    snapshots: Any, *, as_of: Any, repos: Any = PRODUCT_REPOS,
+) -> dict[str, Any]:
+    """Conteos diarios de PRs fusionados a partir de snapshots externos verificados.
+
+    Cada snapshot requiere repo, repository_sha, observed_at,
+    source='github-api', authenticated,
+    complete, run_id, run_status, run_conclusion, pages, verified_pages y events.
+    La autenticidad y exhaustividad DEBEN verificarse externamente por el caller;
+    los campos recibidos son atributos de evidencia, no pruebas criptográficas.
+    Una salida MEASURED es solo diagnóstico, nunca autorización para publicar.
+    """
+    anchor = _product_timestamp(as_of)
+    if anchor is None:
+        return _unknown_product("invalid_clock")
+    if (not isinstance(repos, (list, tuple)) or not repos
+            or len(repos) > len(PRODUCT_REPOS) or any(
+                not isinstance(repo, str) or repo not in PRODUCT_REPOS
+                for repo in repos
+            ) or len(set(repos)) != len(repos)):
+        return _unknown_product("invalid_repository_scope")
+    if not isinstance(snapshots, list) or len(snapshots) != len(repos):
+        return _unknown_product("missing_repository_snapshot")
+
+    result: dict[str, Any] = {}
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            return _unknown_product("invalid_snapshot")
+        repo = snapshot.get("repo")
+        if not isinstance(repo, str) or repo not in repos or repo in result:
+            return _unknown_product("ambiguous_repository")
+        observed = _product_timestamp(snapshot.get("observed_at"))
+        run_id = snapshot.get("run_id")
+        repository_sha = snapshot.get("repository_sha")
+        pages = snapshot.get("pages")
+        verified = snapshot.get("verified_pages")
+        if (observed is None or not timedelta(0) <= anchor - observed <= PRODUCT_MAX_AGE
+                or type(snapshot.get("source")) is not str
+                or snapshot["source"] != "github-api"
+                or not isinstance(repository_sha, str)
+                or not PRODUCT_SHA_RE.fullmatch(repository_sha)
+                or snapshot.get("authenticated") is not True
+                or snapshot.get("complete") is not True
+                or type(run_id) is not int or run_id <= 0
+                or type(snapshot.get("run_status")) is not str
+                or snapshot["run_status"] != "completed"
+                or type(snapshot.get("run_conclusion")) is not str
+                or snapshot["run_conclusion"] != "success"
+                or type(pages) is not int or pages < 1
+                or type(verified) is not int or verified != pages):
+            return _unknown_product("untrusted_stale_or_partial_snapshot")
+        events = snapshot.get("events")
+        if not isinstance(events, list) or len(events) > 10000:
+            return _unknown_product("missing_or_unbounded_events")
+        unique: dict[int, tuple[str, datetime]] = {}
+        for item in events:
+            if not isinstance(item, dict):
+                return _unknown_product("invalid_pr_observation")
+            number = item.get("number")
+            sha = item.get("merge_commit_sha")
+            stamp = _product_timestamp(item.get("merged_at"))
+            if (type(number) is not int or number <= 0
+                    or not isinstance(sha, str) or not PRODUCT_SHA_RE.fullmatch(sha)
+                    or stamp is None or stamp > observed
+                    or item.get("merged") is not True):
+                return _unknown_product("invalid_pr_observation")
+            identity = (sha, stamp)
+            if number in unique and unique[number] != identity:
+                return _unknown_product("conflicting_pr_observation")
+            unique[number] = identity
+        try:
+            window_start = observed - timedelta(hours=24)
+        except OverflowError:
+            return _unknown_product("invalid_clock_range")
+        result[repo] = {
+            "repository_sha": repository_sha,
+            "run_id": run_id,
+            "merged_prs": sum(window_start <= stamp <= observed
+                              for _, stamp in unique.values()),
+            "window_start": window_start.isoformat().replace("+00:00", "Z"),
+            "window_end": observed.isoformat().replace("+00:00", "Z"),
+            "observations": len(unique),
+        }
+    return {
+        "status": "MEASURED",
+        "reason": "complete_external_snapshots",
+        "as_of": anchor.isoformat().replace("+00:00", "Z"),
+        "repositories": {repo: result[repo] for repo in sorted(result)},
+        "publication_allowed": False,
+    }
 
 
 if __name__ == "__main__":
