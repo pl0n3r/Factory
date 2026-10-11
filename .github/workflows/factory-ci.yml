@@ -96,6 +96,11 @@ jobs:
             else
               echo "::error::release_api_transport_failure phase=$phase fail_closed=true" >&2
             fi
+            # "gh api --paginate" puede ejecutar más de un GET: este informe
+            # solo es una cota inferior de intentos por fase y NO acredita éxito.
+            # Se emite ANTES de que set -e/pipefail cierre el job; sin stderr
+            # original, respuesta HTTP ni headers que pudieran contener secretos.
+            echo "::error::release_api_budget_min search=${search_calls:-0} comments=${comments_calls_min:-0} metadata=${metadata_calls:-0} failed_phase=$phase note=minimum_attempts_paginate_may_expand fail_closed=true" >&2
             rm -f "$error_file"
             return 1
           }
@@ -117,6 +122,7 @@ jobs:
           # RELEASE_API_HELPER_END
           search_calls=0
           comments_calls_min=0
+          metadata_calls=0
 
           # Search Issues entrega máximo 100 filas por página; jamás decidir un freeze
           # desde un snapshot truncado (incluidos duplicados sin su canónico).
@@ -124,9 +130,9 @@ jobs:
           # Dos consultas completas independientes evitan aceptar una mezcla
           # de páginas por un desplazamiento del índice entre lecturas.
           for pass in 1 2; do
+          search_calls=$((search_calls + 1))
           release_gh_api search -X GET search/issues -f q="$query" -f per_page=100 -f page=1 \
             -f sort=created -f order=asc > /tmp/release-search-p1-${pass}.json
-          search_calls=$((search_calls + 1))
           total_count="$(jq -er '
             if (.incomplete_results == false)
                and ((.total_count | type) == "number")
@@ -138,9 +144,9 @@ jobs:
             end
           ' /tmp/release-search-p1-${pass}.json)"
           if (( total_count > 100 )); then
+            search_calls=$((search_calls + 1))
             release_gh_api search -X GET search/issues -f q="$query" -f per_page=100 -f page=2 \
               -f sort=created -f order=asc > /tmp/release-search-p2-${pass}.json
-            search_calls=$((search_calls + 1))
           else
             printf 'null\n' > /tmp/release-search-p2-${pass}.json
           fi
@@ -269,6 +275,7 @@ jobs:
               echo "::error::Issue de release inválido"
               exit 1
             }
+            comments_calls_min=$((comments_calls_min + 1))
             gh api --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" | jq -s -e '
               def valid_comment:
                 if type != "object" then false
@@ -302,14 +309,15 @@ jobs:
                   | {user: {login: .user.login}, body: (.body // "")}
                 )
             ' > /tmp/release-comments.json
-            comments_calls_min=$((comments_calls_min + 1))
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < /tmp/release-issues.jsonl
 
+          metadata_calls=$((metadata_calls + 1))
           gh api "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
+          metadata_calls=$((metadata_calls + 1))
           gh api "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
-          echo "release_api_budget_min search=$search_calls comments=$comments_calls_min metadata=2"
+          echo "release_api_budget_min search=$search_calls comments=$comments_calls_min metadata=$metadata_calls note=minimum_attempts_paginate_may_expand"
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n             --arg now "$now"             --slurpfile gates /tmp/release-gates.json             --slurpfile pr /tmp/release-pr.json             --slurpfile work /tmp/release-work-item.json             '{now:$now,gates:$gates[0],pr:$pr[0],work_issue:$work[0]}'             > /tmp/release-window-input.json
 
