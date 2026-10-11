@@ -174,10 +174,18 @@ def classify_transport_failure(
         if delay is not None and (type(delay) is not int
                                   or not 0 <= delay <= MAX_RESET_EVIDENCE_SECONDS):
             _fail("transporte_reset_invalido")
+    # Both server hints are minimum wait bounds; never recommend the shorter.
+    # A primary-limit retry requires reset evidence, even with Retry-After.
     if status == 403 and remaining == 0:
-        kind, delay = "limite_primario", reset_after_seconds
+        kind = "limite_primario"
+        delay = reset_after_seconds
+        if delay is not None and retry_after_seconds is not None:
+            delay = max(delay, retry_after_seconds)
     elif status == 429 or (status == 403 and retry_after_seconds is not None):
-        kind, delay = "limite_secundario", retry_after_seconds
+        kind = "limite_secundario"
+        delay = retry_after_seconds
+        if delay is not None and reset_after_seconds is not None:
+            delay = max(delay, reset_after_seconds)
     elif status == 403:
         kind, delay = "http_403_no_acreditado", None
     elif status in (401, 404):
