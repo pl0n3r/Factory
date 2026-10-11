@@ -19,6 +19,48 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
         self.assertNotIn("pull_request_target", config)
         self.assertNotIn("actions/upload-artifact", config)
 
+    def test_issue_close_job_logs_unknown_without_checkout(self):
+        """The actual issues.closed job emits typed UNKNOWN, no candidate."""
+        import os
+        import subprocess
+        import tempfile
+        import textwrap
+
+        config = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("  issues:\n    types: [closed]", config)
+        self.assertIn("  issue-identity-unknown:", config)
+        job = config.split("  issue-identity-unknown:\n", 1)[1].split(
+            "\n  candidato-offline:", 1)[0]
+        self.assertIn("github.event_name == 'issues'", job)
+        self.assertIn("github.event.action == 'closed'", job)
+        self.assertIn("github.ref == 'refs/heads/main'", job)
+        self.assertIn("permissions:\n      contents: read", job)
+        self.assertIn("publication_allowed:", job)
+        self.assertNotIn("actions/checkout@", job)
+        self.assertNotIn("GITHUB_EVENT_PATH", job)
+        self.assertNotIn("secrets.", job)
+        self.assertNotIn("contents: write", job)
+        self.assertNotIn("actions/upload-artifact", job)
+        lines = config.splitlines()
+        begin = next(i for i, line in enumerate(lines)
+                     if line.strip() == "# ISSUE_UNKNOWN_BEGIN")
+        end = next(i for i, line in enumerate(lines)
+                   if line.strip() == "# ISSUE_UNKNOWN_END")
+        script = textwrap.dedent("\n".join(lines[begin + 1:end]))
+        with tempfile.TemporaryDirectory() as path:
+            output = Path(path) / "github-output"
+            env = {**os.environ, "GITHUB_OUTPUT": str(output)}
+            result = subprocess.run(
+                ["bash", "-e", "-c", script], env=env,
+                capture_output=True, text=True, timeout=5, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"),
+                             "status=UNKNOWN\nreason=ambiguous_issue_closure\n"
+                             "publication_allowed=false\n")
+            self.assertIn("lesson_capture_status=UNKNOWN", result.stdout)
+            self.assertIn("publication_allowed=false", result.stdout)
+            self.assertNotIn("candidate=", result.stdout)
+
     def test_duplicates_failed_events_and_missing_sha_do_not_publish(self):
         config = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('not re.fullmatch(r"[0-9a-f]{40}", merge_sha)', config)
