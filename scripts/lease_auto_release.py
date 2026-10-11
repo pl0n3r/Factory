@@ -122,6 +122,9 @@ def decide(e: Evidence) -> Decision:
     if recovery is None or recovery < last or recovery > now:
         return Decision("unknown", "unverifiable_recovery_clock")
     try:
+        # Recovery itself must not predate the 30-minute inactivity threshold.
+        if recovery < last + timedelta(minutes=30):
+            return Decision("unknown", "premature_recovery_marker")
         deadline = max(
             last + timedelta(minutes=40), recovery + timedelta(minutes=10)
         )

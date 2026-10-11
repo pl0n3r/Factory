@@ -54,6 +54,15 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                 self.assertEqual(result.action, action)
                 self.assertEqual(result.libera_en_min, remaining)
 
+        # A premature RECOVERY marker is not proof of 30 minutes idle.
+        for recovery_minute in (0, 15, 29):
+            with self.subTest(premature_recovery=recovery_minute):
+                result = decide(fixture(
+                    60, status=RECOVERY, recovery_minute=recovery_minute,
+                ))
+                self.assertEqual(result.action, "unknown")
+                self.assertEqual(result.reason, "premature_recovery_marker")
+
         for changed in (
             {"kill_switch_running": False},
             {"ci_running": True},
