@@ -75,6 +75,24 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             "test_preflight_revalidates_v1_ruleset_read_only",
             "tests/test_politica_workflow_contract.py::PoliticaWorkflowContractTests::"
             "test_authenticated_check_transport_cannot_regress_to_anonymous_curl",
+            "tests/test_release_window_snapshot_complete.py::"
+            "ReleaseWindowSnapshotCompleteTests::"
+            "test_two_complete_reads_reject_set_drift_even_if_count_stays_116",
+            "tests/test_release_window_snapshot_complete.py::"
+            "ReleaseWindowSnapshotCompleteTests::"
+            "test_release_window_shell_aborts_before_evaluator_on_drift",
+            "tests/test_security_comment_routing.py::SecurityCommentRoutingTests::"
+            "test_only_owner_decision_commands_route",
+            "tests/test_security_comment_routing.py::SecurityCommentRoutingTests::"
+            "test_prose_and_coordination_commands_do_not_trigger_gate",
+            "tests/test_captura_leccion.py::CaptureLessonTests::"
+            "test_untrusted_source_secrets_and_duplicate_fail_closed",
+            "tests/test_salud_cola.py::SaludColaTests::"
+            "test_recovery_is_counted_without_promoting_work",
+            "tests/test_validar_claims_issue.py::ValidarClaimsIssueTests::"
+            "test_shared_files_remain_real_collisions",
+            "tests/test_recovery_contract.py::RecoveryContractTests::"
+            "test_invalid_sensitive_or_incoherent_manifest_fails_closed_without_echo",
         ))
         for target in targets:
             with self.subTest(target=target):
