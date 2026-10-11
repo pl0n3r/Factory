@@ -328,6 +328,18 @@ class AutoMergeConstruccionTests(unittest.TestCase):
             self.assertNotIn("SENSITIVE", output)
             self.assertFalse(evaluate(changed).eligible)
 
+    def test_legacy_unknown_phase_remains_human_gated(self):
+        """The older #1143 dry-run omits new waiver fields by design."""
+        snapshot = evidence()
+        for field in ("owner_waiver", "reservation", "review_bot"):
+            del snapshot[field]
+        snapshot["phase"] = "UNKNOWN"
+        self.assertEqual(evaluate(snapshot).public(),
+                         {"eligible": False, "reason": "human_gate_required"})
+        snapshot["phase"] = "construccion"
+        self.assertEqual(evaluate(snapshot).public(),
+                         {"eligible": False, "reason": "invalid_snapshot"})
+
 
 if __name__ == "__main__":
     unittest.main()
