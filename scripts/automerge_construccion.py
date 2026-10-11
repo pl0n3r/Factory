@@ -269,6 +269,7 @@ def evaluate(snapshot: Any) -> Decision:
     # no existe una cronología confiable en este snapshot: denegar, nunca reaprobar.
     effective_reviewers: set[str] = set()
     approved = False
+    blocking_review = False
     for review in reviews:
         if not isinstance(review, dict) or set(review) != {"author", "state", "head_sha", "trusted"}:
             return _deny("invalid_snapshot")
@@ -282,11 +283,15 @@ def evaluate(snapshot: Any) -> Decision:
             return _deny("invalid_snapshot")
         effective_reviewers.add(reviewer)
         if review["state"] in {"CHANGES_REQUESTED", "DISMISSED"}:
-            return _deny("reviews_blocked")
+            blocking_review = True
         if (review["state"] == "APPROVED" and review["trusted"]
                 and review["head_sha"] == head
                 and reviewer != author.casefold()):
             approved = True
+    # Primero la estructura/historial: reviews duplicadas siempre son inválidas.
+    # Una revocación autenticada impide el diagnóstico incluso con otro APPROVED.
+    if blocking_review:
+        return _deny("reviews_blocked")
     if not approved:
         waiver_status = _waiver_status(snapshot["owner_waiver"], head, now)
         if waiver_status != "ok":
