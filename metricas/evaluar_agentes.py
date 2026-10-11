@@ -723,14 +723,17 @@ def summarize_product_day(
         pages = snapshot.get("pages")
         verified = snapshot.get("verified_pages")
         if (observed is None or not timedelta(0) <= anchor - observed <= PRODUCT_MAX_AGE
-                or snapshot.get("source") != "github-api"
+                or type(snapshot.get("source")) is not str
+                or snapshot["source"] != "github-api"
                 or not isinstance(repository_sha, str)
                 or not PRODUCT_SHA_RE.fullmatch(repository_sha)
                 or snapshot.get("authenticated") is not True
                 or snapshot.get("complete") is not True
                 or type(run_id) is not int or run_id <= 0
-                or snapshot.get("run_status") != "completed"
-                or snapshot.get("run_conclusion") != "success"
+                or type(snapshot.get("run_status")) is not str
+                or snapshot["run_status"] != "completed"
+                or type(snapshot.get("run_conclusion")) is not str
+                or snapshot["run_conclusion"] != "success"
                 or type(pages) is not int or pages < 1
                 or type(verified) is not int or verified != pages):
             return _unknown_product("untrusted_stale_or_partial_snapshot")

@@ -49,6 +49,34 @@ class ProductoDiarioTests(unittest.TestCase):
         self.assertEqual(a["repositories"]["pl0n3r/GrindFlow"]["merged_prs"], 0)
         self.assertEqual(a["repositories"][repo]["window_start"], "2026-10-10T09:30:00Z")
 
+    def test_provenance_fields_reject_hostile_non_string_equality(self):
+        class BypassEquality:
+            def __ne__(self, other):
+                return False
+
+        class RaiseOnCompare:
+            def __ne__(self, other):
+                raise RuntimeError("equality must not execute on untrusted provenance")
+
+        repo = "pl0n3r/Factory"
+        good = snapshot(repo, [pr(77, "2026-10-11T09:00:00Z")])
+        self.assertEqual(
+            summarize_product_day([good], as_of=AS_OF, repos=[repo])["status"],
+            "MEASURED",
+        )
+        for field in ("source", "run_status", "run_conclusion"):
+            for bad in (BypassEquality(), RaiseOnCompare(), [], {}, 1, False, None):
+                with self.subTest(field=field, bad=type(bad).__name__):
+                    observed = summarize_product_day(
+                        [{**good, field: bad}], as_of=AS_OF, repos=[repo],
+                    )
+                    self.assertEqual(observed["status"], "UNKNOWN")
+                    self.assertEqual(
+                        observed["reason"], "untrusted_stale_or_partial_snapshot",
+                    )
+                    self.assertFalse(observed["publication_allowed"])
+                    self.assertNotIn("repositories", observed)
+
     def test_missing_run_stale_or_partial_metrics_are_unknown_not_zero(self):
         repo = "pl0n3r/Factory"
         original = snapshot(repo, [pr(77, "2026-10-11T09:00:00Z")])
