@@ -50,8 +50,17 @@ def _path_problem(path: object) -> str | None:
         return "glob_claim"
     if _CANONICAL_PATH.fullmatch(path) is None:
         return "invalid_path"
-    if any(part in ("", ".", "..") for part in path.split("/")):
-        return "invalid_path"
+    # Win32 silently aliases trailing dots and reserves device basenames,
+    # including names with extensions, in every directory component.
+    devices = {"con", "prn", "aux", "nul"} | {
+        prefix + str(number)
+        for prefix in ("com", "lpt") for number in range(1, 10)
+    }
+    for part in path.split("/"):
+        if part in ("", ".", "..") or part.endswith("."):
+            return "invalid_path"
+        if part.split(".", 1)[0].casefold() in devices:
+            return "invalid_path"
     return None
 
 

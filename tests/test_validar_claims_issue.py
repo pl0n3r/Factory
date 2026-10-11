@@ -27,6 +27,13 @@ class ValidarClaimsIssueTests(unittest.TestCase):
             (["a.py", "a.py"], "duplicate_path"),
             (["src/Cache.php", "src/cache.php"], "duplicate_path"),
             (["README.md", "readme.md"], "duplicate_path"),
+            (["src/report."], "invalid_path"),
+            (["src/report", "src/report."], "invalid_path"),
+            (["src/CON"], "invalid_path"),
+            (["src/aux.txt"], "invalid_path"),
+            (["src/COM1.log"], "invalid_path"),
+            (["LPT9"], "invalid_path"),
+            (["src/nul/config.json"], "invalid_path"),
         )
         for paths, code in samples:
             with self.subTest(paths=paths):
@@ -82,6 +89,16 @@ class ValidarClaimsIssueTests(unittest.TestCase):
             self.assertTrue(all(len(g) <= MAX_PATHS_PER_LEAF for g in groups))
             self.assertEqual([path for group in groups for path in group], sorted(paths))
         self.assertFalse(inspect_claim_paths(paths[:6])["needs_partition"])
+        # A Win32-unsafe path can never be recommended in a new leaf.
+        for unsafe in ("src/report.", "src/CON", "src/aux.txt"):
+            report = inspect_claim_paths(paths[:6] + [unsafe])
+            self.assertFalse(report["valid"])
+            self.assertEqual(report["reason_codes"], ["invalid_path"])
+            self.assertEqual(report["proposed_groups"], [])
+            self.assertFalse(report["can_reserve"])
+        portable = paths[:6] + ["src/report.txt"]
+        self.assertEqual(inspect_claim_paths(portable)["reason_codes"],
+                         ["too_many_paths"])
         # Alias in different would-be partitions must reject the entire plan.
         aliases = paths[:6] + ["src/MODULE_00.py"]
         result = inspect_claim_paths(aliases)
