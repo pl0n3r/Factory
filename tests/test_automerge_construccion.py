@@ -95,6 +95,8 @@ class AutoMergeConstruccionTests(unittest.TestCase):
                            ("required_checks", [{"name": "Validar", "conclusion": "success",
                                                  "head_sha": HEAD}] * 2),
                            ("reviews", [{"author": "x", "state": "APPROVED", "trusted": 1,
+                                         "head_sha": HEAD}]),
+                           ("reviews", [{"author": "x", "state": [], "trusted": True,
                                          "head_sha": HEAD}])):
             self.deny(key, value)
         secret = evidence()

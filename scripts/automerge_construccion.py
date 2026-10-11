@@ -142,6 +142,7 @@ def evaluate(snapshot: Any) -> Decision:
             return _deny("invalid_snapshot")
         if (not isinstance(review["author"], str) or not review["author"]
                 or type(review["trusted"]) is not bool or not _sha(review["head_sha"])
+                or not isinstance(review["state"], str)
                 or review["state"] not in {"APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"}):
             return _deny("invalid_snapshot")
         if review["state"] == "CHANGES_REQUESTED":
