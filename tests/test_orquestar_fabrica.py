@@ -443,6 +443,27 @@ class OrquestarFabricaTests(unittest.TestCase):
             )
         )
 
+    def test_reservation_appears_after_inventory_and_aborts_before_writes(self):
+        api = FakeGitHub()
+        numbers = sync_plan(api, 3)["issues"]
+        target = numbers["B"]
+        original_issue = api.issue
+
+        def raced_issue(number):
+            if number == target:
+                api.issues[target]["labels"] = [{"name": "estado: reservado"}]
+            return original_issue(number)
+
+        api.issue = raced_issue
+        api.requests.clear()
+        with self.assertRaisesRegex(PlanError, "cambió durante la sincronización"):
+            sync_plan(api, 3)
+        self.assertFalse(api.requests)
+        self.assertEqual(
+            api.issues[numbers["B"]]["labels"],
+            [{"name": "estado: reservado"}],
+        )
+
     def test_later_active_task_preflight_prevents_partial_writes(self):
         api = FakeGitHub()
         issues = sync_plan(api, 3)["issues"]

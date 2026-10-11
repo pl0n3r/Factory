@@ -483,6 +483,20 @@ def _sync_role_labels(
     api.add_labels(issue_number, role_labels)
 
 
+def _verify_snapshot_unchanged(api: GitHub, snapshot: dict[str, Any]) -> None:
+    number = snapshot.get("number")
+    if type(number) is not int or number <= 0:
+        raise PlanError("Hoja materializada sin identidad válida.")
+    actual = api.issue(number)
+    if (
+        actual.get("state") != snapshot.get("state")
+        or actual.get("body") != snapshot.get("body")
+        or label_names(actual) != label_names(snapshot)
+        or ("updated_at" in snapshot and actual.get("updated_at") != snapshot["updated_at"])
+    ):
+        raise PlanError(f"Issue #{number}: cambió durante la sincronización.")
+
+
 def _upsert_issue(
     api: GitHub,
     *,
@@ -496,6 +510,8 @@ def _upsert_issue(
 ) -> dict[str, Any]:
     title = f"[EPIC #{epic}/{task.key}] {task.title}"
     body = _task_body(epic, task, order, roles, dependency_issues)
+    if existing is not None:
+        _verify_snapshot_unchanged(api, existing)
     if existing is not None and _active(existing):
         previous_body = str(existing.get("body") or "")
         if parse_task_marker(previous_body) != parse_task_marker(body):
@@ -593,6 +609,7 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     # Así un body ambiguo en un nodo posterior no deja un sync parcial.
     for issue in existing.values():
         _preserved_enrichment(str(issue.get("body") or ""))
+        _verify_snapshot_unchanged(api, issue)
 
     # Vetar TODAS las modificaciones a reservas antes de la primera escritura.
     for order, task in enumerate(ordered, 1):
