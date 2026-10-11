@@ -179,10 +179,40 @@ def _existing_tasks(
                 and not _active(issue)
                 and api is not None
             ):
+                first = api.issue(issue_number)
+                expected_count = first.get("comments")
+                stamp = first.get("updated_at")
+                if (
+                    first.get("state") != "open"
+                    or first.get("body") != body
+                    or label_names(first) != label_names(issue)
+                    or type(expected_count) is not int
+                    or expected_count < 0
+                    or not isinstance(stamp, str)
+                    or not stamp
+                ):
+                    raise PlanError(
+                        f"Issue #{issue_number}: inventario previo ambiguo."
+                    ) from exc
                 comments = _verified_pages(
                     api, f"/repos/{api.repo}/issues/{issue_number}/comments"
                 )
+                if len(comments) != expected_count:
+                    raise PlanError(
+                        f"Issue #{issue_number}: conteo de comentarios incompleto."
+                    ) from exc
                 pulls = _verified_pages(api, f"/repos/{api.repo}/pulls?state=open")
+                latest_issue = api.issue(issue_number)
+                if (
+                    latest_issue.get("state") != first.get("state")
+                    or latest_issue.get("body") != first.get("body")
+                    or label_names(latest_issue) != label_names(first)
+                    or latest_issue.get("comments") != expected_count
+                    or latest_issue.get("updated_at") != stamp
+                ):
+                    raise PlanError(
+                        f"Issue #{issue_number}: carrera en inventario."
+                    ) from exc
                 for comment in comments:
                     user = comment.get("user") if isinstance(comment, dict) else None
                     payload = str(comment.get("body") or "") if isinstance(comment, dict) else ""
