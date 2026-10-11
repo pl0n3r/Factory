@@ -68,6 +68,15 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
         malformed = comment(2, '{"version":3,"active":true,}')
         with self.assertRaisesRegex(LeaseSnapshotError, "marker_invalido"):
             audit_active_claims(data, {12: [inactive, malformed]}, complete=True)
+        # El prefijo del sucesor puede estar malformado antes del JSON.
+        for prefix in ("<!--condor-reserva ", "<!--\tcondor-reserva ",
+                       "<!--  CONDOR-RESERVA "):
+            malformed_prefix = {"id": 3, "user": {"login": "github-actions[bot]"},
+                                "body": prefix + json.dumps(marker(12)) + " -->"}
+            with self.subTest(prefix=prefix), self.assertRaisesRegex(
+                LeaseSnapshotError, "marker_invalido"
+            ):
+                audit_active_claims(data, {12: [inactive, malformed_prefix]}, complete=True)
         active_payload = json.dumps(marker(12), separators=(",", ":"))
         duplicate = active_payload.replace('"active":true', '"active":false,"active":true')
         with self.assertRaises(LeaseSnapshotError):
