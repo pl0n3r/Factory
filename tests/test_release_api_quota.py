@@ -154,7 +154,7 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertLess(first, selector)
         self.assertIn("gh api --paginate", workflow)
         self.assertIn("incomplete_comment_pages", workflow)
-        self.assertIn("factory-release-window", workflow)
+        self.assertIn("WINDOW_INTENT_RE", workflow)
         self.assertIn("select((.body // \"\") | contains(\"factory-release\"))", workflow)
         self.assertLess(workflow.index("release-issues-prefilter.json"),
                         workflow.index(CANDIDATES_START))
