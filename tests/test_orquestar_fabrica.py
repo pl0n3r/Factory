@@ -40,12 +40,25 @@ class FakeGitHub:
         self.pulls = []
         self.fail_comment_page_two = False
         self.fail_pull_page_two = False
+        self.foreign_counter_override = None
+        self.foreign_counter_race = False
+        self.foreign_read_count = 0
 
     def branch_sha(self, branch):
         return "a" * 40 if branch in self.branches else None
 
     def issue(self, number):
-        return self.issues[number]
+        if number != 44:
+            return self.issues[number]
+        self.foreign_read_count += 1
+        result = dict(self.issues[number])
+        count = len(self.comments)
+        if self.foreign_counter_override is not None:
+            count = self.foreign_counter_override
+        if self.foreign_counter_race and self.foreign_read_count >= 2:
+            count += 1
+        result["comments"] = count
+        return result
 
     def paginate(self, path):
         if "/issues?state=all" in path:
@@ -422,6 +435,7 @@ class OrquestarFabricaTests(unittest.TestCase):
             "number": 44,
             "state": "open",
             "title": "Foreign legacy task",
+            "updated_at": "2026-10-11T07:00:00Z",
             "body": body if body is not None else self._legacy_foreign_marker(),
             "labels": [{"name": name} for name in labels],
         }
@@ -565,6 +579,58 @@ class OrquestarFabricaTests(unittest.TestCase):
                 with self.assertRaises(PlanError):
                     sync_plan(api, 3)
                 self.assertFalse(api.requests)
+
+
+    def test_foreign_second_page_active_lease_is_not_ignored(self):
+        api = FakeGitHub()
+        self._inject_foreign(api, labels=["estado: bloqueado"])
+        api.comments.extend({
+            "id": n, "body": "filler", "user": {"login": "someone"}
+        } for n in range(1, 101))
+        api.comments.append({
+            "id": 101, "user": {"login": "github-actions[bot]"},
+            "body": reservation_marker(
+                "pl0n3r", "12345678-1234-1234-1234-123456789abc",
+                "trabajo/issue-44", True, "tomar",
+            ),
+        })
+        with self.assertRaises(PlanError):
+            sync_plan(api, 3)
+        self.assertEqual(api.requests, [])
+
+    def test_foreign_comment_count_and_snapshot_race_fail_closed(self):
+        for scenario in ("undercount", "overcount", "second_read_race"):
+            with self.subTest(scenario=scenario):
+                api = FakeGitHub()
+                self._inject_foreign(api, labels=["estado: bloqueado"])
+                api.comments.append({
+                    "id": 3, "body": "ordinary", "user": {"login": "someone"},
+                })
+                if scenario == "undercount":
+                    api.foreign_counter_override = 0
+                elif scenario == "overcount":
+                    api.foreign_counter_override = 2
+                else:
+                    api.foreign_counter_race = True
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(api.requests, [])
+
+    def test_foreign_missing_counter_is_not_proof_of_no_lease(self):
+        api = FakeGitHub()
+        self._inject_foreign(api, labels=["estado: bloqueado"])
+        original_issue = api.issue
+
+        def incomplete_issue(number):
+            result = original_issue(number)
+            if number == 44:
+                result.pop("comments", None)
+            return result
+
+        api.issue = incomplete_issue
+        with self.assertRaisesRegex(PlanError, "inventario previo ambiguo"):
+            sync_plan(api, 3)
+        self.assertEqual(api.requests, [])
 
 
 
