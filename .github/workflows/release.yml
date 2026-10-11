@@ -184,10 +184,27 @@ jobs:
           }
           # RELEASE_REMOTE_TAG_GUARD_END
           verify_remote_main
-          if ! url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url' 2>/dev/null)"; then
+          # RELEASE_STATUS_EXACT_GUARD_BEGIN
+          # Probe the authenticated REST endpoint: errors are not evidence of absence.
+          probe_rc=0
+          probe="$(gh api --include --silent "repos/$REPOSITORY/releases/tags/$TAG" 2>&1)" || probe_rc=$?
+          status_lines="$(grep -E '^HTTP/[0-9.]+[[:space:]]+[0-9]{3}([[:space:]]|$)' <<< "$probe" || true)"
+          if [[ "$(grep -c '^HTTP/' <<< "$status_lines")" != "1" ]]; then
+            echo "::error::Consulta de Release sin estado HTTP inequívoco"
+            exit 1
+          fi
+          if (( probe_rc == 0 )) && grep -Eq '^HTTP/[0-9.]+[[:space:]]+200([[:space:]]|$)' <<< "$status_lines"; then
+            url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
+            [[ -n "$url" ]] || { echo "::error::Release existente sin URL válida"; exit 1; }
+          elif (( probe_rc != 0 )) && grep -Eq '^HTTP/[0-9.]+[[:space:]]+404([[:space:]]|$)' <<< "$status_lines"; then
             verify_remote_main
             verify_remote_tag
             gh release create "$TAG" --repo "$REPOSITORY" --verify-tag --title "Release $TAG (V $VERSION)" --generate-notes
             url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
+            [[ -n "$url" ]] || { echo "::error::Release creado sin URL verificable"; exit 1; }
+          else
+            echo "::error::Consulta de Release falló o retornó estado distinto de 200/404"
+            exit 1
           fi
+          # RELEASE_STATUS_EXACT_GUARD_END
           echo "url=$url" >> "$GITHUB_OUTPUT"

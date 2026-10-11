@@ -74,7 +74,7 @@ class T(unittest.TestCase):
   return textwrap.dedent(segment.split("        run: |\n",1)[1])
 
  def _execute_step(self, kind, *, main=None, mutate="", tag_exists=False, approved=None,
-                   remote_ref=None,remote_target=None):
+                   remote_ref=None,remote_target=None,release_status="404"):
   sha="a"*40
   drift="b"*40
   with tempfile.TemporaryDirectory() as tmp:
@@ -86,6 +86,8 @@ class T(unittest.TestCase):
    release=folder/"release.created"
    remote_tag_file=folder/"remote-tag.target"
    remote_tag_file.write_text(sha if remote_target is None else remote_target,encoding="utf-8")
+   if release_status=="200":
+    release.write_text("exists",encoding="utf-8")
    gh=folder/"gh"
    gh.write_text(textwrap.dedent(r"""
     #!/bin/sh
@@ -115,16 +117,20 @@ class T(unittest.TestCase):
         */git/refs*)
           printf 'HTTP/2 201\n'
           exit 0 ;;
+        */releases/tags/*)
+          if [ "$FAKE_MUTATE" = view ]; then
+            printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
+          fi
+          if [ "$FAKE_MUTATE" = remote_tag ]; then
+            printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_REMOTE_TARGET_FILE"
+          fi
+          printf 'HTTP/2 %s\n' "$FAKE_RELEASE_STATUS"
+          if [ "$FAKE_RELEASE_STATUS" = 200 ]; then exit 0; fi
+          exit 22 ;;
       esac
     fi
     if [ "$1" = release ]; then
       if [ "$2" = view ]; then
-        if [ "$FAKE_MUTATE" = view ]; then
-          printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
-        fi
-        if [ "$FAKE_MUTATE" = remote_tag ]; then
-          printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_REMOTE_TARGET_FILE"
-        fi
         if [ -f "$FAKE_RELEASE_FILE" ]; then
           printf '%s\n' https://example.invalid/fake
           exit 0
@@ -161,6 +167,7 @@ class T(unittest.TestCase):
      FAKE_DRIFT_SHA=drift,FAKE_TAG_OBJECT_SHA="c"*40,
      FAKE_REMOTE_REF="c"*40 if remote_ref is None else remote_ref,
      FAKE_REMOTE_TARGET_FILE=str(remote_tag_file),
+     FAKE_RELEASE_STATUS=release_status,
      FAKE_TAG_EXISTS="1" if tag_exists else "0",GITHUB_OUTPUT=str(output))
    run=subprocess.run(["bash","-euo","pipefail","-c",self._step_body(kind)],
                       env=env,capture_output=True,text=True,timeout=10)
@@ -229,3 +236,25 @@ class T(unittest.TestCase):
     self.assertNotEqual(res.returncode,0,res.stdout+res.stderr)
     self.assertNotIn("release create",trace)
     self.assertFalse(created)
+
+ def test_release_status_requires_rest_404_before_real_create(self):
+  release_step=self._step_body("release")
+  self.assertIn('gh api --include --silent "repos/$REPOSITORY/releases/tags/$TAG"',release_step)
+  self.assertLess(release_step.index("probe="),release_step.index('gh release create "$TAG"'))
+  for code in ("403","429","500","401","302","unknown",""):
+   with self.subTest(code=code):
+    run,trace,created,_=self._execute_step("release",release_status=code)
+    self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+    self.assertIn("releases/tags/",trace)
+    self.assertNotIn("release create",trace)
+    self.assertFalse(created)
+  run,trace,created,_=self._execute_step("release",release_status="404")
+  self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertIn("releases/tags/",trace)
+  self.assertIn("release create",trace)
+  self.assertTrue(created)
+  run,trace,created,_=self._execute_step("release",release_status="200")
+  self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertIn("releases/tags/",trace)
+  self.assertNotIn("release create",trace)
+  self.assertTrue(created)
