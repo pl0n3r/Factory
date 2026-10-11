@@ -40,6 +40,7 @@ class FakeGitHub:
         self.pulls = []
         self.fail_comment_page_two = False
         self.fail_pull_page_two = False
+        self.fail_issue_page_two = False
         self.foreign_counter_override = None
         self.foreign_counter_race = False
         self.foreign_read_count = 0
@@ -99,6 +100,15 @@ class FakeGitHub:
         })
 
     def request(self, method, path, payload=None):
+        if method == "GET" and "/issues?state=all&per_page=100&page=" in path:
+            page = int(path.rsplit("page=", 1)[1])
+            if page == 2 and self.fail_issue_page_two:
+                return {"message": "partial issue inventory"}
+            issues = list(self.issues.values())
+            return [
+                {**item, "id": item.get("id", item["number"])}
+                for item in issues[(page - 1) * 100:page * 100]
+            ]
         if method == "GET" and "/comments?per_page=100&page=" in path:
             page = int(path.rsplit("page=", 1)[1])
             if page == 2 and self.fail_comment_page_two:
@@ -440,6 +450,34 @@ class OrquestarFabricaTests(unittest.TestCase):
             "labels": [{"name": name} for name in labels],
         }
         return api.issues[44]
+
+    def test_global_issue_inventory_must_be_complete_and_unambiguous(self):
+        # A 100-item page followed by an HTTP-200 non-list cannot make
+        # the orchestrator believe the remaining issues do not exist.
+        api = FakeGitHub()
+        for number in range(100, 199):
+            api.issues[number] = {
+                "number": number, "state": "open", "body": "",
+                "labels": [], "title": f"Unrelated {number}",
+            }
+        api.fail_issue_page_two = True
+        with self.assertRaisesRegex(PlanError, "Colección de autoridad incompleta"):
+            sync_plan(api, 3)
+        self.assertEqual(api.requests, [], "no mutations before inventory proof")
+        self.assertEqual(len(api.issues), 100)
+
+        # Duplicate GitHub item IDs are ambiguous even when issue numbers
+        # differ, and malformed IDs may not be silently filtered.
+        for bad_id in (3, 0, True, "untrusted"):
+            with self.subTest(bad_id=bad_id):
+                api = FakeGitHub()
+                api.issues[44] = {
+                    "id": bad_id, "number": 44, "state": "open",
+                    "body": "", "labels": [], "title": "Unrelated",
+                }
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(api.requests, [])
 
     def test_foreign_unreserved_invalid_marker_is_isolated(self):
         api = FakeGitHub()

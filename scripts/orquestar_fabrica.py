@@ -64,9 +64,11 @@ REPORT_PREFIX = "<!-- factory-plan-report:"
 
 
 def _all_issues(api: GitHub) -> list[dict[str, Any]]:
+    # No interpretar un prefijo paginado como inventario global exhaustivo.
+    # Un truncamiento silencioso permitiría duplicar hojas del mismo épico.
     return [
         issue
-        for issue in api.paginate(f"/repos/{api.repo}/issues?state=all")
+        for issue in _verified_pages(api, f"/repos/{api.repo}/issues?state=all")
         if not issue.get("pull_request")
     ]
 
