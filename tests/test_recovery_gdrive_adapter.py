@@ -104,6 +104,30 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
                 drive.upload(bad, payload, payload_digest, retention_days=1)
 
     def test_secret_material_never_enters_error_or_evidence(self):
+        # Credential-shaped object refs must be rejected before fake storage,
+        # secret lookup or any receipt can echo the supplied identifier.
+        for unsafe_ref in (
+            "sk-" + "FAKE" * 6,
+            "ghp_" + "F" * 24,
+            "github_pat_" + "F" * 18,
+            "snapshot:sk-" + "F" * 24,
+            "snapshot:github_pat_" + "F" * 18,
+        ):
+            with self.subTest(ref_kind=unsafe_ref[:4]):
+                fake = FakeDriveTransport()
+                creds = Secrets()
+                drive = instance(transport=fake, secrets=creds, allow=True)
+                fake_data = b"fake-secret-guard-test"
+                with self.assertRaisesRegex(ColdCopyError, "invalid_reference") as rejected:
+                    drive.upload(unsafe_ref, fake_data, sha(fake_data), retention_days=7)
+                self.assertNotIn(unsafe_ref, str(rejected.exception))
+                with self.assertRaisesRegex(ColdCopyError, "invalid_reference"):
+                    drive.materialize_fake(
+                        unsafe_ref, sha(fake_data), purpose="offline_restore_test",
+                    )
+                self.assertEqual(fake.writes, 0)
+                self.assertEqual(fake.objects, {})
+                self.assertEqual(creds.calls, 0)
         sensitive = "VERY_PRIVATE_OAUTH_TOKEN_NOT_REAL"
         secrets = Secrets(sensitive)
 
