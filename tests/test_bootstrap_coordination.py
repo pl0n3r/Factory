@@ -1106,6 +1106,18 @@ class BootstrapCoordinationTests(unittest.TestCase):
             with self.subTest(variant=variant):
                 self.assert_grindflow_caller_contract(candidate)
 
+    def test_grindflow_strict_preflight_rejects_extra_write_scopes(self):
+        template = (ROOT / "template/.github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+        strict = strict_caller_fixture(template)
+        old = "      contents: read\n    outputs:"
+        self.assertIn(old, strict)
+        for injected in ("      issues: write\n", "      pull-requests: write\n",
+                         "      contents: write\n"):
+            with self.subTest(extra_permission=injected.strip()):
+                bad = strict.replace(old, "      contents: read\n" + injected + "    outputs:", 1)
+                with self.assertRaises(AssertionError):
+                    self.assert_grindflow_caller_contract(bad)
+
     def assert_grindflow_caller_contract(self, template: str):
         tmp,root=self._grindflow_fixture("0.1.144")
         self.addCleanup(tmp.cleanup)
@@ -1130,6 +1142,9 @@ class BootstrapCoordinationTests(unittest.TestCase):
         self.assertIn("operation: comment",comment)
         if "  preflight_comentario:\n" in caller:
             preflight=caller.split("  preflight_comentario:\n",1)[1].split("  comentario:\n",1)[0]
+            # Preflight solo lectura: cualquier scope aditivo invalida el caller.
+            grants=preflight.split("    permissions:\n",1)[1].split("    outputs:\n",1)[0]
+            self.assertEqual("      contents: read\n",grants)
             self.assertIn("needs: preflight_comentario",comment)
             self.assertIn("needs.preflight_comentario.outputs.route == 'true'",comment)
             self.assertIn('os.environ["GITHUB_EVENT_PATH"]',preflight)

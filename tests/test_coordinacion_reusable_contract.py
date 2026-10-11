@@ -177,6 +177,17 @@ class T(unittest.TestCase):
             with self.subTest(variant=variant):
                 self.assert_template_renewal_contract(template)
 
+    def test_strict_preflight_rejects_permission_escalation(self):
+        strict = strict_caller_fixture(TEMPLATE)
+        old = "      contents: read\n    outputs:"
+        self.assertIn(old, strict)
+        for injected in ("      issues: write\n", "      pull-requests: write\n",
+                         "      contents: write\n"):
+            with self.subTest(extra_permission=injected.strip()):
+                bad = strict.replace(old, "      contents: read\n" + injected + "    outputs:", 1)
+                with self.assertRaises(AssertionError):
+                    self.assert_template_renewal_contract(bad)
+
     def assert_template_renewal_contract(self, template: str):
         jobs = job_blocks(template)
         comment = jobs["comentario"]
@@ -186,6 +197,9 @@ class T(unittest.TestCase):
         self.assertIn("github.event.sender.login == github.event.comment.user.login", comment)
         if "preflight_comentario" in jobs:
             preflight = jobs["preflight_comentario"]
+            # Validar el mapa completo, no solo la presencia de contents:read.
+            grants = preflight.split("    permissions:\n", 1)[1].split("    outputs:\n", 1)[0]
+            self.assertEqual("      contents: read\n", grants)
             self.assertIn("needs: preflight_comentario", comment)
             self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)
             self.assertIn("outputs:\n      route: ${{ steps.route.outputs.route }}", preflight)
