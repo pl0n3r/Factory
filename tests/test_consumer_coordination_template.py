@@ -156,8 +156,12 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
                 self.assertTrue(routes_comment(body))
                 with self.assertRaises(coordinator.CoordinationError):
                     coordinator.parse_comment_command(body)
-        self.assertFalse(routes_comment("/tomarlo"))
-        self.assertFalse(routes_comment("/renovar-contrato-ejemplo"))
+        # La comparacion del primer token es exacta y sensible a mayusculas.
+        for body in ("/tomarlo", "/renovar-contrato-ejemplo", "/TOMAR",
+                     "/Liberar " + uuid, "/RENOVAR-CONTRATO " + uuid,
+                     "/decidir A", "/reiniciar"):
+            with self.subTest(unsupported_command=body):
+                self.assertFalse(routes_comment(body))
 
     def test_comment_routing_preserves_permissions_and_pr_guard(self):
         value = text()
@@ -170,7 +174,9 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
                 "github.event.sender.login == github.event.comment.user.login",
                 block,
             )
-        self.assertIn("permissions:\n      contents: read", preflight)
+        # Contrato de minimo privilegio: no permitir grants aditivos.
+        permissions = preflight.split("    permissions:\n", 1)[1].split("    outputs:\n", 1)[0]
+        self.assertEqual("      contents: read\n", permissions)
         self.assertIn("timeout-minutes: 2", preflight)
         self.assertIn('os.environ["GITHUB_EVENT_PATH"]', preflight)
         self.assertNotIn("COMMENT_BODY", preflight)
@@ -186,6 +192,18 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
         for event in ("schedule:", "workflow_dispatch:", "pull_request:",
                       "issues:", "issue_comment:"):
             self.assertIn(event, value)
+
+    def test_preflight_permission_mutations_are_rejected(self):
+        workflow = text()
+        base = "      contents: read\n    outputs:"
+        self.assertIn(base, workflow)
+        for injected in ("      issues: write\n", "      pull-requests: write\n",
+                         "      contents: write\n"):
+            with self.subTest(extra_scope=injected.strip()):
+                bad = workflow.replace(base, "      contents: read\n" + injected + "    outputs:", 1)
+                preflight = job_block(bad, "preflight_comentario", "comentario")
+                permissions = preflight.split("    permissions:\n", 1)[1].split("    outputs:\n", 1)[0]
+                self.assertNotEqual("      contents: read\n", permissions)
 
     def test_all_routes_keep_expected_events_conditions_and_operations(self):
         value = text()
