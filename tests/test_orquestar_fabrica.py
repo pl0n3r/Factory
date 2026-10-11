@@ -509,7 +509,10 @@ class OrquestarFabricaTests(unittest.TestCase):
         self.assertEqual(len(api.comments), 1)
 
     def test_ambiguous_issue_inventory_is_atomic(self):
-        for defect in ("duplicate_number", "missing_one_direction", "page_two"):
+        for defect in (
+            "duplicate_number", "missing_one_direction", "page_two",
+            "truncated_report_comments", "missing_report",
+        ):
             with self.subTest(defect=defect):
                 api = FakeGitHub()
                 if defect == "duplicate_number":
@@ -530,10 +533,22 @@ class OrquestarFabricaTests(unittest.TestCase):
                             "labels": [], "title": f"Unrelated {number}",
                         }
                     api.fail_issue_page_two = True
+                if defect in ("truncated_report_comments", "missing_report"):
+                    sync_plan(api, 3)
+                    if defect == "truncated_report_comments":
+                        api.comments.extend({
+                            "id": number, "user": {"login": "someone"},
+                            "body": "noise",
+                        } for number in range(2, 102))
+                        api.fail_comment_page_two = True
+                    else:
+                        api.comments.clear()
+                    api.requests.clear()
+                next_issue = api.next_issue
                 with self.assertRaises(PlanError):
                     sync_plan(api, 3)
                 self.assertFalse(api.requests)
-                self.assertEqual(api.next_issue, 10)
+                self.assertEqual(api.next_issue, next_issue)
 
     def test_global_issue_inventory_must_be_complete_and_unambiguous(self):
         api = FakeGitHub()
