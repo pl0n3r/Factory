@@ -97,8 +97,30 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           TARGET_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BOOTSTRAP: ${{ inputs.factory_bootstrap }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          # RELEASE_EXACT_MAIN_TAG_GUARD_BEGIN
+          verify_remote_main() {
+            local remote_sha
+            if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::SHA candidato inválido antes de publicar"
+              exit 1
+            fi
+            if [[ "$BOOTSTRAP" == "true" && "$EXPECTED_SHA" != "$TARGET_SHA" ]]; then
+              echo "::error::SHA de bootstrap no coincide con candidato"
+              exit 1
+            fi
+            remote_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+            if [[ ! "$remote_sha" =~ ^[0-9a-f]{40}$ || "$remote_sha" != "$TARGET_SHA" ]]; then
+              echo "::error::main cambió antes de publicar tag/release"
+              exit 1
+            fi
+          }
+          # RELEASE_EXACT_MAIN_TAG_GUARD_END
+          verify_remote_main
           if git show-ref --verify --quiet "refs/tags/$TAG"; then
             [[ "$(git cat-file -t "refs/tags/$TAG")" == "tag" ]] || { echo "::error::$TAG no es anotado"; exit 1; }
             existing_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
@@ -106,6 +128,7 @@ jobs:
             exit 0
           fi
           object="$(gh api --method POST "repos/$REPOSITORY/git/tags" -f tag="$TAG" -f message="Release $TAG — $TARGET_SHA" -f object="$TARGET_SHA" -f type=commit --jq '.sha')"
+          verify_remote_main
           if response="$(gh api --include --silent --method POST "repos/$REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" 2>&1)"; then
             exit 0
           fi
@@ -121,8 +144,31 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
           REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BOOTSTRAP: ${{ inputs.factory_bootstrap }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          # RELEASE_EXACT_MAIN_RELEASE_GUARD_BEGIN
+          verify_remote_main() {
+            local remote_sha
+            if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::SHA candidato inválido antes de publicar"
+              exit 1
+            fi
+            if [[ "$BOOTSTRAP" == "true" && "$EXPECTED_SHA" != "$TARGET_SHA" ]]; then
+              echo "::error::SHA de bootstrap no coincide con candidato"
+              exit 1
+            fi
+            remote_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+            if [[ ! "$remote_sha" =~ ^[0-9a-f]{40}$ || "$remote_sha" != "$TARGET_SHA" ]]; then
+              echo "::error::main cambió antes de publicar tag/release"
+              exit 1
+            fi
+          }
+          # RELEASE_EXACT_MAIN_RELEASE_GUARD_END
+          verify_remote_main
           if ! url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url' 2>/dev/null)"; then
             gh release create "$TAG" --repo "$REPOSITORY" --verify-tag --title "Release $TAG (V $VERSION)" --generate-notes
             url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
