@@ -133,6 +133,19 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
                                      feature_enabled=True, dry_run=False)
                     self.assertFalse(result.wrote)
                     self.assertEqual(port.writes, [])
+        # A third read occurs AFTER the append, before changing the label.
+        # It may see an earlier clock: never write the final status then.
+        for recovery, minute in ((False, 20), (True, 35)):
+            with self.subTest(postappend_regression=recovery):
+                port = FakePort(snapshot(recovery=recovery))
+                port.locked_clock_drift = (3, minute)
+                result = execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertFalse(result.wrote)
+                self.assertEqual(len(port.writes), 1)
+                self.assertEqual(port.writes[0][0], "comment")
+                self.assertEqual(port.item.status,
+                                 RECOVERY if recovery else "estado: en revisión")
         # Monotonic advancement of trusted UTC under the lock remains valid.
         for recovery in (False, True):
             with self.subTest(advancing_clock_recovery=recovery):

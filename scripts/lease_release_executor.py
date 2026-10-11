@@ -168,6 +168,23 @@ def _release_marker(s: Snapshot) -> str:
             f"{_utc(s.last_activity_at).isoformat()}; "
             "adopción sólo mediante /adoptar-contrato-huerfana.")
 
+def _postappend(current: Snapshot, after: Snapshot, action: str) -> bool:
+    """No cambiar etiqueta con evidencia temporal/lease obsoleta tras append.
+
+    El fingerprint puede cambiar porque el comentario recién publicado
+    forma parte del snapshot, pero el marker debe ser exactamente el previsto.
+    """
+    expected = dict(current.marker)
+    if action == "release":
+        expected.update(active=False, reason="auto-inactivity-release")
+    return (_trusted(after, allow_partial=action == "release")
+            and _identity(after) == _identity(current)
+            and after.status == current.status and after.phase == current.phase
+            and after.last_activity_at == current.last_activity_at
+            and after.recovery_since == current.recovery_since
+            and _utc(current.now) <= _utc(after.now)
+            and after.marker == expected and _eligible(after, action))
+
 
 def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
             feature_enabled: bool = False, dry_run: bool = True) -> Result:
@@ -226,20 +243,13 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                         "reserva todavía activa.")
                 port.append(issue, body, current)
                 after = port.read(issue)
-                if not (_trusted(after) and _identity(after) == _identity(current)
-                        and after.status == current.status
-                        and after.last_activity_at == current.last_activity_at):
+                if not _postappend(current, after, action):
                     return Result(action, "partial_comment_only")
                 port.status(issue, RECOVERY, after)
                 return Result(action, "recovery_marked", True)
             port.append(issue, _release_marker(current), current)
             after = port.read(issue)
-            if not (_trusted(after, allow_partial=True)
-                    and _identity(after) == _identity(current)
-                    and after.status == current.status
-                    and after.marker.get("active") is False
-                    and after.marker.get("reason") == "auto-inactivity-release"
-                    and after.last_activity_at == current.last_activity_at):
+            if not _postappend(current, after, action):
                 return Result(action, "partial_marker_only")
             port.status(issue, AVAILABLE, after)
             return Result(action, "released", True)
