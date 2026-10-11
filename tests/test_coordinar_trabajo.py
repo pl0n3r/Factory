@@ -602,6 +602,57 @@ class EstadoCoordinacionTests(unittest.TestCase):
 class CoordinacionTests(unittest.TestCase):
     """Cubre contratos de reserva, sesión, transición y colisiones."""
 
+    def test_v3_inventory_pagination_rejects_partial_pages(self):
+        """No conceder V3 desde prefijos REST o filas no autenticables."""
+        api = FakeGitHub()
+        rest = GitHub("pl0n3r/Factory", "token-prueba")
+        rows = [
+            {"number": n + 100, "state": "open",
+             "labels": [{"name": STATUS_AVAILABLE}],
+             "body": VALID_ACCEPTANCE_BODY}
+            for n in range(60)
+        ]
+        rows.extend(
+            {"number": n + 1000, "state": "open",
+             "pull_request": {"url": "https://example.invalid/pull/1"}}
+            for n in range(40)
+        )
+        self.assertEqual(len(rows), 100)
+
+        for mode in ("second_page_not_list", "malformed_row"):
+            with self.subTest(mode=mode):
+                paths = []
+                def response(method, path, payload=None, allow=()):
+                    paths.append(path)
+                    self.assertEqual(method, "GET")
+                    if path.endswith("page=1"):
+                        if mode == "malformed_row":
+                            return [*rows[:15], "fila-invalida"]
+                        return rows
+                    if path.endswith("page=2"):
+                        return {"message": "error"}
+                    self.fail(f"GET inesperado: {path}")
+
+                with patch.object(rest, "request", side_effect=response), (
+                    patch.object(api, "open_issues", side_effect=rest.open_issues)
+                ):
+                    with self.assertRaisesRegex(
+                        CoordinationError, r"Inventario de Issues incompleto"
+                    ):
+                        reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.assignees, set())
+                self.assertEqual(
+                    len(paths), 2 if mode == "second_page_not_list" else 1
+                )
+
+        def valid_response(method, path, payload=None, allow=()):
+            return rows if path.endswith("page=1") else []
+        with patch.object(rest, "request", side_effect=valid_response):
+            self.assertEqual(len(rest.open_issues()), 60)
+
+
     def test_hidden_v3_immutable_identity_drift_fails_closed(self):
         """A igual UUID/paths, un cambio de identidad se detecta bajo lock."""
         api_factory = self._hidden_v3_fixture

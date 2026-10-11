@@ -417,12 +417,44 @@ class GitHub:
         return self.paginate(f"/repos/{self.repo}/pulls?state=closed")
 
     def open_issues(self) -> list[dict[str, Any]]:
-        """Obtiene Issues abiertos, sin incluir Pull Requests."""
-        return [
-            issue
-            for issue in self.paginate(f"/repos/{self.repo}/issues?state=open")
-            if not issue.get("pull_request")
-        ]
+        """Inventario REST estricto: jamás tratar un prefijo como completo.
+
+        GitHub mezcla Issues y PRs en /issues; validar las filas ANTES de
+        filtrar y recorrer todas las páginas para no perder leases V3.
+        """
+        items: list[dict[str, Any]] = []
+        seen_numbers: set[int] = set()
+        for page in range(1, 32):
+            payload = self.request(
+                "GET",
+                f"/repos/{self.repo}/issues?state=open&per_page=100&page={page}",
+            )
+            if not isinstance(payload, list) or len(payload) > 100:
+                raise CoordinationError(
+                    f"Inventario de Issues incompleto: página {page} inválida."
+                )
+            for row in payload:
+                if not isinstance(row, dict):
+                    raise CoordinationError(
+                        f"Inventario de Issues incompleto: fila en página {page} inválida."
+                    )
+                number = row.get("number")
+                if type(number) is not int or number < 1 or number in seen_numbers:
+                    raise CoordinationError(
+                        f"Inventario de Issues incompleto: ID duplicado o inválido en página {page}."
+                    )
+                seen_numbers.add(number)
+                if row.get("state") != "open":
+                    raise CoordinationError(
+                        f"Inventario de Issues incompleto: estado inválido en página {page}."
+                    )
+                if not row.get("pull_request"):
+                    items.append(row)
+            if len(payload) < 100:
+                return items
+        raise CoordinationError(
+            "Inventario de Issues incompleto: más de 3100 filas paginadas."
+        )
 
     def pull_files_exact_head(self, number: int) -> dict[str, Any]:
         """Lee todos los filenames autenticados con snapshot HEAD/BASE inmutable.
