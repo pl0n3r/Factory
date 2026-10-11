@@ -97,9 +97,13 @@ def _stable(value: object) -> object:
             ),
         )
     if isinstance(value, dict):
+        # JSON object keys are always strings. Coercion makes distinct Python
+        # keys (1/"1", True/"True") alias and silently discards evidence.
+        if any(type(key) is not str for key in value):
+            raise NoWorkInventoryError("inventory_key_invalid")
         return {
-            _stable(str(key)): _stable(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            _stable(key): _stable(item)
+            for key, item in sorted(value.items())
         }
     raise NoWorkInventoryError("inventory_value_invalid")
 

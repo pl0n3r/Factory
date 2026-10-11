@@ -351,6 +351,36 @@ class NoWorkDedupTests(unittest.TestCase):
         good["repositories"]["Factory"]["blockers"][0]["description"] = "éxito"
         self.assertNotEqual(inventory_fingerprint(good), baseline)
 
+    def test_non_string_material_keys_cannot_alias_json_keys(self):
+        baseline = inventory_fingerprint(inventory())
+        bad_keys = (
+            {1: "first", "1": "second"},
+            {True: "first", "True": "second"},
+            {None: "synthetic"},
+            {1.5: "synthetic"},
+        )
+        for details in bad_keys:
+            case = inventory()
+            case["repositories"]["Factory"]["blockers"][0]["details"] = details
+            with self.subTest(keys=repr(list(details))):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "inventory_key_invalid"
+                ):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        valid = inventory()
+        valid["repositories"]["Factory"]["blockers"][0]["details"] = {
+            "1": "first", "True": "second"
+        }
+        self.assertNotEqual(inventory_fingerprint(valid), baseline)
+        same = inventory()
+        same["repositories"]["Factory"]["blockers"][0]["details"] = {
+            "True": "second", "1": "first"
+        }
+        self.assertEqual(inventory_fingerprint(valid), inventory_fingerprint(same))
+
     def test_nested_observation_timestamps_do_not_change_fingerprint(self):
         """Cambiar la hora de captura no convierte una lease igual en trabajo nuevo."""
         baseline = inventory_fingerprint(inventory())
