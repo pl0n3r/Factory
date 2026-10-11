@@ -210,6 +210,8 @@ jobs:
           elif (( probe_rc != 0 )) && grep -Eq '^HTTP/[0-9.]+[[:space:]]+404([[:space:]]|$)' <<< "$status_lines"; then
             verify_remote_main
             verify_remote_tag
+            # El GET del objeto tag puede observar deriva: revalidar main antes del POST.
+            verify_remote_main
             gh release create "$TAG" --repo "$REPOSITORY" --verify-tag --title "Release $TAG (V $VERSION)" --generate-notes
             url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
             [[ -n "$url" ]] || { echo "::error::Release creado sin URL verificable"; exit 1; }
