@@ -54,6 +54,7 @@ def evaluate_retro_daily(*, events: Any, sources: Any, now: Any) -> dict[str, An
 
     valid_sources: dict[str, str] = {}
     repos: set[str] = set()
+    canonical_repos: set[str] = set()
     for source in sources:
         if not isinstance(source, dict):
             return _deny("invalid_source")
@@ -64,10 +65,14 @@ def evaluate_retro_daily(*, events: Any, sources: Any, now: Any) -> dict[str, An
                 or source.get("authenticated") is not True
                 or source.get("complete") is not True):
             return _deny("unauthenticated_or_incomplete_source")
-        if sid in valid_sources or repo in repos:
+        # GitHub identities are case-insensitive even when the display name differs.
+        # Do not count two sources for the same canonical repository.
+        canonical = repo.casefold()
+        if sid in valid_sources or canonical in canonical_repos:
             return _deny("ambiguous_source_identity")
         valid_sources[sid] = repo
         repos.add(repo)
+        canonical_repos.add(canonical)
 
     try:
         start = anchor - timedelta(hours=24)

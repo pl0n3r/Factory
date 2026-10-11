@@ -15,6 +15,29 @@ def event(ident, when, kind="pr_merged"):
 
 
 class RetroDailyTests(unittest.TestCase):
+    def test_case_variant_repositories_are_one_identity(self):
+        # GitHub resolves Factory/factory and PL0N3R/pl0n3r to one repository.
+        for variant in ("pl0n3r/factory", "PL0N3R/Factory"):
+            with self.subTest(variant=variant):
+                alias = {**SOURCE, "id": "alias", "repo": variant}
+                result = evaluate_retro_daily(
+                    events=[event("e1", "2026-10-11T08:00:00Z")],
+                    sources=[SOURCE, alias], now=NOW,
+                )
+                self.assertEqual(result["status"], "UNKNOWN")
+                self.assertEqual(result["reason"], "ambiguous_source_identity")
+                self.assertNotIn("counts_by_repo", result)
+
+        other = {**SOURCE, "id": "other", "repo": "pl0n3r/Condor"}
+        positive = evaluate_retro_daily(
+            events=[event("e1", "2026-10-11T08:00:00Z")],
+            sources=[SOURCE, other], now=NOW,
+        )
+        self.assertEqual(positive["status"], "READY")
+        self.assertEqual(positive["counts_by_repo"]["pl0n3r/Factory"]["pr_merged"], 1)
+        self.assertEqual(positive["counts_by_repo"]["pl0n3r/Condor"]["pr_merged"], 0)
+        self.assertFalse(positive["publication_allowed"])
+
     def test_rolling_24h_event_window_utc_and_determinism(self):
         input_rows = [event("new", "2026-10-11T08:00:00Z"),
                       event("old", "2026-10-10T08:59:59Z"),
