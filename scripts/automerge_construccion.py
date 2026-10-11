@@ -20,7 +20,7 @@ REQUIRED_CHECKS = frozenset({
     "CodeRabbit", "Criterios de aceptación", "Validar coordinación", "Seguridad",
 })
 WAIVER_SOURCE = ("pl0n3r/Factory", 1139, 6107503429, "pl0n3r")
-UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\\Z")
+UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
 SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy",
              "secrets", "puertas-humanas", "production", "deploy")
 SENSITIVE_PREFIXES = (".github/", "config/", "credentials/", "agentes/roles/",
@@ -94,10 +94,11 @@ def _paths_status(paths: Any) -> str:
 
 
 
-def _reservation_status(value: Any, head: str, now: datetime) -> str:
+def _reservation_status(value: Any, head: str, now: datetime, paths: list[str]) -> str:
     """Valida el contrato del dato atestado por el caller, no llama GitHub."""
     expected = {"version", "active", "source", "reservation_id", "owner",
-                "branch", "head_sha", "verified_at", "expires_at"}
+                "branch", "head_sha", "verified_at", "expires_at",
+                "issue_number", "task_paths"}
     if not isinstance(value, dict) or set(value) != expected:
         return "incomplete_evidence"
     if (type(value["version"]) is not int or value["version"] != 3
@@ -107,7 +108,11 @@ def _reservation_status(value: Any, head: str, now: datetime) -> str:
             or not isinstance(value["reservation_id"], str)
             or UUID.fullmatch(value["reservation_id"]) is None
             or not isinstance(value["branch"], str)
-            or re.fullmatch(r"trabajo/issue-[1-9][0-9]*", value["branch"]) is None
+            or type(value["issue_number"]) is not int
+            or value["issue_number"] < 1
+            or value["branch"] != f'trabajo/issue-{value["issue_number"]}'
+            or type(value["task_paths"]) is not list
+            or value["task_paths"] != paths
             or value["head_sha"] != head):
         return "incomplete_evidence"
     verified, until = _utc(value["verified_at"]), _utc(value["expires_at"])
@@ -204,7 +209,8 @@ def evaluate(snapshot: Any) -> Decision:
     if remaining < minimum:
         return _deny("insufficient_budget")
 
-    reservation_status = _reservation_status(snapshot["reservation"], head, now)
+    reservation_status = _reservation_status(snapshot["reservation"], head, now,
+                                             snapshot["paths"])
     if reservation_status != "ok":
         return _deny(reservation_status)
     review_bot_status = _review_bot_status(snapshot["review_bot"], head)
