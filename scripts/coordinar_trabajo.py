@@ -2212,6 +2212,12 @@ def reserve_work(
             else None
         )
         open_issues = api.open_issues()
+        # Presupuesto máximo: con más filas no es seguro afirmar que se
+        # inventariaron todas las reservas. Fallar cerrado antes de escanear.
+        if len(open_issues) > 64:
+            raise CoordinationError(
+                "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
+            )
         active_task_snapshots: dict[int, dict[str, Any]] | None = None
         active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None
         active_reservation_numbers: set[int] | None = None
@@ -2322,26 +2328,28 @@ def reserve_work(
                 )
         # Segunda lectura sin prefiltrado de estados: carrera de activación
         # o rotación bajo label AVAILABLE/BLOCKED también niega el nuevo grant.
-        current_active = {
-            other["number"] for other in api.open_issues()
-            if isinstance(other.get("number"), int)
-            and other["number"] != issue_number
-            and active_reservation(api, other["number"]) is not None
-        }
-        if current_active != active_reservation_numbers:
+        fresh_issues = api.open_issues()
+        if len(fresh_issues) > 64:
+            raise CoordinationError(
+                "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
+            )
+        # Un único barrido conserva el snapshot completo de identidad de las
+        # reservas sin multiplicar GET de comentarios de leases activas.
+        current_reservations = {}
+        for other in fresh_issues:
+            other_number = other.get("number")
+            if not isinstance(other_number, int) or other_number == issue_number:
+                continue
+            snapshot = active_reservation(api, other_number)
+            if snapshot is not None:
+                current_reservations[other_number] = snapshot
+        if set(current_reservations) != active_reservation_numbers:
             raise CoordinationError("Cola activa cambió durante /tomar.")
-        # Una lease ajena puede rotar o ampliar claims aunque no existan
-        # pins de diff: comparar siempre la autoridad inicial de la cola.
+        # Conservar la identidad V3 ENTERA: UUID sin cambios no basta si
+        # cambian owner, branch, fingerprints, claims o dependencias.
         for number, initial in active_reservations.items():
-            latest_lease = active_reservation(api, number)
-            if (
-                latest_lease is None
-                or latest_lease.get("reservation_id") != initial.get("reservation_id")
-                or latest_lease.get("version") != initial.get("version")
-                or latest_lease.get("active") is not True
-                or reservation_task_marker(latest_lease)
-                != active_task_snapshots.get(number)
-            ):
+            latest_lease = current_reservations.get(number)
+            if latest_lease != initial:
                 raise CoordinationError(
                     f"Lease #{number} cambió durante /tomar."
                 )
@@ -2358,7 +2366,7 @@ def reserve_work(
                         f"Dependencia #{dep} de lease #{number} cambió durante /tomar."
                     )
         for number, pinned in pins.items():
-            latest_lease = active_reservation(api, number)
+            latest_lease = current_reservations.get(number)
             if (
                 latest_lease is None
                 or latest_lease.get("reservation_id") != pinned[0]

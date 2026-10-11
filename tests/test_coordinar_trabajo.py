@@ -602,6 +602,102 @@ class EstadoCoordinacionTests(unittest.TestCase):
 class CoordinacionTests(unittest.TestCase):
     """Cubre contratos de reserva, sesión, transición y colisiones."""
 
+    def test_hidden_v3_immutable_identity_drift_fails_closed(self):
+        """A igual UUID/paths, un cambio de identidad se detecta bajo lock."""
+        api_factory = self._hidden_v3_fixture
+        for field, value in (
+            ("owner", "otro-titular"),
+            ("branch", "trabajo/issue-999"),
+            ("acceptance_sha256", "f" * 64),
+            ("task_marker_sha256", "e" * 64),
+        ):
+            with self.subTest(field=field):
+                api, original_comments = api_factory(STATUS_AVAILABLE)
+                # El candidato es disjunto; solo la rotación de autoridad
+                # posterior a la primera lectura debe bloquearlo.
+                api.issue_data["body"] = api.issue_data["body"].replace(
+                    "src/same.php", "docs/disjoint.md"
+                )
+                activated = False
+                create_original = api.create_branch
+
+                def start_branch(name, sha):
+                    nonlocal activated
+                    result = create_original(name, sha)
+                    if name == "trabajo/issue-12":
+                        activated = True
+                    return result
+
+                def drifting_comments(number):
+                    rows = original_comments(number)
+                    if number != 50 or not activated:
+                        return rows
+                    row = dict(rows[0])
+                    marker = json.loads(
+                        row["body"].split("<!-- condor-reserva ", 1)[1]
+                        .split(" -->", 1)[0]
+                    )
+                    marker[field] = value
+                    row["body"] = (
+                        "<!-- condor-reserva "
+                        + json.dumps(marker, separators=(",", ":"), sort_keys=True)
+                        + " -->"
+                    )
+                    return [row]
+
+                with patch.object(api, "issue_comments", side_effect=drifting_comments), (
+                    patch.object(api, "create_branch", side_effect=start_branch)
+                ):
+                    with self.assertRaisesRegex(
+                        CoordinationError, r"Lease #50 cambió"
+                    ):
+                        reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertNotIn("trabajo/issue-12", api.branches)
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.assignees, set())
+
+    def test_v3_inventory_read_budget_is_bounded_and_fails_closed(self):
+        """10 Issues se verifican, 100 no gastan API ni conceden sesión."""
+        small, trusted = self._hidden_v3_fixture(STATUS_BLOCKED)
+        for num in range(60, 69):
+            small.open_issue_data.append({
+                "number": num, "state": "open",
+                "labels": [{"name": STATUS_AVAILABLE}],
+                "body": VALID_ACCEPTANCE_BODY,
+            })
+        calls = []
+        def measured_comments(number):
+            calls.append(number)
+            return trusted(number)
+        with patch.object(small, "issue_comments", side_effect=measured_comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"colisión con tarea activa #50"
+            ):
+                reserve_work(small, 12, "pl0n3r", "OWNER")
+        self.assertEqual(len(calls), 10)
+        self.assertEqual(small.comments, [])
+
+        large, trusted_large = self._hidden_v3_fixture(STATUS_AVAILABLE)
+        for num in range(60, 159):
+            large.open_issue_data.append({
+                "number": num, "state": "open",
+                "labels": [{"name": STATUS_AVAILABLE}],
+                "body": VALID_ACCEPTANCE_BODY,
+            })
+        comment_calls = []
+        def counted_comments(number):
+            comment_calls.append(number)
+            return trusted_large(number)
+        with patch.object(large, "issue_comments", side_effect=counted_comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"presupuesto seguro de 64 Issues"
+            ):
+                reserve_work(large, 12, "pl0n3r", "OWNER")
+        self.assertEqual(comment_calls, [])
+        self.assertNotIn("trabajo/issue-12", large.branches)
+        self.assertEqual(large.comments, [])
+
+
     def _hidden_v3_fixture(self, visible_status):
         """Construye un claim V3 ajeno, autenticado, sin confiar en su label."""
         from scripts.orquestador_kit import PlannedTask, build_task_marker
