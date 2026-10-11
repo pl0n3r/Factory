@@ -12,7 +12,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -21,18 +21,30 @@ if __package__:
     from scripts.aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
     from scripts.orquestador_kit import (
         PlanError,
+        MAX_PATHS,
+        MAX_TASKS,
+        _valid_path,
+        _collision_key,
         parallel_compatibility_evidence,
         parse_task_marker,
         reservation_blockers,
+        verified_new_file_claim_against_active_diff,
+        claims_overlap,
         task_marker_fingerprint,
     )
 else:
     from aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
     from orquestador_kit import (
         PlanError,
+        MAX_PATHS,
+        MAX_TASKS,
+        _valid_path,
+        _collision_key,
         parallel_compatibility_evidence,
         parse_task_marker,
         reservation_blockers,
+        verified_new_file_claim_against_active_diff,
+        claims_overlap,
         task_marker_fingerprint,
     )
 
@@ -412,6 +424,116 @@ class GitHub:
             if not issue.get("pull_request")
         ]
 
+    def pull_files_exact_head(self, number: int) -> dict[str, Any]:
+        """Lee todos los filenames autenticados con snapshot HEAD/BASE inmutable.
+
+        Este preflight no reserva paths ni autoriza el merge: confirma que no se
+        pierde un conflicto por paginación, rename o un push concurrente.
+        """
+        before = self.pull(number)
+        head = before.get("head")
+        base = before.get("base")
+        expected_count = before.get("changed_files")
+        if (
+            before.get("state") != "open"
+            or not isinstance(head, dict)
+            or not isinstance(base, dict)
+            or not isinstance(head.get("sha"), str)
+            or not isinstance(base.get("sha"), str)
+            or SHA_RE.fullmatch(head["sha"]) is None
+            or SHA_RE.fullmatch(base["sha"]) is None
+            or base.get("ref") != "main"
+            or type(expected_count) is not int
+            or not 0 <= expected_count <= 3000
+        ):
+            raise CoordinationError(
+                f"PR #{number}: metadata incompleta para files exact-HEAD."
+            )
+        expected_head = head["sha"].lower()
+        expected_base = base["sha"].lower()
+        filenames: list[str] = []
+        aliases: list[str] = []
+
+        def valid_file(value: Any) -> bool:
+            # La API devuelve nombres literales, no patrones de claims.
+            if (
+                not isinstance(value, str)
+                or not value
+                or value.startswith(("/", "./"))
+                or value.endswith("/")
+                or any(ch in value for ch in ("\n", "\r", "\x00"))
+            ):
+                return False
+            return all(part not in ("", ".", "..") for part in value.split("/"))
+
+        for page in (range(1, 31) if expected_count else ()):
+            rows = self.request(
+                "GET",
+                f"/repos/{self.repo}/pulls/{number}/files?per_page=100&page={page}",
+            )
+            if not isinstance(rows, list) or not rows or len(rows) > 100:
+                raise CoordinationError(
+                    f"PR #{number}: página {page} ausente, vacía o inválida."
+                )
+            for entry in rows:
+                if not isinstance(entry, dict):
+                    raise CoordinationError(f"PR #{number}: fila de diff inválida.")
+                name = entry.get("filename")
+                if not valid_file(name):
+                    raise CoordinationError(f"PR #{number}: archivo no canónico.")
+                filenames.append(name)
+                if entry.get("status") == "renamed":
+                    prev = entry.get("previous_filename")
+                    if not valid_file(prev):
+                        raise CoordinationError(
+                            f"PR #{number}: rename sin origen verificable."
+                        )
+                    aliases.append(prev)
+            if len(filenames) > expected_count:
+                raise CoordinationError(
+                    f"PR #{number}: filas exceden changed_files."
+                )
+            if len(filenames) == expected_count:
+                break
+            if len(rows) < 100:
+                raise CoordinationError(
+                    f"PR #{number}: diff truncado antes de changed_files."
+                )
+        else:
+            # Con changed_files=0, el bucle se omite intencionalmente.
+            if expected_count:
+                raise CoordinationError(f"PR #{number}: diff excede 3000 archivos.")
+
+        logical_paths = [_collision_key(path) for path in (*filenames, *aliases)]
+        if (
+            len(filenames) != expected_count
+            or len(set(logical_paths)) != len(logical_paths)
+        ):
+            raise CoordinationError(
+                f"PR #{number}: diff incompleto, duplicado o inconsistente."
+            )
+        after = self.pull(number)
+        after_head = after.get("head")
+        after_base = after.get("base")
+        if (
+            after.get("state") != "open"
+            or not isinstance(after_head, dict)
+            or not isinstance(after_base, dict)
+            or after_base.get("ref") != "main"
+            or str(after_head.get("sha", "")).lower() != expected_head
+            or str(after_base.get("sha", "")).lower() != expected_base
+            or after.get("changed_files") != expected_count
+        ):
+            raise CoordinationError(
+                f"PR #{number}: HEAD/BASE cambió durante lectura de diff."
+            )
+        return {
+            "head_sha": expected_head,
+            "base_sha": expected_base,
+            "files": sorted(set(filenames) | set(aliases)),
+            "complete": True,
+        }
+
     def pull_files(self, number: int) -> set[str]:
         """Devuelve los archivos modificados por un Pull Request."""
         files = self.paginate(f"/repos/{self.repo}/pulls/{number}/files")
@@ -777,16 +899,22 @@ def valid_reservation_payload(value: Any) -> bool:
             not isinstance(marker_fingerprint, str)
             or re.fullmatch(r"[0-9a-f]{64}", marker_fingerprint) is None
             or not isinstance(paths, list)
-            or not paths
-            or not all(isinstance(path, str) and path for path in paths)
+            or not 1 <= len(paths) <= MAX_PATHS
+            or len(set(path for path in paths if isinstance(path, str))) != len(paths)
             or not isinstance(dependencies, list)
+            or len(dependencies) > MAX_TASKS
+            or len(set(number for number in dependencies if type(number) is int))
+               != len(dependencies)
             or not all(
-                isinstance(number, int)
-                and not isinstance(number, bool)
-                and number > 0
+                type(number) is int and number > 0
                 for number in dependencies
             )
         ):
+            return False
+        try:
+            for path in paths:
+                _valid_path(path)
+        except (PlanError, TypeError):
             return False
     else:
         return False
@@ -865,10 +993,16 @@ def file_overlaps(
     current_files: set[str],
     others: dict[int, set[str]],
 ) -> dict[int, list[str]]:
-    """Calcula solapamientos exactos de archivos contra otros PR."""
+    """Compara archivos usando identidad conservadora NFC + casefold.
+
+    Conservar los nombres originales del PR actual en los diagnósticos.
+    """
     collisions: dict[int, list[str]] = {}
     for pr_number, files in others.items():
-        overlap = sorted(current_files & files)
+        other_keys = {_collision_key(path) for path in files}
+        overlap = sorted(
+            path for path in current_files if _collision_key(path) in other_keys
+        )
         if overlap:
             collisions[pr_number] = overlap
     return collisions
@@ -1724,6 +1858,7 @@ def reserve_available_work(
     acceptance_sha256: str,
     parallel_evidence: list[str] | None = None,
     task_marker: dict[str, Any] | None = None,
+    pre_publish_check: Callable[[], None] | None = None,
 ) -> str | None:
     """Crea una reserva nueva para un Issue realmente disponible."""
     main_sha = api.branch_sha("main")
@@ -1749,16 +1884,76 @@ def reserve_available_work(
             + "\n".join(f"- {item}" for item in parallel_evidence)
         )
 
+    if pre_publish_check is not None:
+        try:
+            pre_publish_check()
+        except Exception:
+            # La rama pudo recibir cambios entre create_branch y preflight.
+            try:
+                if api.branch_sha(branch) == main_sha:
+                    api.delete_branch(branch)
+            except Exception:
+                pass
+            raise
+    # El preflight valida la cola; también fijar la identidad de la rama
+    # propia antes de cualquier escritura. Una rama avanzada es ajena:
+    # no borrarla ni publicar una reserva sobre ese contenido.
+    if api.branch_sha(branch) != main_sha:
+        raise CoordinationError(
+            "HEAD de rama candidata cambió durante /tomar."
+        )
+    status_written = False
+    assigned = False
+    unassign_ours = False
     try:
+        # Una lectura fallida tampoco debe dejar la rama sin rollback.
+        original_assignees = api.issue(issue_number).get("assignees")
+        unassign_ours = (
+            isinstance(original_assignees, list)
+            and all(
+                isinstance(row, dict) and row.get("login") != actor
+                for row in original_assignees
+            )
+        )
         api.set_status(issue_number, STATUS_RESERVED)
+        status_written = True
         api.try_assign(issue_number, actor)
+        assigned = True
         api.comment(issue_number, reservation_comment)
     except Exception:
-        api.delete_branch(branch)
-        api.try_unassign(issue_number, actor)
+        # GitHub no ofrece una transacción multi-API. Si otra sesión cambió
+        # estado, rama o autoridad, conservarla en vez de restaurar a ciegas.
         try:
-            api.set_status(issue_number, STATUS_AVAILABLE)
+            latest_issue = api.issue(issue_number)
+            latest_statuses = {
+                name for name in label_names(latest_issue)
+                if name.startswith(("estado: ", "status: "))
+            }
+            winning_lease = (
+                active_reservation(api, issue_number)
+                if hasattr(api, "issue_comments")
+                else None
+            )
+            # Solo revertir Issue si la rama aún es la que creó esta
+            # sesión; si hubo un push ajeno, conservar estado y rama juntos.
+            may_rollback = (
+                winning_lease is None
+                and api.branch_sha(branch) == main_sha
+            )
+            if (
+                may_rollback
+                and status_written
+                and latest_issue.get("state") == "open"
+                and latest_statuses == {STATUS_RESERVED}
+            ):
+                if assigned and unassign_ours:
+                    api.try_unassign(issue_number, actor)
+                api.set_status(issue_number, STATUS_AVAILABLE)
+            if may_rollback:
+                api.delete_branch(branch)
         except Exception:
+            # Si no podemos leer la autoridad, fallar cerrado: no borrar
+            # estado, asignación ni trabajo potencialmente ajenos.
             pass
         raise
 
@@ -1844,6 +2039,83 @@ def recovery_issue_numbers(api: GitHub) -> list[int]:
     return sorted(numbers)
 
 
+def verified_parallel_file_evidence(
+    api: GitHub,
+    task_marker: dict[str, Any] | None,
+    active_reservations: dict[int, dict[str, Any]],
+    active_task_snapshots: dict[int, dict[str, Any]],
+) -> tuple[set[int], list[str], dict[int, tuple[str, str, int, str]]]:
+    """Preflight opt-in: un archivo candidato contra diff completo de lease V3.
+
+    El éxito depende de SHAs y UUID revalidables, nunca de un label aislado.
+    Los leases V1/V2 o ramas sin PR siguen serializados (fail closed).
+    """
+    if not task_marker:
+        return set(), [], {}
+    paths = task_marker["paths"]
+    if not paths or any(not isinstance(x, str) or x.endswith("/") for x in paths):
+        return set(), [], {}
+    reader = getattr(api, "pull_files_exact_head", None)
+    if not callable(reader):
+        return set(), [], {}
+    compatible: set[int] = set()
+    notes: list[str] = []
+    pins: dict[int, tuple[str, str, int, str]] = {}
+    open_pulls = api.open_pulls()
+    for number, lease in active_reservations.items():
+        other = active_task_snapshots.get(number)
+        if not other:
+            # No snapshot V3 verificable: no se concede independencia.
+            continue
+        other_paths = other["paths"]
+        if not any(claims_overlap(a, b) for a in paths for b in other_paths):
+            continue
+        if lease.get("version") != 3 or lease.get("active") is not True:
+            continue
+        branch = lease.get("branch")
+        session = lease.get("reservation_id")
+        if not isinstance(branch, str) or not isinstance(session, str):
+            continue
+        linked = [
+            p for p in open_pulls
+            if p.get("state") == "open"
+            and isinstance(p.get("head"), dict)
+            and p["head"].get("ref") == branch
+            and isinstance(p["head"].get("repo"), dict)
+            and str(p["head"]["repo"].get("full_name") or "").lower() == api.repo.lower()
+            and isinstance(p.get("base"), dict)
+            and p["base"].get("ref") == "main"
+        ]
+        if len(linked) != 1 or type(linked[0].get("number")) is not int:
+            continue
+        pr = linked[0]
+        proof = reader(pr["number"])
+        head = api.branch_sha(branch)
+        if not head or head.lower() != proof.get("head_sha"):
+            continue
+        if str(pr["head"].get("sha", "")).lower() != head.lower():
+            continue
+        verdict = verified_new_file_claim_against_active_diff(
+            paths, other_paths,
+            active_files=proof.get("files"),
+            active_head=head.lower(),
+            evidence_head=proof.get("head_sha"),
+            diff_complete=proof.get("complete"),
+            active_issue=number,
+            active_lease=session,
+        )
+        if verdict["safe"] is not True:
+            continue
+        compatible.add(number)
+        pins[number] = (session, head.lower(), pr["number"], proof["base_sha"])
+        notes.append(
+            f"#{number}: archivos exactos del candidato disjuntos del diff "
+            f"PR #{pr['number']}@{head.lower()} (lease {session}); "
+            "el siguiente cambio de SHA vuelve a bloquear hasta revalidación"
+        )
+    return compatible, notes, pins
+
+
 def reserve_work(
     api: GitHub,
     issue_number: int,
@@ -1904,7 +2176,11 @@ def reserve_work(
             current,
         )
 
-    if STATUS_AVAILABLE not in labels:
+    # No conceder una segunda lease cuando coexisten estados canónicos.
+    visible_statuses = {
+        label for label in labels if label.startswith(("estado: ", "status: "))
+    }
+    if visible_statuses != {STATUS_AVAILABLE}:
         visible_states = sorted(
             label
             for label in labels
@@ -1939,6 +2215,7 @@ def reserve_work(
         active_task_snapshots: dict[int, dict[str, Any]] | None = None
         active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None
         active_reservation_numbers: set[int] | None = None
+        active_reservations: dict[int, dict[str, Any]] = {}
         if hasattr(api, "issue_comments"):
             active_task_snapshots = {}
             active_dependency_states = {}
@@ -1963,6 +2240,7 @@ def reserve_work(
                 if other_reservation is None:
                     continue
                 active_reservation_numbers.add(other_number)
+                active_reservations[other_number] = other_reservation
                 other_marker = reservation_task_marker(other_reservation)
                 if other_marker is not None:
                     active_task_snapshots[other_number] = other_marker
@@ -1971,6 +2249,9 @@ def reserve_work(
                         for number in other_marker["depends_on"]
                     }
 
+        verified, verified_notes, pins = verified_parallel_file_evidence(
+            api, task_marker, active_reservations, active_task_snapshots or {},
+        )
         plan_blockers = reservation_blockers(
             issue,
             open_issues,
@@ -1979,6 +2260,9 @@ def reserve_work(
             active_task_snapshots,
             active_dependency_states,
             active_reservation_numbers,
+            # Un diff actual no asegura exclusividad frente a futuros pushes
+            # de una lease con claims más amplios: fail-closed.
+            verified_file_independence=set(),
         )
     except PlanError as exc:
         raise CoordinationError(
@@ -1999,6 +2283,96 @@ def reserve_work(
         open_issues,
         active_task_snapshots,
     )
+    parallel_evidence.extend(verified_notes)
+
+    dependency_status_snapshot = {
+        number: (
+            record.get("state"), record.get("state_reason"),
+            frozenset(label_names(record)),
+        )
+        for number, record in (dependency_states or {}).items()
+    }
+
+    def recheck_before_publishing() -> None:
+        """Revalidar candidato y dependencias incluso sin pins granulares."""
+        latest_issue = api.issue(issue_number)
+        if (
+            latest_issue.get("state") != "open"
+            or {
+                label for label in label_names(latest_issue)
+                if label.startswith(("estado: ", "status: "))
+            } != {STATUS_AVAILABLE}
+            or parse_task_marker(str(latest_issue.get("body") or ""))
+            != task_marker
+            or contract_fingerprint(str(latest_issue.get("body") or ""))
+            != acceptance_sha256
+        ):
+            raise CoordinationError("Issue candidato cambió durante /tomar.")
+        for dep, expected in dependency_status_snapshot.items():
+            current_dep = api.issue(dep)
+            actual = (
+                current_dep.get("state"), current_dep.get("state_reason"),
+                frozenset(label_names(current_dep)),
+            )
+            if actual != expected:
+                raise CoordinationError(
+                    f"Dependencia #{dep} cambió durante /tomar."
+                )
+        statuses = {
+            STATUS_RESERVED, STATUS_REVIEW, STATUS_RECOVERY,
+            "status: reserved", "status: in review", "status: recovery required",
+        }
+        current_active = {
+            other["number"] for other in api.open_issues()
+            if isinstance(other.get("number"), int)
+            and other["number"] != issue_number
+            and label_names(other) & statuses
+            and active_reservation(api, other["number"]) is not None
+        }
+        if current_active != active_reservation_numbers:
+            raise CoordinationError("Cola activa cambió durante /tomar.")
+        # Una lease ajena puede rotar o ampliar claims aunque no existan
+        # pins de diff: comparar siempre la autoridad inicial de la cola.
+        for number, initial in active_reservations.items():
+            latest_lease = active_reservation(api, number)
+            if (
+                latest_lease is None
+                or latest_lease.get("reservation_id") != initial.get("reservation_id")
+                or latest_lease.get("version") != initial.get("version")
+                or latest_lease.get("active") is not True
+                or reservation_task_marker(latest_lease)
+                != active_task_snapshots.get(number)
+            ):
+                raise CoordinationError(
+                    f"Lease #{number} cambió durante /tomar."
+                )
+            for dep, initial_dep in (active_dependency_states or {}).get(
+                number, {}
+            ).items():
+                latest_dep = api.issue(dep)
+                if (
+                    latest_dep.get("state") != initial_dep.get("state")
+                    or latest_dep.get("state_reason")
+                    != initial_dep.get("state_reason")
+                ):
+                    raise CoordinationError(
+                        f"Dependencia #{dep} de lease #{number} cambió durante /tomar."
+                    )
+        for number, pinned in pins.items():
+            latest_lease = active_reservation(api, number)
+            if (
+                latest_lease is None
+                or latest_lease.get("reservation_id") != pinned[0]
+                or latest_lease.get("version") != 3
+                or reservation_task_marker(latest_lease)
+                != active_task_snapshots.get(number)
+            ):
+                raise CoordinationError(f"Lease #{number} cambió durante /tomar.")
+        renewed, _, renewed_pins = verified_parallel_file_evidence(
+            api, task_marker, active_reservations, active_task_snapshots or {},
+        )
+        if renewed != verified or renewed_pins != pins:
+            raise CoordinationError("Diff/HEAD activo cambió durante /tomar.")
 
     return reserve_available_work(
         api,
@@ -2008,6 +2382,7 @@ def reserve_work(
         acceptance_sha256,
         parallel_evidence,
         task_marker,
+        pre_publish_check=recheck_before_publishing,
     )
 
 def reservation_fingerprint_for_profile(
@@ -3073,7 +3448,18 @@ def collision_validation_errors(
     pr_number: int,
 ) -> list[str]:
     """Detecta archivos solapados contra otros PR abiertos hacia main."""
-    current_files = api.pull_files(pr_number)
+    # El cliente real valida paginación, aliases de rename y HEAD/BASE
+    # completos. Los fakes antiguos conservan la interfaz de set[str].
+    exact_reader = getattr(api, "pull_files_exact_head", None)
+    if callable(exact_reader):
+        proofs: dict[int, dict[str, Any]] = {}
+        first = exact_reader(pr_number)
+        proofs[pr_number] = first
+        current_files = set(first["files"])
+    else:
+        proofs = {}
+        current_files = api.pull_files(pr_number)
+
     others: dict[int, set[str]] = {}
     for other in api.open_pulls():
         other_number = other.get("number")
@@ -3082,7 +3468,31 @@ def collision_validation_errors(
         other_base = other.get("base")
         if isinstance(other_base, dict) and other_base.get("ref") != "main":
             continue
-        others[other_number] = api.pull_files(other_number)
+        if callable(exact_reader):
+            proof = exact_reader(other_number)
+            proofs[other_number] = proof
+            others[other_number] = set(proof["files"])
+        else:
+            others[other_number] = api.pull_files(other_number)
+
+    # Una lectura de varios PR no es atómica. Prohibir el resultado si
+    # cualquier HEAD/BASE cambió desde su evidencia antes de retornar.
+    for number, proof in proofs.items():
+        current = api.pull(number)
+        head = current.get("head")
+        base = current.get("base")
+        if (
+            current.get("state") != "open"
+            or not isinstance(head, dict)
+            or not isinstance(base, dict)
+            or not isinstance(head.get("sha"), str)
+            or not isinstance(base.get("sha"), str)
+            or head["sha"].lower() != proof["head_sha"]
+            or base["sha"].lower() != proof["base_sha"]
+        ):
+            raise CoordinationError(
+                f"PR #{number}: SHA cambió entre las lecturas de colisión."
+            )
 
     errors: list[str] = []
     for other_pr, files in file_overlaps(current_files, others).items():
@@ -3132,6 +3542,76 @@ def validate_pull(
         f"Coordinación válida para PR #{pr_number} "
         f"({mode}); sin solapamientos con otros PR abiertos."
     )
+
+def validate_pr_claims(api: GitHub, pr_number: int) -> None:
+    """Verifica cada push contra los archivos reclamados por su lease V3.
+
+    Check read-only, exact-HEAD; no concede paralelismo ni sustituye al
+    merge gate. El workflow confiable debe dispararlo en synchronize.
+    """
+    before = api.pull(pr_number)
+    head = before.get("head")
+    base = before.get("base")
+    if (
+        before.get("state") != "open"
+        or not isinstance(head, dict)
+        or not isinstance(base, dict)
+        or base.get("ref") != "main"
+        or not isinstance(head.get("sha"), str)
+        or not isinstance(base.get("sha"), str)
+        or SHA_RE.fullmatch(head["sha"]) is None
+        or SHA_RE.fullmatch(base["sha"]) is None
+    ):
+        raise CoordinationError("PR sin HEAD/BASE canónico para claims.")
+    branch = head.get("ref")
+    issue_number = issue_from_branch(branch) if isinstance(branch, str) else None
+    if issue_number is None:
+        raise CoordinationError("PR sin rama canónica asociada a un Issue.")
+    lease = active_reservation(api, issue_number)
+    if (
+        not isinstance(lease, dict)
+        or lease.get("version") != 3
+        or lease.get("active") is not True
+        or lease.get("branch") != branch
+        or not isinstance(lease.get("task_paths"), list)
+        or not lease["task_paths"]
+    ):
+        raise CoordinationError("PR sin lease V3 activa con task_paths canónicos.")
+
+    proof = api.pull_files_exact_head(pr_number)
+    if (
+        proof.get("complete") is not True
+        or proof.get("head_sha") != head["sha"].lower()
+        or proof.get("base_sha") != base["sha"].lower()
+        or not isinstance(proof.get("files"), list)
+        or not proof["files"]
+    ):
+        raise CoordinationError("Diff exact-HEAD ausente, vacío o caducado.")
+
+    if any(not isinstance(path, str) for path in proof["files"]):
+        raise CoordinationError("Diff contiene un nombre de archivo inválido.")
+    violations = sorted(
+        path for path in proof["files"]
+        if not any(claims_overlap(path, claim) for claim in lease["task_paths"])
+    )
+    after = api.pull(pr_number)
+    latest = active_reservation(api, issue_number)
+    if (
+        after.get("state") != "open"
+        or not isinstance(after.get("head"), dict)
+        or not isinstance(after.get("base"), dict)
+        or after["head"].get("sha") != head["sha"]
+        or after["base"].get("sha") != base["sha"]
+        or latest != lease
+        or api.branch_sha(branch) != head["sha"]
+    ):
+        raise CoordinationError("PR o lease cambió durante validación de claims.")
+    if violations:
+        raise CoordinationError(
+            "Archivos fuera de la lease V3: " + ", ".join(violations)
+        )
+    print(f"PR #{pr_number}: diff exact-HEAD dentro de claims V3 de #{issue_number}.")
+
 
 def parse_comment_command(body: str) -> tuple[str, str | None]:
     """Interpreta únicamente los comandos públicos del perfil activo."""
@@ -3257,6 +3737,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--pr", required=True, type=int)
     validate.add_argument("--require-reservation", action="store_true")
 
+    scoped = sub.add_parser("validar-claims-pr")
+    scoped.add_argument("--repo", required=True)
+    scoped.add_argument("--pr", required=True, type=int)
+
     sweep = sub.add_parser("marcar-inactivas")
     sweep.add_argument("--repo", required=True)
 
@@ -3286,6 +3770,8 @@ def main() -> int:
             update_issue_label_state(api, args.issue, args.actor, args.label)
         elif args.command == "validar-pr":
             validate_pull(api, args.pr, args.require_reservation)
+        elif args.command == "validar-claims-pr":
+            validate_pr_claims(api, args.pr)
         elif args.command == "marcar-inactivas":
             run_scheduled_sweep(api)
         else:
