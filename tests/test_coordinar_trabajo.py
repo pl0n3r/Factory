@@ -674,7 +674,9 @@ class CoordinacionTests(unittest.TestCase):
                 CoordinationError, r"colisión con tarea activa #50"
             ):
                 reserve_work(small, 12, "pl0n3r", "OWNER")
-        self.assertEqual(len(calls), 10)
+        # 10 consultas de otras hojas, más el preflight de Issue #12.
+        self.assertEqual(len([number for number in calls if number != 12]), 10)
+        self.assertEqual(calls.count(12), 1)
         self.assertEqual(small.comments, [])
 
         large, trusted_large = self._hidden_v3_fixture(STATUS_AVAILABLE)
