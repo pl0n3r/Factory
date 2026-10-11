@@ -91,6 +91,20 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
         data = [issue(12), issue(13, "estado: disponible")]
         comments = {12: [comment(1, marker(12))], 13: []}
         stable = audit_active_claims(data, comments, complete=True)
+        # /tomar de otro actor aún no confirmado por el bot invalida el recheck.
+        pending = {12: comments[12], 13: [
+            {"id": 3, "user": {"login": "pl0n3r"}, "body": "/tomar"}
+        ]}
+        pending_audit = audit_active_claims(data, pending, complete=True)
+        with self.assertRaisesRegex(LeaseSnapshotError, "inventario_cambio"):
+            require_unchanged(stable, pending_audit)
+        # Ediciones al contrato de aceptación o task marker también cuentan.
+        body_changed = audit_active_claims(
+            [{**data[0], "body": "factory-plan-task actualizado"}, data[1]],
+            comments, complete=True,
+        )
+        with self.assertRaisesRegex(LeaseSnapshotError, "inventario_cambio"):
+            require_unchanged(stable, body_changed)
         for bad_data, bad_comments, complete in [
             (data, {12: comments[12]}, True),
             (data, comments, False),
