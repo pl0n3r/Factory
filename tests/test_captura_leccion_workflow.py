@@ -21,7 +21,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
 
     def test_duplicates_failed_events_and_missing_sha_do_not_publish(self):
         config = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn('pr.get("merge_commit_sha") != sha', config)
+        self.assertIn('not re.fullmatch(r"[0-9a-f]{40}", merge_sha)', config)
         self.assertIn('pr.get("merged") is not True', config)
         self.assertIn('payload.get("action") != "closed"', config)
         self.assertIn("capture_lessons([candidate, candidate])", config)
@@ -85,7 +85,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
                 emitted = json.loads(record.read_text(encoding="utf-8")) if record.exists() else None
                 return result.returncode, emitted
 
-        for fixture, event in ((issue, "issues"), (pr, "pull_request")):
+        for fixture, event in ((pr, "pull_request"),):
             with self.subTest(positive=event):
                 rc, candidate = execute(fixture, event=event)
                 self.assertEqual(rc, 0)
@@ -93,6 +93,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
                 self.assertEqual(len(capture_lessons([candidate, candidate])), 1)
 
         invalid = [
+            (issue, "issues", {}),  # Issue closure lacks an authoritative action ID.
             ({"repository": {"full_name": "outsider/Factory"},
               **{key: value for key, value in issue.items() if key != "repository"}}, "issues", {},),
             ({**issue, "action": "reopened"}, "issues", {}),
@@ -102,7 +103,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
             ({**pr, "pull_request": {**pr["pull_request"], "merged": False}},
              "pull_request", {}),
             ({**pr, "pull_request": {**pr["pull_request"],
-                                     "merge_commit_sha": "b" * 40}},
+                                     "merge_commit_sha": "bad"}},
              "pull_request", {}),
             (issue, "issues", {"sha": "missing"}),
             (issue, "issues", {"ref": "refs/pull/12/merge"}),
@@ -145,57 +146,83 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
             return outcome.returncode, candidate
 
     def test_cross_run_duplicate_closure_has_stable_event_id(self):
-        issue = {"repository": {"full_name": "pl0n3r/Factory"},
-                 "action": "closed",
-                 "issue": {"number": 1156, "state": "closed",
-                           "closed_at": "2026-10-11T09:00:00Z"}}
         pr = {"repository": {"full_name": "pl0n3r/Factory"},
               "action": "closed",
               "pull_request": {"number": 1164, "state": "closed",
-                               "merged": True, "merge_commit_sha": "a" * 40,
+                               "merged": True, "merge_commit_sha": "c" * 40,
                                "merged_at": "2026-10-11T09:00:00Z",
                                "base": {"ref": "main",
                                         "repo": {"full_name": "pl0n3r/Factory"}}}}
-        for payload, event in ((issue, "issues"), (pr, "pull_request")):
-            with self.subTest(event=event):
-                rc_a, first = self._execute_trust_gate(payload, event=event, run_id="123")
-                rc_b, second = self._execute_trust_gate(payload, event=event, run_id="456")
-                self.assertEqual((rc_a, rc_b), (0, 0))
-                self.assertEqual(first, second)
-                self.assertNotIn("123", first["event_id"])
-                self.assertNotIn("456", first["event_id"])
-                self.assertEqual(len(capture_lessons([first, second])), 1)
+        rc_a, first = self._execute_trust_gate(pr, event="pull_request",
+                                               run_id="123", sha="a" * 40)
+        rc_b, second = self._execute_trust_gate(pr, event="pull_request",
+                                                run_id="456", sha="b" * 40)
+        self.assertEqual((rc_a, rc_b), (0, 0))
+        self.assertEqual(first["event_id"], second["event_id"])
+        self.assertEqual(first["sha"], "c" * 40)
+        self.assertEqual(first["run_sha"], "a" * 40)
+        self.assertEqual(second["run_sha"], "b" * 40)
+        self.assertEqual(len(capture_lessons([first, second])), 1)
+        self.assertNotIn("123", first["event_id"])
+        self.assertNotIn("456", first["event_id"])
 
     def test_distinct_closures_and_conflicts_fail_closed(self):
-        base = {"repository": {"full_name": "pl0n3r/Factory"},
-                "action": "closed", "issue": {"number": 1156,
-                "state": "closed", "closed_at": "2026-10-11T09:00:00Z"}}
-        rc_a, first = self._execute_trust_gate(base, run_id="123")
-        later = {**base, "issue": {**base["issue"],
-                 "closed_at": "2026-10-11T09:05:00Z"}}
-        rc_b, second = self._execute_trust_gate(later, run_id="456")
+        def pr(number, merge_sha):
+            return {"repository": {"full_name": "pl0n3r/Factory"},
+                    "action": "closed",
+                    "pull_request": {"number": number, "state": "closed",
+                                     "merged": True, "merge_commit_sha": merge_sha,
+                                     "merged_at": "2026-10-11T09:00:00Z",
+                                     "base": {"ref": "main",
+                                              "repo": {"full_name": "pl0n3r/Factory"}}}}
+        rc_a, first = self._execute_trust_gate(pr(1164, "a" * 40),
+                                                event="pull_request", run_id="123")
+        rc_b, second = self._execute_trust_gate(pr(1165, "b" * 40),
+                                                 event="pull_request", run_id="456")
         self.assertEqual((rc_a, rc_b), (0, 0))
         self.assertNotEqual(first["event_id"], second["event_id"])
         self.assertEqual(len(capture_lessons([first, second])), 2)
-        with self.assertRaises(CaptureError):
-            capture_lessons([first, {**first, "sha": "b" * 40}])
-        invalid, candidate = self._execute_trust_gate(base, run_id="invalid-id")
-        self.assertNotEqual(invalid, 0)
-        self.assertIsNone(candidate)
+        self.assertEqual(len(capture_lessons([first, first])), 1)
+        with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
+            capture_lessons([first, {**first, "summary": "Conflicto semantico"}])
+        rc_bad, no_candidate = self._execute_trust_gate(
+            pr(1165, "bad"), event="pull_request", run_id="456")
+        self.assertNotEqual(rc_bad, 0)
+        self.assertIsNone(no_candidate)
 
     def test_same_closure_changed_main_sha_fails_closed(self):
-        """The stable business ID cannot conceal divergent checkout provenance."""
-        issue = {"repository": {"full_name": "pl0n3r/Factory"},
-                 "action": "closed",
-                 "issue": {"number": 1156, "state": "closed",
-                           "closed_at": "2026-10-11T09:00:00Z"}}
-        rc_a, first = self._execute_trust_gate(issue, run_id="123", sha="a" * 40)
-        rc_b, second = self._execute_trust_gate(issue, run_id="456", sha="b" * 40)
+        """Compatibility: a different checkout SHA does not split a PR merge."""
+        pr = {"repository": {"full_name": "pl0n3r/Factory"},
+              "action": "closed",
+              "pull_request": {"number": 1164, "state": "closed",
+                               "merged": True, "merge_commit_sha": "c" * 40,
+                               "merged_at": "2026-10-11T09:00:00Z",
+                               "base": {"ref": "main",
+                                        "repo": {"full_name": "pl0n3r/Factory"}}}}
+        rc_a, first = self._execute_trust_gate(pr, event="pull_request",
+                                                run_id="123", sha="a" * 40)
+        rc_b, second = self._execute_trust_gate(pr, event="pull_request",
+                                                 run_id="456", sha="b" * 40)
         self.assertEqual((rc_a, rc_b), (0, 0))
         self.assertEqual(first["event_id"], second["event_id"])
-        self.assertNotEqual(first["sha"], second["sha"])
-        with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
-            capture_lessons([first, second])
+        self.assertEqual(first["sha"], second["sha"])
+        self.assertNotEqual(first["run_sha"], second["run_sha"])
+        self.assertEqual(len(capture_lessons([first, second])), 1)
+
+    def test_same_second_closure_without_authoritative_identity_fails_closed(self):
+        """A GitHub Issue closure has no unique per-closure action identifier."""
+        source = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("ambiguous_issue_closure", source)
+        self.assertIn("github.event_name == 'pull_request'", source)
+        base = {"repository": {"full_name": "pl0n3r/Factory"},
+                "action": "closed", "issue": {"number": 1156,
+                "state": "closed", "closed_at": "2026-10-11T09:00:00Z"}}
+        for run_id in ("123", "456"):
+            with self.subTest(run_id=run_id):
+                result, candidate = self._execute_trust_gate(
+                    base, event="issues", run_id=run_id)
+                self.assertNotEqual(result, 0)
+                self.assertIsNone(candidate)
 
 
 if __name__ == "__main__":
