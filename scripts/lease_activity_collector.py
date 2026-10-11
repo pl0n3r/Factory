@@ -277,6 +277,18 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                        for k in ("state", "number", "comments", "updated_at", "labels"))
                 or branch_sha() != sha):
             raise IncompleteEvidence()
+        # GitHub puede lanzar/rerun CI sin cambiar Issue ni ref.
+        # La segunda lectura descarta snapshots con runs/checks cambiantes.
+        checked_again = pages(
+            f"{base}/commits/{sha}/check-runs",
+            name="checks_recheck", checks=True,
+        )
+        runs_again = pages(
+            f"{base}/actions/runs?branch={quote(branch, safe='')}",
+            name="runs_recheck", runs=True,
+        )
+        if checked_again != checks or runs_again != workflow_runs:
+            raise IncompleteEvidence()
         effective_remaining = remaining - used
         if effective_remaining < 0 or effective_remaining * 5 < limit:
             raise IncompleteEvidence()
