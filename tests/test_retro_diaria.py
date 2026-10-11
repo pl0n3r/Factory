@@ -30,6 +30,31 @@ class RetroDailyTests(unittest.TestCase):
         self.assertEqual(first["counts_by_repo"]["pl0n3r/Factory"]["pr_merged"], 1)
         self.assertEqual(first["counts_by_repo"]["pl0n3r/Factory"]["incident_closed"], 1)
 
+
+    def test_duplicate_ids_across_repos_are_independent_but_conflicts_fail_closed(self):
+        other = {"id": "snapshot-2", "repo": "pl0n3r/Condor",
+                 "sha": "b" * 40, "authenticated": True, "complete": True}
+        first = event("123", "2026-10-11T08:00:00Z")
+        second = {"id": "123", "source_id": "snapshot-2",
+                  "repo": "pl0n3r/Condor", "kind": "incident_opened",
+                  "occurred_at": "2026-10-11T08:15:00Z"}
+        rows = [first, second, dict(first)]
+        a = evaluate_retro_daily(events=rows, sources=[SOURCE, other], now=NOW)
+        b = evaluate_retro_daily(events=list(reversed(rows)),
+                                 sources=[other, SOURCE], now=NOW)
+        self.assertEqual(a, b)
+        self.assertEqual(a["status"], "READY")
+        self.assertEqual(len(a["events"]), 2)
+        self.assertEqual(a["counts_by_repo"]["pl0n3r/Factory"]["pr_merged"], 1)
+        self.assertEqual(a["counts_by_repo"]["pl0n3r/Condor"]["incident_opened"], 1)
+        self.assertFalse(a["publication_allowed"])
+        conflict = evaluate_retro_daily(
+            events=rows + [{**first, "kind": "incident_closed"}],
+            sources=[SOURCE, other], now=NOW)
+        self.assertEqual(conflict["status"], "UNKNOWN")
+        self.assertEqual(conflict["reason"], "conflicting_duplicate_event")
+        self.assertNotIn("counts_by_repo", conflict)
+
     def test_missing_authenticated_evidence_fails_closed(self):
         good = [event("new", "2026-10-11T08:00:00Z")]
         scenarios = [
