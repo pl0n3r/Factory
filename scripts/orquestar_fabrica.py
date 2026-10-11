@@ -64,11 +64,26 @@ REPORT_PREFIX = "<!-- factory-plan-report:"
 
 
 def _all_issues(api: GitHub) -> list[dict[str, Any]]:
-    # No interpretar un prefijo paginado como inventario global exhaustivo.
-    # Un truncamiento silencioso permitiría duplicar hojas del mismo épico.
+    """Contrasta dos recorridos inversos antes de autorizar mutaciones."""
+    inventories: list[dict[int, dict[str, Any]]] = []
+    for direction in ("asc", "desc"):
+        pages = _verified_pages(
+            api,
+            f"/repos/{api.repo}/issues?state=all&sort=created&direction={direction}",
+        )
+        indexed: dict[int, dict[str, Any]] = {}
+        numbers: set[int] = set()
+        for issue in pages:
+            number = issue.get("number")
+            if type(number) is not int or number <= 0 or number in numbers:
+                raise PlanError("Colección de autoridad ambigua o duplicada.")
+            numbers.add(number)
+            indexed[issue["id"]] = issue
+        inventories.append(indexed)
+    if inventories[0] != inventories[1]:
+        raise PlanError("Colección de autoridad incompleta o inestable.")
     return [
-        issue
-        for issue in _verified_pages(api, f"/repos/{api.repo}/issues?state=all")
+        issue for issue in inventories[0].values()
         if not issue.get("pull_request")
     ]
 
@@ -254,6 +269,45 @@ def _existing_tasks(
             raise PlanError(f"Más de un Issue materializa {key} del épico #{epic}.")
         result[key] = issue
     return result
+
+
+def _verify_reported_issues(
+    api: GitHub, epic: int, existing: dict[str, dict[str, Any]]
+) -> None:
+    """Un reporte anterior es evidencia para vetar, no permiso para crear."""
+    marker = f"{REPORT_PREFIX}{epic} -->"
+    reports = [
+        comment["body"]
+        for comment in api.issue_comments(epic)
+        if isinstance(comment, dict)
+        and isinstance(comment.get("body"), str)
+        and marker in comment["body"].splitlines()
+        and isinstance(comment.get("user"), dict)
+        and comment["user"].get("login") == "github-actions[bot]"
+    ]
+    if len(reports) > 1:
+        raise PlanError("Reportes de autoridad duplicados para el épico.")
+    if not reports:
+        return
+    body = reports[0]
+    if body.splitlines().count(marker) != 1:
+        raise PlanError("Reporte de autoridad ambiguo.")
+    rows = re.findall(
+        r"^\|\s*\d+\s*\|\s*#([1-9]\d*)\s+·\s+([A-Z][A-Z0-9_]*)\s*\|",
+        body,
+        flags=re.MULTILINE,
+    )
+    if not rows or len(rows) != len(
+        re.findall(r"^\|\s*\d+\s*\|", body, flags=re.MULTILINE)
+    ):
+        raise PlanError("Reporte anterior ilegible; inventario no verificable.")
+    seen: set[str] = set()
+    for number_text, key in rows:
+        if key in seen or key not in existing:
+            raise PlanError("Inventario incompleto respecto del reporte anterior.")
+        seen.add(key)
+        if existing[key].get("number") != int(number_text):
+            raise PlanError("Identidad de hoja contradice el reporte anterior.")
 
 
 def _inherited_labels(epic: dict[str, Any]) -> list[str]:
@@ -507,6 +561,7 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     all_issues = _all_issues(api)
     historical_warnings: list[str] = []
     existing = _existing_tasks(all_issues, epic_number, historical_warnings, api=api)
+    _verify_reported_issues(api, epic_number, existing)
     planned_keys = {task.key for task in tasks}
     orphaned = sorted(set(existing) - planned_keys)
     if orphaned:
