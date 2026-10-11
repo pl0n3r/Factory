@@ -93,6 +93,16 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         }
         self.assertEqual(self._validate_release_drift_fixture(observed),
                          set(self._declared_control_changes()))
+        # La lista de diff histórico por sí sola también incluiría archivos
+        # ELIMINADOS. Exigir que todo control declarado siga siendo un archivo
+        # legible/no vacío en el árbol candidato, sin tratar esto como prueba
+        # de contenido, firma, frescura o ausencia de deriva externa.
+        for name in self._declared_control_changes():
+            with self.subTest(required_control=name):
+                path = self.root / name
+                self.assertTrue(path.is_file(), "required_control_missing")
+                self.assertGreater(path.stat().st_size, 0)
+
         # Negativos: paths nuevos de control, paginas incompletas, identidad
         # falsa o mismo SHA no pasan como evidencia de ausencia de deriva.
         for variant in (
