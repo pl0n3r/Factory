@@ -1,0 +1,197 @@
+"""Factory 1143: comprobaciones offline del observador de lectura."""
+import json
+import re
+import sys
+import tempfile
+import textwrap
+import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
+
+WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/automerge-construccion.yml"
+HEAD = "a" * 40
+BASE = "b" * 40
+
+
+def load():
+    data = WORKFLOW.read_text(encoding="utf-8")
+    match = re.search(r"          python3 - <<'PY'\n(.*?)\n          PY", data, re.S)
+    if match is None:
+        raise AssertionError("embedded script missing")
+    scope = {"__name__": "offline_fixture"}
+    # Acceptance runner removes its temporary sys.path after importing this module.
+    root = str(WORKFLOW.parents[2])
+    added = root not in sys.path
+    if added:
+        sys.path.insert(0, root)
+    try:
+        exec(compile(textwrap.dedent(match.group(1)), str(WORKFLOW), "exec"), scope)
+    finally:
+        if added:
+            sys.path.remove(root)
+    return scope
+
+
+def evt():
+    return {"repository": {"full_name": "pl0n3r/Factory"}, "number": 9,
+            "pull_request": {"head": {"sha": HEAD}}}
+
+
+class Fake:
+    def __init__(self, *, pause=False, drift=False, partial=False):
+        self.pause, self.drift, self.partial = pause, drift, partial
+        self.calls = []
+
+    def __call__(self, route):
+        self.calls.append(route)
+        if route.endswith("/issues/767"):
+            flag = "PAUSED" if self.pause else "RUNNING"
+            body = '<!-- factory-unattended-kill-switch {"version":1,"state":"' + flag + '","owner":"pl0n3r"} -->'
+            return {"id": 767, "number": 767, "state": "closed",
+                    "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
+                    "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
+                    "user": {"login": "pl0n3r"}, "body": body, "updated_at": "2026-10-11T09:00:00Z"}
+        if route.endswith("/pulls/9"):
+            return {"number": 9, "head": {"sha": HEAD},
+                    "base": {"sha": BASE, "ref": "main"}, "draft": False,
+                    "mergeable": True, "mergeable_state": "clean", "user": {"login": "author"}}
+        if route.endswith("/branches/main"):
+            return {"commit": {"sha": "c" * 40 if self.drift else BASE}}
+        if route.endswith("/protection/required_status_checks"):
+            return {"contexts": ["Validar", "Criterios de aceptación", "Validar coordinación", "Seguridad"]}
+        if "/check-runs?" in route:
+            records = [{"id": idx, "name": label, "status": "completed", "conclusion": "success",
+                        "head_sha": HEAD} for idx, label in enumerate(
+                            ("Validar", "Criterios de aceptación", "Validar coordinación", "Seguridad"), 1)]
+            if route.endswith("page=2"):
+                records = []
+            elif self.partial:
+                records = records[:3]
+            return {"total_count": 4, "check_runs": records}
+        if "/reviews?" in route:
+            return [] if route.endswith("page=2") else [{
+                "id": 7, "user": {"login": "reviewer", "type": "User"},
+                "submitted_at": "2026-10-11T09:00:00Z",
+                "commit_id": HEAD, "state": "APPROVED",
+                "author_association": "COLLABORATOR"}]
+        if "/files?" in route:
+            return [] if route.endswith("page=2") else [{"filename": "scripts/feature.py"}]
+        if route == "/rate_limit":
+            return {"resources": {"core": {"remaining": 80}}}
+        raise AssertionError("unknown endpoint")
+
+
+def graph(_repo, _number):
+    return {"has_next_page": False, "resolved": [True]}
+
+
+class AutoMergeWorkflowTests(unittest.TestCase):
+    def test_dry_run_workflow_is_read_only_and_never_merges(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("on:\n  pull_request:", text)
+        self.assertIn("persist-credentials: false", text)
+        self.assertRegex(text, r"actions/checkout@[0-9a-f]{40}")
+        for forbidden in ("contents: write", "pull-requests: write",
+                          "pull_request_target:", "enablePullRequestAutoMerge"):
+            self.assertNotIn(forbidden, text)
+        self.assertIn("timeout-minutes: 5", text)
+
+    def test_switch_rejects_duplicate_malformed_markers_and_noncanonical_issue(self):
+        module = load()
+        original = Fake()("/repos/pl0n3r/Factory/issues/767")
+        self.assertIsNotNone(module["switch"](original))
+        for extra in (
+            "<!-- factory-unattended-kill-switch not-json -->",
+            "<!--  FACTORY-UNATTENDED-KILL-SWITCH {} -->",
+            "<!-- factory-unattended-kill-switch {broken -->",
+        ):
+            with self.subTest(extra=extra):
+                self.assertIsNone(module["switch"]({**original, "body": original["body"] + extra}))
+        for change in (
+            {"number": 768}, {"number": None},
+            {"url": "https://api.github.com/repos/other/Factory/issues/767"},
+            {"repository_url": "https://api.github.com/repos/other/Factory"},
+            {"body": None},
+        ):
+            with self.subTest(change=change):
+                self.assertIsNone(module["switch"]({**original, **change}))
+
+    def test_effective_reviews_use_real_utc_instants_and_deny_ambiguous_dates(self):
+        module = load()
+        user = {"login": "qa-reviewer", "type": "User"}
+        first = {"id": 1, "user": user, "submitted_at": "2026-10-11T10:00:00+10:00",
+                 "commit_id": HEAD, "state": "APPROVED",
+                 "author_association": "COLLABORATOR"}
+        newer = {**first, "id": 2, "state": "CHANGES_REQUESTED",
+                 "submitted_at": "2026-10-11T09:00:00-10:00"}
+        reviews = module["effective_reviews"]([first, newer], HEAD)
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["state"], "CHANGES_REQUESTED")
+        with self.assertRaisesRegex(ValueError, "tied review"):
+            module["effective_reviews"]([first, {**first, "id": 2,
+                "submitted_at": "2026-10-11T00:00:00Z"}], HEAD)
+        for invalid in ("not-a-date", "2026-10-11T09:00:00", None):
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                module["effective_reviews"]([{**first, "submitted_at": invalid}], HEAD)
+
+    def test_exact_sha_and_independent_review_snapshot_are_required(self):
+        module = load()
+        api = Fake()
+        self.assertFalse(module["simulate"](api, graph, evt(), "2026-10-11T09:00:00Z")["eligible"])
+        self.assertTrue(any("/reviews?" in route for route in api.calls))
+        self.assertTrue(any("/check-runs?" in route for route in api.calls))
+        drift = module["simulate"](Fake(drift=True), graph, evt(), "2026-10-11T09:00:00Z")
+        self.assertEqual(drift["reason"], "sha_mismatch")
+        invalid = evt()
+        invalid["pull_request"]["head"]["sha"] = "invalid"
+        self.assertFalse(module["simulate"](Fake(), graph, invalid, "2026-10-11T09:00:00Z")["eligible"])
+
+    def test_kill_switch_freeze_live_and_sensitive_paths_fail_closed(self):
+        module = load()
+        result = module["simulate"](Fake(pause=True), graph, evt(), "2026-10-11T09:00:00Z")
+        self.assertEqual(result["reason"], "kill_switch_inactive")
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn('"phase": "UNKNOWN"', text)
+        self.assertIn('"freeze_active": True', text)
+        self.assertIn('"human_gate_required": True', text)
+
+    def test_diagnostic_only_sanitized_report_and_budget_limits(self):
+        module = load()
+        result = module["simulate"](Fake(), graph, evt(), "2026-10-11T09:00:00Z")
+        self.assertFalse(result["eligible"])
+        self.assertEqual(set(result), {"repository", "pr_number", "head_sha", "eligible", "reason"})
+        self.assertEqual(result["reason"], "human_gate_required")
+        self.assertNotIn("Authorization", str(result))
+        with tempfile.TemporaryDirectory() as tmp:
+            event_path = Path(tmp) / "event.json"
+            event_path.write_text(json.dumps(evt()), encoding="utf-8")
+            def api_failure(*_args):
+                raise ValueError("unavailable API")
+            module["simulate"] = api_failure
+            output = StringIO()
+            with patch.dict(module["os"].environ, {"GH_EVENT": str(event_path)}):
+                with redirect_stdout(output):
+                    module["main"]()
+            rejected = json.loads(output.getvalue())
+            self.assertEqual(rejected["pr_number"], 9)
+            self.assertEqual(rejected["head_sha"], HEAD)
+            self.assertFalse(rejected["eligible"])
+            self.assertEqual(rejected["reason"], "incomplete_evidence")
+
+    def test_workflow_is_idempotent_non_mutating_and_offline_testable(self):
+        module = load()
+        api = Fake()
+        first = module["simulate"](api, graph, evt(), "2026-10-11T09:00:00Z")
+        second = module["simulate"](api, graph, evt(), "2026-10-11T09:00:00Z")
+        self.assertEqual(first, second)
+        self.assertTrue(all(route.startswith("/") for route in api.calls))
+        missing = module["simulate"](Fake(partial=True), graph, evt(), "2026-10-11T09:00:00Z")
+        self.assertEqual(missing["reason"], "incomplete_evidence")
+        self.assertFalse(module["simulate"](Fake(), lambda *_: {"has_next_page": True},
+                                            evt(), "2026-10-11T09:00:00Z")["eligible"])
+
+
+if __name__ == "__main__":
+    unittest.main()
