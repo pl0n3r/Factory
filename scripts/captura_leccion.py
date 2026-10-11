@@ -31,7 +31,7 @@ class CaptureError(ValueError):
 
 
 def _parse(event: Any) -> dict[str, Any]:
-    if type(event) is not dict or set(event) != KEYS:
+    if type(event) is not dict or set(event) not in (KEYS, KEYS | {"run_sha"}):
         raise CaptureError("invalid_event_envelope")
     if event["issuer"] != "github-actions[bot]" or event["verified"] is not True:
         raise CaptureError("unverified_source")
@@ -41,6 +41,12 @@ def _parse(event: Any) -> dict[str, Any]:
             or type(event["event_id"]) is not str or not EVENT_ID.fullmatch(event["event_id"])
             or type(event["event"]) is not str or event["event"] not in EVENTS):
         raise CaptureError("invalid_identity")
+    # Runner context is evidence of execution, NOT business event identity.
+    # It must be well-formed, but redelivery across main SHAs must not split
+    # or conflict with an authenticated closure business identity.
+    if "run_sha" in event and (type(event["run_sha"]) is not str
+                               or not SHA.fullmatch(event["run_sha"])):
+        raise CaptureError("invalid_run_provenance")
     timestamp = event["occurred_at"]
     if type(timestamp) is not str or not re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp
