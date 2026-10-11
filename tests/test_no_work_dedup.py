@@ -689,6 +689,41 @@ class NoWorkDedupTests(unittest.TestCase):
             "fingerprint_changed",
         )
 
+    def test_prewrite_rejects_concurrent_refresh_with_same_fingerprint(self):
+        snapshot = inventory()
+        first = decide_no_work(snapshot, None, 100)
+        previous = state_after(
+            first, comment_id=904_300, published_at=100, observed_at=100
+        )
+        pending = decide_no_work(snapshot, previous, 1_900, observed_at=150)
+        self.assertEqual(pending.action, "update")
+        self.assertEqual(pending.expected_published_at, 100)
+        self.assertEqual(
+            revalidate_no_work_application(pending, previous).action, "apply"
+        )
+
+        # Another session republished the same fingerprint/comment, with
+        # an observation not newer than ours. Old guards falsely allowed it.
+        concurrent = NoWorkPublicationState(
+            comment_id=previous.comment_id,
+            fingerprint=previous.fingerprint,
+            published_at=1_750,
+            observed_at=100,
+        )
+        result = revalidate_no_work_application(pending, concurrent)
+        self.assertEqual((result.action, result.reason),
+                         ("recompute", "publication_changed"))
+
+        changed = inventory()
+        changed["repositories"]["FactoryRunner"]["available"] = [904]
+        pending_changed = decide_no_work(
+            changed, previous, 200, observed_at=150
+        )
+        self.assertEqual(
+            revalidate_no_work_application(pending_changed, concurrent).reason,
+            "publication_changed",
+        )
+
     def test_equal_or_newer_observation_preserves_create_update_omit_and_single_sink_contract(self):
         base = inventory()
         create = decide_no_work(base, None, 100, observed_at=100)

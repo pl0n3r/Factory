@@ -60,6 +60,9 @@ class NoWorkDecision:
     observed_at: int
     expected_comment_id: int | None
     expected_fingerprint: str | None
+    # Optimistic prewrite check: same comment/fingerprint may have been
+    # republished by another dispatcher session after we read it.
+    expected_published_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -362,6 +365,7 @@ def decide_no_work(
             observation_at,
             prior.comment_id,
             prior.fingerprint,
+            prior.published_at,
         )
 
     if decision_at - prior.published_at >= REFRESH_AFTER_SECONDS:
@@ -374,6 +378,7 @@ def decide_no_work(
             observation_at,
             prior.comment_id,
             prior.fingerprint,
+            prior.published_at,
         )
 
     return NoWorkDecision(
@@ -385,6 +390,7 @@ def decide_no_work(
         observation_at,
         prior.comment_id,
         prior.fingerprint,
+        prior.published_at,
     )
 
 
@@ -422,5 +428,10 @@ def revalidate_no_work_application(
     assert live.observed_at is not None
     if live.observed_at > decision.observed_at:
         return NoWorkApplicationDecision("recompute", "canonical_observation_newer")
+
+    # A concurrent refresh may keep both the same comment ID and fingerprint.
+    # Its published_at must still match what this decision actually observed.
+    if live.published_at != decision.expected_published_at:
+        return NoWorkApplicationDecision("recompute", "publication_changed")
 
     return NoWorkApplicationDecision("apply", "prewrite_revalidation_passed")
