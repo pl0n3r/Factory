@@ -6,7 +6,7 @@ import json
 import unittest
 
 from scripts.salud_cola_github import (
-    GitHubPageError, parse_github_issue_page, parse_github_issue_sequence,
+    GitHubPageError, MAX_PAYLOAD_BYTES, parse_github_issue_page, parse_github_issue_sequence,
     require_stable_github_sweeps,
 )
 
@@ -59,10 +59,16 @@ class GitHubPageTests(unittest.TestCase):
             url(1).replace("api.github.com", "api.github.com\t"),
             "\x00" + url(1),
             url(1) + "\x7f",
+            " " + url(1),
+            "   " + url(1),
+            url(1) + " ",
         )
         for request in bad_urls:
             with self.subTest(request=request), self.assertRaises(GitHubPageError):
                 parse(request=request)
+        with self.assertRaisesRegex(GitHubPageError, "invalid_request_url") as error:
+            parse(request=url(1) + "&private-query-sentinel")
+        self.assertIsNone(error.exception.__cause__)
         for p in (True, 0, 101, "1"):
             with self.subTest(page=p), self.assertRaises(GitHubPageError):
                 parse(page=p)
@@ -92,6 +98,18 @@ class GitHubPageTests(unittest.TestCase):
             parse(page=2, header=link(1, "prev"), items=full_items(100))
         self.assertFalse(parse(page=3, header=final)["has_next"])
         self.assertFalse(parse()["has_next"])
+        class ForgesMissingHeader:
+            def __eq__(self, other):
+                return True
+
+        class ThrowsOnComparison:
+            def __eq__(self, other):
+                raise RuntimeError("raw Link must never compare")
+
+        for forged in (ForgesMissingHeader(), ThrowsOnComparison(), 0, [], {}):
+            with self.subTest(forged=type(forged).__name__):
+                with self.assertRaisesRegex(GitHubPageError, "invalid_link"):
+                    parse(header=forged)
         bad = (
             (1, link(3, "next")),
             (1, link(2, "next") + ", " + link(2, "next")),
@@ -279,6 +297,15 @@ class GitHubPageTests(unittest.TestCase):
             [{"number": 42, "state": "open",
               "labels": [{"name": "status: available"},
                          {"name": "STATUS: BLOCKED"}]}],
+            [{"number": 42, "state": "open",
+              "labels": [{"name": "estado: disponible"},
+                         {"name": "estado: reservado"}]}],
+            [{"number": 42, "state": "open",
+              "labels": [{"name": "status: available"},
+                         {"name": "estado: bloqueado"}]}],
+            [{"number": 42, "state": "open",
+              "labels": [{"name": "estado: disponible"},
+                         {"name": "estado: disponible"}]}],
             [{"number": 1, "state": "open", "labels": {}}],
             [{"number": 1, "labels": [42]}],
             [{"number": 1, "labels": [{"color": "fff"}]}],
@@ -291,6 +318,15 @@ class GitHubPageTests(unittest.TestCase):
         for items in bad_payloads:
             with self.subTest(items=str(items)[:70]), self.assertRaises(GitHubPageError):
                 parse(items=items)
+        with self.assertRaisesRegex(GitHubPageError, "payload_too_large"):
+            parse(items=[{"number": 42, "state": "open", "labels": [],
+                          "title": "S" * (MAX_PAYLOAD_BYTES + 1)}])
+        with self.assertRaisesRegex(GitHubPageError, "invalid_payload"):
+            parse(items=[{"number": 42, "state": "open", "labels": [],
+                          "score": float("nan")}])
+        with self.assertRaisesRegex(GitHubPageError, "invalid_payload"):
+            parse(items=[{"number": 42, "state": "open", "labels": [],
+                          "extra": {"non-json": {1, 2}}}])
         non_workflow = parse(items=[{"number": 42, "state": "open",
                                      "labels": [{"name": "estado_de_prueba"}]}])
         self.assertEqual(non_workflow["issues"][0]["labels"], [])

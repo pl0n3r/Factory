@@ -6,6 +6,7 @@ La función valida coherencia de la evidencia recibida, no su autenticidad.
 """
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import parse_qsl, urlsplit
 
@@ -16,6 +17,7 @@ REPOSITORIES = (
 MAX_PAGE = 100
 PAGE_SIZE = 100
 MAX_LABELS = 40
+MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 # Explicit state vocabulary shared with the snapshot adapter, including the
 # recovery label. Unknown workflow prefixes must never be hidden.
 STATE_LABELS = frozenset((
@@ -38,7 +40,7 @@ def _int(value: object, minimum: int, maximum: int) -> bool:
 
 def _page_from_url(url: object, repo: str) -> int:
     if (type(url) is not str or len(url) > 900
-            or any(ord(char) < 32 or ord(char) == 127 for char in url)):
+            or any(ord(char) <= 32 or ord(char) == 127 for char in url)):
         # urlsplit silently strips CR/LF/TAB (and leading C0) in Python.
         # Check the captured, unmodified URL before parsing components.
         raise GitHubPageError("invalid_request_url")
@@ -46,7 +48,7 @@ def _page_from_url(url: object, repo: str) -> int:
         u = urlsplit(url)
         query = parse_qsl(u.query, strict_parsing=True, keep_blank_values=True)
     except ValueError as exc:
-        raise GitHubPageError("invalid_request_url") from exc
+        raise GitHubPageError("invalid_request_url") from None
     if (u.scheme != "https" or u.netloc != "api.github.com"
             or u.path != f"/repos/pl0n3r/{repo}/issues"
             or u.fragment or len(query) != 3):
@@ -70,12 +72,14 @@ def _page_from_url(url: object, repo: str) -> int:
 
 
 def _link_has_next(header: object, repo: str, page: int) -> bool:
+    # Never execute __eq__ from an untrusted non-string header.
+    if header is not None and type(header) is not str:
+        raise GitHubPageError("invalid_link")
     if header is None or header == "":
         if page != 1:
-            # A non-first page should carry at least its prev relation.
             raise GitHubPageError("incomplete_link")
         return False
-    if (type(header) is not str or len(header) > 4000
+    if (len(header) > 4000
             or any(ord(char) < 32 or ord(char) == 127 for char in header)):
         raise GitHubPageError("invalid_link")
     links: dict[str, int] = {}
@@ -124,6 +128,16 @@ def parse_github_issue_page(repo: object, requested_page: object,
     has_next = _link_has_next(link_header, repo, actual_page)
     if type(payload) is not list or len(payload) > PAGE_SIZE:
         raise GitHubPageError("invalid_payload")
+    # Bound JSON evidence by bytes, not only by number of Issue rows.
+    # The caller still owns authenticated HTTP response-size limits.
+    try:
+        payload_bytes = len(json.dumps(
+            payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode("utf-8"))
+    except (TypeError, ValueError, UnicodeError, RecursionError, OverflowError):
+        raise GitHubPageError("invalid_payload") from None
+    if payload_bytes > MAX_PAYLOAD_BYTES:
+        raise GitHubPageError("payload_too_large")
     # With per_page=100, a nonterminal page MUST be full; otherwise the
     # declared 'next' chain could conceal omitted issue records.
     if has_next and len(payload) != PAGE_SIZE:
@@ -161,6 +175,9 @@ def parse_github_issue_page(repo: object, requested_page: object,
                 # another label could otherwise make the Issue actionable.
                 raise GitHubPageError("unknown_status_label")
             # Other labels are arbitrary user-editable text: omit entirely.
+        # Even two individually canonical statuses are ambiguous together.
+        if len(names) > 1:
+            raise GitHubPageError("ambiguous_status_labels")
 
         is_pr = "pull_request" in raw
         if is_pr and (type(raw["pull_request"]) is not dict
