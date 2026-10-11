@@ -59,10 +59,33 @@ class Result:
     wrote: bool = False
 
 
+@dataclass(frozen=True)
+class RecoveryNoteProof:
+    """Búsqueda completa de notas ligadas al UUID/branch/actividad exactos.
+
+    El adaptador debe paginar con GitHub autenticado, verificar el payload
+    del comentario y comprobar el autor canónico github-actions[bot].
+    Un error/403/página truncada produce complete=False, nunca count=0.
+    """
+    complete: bool
+    authenticated: bool
+    count: int
+    owner: str
+    reservation_id: str
+    branch: str
+    branch_sha: str
+    last_activity_at: datetime
+    acceptance_sha256: str
+    task_marker_sha256: str
+    created_at: datetime | None
+    author: str | None
+
+
 class Port(Protocol):
     def read(self, issue: int) -> Snapshot: ...
     def lock(self, group: str) -> Any: ...
     def append(self, issue: int, body: str, expected: Snapshot) -> None: ...
+    def recovery_note(self, issue: int, expected: Snapshot) -> RecoveryNoteProof: ...
     def status(self, issue: int, state: str, expected: Snapshot) -> None: ...
 
 
@@ -153,6 +176,32 @@ def _eligible(s: Snapshot, action: str) -> bool:
     return False
 
 
+def _note_ok(proof: Any, s: Snapshot) -> bool:
+    """Sólo cero o una nota acreditada por API/actor, nunca evidencia parcial."""
+    if type(proof) is not RecoveryNoteProof:
+        return False
+    if (type(proof.complete) is not bool or type(proof.authenticated) is not bool
+            or not proof.complete or not proof.authenticated
+            or type(proof.count) is not int or proof.count not in (0, 1)
+            or proof.owner != s.owner or proof.reservation_id != s.reservation_id
+            or proof.branch != s.branch or proof.branch_sha != s.branch_sha
+            or _utc(proof.last_activity_at) != _utc(s.last_activity_at)
+            or proof.acceptance_sha256 != s.marker["acceptance_sha256"]
+            or proof.task_marker_sha256 != s.marker["task_marker_sha256"]):
+        return False
+    if proof.count == 0:
+        return proof.created_at is None and proof.author is None
+    at, now, activity = (_utc(proof.created_at), _utc(s.now),
+                         _utc(s.last_activity_at))
+    if at is None or now is None or activity is None:
+        return False
+    try:
+        return (proof.author == "github-actions[bot]"
+                and at >= activity + timedelta(minutes=30) and at <= now)
+    except OverflowError:
+        return False
+
+
 def _same(a: Snapshot, b: Snapshot) -> bool:
     return (_identity(a) == _identity(b) and a.fingerprint == b.fingerprint
             and a.status == b.status and a.marker == b.marker
@@ -241,15 +290,43 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
             if getattr(decide(current), "action", None) != action:
                 return Result("unknown", "decision_drift")
             if action == "mark_recovery":
-                body = (f"Auto-release: 30 min sin actividad autenticada; "
-                        f"UUID {current.reservation_id}, rama {current.branch}, "
-                        f"SHA {current.branch_sha}. Gracia 10 min; "
-                        "reserva todavía activa.")
-                port.append(issue, body, current)
-                after = port.read(issue)
-                if not _postappend(current, after, action):
+                proof = port.recovery_note(issue, current)
+                if not _note_ok(proof, current):
+                    return Result("unknown", "recovery_note_untrusted")
+                if proof.count == 0:
+                    evidence = {
+                        "version": 1, "reservation_id": current.reservation_id,
+                        "owner": current.owner, "branch": current.branch,
+                        "branch_sha": current.branch_sha,
+                        "last_activity_at": _utc(current.last_activity_at).isoformat(),
+                        "acceptance_sha256": current.marker["acceptance_sha256"],
+                        "task_marker_sha256": current.marker["task_marker_sha256"],
+                    }
+                    body = ("<!-- factory-lease-recovery " +
+                            json.dumps(evidence, sort_keys=True,
+                                       separators=(",", ":")) + " -->\n"
+                            "Auto-release: 30 min sin actividad autenticada; "
+                            "reserva todavía activa, gracia de 10 min.")
+                    port.append(issue, body, current)
+                    after = port.read(issue)
+                    proof = port.recovery_note(issue, after)
+                else:
+                    # Reintento tras append confirmado y fallo del cambio
+                    # de etiqueta; no publicar otra nota para este UUID.
+                    after = current
+                if (not _postappend(current, after, action)
+                        or not _note_ok(proof, after) or proof.count != 1):
                     return Result(action, "partial_comment_only")
                 port.status(issue, RECOVERY, after)
+                confirmed = port.read(issue)
+                if (not _trusted(confirmed)
+                        or _identity(confirmed) != _identity(after)
+                        or confirmed.status != RECOVERY
+                        or confirmed.marker != after.marker
+                        or confirmed.last_activity_at != after.last_activity_at
+                        or _utc(confirmed.now) < _utc(after.now)
+                        or _utc(confirmed.recovery_since) != _utc(proof.created_at)):
+                    return Result(action, "unverified_recovery_since", True)
                 return Result(action, "recovery_marked", True)
             port.append(issue, _release_marker(current), current)
             after = port.read(issue)

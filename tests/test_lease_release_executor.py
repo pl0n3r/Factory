@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from scripts.lease_release_executor import (
-    AVAILABLE, RECOVERY, Snapshot, execute,
+    AVAILABLE, RECOVERY, RecoveryNoteProof, Snapshot, execute,
 )
 
 START = datetime(2026, 10, 11, 10, tzinfo=timezone.utc)
@@ -41,6 +41,11 @@ class FakePort:
         self.fail_status = False
         self.locked_clock_drift = None  # (locked_read_ordinal, absolute_minute)
         self.locked_reads = 0
+        self.note_at = None
+        self.note_complete = True
+        self.note_authenticated = True
+        self.note_author = "github-actions[bot]"
+        self.note_count = None  # opcional para simular duplicidad
 
     def read(self, issue):
         assert issue == 1191
@@ -65,9 +70,25 @@ class FakePort:
         finally:
             self.locked = False
 
+    def recovery_note(self, issue, expected):
+        assert self.locked and issue == 1191
+        found = int(self.note_at is not None) if self.note_count is None else self.note_count
+        return RecoveryNoteProof(
+            complete=self.note_complete, authenticated=self.note_authenticated,
+            count=found, owner=expected.owner,
+            reservation_id=expected.reservation_id, branch=expected.branch,
+            branch_sha=expected.branch_sha,
+            last_activity_at=expected.last_activity_at,
+            acceptance_sha256=expected.marker["acceptance_sha256"],
+            task_marker_sha256=expected.marker["task_marker_sha256"],
+            created_at=self.note_at if found else None,
+            author=self.note_author if found else None)
+
     def append(self, issue, body, expected):
         assert self.locked and expected is self.item
         self.writes.append(("comment", body))
+        if body.startswith("<!-- factory-lease-recovery "):
+            self.note_at = self.item.now
         if body.startswith("<!-- condor-reserva "):
             self.item = replace(self.item, marker={**self.item.marker,
                 "active": False, "reason": "auto-inactivity-release"})
@@ -77,7 +98,9 @@ class FakePort:
         if self.fail_status:
             raise RuntimeError("partial")
         self.writes.append(("status", status))
-        self.item = replace(self.item, status=status)
+        self.item = replace(
+            self.item, status=status,
+            recovery_since=self.note_at if status == RECOVERY else self.item.recovery_since)
 
 
 def decision(s):
@@ -130,6 +153,19 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertEqual(answer.reason, "recovery_marked")
         self.assertEqual(port.item.status, RECOVERY)
         self.assertEqual(len(port.writes), 2)
+        self.assertEqual(port.item.recovery_since, START + timedelta(minutes=41))
+        # End-to-end: la gracia se cuenta desde la nota bot, nunca desde
+        # el primer preflight. A los 9 minutos no puede liberar.
+        port.item = replace(port.item, now=START + timedelta(minutes=50))
+        before = len(port.writes)
+        self.assertFalse(execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False).wrote)
+        self.assertEqual(len(port.writes), before)
+        port.item = replace(port.item, now=START + timedelta(minutes=51))
+        self.assertEqual(execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False).reason,
+                         "released")
+        self.assertEqual(port.item.status, AVAILABLE)
         port = FakePort(snapshot())
         port.drift = replace(port.item, branch_sha="e" * 40)
         self.assertEqual(execute(1191, port, decision,
@@ -207,6 +243,36 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertEqual(len(failed.writes), 2)
         self.assertEqual(failed.item.status, AVAILABLE)
         self.assertEqual(failed.item.branch_sha, "a" * 40)
+        # Reintento de nota de recuperación ya publicada tras fallo de
+        # etiqueta: debe reconciliar sin duplicar el comentario.
+        recover = FakePort(snapshot(recovery=False))
+        recover.fail_status = True
+        self.assertEqual(execute(1191, recover, decision,
+                                 feature_enabled=True, dry_run=False).reason,
+                         "port_failure_or_partial_write")
+        self.assertEqual(len(recover.writes), 1)
+        self.assertEqual(recover.item.status, "estado: en revisión")
+        recover.fail_status = False
+        self.assertEqual(execute(1191, recover, decision,
+                                 feature_enabled=True, dry_run=False).reason,
+                         "recovery_marked")
+        self.assertEqual(len(recover.writes), 2)
+        self.assertEqual(recover.writes[0][0], "comment")
+        self.assertEqual(recover.writes[1], ("status", RECOVERY))
+        self.assertEqual(recover.item.recovery_since, recover.note_at)
+        # Actor dudoso, consulta incompleta, más de una nota => fail closed.
+        for attr, value in (("note_author", "attacker"),
+                            ("note_complete", False),
+                            ("note_authenticated", False),
+                            ("note_count", 2)):
+            with self.subTest(untrusted_note=attr):
+                fake = FakePort(snapshot(recovery=False))
+                fake.note_at = fake.item.now
+                setattr(fake, attr, value)
+                result = execute(1191, fake, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertFalse(result.wrote)
+                self.assertEqual(fake.writes, [])
         # The idempotent partial-marker path also vetoes clock regressions.
         partial = FakePort(replace(snapshot(), marker={**snapshot().marker,
             "active": False, "reason": "auto-inactivity-release"}))
