@@ -93,6 +93,8 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(result["status"], "estado: reservado")
         self.assertEqual(result["last_activity_at"], "2026-10-11T09:25:00Z")
         self.assertEqual(result["branch_sha"], SHA)
+        api.issue["labels"].append({"name": "prioridad: crítica"})
+        self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
         self.assertEqual(result["rate_remaining"], 80)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
@@ -107,6 +109,9 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         a = API(); a.checks.append(copy.deepcopy(a.checks[0])); cases.append(a)
         a = API(); a.comments[0]["body"] = "<!-- condor-reserva SECRET -->"; cases.append(a)
         a = API(); a.issue["labels"].append({"name": "estado: en revisión"}); cases.append(a)
+        for state in ("estado: bloqueado", "estado: disponible", "estado: completado",
+                      "ESTADO: bloqueado"):
+            a = API(); a.issue["labels"].append({"name": state}); cases.append(a)
         for case in cases:
             with self.subTest(case=cases.index(case)):
                 self.assertEqual(

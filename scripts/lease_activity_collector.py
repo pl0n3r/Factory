@@ -119,9 +119,11 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         if not isinstance(labels, list) or not all(
                 isinstance(v, dict) and type(v.get("name")) is str for v in labels):
             raise IncompleteEvidence()
-        active_labels = [v["name"] for v in labels if v["name"] in STATES]
+        state_labels = [v["name"] for v in labels
+                        if v["name"].casefold().startswith("estado:")]
         total = issue.get("comments")
-        if (len(active_labels) != 1 or type(total) is not int
+        if (len(state_labels) != 1 or state_labels[0] not in STATES
+                or type(total) is not int
                 or not 1 <= total <= 500):
             raise IncompleteEvidence()
         comments = pages(f"{path}/comments", expected=total)
@@ -213,7 +215,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or branch_sha() != sha):
             raise IncompleteEvidence()
         return {
-            "status": active_labels[0], "evidence_complete": True,
+            "status": state_labels[0], "evidence_complete": True,
             "repo": repo, "issue_number": issue_number, "owner": owner,
             "lease_id": lease["reservation_id"], "branch_sha": sha,
             "last_activity_at": latest.isoformat().replace("+00:00", "Z"),
