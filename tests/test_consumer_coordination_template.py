@@ -167,7 +167,7 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
         """La guarda de actor autorizado protege preflight y reusable mutante."""
         value = text()
         expected = (
-            "contains(fromJSON('[\\"OWNER\\",\\"MEMBER\\",\\"COLLABORATOR\\"]'), "
+            """contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), """
             "github.event.comment.author_association)"
         )
         for block in (
