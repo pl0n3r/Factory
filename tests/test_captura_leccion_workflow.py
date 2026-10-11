@@ -113,6 +113,90 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
                 self.assertNotEqual(rc, 0)
                 self.assertIsNone(candidate)
 
+    @staticmethod
+    def _execute_trust_gate(payload, *, event="issues", run_id="101", sha="a" * 40):
+        """Execute the real workflow pre-checkout gate, without network calls."""
+        import json
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        import textwrap
+
+        source = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        begin = next(i for i, line in enumerate(source)
+                     if line.strip() == "# TRUST_GATE_START")
+        end = next(i for i, line in enumerate(source)
+                   if line.strip() == "# TRUST_GATE_END")
+        gate = textwrap.dedent("\n".join(source[begin + 1:end]))
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "event.json"
+            source_path.write_text(json.dumps(payload), encoding="utf-8")
+            env = {**os.environ, "GITHUB_REPOSITORY": "pl0n3r/Factory",
+                   "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": sha,
+                   "GITHUB_EVENT_NAME": event, "GITHUB_RUN_ID": run_id,
+                   "GITHUB_EVENT_PATH": str(source_path), "RUNNER_TEMP": directory}
+            outcome = subprocess.run([sys.executable, "-c", gate], env=env,
+                                     cwd=WORKFLOW.parents[2], text=True,
+                                     capture_output=True, timeout=10, check=False)
+            record = Path(directory) / "factory-lesson-event.json"
+            candidate = (json.loads(record.read_text(encoding="utf-8"))
+                         if record.exists() else None)
+            return outcome.returncode, candidate
+
+    def test_cross_run_duplicate_closure_has_stable_event_id(self):
+        issue = {"repository": {"full_name": "pl0n3r/Factory"},
+                 "action": "closed",
+                 "issue": {"number": 1156, "state": "closed",
+                           "closed_at": "2026-10-11T09:00:00Z"}}
+        pr = {"repository": {"full_name": "pl0n3r/Factory"},
+              "action": "closed",
+              "pull_request": {"number": 1164, "state": "closed",
+                               "merged": True, "merge_commit_sha": "a" * 40,
+                               "merged_at": "2026-10-11T09:00:00Z",
+                               "base": {"ref": "main",
+                                        "repo": {"full_name": "pl0n3r/Factory"}}}}
+        for payload, event in ((issue, "issues"), (pr, "pull_request")):
+            with self.subTest(event=event):
+                rc_a, first = self._execute_trust_gate(payload, event=event, run_id="123")
+                rc_b, second = self._execute_trust_gate(payload, event=event, run_id="456")
+                self.assertEqual((rc_a, rc_b), (0, 0))
+                self.assertEqual(first, second)
+                self.assertNotIn("123", first["event_id"])
+                self.assertNotIn("456", first["event_id"])
+                self.assertEqual(len(capture_lessons([first, second])), 1)
+
+    def test_distinct_closures_and_conflicts_fail_closed(self):
+        base = {"repository": {"full_name": "pl0n3r/Factory"},
+                "action": "closed", "issue": {"number": 1156,
+                "state": "closed", "closed_at": "2026-10-11T09:00:00Z"}}
+        rc_a, first = self._execute_trust_gate(base, run_id="123")
+        later = {**base, "issue": {**base["issue"],
+                 "closed_at": "2026-10-11T09:05:00Z"}}
+        rc_b, second = self._execute_trust_gate(later, run_id="456")
+        self.assertEqual((rc_a, rc_b), (0, 0))
+        self.assertNotEqual(first["event_id"], second["event_id"])
+        self.assertEqual(len(capture_lessons([first, second])), 2)
+        with self.assertRaises(CaptureError):
+            capture_lessons([first, {**first, "sha": "b" * 40}])
+        invalid, candidate = self._execute_trust_gate(base, run_id="invalid-id")
+        self.assertNotEqual(invalid, 0)
+        self.assertIsNone(candidate)
+
+    def test_same_closure_changed_main_sha_fails_closed(self):
+        """The stable business ID cannot conceal divergent checkout provenance."""
+        issue = {"repository": {"full_name": "pl0n3r/Factory"},
+                 "action": "closed",
+                 "issue": {"number": 1156, "state": "closed",
+                           "closed_at": "2026-10-11T09:00:00Z"}}
+        rc_a, first = self._execute_trust_gate(issue, run_id="123", sha="a" * 40)
+        rc_b, second = self._execute_trust_gate(issue, run_id="456", sha="b" * 40)
+        self.assertEqual((rc_a, rc_b), (0, 0))
+        self.assertEqual(first["event_id"], second["event_id"])
+        self.assertNotEqual(first["sha"], second["sha"])
+        with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
+            capture_lessons([first, second])
+
 
 if __name__ == "__main__":
     unittest.main()
