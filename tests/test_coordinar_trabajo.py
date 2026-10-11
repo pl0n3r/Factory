@@ -602,6 +602,114 @@ class EstadoCoordinacionTests(unittest.TestCase):
 class CoordinacionTests(unittest.TestCase):
     """Cubre contratos de reserva, sesión, transición y colisiones."""
 
+    def _hidden_v3_fixture(self, visible_status):
+        """Construye un claim V3 ajeno, autenticado, sin confiar en su label."""
+        from scripts.orquestador_kit import PlannedTask, build_task_marker
+
+        def body(number):
+            task = PlannedTask(
+                key=f"LEAF_{number}", title=f"Hoja {number}",
+                owner="pl0n3r", paths=("src/same.php",), depends_on=(),
+            )
+            marker = build_task_marker(
+                epic=1081, task=task, order=number,
+                roles=["ingenieria-software"], dependency_issues=[],
+            )
+            return (
+                VALID_ACCEPTANCE_BODY + "\n### Rutas reclamadas\n"
+                "- src/same.php\n" + marker
+            )
+
+        api = FakeGitHub()
+        api.repo = "pl0n3r/Factory"
+        api.issue_data["body"] = body(12)
+        other_body = body(50)
+        other = {
+            "number": 50, "state": "open", "state_reason": None,
+            "labels": [{"name": visible_status}], "body": other_body,
+        }
+        api.open_issue_data = [api.issue_data, other]
+        api.branches["trabajo/issue-50"] = "a" * 40
+        trusted = [{
+            "user": {"login": BOT},
+            "body": coordinator.reservation_marker(
+                "pl0n3r", SESSION_A, "trabajo/issue-50", True, "tomar",
+                contract_fingerprint(other_body),
+                coordinator.parse_task_marker(other_body),
+            ),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }]
+        original = api.issue_comments
+
+        def comments(number):
+            return trusted if number == 50 else original(number)
+
+        return api, comments
+
+    def test_available_label_does_not_hide_active_v3_overlap(self):
+        """El label disponible nunca borra el claim V3 activo ajeno."""
+        api, comments = self._hidden_v3_fixture(STATUS_AVAILABLE)
+        with patch.object(api, "issue_comments", side_effect=comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"colisión con tarea activa #50"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.assignees, set())
+
+    def test_blocked_label_does_not_hide_active_v3_overlap(self):
+        """Bloqueado con lease V3 retiene el claim, sin marker no lo crea."""
+        api, comments = self._hidden_v3_fixture(STATUS_BLOCKED)
+        with patch.object(api, "issue_comments", side_effect=comments):
+            with self.assertRaisesRegex(
+                CoordinationError, r"colisión con tarea activa #50"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+
+        plain_api, original_comments = self._hidden_v3_fixture(STATUS_BLOCKED)
+        def no_other_marker(number):
+            return [] if number == 50 else original_comments(number)
+        with patch.object(
+            plain_api, "issue_comments", side_effect=no_other_marker
+        ):
+            session = reserve_work(plain_api, 12, "pl0n3r", "OWNER")
+        self.assertIsNotNone(session)
+        self.assertIn("trabajo/issue-12", plain_api.branches)
+
+    def test_hidden_lease_recheck_prevents_second_grant(self):
+        """Una lease oculta aparecida tras crear rama invalida el preflight."""
+        api, other_comments = self._hidden_v3_fixture(STATUS_AVAILABLE)
+        original_create = api.create_branch
+        branch_started = False
+
+        def create_branch(name, sha):
+            nonlocal branch_started
+            created = original_create(name, sha)
+            if name == "trabajo/issue-12":
+                branch_started = True
+            return created
+
+        def comments(number):
+            if number == 50 and not branch_started:
+                return []
+            return other_comments(number)
+
+        with patch.object(api, "issue_comments", side_effect=comments), (
+            patch.object(api, "create_branch", side_effect=create_branch)
+        ):
+            with self.assertRaisesRegex(
+                CoordinationError, r"Cola activa cambió durante /tomar"
+            ):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.assignees, set())
+
+
     def test_issue_from_branch(self) -> None:
         """Extrae Issue únicamente de ramas canónicas."""
         self.assertEqual(issue_from_branch("trabajo/issue-12"), 12)

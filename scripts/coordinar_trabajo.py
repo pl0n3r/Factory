@@ -2220,20 +2220,13 @@ def reserve_work(
             active_task_snapshots = {}
             active_dependency_states = {}
             active_reservation_numbers = set()
-            active_statuses = {
-                STATUS_RESERVED,
-                STATUS_REVIEW,
-                STATUS_RECOVERY,
-                "status: reserved",
-                "status: in review",
-                "status: recovery required",
-            }
+            # La autoridad la da el marker confiable V3, NO el label.
+            # Incluir también leases activas escondidas por AVAILABLE/BLOCKED.
             for other in open_issues:
                 other_number = other.get("number")
                 if (
                     not isinstance(other_number, int)
                     or other_number == issue_number
-                    or not (label_names(other) & active_statuses)
                 ):
                     continue
                 other_reservation = active_reservation(api, other_number)
@@ -2252,9 +2245,18 @@ def reserve_work(
         verified, verified_notes, pins = verified_parallel_file_evidence(
             api, task_marker, active_reservations, active_task_snapshots or {},
         )
+        # El árbitro reusable opera sobre labels; proyectar sólo en memoria
+        # las leases genuinas para que ningún estado visible oculte un claim.
+        # El Issue/labels reales y el API de GitHub no se modifican.
+        arbitration_issues = [
+            {**other, "labels": [{"name": STATUS_RESERVED}]}
+            if other.get("number") in (active_reservation_numbers or set())
+            else other
+            for other in open_issues
+        ]
         plan_blockers = reservation_blockers(
             issue,
-            open_issues,
+            arbitration_issues,
             actor,
             dependency_states,
             active_task_snapshots,
@@ -2280,7 +2282,7 @@ def reserve_work(
 
     parallel_evidence = parallel_compatibility_evidence(
         issue,
-        open_issues,
+        arbitration_issues,
         active_task_snapshots,
     )
     parallel_evidence.extend(verified_notes)
@@ -2318,15 +2320,12 @@ def reserve_work(
                 raise CoordinationError(
                     f"Dependencia #{dep} cambió durante /tomar."
                 )
-        statuses = {
-            STATUS_RESERVED, STATUS_REVIEW, STATUS_RECOVERY,
-            "status: reserved", "status: in review", "status: recovery required",
-        }
+        # Segunda lectura sin prefiltrado de estados: carrera de activación
+        # o rotación bajo label AVAILABLE/BLOCKED también niega el nuevo grant.
         current_active = {
             other["number"] for other in api.open_issues()
             if isinstance(other.get("number"), int)
             and other["number"] != issue_number
-            and label_names(other) & statuses
             and active_reservation(api, other["number"]) is not None
         }
         if current_active != active_reservation_numbers:
