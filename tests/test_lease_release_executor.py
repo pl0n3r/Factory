@@ -39,9 +39,18 @@ class FakePort:
         self.locked = False
         self.drift = None
         self.fail_status = False
+        self.locked_clock_drift = None  # (locked_read_ordinal, absolute_minute)
+        self.locked_reads = 0
 
     def read(self, issue):
         assert issue == 1191
+        if self.locked:
+            self.locked_reads += 1
+            if (self.locked_clock_drift is not None
+                    and self.locked_reads == self.locked_clock_drift[0]):
+                self.item = replace(self.item, now=START + timedelta(
+                    minutes=self.locked_clock_drift[1]))
+                return self.item
         if self.drift is not None:
             value, self.drift = self.drift, None
             return value
@@ -111,6 +120,26 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertFalse(execute(1191, port, decision, feature_enabled=True,
                                  dry_run=False).wrote)
         self.assertEqual(port.writes, [])
+        # Neither a stale lock read nor the final pre-write read may
+        # authorize a transition when the trusted clock goes backward.
+        # The fake decision intentionally only consults status, so the
+        # executor's *independent* 30+10 minute guard must reject both.
+        for recovery, clock_minute in ((False, 20), (True, 35)):
+            for locked_read in (1, 2):
+                with self.subTest(recovery=recovery, locked_read=locked_read):
+                    port = FakePort(snapshot(recovery=recovery))
+                    port.locked_clock_drift = (locked_read, clock_minute)
+                    result = execute(1191, port, decision,
+                                     feature_enabled=True, dry_run=False)
+                    self.assertFalse(result.wrote)
+                    self.assertEqual(port.writes, [])
+        # Monotonic advancement of trusted UTC under the lock remains valid.
+        for recovery in (False, True):
+            with self.subTest(advancing_clock_recovery=recovery):
+                port = FakePort(snapshot(recovery=recovery))
+                port.locked_clock_drift = (2, 42)
+                self.assertTrue(execute(1191, port, decision,
+                                        feature_enabled=True, dry_run=False).wrote)
         port = FakePort(snapshot())
         port.item = replace(port.item, reservation_id="bad")
         self.assertFalse(execute(1191, port, decision, feature_enabled=True,
@@ -145,6 +174,13 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertEqual(len(failed.writes), 2)
         self.assertEqual(failed.item.status, AVAILABLE)
         self.assertEqual(failed.item.branch_sha, "a" * 40)
+        # The idempotent partial-marker path also vetoes clock regressions.
+        partial = FakePort(replace(snapshot(), marker={**snapshot().marker,
+            "active": False, "reason": "auto-inactivity-release"}))
+        partial.locked_clock_drift = (2, 35)
+        self.assertFalse(execute(1191, partial, decision,
+                                 feature_enabled=True, dry_run=False).wrote)
+        self.assertEqual(partial.writes, [])
 
 
 if __name__ == "__main__":

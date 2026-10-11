@@ -153,7 +153,8 @@ def _same(a: Snapshot, b: Snapshot) -> bool:
     return (_identity(a) == _identity(b) and a.fingerprint == b.fingerprint
             and a.status == b.status and a.marker == b.marker
             and a.last_activity_at == b.last_activity_at
-            and a.recovery_since == b.recovery_since and a.phase == b.phase)
+            and a.recovery_since == b.recovery_since and a.phase == b.phase
+            and _utc(a.now) <= _utc(b.now))
 
 
 def _release_marker(s: Snapshot) -> str:
@@ -195,6 +196,7 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                         and _same(first, locked) and _same(locked, current)
                         and current.marker["active"] is False
                         and current.marker.get("reason") == "auto-inactivity-release"
+                        and _eligible(locked, "release")
                         and _eligible(current, "release")):
                     return Result("unknown", "partial_reconciliation_drift")
                 port.status(issue, AVAILABLE, current)
@@ -206,12 +208,14 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
             return Result(action, "dry_run")
         with port.lock(f"{LOCK_GROUP}-{first.repository_id}"):
             locked = port.read(issue)
-            if not _trusted(locked) or not _same(first, locked):
+            if (not _trusted(locked) or not _same(first, locked)
+                    or not _eligible(locked, action)):
                 return Result("unknown", "stale_inside_lock")
             if getattr(decide(locked), "action", None) != action:
                 return Result("unknown", "decision_drift")
             current = port.read(issue)
-            if not _trusted(current) or not _same(locked, current):
+            if (not _trusted(current) or not _same(locked, current)
+                    or not _eligible(current, action)):
                 return Result("unknown", "prewrite_drift")
             if getattr(decide(current), "action", None) != action:
                 return Result("unknown", "decision_drift")
