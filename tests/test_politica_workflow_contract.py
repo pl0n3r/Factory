@@ -232,8 +232,8 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
                             observed[first] = value
                     env['PR_JSON_FIXTURE'] = json.dumps(observed)
                     result = subprocess.run(
-                        ['bash', '-c', 'set -euo pipefail\\n' + helper
-                         + '\\nrecheck_pr_identity'],
+                        ['bash', '-c', 'set -euo pipefail\n' + helper
+                         + '\nrecheck_pr_identity'],
                         env=env, capture_output=True, text=True, timeout=8)
                     self.assertEqual(result.returncode == 0, should_pass,
                                      msg=result.stderr)
