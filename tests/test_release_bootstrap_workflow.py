@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
+import json
 import re
 import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
+
+from scripts import release_window as rw
 
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = (ROOT / ".github/workflows/release-bootstrap.yml").read_text(encoding="utf-8")
@@ -148,6 +154,56 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
             "nunca crea ni mueve `v1`",
         ):
             self.assertIn(value, GUIDE)
+
+
+    def _extract_latest_gate_sha(self, body: str) -> subprocess.CompletedProcess[str]:
+        """Ejecuta el mismo fragmento Python embebido en el preflight de latest."""
+        marker = "gate_sha=\"$(python3 - /tmp/gate.json <<'PY'"
+        self.assertEqual(BOOTSTRAP.count(marker), 1)
+        script = BOOTSTRAP.split(marker, 1)[1].split("\n          PY", 1)[0]
+        script = textwrap.dedent(script)
+        with tempfile.TemporaryDirectory() as tmp:
+            gate_path = Path(tmp) / "gate.json"
+            gate_path.write_text(json.dumps({"body": body}), encoding="utf-8")
+            return subprocess.run(
+                [sys.executable, "-c", script, str(gate_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+
+    def test_latest_accepts_repeated_identical_sha_from_generated_release_window_gate(self):
+        """AC-01: la puerta real repite el SHA sin crear dos candidatos distintos."""
+        sha = "a" * 40
+        gate = rw._render_gate(
+            "1.0.28", sha, datetime(2026, 10, 9, tzinfo=timezone.utc),
+            source_issue=1014,
+        )["body"]
+        self.assertGreaterEqual(gate.count("main@" + sha), 2)
+        result = self._extract_latest_gate_sha(gate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), sha)
+        # Mismo SHA en diferente representación hexadecimal: único valor.
+        mixed_case = gate.replace("main@" + sha, "main@" + sha.upper(), 1)
+        mixed_result = self._extract_latest_gate_sha(mixed_case)
+        self.assertEqual(mixed_result.returncode, 0, mixed_result.stderr)
+        self.assertEqual(mixed_result.stdout.strip(), sha)
+
+    def test_latest_rejects_distinct_shas_in_gate_body(self):
+        """AC-02: no aceptar puerta sin baseline ni con SHAs contradictorios."""
+        sha = "a" * 40
+        gate = rw._render_gate(
+            "1.0.28", sha, datetime(2026, 10, 9, tzinfo=timezone.utc),
+            source_issue=1014,
+        )["body"]
+        for invalid in (
+            "sin main@SHA",
+            gate + "\nmain@" + "b" * 40,
+            # Segundo valor distinto en HEX mayúsculas jamás debe ignorarse.
+            gate + "\nmain@" + "B" * 40,
+        ):
+            with self.subTest(body=invalid[-50:]):
+                result = self._extract_latest_gate_sha(invalid)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("gate sin main@SHA único", result.stderr)
 
 
 if __name__ == "__main__":
