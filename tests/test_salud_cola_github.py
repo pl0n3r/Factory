@@ -45,8 +45,9 @@ class GitHubPageTests(unittest.TestCase):
 
     def test_malformed_link_query_clears_exception_context(self):
         bad = f'<{url(2)}&private-token-SYNTHETIC>; rel="next"'
+        synthetic_rows = full_items()
         with self.assertRaises(GitHubPageError) as raised:
-            parse(header=bad, items=full_items())
+            parse(header=bad, items=synthetic_rows)
         self.assertEqual(str(raised.exception), "invalid_request_url")
         self.assertIsNone(raised.exception.__cause__)
         self.assertIsNone(raised.exception.__context__)
@@ -56,8 +57,9 @@ class GitHubPageTests(unittest.TestCase):
         self.assertEqual(parse(repo="brvtal", request=url(1, "brvtal"))["issues"], [])
         self.assertTrue(parse(header=link(2, "next"), items=full_items())["has_next"])
         self.assertFalse(parse(page=2, header=link(1, "prev"), items=[])["has_next"])
+        encoded_alias = url(1).replace("state=open", "state=%6fpen")
         with self.assertRaises(GitHubPageError):
-            parse(request=url(1).replace("state=open", "state=%6fpen"))
+            parse(request=encoded_alias)
         projected = parse(items=[{"number": 71, "state": "open",
                                   "labels": [{"name": "estado: disponible"}],
                                   "title": "PRIVATE-SYNTHETIC"}])
