@@ -201,7 +201,8 @@ def review_counts_as_round(review: dict[str, Any]) -> bool:
     if state in {"APPROVED", "CHANGES_REQUESTED"}:
         return True
     body = review.get("body")
-    return state == "COMMENTED" and isinstance(body, str) and bool(body.strip())
+    return (state == "COMMENTED" and isinstance(body, str)
+            and bool(body.strip()) and not _is_rate_limit_body(body))
 
 
 def count_review_rounds(lines: list[str]) -> int:
@@ -238,12 +239,23 @@ def _comment_has_exact_head_coverage(
         return False
     if _is_rate_limit_body(body):
         return False
+    # Un segundo marcador incompleto y claves JSON duplicadas invalidan
+    # cualquier atestación: json.loads normal permitiría last-key-wins.
+    if len(re.findall(r"<!--\s*final_review_risk_coverage\b", body, re.I)) != 1:
+        return False
     matches = list(COMMENT_COVERAGE_RE.finditer(body))
     if len(matches) != 1:
         return False
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        found: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in found:
+                raise ValueError("duplicate coverage key")
+            found[key] = value
+        return found
     try:
-        marker = json.loads(matches[0].group(1))
-    except json.JSONDecodeError:
+        marker = json.loads(matches[0].group(1), object_pairs_hook=unique_pairs)
+    except (json.JSONDecodeError, ValueError):
         return False
     if not isinstance(marker, dict) or set(marker) != {
         "sourceCommitId",
@@ -274,14 +286,22 @@ def _required_bot_review_satisfied(
         raise PolicyError("Reviewer-bot requerido inválido.")
     if not SHA_RE.fullmatch(head_sha):
         raise PolicyError("HEAD requerido inválido.")
-    for review in parse_reviews(lines):
+    reviews = parse_reviews(lines)
+    # Negar ANTES del primer positivo: el orden de GitHub no anula vetos.
+    for review in reviews:
+        user = review.get("user")
+        if (isinstance(user, dict) and user.get("type") == "Bot"
+                and user.get("login") == required_review_bot
+                and review.get("commit_id") == head_sha
+                and review.get("state") == "CHANGES_REQUESTED"):
+            raise PolicyError("CHANGES_REQUESTED vigente del reviewer requerido.")
+    for review in reviews:
         user = review.get("user")
         if (
             isinstance(user, dict)
             and user.get("type") == "Bot"
             and user.get("login") == required_review_bot
             and review.get("commit_id") == head_sha
-            and review.get("state") != "CHANGES_REQUESTED"
             and review_counts_as_round(review)
         ):
             return True
@@ -465,7 +485,7 @@ def _has_open_blocking_finding(
 
 
 def _is_rate_limit_body(body: str) -> bool:
-    return any(text in body for text in RATE_LIMIT_TEXTS)
+    return any(text.casefold() in body.casefold() for text in RATE_LIMIT_TEXTS)
 
 
 def _rate_limit_comment_identity(
@@ -696,6 +716,7 @@ def _sha_less_timeline_retry(
 
     previous_rate_limits: list[tuple[int, dict[str, Any]]] = []
     owner_requests: list[tuple[int, dict[str, Any]]] = []
+    all_requests: list[tuple[int, dict[str, Any]]] = []
     for index, event in witnessed:
         if index <= last_commit_index:
             continue
@@ -712,13 +733,14 @@ def _sha_less_timeline_retry(
             previous_rate_limits.append((index, event))
         if (
             user["type"] == "User"
-            and event.get("author_association") == "OWNER"
             and isinstance(body, str)
             and body.strip().lower() == f"@{_normalized_bot_login(required_review_bot)} review"
         ):
-            owner_requests.append((index, event))
+            all_requests.append((index, event))
+            if event.get("author_association") == "OWNER":
+                owner_requests.append((index, event))
 
-    if len(owner_requests) != 1:
+    if len(all_requests) != 1 or len(owner_requests) != 1:
         raise PolicyError("Timeline requiere exactamente un reintento OWNER del HEAD.")
     owner_index, owner_event = owner_requests[0]
     owner_at = owner_event["created_at"]
@@ -739,6 +761,12 @@ def _sha_less_timeline_retry(
     if len(replies) != 1:
         raise PolicyError("Se exige una única respuesta rate-limit tras el reintento.")
     bot_index, bot_event = replies[0]
+    bot_observed = comment_by_id[bot_event["id"]]
+    # La API ofrece updated_at: sin inmutabilidad acreditada, la respuesta
+    # podría haberse editado después del comando y no prueba causalidad.
+    if (bot_observed.get("updated_at") != bot_observed.get("created_at")
+            or bot_observed.get("updated_at") is None):
+        raise PolicyError("Respuesta rate-limit editada o sin timestamp fiable.")
     seconds = (
         datetime.fromisoformat(bot_event["created_at"].replace("Z", "+00:00"))
         - datetime.fromisoformat(owner_at.replace("Z", "+00:00"))
@@ -792,6 +820,15 @@ def validate_rate_limit_fallback(
 
     validate_other_gates_green(check_lines, head_sha=head_sha)
 
+    failed_policy_checks: list[str] = []
+    for check in parse_checks(check_lines):
+        if (check.get("name") == POLICY_CHECK_NAME
+                and check.get("head_sha") == head_sha
+                and check.get("status") == "completed"
+                and check.get("conclusion") == "failure"):
+            failed_policy_checks.append(_parse_iso_timestamp(
+                check.get("completed_at"), noun="Timestamp de Policy failure"))
+
     if run_attempt > 1:
         owner_retries = _owner_review_retry_comments(
             comment_lines,
@@ -809,7 +846,7 @@ def validate_rate_limit_fallback(
             )
             if rate_limit_events:
                 return rate_limit_events[0][1], rate_limit_events[0][0]
-        if timeline_lines:
+        if timeline_lines and failed_policy_checks:
             return _sha_less_timeline_retry(
                 timeline_lines=timeline_lines,
                 comment_lines=comment_lines,
@@ -821,35 +858,13 @@ def validate_rate_limit_fallback(
             "Rerun sin reintento OWNER y rate-limit exact-HEAD posteriores verificables."
         )
 
-    failed_policy_checks: list[str] = []
-    for check in parse_checks(check_lines):
-        if (
-            check.get("name") == POLICY_CHECK_NAME
-            and check.get("head_sha") == head_sha
-            and check.get("status") == "completed"
-            and check.get("conclusion") == "failure"
-        ):
-            failed_policy_checks.append(
-                _parse_iso_timestamp(
-                    check.get("completed_at"),
-                    noun="Timestamp de policy failure",
-                )
-            )
-
     rate_limits = _rate_limit_comments(
         comment_lines,
         required_review_bot=required_review_bot,
         not_before=committed_at,
     )
-    if len(rate_limits) >= 2:
-        for first_at, _first_id in rate_limits:
-            for failed_at in sorted(failed_policy_checks):
-                if failed_at < first_at:
-                    continue
-                for retry_at, retry_id in rate_limits:
-                    if retry_at > failed_at:
-                        return retry_id, retry_at
-
+    # Dos avisos SHA-less no vinculan la respuesta a HEAD ni al OWNER.
+    # Mantener la evidencia exact-HEAD del bloque siguiente.
     for failed_at in sorted(failed_policy_checks):
         owner_retries = _owner_review_retry_comments(
             comment_lines,
