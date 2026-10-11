@@ -38,7 +38,9 @@ Declarar claims exactos por archivo, nunca dar por libre un directorio o un arch
 
 ### Principio 5 — autonomía de construcción, no autoridad de producción
 
-En fase `construccion` preparar cambios reversibles build-ahead sin solicitar permiso del dueño para cada edición offline; esto no autoriza merges, activación, go-live ni publicación automática. Las puertas humanas para gasto/dinero, nuevas credenciales o secretos, datos reales de clientes, proveedores/condiciones legales, privacidad, borrados irreversibles y salida a live permanecen vigentes. Las propuestas de automatización de release no alteran por sí solas las reglas actuales ni el freeze exact-SHA.
+En fase `construccion`, el agente titular implementa y **fusiona por squash su propio PR** cuando esté listo, sin aprobación independiente ni segunda cuenta, solo si el PR no es `DRAFT`, conserva la reserva V3 y claims legítimos, el `HEAD exacto` y `main` están reconciliados, todos los checks obligatorios están terminales verdes y no existen `CHANGES_REQUESTED` ni hilos bloqueantes. La puerta `freeze` de Factory#921, los gates operativos Factory#912/D-043/D-059, las protecciones de rama y cualquier estado `UNKNOWN` prevalecen sobre el verde parcial; un bloqueo exige motivo concreto y no una prohibición genérica de merge. En fase `live` no se fusiona automáticamente. La preparación por sí sola no autoriza merges, activación, go-live ni publicación automática; el squash solo se ejecuta tras verificar todos los requisitos de D-069. Esta regla también aplica a PRs de código de release/seguridad/política en construcción, pero no abre la puerta de publicación ni mueve `Factory@v1`.
+
+Las puertas humanas para gasto/dinero, nuevas credenciales o secretos, datos reales de clientes, proveedores/condiciones legales, privacidad vigente, borrados irreversibles, publicación de releases y salida a live permanecen vigentes. No usar `--admin`, saltar tests ni deducir producción verde de un merge.
 
 ### Principio 6 — contrato canónico antes de reservar
 
@@ -54,4 +56,4 @@ Antes de reabrir, duplicar, liberar o cerrar trabajo, leer `main` exacto, criter
 
 ### Límite explícito del template
 
-Este texto no sincroniza ni modifica consumidores, no constituye aprobación humana o revisión independiente y no activa el orquestador. Ningún cambio queda listo para merge, release, `Factory@v1`, despliegue o live sin CI, revisión independiente, protección de rama y autoridad comprobadas. Se prohíben acceso a datos reales, gasto, compra, credenciales, permisos nuevos y borrados irreversibles sin su puerta legítima.
+Este texto no sincroniza ni modifica consumidores, no constituye aprobación humana o revisión independiente y no activa el orquestador. Ningún cambio queda listo para merge sin checks terminales verdes del HEAD exacto, reserva V3, protección de rama y autoridad comprobadas; en `construccion` no se exige revisión independiente ni segunda cuenta según D-069. Release, `Factory@v1`, despliegue y live conservan sus puertas propias. Se prohíben acceso a datos reales, gasto, compra, credenciales, permisos nuevos y borrados irreversibles sin su puerta legítima.

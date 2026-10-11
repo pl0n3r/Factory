@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "project": "grindflow",
+  "surfaces": [
+    {
+      "id": "ci.production_smoke",
+      "label": "GrindFlow main production-smoke GitHub Actions job duration",
+      "metrics": [
+        {
+          "id": "job_duration",
+          "label": "Elapsed time of completed production-smoke job",
+          "baseline": {
+            "value": 38,
+            "unit": "s",
+            "observed_at": "2026-10-10T00:42:17Z"
+          },
+          "budget": {
+            "operator": "lte",
+            "value": 120,
+            "unit": "s"
+          },
+          "window": {
+            "duration_seconds": 38,
+            "min_samples": 1
+          },
+          "freshness": {
+            "max_age_seconds": 604800
+          },
+          "evidence": {
+            "source": "github_actions",
+            "ref": "github:pl0n3r/GrindFlow/actions/runs/38010129128#job-114087986892",
+            "observed_at": "2026-10-10T00:42:17Z"
+          },
+          "allowed_actions": [
+            "observe",
+            "diagnose",
+            "benchmark",
+            "measure_before_after"
+          ],
+          "escalation_conditions": [
+            "capacity_budget",
+            "architecture_change"
+          ]
+        }
+      ]
+    }
+  ]
+}
