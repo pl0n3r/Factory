@@ -21,7 +21,10 @@ REQUIRED_CHECKS = frozenset({
     "CodeRabbit", "Criterios de aceptación", "Validar coordinación", "Seguridad",
 })
 WAIVER_SOURCE = ("pl0n3r/Factory", 1139, 6107503429, "pl0n3r")
-UUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
+UUID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
+)
 SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy",
              "secrets", "puertas-humanas", "production", "deploy")
 SENSITIVE_PREFIXES = (".github/", "config/", "credentials/", "agentes/roles/",
