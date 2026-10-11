@@ -50,6 +50,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             return unknown
         now = now.astimezone(timezone.utc)
         used = 0
+        pagination: dict[str, dict[str, int]] = {}
 
         def get(path: str) -> Any:
             nonlocal used
@@ -66,8 +67,13 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or limit <= 0 or remaining < 0 or remaining > limit
                 or remaining * 5 < limit):
             raise IncompleteEvidence()
+        identity = get(base)
+        if (not isinstance(identity, dict) or identity.get("full_name") != repo
+                or type(identity.get("id")) is not int or identity["id"] <= 0):
+            raise IncompleteEvidence()
+        repo_id = identity["id"]
 
-        def pages(path: str, *, expected: int | None = None,
+        def pages(path: str, *, name: str, expected: int | None = None,
                   checks: bool = False, commits: bool = False) -> list[dict[str, Any]]:
             output: list[dict[str, Any]] = []
             seen: set[int | str] = set()
@@ -106,6 +112,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 if len(rows) < 100:
                     if expected is not None and len(output) != expected:
                         raise IncompleteEvidence()
+                    pagination[name] = {"pages": page, "items": len(output)}
                     return output
             raise IncompleteEvidence()  # jamás tratar el prefijo como inventario íntegro
 
@@ -126,7 +133,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(total) is not int
                 or not 1 <= total <= 500):
             raise IncompleteEvidence()
-        comments = pages(f"{path}/comments", expected=total)
+        comments = pages(f"{path}/comments", name="comments", expected=total)
         trusted: list[tuple[int, dict[str, Any], datetime]] = []
         for c in comments:
             user = c.get("user")
@@ -175,7 +182,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                     latest = max(latest, when)
 
         since_param = quote(since.isoformat().replace("+00:00", "Z"), safe="")
-        commits = pages(f"{base}/commits?sha={quote(branch, safe='')}&since={since_param}", commits=True)
+        commits = pages(f"{base}/commits?sha={quote(branch, safe='')}&since={since_param}",
+                        name="commits", commits=True)
         for commit in commits:
             author = commit.get("author")
             if (not isinstance(author, dict) or type(author.get("login")) is not str
@@ -188,18 +196,27 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 if when >= since:
                     latest = max(latest, when)
 
-        pulls = pages(f"{base}/pulls?state=open")
+        pulls = pages(f"{base}/pulls?state=open", name="pulls")
         matching = []
         for pull in pulls:
             h = pull.get("head")
             if isinstance(h, dict) and h.get("ref") == branch:
-                if h.get("sha") != sha:
+                source = h.get("repo")
+                if (not isinstance(source, dict)
+                        or type(source.get("id")) is not int
+                        or type(source.get("full_name")) is not str):
+                    raise IncompleteEvidence()
+                if source["id"] != repo_id:
+                    if source["full_name"] == repo:
+                        raise IncompleteEvidence()
+                    continue  # fork con nombre de rama coincidente
+                if source["full_name"] != repo or h.get("sha") != sha:
                     raise IncompleteEvidence()
                 matching.append(pull)
         if len(matching) > 1:
             raise IncompleteEvidence()
         if matching:
-            reviews = pages(f"{base}/pulls/{matching[0]['number']}/reviews")
+            reviews = pages(f"{base}/pulls/{matching[0]['number']}/reviews", name="reviews")
             for review in reviews:
                 author = review.get("user")
                 if (not isinstance(author, dict) or type(author.get("login")) is not str
@@ -210,7 +227,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                     if when >= since:
                         latest = max(latest, when)
 
-        checks = pages(f"{base}/commits/{sha}/check-runs", checks=True)
+        checks = pages(f"{base}/commits/{sha}/check-runs", name="checks", checks=True)
         running = False
         for check in checks:
             if check.get("head_sha") != sha:
@@ -232,8 +249,9 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             raise IncompleteEvidence()
         return {
             "status": state_labels[0], "evidence_complete": True,
-            "repo": repo, "issue_number": issue_number, "owner": owner,
-            "lease_id": lease["reservation_id"], "branch_sha": sha,
+            "repo": repo, "repository_id": repo_id, "issue_number": issue_number,
+            "owner": owner, "lease_id": lease["reservation_id"],
+            "branch": branch, "branch_sha": sha, "pagination": pagination,
             "last_activity_at": latest.isoformat().replace("+00:00", "Z"),
             "ci_running": running, "rate_limit": limit,
             "rate_remaining": effective_remaining, "api_requests": used,

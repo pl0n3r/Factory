@@ -31,6 +31,7 @@ class API:
         self.race = False
         self.ref_reads = 0
         self.remaining = 80
+        self.repo_id = 123
         self.issue = {
             "number": 21, "state": "open", "comments": 2,
             "updated_at": "2026-10-11T09:45:00Z",
@@ -49,6 +50,7 @@ class API:
         self.pulls = [
             {"id": 4, "number": 35, "head": {
                 "ref": "trabajo/issue-21", "sha": SHA,
+                "repo": {"full_name": REPO, "id": 123},
             }},
         ]
         self.reviews = [
@@ -66,6 +68,8 @@ class API:
             raise RuntimeError("private-token-should-not-leak")
         if path == "/rate_limit":
             return {"resources": {"core": {"limit": 100, "remaining": self.remaining}}}
+        if path == f"/repos/{REPO}":
+            return {"id": self.repo_id, "full_name": REPO}
         if path == f"/repos/{REPO}/issues/21":
             return copy.deepcopy(self.issue)
         if path.endswith("/git/ref/heads/trabajo/issue-21"):
@@ -94,11 +98,20 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(result["status"], "estado: reservado")
         self.assertEqual(result["last_activity_at"], "2026-10-11T09:25:00Z")
         self.assertEqual(result["branch_sha"], SHA)
+        self.assertEqual(result["branch"], "trabajo/issue-21")
+        self.assertEqual(result["repository_id"], 123)
+        self.assertEqual(result["pagination"], {
+            "comments": {"pages": 1, "items": 2},
+            "commits": {"pages": 1, "items": 1},
+            "pulls": {"pages": 1, "items": 1},
+            "reviews": {"pages": 1, "items": 1},
+            "checks": {"pages": 1, "items": 1},
+        })
         api.issue["labels"].append({"name": "prioridad: crítica"})
         self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
-        self.assertEqual(result["rate_remaining"], 70)
-        self.assertEqual(result["api_requests"], 10)
+        self.assertEqual(result["rate_remaining"], 69)
+        self.assertEqual(result["api_requests"], 11)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
         self.assertTrue(all(isinstance(p, str) for p in api.calls))
 
@@ -108,6 +121,10 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         a = API(); a.remaining = 29; cases.append(a)
         a = API(); a.issue["comments"] = 3; cases.append(a)
         a = API(); a.pulls[0]["head"]["sha"] = "b" * 40; cases.append(a)
+        a = API(); a.pulls[0]["head"]["repo"] = None; cases.append(a)
+        a = API(); a.pulls[0]["head"]["repo"]["id"] = 999; cases.append(a)
+        a = API(); a.pulls[0]["head"]["repo"]["full_name"] = "other/fork"; cases.append(a)
+        a = API(); a.repo_id = None; cases.append(a)
         a = API(); a.race = True; cases.append(a)
         a = API(); a.checks.append(copy.deepcopy(a.checks[0])); cases.append(a)
         a = API(); a.comments[0]["body"] = "<!-- condor-reserva SECRET -->"; cases.append(a)
@@ -127,6 +144,18 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     collect_activity(case, 21, now=NOW),
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
+
+    def test_same_branch_name_from_foreign_fork_is_ignored(self):
+        api = API()
+        foreign = copy.deepcopy(api.pulls[0])
+        foreign["id"], foreign["number"] = 7, 37
+        foreign["head"]["repo"] = {"full_name": "other/fork", "id": 999}
+        foreign["head"]["sha"] = "c" * 40
+        api.pulls.append(foreign)
+        result = collect_activity(api, 21, now=NOW)
+        self.assertTrue(result["evidence_complete"])
+        self.assertEqual(result["branch_sha"], SHA)
+        self.assertEqual(result["pagination"]["pulls"]["items"], 2)
 
     def test_edited_reservation_marker_updates_activity_clock(self):
         api = API()
