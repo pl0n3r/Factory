@@ -763,7 +763,7 @@ def summarize_product_day(
         result[repo] = {
             "repository_sha": repository_sha,
             "run_id": run_id,
-            "merged_prs": sum(window_start <= stamp <= observed
+            "merged_prs": sum(window_start < stamp <= observed
                               for _, stamp in unique.values()),
             "window_start": window_start.isoformat().replace("+00:00", "Z"),
             "window_end": observed.isoformat().replace("+00:00", "Z"),
