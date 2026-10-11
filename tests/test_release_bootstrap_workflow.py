@@ -208,15 +208,28 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
 
     # #1079: execute the jq filter extracted from the ACTUAL workflow.
     @staticmethod
+    def _workflow_path(name):
+        return {
+            "CI factory": ".github/workflows/factory-ci.yml",
+            "Sonar CI-based": ".github/workflows/sonar.yml",
+            "Evidencia CodeQL": ".github/workflows/codeql-evidence.yml",
+            "Unattended Watchdog": ".github/workflows/unattended-watchdog.yml",
+        }.get(name, ".github/workflows/other.yml")
+
+    @staticmethod
     def _exact_run(number, name="CI factory", status="completed",
                    conclusion="success", created="2026-10-11T09:00:00Z",
-                   sha=None, attempt=1, started=None):
+                   sha=None, attempt=1, started=None, path=None,
+                   head_branch="main"):
         if sha is None:
             sha = "a" * 40
         if started is None and status == "completed":
             started = created
+        if path is None:
+            path = ReleaseBootstrapWorkflowTests._workflow_path(name)
         return {
             "id": number, "run_attempt": attempt, "name": name,
+            "path": path, "head_branch": head_branch,
             "head_sha": sha, "created_at": created,
             "run_started_at": started, "updated_at": started or created,
             "status": status, "conclusion": conclusion,
@@ -233,7 +246,9 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         }
         result = subprocess.run(
             ["jq", "-e", "--arg", "workflow_name", workflow,
-             "--arg", "sha", "a" * 40, program],
+             "--arg", "sha", "a" * 40,
+             "--arg", "workflow_path", self._workflow_path(workflow),
+             program],
             input=json.dumps(snapshot), capture_output=True, text=True, timeout=10,
         )
         self.assertIn(result.returncode, (0, 1), result.stderr)
@@ -292,12 +307,27 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertFalse(self._check_latest(bad, workflow="Sonar CI-based"))
         self.assertTrue(self._check_latest(bad, workflow="CI factory"))
 
+        # Misma etiqueta, distinto workflow: no puede suplir CI legitimo rojo.
+        spoofed = [
+            self._exact_run(100, conclusion="failure"),
+            self._exact_run(210, created="2026-10-11T09:20:00Z",
+                            path=".github/workflows/foreign-ci.yml"),
+        ]
+        self.assertFalse(self._check_latest(spoofed))
+        self.assertFalse(self._check_latest([
+            self._exact_run(100, head_branch="otra-rama")
+        ]))
+
     def test_latest_fails_closed_for_incomplete_ambiguous_or_malformed_runs(self):
         good = self._exact_run(100)
         self.assertIn(
-            'repos/$REPOSITORY/actions/runs?head_sha=$resolved_sha&per_page=100&page=1',
+            'repos/$REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$resolved_sha&per_page=100&page=1',
             BOOTSTRAP,
         )
+        self.assertNotIn('repos/$REPOSITORY/actions/runs?head_sha=', BOOTSTRAP)
+        for filename in ("factory-ci.yml", "sonar.yml",
+                         "codeql-evidence.yml", "unattended-watchdog.yml"):
+            self.assertIn(f'"{filename}"', BOOTSTRAP)
         self.assertNotIn('gh run list --commit "$resolved_sha"', BOOTSTRAP)
         cases = (
             ("truncated", [good], 2),
@@ -313,6 +343,9 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
             ("ambiguous tie", [good, self._exact_run(101,
                                                     conclusion="failure")], None),
             ("malformed status", [dict(good, status=5)], None),
+            ("missing path", [dict(good, path=None)], None),
+            ("invalid path", [dict(good, path="../foreign.yml")], None),
+            ("missing branch", [dict(good, head_branch=None)], None),
         )
         for desc, runs, count in cases:
             with self.subTest(case=desc):
