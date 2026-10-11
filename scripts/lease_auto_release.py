@@ -102,11 +102,13 @@ def decide(e: Evidence) -> Decision:
     last = _utc(e.last_activity_at)
     if now is None or last is None or last > now:
         return Decision("unknown", "unverifiable_activity_clock")
-    age = now - last
     if e.status in (RESERVED, REVIEW):
         if e.recovery_since is not None:
             return Decision("unknown", "unexpected_recovery_timestamp")
-        deadline = last + timedelta(minutes=30)
+        try:
+            deadline = last + timedelta(minutes=30)
+        except OverflowError:
+            return Decision("unknown", "invalid_clock_range")
         if now >= deadline:
             return Decision("mark_recovery", "inactive_30_minutes", 10)
         return Decision("wait", "activity_window", max(
