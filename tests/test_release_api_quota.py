@@ -49,8 +49,25 @@ def _candidate_numbers(rows: list[dict]) -> list[int]:
     with tempfile.TemporaryDirectory() as tmp:
         file = Path(tmp) / "verified.json"
         file.write_text(json.dumps(rows), encoding="utf-8")
+        # Ejecutar la proyección jq REAL del workflow antes del selector.
+        # Detecta regresiones donde un prefiltrado textual omite markers.
+        workflow = _workflow()
+        suffix = "' /tmp/release-search-verified-2.json > /tmp/release-issues-projected.json"
+        end = workflow.index(suffix)
+        begin = workflow.rfind("          jq '", 0, end)
+        if begin < 0:
+            raise AssertionError("No existe la proyección jq canónica.")
+        expression = workflow[begin + len("          jq '"):end]
+        projection = subprocess.run(
+            ["jq", expression, str(file)],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        if projection.returncode:
+            raise AssertionError("La proyección jq falló: " + projection.stderr)
+        projected = Path(tmp) / "projected.json"
+        projected.write_text(projection.stdout, encoding="utf-8")
         result = subprocess.run(
-            [sys.executable, "-c", _candidate_script(), str(file)],
+            [sys.executable, "-c", _candidate_script(), str(projected)],
             cwd=ROOT, capture_output=True, text=True, check=False,
         )
         if result.returncode:
@@ -142,11 +159,15 @@ class ReleaseApiQuotaTests(unittest.TestCase):
             {"number": 2, "body": body_real},
             {"number": 3, "body": body_window_bad},
             {"number": 4, "body": '<!-- factory-human-gate {"category":"operations"} -->'},
+            # JSON permite caracteres escapados: la categoría sigue siendo
+            # factory-release aunque la subcadena literal no aparezca.
+            {"number": 5, "body": '<!-- factory-human-gate {"category":"factory-\\u0072elease"} -->'},
         ]
-        self.assertEqual(_candidate_numbers(rows), [2, 3])
+        self.assertEqual(_candidate_numbers(rows), [2, 3, 5])
         # Un snapshot actualizado se reevalúa íntegro, sin caché de decisiones.
         rows[1]["body"] = "No marker; the decision has changed"
         rows[2]["body"] = "Window marker removed"
+        rows[4]["body"] = "Legacy gate removed"
         self.assertEqual(_candidate_numbers(rows), [])
         workflow = _workflow()
         first = workflow.index("cmp -s /tmp/release-search-verified-1.json")
@@ -155,8 +176,9 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertIn("gh api --paginate", workflow)
         self.assertIn("incomplete_comment_pages", workflow)
         self.assertIn("WINDOW_INTENT_RE", workflow)
-        self.assertIn("select((.body // \"\") | contains(\"factory-release\"))", workflow)
-        self.assertLess(workflow.index("release-issues-prefilter.json"),
+        self.assertNotIn("select((.body // \"\") | contains(\"factory-release\"))", workflow)
+        self.assertIn("release-issues-projected.json", workflow)
+        self.assertLess(workflow.index("release-issues-projected.json"),
                         workflow.index(CANDIDATES_START))
 
     def test_report_excludes_comment_bodies_and_tokens(self):
