@@ -14,6 +14,13 @@ from recovery.contract import RecoveryContractError, validate_recovery_manifest
 
 _REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# A public object identifier must never echo an API key into fake receipts.
+# Match complete credential-shaped tokens, also when embedded after a delimiter.
+_CREDENTIAL_REF = re.compile(
+    r"(?:^|[:._-])(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|"
+    r"github_pat_[A-Za-z0-9_]{10,})(?=$|[:._-])",
+    re.IGNORECASE,
+)
 _MAX_BYTES = 10_000_000
 
 
@@ -23,7 +30,7 @@ class ColdCopyError(ValueError):
 
 def _reference(value: object) -> str:
     if (type(value) is not str or _REFERENCE.fullmatch(value) is None
-            or ".." in value):
+            or ".." in value or _CREDENTIAL_REF.search(value) is not None):
         raise ColdCopyError("invalid_reference")
     return value
 
