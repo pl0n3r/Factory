@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
+import math
 from typing import Literal
 
 CANONICAL_SINK = "pl0n3r/Factory#904"
@@ -60,6 +61,9 @@ class NoWorkDecision:
     observed_at: int
     expected_comment_id: int | None
     expected_fingerprint: str | None
+    # Optimistic prewrite check: same comment/fingerprint may have been
+    # republished by another dispatcher session after we read it.
+    expected_published_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -69,7 +73,17 @@ class NoWorkApplicationDecision:
 
 
 def _stable(value: object) -> object:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or type(value) in (int, bool):
+        return value
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise NoWorkInventoryError("inventory_unicode_invalid") from None
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise NoWorkInventoryError("inventory_nonfinite_number")
         return value
     if isinstance(value, list):
         normalized = [_stable(item) for item in value]
@@ -83,9 +97,13 @@ def _stable(value: object) -> object:
             ),
         )
     if isinstance(value, dict):
+        # JSON object keys are always strings. Coercion makes distinct Python
+        # keys (1/"1", True/"True") alias and silently discards evidence.
+        if any(type(key) is not str for key in value):
+            raise NoWorkInventoryError("inventory_key_invalid")
         return {
-            str(key): _stable(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            _stable(key): _stable(item)
+            for key, item in sorted(value.items())
         }
     raise NoWorkInventoryError("inventory_value_invalid")
 
@@ -141,21 +159,82 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         if not isinstance(value[field], list):
             raise NoWorkInventoryError(f"repository_field_invalid:{name}:{field}")
 
+    for field in ("available", "recovery"):
+        issue_ids = value[field]
+        if any(type(item) is not int or item <= 0 for item in issue_ids):
+            raise NoWorkInventoryError(f"issue_ids_invalid:{name}:{field}")
+        if len(set(issue_ids)) != len(issue_ids):
+            raise NoWorkInventoryError(f"issue_ids_duplicate:{name}:{field}")
+    if set(value["available"]) & set(value["recovery"]):
+        raise NoWorkInventoryError(f"issue_state_conflict:{name}")
+
+    # Las reservas V3 pueden usar "issue" o "issue_number" según el caller.
+    # La forma inválida no debe producir una huella publicable.
     live_reservations = []
+    active_issue_ids = set()
+    active_reservation_ids = set()
     for reservation in value["reservations"]:
-        if isinstance(reservation, dict) and reservation.get("active") is False:
+        if not isinstance(reservation, dict):
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:shape")
+        if type(reservation.get("active")) is not bool:
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:active")
+        issue_id = reservation.get("issue", reservation.get("issue_number"))
+        if type(issue_id) is not int or issue_id <= 0 or (
+            "issue_number" in reservation
+            and (
+                type(reservation["issue_number"]) is not int
+                or reservation["issue_number"] <= 0
+                or reservation["issue_number"] != issue_id
+            )
+        ):
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:issue")
+        reservation_id = reservation.get("reservation_id")
+        if not isinstance(reservation_id, str) or not reservation_id.strip():
+            raise NoWorkInventoryError(f"reservation_invalid:{name}:reservation_id")
+        # Inactive leases are excluded from the fingerprint, but must still
+        # be valid JSON-shaped evidence (including nested material). Validate
+        # *before* omitting them so NaN/non-string keys cannot hide here.
+        material = _stable(_material_entry(
+            reservation, noun=f"reservation:{name}"
+        ))
+        if not reservation["active"]:
             continue
-        live_reservations.append(_material_entry(reservation, noun=f"reservation:{name}"))
+        if issue_id in active_issue_ids or reservation_id in active_reservation_ids:
+            raise NoWorkInventoryError(f"reservation_duplicate:{name}")
+        active_issue_ids.add(issue_id)
+        active_reservation_ids.add(reservation_id)
+        live_reservations.append(material)
+
+    if active_issue_ids & set(value["available"]):
+        raise NoWorkInventoryError(f"available_reserved_conflict:{name}")
+
+    blocked_issue_ids = set()
+    blockers = []
+    for blocker in value["blockers"]:
+        if isinstance(blocker, dict):
+            blocker_id = blocker.get("issue")
+        else:
+            blocker_id = blocker
+        if type(blocker_id) is not int or blocker_id <= 0:
+            raise NoWorkInventoryError(f"blocker_invalid:{name}")
+        if blocker_id in blocked_issue_ids:
+            raise NoWorkInventoryError(f"blocker_duplicate:{name}")
+        blocked_issue_ids.add(blocker_id)
+        blockers.append(_material_entry(blocker, noun=f"blocker:{name}"))
+
+    if blocked_issue_ids & set(value["available"]):
+        raise NoWorkInventoryError(f"available_blocker_conflict:{name}")
 
     open_prs = []
+    open_pr_numbers = set()
     for pr in value["pull_requests"]:
         if not isinstance(pr, dict):
             raise NoWorkInventoryError(f"pull_request_invalid:{name}")
         state = pr.get("state")
-        if state != "open":
-            if isinstance(state, str):
-                continue
+        if state not in ("open", "closed"):
             raise NoWorkInventoryError(f"pull_request_state_invalid:{name}")
+        if state == "closed":
+            continue
         number = pr.get("number")
         head_sha = pr.get("head_sha")
         if type(number) is not int or number <= 0:
@@ -166,6 +245,9 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
             or any(ch not in "0123456789abcdef" for ch in head_sha)
         ):
             raise NoWorkInventoryError(f"pull_request_head_invalid:{name}")
+        if number in open_pr_numbers:
+            raise NoWorkInventoryError(f"pull_request_duplicate:{name}")
+        open_pr_numbers.add(number)
         open_prs.append(
             {
                 "number": number,
@@ -178,10 +260,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         "available": _stable(value["available"]),
         "recovery": _stable(value["recovery"]),
         "reservations": _stable(live_reservations),
-        "blockers": _stable([
-            _material_entry(blocker, noun=f"blocker:{name}")
-            for blocker in value["blockers"]
-        ]),
+        "blockers": _stable(blockers),
         "pull_requests": _stable(open_prs),
     }
 
@@ -195,6 +274,10 @@ def canonical_inventory(snapshot: object) -> dict[str, object]:
     repositories = snapshot.get("repositories")
     if not isinstance(kill_switch, dict) or "state" not in kill_switch:
         raise NoWorkInventoryError("kill_switch_missing")
+    if type(kill_switch["state"]) is not str or kill_switch["state"] not in (
+        "RUNNING", "PAUSED"
+    ):
+        raise NoWorkInventoryError("kill_switch_state_invalid")
     if not isinstance(repositories, dict):
         raise NoWorkInventoryError("repositories_missing")
     if set(repositories) != set(REPOSITORIES):
@@ -275,6 +358,10 @@ def decide_no_work(
 
     prior = _valid_previous(previous)
     fingerprint = inventory_fingerprint(snapshot)
+    # A PAUSED snapshot is valid audit evidence, never publication authority.
+    # The caller's global kill-switch preflight remains independently required.
+    if snapshot["kill_switch"]["state"] != "RUNNING":
+        raise NoWorkInventoryError("kill_switch_paused")
 
     if prior is None:
         return NoWorkDecision(
@@ -301,6 +388,7 @@ def decide_no_work(
             observation_at,
             prior.comment_id,
             prior.fingerprint,
+            prior.published_at,
         )
 
     if decision_at - prior.published_at >= REFRESH_AFTER_SECONDS:
@@ -313,6 +401,7 @@ def decide_no_work(
             observation_at,
             prior.comment_id,
             prior.fingerprint,
+            prior.published_at,
         )
 
     return NoWorkDecision(
@@ -324,6 +413,7 @@ def decide_no_work(
         observation_at,
         prior.comment_id,
         prior.fingerprint,
+        prior.published_at,
     )
 
 
@@ -338,6 +428,39 @@ def revalidate_no_work_application(
     """
     if not isinstance(decision, NoWorkDecision):
         raise NoWorkInventoryError("decision_invalid")
+    # Frozen dataclasses are not runtime-validated. A hand-built or corrupted
+    # decision must never authorize a write to a different sink/action.
+    if decision.action not in ("create", "update", "omit"):
+        raise NoWorkInventoryError("decision_action_invalid")
+    if decision.sink != CANONICAL_SINK:
+        raise NoWorkInventoryError("decision_sink_invalid")
+    if (
+        type(decision.observed_at) is not int or decision.observed_at < 0
+        or not isinstance(decision.fingerprint, str)
+        or len(decision.fingerprint) != 64
+        or any(ch not in "0123456789abcdef" for ch in decision.fingerprint)
+    ):
+        raise NoWorkInventoryError("decision_provenance_invalid")
+    if decision.action == "create":
+        if any(field is not None for field in (
+            decision.comment_id, decision.expected_comment_id,
+            decision.expected_fingerprint, decision.expected_published_at,
+        )):
+            raise NoWorkInventoryError("decision_provenance_invalid")
+    else:
+        if (
+            type(decision.comment_id) is not int or decision.comment_id <= 0
+            or decision.comment_id != decision.expected_comment_id
+            or not isinstance(decision.expected_fingerprint, str)
+            or len(decision.expected_fingerprint) != 64
+            or any(
+                ch not in "0123456789abcdef"
+                for ch in decision.expected_fingerprint
+            )
+            or type(decision.expected_published_at) is not int
+            or decision.expected_published_at < 0
+        ):
+            raise NoWorkInventoryError("decision_provenance_invalid")
 
     if decision.action == "omit":
         return NoWorkApplicationDecision("omit", "decision_already_omit")
@@ -361,5 +484,10 @@ def revalidate_no_work_application(
     assert live.observed_at is not None
     if live.observed_at > decision.observed_at:
         return NoWorkApplicationDecision("recompute", "canonical_observation_newer")
+
+    # A concurrent refresh may keep both the same comment ID and fingerprint.
+    # Its published_at must still match what this decision actually observed.
+    if live.published_at != decision.expected_published_at:
+        return NoWorkApplicationDecision("recompute", "publication_changed")
 
     return NoWorkApplicationDecision("apply", "prewrite_revalidation_passed")
