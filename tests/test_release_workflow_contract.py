@@ -31,7 +31,7 @@ class T(unittest.TestCase):
 
  def test_reusable_revalidates_main_before_release_mutation(self):
   release_step=W.split("      - id: release",1)[1]
-  self.assertEqual(release_step.count("verify_remote_main\n"),1)
+  self.assertEqual(release_step.count("verify_remote_main\n"),2)
   self.assertLess(release_step.index("verify_remote_main\n"),release_step.index('gh release create "$TAG"'))
   self.assertIn('TARGET_SHA: ${{ github.sha }}',release_step)
   self._actual_guard("RELEASE")
@@ -63,3 +63,127 @@ class T(unittest.TestCase):
                        capture_output=True,text=True,timeout=10)
       self.assertEqual(p.returncode==0,allowed,p.stdout+p.stderr)
       self.assertEqual("MUTATION_ALLOWED" in p.stdout,allowed,p.stdout+p.stderr)
+
+ def _step_body(self, kind):
+  if kind=="tag":
+   segment=W.split("      - name: Asegurar tag anotado",1)[1].split("      - id: release",1)[0]
+  else:
+   segment=W.split("      - id: release",1)[1]
+  return textwrap.dedent(segment.split("        run: |\n",1)[1])
+
+ def _execute_step(self, kind, *, main=None, mutate="", tag_exists=False, approved=None):
+  sha="a"*40
+  drift="b"*40
+  with tempfile.TemporaryDirectory() as tmp:
+   folder=Path(tmp)
+   log=folder/"mutations.log"
+   log.write_text("",encoding="utf-8")
+   remote=folder/"main.sha"
+   remote.write_text(sha if main is None else main,encoding="utf-8")
+   release=folder/"release.created"
+   gh=folder/"gh"
+   gh.write_text(textwrap.dedent(r"""
+    #!/bin/sh
+    printf '%s\n' "$*" >> "$FAKE_LOG"
+    if [ "$1" = api ]; then
+      case "$*" in
+        */commits/*)
+          state="$(cat "$FAKE_MAIN_FILE")"
+          [ "$state" != API_ERROR ] || exit 33
+          printf '%s\n' "$state"
+          exit 0 ;;
+        */git/tags*)
+          if [ "$FAKE_MUTATE" = tag ]; then
+            printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
+          fi
+          printf '%s\n' "$FAKE_TAG_OBJECT_SHA"
+          exit 0 ;;
+        */git/refs*)
+          printf 'HTTP/2 201\n'
+          exit 0 ;;
+      esac
+    fi
+    if [ "$1" = release ]; then
+      if [ "$2" = view ]; then
+        if [ "$FAKE_MUTATE" = view ]; then
+          printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
+        fi
+        if [ -f "$FAKE_RELEASE_FILE" ]; then
+          printf '%s\n' https://example.invalid/fake
+          exit 0
+        fi
+        exit 1
+      fi
+      if [ "$2" = create ]; then
+        : > "$FAKE_RELEASE_FILE"
+        exit 0
+      fi
+    fi
+    exit 88
+   """).lstrip(),encoding="utf-8")
+   gh.chmod(0o700)
+   git=folder/"git"
+   git.write_text(textwrap.dedent(r"""
+    #!/bin/sh
+    if [ "$1" = show-ref ]; then
+      if [ "$FAKE_TAG_EXISTS" = 1 ]; then exit 0; fi
+      exit 1
+    fi
+    if [ "$1" = cat-file ]; then printf 'tag\n'; exit 0; fi
+    if [ "$1" = rev-parse ]; then printf '%s\n' "$TARGET_SHA"; exit 0; fi
+    exit 88
+   """).lstrip(),encoding="utf-8")
+   git.chmod(0o700)
+   output=folder/"outputs.txt"
+   env=dict(os.environ,PATH=tmp+os.pathsep+os.environ.get("PATH",""),
+     REPOSITORY="pl0n3r/Factory",DEFAULT_BRANCH="main",BOOTSTRAP="true",
+     TARGET_SHA=sha,EXPECTED_SHA=sha if approved is None else approved,
+     TAG="v1.0.29",VERSION="1.0.29",GH_TOKEN="fixture",
+     FAKE_MAIN_FILE=str(remote),FAKE_LOG=str(log),
+     FAKE_RELEASE_FILE=str(release),FAKE_MUTATE=mutate,
+     FAKE_DRIFT_SHA=drift,FAKE_TAG_OBJECT_SHA="c"*40,
+     FAKE_TAG_EXISTS="1" if tag_exists else "0",GITHUB_OUTPUT=str(output))
+   run=subprocess.run(["bash","-euo","pipefail","-c",self._step_body(kind)],
+                      env=env,capture_output=True,text=True,timeout=10)
+   return run,log.read_text(encoding="utf-8"),release.exists(),remote.read_text(encoding="utf-8")
+
+ def test_actual_tag_script_stops_before_ref_after_intermediate_drift(self):
+  run,log,created,main=self._execute_step("tag",mutate="tag")
+  self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertEqual(main,"b"*40)
+  self.assertEqual(log.count("git/tags"),1,log)
+  self.assertNotIn("git/refs",log)
+  self.assertFalse(created)
+
+ def test_actual_release_script_stops_after_view_changes_main(self):
+  run,log,created,main=self._execute_step("release",mutate="view")
+  self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertEqual(main,"b"*40)
+  self.assertIn("release view",log)
+  self.assertNotIn("release create",log)
+  self.assertFalse(created)
+
+ def test_actual_tag_and_release_scripts_fail_closed_and_preserve_idempotence(self):
+  for kind in ("tag","release"):
+   for label,kwargs in (
+     ("advanced",{"main":"b"*40}),
+     ("empty",{"main":""}),
+     ("malformed",{"main":"not-a-sha"}),
+     ("api failure",{"main":"API_ERROR"}),
+     ("expected mismatch",{"approved":"b"*40}),
+   ):
+    with self.subTest(kind=kind,case=label):
+     run,log,created,_=self._execute_step(kind,**kwargs)
+     self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+     self.assertNotIn("git/tags",log)
+     self.assertNotIn("git/refs",log)
+     self.assertNotIn("release create",log)
+     self.assertFalse(created)
+  run,log,created,_=self._execute_step("tag",tag_exists=True)
+  self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertNotIn("git/tags",log)
+  self.assertNotIn("git/refs",log)
+  run,log,created,_=self._execute_step("release")
+  self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertIn("release create",log)
+  self.assertTrue(created)

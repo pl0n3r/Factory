@@ -170,6 +170,7 @@ jobs:
           # RELEASE_EXACT_MAIN_RELEASE_GUARD_END
           verify_remote_main
           if ! url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url' 2>/dev/null)"; then
+            verify_remote_main
             gh release create "$TAG" --repo "$REPOSITORY" --verify-tag --title "Release $TAG (V $VERSION)" --generate-notes
             url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
           fi
