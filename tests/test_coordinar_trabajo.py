@@ -746,9 +746,9 @@ class CoordinacionTests(unittest.TestCase):
                 CoordinationError, r"presupuesto seguro de 64 Issues"
             ):
                 reserve_work(large, 12, "pl0n3r", "OWNER")
-        # El candidato #12 se consulta antes del inventario; las otras
-        # 100 hojas NO generan lecturas cuando el presupuesto se excede.
-        self.assertEqual(comment_calls, [12])
+        # El presupuesto se comprueba antes de leer cualquier lease,
+        # incluida la del candidato.
+        self.assertEqual(comment_calls, [])
         self.assertNotIn("trabajo/issue-12", large.branches)
         self.assertEqual(large.comments, [])
 
