@@ -496,6 +496,15 @@ def _upsert_issue(
 ) -> dict[str, Any]:
     title = f"[EPIC #{epic}/{task.key}] {task.title}"
     body = _task_body(epic, task, order, roles, dependency_issues)
+    if existing is not None and _active(existing):
+        previous_body = str(existing.get("body") or "")
+        if parse_task_marker(previous_body) != parse_task_marker(body):
+            raise PlanError(
+                f"Issue #{existing.get('number')} está activo; su plan no puede mutar."
+            )
+        _preserved_enrichment(previous_body)
+        # Reutilizar no equivale a reasignar la reserva vigente.
+        return existing
     role_labels = _ensure_role_labels(api, roles)
     if existing is None:
         payload = {
@@ -511,12 +520,6 @@ def _upsert_issue(
         return created
 
     existing_body = str(existing.get("body") or "")
-    old_marker = parse_task_marker(existing_body)
-    new_marker = parse_task_marker(body)
-    if _active(existing) and old_marker != new_marker:
-        raise PlanError(
-            f"Issue #{existing.get('number')} está activo; su plan no puede mutar."
-        )
     enrichment = _preserved_enrichment(existing_body)
     body = body + enrichment
     number = existing.get("number")
@@ -590,6 +593,28 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     # Así un body ambiguo en un nodo posterior no deja un sync parcial.
     for issue in existing.values():
         _preserved_enrichment(str(issue.get("body") or ""))
+
+    # Vetar TODAS las modificaciones a reservas antes de la primera escritura.
+    for order, task in enumerate(ordered, 1):
+        current = existing.get(task.key)
+        if current is None or not _active(current):
+            continue
+        dependency_issues = []
+        for key in task.depends_on:
+            predecessor = existing.get(key)
+            number = predecessor.get("number") if predecessor else None
+            if type(number) is not int or number <= 0:
+                raise PlanError("Tarea activa depende de hoja aún no materializada.")
+            dependency_issues.append(number)
+        roles = _roles_for(task, epic)
+        proposed = parse_task_marker(
+            _task_body(epic_number, task, order, roles, dependency_issues)
+        )
+        saved = parse_task_marker(str(current.get("body") or ""))
+        if proposed != saved:
+            raise PlanError(
+                f"Issue #{current.get('number')} está activo; su plan no puede mutar."
+            )
 
     issue_numbers: dict[str, int] = {}
     task_roles: dict[str, list[str]] = {}

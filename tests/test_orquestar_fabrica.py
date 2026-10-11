@@ -443,6 +443,40 @@ class OrquestarFabricaTests(unittest.TestCase):
             )
         )
 
+    def test_later_active_task_preflight_prevents_partial_writes(self):
+        api = FakeGitHub()
+        issues = sync_plan(api, 3)["issues"]
+        first_body = api.issues[issues["A"]]["body"]
+        later = api.issues[issues["B"]]
+        later["labels"] = [{"name": "estado: reservado"}]
+        original = later["body"]
+        api.issues[3]["body"] = api.issues[3]["body"].replace(
+            '"paths":["docs/b.md"]',
+            '"paths":["docs/b.md","docs/b-extra.md"]',
+        )
+        api.requests.clear()
+        with self.assertRaisesRegex(PlanError, "activo; su plan no puede mutar"):
+            sync_plan(api, 3)
+        self.assertFalse(api.requests)
+        self.assertEqual(first_body, api.issues[issues["A"]]["body"])
+        self.assertEqual(original, later["body"])
+
+    def test_active_unchanged_contract_preserves_reservation_assignment(self):
+        api = FakeGitHub()
+        number = sync_plan(api, 3)["issues"]["A"]
+        task = api.issues[number]
+        task["labels"] = [{"name": "estado: reservado"}]
+        task["assignees"] = [{"login": "other-agent"}]
+        before_body = task["body"]
+        api.requests.clear()
+        sync_plan(api, 3)
+        self.assertEqual(task["body"], before_body)
+        self.assertEqual(task["assignees"], [{"login": "other-agent"}])
+        self.assertEqual(task["labels"], [{"name": "estado: reservado"}])
+        self.assertFalse(any(
+            f"/issues/{number}" in path for _, path, _ in api.requests
+        ))
+
     @staticmethod
     def _legacy_foreign_marker(epic=999):
         marker = json.dumps({
