@@ -79,7 +79,8 @@ def _read_pass(pages: Any) -> tuple[tuple[tuple[Any, ...], ...], int]:
     wanted = max(1, (count + PAGE_SIZE - 1) // PAGE_SIZE)
     if len(pages) != wanted:
         _fail("search_paginas_incompletas")
-    seen: set[int] = set()
+    seen_numbers: set[int] = set()
+    seen_ids: set[int] = set()
     rows: list[tuple[Any, ...]] = []
     for index, page in enumerate(pages):
         if (not isinstance(page, dict)
@@ -94,8 +95,9 @@ def _read_pass(pages: Any) -> tuple[tuple[tuple[Any, ...], ...], int]:
         for item in items:
             if not isinstance(item, dict):
                 _fail("search_issue_invalido")
-            number, state = item.get("number"), item.get("state")
-            if (type(number) is not int or number <= 0 or number in seen
+            number, node_id, state = item.get("number"), item.get("id"), item.get("state")
+            if (type(number) is not int or number <= 0 or number in seen_numbers
+                or type(node_id) is not int or node_id <= 0 or node_id in seen_ids
                 or state not in ("open", "closed")
                 or item.get("pull_request") is not None
                 or not isinstance(item.get("title"), str)
@@ -103,8 +105,9 @@ def _read_pass(pages: Any) -> tuple[tuple[tuple[Any, ...], ...], int]:
                 or not isinstance(item.get("body"), str)
                 or not _canonical_timestamp(item.get("updated_at"))):
                 _fail("search_issue_invalido")
-            seen.add(number)
-            rows.append((number, state, item["title"], item["body"], item["updated_at"]))
+            seen_numbers.add(number)
+            seen_ids.add(node_id)
+            rows.append((node_id, number, state, item["title"], item["body"], item["updated_at"]))
     if len(rows) != count:
         _fail("search_total_no_coincide")
     return tuple(rows), len(pages)
@@ -120,7 +123,7 @@ def estimate_api_budget(first_pass: Any, second_pass: Any) -> ApiBudget:
     second, second_calls = _read_pass(second_pass)
     if first != second or first_calls != second_calls:
         _fail("search_deriva_entre_lecturas")
-    selected = sum("factory-release" in row[3] for row in first)
+    selected = sum("factory-release" in row[4] for row in first)
     search_calls = first_calls + second_calls
     metadata_calls = 2  # PR e Issue del trabajo, sin contar endpoints de CI.
     return ApiBudget(

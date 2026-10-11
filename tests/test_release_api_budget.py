@@ -13,7 +13,7 @@ from scripts.release_api_budget import (
 
 def issue(n: int, gate: bool = False) -> dict:
     return {
-        "number": n, "state": "closed", "title": f"Puerta {n}",
+        "id": 100000 + n, "number": n, "state": "closed", "title": f"Puerta {n}",
         "body": "factory-human-gate factory-release" if gate else "factory-human-gate",
         "updated_at": "2026-10-10T20:00:00Z",
     }
@@ -49,15 +49,23 @@ class ReleaseApiBudgetTests(unittest.TestCase):
         partial = copy.deepcopy(good); partial[1]["incomplete_results"] = True; bad_cases.append(partial)
         altered = copy.deepcopy(good); altered[1]["total_count"] = 121; bad_cases.append(altered)
         duplicated = copy.deepcopy(good); duplicated[1]["items"][0]["number"] = 1; bad_cases.append(duplicated)
+        duplicated_id = copy.deepcopy(good)
+        duplicated_id[1]["items"][0]["id"] = duplicated_id[0]["items"][0]["id"]
+        bad_cases.append(duplicated_id)
+        missing_id = copy.deepcopy(good); del missing_id[1]["items"][0]["id"]; bad_cases.append(missing_id)
+        bool_id = copy.deepcopy(good); bool_id[1]["items"][0]["id"] = True; bad_cases.append(bool_id)
         bool_count = copy.deepcopy(good); bool_count[0]["total_count"] = True; bad_cases.append(bool_count)
         wrong_body = copy.deepcopy(good); del wrong_body[1]["items"][0]["body"]; bad_cases.append(wrong_body)
         oversized = search_pages(rows=201, gates=0); bad_cases.append(oversized)
         for bad in bad_cases:
             with self.subTest(bad=str(bad)[:70]), self.assertRaises(ReleaseBudgetError):
                 estimate_api_budget(bad, good)
-        for change in ("body", "updated_at", "title"):
+        for change in ("body", "updated_at", "title", "id"):
             drift = copy.deepcopy(good)
-            drift[1]["items"][0][change] += " cambiado"
+            if change == "id":
+                drift[1]["items"][0][change] += 1000000
+            else:
+                drift[1]["items"][0][change] += " cambiado"
             with self.subTest(change=change), self.assertRaises(ReleaseBudgetError):
                 estimate_api_budget(good, drift)
 
