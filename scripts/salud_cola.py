@@ -6,7 +6,7 @@ REPOSITORIES = (
     "Factory", "Condor", "GrindFlow", "brvtal", "ControlBot",
     "AutoFactory", "FactoryRunner",
 )
-STATES = ("available", "reserved", "blocked", "planned", "in_review")
+STATES = ("available", "reserved", "blocked", "planned", "in_review", "recovery_required")
 CAUSES = frozenset(("dependency", "claims", "human_gate", "planned", "unknown"))
 MAX_ISSUES = 10000
 MAX_CANDIDATES = 32
@@ -98,6 +98,7 @@ def diagnose_queue(snapshot: object) -> dict:
     if seen_repos != set(REPOSITORIES):
         raise QueueHealthError("incomplete_inventory")
     total_available = sum(r["counts"]["available"] for r in by_repo.values())
+    total_recovery = sum(r["counts"]["recovery_required"] for r in by_repo.values())
     total_open = sum(r["open_issues"] for r in by_repo.values())
     total_causes = {
         cause: sum(by_repo[name]["blocked_cause_counts"][cause] for name in REPOSITORIES)
@@ -120,7 +121,8 @@ def diagnose_queue(snapshot: object) -> dict:
 
     reason = {
         "budget_deferred": "rate_limit_below_20_percent",
-        "queue_empty": "zero_available",
+        "queue_empty": ("zero_available_recovery_pending" if total_recovery
+                        else "zero_available"),
         "unknown_capacity": "capacity_not_observed",
         "below_capacity": ("zero_execution_capacity" if capacity == 0
                            else "fewer_ready_than_capacity"),
@@ -135,7 +137,8 @@ def diagnose_queue(snapshot: object) -> dict:
     # During budget deferral there is no grounded trigger to publish or act on.
     selected = [] if state == "budget_deferred" else sorted_candidates[:MAX_CANDIDATES]
     return {"version": 1, "state": state, "reason": reason,
-            "available_total": total_available, "open_total": total_open,
+            "available_total": total_available,
+            "recovery_required_total": total_recovery, "open_total": total_open,
             "agent_capacity": capacity, "blocked_cause_totals": total_causes,
             "repositories": {name: by_repo[name] for name in REPOSITORIES},
             "roadmap_candidates": selected,

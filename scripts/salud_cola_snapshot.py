@@ -11,7 +11,7 @@ REPOSITORIES = (
     "Factory", "Condor", "GrindFlow", "brvtal",
     "ControlBot", "AutoFactory", "FactoryRunner",
 )
-STATES = ("available", "reserved", "blocked", "planned", "in_review")
+STATES = ("available", "reserved", "blocked", "planned", "in_review", "recovery_required")
 CAUSES = frozenset(("dependency", "claims", "human_gate", "planned", "unknown"))
 LABEL_STATE = {
     "estado: disponible": "available",
@@ -24,6 +24,8 @@ LABEL_STATE = {
     "status: blocked": "blocked",
     "status: planned": "planned",
     "status: in review": "in_review",
+    "estado: requiere recuperación": "recovery_required",
+    "status: recovery required": "recovery_required",
 }
 MAX_PAGES = 100
 MAX_PAGE_SIZE = 100
@@ -54,11 +56,6 @@ def _state(labels: object) -> str:
         seen.add(label)
         if label in LABEL_STATE:
             found.append(LABEL_STATE[label])
-        elif label in ("estado: requiere recuperación", "status: recovery required"):
-            # A recovery lease is neither ordinary 'blocked' nor 'available'.
-            # Sibling diagnose_queue currently has no recovery count: refuse a
-            # misleading complete snapshot until both contracts are upgraded.
-            raise SnapshotError("recovery_status_unrepresentable")
         elif label.casefold().startswith(("estado:", "status:")):
             raise SnapshotError("unknown_status_label")
     if len(found) != 1:
