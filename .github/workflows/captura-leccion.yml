@@ -84,10 +84,10 @@ jobs:
               if (not isinstance(when, str)
                       or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", when)):
                   raise ValueError("time_invalid")
-              datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ")
+              closed_time = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ")
 
               candidate = {
-                  "event_id": f"{event}-{number}-{run_id}",
+                  "event_id": f"{event_kind}-{number}-{closed_time:%Y%m%dT%H%M%SZ}",
                   "repo": repo, "issue": number, "sha": sha,
                   "occurred_at": when, "event": event_kind, "summary": summary,
                   "issuer": "github-actions[bot]", "verified": True,

@@ -81,6 +81,10 @@ def diagnose_queue(snapshot: object) -> dict:
                     or type(cause) is not str or cause not in CAUSES
                     or type(roadmap) is not bool):
                 raise QueueHealthError("invalid_blocker")
+            # Match the snapshot adapter: a non-actionable cause cannot
+            # become a roadmap candidate even when a caller asserts it.
+            if roadmap and cause not in ("dependency", "claims"):
+                raise QueueHealthError("invalid_blocker")
             seen_issues.add(n)
             cause_counts[cause] += 1
             safe_blockers.append({"issue": n, "cause": cause, "roadmap": roadmap})
