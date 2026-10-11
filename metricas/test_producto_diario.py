@@ -77,6 +77,15 @@ class ProductoDiarioTests(unittest.TestCase):
         missing = summarize_product_day([], as_of=AS_OF, repos=[repo])
         self.assertEqual(missing["status"], "UNKNOWN")
         self.assertNotIn("repositories", missing)
+        minimum = snapshot(repo, [])
+        minimum["observed_at"] = "0001-01-01T00:00:00Z"
+        boundary = summarize_product_day([minimum],
+                                         as_of="0001-01-01T00:00:00Z", repos=[repo])
+        self.assertEqual(boundary["status"], "UNKNOWN")
+        self.assertNotIn("repositories", boundary)
+        overflow_zone = summarize_product_day([minimum],
+                                              as_of="0001-01-01T00:00:00+23:00", repos=[repo])
+        self.assertEqual(overflow_zone["status"], "UNKNOWN")
 
 
 if __name__ == "__main__":
