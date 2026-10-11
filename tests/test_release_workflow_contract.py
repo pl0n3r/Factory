@@ -23,9 +23,10 @@ class T(unittest.TestCase):
 
  def test_reusable_revalidates_main_before_tag_mutation(self):
   tag_step=W.split("      - name: Asegurar tag anotado",1)[1].split("      - id: release",1)[0]
-  self.assertEqual(tag_step.count("verify_remote_main\n"),2)
+  self.assertEqual(tag_step.count("verify_remote_main\n"),3)
   self.assertLess(tag_step.index("verify_remote_main\n"),tag_step.index('gh api --method POST "repos/$REPOSITORY/git/tags"'))
   self.assertLess(tag_step.index('gh api --method POST "repos/$REPOSITORY/git/tags"'),tag_step.rindex("verify_remote_main\n"))
+  self.assertLess(tag_step.index('gh api "repos/$REPOSITORY/git/tags/$object"'),tag_step.rindex("verify_remote_main\n"))
   self.assertLess(tag_step.rindex("verify_remote_main\n"),tag_step.index('gh api --include --silent --method POST'))
   self._actual_guard("TAG")
 
@@ -105,6 +106,9 @@ class T(unittest.TestCase):
           printf '%s\n' "$FAKE_REMOTE_REF"
           exit 0 ;;
         */git/tags/*)
+          if [ "$FAKE_MUTATE" = tag_read ]; then
+            printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
+          fi
           value="$(cat "$FAKE_REMOTE_TARGET_FILE")"
           [ "$value" != API_ERROR ] || exit 33
           printf '%s\tcommit\t%s\n' "$FAKE_REMOTE_NAME" "$value"
@@ -186,6 +190,14 @@ class T(unittest.TestCase):
   self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
   self.assertEqual(main,"b"*40)
   self.assertEqual(log.count("git/tags"),1,log)
+  self.assertNotIn("git/refs",log)
+  self.assertFalse(created)
+
+ def test_tag_object_read_revalidates_main_before_ref_mutation(self):
+  run,log,created,main=self._execute_step("tag",mutate="tag_read")
+  self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertEqual(main,"b"*40)
+  self.assertIn("git/tags/",log)
   self.assertNotIn("git/refs",log)
   self.assertFalse(created)
 

@@ -136,6 +136,8 @@ jobs:
             echo "::error::Objeto tag creado no corresponde al nombre, tipo o commit aprobados"
             exit 1
           fi
+          # El GET del objeto puede observar deriva: verificar main justo antes del POST mutante.
+          verify_remote_main
           if response="$(gh api --include --silent --method POST "repos/$REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" 2>&1)"; then
             exit 0
           fi
