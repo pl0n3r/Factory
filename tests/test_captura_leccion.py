@@ -30,6 +30,36 @@ class CaptureLessonTests(unittest.TestCase):
         self.assertNotIn("verified", observed[0])
         self.assertNotIn("issuer", observed[0])
 
+    def test_cross_run_sha_drift_preserves_business_identity(self):
+        """Runner checkout SHA is not the merge commit's event identity."""
+        merge_sha = "c" * 40
+        stable = event("pr_merged-44-" + merge_sha, issue=44,
+                       event="pr_merged", sha=merge_sha,
+                       summary="Fusion de PR verificada en GitHub")
+        run_a = {**stable, "run_sha": "a" * 40}
+        run_b = {**stable, "run_sha": "b" * 40}
+        self.assertEqual(capture_lessons([run_a, run_b]), capture_lessons([run_b, run_a]))
+        self.assertEqual(len(capture_lessons([run_a, run_b])), 1)
+        self.assertEqual(capture_lessons([run_a])[0]["sha"], merge_sha)
+        self.assertNotIn("run_sha", capture_lessons([run_a])[0])
+        with self.assertRaisesRegex(CaptureError, "invalid_run_provenance"):
+            capture_lessons([{**stable, "run_sha": "bad"}])
+
+    def test_distinct_closure_identity_and_business_conflicts_fail_closed(self):
+        first = event("pr_merged-44-" + "c" * 40, issue=44, event="pr_merged",
+                      sha="c" * 40)
+        other = event("pr_merged-45-" + "d" * 40, issue=45, event="pr_merged",
+                      sha="d" * 40)
+        self.assertEqual(len(capture_lessons([first, other, first])), 2)
+        self.assertEqual(len(capture_lessons([first, first])), 1)
+        for conflict in ({**first, "issue": 46},
+                         {**first, "summary": "Otro cierre del mismo PR"}):
+            with self.subTest(conflict=conflict):
+                with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
+                    capture_lessons([first, conflict])
+        with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
+            capture_lessons([first, {**first, "sha": "b" * 40}])
+
     def test_untrusted_source_secrets_and_duplicate_fail_closed(self):
         bad = [event(verified=False), event(issuer="unknown"),
                event(summary="Token=secret-do-not-log"),
