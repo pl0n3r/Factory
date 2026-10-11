@@ -1,5 +1,4 @@
 """Contrato offline de conteos diarios de producto (#1157)."""
-from copy import deepcopy
 import unittest
 
 from metricas.evaluar_agentes import summarize_product_day
@@ -15,6 +14,7 @@ def pr(number, merged_at, sha="a" * 40):
 def snapshot(repo, events=None):
     return {
         "repo": repo,
+        "repository_sha": "d" * 40,
         "observed_at": "2026-10-11T09:30:00Z",
         "source": "github-api", "authenticated": True, "complete": True,
         "run_id": 100, "run_status": "completed", "run_conclusion": "success",
@@ -43,6 +43,8 @@ class ProductoDiarioTests(unittest.TestCase):
         self.assertEqual(a["status"], "MEASURED")
         self.assertFalse(a["publication_allowed"])
         self.assertEqual(a["repositories"][repo]["merged_prs"], 2)
+        self.assertEqual(a["repositories"][repo]["repository_sha"], "d" * 40)
+        self.assertEqual(a["repositories"][repo]["run_id"], 100)
         self.assertEqual(a["repositories"][repo]["observations"], 3)
         self.assertEqual(a["repositories"]["pl0n3r/GrindFlow"]["merged_prs"], 0)
         self.assertEqual(a["repositories"][repo]["window_start"], "2026-10-10T09:30:00Z")
@@ -55,6 +57,10 @@ class ProductoDiarioTests(unittest.TestCase):
             {**original, "authenticated": False},
             {**original, "authenticated": 1},
             {**original, "complete": False},
+            {key: val for key, val in original.items() if key != "repository_sha"},
+            {**original, "repository_sha": "not-a-sha"},
+            {**original, "repository_sha": None},
+            {**original, "repository_sha": True},
             {**original, "pages": 2, "verified_pages": 1},
             {**original, "run_id": None},
             {**original, "run_id": True},
