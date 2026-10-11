@@ -13,7 +13,8 @@ def inventory(*, capacity=4, remaining=5000, limit=5000):
     for repo in REPOSITORIES:
         rows.append({"name": repo, "complete": True, "open_issues": 1,
                      "counts": {"available": 0, "reserved": 0, "blocked": 1,
-                                "planned": 0, "in_review": 0},
+                                "planned": 0, "in_review": 0,
+                                "recovery_required": 0},
                      "blockers": [{"number": 17, "cause": "dependency", "roadmap": True}]})
     return {"version": 1, "repositories": rows, "agent_capacity": capacity,
             "rate_limit": {"remaining": remaining, "limit": limit}}
@@ -168,6 +169,63 @@ class SaludColaTests(unittest.TestCase):
             row["open_issues"] = 5001
         with self.assertRaisesRegex(QueueHealthError, "blocker_report_too_large"):
             diagnose_queue(huge)
+
+
+    def test_recovery_is_counted_without_promoting_work(self):
+        queue = inventory(capacity=1)
+        for row in queue["repositories"]:
+            row["counts"]["blocked"] = 0
+            row["counts"]["recovery_required"] = 1
+            row["blockers"] = []
+        report = diagnose_queue(queue)
+        self.assertEqual(report["state"], "queue_empty")
+        self.assertEqual(report["reason"], "zero_available_recovery_pending")
+        self.assertEqual(report["recovery_required_total"], 7)
+        self.assertEqual(report["open_total"], 7)
+        self.assertEqual(report["available_total"], 0)
+        self.assertEqual(report["roadmap_candidates"], [])
+        self.assertEqual(sum(report["blocked_cause_totals"].values()), 0)
+        self.assertFalse(report["can_dispatch"])
+        self.assertFalse(report["publication_allowed"])
+        self.assertEqual(report["repositories"]["Factory"]["counts"]["recovery_required"], 1)
+        queue["repositories"][0]["counts"].update(available=1, recovery_required=0)
+        ready = diagnose_queue(queue)
+        self.assertEqual(ready["recovery_required_total"], 6)
+        self.assertEqual(ready["available_total"], 1)
+        self.assertTrue(ready["can_dispatch"])
+        self.assertEqual(ready["state"], "healthy")
+        self.assertFalse(ready["publication_allowed"])
+
+    def test_recovery_conflicts_and_budget_fail_closed(self):
+        queue = inventory()
+        queue["repositories"][0]["counts"].update(blocked=0, recovery_required=1)
+        queue["repositories"][0]["blockers"] = []
+        report = diagnose_queue(queue)
+        self.assertEqual(report["recovery_required_total"], 1)
+        self.assertEqual(report["blocked_cause_totals"]["dependency"], 6)
+        self.assertEqual(report["open_total"], 7)
+        self.assertFalse(report["can_dispatch"])
+        for mutate in (
+            lambda q: q["repositories"][0]["counts"].update(recovery_required=2),
+            lambda q: q["repositories"][0]["counts"].update(available=1),
+            lambda q: q["repositories"][0]["counts"].pop("recovery_required"),
+            lambda q: q["repositories"][0]["counts"].update(recovery_required=True),
+            lambda q: q["repositories"][0].update(open_issues=0),
+            lambda q: q["repositories"][0]["blockers"].append(
+                {"number": 99, "cause": "unknown", "roadmap": False}),
+        ):
+            with self.subTest(mutate=mutate):
+                broken = copy.deepcopy(queue)
+                mutate(broken)
+                with self.assertRaises(QueueHealthError):
+                    diagnose_queue(broken)
+        queue["rate_limit"]["remaining"] = 999
+        deferred = diagnose_queue(queue)
+        self.assertEqual(deferred["state"], "budget_deferred")
+        self.assertEqual(deferred["recovery_required_total"], 1)
+        self.assertEqual(deferred["roadmap_candidates"], [])
+        self.assertFalse(deferred["can_dispatch"])
+        self.assertFalse(deferred["publication_allowed"])
 
 
 if __name__ == "__main__":
