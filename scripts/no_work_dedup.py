@@ -191,8 +191,12 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         reservation_id = reservation.get("reservation_id")
         if not isinstance(reservation_id, str) or not reservation_id.strip():
             raise NoWorkInventoryError(f"reservation_invalid:{name}:reservation_id")
-        # Invalid incidental metadata cannot hide in an inactive lease.
-        material = _material_entry(reservation, noun=f"reservation:{name}")
+        # Inactive leases are excluded from the fingerprint, but must still
+        # be valid JSON-shaped evidence (including nested material). Validate
+        # *before* omitting them so NaN/non-string keys cannot hide here.
+        material = _stable(_material_entry(
+            reservation, noun=f"reservation:{name}"
+        ))
         if not reservation["active"]:
             continue
         if issue_id in active_issue_ids or reservation_id in active_reservation_ids:

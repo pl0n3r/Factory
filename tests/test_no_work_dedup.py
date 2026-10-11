@@ -351,6 +351,37 @@ class NoWorkDedupTests(unittest.TestCase):
         good["repositories"]["Factory"]["blockers"][0]["description"] = "éxito"
         self.assertNotEqual(inventory_fingerprint(good), baseline)
 
+    def test_inactive_reservations_validate_material_before_exclusion(self):
+        from math import inf, nan
+
+        baseline = inventory_fingerprint(inventory())
+        examples = (
+            ({"material_score": nan}, "inventory_nonfinite_number"),
+            ({"material_score": inf}, "inventory_nonfinite_number"),
+            ({"details": {1: "untrusted"}}, "inventory_key_invalid"),
+            ({"details": {"set": {1, 2}}}, "inventory_value_invalid"),
+            ({"details": chr(0xD800)}, "inventory_unicode_invalid"),
+        )
+        for extra, code in examples:
+            case = inventory()
+            case["repositories"]["ControlBot"]["reservations"].append({
+                "issue": 1121, "reservation_id": "old", "active": False,
+                **extra,
+            })
+            with self.subTest(code=code, extra=repr(extra)):
+                with self.assertRaisesRegex(NoWorkInventoryError, code):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        valid = inventory()
+        valid["repositories"]["ControlBot"]["reservations"].append({
+            "issue": 1121, "reservation_id": "old", "active": False,
+            "details": {"version": 1, "value": "éxito"},
+        })
+        self.assertEqual(inventory_fingerprint(valid), baseline)
+        self.assertEqual(decide_no_work(valid, None, 100).action, "create")
+
     def test_non_string_material_keys_cannot_alias_json_keys(self):
         baseline = inventory_fingerprint(inventory())
         bad_keys = (
