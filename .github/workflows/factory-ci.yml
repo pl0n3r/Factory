@@ -243,14 +243,18 @@ jobs:
                 | {number, state, title, body, updated_at}
               ]' /tmp/release-search-verified-2.json > /tmp/release-issues-projected.json
           # RELEASE_GATE_CANDIDATES_START
-          # El parser canónico solo examina Issues con ventana explícita o
-          # marker de release (incluidos los malformados, para fallar cerrado).
-          # Un texto narrativo "factory-release" NO requiere leer comentarios.
+          # Igual que gate_records: todo window-intent pasa al evaluador y
+          # falla cerrado si es inválido. Solo los gates legacy sin ventana
+          # que el evaluador mismo descarta se pueden omitir antes de leer
+          # páginas de comentarios. No cachear decisiones ni snapshots.
           python3 - /tmp/release-issues-projected.json <<'PY' > /tmp/release-issues.json
           import json
           import sys
           from pathlib import Path
-          from scripts.release_window import WINDOW_INTENT_RE, _legacy_factory_release_intent
+          from scripts.release_window import (
+              WINDOW_INTENT_RE, ReleaseWindowError, _gate_from_body,
+              _legacy_factory_release_intent,
+          )
 
           rows = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           if not isinstance(rows, list):
@@ -260,8 +264,16 @@ jobs:
               if not isinstance(item, dict) or not isinstance(item.get("body"), str):
                   raise SystemExit("ERROR: Issue verificado inválido")
               body = item["body"]
-              if WINDOW_INTENT_RE.search(body) or _legacy_factory_release_intent(body):
+              if WINDOW_INTENT_RE.search(body):
                   selected.append(item)
+              elif _legacy_factory_release_intent(body):
+                  try:
+                      gate_info = _gate_from_body(body)
+                  except ReleaseWindowError:
+                      # gate_records ignora el legacy inválido sin ventana.
+                      continue
+                  if gate_info is not None:
+                      selected.append(item)
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
           # RELEASE_GATE_CANDIDATES_END
