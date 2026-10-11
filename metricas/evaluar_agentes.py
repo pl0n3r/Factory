@@ -612,10 +612,10 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
-    """Publica JSON y Markdown por etapas; revierte fallos y marca crash parcial.
+    """Escritor exclusivo con rollback; los lectores deben respetar la marca.
 
-    Dos renames no son una transacción para lectores concurrentes. La marca
-    de fallo impide que el CLI vuelva a publicar sobre evidencia dudosa.
+    Dos renames no son atómicos como pareja ante lectores concurrentes. Una
+    marca persistente deniega escrituras futuras tras un rollback fallido/crash.
     """
     payloads = {
         "recomendaciones.json": json.dumps(
@@ -625,48 +625,62 @@ def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     marker = output_dir / ".metricas-generation-incomplete"
-    if marker.exists():
-        raise OSError("Existe una generación anterior incompleta.")
-    stage = Path(tempfile.mkdtemp(prefix=".metricas-txn-", dir=output_dir))
-    marked = False
+    # O_EXCL evita carreras entre escritores y rechaza incluso symlinks colgantes.
+    # O_NOFOLLOW refuerza el rechazo en los sistemas que lo soportan.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        originals: set[str] = set()
+        descriptor = os.open(marker, flags, 0o600)
+    except FileExistsError as exc:
+        raise OSError("Existe una generación anterior incompleta.") from exc
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write("generacion-incompleta\n")
+    except BaseException:
+        # Si falla registrar la marca, conservar el fichero para fallar cerrado.
+        raise
+
+    stage: Path | None = None
+    installed: list[str] = []
+    originals: set[str] = set()
+    try:
+        stage = Path(tempfile.mkdtemp(prefix=".metricas-txn-", dir=output_dir))
         for name, contents in payloads.items():
             (stage / f"{name}.next").write_text(contents, encoding="utf-8")
             target = output_dir / name
+            if target.is_symlink():
+                raise OSError("Archivo de salida simbólico no permitido.")
             if target.exists():
                 (stage / f"{name}.bak").write_bytes(target.read_bytes())
                 originals.add(name)
-        # Persistir la señal de invalidez ANTES del primer rename.
-        marker.write_text("generacion-incompleta\n", encoding="utf-8")
-        marked = True
-        installed: list[str] = []
-        try:
-            for name in payloads:
-                os.replace(stage / f"{name}.next", output_dir / name)
-                installed.append(name)
-        except OSError:
-            restored = True
-            for name in reversed(installed):
-                try:
-                    if name in originals:
-                        os.replace(stage / f"{name}.bak", output_dir / name)
-                    else:
-                        (output_dir / name).unlink(missing_ok=True)
-                except OSError:
-                    restored = False
-            if restored:
+        for name in payloads:
+            os.replace(stage / f"{name}.next", output_dir / name)
+            installed.append(name)
+    except OSError:
+        restored = True
+        for name in reversed(installed):
+            try:
+                if name in originals:
+                    os.replace(stage / f"{name}.bak", output_dir / name)
+                else:
+                    (output_dir / name).unlink(missing_ok=True)
+            except OSError:
+                restored = False
+        if restored:
+            try:
+                if stage is not None:
+                    shutil.rmtree(stage)
                 marker.unlink()
-                marked = False
-            # Ante rollback fallido, conservar backups y marca para recuperación.
-            raise
-        shutil.rmtree(stage)
-        stage = None
-        marker.unlink()
-        marked = False
-    finally:
-        if stage is not None and not marked:
-            shutil.rmtree(stage)
+            except OSError:
+                # Conserva la marca: una limpieza parcial no acredita éxito.
+                pass
+        # Si el rollback falla, deja backups y marca para recuperación.
+        raise
+
+    # No retirar el lock hasta terminar toda la preparación y limpieza.
+    # Un fallo después de publicar conserva la marca e impide nuevas escrituras.
+    shutil.rmtree(stage)
+    marker.unlink()
 
 
 def main() -> int:

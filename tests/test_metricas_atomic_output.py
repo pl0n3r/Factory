@@ -97,3 +97,61 @@ class MetricAtomicOutputTests(unittest.TestCase):
             self.assertTrue((directory / ".metricas-generation-incomplete").exists())
             with self.assertRaisesRegex(OSError, "incompleta"):
                 _write_artifact_pair(report(), directory)
+
+
+    def test_dangling_symlink_marker_does_not_escape_output_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "artifacts"
+            directory.mkdir()
+            outside = Path(tmp) / "untrusted_destination"
+            (directory / ".metricas-generation-incomplete").symlink_to(outside)
+            with self.assertRaises(OSError):
+                _write_artifact_pair(report(), directory)
+            self.assertFalse(outside.exists())
+            self.assertTrue((directory / ".metricas-generation-incomplete").is_symlink())
+
+    def test_simultaneous_writers_cannot_mix_output_generations(self):
+        from threading import Event, Thread
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            started, resume = Event(), Event()
+            failures = []
+            original = os.replace
+            first = report()
+            first["period"] = "writer-one"
+            second = report()
+            second["period"] = "writer-two"
+
+            def blocked_replace(source, destination):
+                outcome = original(source, destination)
+                if str(source).endswith("recomendaciones.json.next"):
+                    started.set()
+                    if not resume.wait(timeout=10):
+                        raise OSError("timeout de fixture")
+                return outcome
+
+            def writer_one():
+                try:
+                    _write_artifact_pair(first, directory)
+                except Exception as exc:
+                    failures.append(exc)
+
+            with patch("metricas.evaluar_agentes.os.replace",
+                       side_effect=blocked_replace):
+                thread = Thread(target=writer_one)
+                thread.start()
+                try:
+                    self.assertTrue(started.wait(timeout=10))
+                    with self.assertRaises(OSError):
+                        _write_artifact_pair(second, directory)
+                finally:
+                    resume.set()
+                    thread.join(timeout=10)
+                self.assertFalse(thread.is_alive())
+            self.assertEqual(failures, [])
+            self.assertEqual(json.loads((directory / "recomendaciones.json").read_text()),
+                             first)
+            self.assertEqual((directory / "dashboard.md").read_text(),
+                             render_markdown(first) + "\n")
+            self.assertFalse((directory / ".metricas-generation-incomplete").exists())
