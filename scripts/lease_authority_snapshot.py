@@ -118,11 +118,12 @@ def _marker_payload(body: str, number: int) -> dict[str, Any]:
     return marker
 
 
-def _last_bot_marker(comments: Any, issue_number: int) -> dict[str, Any] | None:
+def _last_bot_marker(comments: Any, issue_number: int) -> tuple[dict[str, Any] | None, str]:
     if not isinstance(comments, list):
         _reject("comentarios_incompletos")
     last_id = 0
     last_body: str | None = None
+    digest = hashlib.sha256()
     for comment in comments:
         if not isinstance(comment, dict) or type(comment.get("id")) is not int:
             _reject("comentario_invalido")
@@ -133,9 +134,18 @@ def _last_bot_marker(comments: Any, issue_number: int) -> dict[str, Any] | None:
         user, body = comment.get("user"), comment.get("body")
         if not isinstance(user, dict) or not isinstance(body, str):
             _reject("comentario_invalido")
-        if user.get("login") == BOT and SUSPECT_MARKER.search(body):
+        actor = user.get("login")
+        if not isinstance(actor, str) or not actor:
+            _reject("comentario_invalido")
+        # Incluye /tomar y comentarios no-marker: cualquier edición o nuevo
+        # comentario entre snapshots invalida el permiso de publicación.
+        body_hash = hashlib.sha256(json.dumps(body, ensure_ascii=True).encode("ascii")).hexdigest()
+        identity = json.dumps([cid, actor, body_hash], separators=(",", ":"), ensure_ascii=True)
+        digest.update(identity.encode("ascii") + b"\n")
+        if actor == BOT and SUSPECT_MARKER.search(body):
             last_body = body
-    return _marker_payload(last_body, issue_number) if last_body is not None else None
+    parsed = _marker_payload(last_body, issue_number) if last_body is not None else None
+    return parsed, digest.hexdigest()
 
 
 def audit_active_claims(open_issues: Any, comments_by_issue: Any, *, complete: bool) -> LeaseAudit:
@@ -165,7 +175,7 @@ def audit_active_claims(open_issues: Any, comments_by_issue: Any, *, complete: b
             _reject("labels_estados_conflictivos")
         if number not in comments_by_issue:
             _reject("comentarios_incompletos")
-        marker = _last_bot_marker(comments_by_issue[number], number)
+        marker, comments_sha256 = _last_bot_marker(comments_by_issue[number], number)
         if ACTIVE_LABELS.intersection(label_names) and (marker is None or not marker["active"]):
             _reject("estado_activo_sin_marker")
         if marker is not None:
@@ -176,7 +186,15 @@ def audit_active_claims(open_issues: Any, comments_by_issue: Any, *, complete: b
             if marker["active"]:
                 # IMPORTANTE: no filtrar por label: incluso BLOCKED retiene claims.
                 active.append(ActiveLease(number, uid, tuple(marker["task_paths"])))
-        normalized.append({"number": number, "labels": sorted(label_names), "marker": marker})
+        body, updated = issue.get("body"), issue.get("updated_at")
+        if (body is not None and not isinstance(body, str)) or (
+            updated is not None and not isinstance(updated, str)
+        ):
+            _reject("issue_invalido")
+        body_hash = hashlib.sha256(json.dumps(body, ensure_ascii=True).encode("ascii")).hexdigest()
+        normalized.append({"number": number, "labels": sorted(label_names),
+                           "marker": marker, "comments_sha256": comments_sha256,
+                           "body_sha256": body_hash, "updated_at": updated})
     if set(comments_by_issue) != issue_ids:
         _reject("inventario_incompleto")
     normalized.sort(key=lambda row: row["number"])
