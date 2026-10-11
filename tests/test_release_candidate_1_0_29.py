@@ -164,6 +164,25 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self._validate_release_drift_fixture(variant)
 
+        # Misma cardinalidad y mismo par exact-SHA; el rechazo debe nacer de
+        # un cambio de control NO declarado, no del chequeo len(files) != 53.
+        unclassified = list(observed["files"])
+        unclassified[-1] = ".github/workflows/unexpected-release.yml"
+        with self.assertRaisesRegex(
+            ValueError, "undeclared_release_or_security_drift"
+        ):
+            self._validate_release_drift_fixture(
+                {**observed, "files": unclassified}
+            )
+        omitted_control = list(observed["files"])
+        omitted_control[0] = "docs/another-readme.md"
+        with self.assertRaisesRegex(
+            ValueError, "undeclared_release_or_security_drift"
+        ):
+            self._validate_release_drift_fixture(
+                {**observed, "files": omitted_control}
+            )
+
     @staticmethod
     def _declared_control_changes() -> tuple[str, ...]:
         # Incluye seguridad.yml y captura-leccion.yml, omitidos inicialmente.
