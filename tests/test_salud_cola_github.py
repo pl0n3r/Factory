@@ -82,9 +82,14 @@ class GitHubPageTests(unittest.TestCase):
             with self.subTest(underfilled=count):
                 with self.assertRaisesRegex(GitHubPageError, "nonterminal_page_underfilled"):
                     parse(header=first, items=full_items(count))
-        # A terminal page legitimately has any size from zero through 100.
-        for count in (0, 1, 99, 100):
+        # Underfilled terminal pages are unambiguous; 100 without a
+        # definitive end marker could omit a page containing Issue 101.
+        for count in (0, 1, 99):
             self.assertFalse(parse(items=full_items(count))["has_next"])
+        with self.assertRaisesRegex(GitHubPageError, "ambiguous_terminal_full_page"):
+            parse(items=full_items(100))
+        with self.assertRaisesRegex(GitHubPageError, "ambiguous_terminal_full_page"):
+            parse(page=2, header=link(1, "prev"), items=full_items(100))
         self.assertFalse(parse(page=3, header=final)["has_next"])
         self.assertFalse(parse()["has_next"])
         bad = (
@@ -145,6 +150,7 @@ class GitHubPageTests(unittest.TestCase):
             [missing_last, second],
             [first],  # Missing a page announced by next.
             [first, duplicated_issue],
+            [capture(1, full_items(), None)],  # Missing Link on full page.
             [second],  # Requesting page 2 as the first capture.
             [first, second, second],
             [{"request_url": url(1), "status_code": 200,
@@ -204,6 +210,9 @@ class GitHubPageTests(unittest.TestCase):
             require_stable_github_sweeps("Factory", initial, partial)
         with self.assertRaises(GitHubPageError):
             require_stable_github_sweeps("UnknownRepo", initial, stable)
+        ambiguous = [capture(1, full_items(), None)]
+        with self.assertRaisesRegex(GitHubPageError, "ambiguous_terminal_full_page"):
+            require_stable_github_sweeps("Factory", ambiguous, copy.deepcopy(ambiguous))
         # Source-only free text is intentionally excluded from comparisons.
         texts_only = copy.deepcopy(initial)
         texts_only[0]["payload"][0]["title"] = "private changed title"
@@ -264,6 +273,12 @@ class GitHubPageTests(unittest.TestCase):
             [{"number": 42, "state": "open",
               "labels": [{"name": "status: available"},
                          {"name": "status: unauthorized"}]}],
+            [{"number": 42, "state": "open",
+              "labels": [{"name": "estado: disponible"},
+                         {"name": "Estado: bloqueado"}]}],
+            [{"number": 42, "state": "open",
+              "labels": [{"name": "status: available"},
+                         {"name": "STATUS: BLOCKED"}]}],
             [{"number": 1, "state": "open", "labels": {}}],
             [{"number": 1, "labels": [42]}],
             [{"number": 1, "labels": [{"color": "fff"}]}],
@@ -276,6 +291,9 @@ class GitHubPageTests(unittest.TestCase):
         for items in bad_payloads:
             with self.subTest(items=str(items)[:70]), self.assertRaises(GitHubPageError):
                 parse(items=items)
+        non_workflow = parse(items=[{"number": 42, "state": "open",
+                                     "labels": [{"name": "estado_de_prueba"}]}])
+        self.assertEqual(non_workflow["issues"][0]["labels"], [])
 
 
 if __name__ == "__main__":

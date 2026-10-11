@@ -128,6 +128,10 @@ def parse_github_issue_page(repo: object, requested_page: object,
     # declared 'next' chain could conceal omitted issue records.
     if has_next and len(payload) != PAGE_SIZE:
         raise GitHubPageError("nonterminal_page_underfilled")
+    # A full terminal page without an authenticated continuation/end signal
+    # is ambiguous: it may conceal the next 100 Issues.
+    if not has_next and len(payload) == PAGE_SIZE:
+        raise GitHubPageError("ambiguous_terminal_full_page")
     issues: list[dict] = []
     seen: set[int] = set()
     for raw in payload:
@@ -152,7 +156,7 @@ def parse_github_issue_page(repo: object, requested_page: object,
                 raise GitHubPageError("invalid_labels")
             if label in STATE_LABELS:
                 names.append(label)
-            elif label.startswith(("estado:", "status:")):
+            elif label.casefold().startswith(("estado:", "status:")):
                 # Never silently discard an unknown workflow status if
                 # another label could otherwise make the Issue actionable.
                 raise GitHubPageError("unknown_status_label")
