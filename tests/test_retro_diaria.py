@@ -39,6 +39,8 @@ class RetroDailyTests(unittest.TestCase):
             (good, [{**SOURCE, "complete": False}], NOW),
             (good, [{**SOURCE, "sha": "bad"}], NOW),
             (good, [SOURCE], "2026-10-11T09:00:00"),
+            ([], [SOURCE], "0001-01-01T00:00:00Z"),
+            ([], [SOURCE], "0001-01-01T00:00:00+23:00"),
             (good + [event("new", "2026-10-11T07:00:00Z")], [SOURCE], NOW),
             ([{**good[0], "source_id": "unknown"}], [SOURCE], NOW),
             ([{**good[0], "occurred_at": "2026-10-11T10:00:00Z"}], [SOURCE], NOW),
