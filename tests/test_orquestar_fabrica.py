@@ -515,49 +515,32 @@ class OrquestarFabricaTests(unittest.TestCase):
                 self.assertEqual(api.requests, [], "reject before any mutation")
 
     def test_foreign_active_invalid_marker_remains_blocking(self):
-        for state in (
-            "estado: reservado", "estado: en revisión",
-            "estado: requiere recuperación",
-        ):
-            with self.subTest(state=state):
+        cases = ("estado: reservado", "estado: en revisión",
+                 "estado: requiere recuperación", "active_lease",
+                 "orphan_branch", "malformed_lease")
+        for case in cases:
+            with self.subTest(case=case):
                 api = FakeGitHub()
-                self._inject_foreign(api, labels=[state])
-                with self.assertRaises(PlanError):
+                label = case if case.startswith("estado:") else "estado: bloqueado"
+                self._inject_foreign(api, labels=[label])
+                if case == "active_lease":
+                    api.comments.append({
+                        "id": 9, "user": {"login": "github-actions[bot]"},
+                        "body": reservation_marker(
+                            "pl0n3r", "12345678-1234-1234-1234-123456789abc",
+                            "trabajo/issue-44", True, "tomar"),
+                    })
+                elif case == "orphan_branch":
+                    api.branches.add("trabajo/issue-44")
+                elif case == "malformed_lease":
+                    api.comments.append({
+                        "id": 9, "user": {"login": "github-actions[bot]"},
+                        "body": '<!-- condor-reserva {"active":true} -->',
+                    })
+                pattern = "reserva ambiguo" if case == "malformed_lease" else "."
+                with self.assertRaisesRegex(PlanError, pattern):
                     sync_plan(api, 3)
                 self.assertEqual(api.requests, [])
-
-        with self.subTest("blocked label does not erase active lease"):
-            api = FakeGitHub()
-            self._inject_foreign(api, labels=["estado: bloqueado"])
-            api.comments.append({
-                "id": 9, "user": {"login": "github-actions[bot]"},
-                "body": reservation_marker(
-                    "pl0n3r", "12345678-1234-1234-1234-123456789abc",
-                    "trabajo/issue-44", True, "tomar",
-                ),
-            })
-            with self.assertRaises(PlanError):
-                sync_plan(api, 3)
-            self.assertEqual(api.requests, [])
-
-        with self.subTest("orphan branch is not proof of no work"):
-            api = FakeGitHub()
-            self._inject_foreign(api, labels=["estado: bloqueado"])
-            api.branches.add("trabajo/issue-44")
-            with self.assertRaises(PlanError):
-                sync_plan(api, 3)
-            self.assertEqual(api.requests, [])
-
-        with self.subTest("malformed trusted lease is ambiguous"):
-            api = FakeGitHub()
-            self._inject_foreign(api)
-            api.comments.append({
-                "id": 9, "user": {"login": "github-actions[bot]"},
-                "body": '<!-- condor-reserva {"active":true} -->',
-            })
-            with self.assertRaisesRegex(PlanError, "reserva ambiguo"):
-                sync_plan(api, 3)
-            self.assertEqual(api.requests, [])
 
     def test_foreign_open_pr_blocks_isolation_even_without_canonical_branch(self):
         for ref, title, body in (
@@ -568,14 +551,12 @@ class OrquestarFabricaTests(unittest.TestCase):
             with self.subTest(ref=ref, body=body):
                 api = FakeGitHub()
                 foreign = self._inject_foreign(api, labels=["estado: bloqueado"])
-                old_body = foreign["body"]
-                api.pulls.append({
-                    "id": 71, "number": 71, "title": title,
-                    "body": body, "head": {"ref": ref},
-                })
+                before = dict(foreign)
+                api.pulls.append({"id": 71, "number": 71, "title": title,
+                                  "body": body, "head": {"ref": ref}})
                 with self.assertRaises(PlanError):
                     sync_plan(api, 3)
-                self.assertEqual(foreign["body"], old_body)
+                self.assertEqual(foreign, before)
                 self.assertFalse(api.requests)
 
     def test_foreign_incomplete_comment_or_pr_pagination_fails_closed(self):
@@ -584,15 +565,13 @@ class OrquestarFabricaTests(unittest.TestCase):
                 api = FakeGitHub()
                 self._inject_foreign(api, labels=["estado: bloqueado"])
                 if which == "comment":
-                    api.comments.extend({
-                        "id": n, "user": {"login": "someone"}, "body": "noise"
-                    } for n in range(100, 200))
+                    api.comments.extend({"id": n, "user": {"login": "someone"},
+                                         "body": "noise"} for n in range(100, 200))
                     api.fail_comment_page_two = True
                 else:
-                    api.pulls.extend({
-                        "id": n, "number": n, "title": "Other",
-                        "body": "", "head": {"ref": f"feature/{n}"}
-                    } for n in range(100, 200))
+                    api.pulls.extend({"id": n, "number": n, "title": "Other",
+                                      "body": "", "head": {"ref": f"feature/{n}"}}
+                                     for n in range(100, 200))
                     api.fail_pull_page_two = True
                 with self.assertRaisesRegex(PlanError, "incompleta o inválida"):
                     sync_plan(api, 3)
@@ -604,33 +583,28 @@ class OrquestarFabricaTests(unittest.TestCase):
                 api = FakeGitHub()
                 self._inject_foreign(api, labels=["estado: bloqueado"])
                 if kind == "duplicate_comments":
-                    api.comments.extend({
-                        "id": 9, "user": {"login": "someone"}, "body": "noise"
-                    } for _ in range(2))
+                    api.comments.extend({"id": 9, "user": {"login": "someone"},
+                                         "body": "noise"} for _ in range(2))
                 if kind == "duplicate_pulls":
-                    api.pulls.extend({
-                        "id": 9, "number": 9, "title": "Other",
-                        "body": "", "head": {"ref": "feature/a"}
-                    } for _ in range(2))
+                    api.pulls.extend({"id": 9, "number": 9, "title": "Other",
+                                      "body": "", "head": {"ref": "feature/a"}}
+                                     for _ in range(2))
                 if kind == "malformed_pull":
                     api.pulls.append({"id": 9, "number": 9, "title": "Other"})
                 with self.assertRaises(PlanError):
                     sync_plan(api, 3)
                 self.assertFalse(api.requests)
 
-
     def test_foreign_second_page_active_lease_is_not_ignored(self):
         api = FakeGitHub()
         self._inject_foreign(api, labels=["estado: bloqueado"])
-        api.comments.extend({
-            "id": n, "body": "filler", "user": {"login": "someone"}
-        } for n in range(1, 101))
+        api.comments.extend({"id": n, "body": "filler",
+                             "user": {"login": "someone"}} for n in range(1, 101))
         api.comments.append({
             "id": 101, "user": {"login": "github-actions[bot]"},
             "body": reservation_marker(
                 "pl0n3r", "12345678-1234-1234-1234-123456789abc",
-                "trabajo/issue-44", True, "tomar",
-            ),
+                "trabajo/issue-44", True, "tomar"),
         })
         with self.assertRaises(PlanError):
             sync_plan(api, 3)
@@ -669,8 +643,6 @@ class OrquestarFabricaTests(unittest.TestCase):
         with self.assertRaisesRegex(PlanError, "inventario previo ambiguo"):
             sync_plan(api, 3)
         self.assertEqual(api.requests, [])
-
-
 
 if __name__ == "__main__":
     unittest.main()
