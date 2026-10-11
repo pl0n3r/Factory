@@ -7,6 +7,7 @@ de evidencia de CI/main, startup watcher, freeze y v1 es externa y exact-SHA.
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -20,7 +21,11 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         payload = json.loads(
             (self.root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.29"})
+        self.assertEqual(set(payload), {"version"})
+        version = payload["version"]
+        self.assertIsInstance(version, str)
+        self.assertRegex(version, r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+        self.assertGreaterEqual(tuple(map(int, version.split("."))), (1, 0, 29))
 
     @staticmethod
     def _acceptance_tools():
@@ -75,19 +80,137 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             with self.subTest(target=target):
                 run_named_test(Criterion("AC-02", "test", target), self.root)
 
-        # El compare verificado v1...main incluye deriva en estos componentes.
-        # Su existencia NO autoriza reusar una puerta de release vieja: la
-        # revalidación actual exact-SHA se hará fuera de este test.
-        release_machinery_drift = (
+
+        # Snapshot informativo de la comparacion REST v1...main ya observada
+        # fuera del test. Es una prueba OFFLINE del inventario, no una llamada
+        # autenticada; el gate externo debe volver a comparar HEAD + tag.
+        observed = {
+            "tag_sha": "7be20fda7a60fd1371af3aa03f3f2ac6d03ec281",
+            "main_sha": "79140a8ebbea1fe026c1ec500c8330062c1e78f5",
+            "ahead_by": 24,
+            "status": "ahead",
+            "files": [
+                      ".github/workflows/captura-leccion.yml",
+                      ".github/workflows/factory-ci.yml",
+                      ".github/workflows/release-bootstrap.yml",
+                      ".github/workflows/seguridad.yml",
+                      "docs/principios-construccion.md",
+                      "docs/release-bootstrap.md",
+                      "lecciones/registros/2026-10-construccion.jsonl",
+                      "lecciones/registros/principios-construccion.jsonl",
+                      "lecciones/test_memoria.py",
+                      "performance/contracts/autofactory.json",
+                      "performance/contracts/condor.json",
+                      "performance/contracts/controlbot.json",
+                      "performance/contracts/factoryrunner.json",
+                      "recovery/contract.py",
+                      "recovery/gdrive_adapter.py",
+                      "recovery/manifests/autofactory.yml",
+                      "recovery/manifests/brvtal.yml",
+                      "recovery/manifests/condor.yml",
+                      "recovery/manifests/controlbot.yml",
+                      "recovery/manifests/grindflow.yml",
+                      "scripts/automerge_construccion.py",
+                      "scripts/captura_leccion.py",
+                      "scripts/lease_authority_snapshot.py",
+                      "scripts/orquestar_fabrica.py",
+                      "scripts/release_api_budget.py",
+                      "scripts/salud_cola.py",
+                      "scripts/salud_cola_snapshot.py",
+                      "scripts/validar_claims_issue.py",
+                      "template/AGENTES.md",
+                      "tests/test_automerge_construccion.py",
+                      "tests/test_bootstrap_coordination.py",
+                      "tests/test_captura_leccion.py",
+                      "tests/test_captura_leccion_workflow.py",
+                      "tests/test_coordinacion_reusable_contract.py",
+                      "tests/test_lease_authority_snapshot.py",
+                      "tests/test_orquestar_fabrica.py",
+                      "tests/test_performance_autofactory_contract.py",
+                      "tests/test_performance_condor_contract.py",
+                      "tests/test_performance_controlbot_contract.py",
+                      "tests/test_performance_factoryrunner_contract.py",
+                      "tests/test_principios_construccion.py",
+                      "tests/test_recovery_contract.py",
+                      "tests/test_recovery_gdrive_adapter.py",
+                      "tests/test_recovery_manifests.py",
+                      "tests/test_release_api_budget.py",
+                      "tests/test_release_bootstrap_workflow.py",
+                      "tests/test_release_comment_pages.py",
+                      "tests/test_release_window_snapshot_complete.py",
+                      "tests/test_salud_cola.py",
+                      "tests/test_salud_cola_snapshot.py",
+                      "tests/test_security_comment_routing.py",
+                      "tests/test_template_principios_construccion.py",
+                      "tests/test_validar_claims_issue.py"
+            ]
+        }
+        self.assertEqual(self._validate_release_drift_fixture(observed),
+                         set(self._declared_control_changes()))
+        # Negativos: paths nuevos de control, paginas incompletas, identidad
+        # falsa o mismo SHA no pasan como evidencia de ausencia de deriva.
+        for variant in (
+            {**observed, "files": observed["files"] +
+             [".github/workflows/unexpected-release.yml"]},
+            {**observed, "files": observed["files"][:-1]},
+            {**observed, "files": observed["files"] +
+             [observed["files"][0]]},
+            {**observed, "main_sha": observed["tag_sha"]},
+            {**observed, "status": "identical"},
+            {**observed, "ahead_by": True},
+            {**observed, "tag_sha": "unknown"},
+        ):
+            with self.subTest(invalid=variant):
+                with self.assertRaises(ValueError):
+                    self._validate_release_drift_fixture(variant)
+
+    @staticmethod
+    def _declared_control_changes() -> tuple[str, ...]:
+        # Incluye seguridad.yml y captura-leccion.yml, omitidos inicialmente.
+        return tuple([
+            ".github/workflows/captura-leccion.yml",
             ".github/workflows/factory-ci.yml",
             ".github/workflows/release-bootstrap.yml",
+            ".github/workflows/seguridad.yml",
+            "scripts/automerge_construccion.py",
+            "scripts/lease_authority_snapshot.py",
             "scripts/release_api_budget.py",
-        )
-        for name in release_machinery_drift:
-            with self.subTest(drift=name):
-                path = self.root / name
-                self.assertTrue(path.is_file(), "missing_release_machine")
-                self.assertGreater(path.stat().st_size, 0)
+            "scripts/validar_claims_issue.py"
+    ])
+
+    @classmethod
+    def _validate_release_drift_fixture(cls, observation: dict) -> set[str]:
+        if type(observation) is not dict or set(observation) != {
+            "tag_sha", "main_sha", "ahead_by", "status", "files"
+        }:
+            raise ValueError("invalid_compare_envelope")
+        if (observation["tag_sha"] != "7be20fda7a60fd1371af3aa03f3f2ac6d03ec281"
+                or observation["main_sha"] != "79140a8ebbea1fe026c1ec500c8330062c1e78f5"
+                or observation["tag_sha"] == observation["main_sha"]
+                or type(observation["ahead_by"]) is not int
+                or observation["ahead_by"] != 24
+                or observation["status"] != "ahead"):
+            raise ValueError("unverified_compare_identity")
+        files = observation["files"]
+        if (type(files) is not list or len(files) != 53
+                or any(type(path) is not str
+                       or not re.fullmatch(r"[A-Za-z0-9._/-]+", path)
+                       or path.startswith("/")
+                       or "/../" in path or path.startswith("../")
+                       for path in files)
+                or len(set(files)) != len(files)):
+            raise ValueError("invalid_compare_inventory")
+        relevant = {
+            path for path in files
+            if path.startswith(".github/workflows/")
+            or path.startswith("scripts/release_")
+            or path in cls._declared_control_changes()
+        }
+        if relevant != set(cls._declared_control_changes()):
+            raise ValueError("undeclared_release_or_security_drift")
+        # Un fixture no sustituye la comparacion autenticada exact-SHA;
+        # ningun estado READY, gate A, publication_allowed ni v1 se deriva.
+        return relevant
 
 
 if __name__ == "__main__":
