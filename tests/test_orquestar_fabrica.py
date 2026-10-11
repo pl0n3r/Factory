@@ -42,6 +42,8 @@ class FakeGitHub:
         self.fail_pull_page_two = False
         self.short_pull_pages = False
         self.fail_issue_page_two = False
+        self.omit_issue_from_inventory = None
+        self.omit_issue_only_ascending = None
         self.foreign_counter_override = None
         self.foreign_counter_race = False
         self.foreign_read_count = 0
@@ -101,11 +103,23 @@ class FakeGitHub:
         })
 
     def request(self, method, path, payload=None):
-        if method == "GET" and "/issues?state=all&per_page=100&page=" in path:
+        if (
+            method == "GET" and "/issues?state=all&sort=created&direction=" in path
+            and "&per_page=100&page=" in path
+        ):
             page = int(path.rsplit("page=", 1)[1])
             if page == 2 and self.fail_issue_page_two:
                 return {"message": "partial issue inventory"}
-            issues = list(self.issues.values())
+            reverse = "direction=desc" in path
+            issues = sorted(
+                self.issues.values(), key=lambda item: item["number"],
+                reverse=reverse,
+            )
+            omitted = self.omit_issue_from_inventory
+            if omitted is None and not reverse:
+                omitted = self.omit_issue_only_ascending
+            if omitted is not None:
+                issues = [item for item in issues if item["number"] != omitted]
             return [
                 {**item, "id": item.get("id", item["number"])}
                 for item in issues[(page - 1) * 100:page * 100]
@@ -453,6 +467,73 @@ class OrquestarFabricaTests(unittest.TestCase):
             "labels": [{"name": name} for name in labels],
         }
         return api.issues[44]
+
+    def test_partial_issue_page_fails_closed_without_children(self):
+        api = FakeGitHub()
+        first = sync_plan(api, 3)
+        missing = first["issues"]["B"]
+        # [99, []] parece normal en ambos barridos, pero el reporte conoce B.
+        for number in range(100, 197):
+            api.issues[number] = {
+                "number": number, "state": "open", "body": "",
+                "labels": [], "title": f"Unrelated {number}",
+            }
+        api.omit_issue_from_inventory = missing
+        before = {key: dict(value) for key, value in api.issues.items()}
+        api.requests.clear()
+
+        with self.assertRaisesRegex(PlanError, "reporte anterior"):
+            sync_plan(api, 3)
+
+        self.assertFalse(api.requests)
+        self.assertEqual(api.issues, before)
+        self.assertIn(missing, api.issues)
+
+    def test_valid_paginated_inventory_remains_idempotent(self):
+        api = FakeGitHub()
+        for number in range(4, 103):
+            api.issues[number] = {
+                "number": number, "state": "open", "body": "",
+                "labels": [], "title": f"Unrelated {number}",
+            }
+        api.next_issue = 103
+        first = sync_plan(api, 3)
+        self.assertEqual(first["issues"]["B"], 104)
+        self.assertEqual(len(api.issues), 102)
+
+        second = sync_plan(api, 3)
+        third = sync_plan(api, 3)
+        self.assertEqual(second["issues"], first["issues"])
+        self.assertEqual(third["issues"], first["issues"])
+        self.assertEqual(len(api.issues), 102)
+        self.assertEqual(len(api.comments), 1)
+
+    def test_ambiguous_issue_inventory_is_atomic(self):
+        for defect in ("duplicate_number", "missing_one_direction", "page_two"):
+            with self.subTest(defect=defect):
+                api = FakeGitHub()
+                if defect == "duplicate_number":
+                    api.issues[44] = {
+                        "id": 44, "number": 3, "state": "open",
+                        "body": "", "labels": [], "title": "Duplicate",
+                    }
+                elif defect == "missing_one_direction":
+                    api.issues[44] = {
+                        "number": 44, "state": "open", "body": "",
+                        "labels": [], "title": "Omitted",
+                    }
+                    api.omit_issue_only_ascending = 44
+                else:
+                    for number in range(100, 199):
+                        api.issues[number] = {
+                            "number": number, "state": "open", "body": "",
+                            "labels": [], "title": f"Unrelated {number}",
+                        }
+                    api.fail_issue_page_two = True
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertFalse(api.requests)
+                self.assertEqual(api.next_issue, 10)
 
     def test_global_issue_inventory_must_be_complete_and_unambiguous(self):
         api = FakeGitHub()
