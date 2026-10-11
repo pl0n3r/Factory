@@ -74,22 +74,24 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         repo_id = identity["id"]
 
         def pages(path: str, *, name: str, expected: int | None = None,
-                  checks: bool = False, commits: bool = False) -> list[dict[str, Any]]:
+                  checks: bool = False, commits: bool = False,
+                  runs: bool = False) -> list[dict[str, Any]]:
             output: list[dict[str, Any]] = []
             seen: set[int | str] = set()
             for page in range(1, 6):
                 suffix = "&" if "?" in path else "?"
                 raw = get(f"{path}{suffix}per_page=100&page={page}")
-                if checks:
+                if checks or runs:
                     if (not isinstance(raw, dict)
-                            or type(raw.get("total_count")) is not int):
+                            or type(raw.get("total_count")) is not int
+                            or raw["total_count"] < 0):
                         raise IncompleteEvidence()
                     count = raw["total_count"]
                     if expected is None:
                         expected = count
                     if count != expected:
                         raise IncompleteEvidence()
-                    rows = raw.get("check_runs")
+                    rows = raw.get("check_runs" if checks else "workflow_runs")
                 else:
                     rows = raw
                 if not isinstance(rows, list) or len(rows) > 100:
@@ -112,7 +114,15 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 if len(rows) < 100:
                     if expected is not None and len(output) != expected:
                         raise IncompleteEvidence()
-                    pagination[name] = {"pages": page, "items": len(output)}
+                    # Cuerpos sin Link: una página corta no acredita por sí
+                    # sola el cierre; exigir página centinela vacía.
+                    probes = 0
+                    if expected is None:
+                        sentinel = get(f"{path}{suffix}per_page=100&page={page + 1}")
+                        if not isinstance(sentinel, list) or sentinel:
+                            raise IncompleteEvidence()
+                        probes = 1
+                    pagination[name] = {"pages": page + probes, "items": len(output)}
                     return output
             raise IncompleteEvidence()  # jamás tratar el prefijo como inventario íntegro
 
@@ -236,6 +246,29 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             if status not in ("queued", "in_progress", "completed"):
                 raise IncompleteEvidence()
             if status in ("queued", "in_progress"):
+                running = True
+
+        # Los checks del HEAD no prueban que un run de un SHA anterior
+        # haya terminado. Auditar todas las ejecuciones de esta rama.
+        workflow_runs = pages(
+            f"{base}/actions/runs?branch={quote(branch, safe='')}",
+            name="runs", runs=True,
+        )
+        for run in workflow_runs:
+            source = run.get("head_repository")
+            run_sha = run.get("head_sha")
+            if (run.get("head_branch") != branch
+                    or not isinstance(source, dict)
+                    or source.get("id") != repo_id
+                    or source.get("full_name") != repo
+                    or type(run_sha) is not str or SHA.fullmatch(run_sha) is None):
+                raise IncompleteEvidence()
+            status = run.get("status")
+            if status not in (
+                    "completed", "queued", "in_progress",
+                    "pending", "requested", "waiting"):
+                raise IncompleteEvidence()
+            if status != "completed":
                 running = True
 
         verify = get(path)

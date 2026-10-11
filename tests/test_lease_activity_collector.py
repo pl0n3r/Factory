@@ -60,6 +60,9 @@ class API:
         self.checks = [
             {"id": 6, "head_sha": SHA, "status": "in_progress"},
         ]
+        self.extra_runs = []
+        self.runs_count_override = None
+        self.extra_pull_page = []
 
     def request(self, method, path):
         assert method == "GET", "read-only collector"
@@ -81,12 +84,25 @@ class API:
         if "/commits?sha=" in path:
             return copy.deepcopy(self.commits) if page == 1 else []
         if "/pulls?state=open" in path:
-            return copy.deepcopy(self.pulls) if page == 1 else []
+            return (copy.deepcopy(self.pulls) if page == 1
+                    else copy.deepcopy(self.extra_pull_page) if page == 2 else [])
         if "/pulls/35/reviews?" in path:
             return copy.deepcopy(self.reviews) if page == 1 else []
         if "/check-runs?" in path:
             return {"total_count": len(self.checks),
                     "check_runs": copy.deepcopy(self.checks) if page == 1 else []}
+        if "/actions/runs?branch=" in path:
+            current = {
+                "id": 8, "head_sha": SHA,
+                "head_branch": "trabajo/issue-21",
+                "head_repository": {"id": 123, "full_name": REPO},
+                "status": self.checks[0]["status"],
+            }
+            runs = [current] + self.extra_runs
+            total = (self.runs_count_override if self.runs_count_override is not None
+                     else len(runs))
+            return {"total_count": total,
+                    "workflow_runs": copy.deepcopy(runs) if page == 1 else []}
         raise AssertionError("unexpected GET")
 
 
@@ -102,16 +118,17 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(result["repository_id"], 123)
         self.assertEqual(result["pagination"], {
             "comments": {"pages": 1, "items": 2},
-            "commits": {"pages": 1, "items": 1},
-            "pulls": {"pages": 1, "items": 1},
-            "reviews": {"pages": 1, "items": 1},
+            "commits": {"pages": 2, "items": 1},
+            "pulls": {"pages": 2, "items": 1},
+            "reviews": {"pages": 2, "items": 1},
             "checks": {"pages": 1, "items": 1},
+            "runs": {"pages": 1, "items": 1},
         })
         api.issue["labels"].append({"name": "prioridad: crítica"})
         self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
-        self.assertEqual(result["rate_remaining"], 69)
-        self.assertEqual(result["api_requests"], 11)
+        self.assertEqual(result["rate_remaining"], 65)
+        self.assertEqual(result["api_requests"], 15)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
         self.assertTrue(all(isinstance(p, str) for p in api.calls))
 
@@ -125,6 +142,11 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         a = API(); a.pulls[0]["head"]["repo"]["id"] = 999; cases.append(a)
         a = API(); a.pulls[0]["head"]["repo"]["full_name"] = "other/fork"; cases.append(a)
         a = API(); a.repo_id = None; cases.append(a)
+        a = API(); a.runs_count_override = 2; cases.append(a)
+        a = API(); a.extra_runs = [{"id": 9, "head_sha": "c" * 40,
+            "head_branch": "trabajo/issue-21", "head_repository": None,
+            "status": "in_progress"}]; cases.append(a)
+        a = API(); a.extra_pull_page = [{"id": 99}]; cases.append(a)
         a = API(); a.race = True; cases.append(a)
         a = API(); a.checks.append(copy.deepcopy(a.checks[0])); cases.append(a)
         a = API(); a.comments[0]["body"] = "<!-- condor-reserva SECRET -->"; cases.append(a)
@@ -144,6 +166,23 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     collect_activity(case, 21, now=NOW),
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
+
+    def test_ci_in_progress_on_previous_sha_remains_protected(self):
+        api = API()
+        api.checks[0]["status"] = "completed"
+        earlier = {"id": 9, "head_sha": "b" * 40,
+                   "head_branch": "trabajo/issue-21",
+                   "head_repository": {"id": 123, "full_name": REPO},
+                   "status": "in_progress"}
+        api.extra_runs = [earlier]
+        observed = collect_activity(api, 21, now=NOW)
+        self.assertTrue(observed["evidence_complete"])
+        self.assertTrue(observed["ci_running"])
+        self.assertEqual(observed["pagination"]["runs"]["items"], 2)
+        api.extra_runs[0]["status"] = "completed"
+        terminal = collect_activity(api, 21, now=NOW)
+        self.assertTrue(terminal["evidence_complete"])
+        self.assertFalse(terminal["ci_running"])
 
     def test_same_branch_name_from_foreign_fork_is_ignored(self):
         api = API()
