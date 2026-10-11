@@ -65,7 +65,7 @@ class Fake:
                 "commit_id": HEAD, "state": "APPROVED",
                 "author_association": "COLLABORATOR"}]
         if "/files?" in route:
-            return [] if route.endswith("page=2") else [{"id": 8, "filename": "scripts/feature.py"}]
+            return [] if route.endswith("page=2") else [{"filename": "scripts/feature.py"}]
         if route == "/rate_limit":
             return {"resources": {"core": {"remaining": 80}}}
         raise AssertionError("unknown endpoint")
