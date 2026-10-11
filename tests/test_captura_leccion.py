@@ -45,6 +45,26 @@ class CaptureLessonTests(unittest.TestCase):
         with self.assertRaisesRegex(CaptureError, "invalid_run_provenance"):
             capture_lessons([{**stable, "run_sha": "bad"}])
 
+    def test_pr_merge_id_is_bound_to_issue_and_sha(self):
+        """A caller cannot split one merge with fabricated event IDs."""
+        valid = event("pr_merged-44-" + "c" * 40, issue=44,
+                      event="pr_merged", sha="c" * 40,
+                      summary="Fusion de PR verificada en GitHub")
+        self.assertEqual(len(capture_lessons([valid, valid])), 1)
+        for candidate in (
+                {**valid, "event_id": "pr_merged-44-" + "b" * 40},
+                {**valid, "event_id": "pr_merged-45-" + "c" * 40},
+                {**valid, "event_id": "evt-irrelevant"},
+                {**valid, "issue": 45},
+                {**valid, "sha": "d" * 40},
+        ):
+            with self.subTest(id=candidate["event_id"], issue=candidate["issue"]):
+                with self.assertRaisesRegex(
+                        CaptureError, "invalid_business_event_identity"):
+                    capture_lessons([candidate])
+        with self.assertRaisesRegex(CaptureError, "invalid_business_event_identity"):
+            capture_lessons([valid, {**valid, "event_id": "pr_merged-44-" + "d" * 40}])
+
     def test_distinct_closure_identity_and_business_conflicts_fail_closed(self):
         first = event("pr_merged-44-" + "c" * 40, issue=44, event="pr_merged",
                       sha="c" * 40)
