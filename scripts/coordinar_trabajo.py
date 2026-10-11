@@ -2039,6 +2039,11 @@ def recovery_issue_numbers(api: GitHub) -> list[int]:
     return sorted(numbers)
 
 
+def parallel_file_grants_enabled() -> bool:
+    """Interruptor del paralelismo por archivo verificado (activo por defecto)."""
+    return os.getenv("CONDOR_PARALLEL_FILE_GRANTS", "1").strip() != "0"
+
+
 def verified_parallel_file_evidence(
     api: GitHub,
     task_marker: dict[str, Any] | None,
@@ -2260,9 +2265,13 @@ def reserve_work(
             active_task_snapshots,
             active_dependency_states,
             active_reservation_numbers,
-            # Un diff actual no asegura exclusividad frente a futuros pushes
-            # de una lease con claims más amplios: fail-closed.
-            verified_file_independence=set(),
+            # La independencia por archivo solo se concede con diff exact-SHA
+            # completo de una lease V3 y archivos exactos del candidato; cada
+            # pin se revalida en el PR (validate_pr_claims) y un cambio de SHA
+            # vuelve a bloquear. CONDOR_PARALLEL_FILE_GRANTS=0 la desactiva.
+            verified_file_independence=(
+                verified if parallel_file_grants_enabled() else set()
+            ),
         )
     except PlanError as exc:
         raise CoordinationError(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from unittest.mock import patch
 from contextlib import redirect_stdout
@@ -4432,16 +4433,27 @@ class GranularReserveWorkIntegrationTests(unittest.TestCase):
         self.assertEqual(api.status_history, [])
         self.assertEqual(api.assignees, set())
 
-    def test_tomar_rejects_future_collision_even_when_current_diff_is_disjoint(self) -> None:
-        # La lease src/ puede editar src/next.php después de leer el PR.
+    def test_tomar_rejects_future_collision_when_parallel_file_grants_are_disabled(self) -> None:
+        # Con el interruptor apagado se conserva el comportamiento fail-closed:
+        # la lease src/ puede editar src/next.php después de leer el PR.
         api, comments, diff = self._ready_api()
-        with patch.object(api, "issue_comments", side_effect=comments), (
-            patch.object(api, "pull_files_exact_head", side_effect=diff, create=True)
-        ):
+        with patch.dict(os.environ, {"CONDOR_PARALLEL_FILE_GRANTS": "0"}), (
+            patch.object(api, "issue_comments", side_effect=comments)
+        ), patch.object(api, "pull_files_exact_head", side_effect=diff, create=True):
             with self.assertRaisesRegex(CoordinationError, "colisión con tarea activa"):
                 reserve_work(api, 12, "pl0n3r", "OWNER")
         self.assertNotIn("trabajo/issue-12", api.branches)
         self.assertEqual(api.status_history, [])
+
+    def test_tomar_grants_parallel_exact_file_when_active_diff_is_verified_disjoint(self) -> None:
+        # AC-01 de #1081: archivo exacto del candidato disjunto del diff exact-SHA
+        # completo de una lease V3; un solapamiento posterior lo detecta el PR.
+        api, comments, diff = self._ready_api()
+        with patch.dict(os.environ, {"CONDOR_PARALLEL_FILE_GRANTS": "1"}), (
+            patch.object(api, "issue_comments", side_effect=comments)
+        ), patch.object(api, "pull_files_exact_head", side_effect=diff, create=True):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertIn("trabajo/issue-12", api.branches)
 
     def test_tomar_still_denies_legacy_v2_without_snapshot(self) -> None:
         api, comments, diff = self._ready_api(legacy=True)
