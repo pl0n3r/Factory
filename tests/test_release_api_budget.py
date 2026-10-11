@@ -88,6 +88,28 @@ class ReleaseApiBudgetTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ReleaseBudgetError):
                 estimate_api_budget(good, drift)
 
+    def test_workflow_projected_search_is_not_complete_api_evidence(self):
+        """El adaptador de #1132 debe alimentar páginas REST crudas, no JSON reducido."""
+        raw = search_pages()
+        projection = [
+            {key: item[key] for key in ("number", "state", "title", "body", "updated_at")}
+            for page in raw for item in page["items"]
+        ]
+        # El workflow #1118 entrega una lista plana sin paginación.
+        with self.assertRaises(ReleaseBudgetError):
+            estimate_api_budget(projection, copy.deepcopy(projection))
+        # Envolver artificialmente el JSON reducido no restaura identidades REST.
+        wrapped = [
+            {"total_count": 120, "incomplete_results": False,
+             "items": projection[start:start + 100]}
+            for start in (0, 100)
+        ]
+        with self.assertRaises(ReleaseBudgetError):
+            estimate_api_budget(wrapped, copy.deepcopy(wrapped))
+        with self.assertRaises(ReleaseBudgetError):
+            estimate_api_budget(raw[:1], copy.deepcopy(raw[:1]))
+        self.assertEqual(estimate_api_budget(raw, copy.deepcopy(raw)).total_calls_min, 104)
+
     def test_rate_limit_retries_bounded_and_always_fail_closed(self):
         primary = classify_transport_failure(403, remaining=0, reset_after_seconds=25)
         self.assertEqual(primary.kind, "limite_primario")
