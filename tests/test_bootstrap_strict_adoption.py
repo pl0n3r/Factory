@@ -218,5 +218,25 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 self.assertIn("FAIL", result.stderr)
 
 
+
+        # Negative mutations: unknown slash commands, case-folding and
+        # additional write scopes must not pass consumer adoption tests.
+        for name, mutated in (
+            ("unexpected_slash", strict.replace(
+                "route = bool(parts and parts[0] in supported)",
+                "route = bool(parts and parts[0].startswith('/'))", 1)),
+            ("case_fold", strict.replace(
+                "route = bool(parts and parts[0] in supported)",
+                "route = bool(parts and parts[0].lower() in supported)", 1)),
+            ("extra_write_scope", strict.replace(
+                "      contents: read\n    outputs:",
+                "      contents: read\n      issues: write\n    outputs:", 1)),
+        ):
+            with self.subTest(unsafe_preflight=name):
+                self.assertNotEqual(mutated, strict)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL", result.stderr)
+
 if __name__ == "__main__":
     unittest.main()
