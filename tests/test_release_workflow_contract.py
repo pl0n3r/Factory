@@ -31,7 +31,7 @@ class T(unittest.TestCase):
 
  def test_reusable_revalidates_main_before_release_mutation(self):
   release_step=W.split("      - id: release",1)[1]
-  self.assertEqual(release_step.count("verify_remote_main\n"),2)
+  self.assertEqual(release_step.count("verify_remote_main\n"),3)
   self.assertLess(release_step.index("verify_remote_main\n"),release_step.index('gh release create "$TAG"'))
   self.assertIn('TARGET_SHA: ${{ github.sha }}',release_step)
   self._actual_guard("RELEASE")
@@ -74,7 +74,8 @@ class T(unittest.TestCase):
   return textwrap.dedent(segment.split("        run: |\n",1)[1])
 
  def _execute_step(self, kind, *, main=None, mutate="", tag_exists=False, approved=None,
-                   remote_ref=None,remote_target=None,release_status="404"):
+                   remote_ref=None,remote_target=None,release_status="404",
+                   tag_object=None,view_url=None):
   sha="a"*40
   drift="b"*40
   with tempfile.TemporaryDirectory() as tmp:
@@ -132,7 +133,7 @@ class T(unittest.TestCase):
     if [ "$1" = release ]; then
       if [ "$2" = view ]; then
         if [ -f "$FAKE_RELEASE_FILE" ]; then
-          printf '%s\n' https://example.invalid/fake
+          printf '%s\n' "$FAKE_VIEW_URL"
           exit 0
         fi
         exit 1
@@ -164,13 +165,19 @@ class T(unittest.TestCase):
      TAG="v1.0.29",VERSION="1.0.29",GH_TOKEN="fixture",
      FAKE_MAIN_FILE=str(remote),FAKE_LOG=str(log),
      FAKE_RELEASE_FILE=str(release),FAKE_MUTATE=mutate,
-     FAKE_DRIFT_SHA=drift,FAKE_TAG_OBJECT_SHA="c"*40,
+     FAKE_DRIFT_SHA=drift,
+     FAKE_TAG_OBJECT_SHA="c"*40 if tag_object is None else tag_object,
+     FAKE_VIEW_URL=("https://github.com/pl0n3r/Factory/releases/tag/v1.0.29"
+                    if view_url is None else view_url),
      FAKE_REMOTE_REF="c"*40 if remote_ref is None else remote_ref,
      FAKE_REMOTE_TARGET_FILE=str(remote_tag_file),
      FAKE_RELEASE_STATUS=release_status,
      FAKE_TAG_EXISTS="1" if tag_exists else "0",GITHUB_OUTPUT=str(output))
    run=subprocess.run(["bash","-euo","pipefail","-c",self._step_body(kind)],
                       env=env,capture_output=True,text=True,timeout=10)
+   if run.returncode:
+    self.assertFalse(output.exists() and output.read_text(encoding="utf-8"),
+                     "failed release exported approval")
    return run,log.read_text(encoding="utf-8"),release.exists(),remote.read_text(encoding="utf-8")
 
  def test_actual_tag_script_stops_before_ref_after_intermediate_drift(self):
@@ -274,3 +281,26 @@ class T(unittest.TestCase):
   self.assertIn("git/ref/tags/",trace)
   self.assertNotIn("release create",trace)
   self.assertTrue(created)
+
+ def test_idempotent_release_validates_url_and_remote_tag(self):
+  for label,settings in (
+    ("changed tag",{"remote_target":"b"*40}),
+    ("wrong URL",{"view_url":"https://example.invalid/wrong"}),
+    ("empty URL",{"view_url":""}),
+    ("null URL",{"view_url":"null"}),
+  ):
+   with self.subTest(case=label):
+    run,trace,_,_=self._execute_step("release",release_status="200",**settings)
+    self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+    self.assertNotIn("release create",trace)
+  run,trace,_,_=self._execute_step("release",release_status="200")
+  self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertNotIn("release create",trace)
+
+ def test_tag_creation_response_requires_sha_before_ref_post(self):
+  for value in ("","null","abc","not-a-sha"):
+   with self.subTest(value=value):
+    run,trace,_,_=self._execute_step("tag",tag_object=value)
+    self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+    self.assertIn("git/tags",trace)
+    self.assertNotIn("git/refs",trace)
