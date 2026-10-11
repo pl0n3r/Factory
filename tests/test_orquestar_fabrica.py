@@ -37,6 +37,9 @@ class FakeGitHub:
         self.labels = set()
         self.requests = []
         self.branches = set()
+        self.pulls = []
+        self.fail_comment_page_two = False
+        self.fail_pull_page_two = False
 
     def branch_sha(self, branch):
         return "a" * 40 if branch in self.branches else None
@@ -83,6 +86,16 @@ class FakeGitHub:
         })
 
     def request(self, method, path, payload=None):
+        if method == "GET" and "/comments?per_page=100&page=" in path:
+            page = int(path.rsplit("page=", 1)[1])
+            if page == 2 and self.fail_comment_page_two:
+                return {"message": "partial collection"}
+            return self.comments[(page - 1) * 100:page * 100]
+        if method == "GET" and "/pulls?state=open&per_page=100&page=" in path:
+            page = int(path.rsplit("page=", 1)[1])
+            if page == 2 and self.fail_pull_page_two:
+                return {"message": "partial collection"}
+            return self.pulls[(page - 1) * 100:page * 100]
         self.requests.append((method, path, payload))
         if method == "POST" and path.endswith("/issues"):
             number = self.next_issue
@@ -493,6 +506,66 @@ class OrquestarFabricaTests(unittest.TestCase):
             with self.assertRaisesRegex(PlanError, "reserva ambiguo"):
                 sync_plan(api, 3)
             self.assertEqual(api.requests, [])
+
+    def test_foreign_open_pr_blocks_isolation_even_without_canonical_branch(self):
+        for ref, title, body in (
+            ("feature/alternative", "Implementar", "Closes #44"),
+            ("trabajo/issue-44", "Implementar", ""),
+            ("work/issue-44", "Implementar", ""),
+        ):
+            with self.subTest(ref=ref, body=body):
+                api = FakeGitHub()
+                foreign = self._inject_foreign(api, labels=["estado: bloqueado"])
+                old_body = foreign["body"]
+                api.pulls.append({
+                    "id": 71, "number": 71, "title": title,
+                    "body": body, "head": {"ref": ref},
+                })
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(foreign["body"], old_body)
+                self.assertFalse(api.requests)
+
+    def test_foreign_incomplete_comment_or_pr_pagination_fails_closed(self):
+        for which in ("comment", "pull"):
+            with self.subTest(which=which):
+                api = FakeGitHub()
+                self._inject_foreign(api, labels=["estado: bloqueado"])
+                if which == "comment":
+                    api.comments.extend({
+                        "id": n, "user": {"login": "someone"}, "body": "noise"
+                    } for n in range(100, 200))
+                    api.fail_comment_page_two = True
+                else:
+                    api.pulls.extend({
+                        "id": n, "number": n, "title": "Other",
+                        "body": "", "head": {"ref": f"feature/{n}"}
+                    } for n in range(100, 200))
+                    api.fail_pull_page_two = True
+                with self.assertRaisesRegex(PlanError, "incompleta o inválida"):
+                    sync_plan(api, 3)
+                self.assertFalse(api.requests)
+
+    def test_foreign_duplicate_collection_ids_and_malformed_pr_fail_closed(self):
+        for kind in ("duplicate_comments", "duplicate_pulls", "malformed_pull"):
+            with self.subTest(kind=kind):
+                api = FakeGitHub()
+                self._inject_foreign(api, labels=["estado: bloqueado"])
+                if kind == "duplicate_comments":
+                    api.comments.extend({
+                        "id": 9, "user": {"login": "someone"}, "body": "noise"
+                    } for _ in range(2))
+                if kind == "duplicate_pulls":
+                    api.pulls.extend({
+                        "id": 9, "number": 9, "title": "Other",
+                        "body": "", "head": {"ref": "feature/a"}
+                    } for _ in range(2))
+                if kind == "malformed_pull":
+                    api.pulls.append({"id": 9, "number": 9, "title": "Other"})
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertFalse(api.requests)
+
 
 
 if __name__ == "__main__":
