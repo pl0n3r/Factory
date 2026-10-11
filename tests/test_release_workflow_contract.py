@@ -278,7 +278,7 @@ class T(unittest.TestCase):
   not_found=step.split('elif (( probe_rc != 0 ))',1)[1]
   before_create=not_found.split('gh release create "$TAG"',1)[0]
   self.assertRegex(before_create,
-                   r"verify_remote_main\s*\n\s*verify_remote_tag\s*\n\s*verify_remote_main")
+                   r"verify_remote_main\s*\n\s*verify_remote_tag\s*\n(?:\s*#[^\n]*\n)*\s*verify_remote_main")
 
  def test_release_tag_get_main_drift_never_invokes_create(self):
   # AC-02: el segundo GET del objeto tag altera main después del primer gate.
