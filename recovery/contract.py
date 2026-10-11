@@ -127,11 +127,18 @@ def _nonnegative_map(value: Any, expected: set[str], label: str) -> dict[str, in
 
 
 def _size_and_sensitive(payload: Any) -> None:
+    # Encode inside the same trust boundary: a JSON unicode surrogate can
+    # serialize to str yet raise UnicodeEncodeError during UTF-8 encoding.
+    # Raise the public error OUTSIDE except to avoid retaining raw __context__.
+    encoded = None
     try:
         encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise RecoveryContractError("manifest debe ser JSON finito.") from exc
-    if len(encoded.encode()) > 100_000:
+        size = len(encoded.encode("utf-8"))
+    except (TypeError, ValueError):
+        encoded = None
+    if encoded is None:
+        raise RecoveryContractError("manifest debe ser JSON finito.")
+    if size > 100_000:
         raise RecoveryContractError("manifest excede tamaño máximo.")
     if _SENSITIVE.search(encoded):
         raise RecoveryContractError("manifest contiene forma sensible no permitida.")

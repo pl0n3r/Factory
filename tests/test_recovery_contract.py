@@ -67,6 +67,25 @@ class RecoveryContractTests(unittest.TestCase):
                 validate_recovery_manifest(value)
             self.assertNotIn("supersecretvalue", str(ctx.exception))
 
+        # AC-03: malformed JSON unicode must yield the same typed, sanitized
+        # failure for both entry points, never a raw UnicodeEncodeError.
+        lone_surrogate = json.loads('"\\ud800"')
+        for field in ("project", "key_material"):
+            malformed = manifest()
+            if field == "project":
+                malformed["project"] = lone_surrogate
+            else:
+                malformed["encryption"]["key_material"] = lone_surrogate
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                with self.subTest(field=field, validator=validator.__name__):
+                    with self.assertRaisesRegex(
+                        RecoveryContractError, "manifest debe ser JSON finito"
+                    ) as error:
+                        validator(malformed)
+                    self.assertIsNone(error.exception.__cause__)
+                    self.assertIsNone(error.exception.__context__)
+                    self.assertNotIn("token=", str(error.exception))
+
 
     def test_version_requires_strict_integer_one(self):
         valid = manifest()
