@@ -10,8 +10,10 @@ reservas en producción.
 
 **No se autoriza activar un cron mutante** hasta integrar un colector auténtico
 de evidencia y un ejecutor serializado, y demostrar los casos de carrera.
-El archivo \`.github/workflows/liberar-reservas.yml\` queda pendiente de la
-segunda etapa; el lector no debe interpretar su ausencia como un barrido activo.
+El workflow \`.github/workflows/liberar-reservas.yml\` está presente
+como auditoría de solo lectura cada 10 minutos: ejecuta contratos locales tras
+preflight de cuota >=20%; **no consulta actividad real ni modifica reservas**.
+La integración autenticada/ejecutora queda pendiente de otra etapa.
 
 ## Semántica temporal explícita
 
@@ -52,6 +54,15 @@ La propiedad \`libera_en_min\` es un tiempo mínimo restante según evidencia,
   el mismo UUID, aceptación y claims originales; anotación de motivo,
   último SHA y evidencia, \`estado: disponible\` sin borrar la rama,
   y reconciliación idempotente si falla una escritura intermedia.
+
+**Nota de compatibilidad QA:** el flujo actual de \`/tomar\` **NO**
+re-adopta automáticamente una rama huérfana conservada: con branch existente
+y reserva V3 \`active:false\`, \`reserve_work\` devuelve el error que exige
+\`/adoptar-contrato-huerfana\`. Por tanto la adopción operativa documentada
+es **EXPLÍCITA**, con actor autorizado, contrato V3 comprobado y lock
+compartido; no prometer «/tomar adopta». Una modificación de ese comando
+exigiría una tarea y reserva separadas sobre \`scripts/coordinar_trabajo.py\`,
+que este Issue no reclama.
 
 La re-adopción usa el contrato existente
 \`/adoptar-contrato-huerfana\` **solo tras desactivación inequívoca** de
