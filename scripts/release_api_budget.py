@@ -6,6 +6,8 @@ Un piso de solicitudes no demuestra que los comentarios estén paginados por com
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -81,6 +83,7 @@ def _read_pass(pages: Any) -> tuple[tuple[tuple[Any, ...], ...], int]:
         _fail("search_paginas_incompletas")
     seen_numbers: set[int] = set()
     seen_ids: set[int] = set()
+    seen_node_ids: set[str] = set()
     rows: list[tuple[Any, ...]] = []
     for index, page in enumerate(pages):
         if (not isinstance(page, dict)
@@ -95,9 +98,18 @@ def _read_pass(pages: Any) -> tuple[tuple[tuple[Any, ...], ...], int]:
         for item in items:
             if not isinstance(item, dict):
                 _fail("search_issue_invalido")
-            number, node_id, state = item.get("number"), item.get("id"), item.get("state")
+            number, rest_id, state = item.get("number"), item.get("id"), item.get("state")
+            graphql_id = item.get("node_id")
+            labels = item.get("labels")
             if (type(number) is not int or number <= 0 or number in seen_numbers
-                or type(node_id) is not int or node_id <= 0 or node_id in seen_ids
+                or type(rest_id) is not int or rest_id <= 0 or rest_id in seen_ids
+                or not isinstance(graphql_id, str) or not graphql_id.strip()
+                or graphql_id in seen_node_ids
+                or not isinstance(labels, list)
+                or any(not isinstance(label, dict)
+                       or not isinstance(label.get("name"), str)
+                       or not label["name"] for label in labels)
+                or not _canonical_timestamp(item.get("created_at"))
                 or state not in ("open", "closed")
                 or item.get("pull_request") is not None
                 or not isinstance(item.get("title"), str)
@@ -105,9 +117,18 @@ def _read_pass(pages: Any) -> tuple[tuple[tuple[Any, ...], ...], int]:
                 or not isinstance(item.get("body"), str)
                 or not _canonical_timestamp(item.get("updated_at"))):
                 _fail("search_issue_invalido")
+            try:
+                fingerprint = hashlib.sha256(json.dumps(
+                    item, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                    allow_nan=False,
+                ).encode("ascii")).hexdigest()
+            except (TypeError, ValueError, OverflowError):
+                _fail("search_metadata_no_serializable")
             seen_numbers.add(number)
-            seen_ids.add(node_id)
-            rows.append((node_id, number, state, item["title"], item["body"], item["updated_at"]))
+            seen_ids.add(rest_id)
+            seen_node_ids.add(graphql_id)
+            rows.append((rest_id, number, state, item["title"],
+                         item["body"], item["updated_at"], fingerprint))
     if len(rows) != count:
         _fail("search_total_no_coincide")
     return tuple(rows), len(pages)

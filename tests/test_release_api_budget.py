@@ -13,9 +13,12 @@ from scripts.release_api_budget import (
 
 def issue(n: int, gate: bool = False) -> dict:
     return {
-        "id": 100000 + n, "number": n, "state": "closed", "title": f"Puerta {n}",
+        "id": 100000 + n, "node_id": f"I_fake_{n}", "number": n,
+        "state": "closed", "title": f"Puerta {n}",
         "body": "factory-human-gate factory-release" if gate else "factory-human-gate",
+        "created_at": "2026-10-09T20:00:00Z",
         "updated_at": "2026-10-10T20:00:00Z",
+        "labels": [{"name": "ejemplo"}],
     }
 
 
@@ -54,16 +57,32 @@ class ReleaseApiBudgetTests(unittest.TestCase):
         bad_cases.append(duplicated_id)
         missing_id = copy.deepcopy(good); del missing_id[1]["items"][0]["id"]; bad_cases.append(missing_id)
         bool_id = copy.deepcopy(good); bool_id[1]["items"][0]["id"] = True; bad_cases.append(bool_id)
+        duplicate_node = copy.deepcopy(good)
+        duplicate_node[1]["items"][0]["node_id"] = duplicate_node[0]["items"][0]["node_id"]
+        bad_cases.append(duplicate_node)
+        missing_node = copy.deepcopy(good); del missing_node[1]["items"][0]["node_id"]
+        bad_cases.append(missing_node)
+        bad_created = copy.deepcopy(good); bad_created[1]["items"][0]["created_at"] = "mañana"
+        bad_cases.append(bad_created)
+        no_labels = copy.deepcopy(good); del no_labels[1]["items"][0]["labels"]
+        bad_cases.append(no_labels)
         bool_count = copy.deepcopy(good); bool_count[0]["total_count"] = True; bad_cases.append(bool_count)
         wrong_body = copy.deepcopy(good); del wrong_body[1]["items"][0]["body"]; bad_cases.append(wrong_body)
         oversized = search_pages(rows=201, gates=0); bad_cases.append(oversized)
         for bad in bad_cases:
             with self.subTest(bad=str(bad)[:70]), self.assertRaises(ReleaseBudgetError):
                 estimate_api_budget(bad, good)
-        for change in ("body", "updated_at", "title", "id"):
+        for change in ("body", "updated_at", "title", "id", "node_id",
+                       "created_at", "labels", "state_reason"):
             drift = copy.deepcopy(good)
             if change == "id":
                 drift[1]["items"][0][change] += 1000000
+            elif change == "labels":
+                drift[1]["items"][0][change].append({"name": "nueva"})
+            elif change == "state_reason":
+                drift[1]["items"][0][change] = "completed"
+            elif change == "created_at":
+                drift[1]["items"][0][change] = "2026-10-08T20:00:00Z"
             else:
                 drift[1]["items"][0][change] += " cambiado"
             with self.subTest(change=change), self.assertRaises(ReleaseBudgetError):
