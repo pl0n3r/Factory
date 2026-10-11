@@ -89,61 +89,7 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             "main_sha": "79140a8ebbea1fe026c1ec500c8330062c1e78f5",
             "ahead_by": 24,
             "status": "ahead",
-            "files": [
-                      ".github/workflows/captura-leccion.yml",
-                      ".github/workflows/factory-ci.yml",
-                      ".github/workflows/release-bootstrap.yml",
-                      ".github/workflows/seguridad.yml",
-                      "docs/principios-construccion.md",
-                      "docs/release-bootstrap.md",
-                      "lecciones/registros/2026-10-construccion.jsonl",
-                      "lecciones/registros/principios-construccion.jsonl",
-                      "lecciones/test_memoria.py",
-                      "performance/contracts/autofactory.json",
-                      "performance/contracts/condor.json",
-                      "performance/contracts/controlbot.json",
-                      "performance/contracts/factoryrunner.json",
-                      "recovery/contract.py",
-                      "recovery/gdrive_adapter.py",
-                      "recovery/manifests/autofactory.yml",
-                      "recovery/manifests/brvtal.yml",
-                      "recovery/manifests/condor.yml",
-                      "recovery/manifests/controlbot.yml",
-                      "recovery/manifests/grindflow.yml",
-                      "scripts/automerge_construccion.py",
-                      "scripts/captura_leccion.py",
-                      "scripts/lease_authority_snapshot.py",
-                      "scripts/orquestar_fabrica.py",
-                      "scripts/release_api_budget.py",
-                      "scripts/salud_cola.py",
-                      "scripts/salud_cola_snapshot.py",
-                      "scripts/validar_claims_issue.py",
-                      "template/AGENTES.md",
-                      "tests/test_automerge_construccion.py",
-                      "tests/test_bootstrap_coordination.py",
-                      "tests/test_captura_leccion.py",
-                      "tests/test_captura_leccion_workflow.py",
-                      "tests/test_coordinacion_reusable_contract.py",
-                      "tests/test_lease_authority_snapshot.py",
-                      "tests/test_orquestar_fabrica.py",
-                      "tests/test_performance_autofactory_contract.py",
-                      "tests/test_performance_condor_contract.py",
-                      "tests/test_performance_controlbot_contract.py",
-                      "tests/test_performance_factoryrunner_contract.py",
-                      "tests/test_principios_construccion.py",
-                      "tests/test_recovery_contract.py",
-                      "tests/test_recovery_gdrive_adapter.py",
-                      "tests/test_recovery_manifests.py",
-                      "tests/test_release_api_budget.py",
-                      "tests/test_release_bootstrap_workflow.py",
-                      "tests/test_release_comment_pages.py",
-                      "tests/test_release_window_snapshot_complete.py",
-                      "tests/test_salud_cola.py",
-                      "tests/test_salud_cola_snapshot.py",
-                      "tests/test_security_comment_routing.py",
-                      "tests/test_template_principios_construccion.py",
-                      "tests/test_validar_claims_issue.py"
-            ]
+            "files": list(self._known_compare_paths())
         }
         self.assertEqual(self._validate_release_drift_fixture(observed),
                          set(self._declared_control_changes()))
@@ -174,6 +120,16 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             self._validate_release_drift_fixture(
                 {**observed, "files": unclassified}
             )
+        # Mismo numero de entradas y los mismos cambios sensibles: una ruta
+        # no sensible inventada tambien debe quedar rechazada.
+        altered_nonsensitive = list(observed["files"])
+        altered_nonsensitive[-1] = "docs/unobserved-note.md"
+        with self.assertRaisesRegex(
+            ValueError, "unverified_compare_inventory"
+        ):
+            self._validate_release_drift_fixture(
+                {**observed, "files": altered_nonsensitive}
+            )
         omitted_control = list(observed["files"])
         omitted_control[0] = "docs/another-readme.md"
         with self.assertRaisesRegex(
@@ -182,6 +138,65 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             self._validate_release_drift_fixture(
                 {**observed, "files": omitted_control}
             )
+
+    @staticmethod
+    def _known_compare_paths() -> tuple[str, ...]:
+        """Inventario completo del compare observado v1...main; NO actualiza GitHub."""
+        return (
+            ".github/workflows/captura-leccion.yml",
+            ".github/workflows/factory-ci.yml",
+            ".github/workflows/release-bootstrap.yml",
+            ".github/workflows/seguridad.yml",
+            "docs/principios-construccion.md",
+            "docs/release-bootstrap.md",
+            "lecciones/registros/2026-10-construccion.jsonl",
+            "lecciones/registros/principios-construccion.jsonl",
+            "lecciones/test_memoria.py",
+            "performance/contracts/autofactory.json",
+            "performance/contracts/condor.json",
+            "performance/contracts/controlbot.json",
+            "performance/contracts/factoryrunner.json",
+            "recovery/contract.py",
+            "recovery/gdrive_adapter.py",
+            "recovery/manifests/autofactory.yml",
+            "recovery/manifests/brvtal.yml",
+            "recovery/manifests/condor.yml",
+            "recovery/manifests/controlbot.yml",
+            "recovery/manifests/grindflow.yml",
+            "scripts/automerge_construccion.py",
+            "scripts/captura_leccion.py",
+            "scripts/lease_authority_snapshot.py",
+            "scripts/orquestar_fabrica.py",
+            "scripts/release_api_budget.py",
+            "scripts/salud_cola.py",
+            "scripts/salud_cola_snapshot.py",
+            "scripts/validar_claims_issue.py",
+            "template/AGENTES.md",
+            "tests/test_automerge_construccion.py",
+            "tests/test_bootstrap_coordination.py",
+            "tests/test_captura_leccion.py",
+            "tests/test_captura_leccion_workflow.py",
+            "tests/test_coordinacion_reusable_contract.py",
+            "tests/test_lease_authority_snapshot.py",
+            "tests/test_orquestar_fabrica.py",
+            "tests/test_performance_autofactory_contract.py",
+            "tests/test_performance_condor_contract.py",
+            "tests/test_performance_controlbot_contract.py",
+            "tests/test_performance_factoryrunner_contract.py",
+            "tests/test_principios_construccion.py",
+            "tests/test_recovery_contract.py",
+            "tests/test_recovery_gdrive_adapter.py",
+            "tests/test_recovery_manifests.py",
+            "tests/test_release_api_budget.py",
+            "tests/test_release_bootstrap_workflow.py",
+            "tests/test_release_comment_pages.py",
+            "tests/test_release_window_snapshot_complete.py",
+            "tests/test_salud_cola.py",
+            "tests/test_salud_cola_snapshot.py",
+            "tests/test_security_comment_routing.py",
+            "tests/test_template_principios_construccion.py",
+            "tests/test_validar_claims_issue.py",
+        )
 
     @staticmethod
     def _declared_control_changes() -> tuple[str, ...]:
@@ -227,6 +242,8 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         }
         if relevant != set(cls._declared_control_changes()):
             raise ValueError("undeclared_release_or_security_drift")
+        if tuple(sorted(files)) != cls._known_compare_paths():
+            raise ValueError("unverified_compare_inventory")
         # Un fixture no sustituye la comparacion autenticada exact-SHA;
         # ningun estado READY, gate A, publication_allowed ni v1 se deriva.
         return relevant
