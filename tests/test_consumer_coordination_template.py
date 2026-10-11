@@ -163,6 +163,24 @@ class ConsumerCoordinationTemplateTests(unittest.TestCase):
             with self.subTest(unsupported_command=body):
                 self.assertFalse(routes_comment(body))
 
+    def test_untrusted_comment_actors_do_not_start_write_job(self):
+        """La guarda de actor autorizado protege preflight y reusable mutante."""
+        value = text()
+        expected = (
+            "contains(fromJSON('[\\"OWNER\\",\\"MEMBER\\",\\"COLLABORATOR\\"]'), "
+            "github.event.comment.author_association)"
+        )
+        for block in (
+            job_block(value, "preflight_comentario", "comentario"),
+            job_block(value, "comentario", "etiqueta"),
+        ):
+            with self.subTest(job=block[:40]):
+                self.assertIn(expected, block)
+                self.assertIn("github.event.comment.user.type == 'User'", block)
+                self.assertIn("github.event.sender.login == github.event.comment.user.login", block)
+        self.assertEqual(value.count(expected), 2)
+        self.assertEqual(value.count("github.event.comment.user.type == 'User'"), 2)
+
     def test_comment_routing_preserves_permissions_and_pr_guard(self):
         value = text()
         preflight = job_block(value, "preflight_comentario", "comentario")
