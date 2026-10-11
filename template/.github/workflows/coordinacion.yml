@@ -20,27 +20,49 @@ concurrency:
   queue: max
 
 jobs:
+  # Clasificador de solo lectura; el cuerpo nunca se interpola como shell.
+  preflight_comentario:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      github.event.sender.login == github.event.comment.user.login
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      route: ${{ steps.route.outputs.route }}
+    steps:
+      - id: route
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          # GITHUB_EVENT_PATH contiene el payload del evento en el runner.
+          # Evita pasar el cuerpo por env o imprimirlo en el log del paso.
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as source:
+              event = json.load(source)
+          body = event.get("comment", {}).get("body", "")
+          parts = body.strip().split(maxsplit=1) if isinstance(body, str) else []
+          supported = {
+              "/tomar", "/liberar-forzado", "/adoptar-contrato-huerfana",
+              "/liberar", "/transferir", "/migrar-contrato",
+              "/renovar-contrato",
+          }
+          route = bool(parts and parts[0] in supported)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"route={str(route).lower()}\n")
+          PY
+
   comentario:
+    needs: preflight_comentario
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request == null &&
       github.event.sender.login == github.event.comment.user.login &&
-      (
-        github.event.comment.body == '/tomar' ||
-        github.event.comment.body == '/liberar-forzado' ||
-        github.event.comment.body == '/adoptar-contrato-huerfana' ||
-        startsWith(github.event.comment.body, '/liberar ') ||
-        startsWith(github.event.comment.body, '/transferir ') ||
-        startsWith(github.event.comment.body, '/migrar-contrato ') ||
-        startsWith(github.event.comment.body, '/renovar-contrato ') ||
-        contains(github.event.comment.body, '/tomar') ||
-        contains(github.event.comment.body, '/liberar-forzado') ||
-        contains(github.event.comment.body, '/adoptar-contrato-huerfana') ||
-        contains(github.event.comment.body, '/liberar ') ||
-        contains(github.event.comment.body, '/transferir ') ||
-        contains(github.event.comment.body, '/migrar-contrato ') ||
-        contains(github.event.comment.body, '/renovar-contrato ')
-      )
+      needs.preflight_comentario.outputs.route == 'true'
     # El reusable mantiene el envelope compatible con callers v1.0.18;
     # la evidencia workflow_success del sweep usa lectura pública acotada.
     permissions:
