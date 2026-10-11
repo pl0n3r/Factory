@@ -30,6 +30,7 @@ class API:
         self.block = ""
         self.race = False
         self.ref_reads = 0
+        self.remaining = 80
         self.issue = {
             "number": 21, "state": "open", "comments": 2,
             "updated_at": "2026-10-11T09:45:00Z",
@@ -64,7 +65,7 @@ class API:
         if self.block and self.block in path:
             raise RuntimeError("private-token-should-not-leak")
         if path == "/rate_limit":
-            return {"resources": {"core": {"limit": 100, "remaining": 80}}}
+            return {"resources": {"core": {"limit": 100, "remaining": self.remaining}}}
         if path == f"/repos/{REPO}/issues/21":
             return copy.deepcopy(self.issue)
         if path.endswith("/git/ref/heads/trabajo/issue-21"):
@@ -96,13 +97,15 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         api.issue["labels"].append({"name": "prioridad: crítica"})
         self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
-        self.assertEqual(result["rate_remaining"], 80)
+        self.assertEqual(result["rate_remaining"], 70)
+        self.assertEqual(result["api_requests"], 10)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
         self.assertTrue(all(isinstance(p, str) for p in api.calls))
 
     def test_api_403_truncated_pages_and_untrusted_identity_fail_closed(self):
         cases = []
         a = API(); a.block = "/issues/21/comments"; cases.append(a)
+        a = API(); a.remaining = 29; cases.append(a)
         a = API(); a.issue["comments"] = 3; cases.append(a)
         a = API(); a.pulls[0]["head"]["sha"] = "b" * 40; cases.append(a)
         a = API(); a.race = True; cases.append(a)

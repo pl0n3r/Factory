@@ -222,13 +222,16 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                        for k in ("state", "number", "comments", "updated_at", "labels"))
                 or branch_sha() != sha):
             raise IncompleteEvidence()
+        effective_remaining = remaining - used
+        if effective_remaining < 0 or effective_remaining * 5 < limit:
+            raise IncompleteEvidence()
         return {
             "status": state_labels[0], "evidence_complete": True,
             "repo": repo, "issue_number": issue_number, "owner": owner,
             "lease_id": lease["reservation_id"], "branch_sha": sha,
             "last_activity_at": latest.isoformat().replace("+00:00", "Z"),
             "ci_running": running, "rate_limit": limit,
-            "rate_remaining": remaining, "api_requests": used,
+            "rate_remaining": effective_remaining, "api_requests": used,
         }
     except Exception:
         # No incluir tokens, rutas remotas ni payload privado en diagnósticos.
