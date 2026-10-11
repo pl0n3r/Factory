@@ -93,6 +93,10 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             "test_shared_files_remain_real_collisions",
             "tests/test_recovery_contract.py::RecoveryContractTests::"
             "test_invalid_sensitive_or_incoherent_manifest_fails_closed_without_echo",
+            "tests/test_automerge_workflow.py::AutoMergeWorkflowTests::"
+            "test_exact_sha_and_independent_review_snapshot_are_required",
+            "tests/test_automerge_workflow.py::AutoMergeWorkflowTests::"
+            "test_switch_rejects_duplicate_malformed_markers_and_noncanonical_issue",
         ))
         for target in targets:
             with self.subTest(target=target):
@@ -104,8 +108,8 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         # autenticada; el gate externo debe volver a comparar HEAD + tag.
         observed = {
             "tag_sha": "7be20fda7a60fd1371af3aa03f3f2ac6d03ec281",
-            "main_sha": "79140a8ebbea1fe026c1ec500c8330062c1e78f5",
-            "ahead_by": 24,
+            "main_sha": "fe0b8d9070461ec4c989f315d19d949221f7fd47",
+            "ahead_by": 26,
             "status": "ahead",
             "files": list(self._known_compare_paths())
         }
@@ -139,7 +143,7 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
                     self._validate_release_drift_fixture(variant)
 
         # Misma cardinalidad y mismo par exact-SHA; el rechazo debe nacer de
-        # un cambio de control NO declarado, no del chequeo len(files) != 53.
+        # un cambio de control NO declarado, no del chequeo len(files) != 56.
         unclassified = list(observed["files"])
         unclassified[-1] = ".github/workflows/unexpected-release.yml"
         with self.assertRaisesRegex(
@@ -169,12 +173,14 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
 
     @staticmethod
     def _known_compare_paths() -> tuple[str, ...]:
-        """Inventario completo del compare observado v1...main; NO actualiza GitHub."""
+        """Inventario REST observado para v1...main; revalidar antes del PR."""
         return (
+            ".github/workflows/automerge-construccion.yml",
             ".github/workflows/captura-leccion.yml",
             ".github/workflows/factory-ci.yml",
             ".github/workflows/release-bootstrap.yml",
             ".github/workflows/seguridad.yml",
+            "docs/automerge-construccion.md",
             "docs/principios-construccion.md",
             "docs/release-bootstrap.md",
             "lecciones/registros/2026-10-construccion.jsonl",
@@ -201,6 +207,7 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             "scripts/validar_claims_issue.py",
             "template/AGENTES.md",
             "tests/test_automerge_construccion.py",
+            "tests/test_automerge_workflow.py",
             "tests/test_bootstrap_coordination.py",
             "tests/test_captura_leccion.py",
             "tests/test_captura_leccion_workflow.py",
@@ -228,8 +235,9 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
 
     @staticmethod
     def _declared_control_changes() -> tuple[str, ...]:
-        # Incluye seguridad.yml y captura-leccion.yml, omitidos inicialmente.
-        return tuple([
+        # Inventario sensible de release, coordinación, seguridad y autoridad.
+        return (
+            ".github/workflows/automerge-construccion.yml",
             ".github/workflows/captura-leccion.yml",
             ".github/workflows/factory-ci.yml",
             ".github/workflows/release-bootstrap.yml",
@@ -237,8 +245,9 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
             "scripts/automerge_construccion.py",
             "scripts/lease_authority_snapshot.py",
             "scripts/release_api_budget.py",
-            "scripts/validar_claims_issue.py"
-    ])
+            "scripts/validar_claims_issue.py",
+        )
+
 
     @classmethod
     def _validate_release_drift_fixture(cls, observation: dict) -> set[str]:
@@ -247,14 +256,14 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         }:
             raise ValueError("invalid_compare_envelope")
         if (observation["tag_sha"] != "7be20fda7a60fd1371af3aa03f3f2ac6d03ec281"
-                or observation["main_sha"] != "79140a8ebbea1fe026c1ec500c8330062c1e78f5"
+                or observation["main_sha"] != "fe0b8d9070461ec4c989f315d19d949221f7fd47"
                 or observation["tag_sha"] == observation["main_sha"]
                 or type(observation["ahead_by"]) is not int
-                or observation["ahead_by"] != 24
+                or observation["ahead_by"] != 26
                 or observation["status"] != "ahead"):
             raise ValueError("unverified_compare_identity")
         files = observation["files"]
-        if (type(files) is not list or len(files) != 53
+        if (type(files) is not list or len(files) != 56
                 or any(type(path) is not str
                        or not re.fullmatch(r"[A-Za-z0-9._/-]+", path)
                        or path.startswith("/")
