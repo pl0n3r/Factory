@@ -95,9 +95,20 @@ jobs:
                   if not isinstance(rows, list) or len(rows) > 100:
                       raise ValueError("invalid page")
                   for row in rows:
-                      if not isinstance(row, dict) or not number(row.get("id")) or row["id"] in seen:
+                      if not isinstance(row, dict):
                           raise ValueError("invalid identity")
-                      seen.add(row["id"])
+                      if "/files" in path:
+                          name = row.get("filename")
+                          if not isinstance(name, str) or not name:
+                              raise ValueError("invalid filename")
+                          identity = ("file", name.casefold())
+                      else:
+                          if not number(row.get("id")):
+                              raise ValueError("invalid id")
+                          identity = ("id", row["id"])
+                      if identity in seen:
+                          raise ValueError("duplicate identity")
+                      seen.add(identity)
                   result.extend(rows)
                   if not rows:
                       if total is not None and len(result) != total:
