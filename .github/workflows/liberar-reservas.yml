@@ -36,6 +36,7 @@ jobs:
           persist-credentials: false
 
       - name: Preflight autenticado de cuota API (no publica datos privados)
+        id: budget
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_REPOSITORY: pl0n3r/Factory
@@ -63,10 +64,13 @@ jobs:
           limit="$(jq -r '.resources.core.limit' "$RUNNER_TEMP/lease-rate.json")"
           if (( remaining * 5 < limit )); then
             echo "Auditoría aplazada: API por debajo del 20 %. Ninguna reserva se toca."
+            echo "allow=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "allow=true" >> "$GITHUB_OUTPUT"
 
       - name: Tests deterministas del decisor (read-only)
+        if: steps.budget.outputs.allow == 'true'
         shell: bash
         run: |
           set -euo pipefail
