@@ -73,7 +73,7 @@ class SaludColaTests(unittest.TestCase):
         self.assertFalse(diagnose_queue(queue)["can_dispatch"])
         queue["agent_capacity"] = None
         queue["repositories"][0]["counts"].update(available=0, blocked=1)
-        queue["repositories"][0]["blockers"] = [{"number": 17, "cause": "unknown", "roadmap": True}]
+        queue["repositories"][0]["blockers"] = [{"number": 17, "cause": "unknown", "roadmap": False}]
         self.assertEqual(diagnose_queue(queue)["state"], "queue_empty")
 
     def test_rate_limit_and_untrusted_inputs_fail_closed(self):
@@ -114,28 +114,20 @@ class SaludColaTests(unittest.TestCase):
         self.assertEqual(result["blocked_cause_totals"]["claims"], 1)
         self.assertEqual(sum(result["blocked_cause_totals"].values()), 7)
         self.assertNotIn("private", json.dumps(result))
-        # Report ALL blockers, but never suggest human-only or unknown work.
-        queue["repositories"][0]["blockers"][0]["cause"] = "human_gate"
-        report = diagnose_queue(queue)
-        self.assertEqual(report["repositories"]["Factory"]["blocked_reasons"], [
-            {"issue": 109, "cause": "human_gate", "roadmap": True}
-        ])
-        self.assertEqual(report["blocked_cause_totals"]["human_gate"], 1)
-        self.assertEqual(report["repositories"]["Factory"]["blocked_cause_counts"]["human_gate"], 1)
-        self.assertTrue(all(x["issue"] != 109 or x["repository"] != "Factory"
-                            for x in report["roadmap_candidates"]))
-        queue["repositories"][0]["blockers"][0]["cause"] = "unknown"
-        report = diagnose_queue(queue)
-        self.assertEqual(report["repositories"]["Factory"]["blocked_reasons"][0]["cause"],
-                         "unknown")
-        self.assertTrue(all(x["issue"] != 109 or x["repository"] != "Factory"
-                            for x in report["roadmap_candidates"]))
-        # An item marked planned must not become an actionable roadmap leaf.
-        queue["repositories"][0]["blockers"][0]["cause"] = "planned"
-        report = diagnose_queue(queue)
-        self.assertEqual(report["blocked_cause_totals"]["planned"], 1)
-        self.assertFalse(any(x["issue"] == 109 and x["repository"] == "Factory"
-                             for x in report["roadmap_candidates"]))
+        # A non-actionable blocker remains reportable only when it is not
+        # deceptively marked as a roadmap candidate.
+        for cause in ("human_gate", "unknown", "planned"):
+            with self.subTest(cause=cause):
+                queue["repositories"][0]["blockers"][0].update(
+                    cause=cause, roadmap=False)
+                report = diagnose_queue(queue)
+                self.assertEqual(
+                    report["repositories"]["Factory"]["blocked_reasons"],
+                    [{"issue": 109, "cause": cause, "roadmap": False}])
+                self.assertEqual(report["blocked_cause_totals"][cause], 1)
+                self.assertFalse(report["publication_allowed"])
+                self.assertTrue(all(x["issue"] != 109 or x["repository"] != "Factory"
+                                    for x in report["roadmap_candidates"]))
         self.assertTrue(all(set(x) == {"repository", "issue", "cause"}
                             for x in result["roadmap_candidates"]))
         bad = copy.deepcopy(queue)
@@ -170,6 +162,57 @@ class SaludColaTests(unittest.TestCase):
         with self.assertRaisesRegex(QueueHealthError, "blocker_report_too_large"):
             diagnose_queue(huge)
 
+
+    def test_non_actionable_roadmap_causes_fail_closed(self):
+        for cause in ("human_gate", "planned", "unknown"):
+            for remaining in (5000, 999):
+                with self.subTest(cause=cause, remaining=remaining):
+                    bad = inventory(remaining=remaining)
+                    bad["repositories"][0]["blockers"][0].update(
+                        cause=cause, roadmap=True)
+                    with self.assertRaisesRegex(QueueHealthError, "invalid_blocker"):
+                        diagnose_queue(bad)
+
+    def test_roadmap_cause_contract_matches_snapshot_and_never_publishes(self):
+        from scripts.salud_cola_snapshot import SnapshotError, assemble_inventory
+
+        for cause in ("dependency", "claims", "human_gate", "planned", "unknown"):
+            for roadmap in (False, True):
+                for remaining in (5000, 999):
+                    with self.subTest(cause=cause, roadmap=roadmap,
+                                      remaining=remaining):
+                        reports = [
+                            {"name": repo, "pages": [{
+                                "page_number": 1, "has_next": False,
+                                "issues": [{
+                                    "number": 17, "labels": ["estado: bloqueado"],
+                                    "pull_request": False,
+                                    "blocker": {"cause": cause, "roadmap": roadmap},
+                                }],
+                            }]}
+                            for repo in REPOSITORIES
+                        ]
+                        direct = inventory(remaining=remaining)
+                        for row in direct["repositories"]:
+                            row["blockers"][0].update(cause=cause, roadmap=roadmap)
+                        if roadmap and cause in ("human_gate", "planned", "unknown"):
+                            with self.assertRaisesRegex(SnapshotError, "invalid_blocker"):
+                                assemble_inventory(
+                                    reports, 4, {"limit": 5000, "remaining": remaining})
+                            with self.assertRaisesRegex(QueueHealthError, "invalid_blocker"):
+                                diagnose_queue(direct)
+                            continue
+                        normalized = assemble_inventory(
+                            reports, 4, {"limit": 5000, "remaining": remaining})
+                        output = diagnose_queue(normalized)
+                        self.assertEqual(output, diagnose_queue(direct))
+                        self.assertFalse(output["publication_allowed"])
+                        if remaining < 1000:
+                            self.assertEqual(output["roadmap_candidates"], [])
+                        elif roadmap:
+                            self.assertEqual(len(output["roadmap_candidates"]), 7)
+                        else:
+                            self.assertEqual(output["roadmap_candidates"], [])
 
     def test_recovery_is_counted_without_promoting_work(self):
         queue = inventory(capacity=1)
