@@ -691,7 +691,8 @@ def summarize_product_day(
 ) -> dict[str, Any]:
     """Conteos diarios de PRs fusionados a partir de snapshots externos verificados.
 
-    Cada snapshot requiere repo, observed_at, source='github-api', authenticated,
+    Cada snapshot requiere repo, repository_sha, observed_at,
+    source='github-api', authenticated,
     complete, run_id, run_status, run_conclusion, pages, verified_pages y events.
     La autenticidad y exhaustividad DEBEN verificarse externamente por el caller;
     los campos recibidos son atributos de evidencia, no pruebas criptográficas.
@@ -718,10 +719,13 @@ def summarize_product_day(
             return _unknown_product("ambiguous_repository")
         observed = _product_timestamp(snapshot.get("observed_at"))
         run_id = snapshot.get("run_id")
+        repository_sha = snapshot.get("repository_sha")
         pages = snapshot.get("pages")
         verified = snapshot.get("verified_pages")
         if (observed is None or not timedelta(0) <= anchor - observed <= PRODUCT_MAX_AGE
                 or snapshot.get("source") != "github-api"
+                or not isinstance(repository_sha, str)
+                or not PRODUCT_SHA_RE.fullmatch(repository_sha)
                 or snapshot.get("authenticated") is not True
                 or snapshot.get("complete") is not True
                 or type(run_id) is not int or run_id <= 0
@@ -754,6 +758,8 @@ def summarize_product_day(
         except OverflowError:
             return _unknown_product("invalid_clock_range")
         result[repo] = {
+            "repository_sha": repository_sha,
+            "run_id": run_id,
             "merged_prs": sum(window_start <= stamp <= observed
                               for _, stamp in unique.values()),
             "window_start": window_start.isoformat().replace("+00:00", "Z"),
