@@ -340,7 +340,19 @@ jobs:
 
           python3 -m scripts.release_bootstrap < /tmp/release-bootstrap.json             | tee /tmp/release-bootstrap-result.json
           approved_sha="$(jq -r '.sha' /tmp/release-bootstrap-result.json)"
+          # EXACT_MAIN_FINAL_RECHECK_BEGIN
+          # Last read before exporting approval; a stale main must not pass.
+          final_main_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+          [[ "$final_main_sha" =~ ^[0-9a-f]{40}$ ]] &&
+          [[ "$final_main_sha" == "$CURRENT_SHA" &&
+             "$final_main_sha" == "$default_sha" &&
+             "$final_main_sha" == "$resolved_sha" &&
+             "$final_main_sha" == "$approved_sha" ]] || {
+            echo "::error::main cambió antes de aprobar el preflight de release"
+            exit 1
+          }
           echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"
+          # EXACT_MAIN_FINAL_RECHECK_END
 
   consumer-compat:
     name: Compatibilidad de consumidores

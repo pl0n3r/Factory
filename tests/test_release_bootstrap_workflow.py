@@ -108,6 +108,50 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertIn("issues: read", preflight)
         self.assertNotIn("contents: write", preflight)
 
+    def test_final_preflight_requires_fresh_main_before_approval_output(self):
+        """Second main SHA read must reject drift before emitting approval."""
+        begin = "# EXACT_MAIN_FINAL_RECHECK_BEGIN"
+        end = "# EXACT_MAIN_FINAL_RECHECK_END"
+        self.assertEqual(BOOTSTRAP.count(begin), 1)
+        self.assertEqual(BOOTSTRAP.count(end), 1)
+        block = textwrap.dedent(BOOTSTRAP.split(begin, 1)[1].split(end, 1)[0])
+        self.assertIn('gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH"', block)
+        self.assertIn('echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"', block)
+        sha = "a" * 40
+        moved = "b" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            stub = tmpdir / "gh"
+            stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$FAKE_MAIN_SHA\"\n", encoding="utf-8")
+            stub.chmod(0o700)
+            output = tmpdir / "approval"
+            for label, current, approved, expected_success in (
+                ("unchanged", sha, sha, True),
+                ("main advanced", moved, sha, False),
+                ("approval mismatch", sha, moved, False),
+                ("malformed remote SHA", "truncated", sha, False),
+                ("remote call empty", "", sha, False),
+            ):
+                with self.subTest(case=label):
+                    output.write_text("", encoding="utf-8")
+                    import os
+                    env = dict(os.environ, PATH=str(tmpdir) + ":" + os.environ["PATH"],
+                               REPOSITORY="pl0n3r/factory", DEFAULT_BRANCH="main",
+                               CURRENT_SHA=sha, default_sha=sha, resolved_sha=sha,
+                               approved_sha=approved, GITHUB_OUTPUT=str(output),
+                               FAKE_MAIN_SHA=current)
+                    result = subprocess.run(
+                        ["bash", "-euo", "pipefail", "-c", block],
+                        capture_output=True, text=True, timeout=10, env=env,
+                    )
+                    if expected_success:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(output.read_text(encoding="utf-8"),
+                                         f"approved_sha={sha}\n")
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(output.read_text(encoding="utf-8"), "")
+
     def test_preflight_command_imports_run_as_in_the_workflow(self):
         """Regresión #102: el comando exacto del workflow debe resolver sus imports."""
         match = re.search(r"python3 (-m [\w.]+|scripts/release_bootstrap\.py)", BOOTSTRAP)
