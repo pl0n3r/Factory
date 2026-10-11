@@ -212,7 +212,7 @@ jobs:
           # RELEASE_STATUS_EXACT_GUARD_END
           verify_remote_main
           verify_remote_tag
-          url_prefix="${url%/releases/tag/$TAG}"
+          url_prefix="${url%/releases/tag/"$TAG"}"
           if [[ "$url_prefix" == "$url" || "${url_prefix,,}" != "https://github.com/${REPOSITORY,,}" ]]; then
             echo "::error::URL de Release no corresponde al repo y tag aprobados"
             exit 1
