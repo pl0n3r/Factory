@@ -14,7 +14,11 @@ FIELDS = frozenset({
     "freeze_active", "human_gate_required", "inventory_complete",
     "api_remaining", "api_minimum", "observed_at", "expires_at", "now",
 })
-SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy")
+SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy",
+             "secrets", "puertas-humanas", "production", "deploy")
+SENSITIVE_PREFIXES = (".github/workflows/", ".github/actions/")
+SENSITIVE_FILES = frozenset({"scripts/coordinar_trabajo.py", "scripts/orquestar_fabrica.py",
+                             "scripts/aceptacion_kit.py", "scripts/validar_claims_issue.py"})
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,8 @@ def _paths_status(paths: Any) -> str:
             return "invalid_snapshot"
         normalized = path.casefold()
         if (any(word in normalized for word in SENSITIVE)
+                or any(normalized.startswith(prefix) for prefix in SENSITIVE_PREFIXES)
+                or normalized in SENSITIVE_FILES
                 or normalized in {"agents.md", "agentes.md", "plan-agentes.md", "datos.yml"}
                 or normalized.startswith(".github/codeowners")):
             return "sensitive_paths"

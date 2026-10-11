@@ -73,7 +73,11 @@ class AutoMergeConstruccionTests(unittest.TestCase):
         self.deny("human_gate_required", True)
         for path in (".github/workflows/release-main.yml", "scripts/politica_ci.py",
                      ".github/rulesets/protection.json", "security/audit.py",
-                     "PLAN-AGENTES.md", "../escape.py"):
+                     "PLAN-AGENTES.md", "../escape.py",
+                     "secrets/token.env", "docs/puertas-humanas.md",
+                     "config/production.yml", "deploy/prod.py",
+                     ".github/workflows/ci.yml",
+                     "scripts/coordinar_trabajo.py"):
             with self.subTest(path=path):
                 self.deny("paths", [path])
 
