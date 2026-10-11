@@ -103,7 +103,12 @@ class AutoMergeConstruccionTests(unittest.TestCase):
                      "scripts/automerge_construccion.py",
                      "scripts/unattended_kill_switch.py",
                      ".github/dependabot.yml", "config/credentials.yml",
-                     "CODEOWNERS", "docs/CODEOWNERS"):
+                     "CODEOWNERS", "docs/CODEOWNERS",
+                     "template/AGENTES.md", "template/AGENTS.md",
+                     "template/PLAN-AGENTES.md",
+                     "docs/principios-construccion.md",
+                     "agentes/roles/ingenieria-software.md",
+                     "docs/unattended-safe-mode.md"):
             with self.subTest(path=path):
                 self.deny("paths", [path])
 
