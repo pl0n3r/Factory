@@ -109,7 +109,7 @@ class AutoMergeConstruccionTests(unittest.TestCase):
         valid_other["reviews"] = [revoked,
             {"author": "security-reviewer", "state": "APPROVED",
              "trusted": True, "head_sha": HEAD}]
-        self.assertTrue(evaluate(valid_other).eligible)
+        self.assertEqual(evaluate(valid_other).reason, "reviews_blocked")
 
     def test_live_sensitive_paths_and_freeze_require_human_gate(self):
         self.deny("phase", "live")
@@ -339,6 +339,53 @@ class AutoMergeConstruccionTests(unittest.TestCase):
         snapshot["phase"] = "construccion"
         self.assertEqual(evaluate(snapshot).public(),
                          {"eligible": False, "reason": "invalid_snapshot"})
+
+    def test_waiver_issue_and_comment_ids_require_exact_integers(self):
+        baseline = self._waived()
+        self.assertTrue(evaluate(baseline).eligible)
+        for key, aliases in (
+            ("issue", (1139.0, "1139", None, True)),
+            ("comment_id", (6107503429.0, "6107503429", None, False)),
+        ):
+            for alias in aliases:
+                with self.subTest(key=key, value=repr(alias)):
+                    candidate = copy.deepcopy(baseline)
+                    candidate["owner_waiver"][key] = alias
+                    self.assertEqual(evaluate(candidate).public(),
+                                     {"eligible": False,
+                                      "reason": "independent_approval_missing"})
+
+    def test_nfc_equivalent_paths_and_control_modules_are_sensitive(self):
+        candidate = evidence()
+        duplicate = ["src/café.py", "src/cafe\u0301.py"]
+        candidate["paths"] = duplicate
+        candidate["reservation"]["task_paths"] = duplicate.copy()
+        self.assertEqual(evaluate(candidate).reason, "invalid_snapshot")
+        for path in (
+            "docs/poli\u0301tica.md", "docs/política.md",
+            "scripts/orquestador_kit.py", "scripts/unattended_guards.py",
+            "scripts/lease_authority_snapshot.py",
+        ):
+            with self.subTest(path=path):
+                negative = evidence()
+                negative["paths"] = [path]
+                negative["reservation"]["task_paths"] = [path]
+                self.assertEqual(evaluate(negative).public(),
+                                 {"eligible": False, "reason": "sensitive_paths"})
+
+    def test_independent_approval_does_not_override_dismissed_review(self):
+        approved = {"author": "qa-a", "state": "APPROVED",
+                    "trusted": True, "head_sha": HEAD}
+        dismissed = {"author": "qa-b", "state": "DISMISSED",
+                     "trusted": True, "head_sha": HEAD}
+        for reviews in ((approved, dismissed), (dismissed, approved)):
+            with self.subTest(order=reviews[0]["state"]):
+                candidate = evidence()
+                candidate["reviews"] = [copy.deepcopy(review) for review in reviews]
+                self.assertEqual(evaluate(candidate).public(),
+                                 {"eligible": False, "reason": "reviews_blocked"})
+        positive = evidence()
+        self.assertEqual(evaluate(positive).reason, "eligible_diagnostic_only")
 
 
 if __name__ == "__main__":
