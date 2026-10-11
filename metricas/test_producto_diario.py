@@ -30,7 +30,8 @@ class ProductoDiarioTests(unittest.TestCase):
         first = snapshot(repo, [
             pr(12, "2026-10-11T09:00:00Z"),
             pr(12, "2026-10-11T04:00:00-05:00"),
-            pr(13, "2026-10-10T09:30:00Z", "b" * 40),
+            # Conteo interior: el límite inferior exacto se prueba en #1218.
+            pr(13, "2026-10-10T09:30:01Z", "b" * 40),
             pr(14, "2026-10-10T09:29:59Z", "c" * 40),
         ])
         other = snapshot("pl0n3r/GrindFlow")
