@@ -613,7 +613,7 @@ class T(unittest.TestCase):
         )
         self.assertEqual(result, (101, "2026-10-04T05:03:00Z"))
 
-    def test_rerun_attempt_accepts_owner_retry_and_exact_head_rate_limit_without_visible_old_policy_failure(self):
+    def test_rerun_attempt_requires_failed_policy_even_with_exact_head_rate_limit(self):
         comments = [
             owner_review_retry(created_at="2026-10-04T05:02:00Z"),
             rate_limit_comment(
@@ -638,20 +638,24 @@ class T(unittest.TestCase):
             phase_path = Path(handle.name)
         self.addCleanup(lambda: phase_path.unlink(missing_ok=True))
 
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review_or_fallback(
+                [], "coderabbitai[bot]", HEAD,
+                head_committed_at="2026-10-04T04:59:00Z",
+                comment_lines=comments, check_lines=checks, thread_lines=[],
+                phase_file=phase_path, run_attempt=2)
+
+        failed = green_gate_checks() + [check(
+            check_id=99, name=policy.POLICY_CHECK_NAME,
+            status="completed", conclusion="failure",
+            completed_at="2026-10-04T05:01:00Z")]
         result = validate_required_bot_review_or_fallback(
-            [],
-            "coderabbitai[bot]",
-            HEAD,
+            [], "coderabbitai[bot]", HEAD,
             head_committed_at="2026-10-04T04:59:00Z",
-            comment_lines=comments,
-            check_lines=checks,
-            thread_lines=[],
-            phase_file=phase_path,
-            run_attempt=2,
-        )
+            comment_lines=comments, check_lines=failed, thread_lines=[],
+            phase_file=phase_path, run_attempt=2)
         self.assertTrue(result["review_fallback"])
         self.assertEqual(result["rate_limit_comment_id"], 301)
-        self.assertEqual(result["rate_limit_created_at"], "2026-10-04T05:03:00Z")
 
     def test_first_attempt_still_requires_visible_failed_policy_check(self):
         comments = [

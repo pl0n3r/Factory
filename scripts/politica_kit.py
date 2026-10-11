@@ -830,6 +830,10 @@ def validate_rate_limit_fallback(
                 check.get("completed_at"), noun="Timestamp de Policy failure"))
 
     if run_attempt > 1:
+        # Ni el SHA del comentario ni una timeline permiten retry sin que
+        # el check Policy previo pruebe un fallo terminal en el mismo HEAD.
+        if not any(at >= committed_at for at in failed_policy_checks):
+            raise PolicyError("Rerun sin fallo Policy previo exact-HEAD verificable.")
         owner_retries = _owner_review_retry_comments(
             comment_lines,
             required_review_bot=required_review_bot,
