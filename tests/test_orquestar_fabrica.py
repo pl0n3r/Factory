@@ -1,7 +1,9 @@
+import json
 import unittest
 from datetime import datetime, timezone
 
 from scripts.orquestador_kit import PlanError, parse_task_marker
+from scripts.coordinar_trabajo import reservation_marker
 from scripts.orquestar_fabrica import sync_plan
 
 
@@ -34,6 +36,10 @@ class FakeGitHub:
         self.comments = []
         self.labels = set()
         self.requests = []
+        self.branches = set()
+
+    def branch_sha(self, branch):
+        return "a" * 40 if branch in self.branches else None
 
     def issue(self, number):
         return self.issues[number]
@@ -383,6 +389,110 @@ class OrquestarFabricaTests(unittest.TestCase):
                 for method, path, _payload in api.requests
             )
         )
+
+    @staticmethod
+    def _legacy_foreign_marker(epic=999):
+        marker = json.dumps({
+            "version": 1,
+            "epic": epic,
+            "task_key": "LEGACY_TASK_KEY_TOO_LONG_FOR_CURRENT_CONTRACT",
+            "order": 1,
+            "owner": "pl0n3r",
+            "roles": ["qa"],
+            "depends_on": [],
+            "paths": ["tests/old-task.py"],
+        }, sort_keys=True, separators=(",", ":"))
+        return f"<!-- factory-plan-task {marker} -->"
+
+    def _inject_foreign(self, api, body=None, labels=()):
+        api.issues[44] = {
+            "number": 44,
+            "state": "open",
+            "title": "Foreign legacy task",
+            "body": body if body is not None else self._legacy_foreign_marker(),
+            "labels": [{"name": name} for name in labels],
+        }
+        return api.issues[44]
+
+    def test_foreign_unreserved_invalid_marker_is_isolated(self):
+        api = FakeGitHub()
+        foreign = self._inject_foreign(api, labels=["estado: bloqueado"])
+        before = dict(foreign)
+        result = sync_plan(api, 3)
+        self.assertEqual(result["tasks"], 2)
+        self.assertEqual(set(result["issues"]), {"A", "B"})
+        self.assertEqual(foreign, before, "foreign issue must not be rewritten")
+        self.assertTrue(any("#44" in w and "#999" in w for w in result["warnings"]))
+        self.assertEqual(len(api.issues), 4)
+        self.assertFalse(any(
+            method == "PATCH" and path.endswith("/issues/44")
+            for method, path, _ in api.requests
+        ))
+
+    def test_target_or_ambiguous_invalid_marker_remains_blocking(self):
+        original = self._legacy_foreign_marker()
+        ambiguous = [
+            self._legacy_foreign_marker(epic=3),
+            original.replace('"epic":999', '"epic":999,"epic":999'),
+            original.replace('"version":1', '"version":1,"version":1'),
+            original + "\n" + original,
+            original.replace('"epic":999,', ''),
+            original + "\n<!-- factory-plan-task-->",
+        ]
+        for body in ambiguous:
+            with self.subTest(body=body[-100:]):
+                api = FakeGitHub()
+                foreign = self._inject_foreign(api, body=body)
+                before = dict(foreign)
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(foreign, before)
+                self.assertEqual(api.requests, [], "reject before any mutation")
+
+    def test_foreign_active_invalid_marker_remains_blocking(self):
+        for state in (
+            "estado: reservado", "estado: en revisión",
+            "estado: requiere recuperación",
+        ):
+            with self.subTest(state=state):
+                api = FakeGitHub()
+                self._inject_foreign(api, labels=[state])
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(api.requests, [])
+
+        with self.subTest("blocked label does not erase active lease"):
+            api = FakeGitHub()
+            self._inject_foreign(api, labels=["estado: bloqueado"])
+            api.comments.append({
+                "id": 9, "user": {"login": "github-actions[bot]"},
+                "body": reservation_marker(
+                    "pl0n3r", "12345678-1234-1234-1234-123456789abc",
+                    "trabajo/issue-44", True, "tomar",
+                ),
+            })
+            with self.assertRaises(PlanError):
+                sync_plan(api, 3)
+            self.assertEqual(api.requests, [])
+
+        with self.subTest("orphan branch is not proof of no work"):
+            api = FakeGitHub()
+            self._inject_foreign(api, labels=["estado: bloqueado"])
+            api.branches.add("trabajo/issue-44")
+            with self.assertRaises(PlanError):
+                sync_plan(api, 3)
+            self.assertEqual(api.requests, [])
+
+        with self.subTest("malformed trusted lease is ambiguous"):
+            api = FakeGitHub()
+            self._inject_foreign(api)
+            api.comments.append({
+                "id": 9, "user": {"login": "github-actions[bot]"},
+                "body": '<!-- condor-reserva {"active":true} -->',
+            })
+            with self.assertRaisesRegex(PlanError, "reserva ambiguo"):
+                sync_plan(api, 3)
+            self.assertEqual(api.requests, [])
 
 
 if __name__ == "__main__":
