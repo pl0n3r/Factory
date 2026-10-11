@@ -59,7 +59,10 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         raise RecoveryContractError("offsite incompatible con contrato 3-2-1-1-0.")
 
     encryption = _map(data["encryption"], {"required", "key_material"}, "encryption")
-    if encryption != {"required": True, "key_material": "EXTERNAL_ONLY"}:
+    if (type(encryption["required"]) is not bool
+            or encryption["required"] is not True
+            or type(encryption["key_material"]) is not str
+            or encryption["key_material"] != "EXTERNAL_ONLY"):
         raise RecoveryContractError("encryption debe ser obligatorio con key material externo.")
 
     drill = _map(data["restore_drill"], {"cadence_days"}, "restore_drill")
