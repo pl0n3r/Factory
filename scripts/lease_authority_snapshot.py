@@ -78,7 +78,7 @@ def _owner(login: Any) -> bool:
 
 
 def _marker_payload(body: str, number: int) -> dict[str, Any]:
-    if body.count(PREFIX) != 1:
+    if body.count(PREFIX) != 1 or len(SUSPECT_MARKER.findall(body)) != 1:
         _reject("marker_ambiguo")
     match = MARKER.match(body)
     if match is None:
@@ -129,7 +129,7 @@ def _last_bot_marker(comments: Any, issue_number: int) -> tuple[dict[str, Any] |
     if not isinstance(comments, list):
         _reject("comentarios_incompletos")
     last_id = 0
-    last_body: str | None = None
+    latest: dict[str, Any] | None = None
     digest = hashlib.sha256()
     for comment in comments:
         if not isinstance(comment, dict) or type(comment.get("id")) is not int:
@@ -147,12 +147,24 @@ def _last_bot_marker(comments: Any, issue_number: int) -> tuple[dict[str, Any] |
         # Incluye /tomar y comentarios no-marker: cualquier edición o nuevo
         # comentario entre snapshots invalida el permiso de publicación.
         body_hash = hashlib.sha256(json.dumps(body, ensure_ascii=True).encode("ascii")).hexdigest()
-        identity = json.dumps([cid, actor, body_hash], separators=(",", ":"), ensure_ascii=True)
+        identity = json.dumps([cid, actor, body_hash, comment.get("updated_at")],
+                              separators=(",", ":"), ensure_ascii=True)
         digest.update(identity.encode("ascii") + b"\n")
         if actor == BOT and SUSPECT_MARKER.search(body):
-            last_body = body
-    parsed = _marker_payload(last_body, issue_number) if last_body is not None else None
-    return parsed, digest.hexdigest()
+            current = _marker_payload(body, issue_number)
+            if latest is not None and current["reservation_id"] == latest["reservation_id"]:
+                immutable = ("version", "owner", "branch", "acceptance_sha256",
+                             "task_marker_sha256", "task_paths", "task_depends_on")
+                if any(current.get(field) != latest.get(field) for field in immutable):
+                    _reject("marker_continuidad")
+            latest = current
+    return latest, digest.hexdigest()
+
+
+def _overlap(left: str, right: str) -> bool:
+    left, right = left.casefold(), right.casefold()
+    return (left == right or (left.endswith("/") and right.startswith(left))
+            or (right.endswith("/") and left.startswith(right)))
 
 
 def audit_active_claims(open_issues: Any, comments_by_issue: Any, *, complete: bool) -> LeaseAudit:
@@ -193,9 +205,11 @@ def audit_active_claims(open_issues: Any, comments_by_issue: Any, *, complete: b
             if marker["active"]:
                 # IMPORTANTE: no filtrar por label: incluso BLOCKED retiene claims.
                 active.append(ActiveLease(number, uid, tuple(marker["task_paths"])))
-        body, updated = issue.get("body"), issue.get("updated_at")
+        if "body" not in issue or "updated_at" not in issue:
+            _reject("issue_incompleto")
+        body, updated = issue["body"], issue["updated_at"]
         if (body is not None and not isinstance(body, str)) or (
-            updated is not None and not isinstance(updated, str)
+            not isinstance(updated, str) or not updated
         ):
             _reject("issue_invalido")
         body_hash = hashlib.sha256(json.dumps(body, ensure_ascii=True).encode("ascii")).hexdigest()
@@ -204,6 +218,10 @@ def audit_active_claims(open_issues: Any, comments_by_issue: Any, *, complete: b
                            "body_sha256": body_hash, "updated_at": updated})
     if set(comments_by_issue) != issue_ids:
         _reject("inventario_incompleto")
+    for position, lease in enumerate(active):
+        for other in active[position + 1:]:
+            if any(_overlap(a, b) for a in lease.paths for b in other.paths):
+                _reject("claims_activas_solapadas")
     normalized.sort(key=lambda row: row["number"])
     serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return LeaseAudit(tuple(sorted(active, key=lambda lease: lease.issue)),

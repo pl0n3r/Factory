@@ -11,7 +11,8 @@ from scripts.lease_authority_snapshot import (
 
 
 def issue(number: int, status: str = "estado: bloqueado") -> dict:
-    return {"number": number, "state": "open", "labels": [{"name": status}]}
+    return {"number": number, "state": "open", "labels": [{"name": status}],
+            "body": "", "updated_at": "2026-10-10T12:00:00Z"}
 
 
 def marker(number: int, active: bool = True, *, version: int = 3,
@@ -77,6 +78,9 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
                 LeaseSnapshotError, "marker_ambiguo"
             ):
                 audit_active_claims(data, {12: [inactive, malformed_prefix]}, complete=True)
+        dual = inactive["body"] + "\n" + comment(3, marker(12))["body"].replace("<!-- ", "<!--", 1)
+        with self.assertRaisesRegex(LeaseSnapshotError, "marker_ambiguo"):
+            audit_active_claims(data, {12: [comment(5, dual)]}, complete=True)
         active_payload = json.dumps(marker(12), separators=(",", ":"))
         duplicate = active_payload.replace('"active":true', '"active":false,"active":true')
         with self.assertRaises(LeaseSnapshotError):
@@ -86,6 +90,20 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
         # Una liberación V2 legítima tampoco fabrica exclusividad.
         legacy_inactive = audit_active_claims(data, {12: [comment(4, marker(12, active=False, version=2))]}, complete=True)
         self.assertEqual(legacy_inactive.active, ())
+
+    def test_marker_history_cannot_rename_owner_or_claims(self):
+        original = marker(12)
+        for key, value in (("owner", "otro"), ("task_paths", ["scripts/otra.py"]),
+                           ("task_marker_sha256", "c" * 64)):
+            successor = {**original, key: value}
+            with self.subTest(key=key), self.assertRaisesRegex(
+                LeaseSnapshotError, "marker_continuidad"
+            ):
+                audit_active_claims([issue(12)], {12: [
+                    comment(1, original), comment(2, successor)]}, complete=True)
+        audit = audit_active_claims([issue(12)], {12: [
+            comment(1, original), comment(2, {**original, "active": False})]}, complete=True)
+        self.assertEqual(audit.active, ())
 
     def test_claim_paths_and_owner_must_be_canonical(self):
         data = [issue(12)]
@@ -106,6 +124,20 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
                 LeaseSnapshotError, "marker_identidad"
             ):
                 audit_active_claims(data, {12: [comment(1, modified)]}, complete=True)
+
+    def test_conflicting_active_leases_rejected(self):
+        data = [issue(12), issue(13)]
+        first = marker(12)
+        other = marker(13, uid="3fd88a50-e48a-4a16-9dc2-a9414eb27691")
+        for path in ("scripts/coordinar_trabajo.py", "docs/readme.md"):
+            other["task_paths"] = [path]
+            with self.subTest(path=path), self.assertRaisesRegex(
+                LeaseSnapshotError, "claims_activas_solapadas"
+            ):
+                audit_active_claims(data, {12: [comment(1, first)], 13: [comment(2, other)]}, complete=True)
+        other["task_paths"] = ["other/unrelated.py"]
+        self.assertEqual(len(audit_active_claims(data, {
+            12: [comment(1, first)], 13: [comment(2, other)]}, complete=True).active), 2)
 
     def test_missing_snapshot_duplicate_and_drift_fail_closed(self):
         data = [issue(12), issue(13, "estado: disponible")]
@@ -136,8 +168,13 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
             with self.assertRaises(LeaseSnapshotError):
                 audit_active_claims(bad_data, bad_comments, complete=complete)
         with self.assertRaisesRegex(LeaseSnapshotError, "labels_estados_conflictivos"):
-            audit_active_claims([{"number": 12, "state": "open", "labels": [
+            audit_active_claims([{**data[0], "labels": [
                 {"name": "estado: bloqueado"}, {"name": "estado: reservado"}]}, data[1]], comments, complete=True)
+        for missing in ("body", "updated_at"):
+            incomplete = issue(12)
+            incomplete.pop(missing)
+            with self.assertRaisesRegex(LeaseSnapshotError, "issue_incompleto"):
+                audit_active_claims([incomplete], {12: comments[12]}, complete=True)
         changed_label = audit_active_claims([issue(12, "estado: en revisión"), data[1]], comments, complete=True)
         with self.assertRaisesRegex(LeaseSnapshotError, "inventario_cambio"):
             require_unchanged(stable, changed_label)
