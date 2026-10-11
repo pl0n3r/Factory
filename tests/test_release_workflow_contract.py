@@ -32,7 +32,7 @@ class T(unittest.TestCase):
 
  def test_reusable_revalidates_main_before_release_mutation(self):
   release_step=W.split("      - id: release",1)[1]
-  self.assertEqual(release_step.count("verify_remote_main\n"),3)
+  self.assertEqual(release_step.count("verify_remote_main\n"),4)
   self.assertLess(release_step.index("verify_remote_main\n"),release_step.index('gh release create "$TAG"'))
   self.assertIn('TARGET_SHA: ${{ github.sha }}',release_step)
   self._actual_guard("RELEASE")
@@ -106,6 +106,17 @@ class T(unittest.TestCase):
           printf '%s\n' "$FAKE_REMOTE_REF"
           exit 0 ;;
         */git/tags/*)
+          if [ "$FAKE_MUTATE" = release_second_tag_read ]; then
+            count=0
+            if [ -f "$FAKE_TAG_READ_COUNT_FILE" ]; then
+              count="$(cat "$FAKE_TAG_READ_COUNT_FILE")"
+            fi
+            count=$((count+1))
+            printf '%s' "$count" > "$FAKE_TAG_READ_COUNT_FILE"
+            if [ "$count" -eq 2 ]; then
+              printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
+            fi
+          fi
           if [ "$FAKE_MUTATE" = tag_read ]; then
             printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
           fi
@@ -170,6 +181,7 @@ class T(unittest.TestCase):
      FAKE_MAIN_FILE=str(remote),FAKE_LOG=str(log),
      FAKE_RELEASE_FILE=str(release),FAKE_MUTATE=mutate,
      FAKE_DRIFT_SHA=drift,
+     FAKE_TAG_READ_COUNT_FILE=str(folder/"tag-read-count"),
      FAKE_TAG_OBJECT_SHA="c"*40 if tag_object is None else tag_object,
      FAKE_VIEW_URL=("https://github.com/pl0n3r/Factory/releases/tag/v1.0.29"
                     if view_url is None else view_url),
@@ -259,6 +271,34 @@ class T(unittest.TestCase):
     self.assertNotEqual(res.returncode,0,res.stdout+res.stderr)
     self.assertNotIn("release create",trace)
     self.assertFalse(created)
+
+ def test_release_revalidates_main_after_remote_tag_read_before_create(self):
+  # AC-01: el último GET del tag jamás es el último gate antes del POST.
+  step=self._step_body("release")
+  not_found=step.split('elif (( probe_rc != 0 ))',1)[1]
+  before_create=not_found.split('gh release create "$TAG"',1)[0]
+  self.assertRegex(before_create,
+                   r"verify_remote_main\s*\n\s*verify_remote_tag\s*\n\s*verify_remote_main")
+
+ def test_release_tag_get_main_drift_never_invokes_create(self):
+  # AC-02: el segundo GET del objeto tag altera main después del primer gate.
+  run,trace,created,main=self._execute_step("release",mutate="release_second_tag_read")
+  self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertEqual(main,"b"*40)
+  self.assertEqual(trace.count("git/tags/"),2,trace)
+  self.assertIn("releases/tags/",trace)
+  self.assertNotIn("release create",trace)
+  self.assertFalse(created)
+
+ def test_release_stable_main_remains_idempotent(self):
+  # AC-03: un 404 estable crea una sola Release; HTTP 200 no la recrea.
+  for status in ("404","200"):
+   with self.subTest(status=status):
+    run,trace,created,main=self._execute_step("release",release_status=status)
+    self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+    self.assertEqual(main,"a"*40)
+    self.assertTrue(created)
+    self.assertEqual(trace.count("release create"),1 if status=="404" else 0)
 
  def test_release_status_requires_rest_404_before_real_create(self):
   release_step=self._step_body("release")
