@@ -23,11 +23,11 @@ def _utc(value: Any) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    return parsed.astimezone(timezone.utc)
 
 
 def _deny(reason: str) -> dict[str, str]:
@@ -69,7 +69,10 @@ def evaluate_retro_daily(*, events: Any, sources: Any, now: Any) -> dict[str, An
         valid_sources[sid] = repo
         repos.add(repo)
 
-    start = anchor - timedelta(hours=24)
+    try:
+        start = anchor - timedelta(hours=24)
+    except OverflowError:
+        return _deny("invalid_clock_range")
     dedup: dict[str, tuple[str, str, str, datetime]] = {}
     for item in events:
         if not isinstance(item, dict):
