@@ -168,7 +168,13 @@ def _waiver_status(value: Any, head: str, now: datetime) -> str:
 
 def evaluate(snapshot: Any) -> Decision:
     """Evalúa evidencia sintética no confiable; *eligible* solo es diagnóstico."""
-    if not isinstance(snapshot, dict) or set(snapshot) != FIELDS:
+    if not isinstance(snapshot, dict):
+        return _deny("invalid_snapshot")
+    # El lector dry-run de #1143 conserva un snapshot mínimo y phase=UNKNOWN.
+    # Rechazar por puerta humana ANTES del contrato ampliado; jamás afirmar GO.
+    if isinstance(snapshot.get("phase"), str) and snapshot["phase"] != "construccion":
+        return _deny("human_gate_required")
+    if set(snapshot) != FIELDS:
         return _deny("invalid_snapshot")
     if snapshot["phase"] != "construccion":
         return _deny("human_gate_required")
