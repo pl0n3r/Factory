@@ -102,6 +102,26 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
                              dry_run=False)
             self.assertFalse(answer.wrote)
             self.assertEqual(port.writes, [])
+        # Identidad canónica de Coordinación: minúsculas, UUID v1..v5
+        # y variante RFC 4122. Actualizar también el marker para que
+        # el negativo no dependa de una discrepancia entre ambos campos.
+        for malformed in (
+            "00000000-0000-0000-0000-000000000000",
+            "3945eeb7-1df8-7439-b196-98897eb3a71a",
+            "3945eeb7-1df8-4439-7196-98897eb3a71a",
+            ID.upper(),
+            ID.replace("-", ""),
+        ):
+            with self.subTest(reservation_id=malformed):
+                original = snapshot()
+                tampered = replace(
+                    original, reservation_id=malformed,
+                    marker={**original.marker, "reservation_id": malformed})
+                isolated = FakePort(tampered)
+                result = execute(1191, isolated, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "untrusted_snapshot")
+                self.assertEqual(isolated.writes, [])
 
     def test_mark_recovery_and_release_revalidate_under_shared_lock(self):
         port = FakePort(snapshot(recovery=False))

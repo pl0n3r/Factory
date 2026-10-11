@@ -10,7 +10,6 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
-from uuid import UUID
 
 LOCK_GROUP = "factory-coordination"
 AVAILABLE = "estado: disponible"
@@ -18,6 +17,13 @@ RECOVERY = "estado: requiere recuperación"
 ACTIVE = frozenset({"estado: reservado", "estado: en revisión", RECOVERY})
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 HEX = re.compile(r"[a-f0-9]{64}\Z")
+# Contract parity with scripts/coordinar_trabajo.py::SESSION_RE.
+# Input comments may be normalized by Coordinación, but trusted snapshots
+# and bot markers are expected to carry the canonical lowercase form.
+SESSION_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 
 
 @dataclass(frozen=True)
@@ -93,9 +99,7 @@ def _trusted(s: Any, *, allow_partial: bool = False) -> bool:
             or type(s.status) is not str or s.status not in ACTIVE
             or type(s.phase) is not str or s.phase != "construccion"):
         return False
-    try:
-        UUID(s.reservation_id)
-    except (ValueError, TypeError, AttributeError):
+    if SESSION_RE.fullmatch(s.reservation_id) is None:
         return False
     if s.branch != f"trabajo/issue-{s.issue}" or not s.owner.strip():
         return False
