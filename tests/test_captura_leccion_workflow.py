@@ -39,5 +39,80 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
             capture_lessons([{**sample, "sha": "missing"}])
 
 
+    def test_event_gate_executed_against_fixtures(self):
+        """Execute the actual pre-checkout trust gate using synthetic events."""
+        import json
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        import textwrap
+
+        source = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        start = next(i for i, line in enumerate(source)
+                     if line.strip() == "# TRUST_GATE_START")
+        end = next(i for i, line in enumerate(source)
+                   if line.strip() == "# TRUST_GATE_END")
+        gate = textwrap.dedent("\n".join(source[start + 1:end]))
+
+        issue = {"repository": {"full_name": "pl0n3r/Factory"},
+                 "action": "closed",
+                 "issue": {"number": 1156, "state": "closed",
+                           "closed_at": "2026-10-11T09:00:00Z"}}
+        pr = {"repository": {"full_name": "pl0n3r/Factory"},
+              "action": "closed",
+              "pull_request": {"number": 1164, "state": "closed",
+                               "merged": True, "merge_commit_sha": "a" * 40,
+                               "merged_at": "2026-10-11T09:00:00Z",
+                               "base": {"ref": "main",
+                                        "repo": {"full_name": "pl0n3r/Factory"}}}}
+
+        def execute(payload, event="issues", sha="a" * 40,
+                    ref="refs/heads/main"):
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "event.json"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                env = {**os.environ, "GITHUB_REPOSITORY": "pl0n3r/Factory",
+                       "GITHUB_REF": ref, "GITHUB_SHA": sha,
+                       "GITHUB_EVENT_NAME": event, "GITHUB_RUN_ID": "987",
+                       "GITHUB_EVENT_PATH": str(path),
+                       "RUNNER_TEMP": directory}
+                result = subprocess.run([sys.executable, "-c", gate],
+                                        env=env, cwd=WORKFLOW.parents[2],
+                                        capture_output=True, text=True,
+                                        timeout=10, check=False)
+                record = Path(directory) / "factory-lesson-event.json"
+                emitted = json.loads(record.read_text(encoding="utf-8")) if record.exists() else None
+                return result.returncode, emitted
+
+        for fixture, event in ((issue, "issues"), (pr, "pull_request")):
+            with self.subTest(positive=event):
+                rc, candidate = execute(fixture, event=event)
+                self.assertEqual(rc, 0)
+                self.assertEqual(candidate["sha"], "a" * 40)
+                self.assertEqual(len(capture_lessons([candidate, candidate])), 1)
+
+        invalid = [
+            ({"repository": {"full_name": "outsider/Factory"},
+              **{key: value for key, value in issue.items() if key != "repository"}}, "issues", {},),
+            ({**issue, "action": "reopened"}, "issues", {}),
+            ({**issue, "issue": {**issue["issue"], "number": 0}}, "issues", {}),
+            ({**issue, "issue": {**issue["issue"],
+                                 "closed_at": "2026-02-30T09:00:00Z"}}, "issues", {}),
+            ({**pr, "pull_request": {**pr["pull_request"], "merged": False}},
+             "pull_request", {}),
+            ({**pr, "pull_request": {**pr["pull_request"],
+                                     "merge_commit_sha": "b" * 40}},
+             "pull_request", {}),
+            (issue, "issues", {"sha": "missing"}),
+            (issue, "issues", {"ref": "refs/pull/12/merge"}),
+        ]
+        for fixture, event, options in invalid:
+            with self.subTest(event=event, options=options, fixture=fixture):
+                rc, candidate = execute(fixture, event=event, **options)
+                self.assertNotEqual(rc, 0)
+                self.assertIsNone(candidate)
+
+
 if __name__ == "__main__":
     unittest.main()
