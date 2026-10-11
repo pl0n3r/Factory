@@ -67,6 +67,28 @@ class AutoMergeConstruccionTests(unittest.TestCase):
         gate["security"]["conclusion"] = "pending"
         self.deny("gates", gate)
 
+    def test_dismissed_or_duplicated_reviewer_does_not_count_as_approval(self):
+        approval = evidence()["reviews"][0]
+        revoked = {"author": "qa-reviewer", "state": "DISMISSED",
+                   "trusted": True, "head_sha": HEAD}
+        repeated = {"author": "QA-REVIEWER", "state": "COMMENTED",
+                    "trusted": True, "head_sha": HEAD}
+        for reviews in ([approval, revoked], [revoked, approval],
+                        [approval, repeated], [approval, approval]):
+            with self.subTest(reviews=reviews):
+                candidate = evidence()
+                candidate["reviews"] = reviews
+                self.assertEqual(evaluate(candidate).public(),
+                                 {"eligible": False, "reason": "invalid_snapshot"})
+        only_dismissed = evidence()
+        only_dismissed["reviews"] = [revoked]
+        self.assertFalse(evaluate(only_dismissed).eligible)
+        valid_other = evidence()
+        valid_other["reviews"] = [revoked,
+            {"author": "security-reviewer", "state": "APPROVED",
+             "trusted": True, "head_sha": HEAD}]
+        self.assertTrue(evaluate(valid_other).eligible)
+
     def test_live_sensitive_paths_and_freeze_require_human_gate(self):
         self.deny("phase", "live")
         self.deny("freeze_active", True)

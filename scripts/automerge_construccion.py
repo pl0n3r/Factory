@@ -154,6 +154,9 @@ def evaluate(snapshot: Any) -> Decision:
     if (not isinstance(author, str) or not author or not isinstance(reviews, list)
             or len(reviews) > 128):
         return _deny("invalid_snapshot")
+    # Solo un estado efectivo por revisor. Si llegan filas históricas duplicadas,
+    # no existe una cronología confiable en este snapshot: denegar, nunca reaprobar.
+    effective_reviewers: set[str] = set()
     approved = False
     for review in reviews:
         if not isinstance(review, dict) or set(review) != {"author", "state", "head_sha", "trusted"}:
@@ -163,11 +166,15 @@ def evaluate(snapshot: Any) -> Decision:
                 or not isinstance(review["state"], str)
                 or review["state"] not in {"APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"}):
             return _deny("invalid_snapshot")
+        reviewer = review["author"].casefold()
+        if reviewer in effective_reviewers:
+            return _deny("invalid_snapshot")
+        effective_reviewers.add(reviewer)
         if review["state"] == "CHANGES_REQUESTED":
             return _deny("reviews_blocked")
         if (review["state"] == "APPROVED" and review["trusted"]
                 and review["head_sha"] == head
-                and review["author"].casefold() != author.casefold()):
+                and reviewer != author.casefold()):
             approved = True
     if not approved:
         return _deny("independent_approval_missing")
