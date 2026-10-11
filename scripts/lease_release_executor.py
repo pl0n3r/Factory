@@ -387,6 +387,10 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
             if (first.marker.get("reason") != "auto-inactivity-release"
                     or not _eligible(first, "release")):
                 return Result("wait", "partial_not_reconcilable")
+            # Marker ya publicado NO reemplaza la autoridad del decisor.
+            # El adaptador debe evaluar la liberación incluso en reintentos.
+            if getattr(decide(first), "action", None) != "release":
+                return Result("wait", "decision_not_eligible")
             if dry_run:
                 return Result("release", "dry_run_reconcile")
             with port.lock(f"{LOCK_GROUP}-{first.repository_id}"):
@@ -398,6 +402,10 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                         and _eligible(locked, "release")
                         and _eligible(current, "release")):
                     return Result("unknown", "partial_reconciliation_drift")
+                # Una nueva actividad/CI/switch puede vetar entre snapshots.
+                if (getattr(decide(locked), "action", None) != "release"
+                        or getattr(decide(current), "action", None) != "release"):
+                    return Result("unknown", "decision_drift")
                 if not _recovery_proven(port, issue, current):
                     return Result("unknown", "recovery_label_untrusted")
                 port.status(issue, AVAILABLE, current)

@@ -449,6 +449,44 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertEqual(partial.writes, [])
 
 
+    def test_partial_reconciliation_respects_decider_at_each_gate(self):
+        """Reintentar una transición parcial no esquiva los vetos del decisor."""
+        for deny_on_call in (1, 2, 3):
+            for denied_action in ("wait", "unknown"):
+                with self.subTest(deny_on_call=deny_on_call,
+                                  denied_action=denied_action):
+                    item = snapshot()
+                    marker = {**item.marker, "active": False,
+                              "reason": "auto-inactivity-release"}
+                    fake = FakePort(replace(item, marker=marker))
+                    calls = []
+
+                    def guarded(s):
+                        calls.append(s)
+                        return SimpleNamespace(action=(
+                            denied_action if len(calls) == deny_on_call
+                            else "release"))
+
+                    result = execute(1191, fake, guarded,
+                                     feature_enabled=True, dry_run=False)
+                    self.assertFalse(result.wrote)
+                    self.assertEqual(result.write_state, "none")
+                    self.assertEqual(fake.writes, [])
+                    self.assertEqual(len(calls), deny_on_call)
+                    self.assertEqual(result.reason, (
+                        "decision_not_eligible" if deny_on_call == 1
+                        else "decision_drift"))
+
+        # El preview tampoco puede declarar una liberación simulada si el
+        # decisor devuelve wait / unknown aun con marker parcial.
+        item = snapshot()
+        fake = FakePort(replace(item, marker={**item.marker, "active": False,
+                                             "reason": "auto-inactivity-release"}))
+        denial = lambda s: SimpleNamespace(action="wait")
+        result = execute(1191, fake, denial, feature_enabled=True)
+        self.assertEqual(result.reason, "decision_not_eligible")
+        self.assertEqual(fake.writes, [])
+
     def test_result_tracks_none_partial_complete_and_unknown(self):
         """wrote=False no permite descartar efectos parcialmente persistidos."""
         port = FakePort(snapshot(recovery=False))
