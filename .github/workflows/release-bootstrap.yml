@@ -163,6 +163,7 @@ jobs:
                   (.created_at | utc_time) and
                   (.updated_at | utc_time) and
                   (.run_started_at == null or (.run_started_at | utc_time)) and
+                  (.status != "completed" or .run_started_at != null) and
                   (.run_started_at == null or
                     ((.run_started_at | fromdateiso8601) >= (.created_at | fromdateiso8601))) and
                   ((.updated_at | fromdateiso8601) >= (effective_time | fromdateiso8601)) and
@@ -184,9 +185,13 @@ jobs:
                        ($matching | any(.[]; .path != $workflow_path or .head_branch != "main"))
                     then false
                     else
-                      ($matching | max_by(effective_time)) as $newest |
-                      ([$matching[] | select(effective_time == ($newest | effective_time))] | length == 1) and
-                      ($newest.status == "completed") and ($newest.conclusion == "success")
+                      # Creation and (re)start are separate, both must be terminal.
+                      ($matching | max_by(effective_time)) as $newest_start |
+                      ($matching | max_by(.created_at)) as $newest_created |
+                      ([$matching[] | select(effective_time == ($newest_start | effective_time))] | length == 1) and
+                      ([$matching[] | select(.created_at == $newest_created.created_at)] | length == 1) and
+                      ($newest_start.status == "completed" and $newest_start.conclusion == "success") and
+                      ($newest_created.status == "completed" and $newest_created.conclusion == "success")
                     end
                   else false end
                 ) catch false

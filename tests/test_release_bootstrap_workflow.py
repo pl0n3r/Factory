@@ -270,6 +270,17 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertFalse(self._check_latest([
             retried, self._exact_run(101, created=later),
         ]))
+        # A real newer success should still supersede an older failure.
+        self.assertTrue(self._check_latest([
+            self._exact_run(100, conclusion="failure"),
+            self._exact_run(101, created=later),
+        ]))
+        # Created later but finished before older run started: false green.
+        self.assertFalse(self._check_latest([
+            self._exact_run(100, started="2026-10-11T09:20:00Z"),
+            self._exact_run(101, conclusion="failure",
+                            created="2026-10-11T09:10:00Z"),
+        ]))
 
     def test_latest_rejects_stale_success_if_newer_run_pending(self):
         old = self._exact_run(100)
@@ -282,6 +293,11 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertFalse(self._check_latest([
             self._exact_run(100, status="in_progress", conclusion=None, attempt=2),
             self._exact_run(101, created="2026-10-11T09:05:00Z"),
+        ]))
+        self.assertFalse(self._check_latest([
+            self._exact_run(100, started="2026-10-11T09:20:00Z"),
+            self._exact_run(101, status="queued", conclusion=None,
+                            created="2026-10-11T09:10:00Z"),
         ]))
 
     def test_latest_requires_newest_success_per_required_workflow_exact_sha(self):
@@ -336,6 +352,9 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
             ("invalid id", [dict(good, id=True)], None),
             ("missing attempt", [{k: v for k, v in good.items()
                                  if k != "run_attempt"}], None),
+            ("completed with null start", [dict(good, run_started_at=None)], None),
+            ("completed without start", [{k: v for k, v in good.items()
+                                         if k != "run_started_at"}], None),
             ("missing time", [dict(good, created_at=None)], None),
             ("invalid time", [dict(good, created_at="yesterday")], None),
             ("inverted time", [dict(good,
