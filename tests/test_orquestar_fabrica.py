@@ -453,8 +453,14 @@ class OrquestarFabricaTests(unittest.TestCase):
                     api.comments.append({
                         "id": 9, "user": {"login": "github-actions[bot]"},
                         "body": reservation_marker(
-                            "pl0n3r", "12345678-1234-1234-1234-123456789abc",
-                            f"trabajo/issue-{number}", True, "tomar"),
+                            "pl0n3r", "12345678-1234-4234-8234-123456789abc",
+                            f"trabajo/issue-{number}", True, "tomar",
+                            acceptance_sha256="a" * 64,
+                            task_snapshot={
+                                "task_marker_sha256": "b" * 64,
+                                "task_paths": ["docs/b.md"],
+                                "task_depends_on": [],
+                            }),
                     })
                 api.issues[number]["comments"] = len(api.comments)
                 api.requests.clear()
