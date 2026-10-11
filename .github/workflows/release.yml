@@ -168,9 +168,25 @@ jobs:
             fi
           }
           # RELEASE_EXACT_MAIN_RELEASE_GUARD_END
+          # RELEASE_REMOTE_TAG_GUARD_BEGIN
+          verify_remote_tag() {
+            local object_sha actual_sha
+            object_sha="$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" --jq '.object | select(.type == "tag") | .sha')"
+            if [[ ! "$object_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Tag remoto ausente, ligero o inválido"
+              exit 1
+            fi
+            actual_sha="$(gh api "repos/$REPOSITORY/git/tags/$object_sha" --jq '.object | select(.type == "commit") | .sha')"
+            if [[ "$actual_sha" != "$TARGET_SHA" ]]; then
+              echo "::error::Tag remoto no apunta al SHA aprobado"
+              exit 1
+            fi
+          }
+          # RELEASE_REMOTE_TAG_GUARD_END
           verify_remote_main
           if ! url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url' 2>/dev/null)"; then
             verify_remote_main
+            verify_remote_tag
             gh release create "$TAG" --repo "$REPOSITORY" --verify-tag --title "Release $TAG (V $VERSION)" --generate-notes
             url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
           fi

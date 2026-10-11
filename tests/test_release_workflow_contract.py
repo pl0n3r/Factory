@@ -35,6 +35,8 @@ class T(unittest.TestCase):
   self.assertLess(release_step.index("verify_remote_main\n"),release_step.index('gh release create "$TAG"'))
   self.assertIn('TARGET_SHA: ${{ github.sha }}',release_step)
   self._actual_guard("RELEASE")
+  self.assertIn("verify_remote_tag\n",release_step)
+  self.assertLess(release_step.index("verify_remote_tag\n"),release_step.index('gh release create "$TAG"'))
 
  def test_reusable_denies_bad_or_changed_main_without_mutation(self):
   sha="a"*40
@@ -71,7 +73,8 @@ class T(unittest.TestCase):
    segment=W.split("      - id: release",1)[1]
   return textwrap.dedent(segment.split("        run: |\n",1)[1])
 
- def _execute_step(self, kind, *, main=None, mutate="", tag_exists=False, approved=None):
+ def _execute_step(self, kind, *, main=None, mutate="", tag_exists=False, approved=None,
+                   remote_ref=None,remote_target=None):
   sha="a"*40
   drift="b"*40
   with tempfile.TemporaryDirectory() as tmp:
@@ -81,6 +84,8 @@ class T(unittest.TestCase):
    remote=folder/"main.sha"
    remote.write_text(sha if main is None else main,encoding="utf-8")
    release=folder/"release.created"
+   remote_tag_file=folder/"remote-tag.target"
+   remote_tag_file.write_text(sha if remote_target is None else remote_target,encoding="utf-8")
    gh=folder/"gh"
    gh.write_text(textwrap.dedent(r"""
     #!/bin/sh
@@ -91,6 +96,15 @@ class T(unittest.TestCase):
           state="$(cat "$FAKE_MAIN_FILE")"
           [ "$state" != API_ERROR ] || exit 33
           printf '%s\n' "$state"
+          exit 0 ;;
+        */git/ref/tags/*)
+          [ "$FAKE_REMOTE_REF" != API_ERROR ] || exit 33
+          printf '%s\n' "$FAKE_REMOTE_REF"
+          exit 0 ;;
+        */git/tags/*)
+          value="$(cat "$FAKE_REMOTE_TARGET_FILE")"
+          [ "$value" != API_ERROR ] || exit 33
+          printf '%s\n' "$value"
           exit 0 ;;
         */git/tags*)
           if [ "$FAKE_MUTATE" = tag ]; then
@@ -107,6 +121,9 @@ class T(unittest.TestCase):
       if [ "$2" = view ]; then
         if [ "$FAKE_MUTATE" = view ]; then
           printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_MAIN_FILE"
+        fi
+        if [ "$FAKE_MUTATE" = remote_tag ]; then
+          printf '%s' "$FAKE_DRIFT_SHA" > "$FAKE_REMOTE_TARGET_FILE"
         fi
         if [ -f "$FAKE_RELEASE_FILE" ]; then
           printf '%s\n' https://example.invalid/fake
@@ -142,6 +159,8 @@ class T(unittest.TestCase):
      FAKE_MAIN_FILE=str(remote),FAKE_LOG=str(log),
      FAKE_RELEASE_FILE=str(release),FAKE_MUTATE=mutate,
      FAKE_DRIFT_SHA=drift,FAKE_TAG_OBJECT_SHA="c"*40,
+     FAKE_REMOTE_REF="c"*40 if remote_ref is None else remote_ref,
+     FAKE_REMOTE_TARGET_FILE=str(remote_tag_file),
      FAKE_TAG_EXISTS="1" if tag_exists else "0",GITHUB_OUTPUT=str(output))
    run=subprocess.run(["bash","-euo","pipefail","-c",self._step_body(kind)],
                       env=env,capture_output=True,text=True,timeout=10)
@@ -187,3 +206,26 @@ class T(unittest.TestCase):
   self.assertEqual(run.returncode,0,run.stdout+run.stderr)
   self.assertIn("release create",log)
   self.assertTrue(created)
+
+ def test_actual_release_refuses_remote_tag_drift_before_publish(self):
+  run,log,created,main=self._execute_step("release",mutate="remote_tag")
+  self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
+  self.assertEqual(main,"a"*40,"main is unchanged; only remote tag drifted")
+  self.assertIn("git/ref/tags/",log)
+  self.assertIn("git/tags/",log)
+  self.assertNotIn("release create",log)
+  self.assertFalse(created)
+  for label,params in (
+    ("missing",{"remote_ref":""}),
+    ("lightweight",{"remote_ref":"null"}),
+    ("remote ref API",{"remote_ref":"API_ERROR"}),
+    ("invalid tag object",{"remote_ref":"not-a-sha"}),
+    ("wrong commit",{"remote_target":"b"*40}),
+    ("missing object",{"remote_target":""}),
+    ("object API",{"remote_target":"API_ERROR"}),
+  ):
+   with self.subTest(case=label):
+    res,trace,created,_=self._execute_step("release",**params)
+    self.assertNotEqual(res.returncode,0,res.stdout+res.stderr)
+    self.assertNotIn("release create",trace)
+    self.assertFalse(created)
