@@ -28,25 +28,14 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         "sources", "offsite", "encryption", "restore_drill",
     }
     data = _map(payload, fields, "manifest")
-    if data["version"] != VERSION:
+    if type(data["version"]) is not int or data["version"] != VERSION:
         raise RecoveryContractError("version debe ser 1.")
     project = data["project"]
     if not isinstance(project, str) or _PROJECT.fullmatch(project) is None:
         raise RecoveryContractError("project inválido.")
 
     target = _positive_map(data["target"], {"rpo_minutes", "rto_minutes"}, "target")
-    protection = _map(
-        data["protection"],
-        {"copies", "media_types", "offsite_copies", "immutable_copies",
-         "undetected_restore_failures"},
-        "protection",
-    )
-    expected = {
-        "copies": 3, "media_types": 2, "offsite_copies": 1,
-        "immutable_copies": 1, "undetected_restore_failures": 0,
-    }
-    if dict(protection) != expected:
-        raise RecoveryContractError("protection debe cumplir exactamente 3-2-1-1-0.")
+    protection = _validated_protection(data["protection"])
 
     retention = _nonnegative_map(
         data["retention"], {"hourly", "daily", "weekly", "monthly"}, "retention"
@@ -58,14 +47,15 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
     normalized_sources = {}
     for key in ("database", "media", "repository"):
         value = sources[key]
-        if value not in SOURCE_STATES:
+        if not _valid_catalog_value(value, SOURCE_STATES):
             raise RecoveryContractError("sources contiene estado fuera del catálogo.")
         normalized_sources[key] = value
     if "REQUIRED" not in normalized_sources.values():
         raise RecoveryContractError("al menos una source debe ser REQUIRED.")
 
     offsite = _map(data["offsite"], {"object_storage", "cold_copy"}, "offsite")
-    if offsite["object_storage"] != "REQUIRED" or offsite["cold_copy"] not in COLD_COPY:
+    if (offsite["object_storage"] != "REQUIRED"
+            or not _valid_catalog_value(offsite["cold_copy"], COLD_COPY)):
         raise RecoveryContractError("offsite incompatible con contrato 3-2-1-1-0.")
 
     encryption = _map(data["encryption"], {"required", "key_material"}, "encryption")
@@ -79,7 +69,7 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
 
     return {
         "version": VERSION, "project": project, "target": target,
-        "protection": expected, "retention": retention,
+        "protection": protection, "retention": retention,
         "sources": normalized_sources,
         "offsite": {
             "object_storage": "REQUIRED", "cold_copy": offsite["cold_copy"]
@@ -87,6 +77,24 @@ def validate_recovery_manifest(payload: Any) -> dict[str, Any]:
         "encryption": {"required": True, "key_material": "EXTERNAL_ONLY"},
         "restore_drill": {"cadence_days": cadence},
     }
+
+
+def _valid_catalog_value(value: Any, allowed: frozenset[str]) -> bool:
+    """Rechaza enums JSON no-string antes de consultar un frozenset."""
+    return type(value) is str and value in allowed
+
+
+def _validated_protection(value: Any) -> dict[str, int]:
+    """Enforce exact JSON integer constants, never bool or float aliases."""
+    expected = {
+        "copies": 3, "media_types": 2, "offsite_copies": 1,
+        "immutable_copies": 1, "undetected_restore_failures": 0,
+    }
+    protection = _map(value, set(expected), "protection")
+    if any(type(protection[key]) is not int or protection[key] != expected[key]
+           for key in expected):
+        raise RecoveryContractError("protection debe cumplir exactamente 3-2-1-1-0.")
+    return expected
 
 
 def canonical_recovery_manifest(payload: Any) -> str:
@@ -125,11 +133,18 @@ def _nonnegative_map(value: Any, expected: set[str], label: str) -> dict[str, in
 
 
 def _size_and_sensitive(payload: Any) -> None:
+    # Encode inside the same trust boundary: a JSON unicode surrogate can
+    # serialize to str yet raise UnicodeEncodeError during UTF-8 encoding.
+    # Raise the public error OUTSIDE except to avoid retaining raw __context__.
+    encoded = None
     try:
         encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise RecoveryContractError("manifest debe ser JSON finito.") from exc
-    if len(encoded.encode()) > 100_000:
+        size = len(encoded.encode("utf-8"))
+    except (TypeError, ValueError):
+        encoded = None
+    if encoded is None:
+        raise RecoveryContractError("manifest debe ser JSON finito.")
+    if size > 100_000:
         raise RecoveryContractError("manifest excede tamaño máximo.")
     if _SENSITIVE.search(encoded):
         raise RecoveryContractError("manifest contiene forma sensible no permitida.")
