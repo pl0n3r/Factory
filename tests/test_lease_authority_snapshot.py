@@ -74,7 +74,7 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
             malformed_prefix = {"id": 3, "user": {"login": "github-actions[bot]"},
                                 "body": prefix + json.dumps(marker(12)) + " -->"}
             with self.subTest(prefix=prefix), self.assertRaisesRegex(
-                LeaseSnapshotError, "marker_invalido"
+                LeaseSnapshotError, "marker_ambiguo"
             ):
                 audit_active_claims(data, {12: [inactive, malformed_prefix]}, complete=True)
         active_payload = json.dumps(marker(12), separators=(",", ":"))
