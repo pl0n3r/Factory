@@ -16,6 +16,9 @@ if __package__:
         STATUS_RESERVED,
         STATUS_REVIEW,
         label_names,
+        latest_reservation,
+        reservation_from_text,
+        branch_for_issue,
     )
     from scripts.orquestador_kit import (
         PlanError,
@@ -38,6 +41,9 @@ else:
         STATUS_RESERVED,
         STATUS_REVIEW,
         label_names,
+        latest_reservation,
+        reservation_from_text,
+        branch_for_issue,
     )
     from orquestador_kit import (
         PlanError,
@@ -68,27 +74,24 @@ def _invalid_marker_epic(body: str) -> int | None:
     """Best-effort epic identity used only to isolate closed historical corruption."""
     prefix = "<!-- factory-plan-task "
     suffix = " -->"
-    if body.count(prefix) != 1:
+    if body.count(prefix) != 1 or body.count("<!-- factory-plan-task") != 1:
         return None
     start = body.index(prefix) + len(prefix)
     end = body.find(suffix, start)
     if end < 0:
         return None
-    def reject_ambiguous_epic(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
-        epic_seen = False
         for key, value in pairs:
-            if key == "epic":
-                if epic_seen:
-                    raise ValueError("epic duplicado")
-                epic_seen = True
+            if key in result:
+                raise ValueError("campo duplicado")
             result[key] = value
         return result
 
     try:
         raw = json.loads(
             body[start:end].strip(),
-            object_pairs_hook=reject_ambiguous_epic,
+            object_pairs_hook=reject_duplicate_keys,
         )
     except (json.JSONDecodeError, ValueError):
         return None
@@ -104,6 +107,7 @@ def _existing_tasks(
     issues: list[dict[str, Any]],
     epic: int,
     warnings: list[str] | None = None,
+    api: GitHub | None = None,
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for issue in issues:
@@ -122,6 +126,43 @@ def _existing_tasks(
                         f"(épico #{historical_epic})."
                     )
                 continue
+            # A foreign legacy marker is isolated only with trustworthy evidence
+            # that neither an active reservation nor a work branch exists.
+            if (
+                issue.get("state") == "open"
+                and isinstance(issue_number, int)
+                and historical_epic not in (None, epic)
+                and not _active(issue)
+                and api is not None
+            ):
+                comments = api.issue_comments(issue_number)
+                if not isinstance(comments, list):
+                    raise PlanError(
+                        f"Issue #{issue_number}: reserva ajena no verificable."
+                    ) from exc
+                for comment in comments:
+                    user = comment.get("user") if isinstance(comment, dict) else None
+                    payload = str(comment.get("body") or "") if isinstance(comment, dict) else ""
+                    if (
+                        isinstance(user, dict)
+                        and user.get("login") == "github-actions[bot]"
+                        and "<!-- condor-reserva" in payload
+                        and reservation_from_text(payload) is None
+                    ):
+                        raise PlanError(
+                            f"Issue #{issue_number}: marker de reserva ambiguo."
+                        ) from exc
+                reservation = latest_reservation(comments)
+                if (
+                    (reservation is None or reservation.get("active") is False)
+                    and api.branch_sha(branch_for_issue(issue_number)) is None
+                ):
+                    if warnings is not None:
+                        warnings.append(
+                            f"Issue #{issue_number}: marker abierto ajeno inválido "
+                            f"aislado (épico #{historical_epic}); sin lease ni rama."
+                        )
+                    continue
             if str(exc) == "Marker factory-plan-task malformado.":
                 raise PlanError(
                     "Body enriquecido ambiguo: "
@@ -389,7 +430,7 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     ordered = topological_order(tasks)
     all_issues = _all_issues(api)
     historical_warnings: list[str] = []
-    existing = _existing_tasks(all_issues, epic_number, historical_warnings)
+    existing = _existing_tasks(all_issues, epic_number, historical_warnings, api=api)
     planned_keys = {task.key for task in tasks}
     orphaned = sorted(set(existing) - planned_keys)
     if orphaned:
