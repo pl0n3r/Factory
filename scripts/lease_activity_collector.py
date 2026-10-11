@@ -248,9 +248,11 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             if check.get("head_sha") != sha:
                 raise IncompleteEvidence()
             status = check.get("status")
-            if status not in ("queued", "in_progress", "completed"):
+            if status not in (
+                    "queued", "in_progress", "requested",
+                    "waiting", "pending", "completed"):
                 raise IncompleteEvidence()
-            if status in ("queued", "in_progress"):
+            if status != "completed":
                 running = True
 
         # Los checks del HEAD no prueban que un run de un SHA anterior

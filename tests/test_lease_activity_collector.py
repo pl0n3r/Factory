@@ -188,6 +188,21 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
 
+    def test_check_run_statuses_match_github_rest_contract(self):
+        for status in ("queued", "in_progress", "requested", "waiting", "pending", "completed"):
+            with self.subTest(status=status):
+                api = API()
+                api.checks[0]["status"] = status
+                observed = collect_activity(api, 21, now=NOW)
+                self.assertTrue(observed["evidence_complete"])
+                self.assertEqual(observed["ci_running"], status != "completed")
+        invalid = API()
+        invalid.checks[0]["status"] = "broken"
+        self.assertEqual(
+            collect_activity(invalid, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
     def test_restarted_ci_on_same_sha_during_recheck_fails_closed(self):
         for kind in ("check", "run"):
             with self.subTest(kind=kind):
