@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+from math import isfinite
 import re
+from time import monotonic
 from typing import Any
 
 from recovery.contract import RecoveryContractError, validate_recovery_manifest
@@ -122,7 +124,22 @@ class GDriveColdCopy:
         self.secret_provider = secret_provider
         self.credential_ref = _reference(credential_ref)
         self.now = _utc(now)
+        # now is an injected UTC anchor, not a permanently frozen service clock.
+        self._clock_started = monotonic()
         self.restore_authorizer = restore_authorizer
+
+    def _current_time(self) -> datetime:
+        """Advance the injected UTC clock by monotonic elapsed time."""
+        elapsed = monotonic() - self._clock_started
+        if not isfinite(elapsed) or elapsed < 0:
+            raise ColdCopyError("invalid_clock")
+        try:
+            value = self.now + timedelta(seconds=elapsed)
+        except OverflowError:
+            value = None
+        if value is None:
+            raise ColdCopyError("invalid_clock")
+        return value
 
     @property
     def transport(self) -> FakeDriveTransport:
@@ -166,14 +183,14 @@ class GDriveColdCopy:
         if type(retention_days) is not int or not 1 <= retention_days <= 365:
             raise ColdCopyError("invalid_retention")
         key = ref + ":" + source_digest
-        expiry = self.now + timedelta(days=retention_days)
+        expiry = self._current_time() + timedelta(days=retention_days)
         stored_expiry = self._transport(
             "put_if_absent", self.namespace, key, payload, expiry,
         )
         if not isinstance(stored_expiry, datetime):
             raise ColdCopyError("invalid_remote_evidence")
         stored_expiry = _utc(stored_expiry)
-        if stored_expiry <= self.now:
+        if stored_expiry <= self._current_time():
             # Idempotencia NO debe certificar retención caducada. Purgar o
             # renovar requiere una acción explícita; no sobreescribir en silencio.
             raise ColdCopyError("expired_remote_copy")
@@ -218,7 +235,7 @@ class GDriveColdCopy:
                 or not isinstance(record[1], datetime)):
             raise ColdCopyError("invalid_remote_evidence")
         content, expiry = record
-        if _utc(expiry) <= self.now:
+        if _utc(expiry) <= self._current_time():
             raise ColdCopyError("expired_remote_copy")
         if _digest(content) != expected_sha256:
             raise ColdCopyError("remote_checksum_mismatch")

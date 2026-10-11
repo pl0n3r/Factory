@@ -273,6 +273,20 @@ class RecoveryGDriveAdapterTests(unittest.TestCase):
         self.assertEqual(len(fake.objects), 2)
         self.assertEqual(first.materialize_fake(
             "nightly", content_digest, purpose="offline_restore_test"), content)
+        # The same adapter instance must NOT certify stale retention simply
+        # because it was constructed before expiry (no sleep or real network).
+        with patch("recovery.gdrive_adapter.monotonic", return_value=100.0) as clock:
+            same_fake = FakeDriveTransport()
+            same = instance("condor", transport=same_fake, allow=True)
+            same.upload("same-instance", content, content_digest, retention_days=1)
+            clock.return_value = 100.0 + 2 * 24 * 3600
+            with self.assertRaisesRegex(ColdCopyError, "expired_remote_copy"):
+                same.materialize_fake(
+                    "same-instance", content_digest, purpose="offline_restore_test",
+                )
+            with self.assertRaisesRegex(ColdCopyError, "expired_remote_copy"):
+                same.upload("same-instance", content, content_digest, retention_days=7)
+            self.assertEqual(same_fake.writes, 1)
         aged = GDriveColdCopy(
             manifest("condor"), transport=fake, secret_provider=Secrets(),
             credential_ref="gdrive-cold-copy", now=NOW + timedelta(days=2),
