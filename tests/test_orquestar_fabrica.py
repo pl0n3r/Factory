@@ -526,7 +526,7 @@ class OrquestarFabricaTests(unittest.TestCase):
                         "labels": [], "title": "Omitted",
                     }
                     api.omit_issue_only_ascending = 44
-                else:
+                elif defect == "page_two":
                     for number in range(100, 199):
                         api.issues[number] = {
                             "number": number, "state": "open", "body": "",
