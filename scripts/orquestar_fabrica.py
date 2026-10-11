@@ -125,7 +125,7 @@ def _verified_pages(api: GitHub, path: str) -> list[dict[str, Any]]:
                 raise PlanError("Colección de autoridad ambigua o duplicada.")
             seen.add(value["id"])
             result.append(value)
-        if len(payload) < 100:
+        if len(payload) == 0:
             return result
     raise PlanError("Colección de autoridad excede límite verificable.")
 

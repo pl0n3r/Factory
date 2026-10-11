@@ -40,6 +40,7 @@ class FakeGitHub:
         self.pulls = []
         self.fail_comment_page_two = False
         self.fail_pull_page_two = False
+        self.short_pull_pages = False
         self.fail_issue_page_two = False
         self.foreign_counter_override = None
         self.foreign_counter_race = False
@@ -118,6 +119,8 @@ class FakeGitHub:
             page = int(path.rsplit("page=", 1)[1])
             if page == 2 and self.fail_pull_page_two:
                 return {"message": "partial collection"}
+            if self.short_pull_pages:
+                return self.pulls[page - 1:page]
             return self.pulls[(page - 1) * 100:page * 100]
         self.requests.append((method, path, payload))
         if method == "POST" and path.endswith("/issues"):
@@ -452,32 +455,23 @@ class OrquestarFabricaTests(unittest.TestCase):
         return api.issues[44]
 
     def test_global_issue_inventory_must_be_complete_and_unambiguous(self):
-        # A 100-item page followed by an HTTP-200 non-list cannot make
-        # the orchestrator believe the remaining issues do not exist.
         api = FakeGitHub()
         for number in range(100, 199):
-            api.issues[number] = {
-                "number": number, "state": "open", "body": "",
-                "labels": [], "title": f"Unrelated {number}",
-            }
+            api.issues[number] = {"number": number, "state": "open", "body": "",
+                                  "labels": [], "title": f"Unrelated {number}"}
         api.fail_issue_page_two = True
         with self.assertRaisesRegex(PlanError, "Colección de autoridad incompleta"):
             sync_plan(api, 3)
-        self.assertEqual(api.requests, [], "no mutations before inventory proof")
+        self.assertFalse(api.requests, "no mutations before inventory proof")
         self.assertEqual(len(api.issues), 100)
-
-        # Duplicate GitHub item IDs are ambiguous even when issue numbers
-        # differ, and malformed IDs may not be silently filtered.
         for bad_id in (3, 0, True, "untrusted"):
             with self.subTest(bad_id=bad_id):
                 api = FakeGitHub()
-                api.issues[44] = {
-                    "id": bad_id, "number": 44, "state": "open",
-                    "body": "", "labels": [], "title": "Unrelated",
-                }
+                api.issues[44] = {"id": bad_id, "number": 44, "state": "open",
+                                  "body": "", "labels": [], "title": "Unrelated"}
                 with self.assertRaises(PlanError):
                     sync_plan(api, 3)
-                self.assertEqual(api.requests, [])
+                self.assertFalse(api.requests)
 
     def test_foreign_unreserved_invalid_marker_is_isolated(self):
         api = FakeGitHub()
@@ -543,10 +537,11 @@ class OrquestarFabricaTests(unittest.TestCase):
                 self.assertEqual(api.requests, [])
 
     def test_foreign_open_pr_blocks_isolation_even_without_canonical_branch(self):
-        for ref, title, body in (
-            ("feature/alternative", "Implementar", "Closes #44"),
-            ("trabajo/issue-44", "Implementar", ""),
-            ("work/issue-44", "Implementar", ""),
+        for ref, title, body, short in (
+            ("feature/alternative", "Implementar", "Closes #44", False),
+            ("trabajo/issue-44", "Implementar", "", False),
+            ("work/issue-44", "Implementar", "", False),
+            ("feature/alternative", "Implementar", "Closes #44", True),
         ):
             with self.subTest(ref=ref, body=body):
                 api = FakeGitHub()
@@ -554,6 +549,10 @@ class OrquestarFabricaTests(unittest.TestCase):
                 before = dict(foreign)
                 api.pulls.append({"id": 71, "number": 71, "title": title,
                                   "body": body, "head": {"ref": ref}})
+                if short:
+                    api.short_pull_pages = True
+                    api.pulls.insert(0, {"id": 70, "number": 70, "title": "Other",
+                                         "body": "", "head": {"ref": "feature/other"}})
                 with self.assertRaises(PlanError):
                     sync_plan(api, 3)
                 self.assertEqual(foreign, before)
