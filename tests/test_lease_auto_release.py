@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from scripts.lease_auto_release import (
     RECOVERY, RESERVED, REVIEW, Evidence, decide,
@@ -112,6 +113,32 @@ class LeaseAutoReleaseTests(unittest.TestCase):
         self.assertEqual(decide(replace(e, rate_remaining=19)).action, "unknown")
         self.assertEqual(decide(replace(e, rate_limit=0)).action, "unknown")
         self.assertEqual(decide(replace(e, rate_remaining=101)).action, "unknown")
+
+    def test_extreme_utc_clocks_fail_closed_without_overflow(self):
+        # datetime.max + 30/40 minutos no debe matar el cron.
+        far = datetime.max.replace(tzinfo=timezone.utc)
+        reserved = replace(fixture(30), now=far, last_activity_at=far)
+        self.assertEqual(decide(reserved).reason, "invalid_clock_range")
+        recovering = replace(
+            fixture(40, status=RECOVERY, recovery_minute=30),
+            now=far, last_activity_at=far, recovery_since=far,
+        )
+        self.assertEqual(decide(recovering).reason, "invalid_clock_range")
+
+    def test_scheduled_workflow_cannot_write_or_claim_release(self):
+        workflow = (
+            Path(__file__).resolve().parents[1] /
+            ".github/workflows/liberar-reservas.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("cron: '*/10 * * * *'", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("if: steps.budget.outputs.allow == 'true'", workflow)
+        self.assertIn("gh api /rate_limit", workflow)
+        self.assertIn("AUDITORÍA SOLAMENTE", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+        self.assertNotIn("git push", workflow)
+        self.assertNotIn("liberar-forzado", workflow)
 
     def test_no_io_or_external_authority_is_derived(self):
         e = fixture(45, status=REVIEW)
