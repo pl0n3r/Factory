@@ -7,6 +7,8 @@ Este texto es una plantilla del kit Factory para el campo de **prompt personaliz
 Copia únicamente el mensaje siguiente en el campo de continuación:
 
 ~~~text
+Preflight obligatorio: verifica el interruptor global canónico Factory #767. Solo RUNNING permite evaluar trabajo; PAUSED, UNKNOWN, fallo de lectura o marcador inválido: detén el turno, no tomes otro Issue, no mutas y no fusionas.
+RUNNING no basta: exige reserva V3, CI exact-SHA y demás gates. Un bloqueo local de Issue permite buscar otro solo con RUNNING y Coordinación válida.
 Continúa sin parar hasta terminar una unidad de trabajo completa.
 Pasos:
 (1) relee el estado de tu issue reservado y de su PR;
@@ -23,6 +25,8 @@ Si algo está bloqueado de verdad, di el motivo concreto, etiqueta el issue y to
 Para turnos dedicados a revisión, no a implementación, usa en su lugar:
 
 ~~~text
+Preflight obligatorio: verifica el interruptor global canónico Factory #767. Solo RUNNING permite evaluar trabajo; PAUSED, UNKNOWN, fallo de lectura o marcador inválido: detén el turno, no tomes otro Issue, no mutas y no fusionas.
+RUNNING no basta: exige reserva V3, CI exact-SHA y demás gates. Un bloqueo local de Issue permite buscar otro solo con RUNNING y Coordinación válida.
 Completa una unidad verificable de QA o seguridad: relee el issue y el PR exactos; revisa el cambio y sus controles; reproduce una regresión concreta cuando sea posible; registra un único hallazgo nuevo y accionable o la evidencia de cierre. No te apropies de una reserva ajena, no repitas comentarios de estado ni apruebes por inferencia. Si el frente está bloqueado, documenta la causa y pasa al siguiente frente seguro.
 ~~~
 
