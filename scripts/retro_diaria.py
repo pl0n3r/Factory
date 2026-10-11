@@ -73,7 +73,8 @@ def evaluate_retro_daily(*, events: Any, sources: Any, now: Any) -> dict[str, An
         start = anchor - timedelta(hours=24)
     except OverflowError:
         return _deny("invalid_clock_range")
-    dedup: dict[str, tuple[str, str, str, datetime]] = {}
+    # Una identidad de evento es única DENTRO del repositorio, no entre repos.
+    dedup: dict[tuple[str, str], tuple[str, str, str, datetime]] = {}
     for item in events:
         if not isinstance(item, dict):
             return _deny("invalid_event")
@@ -87,12 +88,13 @@ def evaluate_retro_daily(*, events: Any, sources: Any, now: Any) -> dict[str, An
         if stamp is None or stamp > anchor:
             return _deny("invalid_event_time")
         row = (repo, kind, sid, stamp)
-        if eid in dedup and dedup[eid] != row:
+        key = (repo, eid)
+        if key in dedup and dedup[key] != row:
             return _deny("conflicting_duplicate_event")
-        dedup[eid] = row
+        dedup[key] = row
 
     selected = sorted(
-        ((eid, *row) for eid, row in dedup.items() if start <= row[-1] <= anchor),
+        ((eid, *row) for (_, eid), row in dedup.items() if start <= row[-1] <= anchor),
         key=lambda item: (item[4], item[1], item[2], item[0]),
     )
     totals = {repo: {kind: 0 for kind in sorted(EVENT_KINDS)} for repo in sorted(repos)}
