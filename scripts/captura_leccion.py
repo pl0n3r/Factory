@@ -47,6 +47,11 @@ def _parse(event: Any) -> dict[str, Any]:
     if "run_sha" in event and (type(event["run_sha"]) is not str
                                or not SHA.fullmatch(event["run_sha"])):
         raise CaptureError("invalid_run_provenance")
+    # Defense in depth: same GitHub merge must never have two business IDs.
+    # This is a structural consistency check, not source authentication.
+    if (event["event"] == "pr_merged"
+            and event["event_id"] != f"pr_merged-{event['issue']}-{event['sha']}"):
+        raise CaptureError("invalid_business_event_identity")
     timestamp = event["occurred_at"]
     if type(timestamp) is not str or not re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp
