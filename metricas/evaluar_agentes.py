@@ -674,11 +674,11 @@ def _product_timestamp(value: Any) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    return parsed.astimezone(timezone.utc)
 
 
 def _unknown_product(reason: str) -> dict[str, Any]:
@@ -749,7 +749,10 @@ def summarize_product_day(
             if number in unique and unique[number] != identity:
                 return _unknown_product("conflicting_pr_observation")
             unique[number] = identity
-        window_start = observed - timedelta(hours=24)
+        try:
+            window_start = observed - timedelta(hours=24)
+        except OverflowError:
+            return _unknown_product("invalid_clock_range")
         result[repo] = {
             "merged_prs": sum(window_start <= stamp <= observed
                               for _, stamp in unique.values()),
