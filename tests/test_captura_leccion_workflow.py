@@ -114,7 +114,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
                 self.assertIsNone(candidate)
 
     @staticmethod
-    def _execute_trust_gate(payload, *, event="issues", run_id="101"):
+    def _execute_trust_gate(payload, *, event="issues", run_id="101", sha="a" * 40):
         """Execute the real workflow pre-checkout gate, without network calls."""
         import json
         import os
@@ -133,7 +133,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
             source_path = Path(directory) / "event.json"
             source_path.write_text(json.dumps(payload), encoding="utf-8")
             env = {**os.environ, "GITHUB_REPOSITORY": "pl0n3r/Factory",
-                   "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": "a" * 40,
+                   "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": sha,
                    "GITHUB_EVENT_NAME": event, "GITHUB_RUN_ID": run_id,
                    "GITHUB_EVENT_PATH": str(source_path), "RUNNER_TEMP": directory}
             outcome = subprocess.run([sys.executable, "-c", gate], env=env,
@@ -182,6 +182,20 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
         invalid, candidate = self._execute_trust_gate(base, run_id="invalid-id")
         self.assertNotEqual(invalid, 0)
         self.assertIsNone(candidate)
+
+    def test_same_closure_changed_main_sha_fails_closed(self):
+        """The stable business ID cannot conceal divergent checkout provenance."""
+        issue = {"repository": {"full_name": "pl0n3r/Factory"},
+                 "action": "closed",
+                 "issue": {"number": 1156, "state": "closed",
+                           "closed_at": "2026-10-11T09:00:00Z"}}
+        rc_a, first = self._execute_trust_gate(issue, run_id="123", sha="a" * 40)
+        rc_b, second = self._execute_trust_gate(issue, run_id="456", sha="b" * 40)
+        self.assertEqual((rc_a, rc_b), (0, 0))
+        self.assertEqual(first["event_id"], second["event_id"])
+        self.assertNotEqual(first["sha"], second["sha"])
+        with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
+            capture_lessons([first, second])
 
 
 if __name__ == "__main__":
