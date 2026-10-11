@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import re
+import unicodedata
 from typing import Any
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -30,6 +31,9 @@ SENSITIVE_FILES = frozenset({"scripts/coordinar_trabajo.py", "scripts/orquestar_
                              "scripts/aceptacion_kit.py", "scripts/validar_claims_issue.py",
                              "scripts/automerge_construccion.py",
                              "scripts/unattended_kill_switch.py",
+                               "scripts/orquestador_kit.py",
+                               "scripts/unattended_guards.py",
+                               "scripts/lease_authority_snapshot.py",
                              "codeowners", "docs/codeowners",
                              "template/agentes.md", "template/agents.md",
                              "template/plan-agentes.md",
@@ -80,7 +84,7 @@ def _paths_status(paths: Any) -> str:
                 or any(ord(char) < 32 or ord(char) == 127 for char in path)
                 or any(part in ("", ".", "..") for part in path.split("/"))):
             return "invalid_snapshot"
-        normalized = path.casefold()
+        normalized = unicodedata.normalize("NFC", path).casefold()
         if normalized in seen:
             return "invalid_snapshot"
         seen.add(normalized)
@@ -149,7 +153,9 @@ def _waiver_status(value: Any, head: str, now: datetime) -> str:
                 "mvp_declared", "verification"}
     if not isinstance(value, dict) or set(value) != expected:
         return "independent_approval_missing"
-    if ((value["repo"], value["issue"], value["comment_id"], value["author"])
+    if (type(value["issue"]) is not int
+            or type(value["comment_id"]) is not int
+            or (value["repo"], value["issue"], value["comment_id"], value["author"])
             != WAIVER_SOURCE
             or value["source"] != "github_issue_comment"
             or value["verification"] != "authenticated_github_rest"
@@ -275,7 +281,7 @@ def evaluate(snapshot: Any) -> Decision:
         if reviewer in effective_reviewers:
             return _deny("invalid_snapshot")
         effective_reviewers.add(reviewer)
-        if review["state"] == "CHANGES_REQUESTED":
+        if review["state"] in {"CHANGES_REQUESTED", "DISMISSED"}:
             return _deny("reviews_blocked")
         if (review["state"] == "APPROVED" and review["trusted"]
                 and review["head_sha"] == head
@@ -285,7 +291,6 @@ def evaluate(snapshot: Any) -> Decision:
         waiver_status = _waiver_status(snapshot["owner_waiver"], head, now)
         if waiver_status != "ok":
             return _deny(waiver_status)
-        if any(review["state"] == "DISMISSED" for review in reviews):
-            return _deny("reviews_blocked")
+
     return Decision(True, "eligible_diagnostic_only")
 
