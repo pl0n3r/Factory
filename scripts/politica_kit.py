@@ -640,6 +640,7 @@ def _sha_less_timeline_retry(
     required_review_bot: str,
     head_sha: str,
     head_committed_at: str,
+    failed_policy_checks: list[str],
 ) -> tuple[int, str]:
     """Acredita un retry con timeline REST autenticada, nunca solo con texto del PR."""
     if not SHA_RE.fullmatch(head_sha):
@@ -744,6 +745,13 @@ def _sha_less_timeline_retry(
         raise PolicyError("Timeline requiere exactamente un reintento OWNER del HEAD.")
     owner_index, owner_event = owner_requests[0]
     owner_at = owner_event["created_at"]
+    # La existencia de un fallo Policy exact-HEAD no demuestra por si sola
+    # causalidad: tiene que ser estrictamente anterior al trigger OWNER.
+    # Un check creado después del retry no puede justificar retroactivamente
+    # que el bot recibiera ese comando por un fallo anterior.
+    if not any(head_committed_at < failed_at < owner_at
+               for failed_at in failed_policy_checks):
+        raise PolicyError("Falta fallo Policy previo al trigger OWNER exact-HEAD.")
     owner_observed = comment_by_id[owner_event["id"]]
     owner_updated = owner_observed.get("updated_at")
     if owner_updated is not None and owner_updated != owner_observed.get("created_at"):
@@ -857,6 +865,7 @@ def validate_rate_limit_fallback(
                 required_review_bot=required_review_bot,
                 head_sha=head_sha,
                 head_committed_at=committed_at,
+                failed_policy_checks=failed_policy_checks,
             )
         raise PolicyError(
             "Rerun sin reintento OWNER y rate-limit exact-HEAD posteriores verificables."

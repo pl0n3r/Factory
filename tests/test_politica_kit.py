@@ -203,6 +203,29 @@ class T(unittest.TestCase):
             sha_less_validate(comments, events, checks=green_gate_checks())
         self.assertEqual(sha_less_validate(comments, events)[0], 202)
 
+    def test_sha_less_requires_policy_failure_before_owner_trigger(self):
+        comments, events = sha_less_fixture()
+        # Bot inicial 05:00, OWNER 05:02, respuesta bot 05:02:08.
+        # Solo un fallo Policy anterior al OWNER acredita el rerun.
+        for completed_at in (
+            "2026-10-04T05:05:00Z",  # posterior a la respuesta
+            "2026-10-04T05:02:04Z",  # posterior al trigger OWNER
+            "2026-10-04T05:02:00Z",  # simultaneo al trigger
+            "2026-10-04T04:58:00Z",  # anterior al HEAD exacto
+            "incomplete",           # timestamp no autenticable
+        ):
+            checks = green_gate_checks() + [
+                check(check_id=98, name=policy.POLICY_CHECK_NAME,
+                      conclusion="failure", completed_at=completed_at),
+            ]
+            with self.subTest(completed_at=completed_at), self.assertRaises(PolicyError):
+                sha_less_validate(comments, events, checks=checks)
+        previous = green_gate_checks() + [
+            check(check_id=98, name=policy.POLICY_CHECK_NAME,
+                  conclusion="failure", completed_at="2026-10-04T05:01:00Z"),
+        ]
+        self.assertEqual(sha_less_validate(comments, events, checks=previous)[0], 202)
+
     def test_first_attempt_sha_less_rate_limits_cannot_prove_exact_head(self):
         comments = [
             rate_limit_comment(comment_id=101, created_at="2026-10-04T05:00:00Z"),
