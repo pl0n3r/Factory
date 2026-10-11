@@ -59,6 +59,50 @@ class PromptContinuacionTests(unittest.TestCase):
             with self.subTest(token_prefix=candidate.split("_")[0]):
                 self.assertRegex(candidate, SECRET_PREFIX_RE)
 
+    @staticmethod
+    def _copyable_messages(text: str) -> tuple[str, str]:
+        sections = (
+            text.split("## Mensaje estándar", 1)[1].split(
+                "## Variante breve QA/seguridad", 1
+            )[0],
+            text.split("## Variante breve QA/seguridad", 1)[1].split(
+                "## Cuándo usarlo", 1
+            )[0],
+        )
+        blocks = []
+        for section in sections:
+            matches = re.findall(r"(?ms)^~~~text\n(.*?)\n~~~\s*$", section)
+            if len(matches) != 1:
+                raise AssertionError("Cada variante debe tener un solo bloque copiable")
+            blocks.append(matches[0])
+        return blocks[0], blocks[1]
+
+    def _assert_copyable_global_pause(self, text: str) -> None:
+        for role, prompt in zip(
+            ("estándar", "QA/seguridad"), self._copyable_messages(text)
+        ):
+            for required in (
+                "Factory #767", "RUNNING", "PAUSED", "UNKNOWN",
+                "detén el turno", "no tomes otro Issue", "no mutas",
+                "reserva V3", "CI exact-SHA", "bloqueo local",
+            ):
+                self.assertIn(required, prompt, f"{role}: falta {required}")
+
+    def test_copyable_prompts_require_global_pause_preflight(self) -> None:
+        text = DOCUMENT.read_text(encoding="utf-8")
+        self._assert_copyable_global_pause(text)
+
+    def test_pause_gate_must_be_inside_each_copyable_block(self) -> None:
+        text = DOCUMENT.read_text(encoding="utf-8")
+        self._assert_copyable_global_pause(text)
+        for prompt in self._copyable_messages(text):
+            # Una advertencia en la prosa de fuera no satisface el bloque copiable.
+            without_gate = text.replace(
+                prompt, "Continúa y elige otro frente disponible.", 1
+            )
+            with self.assertRaises(AssertionError):
+                self._assert_copyable_global_pause(without_gate)
+
     def test_scope_and_operational_gates_remain_explicit(self) -> None:
         text = DOCUMENT.read_text(encoding="utf-8")
         for concept in ("reserva V3", "CI exact-SHA", "interruptor global",
