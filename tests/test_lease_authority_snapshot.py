@@ -87,6 +87,26 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
         legacy_inactive = audit_active_claims(data, {12: [comment(4, marker(12, active=False, version=2))]}, complete=True)
         self.assertEqual(legacy_inactive.active, ())
 
+    def test_claim_paths_and_owner_must_be_canonical(self):
+        data = [issue(12)]
+        good = audit_active_claims(data, {12: [comment(1, marker(12))]}, complete=True)
+        self.assertIn("docs/", good.active[0].paths)
+        for path in ("scripts/*.py", "docs/file?.md", "docs/{name}.md",
+                     "a" * 241, "src/../secret", "/etc/passwd", "src//file.py"):
+            modified = marker(12)
+            modified["task_paths"] = [path]
+            with self.subTest(path=path), self.assertRaisesRegex(
+                LeaseSnapshotError, "marker_claims"
+            ):
+                audit_active_claims(data, {12: [comment(1, modified)]}, complete=True)
+        for owner in (" ", "-bad", "bad--owner", "a" * 40):
+            modified = marker(12)
+            modified["owner"] = owner
+            with self.subTest(owner=owner), self.assertRaisesRegex(
+                LeaseSnapshotError, "marker_identidad"
+            ):
+                audit_active_claims(data, {12: [comment(1, modified)]}, complete=True)
+
     def test_missing_snapshot_duplicate_and_drift_fail_closed(self):
         data = [issue(12), issue(13, "estado: disponible")]
         comments = {12: [comment(1, marker(12))], 13: []}
