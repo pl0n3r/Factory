@@ -206,5 +206,119 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
                 self.assertIn("gate sin main@SHA único", result.stderr)
 
 
+    # #1079: execute the jq filter extracted from the ACTUAL workflow.
+    @staticmethod
+    def _exact_run(number, name="CI factory", status="completed",
+                   conclusion="success", created="2026-10-11T09:00:00Z",
+                   sha=None, attempt=1, started=None):
+        if sha is None:
+            sha = "a" * 40
+        if started is None and status == "completed":
+            started = created
+        return {
+            "id": number, "run_attempt": attempt, "name": name,
+            "head_sha": sha, "created_at": created,
+            "run_started_at": started, "updated_at": started or created,
+            "status": status, "conclusion": conclusion,
+        }
+
+    def _check_latest(self, runs, workflow="CI factory", total=None):
+        begin, end = "# EXACT_MAIN_JQ_BEGIN", "# EXACT_MAIN_JQ_END"
+        self.assertEqual(BOOTSTRAP.count(begin), 1)
+        self.assertEqual(BOOTSTRAP.count(end), 1)
+        program = textwrap.dedent(BOOTSTRAP.split(begin, 1)[1].split(end, 1)[0])
+        snapshot = {
+            "total_count": len(runs) if total is None else total,
+            "workflow_runs": runs,
+        }
+        result = subprocess.run(
+            ["jq", "-e", "--arg", "workflow_name", workflow,
+             "--arg", "sha", "a" * 40, program],
+            input=json.dumps(snapshot), capture_output=True, text=True, timeout=10,
+        )
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        return result.returncode == 0 and result.stdout.strip() == "true"
+
+    def test_latest_rejects_stale_success_if_newer_run_failed(self):
+        old = self._exact_run(100)
+        later = "2026-10-11T09:05:00Z"
+        for conclusion in ("failure", "cancelled", "timed_out"):
+            with self.subTest(conclusion=conclusion):
+                self.assertFalse(self._check_latest([
+                    old, self._exact_run(101, conclusion=conclusion, created=later),
+                ]))
+        # Rerun of an older run ID supersedes newer successful creation.
+        retried = self._exact_run(
+            100, conclusion="failure", attempt=2,
+            started="2026-10-11T09:20:00Z",
+        )
+        self.assertFalse(self._check_latest([
+            retried, self._exact_run(101, created=later),
+        ]))
+
+    def test_latest_rejects_stale_success_if_newer_run_pending(self):
+        old = self._exact_run(100)
+        for status in ("queued", "in_progress", "waiting", "pending"):
+            with self.subTest(status=status):
+                self.assertFalse(self._check_latest([
+                    old, self._exact_run(101, status=status, conclusion=None,
+                                         created="2026-10-11T09:05:00Z"),
+                ]))
+        self.assertFalse(self._check_latest([
+            self._exact_run(100, status="in_progress", conclusion=None, attempt=2),
+            self._exact_run(101, created="2026-10-11T09:05:00Z"),
+        ]))
+
+    def test_latest_requires_newest_success_per_required_workflow_exact_sha(self):
+        names = ("CI factory", "Sonar CI-based", "Evidencia CodeQL",
+                 "Unattended Watchdog")
+        runs = [self._exact_run(100 + n, name=name)
+                for n, name in enumerate(names)]
+        for name in names:
+            self.assertTrue(self._check_latest(runs, workflow=name))
+        unrelated = [
+            self._exact_run(200, sha="b" * 40,
+                            created="2026-10-11T09:10:00Z"),
+            self._exact_run(201, name="Other",
+                            created="2026-10-11T09:11:00Z"),
+        ]
+        for name in names:
+            self.assertTrue(self._check_latest(runs + unrelated, workflow=name))
+        self.assertFalse(self._check_latest(runs[:-1],
+                                            workflow="Unattended Watchdog"))
+        bad = runs + [self._exact_run(202, name="Sonar CI-based",
+                                    conclusion="failure",
+                                    created="2026-10-11T09:12:00Z")]
+        self.assertFalse(self._check_latest(bad, workflow="Sonar CI-based"))
+        self.assertTrue(self._check_latest(bad, workflow="CI factory"))
+
+    def test_latest_fails_closed_for_incomplete_ambiguous_or_malformed_runs(self):
+        good = self._exact_run(100)
+        self.assertIn(
+            'repos/$REPOSITORY/actions/runs?head_sha=$resolved_sha&per_page=100&page=1',
+            BOOTSTRAP,
+        )
+        self.assertNotIn('gh run list --commit "$resolved_sha"', BOOTSTRAP)
+        cases = (
+            ("truncated", [good], 2),
+            ("over cap", [self._exact_run(n) for n in range(1, 101)], 100),
+            ("duplicate id", [good, dict(good)], None),
+            ("invalid id", [dict(good, id=True)], None),
+            ("missing attempt", [{k: v for k, v in good.items()
+                                 if k != "run_attempt"}], None),
+            ("missing time", [dict(good, created_at=None)], None),
+            ("invalid time", [dict(good, created_at="yesterday")], None),
+            ("inverted time", [dict(good,
+                                   updated_at="2026-10-11T08:59:00Z")], None),
+            ("ambiguous tie", [good, self._exact_run(101,
+                                                    conclusion="failure")], None),
+            ("malformed status", [dict(good, status=5)], None),
+        )
+        for desc, runs, count in cases:
+            with self.subTest(case=desc):
+                self.assertFalse(self._check_latest(runs, total=count))
+
+
+
 if __name__ == "__main__":
     unittest.main()

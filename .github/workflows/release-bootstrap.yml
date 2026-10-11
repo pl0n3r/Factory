@@ -134,23 +134,60 @@ jobs:
               jq '[.files[].filename]' /tmp/gate-drift.json > /tmp/changed-files-since-gate.json
             fi
 
-            gh run list --commit "$resolved_sha" --limit 100 \
-              --json name,status,conclusion,headSha > /tmp/exact-main-runs.json
+            # Authenticated exact-SHA snapshot. A full page or inconsistent
+            # total is NOT evidence of completeness: fail closed.
+            gh api "repos/$REPOSITORY/actions/runs?head_sha=$resolved_sha&per_page=100&page=1" \
+              > /tmp/exact-main-runs.json
             require_exact_main_success() {
               local workflow_name="$1"
               jq -e \
                 --arg workflow_name "$workflow_name" \
-                --arg sha "$resolved_sha" \
-                'map(select(
-                  .name == $workflow_name and
-                  .headSha == $sha and
-                  .status == "completed" and
-                  .conclusion == "success"
-                )) | length > 0' \
-                /tmp/exact-main-runs.json >/dev/null || {
-                  echo "::error::$workflow_name no tiene ejecución success sobre $resolved_sha"
-                  exit 1
-                }
+                --arg sha "$resolved_sha" '
+                # EXACT_MAIN_JQ_BEGIN
+                def positive_int: type == "number" and . > 0 and . == floor;
+                def utc_time:
+                  type == "string" and
+                  test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and
+                  (try (fromdateiso8601 >= 0) catch false);
+                def effective_time: (.run_started_at // .created_at);
+                def valid_run:
+                  (.id | positive_int) and
+                  (.run_attempt | positive_int) and
+                  (.name | type == "string" and length > 0) and
+                  (.head_sha | type == "string" and test("^[0-9a-f]{40}$")) and
+                  (.created_at | utc_time) and
+                  (.updated_at | utc_time) and
+                  (.run_started_at == null or (.run_started_at | utc_time)) and
+                  (.run_started_at == null or
+                    ((.run_started_at | fromdateiso8601) >= (.created_at | fromdateiso8601))) and
+                  ((.updated_at | fromdateiso8601) >= (effective_time | fromdateiso8601)) and
+                  (.run_attempt == 1 or (.run_started_at != null and .status == "completed")) and
+                  (.status | type == "string") and
+                  (.conclusion == null or (.conclusion | type == "string"));
+                def complete_snapshot:
+                  . as $r |
+                  (type == "object") and
+                  ($r.total_count | type == "number" and . >= 0 and . < 100 and . == floor) and
+                  ($r.workflow_runs | type == "array") and
+                  (($r.workflow_runs | length) == $r.total_count) and
+                  ($r.workflow_runs | all(.[]; valid_run)) and
+                  (($r.workflow_runs | map(.id) | unique | length) == $r.total_count);
+                try (
+                  if complete_snapshot then
+                    [.workflow_runs[] | select(.name == $workflow_name and .head_sha == $sha)] as $matching |
+                    if ($matching | length) == 0 then false
+                    else
+                      ($matching | max_by(effective_time)) as $newest |
+                      ([$matching[] | select(effective_time == ($newest | effective_time))] | length == 1) and
+                      ($newest.status == "completed") and ($newest.conclusion == "success")
+                    end
+                  else false end
+                ) catch false
+                # EXACT_MAIN_JQ_END
+              ' /tmp/exact-main-runs.json >/dev/null || {
+                echo "::error::$workflow_name: no hay ejecución vigente, completa y terminal SUCCESS sobre $resolved_sha"
+                exit 1
+              }
             }
             require_exact_main_success "CI factory"
             require_exact_main_success "Sonar CI-based"
