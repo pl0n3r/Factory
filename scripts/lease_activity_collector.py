@@ -130,8 +130,11 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         trusted: list[tuple[int, dict[str, Any], datetime]] = []
         for c in comments:
             user = c.get("user")
+            if (not isinstance(user, dict) or type(user.get("login")) is not str
+                    or not user["login"]):
+                raise IncompleteEvidence()
             body = c.get("body")
-            if isinstance(user, dict) and user.get("login") == BOT:
+            if user["login"] == BOT:
                 if type(body) is str and "<!-- condor-reserva " in body:
                     marker = reservation_from_text(body)
                     if marker is None:
@@ -170,7 +173,10 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         commits = pages(f"{base}/commits?sha={quote(branch, safe='')}&since={since_param}", commits=True)
         for commit in commits:
             author = commit.get("author")
-            if isinstance(author, dict) and author.get("login") == owner:
+            if (not isinstance(author, dict) or type(author.get("login")) is not str
+                    or not author["login"]):
+                raise IncompleteEvidence()
+            if author["login"] == owner:
                 details = commit.get("commit")
                 actor = details.get("author") if isinstance(details, dict) else None
                 when = _time(actor.get("date") if isinstance(actor, dict) else None, now)
@@ -191,8 +197,10 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             reviews = pages(f"{base}/pulls/{matching[0]['number']}/reviews")
             for review in reviews:
                 author = review.get("user")
-                if (isinstance(author, dict) and author.get("login") == owner
-                        and review.get("state") != "PENDING"):
+                if (not isinstance(author, dict) or type(author.get("login")) is not str
+                        or not author["login"]):
+                    raise IncompleteEvidence()
+                if author["login"] == owner and review.get("state") != "PENDING":
                     when = _time(review.get("submitted_at"), now)
                     if when >= since:
                         latest = max(latest, when)

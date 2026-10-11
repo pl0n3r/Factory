@@ -109,6 +109,9 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         a = API(); a.checks.append(copy.deepcopy(a.checks[0])); cases.append(a)
         a = API(); a.comments[0]["body"] = "<!-- condor-reserva SECRET -->"; cases.append(a)
         a = API(); a.issue["labels"].append({"name": "estado: en revisión"}); cases.append(a)
+        a = API(); a.comments[1]["user"] = None; cases.append(a)
+        a = API(); a.commits[0]["author"] = None; cases.append(a)
+        a = API(); a.reviews[0]["user"] = None; cases.append(a)
         for state in ("estado: bloqueado", "estado: disponible", "estado: completado",
                       "ESTADO: bloqueado"):
             a = API(); a.issue["labels"].append({"name": state}); cases.append(a)
