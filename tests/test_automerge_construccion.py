@@ -108,7 +108,13 @@ class AutoMergeConstruccionTests(unittest.TestCase):
                      "template/PLAN-AGENTES.md",
                      "docs/principios-construccion.md",
                      "agentes/roles/ingenieria-software.md",
-                     "docs/unattended-safe-mode.md"):
+                     "docs/unattended-safe-mode.md",
+                     "decisiones.yml", "agentes/NUCLEO.md",
+                     "template/decisiones.yml", "template/agentes/NUCLEO.md",
+                     "template/.github/workflows/ci.yml",
+                     "template/.github/workflows/coordinacion.yml",
+                     "template/.github/CODEOWNERS",
+                     "template/config/credentials.yml"):
             with self.subTest(path=path):
                 self.deny("paths", [path])
 

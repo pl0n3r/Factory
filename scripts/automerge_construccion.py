@@ -16,7 +16,9 @@ FIELDS = frozenset({
 })
 SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy",
              "secrets", "puertas-humanas", "production", "deploy")
-SENSITIVE_PREFIXES = (".github/", "config/", "credentials/", "agentes/roles/")
+SENSITIVE_PREFIXES = (".github/", "config/", "credentials/", "agentes/roles/",
+                      "template/.github/", "template/config/",
+                      "template/credentials/", "template/agentes/")
 SENSITIVE_FILES = frozenset({"scripts/coordinar_trabajo.py", "scripts/orquestar_fabrica.py",
                              "scripts/aceptacion_kit.py", "scripts/validar_claims_issue.py",
                              "scripts/automerge_construccion.py",
@@ -25,7 +27,9 @@ SENSITIVE_FILES = frozenset({"scripts/coordinar_trabajo.py", "scripts/orquestar_
                              "template/agentes.md", "template/agents.md",
                              "template/plan-agentes.md",
                              "docs/principios-construccion.md",
-                             "docs/unattended-safe-mode.md"})
+                             "docs/unattended-safe-mode.md",
+                             "decisiones.yml", "agentes/nucleo.md",
+                             "template/decisiones.yml"})
 
 
 @dataclass(frozen=True)
