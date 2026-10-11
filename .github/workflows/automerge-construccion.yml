@@ -55,6 +55,7 @@ jobs:
           })
           SHA = re.compile(r"[0-9a-f]{40}\Z")
           MARKER = re.compile(r'<!-- factory-unattended-kill-switch (\{[^\n]*\}) -->')
+          SUSPECT_MARKER = re.compile(r'<!--\s*factory-unattended-kill-switch\b', re.I)
 
           def valid_sha(value):
               return isinstance(value, str) and SHA.fullmatch(value) is not None
@@ -67,7 +68,16 @@ jobs:
                   return None
               if (issue.get("user") or {}).get("login") != "pl0n3r":
                   return None
-              markers = MARKER.findall(issue.get("body") or "")
+              if (issue.get("number") != 767
+                      or issue.get("url") !=
+                      "https://api.github.com/repos/pl0n3r/Factory/issues/767"
+                      or issue.get("repository_url") !=
+                      "https://api.github.com/repos/pl0n3r/Factory"):
+                  return None
+              body = issue.get("body")
+              if not isinstance(body, str) or len(SUSPECT_MARKER.findall(body)) != 1:
+                  return None
+              markers = MARKER.findall(body)
               if len(markers) != 1:
                   return None
               try:
@@ -116,22 +126,33 @@ jobs:
                       return result
               raise ValueError("pagination limit")
 
+          def review_instant(value):
+              if not isinstance(value, str) or len(value) > 40:
+                  raise ValueError("ambiguous review timestamp")
+              try:
+                  stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+              except ValueError as exc:
+                  raise ValueError("ambiguous review timestamp") from exc
+              if stamp.tzinfo is None or stamp.utcoffset() is None:
+                  raise ValueError("ambiguous review timezone")
+              return stamp.astimezone(timezone.utc)
+
           def effective_reviews(rows, sha):
               by_user = {}
               for item in rows:
                   user = item.get("user") or {}
                   login = user.get("login")
-                  stamp = item.get("submitted_at")
-                  if not isinstance(login, str) or not login or not isinstance(stamp, str):
+                  if not isinstance(login, str) or not login:
                       raise ValueError("ambiguous reviewer")
+                  stamp = review_instant(item.get("submitted_at"))
                   ident = login.casefold()
                   prev = by_user.get(ident)
-                  if prev is not None and prev["submitted_at"] == stamp:
+                  if prev is not None and prev[0] == stamp:
                       raise ValueError("tied review")
-                  if prev is None or stamp > prev["submitted_at"]:
-                      by_user[ident] = item
+                  if prev is None or stamp > prev[0]:
+                      by_user[ident] = (stamp, item)
               result = []
-              for item in by_user.values():
+              for _, item in by_user.values():
                   author = item["user"]["login"]
                   association = item.get("author_association")
                   result.append({

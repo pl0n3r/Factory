@@ -49,7 +49,9 @@ class Fake:
         if route.endswith("/issues/767"):
             flag = "PAUSED" if self.pause else "RUNNING"
             body = '<!-- factory-unattended-kill-switch {"version":1,"state":"' + flag + '","owner":"pl0n3r"} -->'
-            return {"id": 767, "state": "closed",
+            return {"id": 767, "number": 767, "state": "closed",
+                    "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
+                    "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
                     "user": {"login": "pl0n3r"}, "body": body, "updated_at": "2026-10-11T09:00:00Z"}
         if route.endswith("/pulls/9"):
             return {"number": 9, "head": {"sha": HEAD},
@@ -95,6 +97,44 @@ class AutoMergeWorkflowTests(unittest.TestCase):
                           "pull_request_target:", "enablePullRequestAutoMerge"):
             self.assertNotIn(forbidden, text)
         self.assertIn("timeout-minutes: 5", text)
+
+    def test_switch_rejects_duplicate_malformed_markers_and_noncanonical_issue(self):
+        module = load()
+        original = Fake()("/repos/pl0n3r/Factory/issues/767")
+        self.assertIsNotNone(module["switch"](original))
+        for extra in (
+            "<!-- factory-unattended-kill-switch not-json -->",
+            "<!--  FACTORY-UNATTENDED-KILL-SWITCH {} -->",
+            "<!-- factory-unattended-kill-switch {broken -->",
+        ):
+            with self.subTest(extra=extra):
+                self.assertIsNone(module["switch"]({**original, "body": original["body"] + extra}))
+        for change in (
+            {"number": 768}, {"number": None},
+            {"url": "https://api.github.com/repos/other/Factory/issues/767"},
+            {"repository_url": "https://api.github.com/repos/other/Factory"},
+            {"body": None},
+        ):
+            with self.subTest(change=change):
+                self.assertIsNone(module["switch"]({**original, **change}))
+
+    def test_effective_reviews_use_real_utc_instants_and_deny_ambiguous_dates(self):
+        module = load()
+        user = {"login": "qa-reviewer", "type": "User"}
+        first = {"id": 1, "user": user, "submitted_at": "2026-10-11T10:00:00+10:00",
+                 "commit_id": HEAD, "state": "APPROVED",
+                 "author_association": "COLLABORATOR"}
+        newer = {**first, "id": 2, "state": "CHANGES_REQUESTED",
+                 "submitted_at": "2026-10-11T09:00:00-10:00"}
+        reviews = module["effective_reviews"]([first, newer], HEAD)
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["state"], "CHANGES_REQUESTED")
+        with self.assertRaisesRegex(ValueError, "tied review"):
+            module["effective_reviews"]([first, {**first, "id": 2,
+                "submitted_at": "2026-10-11T00:00:00Z"}], HEAD)
+        for invalid in ("not-a-date", "2026-10-11T09:00:00", None):
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                module["effective_reviews"]([{**first, "submitted_at": invalid}], HEAD)
 
     def test_exact_sha_and_independent_review_snapshot_are_required(self):
         module = load()
