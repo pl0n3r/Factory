@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from scripts.lease_release_executor import (
-    AVAILABLE, RECOVERY, RecoveryLabelProof, RecoveryNoteProof, Snapshot, execute,
+    AVAILABLE, RECOVERY, RecoveryLabelProof, RecoveryNoteProof, Result, Snapshot,
+    execute,
 )
 
 START = datetime(2026, 10, 11, 10, tzinfo=timezone.utc)
@@ -385,6 +386,77 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
         self.assertFalse(execute(1191, partial, decision,
                                  feature_enabled=True, dry_run=False).wrote)
         self.assertEqual(partial.writes, [])
+
+
+    def test_result_tracks_none_partial_complete_and_unknown(self):
+        """wrote=False no permite descartar efectos parcialmente persistidos."""
+        port = FakePort(snapshot(recovery=False))
+        disabled = execute(1191, port, decision)
+        self.assertEqual((disabled.wrote, disabled.write_state),
+                         (False, "none"))
+        simulated = execute(1191, port, decision, feature_enabled=True)
+        self.assertEqual((simulated.wrote, simulated.write_state),
+                         (False, "none"))
+        self.assertEqual(port.writes, [])
+
+        success = execute(1191, port, decision,
+                          feature_enabled=True, dry_run=False)
+        self.assertEqual((success.reason, success.wrote, success.write_state),
+                         ("recovery_marked", True, "complete"))
+        self.assertEqual(len(port.writes), 2)
+
+        for recovery, minute in ((False, 20), (True, 35)):
+            with self.subTest(partial_after_append=recovery):
+                partial = FakePort(snapshot(recovery=recovery))
+                partial.locked_clock_drift = (3, minute)
+                outcome = execute(1191, partial, decision,
+                                  feature_enabled=True, dry_run=False)
+                self.assertFalse(outcome.wrote)
+                self.assertEqual(outcome.write_state, "partial")
+                self.assertEqual(len(partial.writes), 1)
+
+        failed = FakePort(snapshot())
+        failed.fail_status = True
+        error = execute(1191, failed, decision,
+                        feature_enabled=True, dry_run=False)
+        self.assertEqual((error.wrote, error.write_state),
+                         (False, "unknown"))
+        self.assertEqual(len(failed.writes), 1)
+        self.assertFalse(failed.item.marker["active"])
+
+        for partial_marker in (False, True):
+            with self.subTest(ack_without_persistence=partial_marker):
+                port = FakePort(snapshot())
+                if partial_marker:
+                    port.item = replace(port.item, marker={
+                        **port.item.marker, "active": False,
+                        "reason": "auto-inactivity-release"})
+                port.noop_available = True
+                result = execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual((result.reason, result.wrote, result.write_state),
+                                 ("unverified_release", False, "partial"))
+
+        unverified = FakePort(snapshot(recovery=False))
+        unverified.label_author = "untrusted-actor"
+        result = execute(1191, unverified, decision,
+                         feature_enabled=True, dry_run=False)
+        self.assertEqual((result.reason, result.wrote, result.write_state),
+                         ("unverified_recovery_since", False, "partial"))
+        self.assertEqual(len(unverified.writes), 2)
+
+        failed.fail_status = False
+        reconciled = execute(1191, failed, decision,
+                             feature_enabled=True, dry_run=False)
+        self.assertEqual((reconciled.reason, reconciled.wrote,
+                          reconciled.write_state),
+                         ("partial_reconciled", True, "complete"))
+
+        with self.assertRaises(ValueError):
+            Result("release", "contradiction", True)
+        with self.assertRaises(ValueError):
+            Result("unknown", "contradiction", write_state="complete")
+
 
 
 if __name__ == "__main__":

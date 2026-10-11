@@ -54,9 +54,23 @@ class Snapshot:
 
 @dataclass(frozen=True)
 class Result:
+    """Resultado auditable de una transición; wrote NO significa 'sin efectos'.
+
+    wrote=True exclusivamente si se confirmó la transición terminal.
+    write_state=none: no intento; partial: hubo intento sin estado final;
+    complete: transición terminal verificada; unknown: efecto ambiguo.
+    Todo partial/unknown necesita reconciliación bajo lock antes de reintentar.
+    """
     action: str
     reason: str
     wrote: bool = False
+    write_state: str = "none"
+
+    def __post_init__(self) -> None:
+        if (type(self.wrote) is not bool
+                or self.write_state not in ("none", "partial", "complete", "unknown")
+                or self.wrote != (self.write_state == "complete")):
+            raise ValueError("inconsistent_write_state")
 
 
 @dataclass(frozen=True)
@@ -351,8 +365,8 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                 port.status(issue, AVAILABLE, current)
                 final = port.read(issue)
                 if not _released_ok(current, final):
-                    return Result("release", "unverified_release")
-                return Result("release", "partial_reconciled", True)
+                    return Result("release", "unverified_release", write_state="partial")
+                return Result("release", "partial_reconciled", True, "complete")
         action = getattr(decide(first), "action", None)
         if not _eligible(first, action):
             return Result("wait", "decision_not_eligible")
@@ -398,7 +412,7 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                     after = current
                 if (not _postappend(current, after, action)
                         or not _note_ok(proof, after) or proof.count != 1):
-                    return Result(action, "partial_comment_only")
+                    return Result(action, "partial_comment_only", write_state="partial")
                 port.status(issue, RECOVERY, after)
                 confirmed = port.read(issue)
                 if (not _trusted(confirmed)
@@ -410,21 +424,21 @@ def execute(issue: int, port: Port, decide: Callable[[Snapshot], Any], *,
                         or not _recovery_label_ok(
                             proof, port.recovery_label(issue, confirmed),
                             confirmed)):
-                    return Result(action, "unverified_recovery_since", True)
-                return Result(action, "recovery_marked", True)
+                    return Result(action, "unverified_recovery_since", write_state="partial")
+                return Result(action, "recovery_marked", True, "complete")
             if not _recovery_proven(port, issue, current):
                 return Result("unknown", "recovery_label_untrusted")
             port.append(issue, _release_marker(current), current)
             after = port.read(issue)
             if (not _postappend(current, after, action)
                     or not _recovery_proven(port, issue, after)):
-                return Result(action, "partial_marker_only")
+                return Result(action, "partial_marker_only", write_state="partial")
             port.status(issue, AVAILABLE, after)
             final = port.read(issue)
             if not _released_ok(after, final):
-                return Result(action, "unverified_release")
-            return Result(action, "released", True)
+                return Result(action, "unverified_release", write_state="partial")
+            return Result(action, "released", True, "complete")
     except Exception:
         # Si hubo escritura parcial no borrar rama ni forzar rollback. Un
         # reintento bajo el lock sólo puede reconciliar marker bot exacto.
-        return Result("unknown", "port_failure_or_partial_write")
+        return Result("unknown", "port_failure_or_partial_write", write_state="unknown")
