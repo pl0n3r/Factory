@@ -152,6 +152,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 raise IncompleteEvidence()
             body = c.get("body")
             if user["login"] == BOT:
+                if user.get("type") != "Bot":
+                    raise IncompleteEvidence()
                 if type(body) is str and "<!-- condor-reserva " in body:
                     marker = reservation_from_text(body)
                     if marker is None:
@@ -189,7 +191,9 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             if c.get("user", {}).get("login") == owner:
                 when = _time(c.get("created_at"), now)
                 if when >= since:
-                    latest = max(latest, when)
+                    # login compartido entre agentes: sin credencial de
+                    # sesión, no certificar actividad ni ausencia de ella.
+                    raise IncompleteEvidence()
 
         since_param = quote(since.isoformat().replace("+00:00", "Z"), safe="")
         commits = pages(f"{base}/commits?sha={quote(branch, safe='')}&since={since_param}",
@@ -235,7 +239,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 if author["login"] == owner and review.get("state") != "PENDING":
                     when = _time(review.get("submitted_at"), now)
                     if when >= since:
-                        latest = max(latest, when)
+                        # La review pertenece al login, no a la sesión V3.
+                        raise IncompleteEvidence()
 
         checks = pages(f"{base}/commits/{sha}/check-runs", name="checks", checks=True)
         running = False

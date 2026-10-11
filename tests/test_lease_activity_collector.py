@@ -38,7 +38,7 @@ class API:
             "labels": [{"name": "estado: reservado"}],
         }
         self.comments = [
-            {"id": 1, "user": {"login": "github-actions[bot]"},
+            {"id": 1, "user": {"login": "github-actions[bot]", "type": "Bot"},
              "body": marker(), "created_at": "2026-10-11T08:00:00Z"},
             {"id": 2, "user": {"login": "other"},
              "body": "noise", "created_at": "2026-10-11T09:59:00Z"},
@@ -54,7 +54,7 @@ class API:
             }},
         ]
         self.reviews = [
-            {"id": 5, "user": {"login": "pl0n3r"},
+            {"id": 5, "user": {"login": "other"},
              "state": "COMMENTED", "submitted_at": "2026-10-11T09:25:00Z"},
         ]
         self.checks = [
@@ -127,7 +127,7 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         result = collect_activity(api, 21, now=NOW)
         self.assertTrue(result["evidence_complete"])
         self.assertEqual(result["status"], "estado: reservado")
-        self.assertEqual(result["last_activity_at"], "2026-10-11T09:25:00Z")
+        self.assertEqual(result["last_activity_at"], "2026-10-11T09:10:00Z")
         self.assertEqual(result["branch_sha"], SHA)
         self.assertEqual(result["branch"], "trabajo/issue-21")
         self.assertEqual(result["repository_id"], 123)
@@ -167,6 +167,10 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         a = API(); a.race = True; cases.append(a)
         a = API(); a.checks.append(copy.deepcopy(a.checks[0])); cases.append(a)
         a = API(); a.comments[0]["body"] = "<!-- condor-reserva SECRET -->"; cases.append(a)
+        a = API(); a.comments[0]["user"]["type"] = "User"; cases.append(a)
+        a = API(); a.comments[0]["user"].pop("type"); cases.append(a)
+        a = API(); a.comments[0]["user"]["type"] = "Organization"; cases.append(a)
+        a = API(); a.comments[0]["user"]["type"] = None; cases.append(a)
         a = API(); a.comments[0]["updated_at"] = "2026-10-11T07:00:00Z"; cases.append(a)
         a = API(); a.comments[0]["updated_at"] = "2026-10-11T10:01:00Z"; cases.append(a)
         a = API(); a.comments[0]["updated_at"] = "not-a-date"; cases.append(a)
@@ -220,6 +224,17 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertTrue(terminal["evidence_complete"])
         self.assertFalse(terminal["ci_running"])
 
+    def test_shared_login_qa_comment_is_not_verified_session_activity(self):
+        api = API()
+        api.comments[1]["user"]["login"] = "pl0n3r"
+        api.comments[1]["body"] = "QA de otra hoja; no soy titular V3"
+        api.commits[0]["author"]["login"] = "other"
+        api.checks[0]["status"] = "completed"
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
     def test_same_branch_name_from_foreign_fork_is_ignored(self):
         api = API()
         foreign = copy.deepcopy(api.pulls[0])
@@ -249,8 +264,17 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(out["last_activity_at"], "2026-10-11T08:00:00Z")
         self.assertTrue(out["ci_running"])  # protege, sin atribuirlo al titular
         api.comments[1]["user"]["login"] = "pl0n3r"
-        out = collect_activity(api, 21, now=NOW)
-        self.assertEqual(out["last_activity_at"], "2026-10-11T09:59:00Z")
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        api.comments[1]["user"]["login"] = "other"
+        api.reviews[0]["user"]["login"] = "pl0n3r"
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        api.reviews[0]["user"]["login"] = "other"
         api.checks[0]["status"] = "completed"
         out = collect_activity(api, 21, now=NOW)
         self.assertFalse(out["ci_running"])
