@@ -157,7 +157,7 @@ jobs:
                   (.id | positive_int) and
                   (.run_attempt | positive_int) and
                   (.name | type == "string" and length > 0) and
-                  (.path | type == "string" and test("^\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml$")) and
+                  (.path | type == "string" and test("^\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml(@main)?$")) and
                   (.head_branch | type == "string" and length > 0) and
                   (.head_sha | type == "string" and test("^[0-9a-f]{40}$")) and
                   (.created_at | utc_time) and
@@ -182,7 +182,9 @@ jobs:
                   if complete_snapshot then
                     [.workflow_runs[] | select(.name == $workflow_name and .head_sha == $sha)] as $matching |
                     if ($matching | length) == 0 or
-                       ($matching | any(.[]; .path != $workflow_path or .head_branch != "main"))
+                       ($matching | any(.[]; 
+                         (.path != $workflow_path and .path != ($workflow_path + "@main"))
+                         or .head_branch != "main"))
                     then false
                     else
                       # Creation and (re)start are separate, both must be terminal.

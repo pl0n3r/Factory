@@ -298,6 +298,34 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         self.assertIn(result.returncode, (0, 1), result.stderr)
         return result.returncode == 0 and result.stdout.strip() == "true"
 
+
+    def test_latest_accepts_documented_github_rest_workflow_path_at_main(self):
+        """REST may report path='.../factory-ci.yml@main', not just a bare path."""
+        for name in ("CI factory", "Sonar CI-based",
+                     "Evidencia CodeQL", "Unattended Watchdog"):
+            path = self._workflow_path(name)
+            for ref in ("", "@main"):
+                with self.subTest(name=name, ref=ref or "bare"):
+                    self.assertTrue(self._check_latest([
+                        self._exact_run(100, name=name, path=path + ref)
+                    ], workflow=name))
+            for ref in ("@dev", "@refs/heads/main", "@MAIN",
+                        "@main/evil", "@main@main"):
+                with self.subTest(name=name, unsafe_ref=ref):
+                    self.assertFalse(self._check_latest([
+                        self._exact_run(100, name=name, path=path + ref)
+                    ], workflow=name))
+            with self.subTest(name=name, case="other_workflow"):
+                self.assertFalse(self._check_latest([
+                    self._exact_run(100, name=name,
+                                    path=".github/workflows/foreign.yml@main")
+                ], workflow=name))
+            with self.subTest(name=name, case="other_branch"):
+                self.assertFalse(self._check_latest([
+                    self._exact_run(100, name=name, path=path + "@main",
+                                    head_branch="feature")
+                ], workflow=name))
+
     def test_latest_rejects_stale_success_if_newer_run_failed(self):
         old = self._exact_run(100)
         later = "2026-10-11T09:05:00Z"
