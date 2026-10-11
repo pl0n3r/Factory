@@ -74,7 +74,7 @@ class T(unittest.TestCase):
   return textwrap.dedent(segment.split("        run: |\n",1)[1])
 
  def _execute_step(self, kind, *, main=None, mutate="", tag_exists=False, approved=None,
-                   remote_ref=None,remote_target=None,release_status="404",
+                   remote_ref=None,remote_target=None,remote_name=None,release_status="404",
                    tag_object=None,view_url=None):
   sha="a"*40
   drift="b"*40
@@ -107,7 +107,7 @@ class T(unittest.TestCase):
         */git/tags/*)
           value="$(cat "$FAKE_REMOTE_TARGET_FILE")"
           [ "$value" != API_ERROR ] || exit 33
-          printf '%s\n' "$value"
+          printf '%s\tcommit\t%s\n' "$FAKE_REMOTE_NAME" "$value"
           exit 0 ;;
         */git/tags*)
           if [ "$FAKE_MUTATE" = tag ]; then
@@ -170,6 +170,7 @@ class T(unittest.TestCase):
      FAKE_VIEW_URL=("https://github.com/pl0n3r/Factory/releases/tag/v1.0.29"
                     if view_url is None else view_url),
      FAKE_REMOTE_REF="c"*40 if remote_ref is None else remote_ref,
+     FAKE_REMOTE_NAME="v1.0.29" if remote_name is None else remote_name,
      FAKE_REMOTE_TARGET_FILE=str(remote_tag_file),
      FAKE_RELEASE_STATUS=release_status,
      FAKE_TAG_EXISTS="1" if tag_exists else "0",GITHUB_OUTPUT=str(output))
@@ -236,6 +237,8 @@ class T(unittest.TestCase):
     ("remote ref API",{"remote_ref":"API_ERROR"}),
     ("invalid tag object",{"remote_ref":"not-a-sha"}),
     ("wrong commit",{"remote_target":"b"*40}),
+    ("wrong annotation name",{"remote_name":"v1.0.28"}),
+    ("missing annotation name",{"remote_name":""}),
     ("missing object",{"remote_target":""}),
     ("object API",{"remote_target":"API_ERROR"}),
   ):
