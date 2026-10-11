@@ -15,12 +15,34 @@ def evidence():
         "head_sha": HEAD, "observed_head_sha": HEAD,
         "base_sha": BASE, "main_sha": BASE,
         "draft": False, "mergeable": True, "behind_by": 0,
-        "required_checks": [{"name": "Validar", "conclusion": "success", "head_sha": HEAD}],
+        "required_checks": [
+            {"name": name, "conclusion": "success", "head_sha": HEAD}
+            for name in ("CI factory", "Sonar CI-based", "Evidencia CodeQL",
+                         "CodeRabbit", "Criterios de aceptación",
+                         "Validar coordinación", "Seguridad")
+        ],
         "gates": {name: {"conclusion": "success", "head_sha": HEAD}
                   for name in ("acceptance", "coordination", "security")},
         "reviews": [{"author": "qa-reviewer", "state": "APPROVED", "trusted": True,
                      "head_sha": HEAD}],
         "author": "implementation-owner", "blocking_threads": 0,
+        "owner_waiver": None,
+        "reservation": {
+            "version": 3, "active": True,
+            "source": "verified_github_issue_comment",
+            "reservation_id": "e94142c2-af88-4a43-b5db-ee9d28abe611",
+            "owner": "pl0n3r", "issue_number": 1162,
+            "branch": "trabajo/issue-1162",
+            "task_paths": ["scripts/feature.py", "tests/test_feature.py"],
+            "head_sha": HEAD,
+            "verified_at": "2026-10-11T07:51:00Z",
+            "expires_at": "2026-10-11T07:55:00Z",
+        },
+        "review_bot": {
+            "provider": "coderabbitai[bot]", "result": "success",
+            "head_sha": HEAD, "final_review": "complete",
+            "blocking_findings": 0, "trusted": True,
+        },
         "paths": ["scripts/feature.py", "tests/test_feature.py"],
         "freeze_active": False, "human_gate_required": False,
         "inventory_complete": True, "api_remaining": 55, "api_minimum": 20,
@@ -152,6 +174,159 @@ class AutoMergeConstruccionTests(unittest.TestCase):
         secret = evidence()
         secret["phase"] = "SECRET=do-not-expose"
         self.assertNotIn("do-not-expose", repr(evaluate(secret).public()))
+
+    @staticmethod
+    def _owner_waiver():
+        return {
+            "source": "github_issue_comment", "repo": "pl0n3r/Factory",
+            "issue": 1139, "comment_id": 6107503429, "author": "pl0n3r",
+            "scope": "construccion", "head_sha": HEAD, "mvp_declared": False,
+            "verification": "authenticated_github_rest",
+            "verified_at": "2026-10-11T07:51:00Z",
+            "expires_at": "2026-10-11T07:55:00Z",
+        }
+
+    def _waived(self):
+        candidate = evidence()
+        candidate["reviews"] = []
+        candidate["owner_waiver"] = self._owner_waiver()
+        return candidate
+
+    def test_owner_build_waiver_is_explicit_and_not_a_self_approval(self):
+        candidate = self._waived()
+        outcome = evaluate(candidate)
+        self.assertEqual(outcome.public(),
+                         {"eligible": True, "reason": "eligible_diagnostic_only"})
+        missing = copy.deepcopy(candidate)
+        missing["owner_waiver"] = None
+        self.assertEqual(evaluate(missing).reason, "independent_approval_missing")
+        for key, bad in (
+            ("repo", "attacker/Factory"), ("issue", 1138),
+            ("comment_id", 6107503430), ("author", "qa-impostor"),
+            ("scope", "live"), ("head_sha", BASE),
+            ("verification", "self_attested"), ("mvp_declared", True),
+            ("verified_at", "2026-10-11T07:56:00Z"),
+            ("expires_at", "2026-10-11T07:51:00Z"),
+        ):
+            with self.subTest(key=key):
+                corrupted = copy.deepcopy(candidate)
+                corrupted["owner_waiver"][key] = bad
+                self.assertFalse(evaluate(corrupted).eligible)
+        selfreview = copy.deepcopy(candidate)
+        selfreview["owner_waiver"] = None
+        selfreview["reviews"] = [
+            {"author": selfreview["author"], "state": "APPROVED",
+             "trusted": True, "head_sha": HEAD}
+        ]
+        self.assertFalse(evaluate(selfreview).eligible)
+
+    def test_waiver_requires_terminal_exact_head_quality_gates(self):
+        original = self._waived()
+        required = {c["name"] for c in original["required_checks"]}
+        self.assertEqual(required, {"CI factory", "Sonar CI-based",
+                                    "Evidencia CodeQL", "CodeRabbit",
+                                    "Criterios de aceptación",
+                                    "Validar coordinación", "Seguridad"})
+        for name in required:
+            for failure in ("skipped", "pending", "failure", "neutral"):
+                with self.subTest(name=name, conclusion=failure):
+                    candidate = copy.deepcopy(original)
+                    for check in candidate["required_checks"]:
+                        if check["name"] == name:
+                            check["conclusion"] = failure
+                    self.assertFalse(evaluate(candidate).eligible)
+            with self.subTest(name=name, case="missing"):
+                candidate = copy.deepcopy(original)
+                candidate["required_checks"] = [
+                    check for check in candidate["required_checks"]
+                    if check["name"] != name
+                ]
+                self.assertFalse(evaluate(candidate).eligible)
+            with self.subTest(name=name, case="wrong_head"):
+                candidate = copy.deepcopy(original)
+                for check in candidate["required_checks"]:
+                    if check["name"] == name:
+                        check["head_sha"] = BASE
+                self.assertFalse(evaluate(candidate).eligible)
+        for key, bad in (
+            ("final_review", "rate_limited"), ("result", "skipped"),
+            ("head_sha", BASE), ("trusted", False),
+            ("blocking_findings", 1),
+        ):
+            with self.subTest(review_bot=key):
+                candidate = copy.deepcopy(original)
+                candidate["review_bot"][key] = bad
+                self.assertFalse(evaluate(candidate).eligible)
+        for gate_name in ("acceptance", "coordination", "security"):
+            with self.subTest(gate=gate_name):
+                candidate = copy.deepcopy(original)
+                candidate["gates"][gate_name]["conclusion"] = "pending"
+                self.assertFalse(evaluate(candidate).eligible)
+        for key, bad in (
+            ("active", False), ("version", 2),
+            ("source", "self_attested"), ("reservation_id", "not-uuid"),
+            ("head_sha", BASE), ("issue_number", 1000),
+            ("branch", "trabajo/issue-8888"),
+            ("task_paths", ["tests/other.py"]),
+            ("expires_at", "2026-10-11T07:49:00Z"),
+        ):
+            with self.subTest(reservation=key):
+                candidate = copy.deepcopy(original)
+                candidate["reservation"][key] = bad
+                self.assertFalse(evaluate(candidate).eligible)
+
+    def test_waiver_fails_closed_for_live_sensitive_paused_and_review_blocks(self):
+        candidate = self._waived()
+        for key, bad in (
+            ("phase", "live"), ("phase", "UNKNOWN"),
+            ("kill_switch", "PAUSED"), ("freeze_active", True),
+            ("human_gate_required", True), ("blocking_threads", 1),
+            ("base_sha", HEAD), ("observed_head_sha", BASE),
+        ):
+            with self.subTest(key=key):
+                mutant = copy.deepcopy(candidate)
+                mutant[key] = bad
+                self.assertFalse(evaluate(mutant).eligible)
+        for path in ("scripts/automerge_construccion.py",
+                     ".github/workflows/release.yml",
+                     "template/AGENTES.md", "docs/principios-construccion.md"):
+            with self.subTest(path=path):
+                mutant = copy.deepcopy(candidate)
+                mutant["paths"] = [path]
+                mutant["reservation"]["task_paths"] = [path]
+                self.assertFalse(evaluate(mutant).eligible)
+        for state in ("CHANGES_REQUESTED", "DISMISSED"):
+            with self.subTest(review=state):
+                mutant = copy.deepcopy(candidate)
+                mutant["reviews"] = [
+                    {"author": "security", "state": state,
+                     "trusted": True, "head_sha": HEAD}
+                ]
+                self.assertFalse(evaluate(mutant).eligible)
+        duplicate = copy.deepcopy(candidate)
+        duplicate["reviews"] = [
+            {"author": "security", "state": "COMMENTED",
+             "trusted": True, "head_sha": HEAD},
+            {"author": "SECURITY", "state": "COMMENTED",
+             "trusted": True, "head_sha": HEAD},
+        ]
+        self.assertFalse(evaluate(duplicate).eligible)
+
+    def test_waiver_is_pure_sanitized_and_never_enables_merge(self):
+        candidate = self._waived()
+        snapshot = copy.deepcopy(candidate)
+        with patch("socket.create_connection", side_effect=AssertionError("network")):
+            decision = evaluate(candidate)
+        self.assertEqual(candidate, snapshot)
+        self.assertEqual(decision.public(),
+                         {"eligible": True, "reason": "eligible_diagnostic_only"})
+        self.assertEqual(set(decision.public()), {"eligible", "reason"})
+        for secret in ("token-super-secret", "password", "raw_issue_json"):
+            changed = copy.deepcopy(candidate)
+            changed[secret] = "SENSITIVE"
+            output = repr(evaluate(changed).public())
+            self.assertNotIn("SENSITIVE", output)
+            self.assertFalse(evaluate(changed).eligible)
 
 
 if __name__ == "__main__":
