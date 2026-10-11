@@ -113,6 +113,14 @@ class SecurityCommentRoutingTests(unittest.TestCase):
         for option in "ABCD":
             with self.subTest(option=option):
                 self.assertTrue(_would_run(_fixture("/decidir " + option)))
+        # La envoltura del Issue puede superar 64 KiB sin alterar el comando.
+        long_event = _fixture("/decidir A")
+        long_event["github"]["event"]["issue"]["body"] = "x" * 80000
+        self.assertTrue(_would_run(long_event))
+        # Los eventos anormalmente grandes fallan cerrados.
+        huge_event = _fixture("/decidir A")
+        huge_event["github"]["event"]["issue"]["body"] = "x" * 1_100_000
+        self.assertFalse(_classify_exact(huge_event))
         # El preselector de GitHub Actions es case-insensitive, el script NO.
         for variant in ("/DECIDIR A", "/decidir a", "/Decidir B"):
             with self.subTest(variant=variant):

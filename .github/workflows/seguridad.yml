@@ -103,7 +103,7 @@ jobs:
 
           try:
               event_path = Path(os.environ["GITHUB_EVENT_PATH"])
-              if event_path.stat().st_size > 65536:
+              if event_path.stat().st_size > 1_048_576:
                   raise ValueError("event_too_large")
               event = json.loads(event_path.read_text(encoding="utf-8"))
               body = event["comment"]["body"]
