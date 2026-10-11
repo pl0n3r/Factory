@@ -114,6 +114,23 @@ class ReleaseApiBudgetTests(unittest.TestCase):
         primary = classify_transport_failure(403, remaining=0, reset_after_seconds=25)
         self.assertEqual(primary.kind, "limite_primario")
         self.assertEqual(primary.suggested_retry_seconds, 25)
+        # If both GitHub wait hints exist, the longest delay wins.
+        mixed = (
+            (403, {"remaining": 0, "retry_after_seconds": 120, "reset_after_seconds": 5}, "limite_primario", None),
+            (403, {"remaining": 0, "retry_after_seconds": 5, "reset_after_seconds": 25}, "limite_primario", 25),
+            (429, {"retry_after_seconds": 5, "reset_after_seconds": 120}, "limite_secundario", None),
+            (429, {"retry_after_seconds": 5, "reset_after_seconds": 25}, "limite_secundario", 25),
+            (403, {"remaining": 3, "retry_after_seconds": 5, "reset_after_seconds": 25}, "limite_secundario", 25),
+            (403, {"remaining": 0, "retry_after_seconds": 5}, "limite_primario", None),
+            (429, {"reset_after_seconds": 5}, "limite_secundario", None),
+        )
+        for status, options, expected_kind, expected_delay in mixed:
+            with self.subTest(status=status, options=options):
+                outcome = classify_transport_failure(status, **options)
+                self.assertEqual(outcome.kind, expected_kind)
+                self.assertEqual(outcome.suggested_retry_seconds, expected_delay)
+                self.assertTrue(outcome.must_fail_closed)
+                self.assertFalse(outcome.execution_authorized)
         failures = (
             classify_transport_failure(403),
             classify_transport_failure(403, remaining=25),
