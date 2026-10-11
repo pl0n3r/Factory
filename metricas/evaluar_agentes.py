@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import sys
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -608,6 +611,64 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
+    """Publica JSON y Markdown por etapas; revierte fallos y marca crash parcial.
+
+    Dos renames no son una transacción para lectores concurrentes. La marca
+    de fallo impide que el CLI vuelva a publicar sobre evidencia dudosa.
+    """
+    payloads = {
+        "recomendaciones.json": json.dumps(
+            report, ensure_ascii=False, indent=2, sort_keys=True,
+        ) + "\n",
+        "dashboard.md": render_markdown(report) + "\n",
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    marker = output_dir / ".metricas-generation-incomplete"
+    if marker.exists():
+        raise OSError("Existe una generación anterior incompleta.")
+    stage = Path(tempfile.mkdtemp(prefix=".metricas-txn-", dir=output_dir))
+    marked = False
+    try:
+        originals: set[str] = set()
+        for name, contents in payloads.items():
+            (stage / f"{name}.next").write_text(contents, encoding="utf-8")
+            target = output_dir / name
+            if target.exists():
+                (stage / f"{name}.bak").write_bytes(target.read_bytes())
+                originals.add(name)
+        # Persistir la señal de invalidez ANTES del primer rename.
+        marker.write_text("generacion-incompleta\n", encoding="utf-8")
+        marked = True
+        installed: list[str] = []
+        try:
+            for name in payloads:
+                os.replace(stage / f"{name}.next", output_dir / name)
+                installed.append(name)
+        except OSError:
+            restored = True
+            for name in reversed(installed):
+                try:
+                    if name in originals:
+                        os.replace(stage / f"{name}.bak", output_dir / name)
+                    else:
+                        (output_dir / name).unlink(missing_ok=True)
+                except OSError:
+                    restored = False
+            if restored:
+                marker.unlink()
+                marked = False
+            # Ante rollback fallido, conservar backups y marca para recuperación.
+            raise
+        shutil.rmtree(stage)
+        stage = None
+        marker.unlink()
+        marked = False
+    finally:
+        if stage is not None and not marked:
+            shutil.rmtree(stage)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--min-samples", type=int, default=3)
@@ -633,21 +694,7 @@ def main() -> int:
         return 2
 
     try:
-        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        (DEFAULT_OUTPUT_DIR / "recomendaciones.json").write_text(
-            json.dumps(
-                report,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        (DEFAULT_OUTPUT_DIR / "dashboard.md").write_text(
-            render_markdown(report) + "\n",
-            encoding="utf-8",
-        )
+        _write_artifact_pair(report, DEFAULT_OUTPUT_DIR)
     except OSError:
         print(
             "ERROR: no se pudo escribir la evidencia de métricas.",
