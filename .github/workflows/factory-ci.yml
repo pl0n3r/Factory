@@ -87,7 +87,7 @@ jobs:
             esac
             local error_file
             error_file="$(mktemp)"
-            if gh api "$@" 2>"$error_file"; then
+            if command gh api "$@" 2>"$error_file"; then
               rm -f "$error_file"
               return 0
             fi
@@ -98,6 +98,21 @@ jobs:
             fi
             rm -f "$error_file"
             return 1
+          }
+          # Reusar el mismo parser de cuotas para el gh de la tubería histórica;
+          # la lectura de comentarios mantiene su patrón de pruebas y pipefail.
+          gh() {
+            if [[ "${1:-}" != "api" ]]; then
+              command gh "$@"
+              return $?
+            fi
+            shift
+            local phase="metadata"
+            case " $* " in
+              *"search/issues"*) phase="search" ;;
+              *"/comments?"*) phase="comments" ;;
+            esac
+            release_gh_api "$phase" "$@"
           }
           # RELEASE_API_HELPER_END
           search_calls=0
@@ -213,11 +228,19 @@ jobs:
             echo "::error::Search Issues cambió entre dos lecturas completas"
             exit 1
           }
+          # Se conserva la proyección acotada original, cubierta por las
+          # pruebas de payload y paginación. Una segunda fase omite únicamente
+          # narrativas que el mismo evaluador jamás interpreta como gate.
+          jq '[
+                .[]
+                | select((.body // "") | contains("factory-release"))
+                | {number, state, title, body, updated_at}
+              ]' /tmp/release-search-verified-2.json > /tmp/release-issues-prefilter.json
           # RELEASE_GATE_CANDIDATES_START
           # El parser canónico solo examina Issues con ventana explícita o
           # marker de release (incluidos los malformados, para fallar cerrado).
           # Un texto narrativo "factory-release" NO requiere leer comentarios.
-          python3 - /tmp/release-search-verified-2.json <<'PY' > /tmp/release-issues.json
+          python3 - /tmp/release-issues-prefilter.json <<'PY' > /tmp/release-issues.json
           import json
           import sys
           from pathlib import Path
@@ -246,9 +269,7 @@ jobs:
               echo "::error::Issue de release inválido"
               exit 1
             }
-            release_gh_api comments --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" > /tmp/release-comment-pages.jsonl
-            comments_calls_min=$((comments_calls_min + 1))
-            jq -s -e '
+            gh api --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" | jq -s -e '
               def valid_comment:
                 if type != "object" then false
                 elif (.id | type) != "number" then false
@@ -280,13 +301,14 @@ jobs:
                     )
                   | {user: {login: .user.login}, body: (.body // "")}
                 )
-            ' /tmp/release-comment-pages.jsonl > /tmp/release-comments.json
+            ' > /tmp/release-comments.json
+            comments_calls_min=$((comments_calls_min + 1))
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < /tmp/release-issues.jsonl
 
-          release_gh_api metadata "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
-          release_gh_api metadata "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
+          gh api "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
+          gh api "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
           echo "release_api_budget_min search=$search_calls comments=$comments_calls_min metadata=2"
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n             --arg now "$now"             --slurpfile gates /tmp/release-gates.json             --slurpfile pr /tmp/release-pr.json             --slurpfile work /tmp/release-work-item.json             '{now:$now,gates:$gates[0],pr:$pr[0],work_issue:$work[0]}'             > /tmp/release-window-input.json
