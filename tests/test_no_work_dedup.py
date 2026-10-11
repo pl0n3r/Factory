@@ -307,6 +307,50 @@ class NoWorkDedupTests(unittest.TestCase):
         self.assertEqual(stable, inventory_fingerprint(valid))
         self.assertEqual(decide_no_work(valid, None, 100).action, "create")
 
+    def test_nonfinite_and_undecodable_inventory_evidence_fails_closed(self):
+        from math import inf, nan
+
+        baseline = inventory_fingerprint(inventory())
+        for malicious in (nan, inf, -inf):
+            for section in ("reservation", "blocker"):
+                with self.subTest(value=repr(malicious), section=section):
+                    case = inventory()
+                    if section == "reservation":
+                        case["repositories"]["ControlBot"]["reservations"][0][
+                            "material_score"
+                        ] = malicious
+                    else:
+                        case["repositories"]["Factory"]["blockers"][0][
+                            "material_score"
+                        ] = malicious
+                    with self.assertRaisesRegex(
+                        NoWorkInventoryError, "inventory_nonfinite_number"
+                    ):
+                        inventory_fingerprint(case)
+                    with self.assertRaises(NoWorkInventoryError):
+                        decide_no_work(case, None, 100)
+
+        lone_surrogate = chr(0xD800)
+        for place in ("material_value", "material_key", "nested_value"):
+            case = inventory()
+            marker = case["repositories"]["Factory"]["blockers"][0]
+            if place == "material_key":
+                marker[lone_surrogate] = "synthetic"
+            elif place == "nested_value":
+                marker["details"] = ["normal", {"text": lone_surrogate}]
+            else:
+                marker["details"] = lone_surrogate
+            with self.subTest(place=place):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "inventory_unicode_invalid"
+                ):
+                    inventory_fingerprint(case)
+
+        good = inventory()
+        good["repositories"]["Factory"]["blockers"][0]["material_score"] = 0.5
+        good["repositories"]["Factory"]["blockers"][0]["description"] = "éxito"
+        self.assertNotEqual(inventory_fingerprint(good), baseline)
+
     def test_nested_observation_timestamps_do_not_change_fingerprint(self):
         """Cambiar la hora de captura no convierte una lease igual en trabajo nuevo."""
         baseline = inventory_fingerprint(inventory())

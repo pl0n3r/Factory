@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
+import math
 from typing import Literal
 
 CANONICAL_SINK = "pl0n3r/Factory#904"
@@ -72,7 +73,17 @@ class NoWorkApplicationDecision:
 
 
 def _stable(value: object) -> object:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or type(value) in (int, bool):
+        return value
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise NoWorkInventoryError("inventory_unicode_invalid") from None
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise NoWorkInventoryError("inventory_nonfinite_number")
         return value
     if isinstance(value, list):
         normalized = [_stable(item) for item in value]
@@ -87,7 +98,7 @@ def _stable(value: object) -> object:
         )
     if isinstance(value, dict):
         return {
-            str(key): _stable(item)
+            _stable(str(key)): _stable(item)
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         }
     raise NoWorkInventoryError("inventory_value_invalid")
