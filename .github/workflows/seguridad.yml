@@ -69,8 +69,8 @@ jobs:
               -f description='Decisión reservada explícitamente al dueño.'
           fi
 
-  materializar-respuesta:
-    name: Materializar decisión explícita
+  clasificar_comando:
+    name: Clasificar comando OWNER exacto
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request == null &&
@@ -84,6 +84,42 @@ jobs:
         github.event.comment.body == '/decidir C' ||
         github.event.comment.body == '/decidir D'
       )
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      exact: ${{ steps.exact.outputs.exact }}
+    steps:
+      - name: Comparar el comando exacto desde el evento
+        id: exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          try:
+              event_path = Path(os.environ["GITHUB_EVENT_PATH"])
+              if event_path.stat().st_size > 65536:
+                  raise ValueError("event_too_large")
+              event = json.loads(event_path.read_text(encoding="utf-8"))
+              body = event["comment"]["body"]
+          except (OSError, UnicodeError, ValueError, TypeError, KeyError):
+              body = None
+          exact = type(body) is str and body in {
+              "/decidir A", "/decidir B", "/decidir C", "/decidir D",
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write("exact=true\n" if exact else "exact=false\n")
+          PY
+
+  materializar-respuesta:
+    name: Materializar decisión explícita
+    needs: clasificar_comando
+    if: needs.clasificar_comando.outputs.exact == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

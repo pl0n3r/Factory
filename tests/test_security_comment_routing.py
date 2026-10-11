@@ -7,7 +7,11 @@ job en el YAML versionado. No usa GitHub, tokens ni workflow_dispatch.
 from __future__ import annotations
 
 import ast
+import json
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -21,9 +25,29 @@ def _job(name: str, following: str) -> str:
 
 
 def _selector() -> str:
-    job = _job("materializar-respuesta", "sincronizar-decision")
+    job = _job("clasificar_comando", "materializar-respuesta")
     condition = job.split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
     return " ".join(line.strip() for line in condition.strip().splitlines())
+
+
+def _classify_exact(payload: dict) -> bool:
+    """Ejecuta Bash y Python reales del workflow con un evento sintético."""
+    job = _job("clasificar_comando", "materializar-respuesta")
+    script = job.split("        run: |\n", 1)[1]
+    shell = "\n".join(line[10:] if line.strip() else "" for line in script.splitlines())
+    with tempfile.TemporaryDirectory() as temporary:
+        event = Path(temporary) / "event.json"
+        output = Path(temporary) / "output.txt"
+        event.write_text(json.dumps(payload["github"]["event"]), encoding="utf-8")
+        env = dict(os.environ)
+        env.update({"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output)})
+        result = subprocess.run(
+            ["bash", "-c", shell], env=env, capture_output=True, text=True,
+            check=False, timeout=8,
+        )
+        if result.returncode != 0:
+            raise AssertionError("Falló el clasificador sin revelar texto privado")
+        return output.read_text(encoding="utf-8") == "exact=true\n"
 
 
 def _fixture(body: str = "/decidir A") -> dict:
@@ -66,8 +90,9 @@ def _would_run(payload: dict) -> bool:
     )
     if any(type(item) not in permitted for item in ast.walk(tree)):
         raise AssertionError("Condición no soportada por el evaluador seguro")
-    return bool(eval(compile(tree, "<security-workflow-condition>", "eval"),
-                     {"__builtins__": {}}, {}))
+    eligible = bool(eval(compile(tree, "<security-workflow-condition>", "eval"),
+                         {"__builtins__": {}}, {}))
+    return eligible and _classify_exact(payload)
 
 
 class SecurityCommentRoutingTests(unittest.TestCase):
@@ -78,7 +103,8 @@ class SecurityCommentRoutingTests(unittest.TestCase):
             "Nota: el comando /decidir B es un ejemplo.",
             "texto\n/decidir A", "/decidir A\nOtro texto",
             "/decidir A ", " /decidir C", "/decidir E",
-            "/decidir A y B", "/DECIDIR A", "<script>/decidir A</script>",
+            "/decidir A y B", "/DECIDIR A", "/decidir a", "/Decidir B",
+            "<script>/decidir A</script>",
         ):
             with self.subTest(body=body):
                 self.assertFalse(_would_run(_fixture(body)))
@@ -87,6 +113,10 @@ class SecurityCommentRoutingTests(unittest.TestCase):
         for option in "ABCD":
             with self.subTest(option=option):
                 self.assertTrue(_would_run(_fixture("/decidir " + option)))
+        # El preselector de GitHub Actions es case-insensitive, el script NO.
+        for variant in ("/DECIDIR A", "/decidir a", "/Decidir B"):
+            with self.subTest(variant=variant):
+                self.assertFalse(_classify_exact(_fixture(variant)))
 
         for change in (
             lambda e: e["github"].update(event_name="issues"),
@@ -115,7 +145,8 @@ class SecurityCommentRoutingTests(unittest.TestCase):
 
         jobs = WORKFLOW.split("\njobs:\n", 1)[1]
         for name in (
-            "validar-candidato", "preparar-cola", "materializar-respuesta",
+            "validar-candidato", "preparar-cola", "clasificar_comando",
+            "materializar-respuesta",
             "sincronizar-decision",
         ):
             self.assertIn(f"  {name}:", jobs)
@@ -131,8 +162,14 @@ class SecurityCommentRoutingTests(unittest.TestCase):
         self.assertIn("AUTHOR_ASSOCIATION:", materialize)
         self.assertIn("DEFAULT_BRANCH:", materialize)
         self.assertEqual(len(re.findall(r"\bgithub\.event\.comment\.body == ", _selector())), 4)
-        for option in "ABCD":
-            self.assertIn(f"github.event.comment.body == '/decidir {option}'", _selector())
+        classifier = _job("clasificar_comando", "materializar-respuesta")
+        self.assertIn("    permissions:\n      contents: read", classifier)
+        self.assertNotIn("issues: write", classifier)
+        self.assertNotIn("actions/checkout", classifier)
+        self.assertIn('Path(os.environ["GITHUB_EVENT_PATH"])', classifier)
+        self.assertIn("exact = type(body) is str and body in {", classifier)
+        self.assertIn("    needs: clasificar_comando", materialize)
+        self.assertIn("    if: needs.clasificar_comando.outputs.exact == 'true'", materialize)
         self.assertNotIn("contains(", _selector())
         self.assertNotIn("startsWith(", _selector())
 
