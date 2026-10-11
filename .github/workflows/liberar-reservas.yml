@@ -53,6 +53,9 @@ jobs:
             .resources.core as $core
             | ($core.limit | type) == "number"
               and ($core.remaining | type) == "number"
+              and ($core.limit | floor) == $core.limit
+              and ($core.remaining | floor) == $core.remaining
+              and ($core.limit <= 1000000000)
               and ($core.limit > 0)
               and ($core.remaining >= 0)
               and ($core.remaining <= $core.limit)
@@ -65,7 +68,8 @@ jobs:
           if (( remaining * 5 < limit )); then
             echo "Auditoría aplazada: API por debajo del 20 %. Ninguna reserva se toca."
             echo "allow=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Pruebas no ejecutadas por cuota baja; auditoría no acreditada."
+            exit 1
           fi
           echo "allow=true" >> "$GITHUB_OUTPUT"
 

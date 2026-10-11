@@ -74,6 +74,10 @@ def decide(e: Evidence) -> Decision:
     )
     if not all(type(value) is bool for value in booleans):
         return Decision("unknown", "invalid_evidence_types")
+    # Dataclass annotations are not enforced at runtime: reject custom
+    # comparison objects before evaluating phase/status or any release gate.
+    if type(e.phase) is not str or type(e.status) is not str:
+        return Decision("unknown", "invalid_evidence_types")
     if (type(e.rate_limit) is not int or type(e.rate_remaining) is not int
             or e.rate_limit <= 0 or e.rate_remaining < 0
             or e.rate_remaining > e.rate_limit):

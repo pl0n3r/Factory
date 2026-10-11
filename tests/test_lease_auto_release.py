@@ -148,6 +148,93 @@ class LeaseAutoReleaseTests(unittest.TestCase):
         self.assertNotEqual(decide(replace(e, phase="UNKNOWN")).action, "release")
         self.assertNotEqual(decide(replace(e, trusted_phase=False)).action, "release")
 
+    def test_phase_and_status_must_be_actual_strings(self):
+        """Hostile comparison operators cannot certify release eligibility."""
+        class AlwaysEqual:
+            def __ne__(self, other):
+                return False
+
+            def __eq__(self, other):
+                return True
+
+        class Explosive:
+            def __ne__(self, other):
+                raise RuntimeError("untrusted comparison")
+
+            def __eq__(self, other):
+                raise RuntimeError("untrusted comparison")
+
+        eligible = fixture(50, status=RECOVERY, recovery_minute=30)
+        self.assertEqual(decide(eligible).action, "release")
+        for name in ("phase", "status"):
+            for forged in (None, True, 1, 1.0, [], AlwaysEqual(), Explosive()):
+                with self.subTest(field=name, forged=type(forged).__name__):
+                    candidate = replace(eligible, **{name: forged})
+                    result = decide(candidate)
+                    self.assertEqual(result.action, "unknown")
+                    self.assertEqual(result.reason, "invalid_evidence_types")
+
+    def test_quota_preflight_runs_real_bash_without_false_green(self):
+        """Exercise the actual workflow preflight with a fake GH API response."""
+        import json
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        import textwrap
+
+        if shutil.which("jq") is None:
+            self.skipTest("jq needed for the real GitHub Actions preflight")
+        source = (
+            Path(__file__).resolve().parents[1] /
+            ".github/workflows/liberar-reservas.yml"
+        ).read_text(encoding="utf-8")
+        name = "      - name: Preflight autenticado de cuota API (no publica datos privados)\n"
+        self.assertEqual(source.count(name), 1)
+        section = source.split(name, 1)[1]
+        script = textwrap.dedent(
+            section.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
+        )
+        for remaining, limit, should_allow in (
+            (20, 100, True), (19, 100, False),
+            (19.5, 100, False), (20, 100.5, False),
+            (True, 100, False), (20, 0, False),
+            (1000000001, 1000000001, False),
+        ):
+            with self.subTest(remaining=remaining, limit=limit):
+                with tempfile.TemporaryDirectory() as folder:
+                    helper = Path(folder) / "gh"
+                    helper.write_text(
+                        "#!/bin/sh\nprintf '%s\\n' \"$QUOTA_JSON\"\n",
+                        encoding="utf-8",
+                    )
+                    helper.chmod(0o755)
+                    output = Path(folder) / "output.txt"
+                    env = dict(os.environ)
+                    env.update({
+                        "PATH": folder + os.pathsep + env.get("PATH", ""),
+                        "QUOTA_JSON": json.dumps({
+                            "resources": {"core": {
+                                "remaining": remaining, "limit": limit
+                            }}
+                        }),
+                        "RUNNER_TEMP": folder,
+                        "GITHUB_OUTPUT": str(output),
+                        "GH_TOKEN": "unused",
+                        "EXPECTED_REPOSITORY": "pl0n3r/Factory",
+                        "OBSERVED_REPOSITORY": "pl0n3r/Factory",
+                    })
+                    proc = subprocess.run(
+                        ["bash", "-c", script], env=env,
+                        capture_output=True, text=True, timeout=12,
+                    )
+                    self.assertEqual(
+                        proc.returncode == 0, should_allow,
+                        msg=proc.stderr,
+                    )
+                    logged = output.read_text(encoding="utf-8") if output.exists() else ""
+                    self.assertEqual("allow=true" in logged, should_allow)
+
 
 if __name__ == "__main__":
     unittest.main()
