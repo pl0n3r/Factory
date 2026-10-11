@@ -81,7 +81,7 @@ class SaludColaSnapshotTests(unittest.TestCase):
         self.assertEqual(row["open_issues"], 5)
         self.assertEqual(row["counts"],
                          {"available": 1, "reserved": 1, "blocked": 1,
-                          "planned": 1, "in_review": 1})
+                          "planned": 1, "in_review": 1, "recovery_required": 0})
         self.assertEqual(row["blockers"],
                          [{"number": 3, "cause": "unknown", "roadmap": False}])
         variants = [
@@ -99,10 +99,6 @@ class SaludColaSnapshotTests(unittest.TestCase):
                 labels=["status: available", "STATUS: BLOCKED"]),
             lambda x: x["pages"][0]["issues"][0].update(
                 labels=["Estado: disponible"]),
-            lambda x: x["pages"][0]["issues"][0].update(
-                labels=["estado: requiere recuperación"]),
-            lambda x: x["pages"][0]["issues"][0].update(
-                labels=["status: recovery required"]),
             lambda x: x["pages"][0]["issues"][0].update(labels=["estado: disponible"] * 2),
             lambda x: x["pages"][0]["issues"][0].update(pull_request="false"),
         ]
@@ -178,6 +174,72 @@ class SaludColaSnapshotTests(unittest.TestCase):
         ]
         with self.assertRaises(SnapshotError):
             assemble_inventory(raw, 3, {"limit": 5000, "remaining": 3000})
+
+
+    def test_recovery_labels_are_sixth_state_and_not_available(self):
+        raw = reports()
+        raw[0]["pages"][0]["issues"] = [
+            issue(11, "estado: requiere recuperación"),
+            issue(12, "status: recovery required"),
+            issue(13, "status: blocked"),
+        ]
+        raw[1]["pages"][0]["issues"] = [issue(14, "status: available")]
+        inventory = assemble_inventory(raw, 2, {"limit": 5000, "remaining": 5000})
+        first = inventory["repositories"][0]
+        self.assertEqual(first["open_issues"], 3)
+        self.assertEqual(first["counts"]["recovery_required"], 2)
+        self.assertEqual(first["counts"]["available"], 0)
+        self.assertEqual(first["counts"]["blocked"], 1)
+        self.assertEqual(first["blockers"], [
+            {"number": 13, "cause": "unknown", "roadmap": False},
+        ])
+        self.assertEqual(inventory["repositories"][1]["counts"]["available"], 1)
+        self.assertTrue(all("recovery_required" in r["counts"]
+                            for r in inventory["repositories"]))
+
+    def test_recovery_pipeline_contract_is_fail_closed(self):
+        from scripts.salud_cola import diagnose_queue
+
+        raw = reports()
+        raw[0]["pages"][0]["issues"] = [
+            issue(22, "estado: requiere recuperación"),
+            issue(23, "status: planned"),
+            issue(24, "estado: bloqueado"),
+        ]
+        raw[1]["pages"][0]["issues"] = [issue(30, "status: recovery required")]
+        inventory = assemble_inventory(raw, 2, {"limit": 5000, "remaining": 999})
+        report = diagnose_queue(inventory)
+        self.assertEqual(report["recovery_required_total"], 2)
+        self.assertEqual(report["open_total"], 4)
+        self.assertEqual(report["blocked_cause_totals"]["unknown"], 1)
+        self.assertEqual(report["roadmap_candidates"], [])
+        self.assertEqual(report["state"], "budget_deferred")
+        self.assertFalse(report["can_dispatch"])
+        self.assertFalse(report["publication_allowed"])
+        high = assemble_inventory(raw, 2, {"limit": 5000, "remaining": 5000})
+        diagnosed = diagnose_queue(high)
+        self.assertEqual(diagnosed["state"], "queue_empty")
+        self.assertEqual(diagnosed["reason"], "zero_available_recovery_pending")
+        self.assertFalse(diagnosed["can_dispatch"])
+        for labels in (
+            ["estado: requiere recuperación", "status: recovery required"],
+            ["estado: requiere recuperación", "estado: disponible"],
+            ["status: recovery required", "status: blocked"],
+            ["Estado: requiere recuperación"],
+            ["estado: desconocido"],
+            [],
+        ):
+            with self.subTest(labels=labels):
+                broken = copy.deepcopy(raw)
+                broken[0]["pages"][0]["issues"][0]["labels"] = labels
+                with self.assertRaises(SnapshotError):
+                    assemble_inventory(broken, 2, {"limit": 5000, "remaining": 5000})
+        broken = copy.deepcopy(raw)
+        broken[0]["pages"][0]["issues"][0]["blocker"] = {
+            "cause": "dependency", "roadmap": True,
+        }
+        with self.assertRaises(SnapshotError):
+            assemble_inventory(broken, 2, {"limit": 5000, "remaining": 5000})
 
 
 if __name__ == "__main__":
