@@ -2188,6 +2188,14 @@ def reserve_work(
         )
         return None
 
+    # Comprobar el presupuesto antes de la primera lectura de comentarios,
+    # incluida la lease del candidato. Un prefijo no concede autoridad.
+    open_issues = api.open_issues()
+    if len(open_issues) > 64:
+        raise CoordinationError(
+            "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
+        )
+
     branch = branch_for_issue(issue_number)
     current = (
         active_reservation(api, issue_number)
@@ -2243,13 +2251,6 @@ def reserve_work(
             if task_marker is not None
             else None
         )
-        open_issues = api.open_issues()
-        # Presupuesto máximo: con más filas no es seguro afirmar que se
-        # inventariaron todas las reservas. Fallar cerrado antes de escanear.
-        if len(open_issues) > 64:
-            raise CoordinationError(
-                "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
-            )
         active_task_snapshots: dict[int, dict[str, Any]] | None = None
         active_dependency_states: dict[int, dict[int, dict[str, Any]]] | None = None
         active_reservation_numbers: set[int] | None = None
