@@ -276,9 +276,11 @@ def _verify_reported_issues(
 ) -> None:
     """Un reporte anterior es evidencia para vetar, no permiso para crear."""
     marker = f"{REPORT_PREFIX}{epic} -->"
+    # Nunca confiar en el prefijo silencioso de GitHub.paginate().
+    comments = _verified_pages(api, f"/repos/{api.repo}/issues/{epic}/comments")
     reports = [
         comment["body"]
-        for comment in api.issue_comments(epic)
+        for comment in comments
         if isinstance(comment, dict)
         and isinstance(comment.get("body"), str)
         and marker in comment["body"].splitlines()
@@ -288,6 +290,11 @@ def _verify_reported_issues(
     if len(reports) > 1:
         raise PlanError("Reportes de autoridad duplicados para el épico.")
     if not reports:
+        if existing:
+            raise PlanError(
+                "Falta reporte previo para hojas existentes; "
+                "inventario no verificable."
+            )
         return
     body = reports[0]
     if body.splitlines().count(marker) != 1:
