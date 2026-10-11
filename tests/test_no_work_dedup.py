@@ -220,6 +220,93 @@ class NoWorkDedupTests(unittest.TestCase):
             "apply",
         )
 
+    def test_ambiguous_inventory_blocks_no_work_decisions(self):
+        # A real Issue cannot be simultaneously available and reserved/blocked.
+        for kind in ("reservation", "blocker_scalar", "blocker_dict"):
+            case = inventory()
+            repo = case["repositories"]["Factory"]
+            repo["available"] = [1121]
+            if kind == "reservation":
+                repo["reservations"] = [
+                    {"issue": 1121, "reservation_id": "lease-1121", "active": True}
+                ]
+                code = "available_reserved_conflict"
+            else:
+                repo["blockers"] = (
+                    [1121] if kind == "blocker_scalar"
+                    else [{"issue": 1121, "reason": "human"}]
+                )
+                code = "available_blocker_conflict"
+            with self.subTest(kind=kind):
+                with self.assertRaisesRegex(NoWorkInventoryError, code):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        for blocker in (
+            {}, {"reason": "human"}, {"issue": None}, {"issue": False},
+            {"issue": 0}, {"issue": 1121.0}, {"issue": "1121"},
+        ):
+            case = inventory()
+            case["repositories"]["Factory"]["blockers"] = [blocker]
+            with self.subTest(blocker=repr(blocker)):
+                with self.assertRaisesRegex(NoWorkInventoryError, "blocker_invalid"):
+                    inventory_fingerprint(case)
+        for dup in ([1121, 1121], [1121, {"issue": 1121, "reason": "human"}]):
+            case = inventory()
+            case["repositories"]["Factory"]["blockers"] = dup
+            with self.subTest(duplicate=repr(dup)):
+                with self.assertRaisesRegex(NoWorkInventoryError, "blocker_duplicate"):
+                    inventory_fingerprint(case)
+
+        for head in ("a" * 40, "b" * 40):
+            case = inventory()
+            case["repositories"]["Condor"]["pull_requests"].append(
+                {"number": 448, "state": "open", "head_sha": head}
+            )
+            with self.subTest(repeated_head=head):
+                with self.assertRaisesRegex(NoWorkInventoryError, "pull_request_duplicate"):
+                    inventory_fingerprint(case)
+
+        for state in ("UNKNOWN", "", True, False, None, 0, [], {}):
+            case = inventory()
+            case["kill_switch"]["state"] = state
+            with self.subTest(kill_state=repr(state)):
+                with self.assertRaisesRegex(NoWorkInventoryError, "kill_switch_state_invalid"):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        base = inventory()
+        fingerprint = inventory_fingerprint(base)
+        paused = inventory()
+        paused["kill_switch"]["state"] = "PAUSED"
+        self.assertNotEqual(fingerprint, inventory_fingerprint(paused))
+        inactive = inventory()
+        inactive["repositories"]["Factory"]["reservations"] = [
+            {"issue": 1121, "reservation_id": "old", "active": False}
+        ]
+        self.assertEqual(fingerprint, inventory_fingerprint(inactive))
+        # Inactive leases are excluded only after their observation shape is checked.
+        inactive["repositories"]["Factory"]["reservations"][0]["observed_at"] = "bad-date"
+        with self.assertRaisesRegex(NoWorkInventoryError, "observation_timestamp_invalid"):
+            inventory_fingerprint(inactive)
+
+        valid = inventory()
+        valid["repositories"]["Factory"]["available"] = [1121]
+        valid["repositories"]["Factory"]["blockers"] = [860, {"issue": 904, "reason": "qa"}]
+        valid["repositories"]["Factory"]["reservations"] = [
+            {"issue": 1102, "reservation_id": "lease-1102", "active": True}
+        ]
+        valid["repositories"]["Condor"]["pull_requests"].append(
+            {"number": 449, "state": "open", "head_sha": "b" * 40}
+        )
+        stable = inventory_fingerprint(valid)
+        valid["repositories"]["Factory"]["blockers"].reverse()
+        valid["repositories"]["Condor"]["pull_requests"].reverse()
+        self.assertEqual(stable, inventory_fingerprint(valid))
+        self.assertEqual(decide_no_work(valid, None, 100).action, "create")
+
     def test_nested_observation_timestamps_do_not_change_fingerprint(self):
         """Cambiar la hora de captura no convierte una lease igual en trabajo nuevo."""
         baseline = inventory_fingerprint(inventory())

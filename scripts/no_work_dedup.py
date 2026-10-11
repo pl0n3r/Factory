@@ -173,21 +173,38 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         reservation_id = reservation.get("reservation_id")
         if not isinstance(reservation_id, str) or not reservation_id.strip():
             raise NoWorkInventoryError(f"reservation_invalid:{name}:reservation_id")
+        # Invalid incidental metadata cannot hide in an inactive lease.
+        material = _material_entry(reservation, noun=f"reservation:{name}")
         if not reservation["active"]:
             continue
         if issue_id in active_issue_ids or reservation_id in active_reservation_ids:
             raise NoWorkInventoryError(f"reservation_duplicate:{name}")
         active_issue_ids.add(issue_id)
         active_reservation_ids.add(reservation_id)
-        live_reservations.append(_material_entry(reservation, noun=f"reservation:{name}"))
+        live_reservations.append(material)
 
+    if active_issue_ids & set(value["available"]):
+        raise NoWorkInventoryError(f"available_reserved_conflict:{name}")
+
+    blocked_issue_ids = set()
+    blockers = []
     for blocker in value["blockers"]:
-        if not isinstance(blocker, dict) and (
-            type(blocker) is not int or blocker <= 0
-        ):
+        if isinstance(blocker, dict):
+            blocker_id = blocker.get("issue")
+        else:
+            blocker_id = blocker
+        if type(blocker_id) is not int or blocker_id <= 0:
             raise NoWorkInventoryError(f"blocker_invalid:{name}")
+        if blocker_id in blocked_issue_ids:
+            raise NoWorkInventoryError(f"blocker_duplicate:{name}")
+        blocked_issue_ids.add(blocker_id)
+        blockers.append(_material_entry(blocker, noun=f"blocker:{name}"))
+
+    if blocked_issue_ids & set(value["available"]):
+        raise NoWorkInventoryError(f"available_blocker_conflict:{name}")
 
     open_prs = []
+    open_pr_numbers = set()
     for pr in value["pull_requests"]:
         if not isinstance(pr, dict):
             raise NoWorkInventoryError(f"pull_request_invalid:{name}")
@@ -206,6 +223,9 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
             or any(ch not in "0123456789abcdef" for ch in head_sha)
         ):
             raise NoWorkInventoryError(f"pull_request_head_invalid:{name}")
+        if number in open_pr_numbers:
+            raise NoWorkInventoryError(f"pull_request_duplicate:{name}")
+        open_pr_numbers.add(number)
         open_prs.append(
             {
                 "number": number,
@@ -218,10 +238,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         "available": _stable(value["available"]),
         "recovery": _stable(value["recovery"]),
         "reservations": _stable(live_reservations),
-        "blockers": _stable([
-            _material_entry(blocker, noun=f"blocker:{name}")
-            for blocker in value["blockers"]
-        ]),
+        "blockers": _stable(blockers),
         "pull_requests": _stable(open_prs),
     }
 
@@ -235,6 +252,10 @@ def canonical_inventory(snapshot: object) -> dict[str, object]:
     repositories = snapshot.get("repositories")
     if not isinstance(kill_switch, dict) or "state" not in kill_switch:
         raise NoWorkInventoryError("kill_switch_missing")
+    if type(kill_switch["state"]) is not str or kill_switch["state"] not in (
+        "RUNNING", "PAUSED"
+    ):
+        raise NoWorkInventoryError("kill_switch_state_invalid")
     if not isinstance(repositories, dict):
         raise NoWorkInventoryError("repositories_missing")
     if set(repositories) != set(REPOSITORIES):
