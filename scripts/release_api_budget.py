@@ -14,6 +14,7 @@ from typing import Any
 
 PAGE_SIZE = 100
 MAX_SEARCH_ROWS = 200
+MAX_RESET_EVIDENCE_SECONDS = 3600
 DATETIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 
 
@@ -138,7 +139,7 @@ def classify_transport_failure(
     attempts_used: int = 1, max_attempts: int = 2,
 ) -> TransportFailure:
     """Solo consejo diagnóstico: ninguna respuesta convierte una falla en GREEN."""
-    if (type(status) is not int or not 100 <= status <= 599
+    if (type(status) is not int or not 400 <= status <= 599
         or type(max_retry_seconds) is not int or not 0 <= max_retry_seconds <= 60
         or type(attempts_used) is not int or type(max_attempts) is not int
         or not 1 <= attempts_used <= max_attempts <= 3):
@@ -146,7 +147,8 @@ def classify_transport_failure(
     if remaining is not None and (type(remaining) is not int or remaining < 0):
         _fail("transporte_cuota_invalida")
     for delay in (retry_after_seconds, reset_after_seconds):
-        if delay is not None and (type(delay) is not int or delay < 0):
+        if delay is not None and (type(delay) is not int
+                                  or not 0 <= delay <= MAX_RESET_EVIDENCE_SECONDS):
             _fail("transporte_reset_invalido")
     if status == 403 and remaining == 0:
         kind, delay = "limite_primario", reset_after_seconds
@@ -160,7 +162,8 @@ def classify_transport_failure(
         kind, delay = "fallo_red_o_servidor", None
     else:
         kind, delay = "http_error", None
-    suggestion = (delay if delay is not None and delay <= max_retry_seconds
+    suggestion = (delay if kind in ("limite_primario", "limite_secundario")
+                  and delay is not None and delay <= max_retry_seconds
                   and attempts_used < max_attempts else None)
     return TransportFailure(kind=kind, must_fail_closed=True,
                             suggested_retry_seconds=suggestion)

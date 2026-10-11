@@ -70,18 +70,22 @@ class ReleaseApiBudgetTests(unittest.TestCase):
             classify_transport_failure(403, remaining=25),
             classify_transport_failure(429, retry_after_seconds=31),
             classify_transport_failure(429, retry_after_seconds=5, attempts_used=2),
-            classify_transport_failure(401),
-            classify_transport_failure(500),
+            classify_transport_failure(401, retry_after_seconds=5),
+            classify_transport_failure(500, retry_after_seconds=5),
         )
         for failure in (primary, *failures):
             self.assertTrue(failure.must_fail_closed)
             self.assertFalse(failure.execution_authorized)
         self.assertTrue(all(f.suggested_retry_seconds is None for f in failures))
         for option in ({"remaining": False}, {"retry_after_seconds": "15"},
-                       {"reset_after_seconds": -1}, {"max_attempts": True},
-                       {"attempts_used": 4}):
+                       {"reset_after_seconds": -1},
+                       {"reset_after_seconds": 10**9},
+                       {"max_attempts": True}, {"attempts_used": 4}):
             with self.subTest(option=option), self.assertRaises(ReleaseBudgetError):
                 classify_transport_failure(403, **option)
+        # Una respuesta 200 no es un fallo: ni siquiera puede diagnosticarse como tal.
+        with self.assertRaisesRegex(ReleaseBudgetError, "transporte_parametros_invalidos"):
+            classify_transport_failure(200, retry_after_seconds=5)
 
     def test_report_excludes_comment_bodies_and_tokens(self):
         pages = search_pages()
