@@ -80,6 +80,16 @@ class CaptureLessonTests(unittest.TestCase):
         with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
             capture_lessons([first, {**first, "sha": "b" * 40}])
 
+    def test_unicode_surrogates_are_rejected_with_typed_error(self):
+        """JSON can decode lone surrogates; they cannot reach UTF-8 hashing."""
+        for text in ("Fusion \ud800 verificada", "Fusion \udfff verificada",
+                     "Fusion \udc00 verificada"):
+            with self.subTest(text=repr(text)):
+                with self.assertRaisesRegex(CaptureError, "unsafe_summary"):
+                    capture_lessons([event(summary=text)])
+        self.assertEqual(len(capture_lessons([
+            event(summary="Fusion con emoji ✅ verificada")])), 1)
+
     def test_untrusted_source_secrets_and_duplicate_fail_closed(self):
         bad = [event(verified=False), event(issuer="unknown"),
                event(summary="Token=secret-do-not-log"),

@@ -37,6 +37,16 @@ def _validate_run_provenance(event: dict[str, Any]) -> None:
         raise CaptureError("invalid_run_provenance")
 
 
+def _validate_summary(summary: Any) -> None:
+    """Reject malformed Unicode before stable UTF-8 fingerprinting."""
+    if (type(summary) is not str or summary != summary.strip()
+            or not (5 <= len(summary) <= 300)
+            or any(ord(c) < 32 or ord(c) == 127
+                   or 0xD800 <= ord(c) <= 0xDFFF for c in summary)
+            or SENSITIVE.search(summary)):
+        raise CaptureError("unsafe_summary")
+
+
 def _parse(event: Any) -> dict[str, Any]:
     if type(event) is not dict or set(event) not in (KEYS, KEYS | {"run_sha"}):
         raise CaptureError("invalid_event_envelope")
@@ -67,11 +77,7 @@ def _parse(event: Any) -> dict[str, Any]:
     if when.tzinfo != timezone.utc:
         raise CaptureError("invalid_timestamp")
     summary = event["summary"]
-    if (type(summary) is not str or summary != summary.strip()
-            or not (5 <= len(summary) <= 300)
-            or any(ord(c) < 32 or ord(c) == 127 for c in summary)
-            or SENSITIVE.search(summary)):
-        raise CaptureError("unsafe_summary")
+    _validate_summary(summary)
     record = {"event_id": event["event_id"], "repo": event["repo"],
               "issue": event["issue"], "sha": event["sha"],
               "occurred_at": when.isoformat().replace("+00:00", "Z"),
