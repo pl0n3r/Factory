@@ -185,7 +185,8 @@ class T(unittest.TestCase):
   run,log,created,main=self._execute_step("release",mutate="view")
   self.assertNotEqual(run.returncode,0,run.stdout+run.stderr)
   self.assertEqual(main,"b"*40)
-  self.assertIn("release view",log)
+  self.assertIn("releases/tags/",log)
+  self.assertNotIn("release view",log)
   self.assertNotIn("release create",log)
   self.assertFalse(created)
 
