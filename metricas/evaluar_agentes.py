@@ -61,7 +61,7 @@ def _integer(
     value = record.get(field)
     if optional and value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if type(value) is not int or value < 0:
         raise ValidationError(f"{where}: campo {field} debe ser entero >= 0.")
     if value > MAX_METRIC_INTEGER:
         raise ValidationError(
