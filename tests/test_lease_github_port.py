@@ -130,6 +130,62 @@ class LeaseGithubPortTests(unittest.TestCase):
                                     p.startswith("/repos/") for p in api.calls))
                 self.assertNotIn("secret-cannot-be-logged", str(observed))
 
+    def test_report_boundary_never_accepts_stale_or_spoofed_fields(self):
+        from unittest.mock import patch
+        from scripts.lease_activity_collector import collect_activity
+
+        baseline = collect_activity(FakeAPI(), 21, now=NOW)
+        self.assertTrue(baseline["evidence_complete"])
+        # Positive control: authenticated collector payload and bounded time.
+        with patch("scripts.lease_github_port.collect_activity",
+                   return_value=baseline):
+            accepted = LeaseGithubPort(FakeAPI()).inspect(21, now=NOW)
+        self.assertEqual(accepted.state, RECENT)
+        self.assertFalse(accepted.release_authorized)
+
+        bad_fields = (
+            ("repo", "other/repository"),
+            ("status", "estado: disponible"),
+            ("status", True),
+            ("evidence_complete", 1),
+            ("issue_number", True),
+            ("repository_id", 0),
+            ("owner", ""),
+            ("branch", "trabajo/issue-999"),
+            ("lease_id", "not-a-uuid"),
+            ("branch_sha", "b" * 40 + "extra"),
+            ("ci_running", 0),
+            ("rate_limit", 0),
+            ("rate_remaining", 19),
+            ("rate_remaining", True),
+            ("api_requests", 33),
+            ("pagination", []),
+            ("last_activity_at", "2026-10-11T09:29:00Z"),
+            ("last_activity_at", "2026-10-11T10:01:00Z"),
+            ("last_activity_at", "2026-10-11T09:55:00+00:00"),
+            ("last_activity_at", "2026-10-11T09:55:00Z\\Z"),
+            ("last_activity_at", "not-a-clock"),
+        )
+        for field, value in bad_fields:
+            with self.subTest(field=field, value=str(value)[:24]):
+                invalid = dict(baseline)
+                invalid[field] = value
+                transport = FakeAPI()
+                with patch("scripts.lease_github_port.collect_activity",
+                           return_value=invalid):
+                    observed = LeaseGithubPort(transport).inspect(21, now=NOW)
+                self.assertEqual(observed.state, UNKNOWN)
+                self.assertFalse(observed.release_authorized)
+                self.assertEqual(transport.switch_reads, 1)
+
+        # A malformed collector response never inherits release authority.
+        for invalid in (None, [], "verified", {"status": "RECENT_ACTIVITY"}):
+            with self.subTest(payload=str(invalid)[:22]):
+                with patch("scripts.lease_github_port.collect_activity",
+                           return_value=invalid):
+                    result = LeaseGithubPort(FakeAPI()).inspect(21, now=NOW)
+                self.assertEqual(result.state, UNKNOWN)
+
     def test_mutating_port_surface_denied_even_with_fake_evidence(self):
         api = FakeAPI()
         port = LeaseGithubPort(api)

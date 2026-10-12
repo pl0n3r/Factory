@@ -41,7 +41,7 @@ class Inspection:
 _RECENT_STATES = frozenset({
     "estado: reservado", "estado: en revisión", "estado: requiere recuperación",
 })
-_STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\Z")
+_STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
 
 
 def _recent_report_ok(report: Any, issue: int, repo: Any, now: Any) -> bool:
