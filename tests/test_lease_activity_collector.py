@@ -2,7 +2,7 @@
 import copy
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 from scripts.lease_activity_collector import collect_activity
 
@@ -30,12 +30,15 @@ class API:
         self.block = ""
         self.race = False
         self.ref_reads = 0
+        self.issue_reads = 0
+        self.change_assignees_on_recheck = False
         self.remaining = 80
         self.repo_id = 123
         self.issue = {
             "number": 21, "state": "open", "comments": 2,
             "updated_at": "2026-10-11T09:45:00Z",
             "labels": [{"name": "estado: reservado"}],
+            "assignees": [{"login": "pl0n3r"}],
         }
         self.comments = [
             {"id": 1, "user": {"login": "github-actions[bot]", "type": "Bot"},
@@ -61,6 +64,11 @@ class API:
             {"id": 6, "head_sha": SHA, "status": "in_progress"},
         ]
         self.extra_runs = []
+        # An authenticated push-triggered Actions run is a bounded,
+        # positive witness of branch activity, not a complete push audit.
+        self.push_event = "push"
+        self.push_created_at = "2026-10-11T09:40:00Z"
+        self.push_head_sha = SHA
         self.runs_count_override = None
         self.extra_pull_page = []
         self.check_reads = 0
@@ -78,7 +86,11 @@ class API:
         if path == f"/repos/{REPO}":
             return {"id": self.repo_id, "full_name": REPO}
         if path == f"/repos/{REPO}/issues/21":
-            return copy.deepcopy(self.issue)
+            self.issue_reads += 1
+            observed = copy.deepcopy(self.issue)
+            if self.change_assignees_on_recheck and self.issue_reads == 2:
+                observed["assignees"] = [{"login": "other"}]
+            return observed
         if path.endswith("/git/ref/heads/trabajo/issue-21"):
             self.ref_reads += 1
             return {"object": {"sha": "b" * 40 if self.race and self.ref_reads > 1 else SHA}}
@@ -108,9 +120,11 @@ class API:
                     "status": "in_progress",
                 })
             current = {
-                "id": 8, "head_sha": SHA,
+                "id": 8, "head_sha": self.push_head_sha,
                 "head_branch": "trabajo/issue-21",
                 "head_repository": {"id": 123, "full_name": REPO},
+                "event": self.push_event,
+                "created_at": self.push_created_at,
                 "status": self.checks[0]["status"],
             }
             runs = [current] + self.extra_runs
@@ -122,12 +136,206 @@ class API:
 
 
 class LeaseActivityCollectorTests(unittest.TestCase):
+    def test_old_authored_commit_recent_push_is_unknown_without_provenance(self):
+        # A commit authored before the lease can be pushed moments ago.
+        api = API()
+        api.commits[0]["commit"]["author"]["date"] = "2026-10-11T07:00:00Z"
+        api.push_event = "pull_request"
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        # A current-SHA push run proves recent activity, not the author date.
+        api.push_event = "push"
+        observed = collect_activity(api, 21, now=NOW)
+        self.assertTrue(observed["evidence_complete"])
+        self.assertEqual(observed["last_activity_at"], "2026-10-11T09:40:00Z")
+        self.assertTrue(all("secret" not in str(v).lower()
+                            for v in observed.values()))
+
+    def test_branch_push_provenance_missing_or_racy_fails_closed(self):
+        # No push-run evidence means we cannot prove the *absence* of a push.
+        for event, stamp, head in (
+            ("pull_request", "2026-10-11T09:40:00Z", SHA),
+            ("workflow_dispatch", "2026-10-11T09:40:00Z", SHA),
+            (None, "2026-10-11T09:40:00Z", SHA),
+            ("push", None, SHA),
+            ("push", "2026-10-11T09:30:00Z", SHA),
+            ("push", "2026-10-11T09:29:59Z", SHA),
+            ("push", "2026-10-11T10:00:01Z", SHA),
+            ("push", "not-an-utc-clock", SHA),
+            ("push", "2026-10-11T09:40:00Z", "b" * 40),
+        ):
+            with self.subTest(event=event, stamp=stamp, head=head):
+                api = API()
+                api.push_event = event
+                api.push_created_at = stamp
+                api.push_head_sha = head
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+        api = API()
+        api.commits = []  # /commits?since can hide late-pushed old commits.
+        api.push_event = "pull_request"
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        api = API()
+        api.race = True
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
+    def test_proven_owner_activity_and_existing_guards_preserved(self):
+        api = API()
+        observed = collect_activity(api, 21, now=NOW)
+        self.assertTrue(observed["evidence_complete"])
+        self.assertEqual(observed["repository_id"], 123)
+        self.assertEqual(observed["owner"], "pl0n3r")
+        self.assertEqual(observed["last_activity_at"], "2026-10-11T09:40:00Z")
+        self.assertTrue(observed["ci_running"])
+        self.assertTrue(all("/repos/" in p or p == "/rate_limit"
+                            for p in api.calls))
+        # A recently revalidated bot lease also cannot expire; it is not
+        # evidence of an owner push and must not be attributed to one.
+        api = API()
+        api.push_event = "pull_request"
+        api.comments[0]["updated_at"] = "2026-10-11T09:50:00Z"
+        api.issue["updated_at"] = "2026-10-11T09:50:00Z"
+        result = collect_activity(api, 21, now=NOW)
+        self.assertTrue(result["evidence_complete"])
+        self.assertEqual(result["last_activity_at"], "2026-10-11T09:50:00Z")
+        # Fresh fake: the first two reads above already consumed the
+        # recheck counter; reuse would not trigger a deterministic race.
+        race = API()
+        race.change_assignees_on_recheck = True
+        self.assertEqual(
+            collect_activity(race, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
+    def test_external_changes_requested_fail_closed(self):
+        # An authenticated third-party review is a veto, not owner activity.
+        # The Fake API raises if a non-GET operation is attempted.
+        for reviewer in ("other", "pl0n3r"):
+            with self.subTest(reviewer=reviewer):
+                api = API()
+                api.reviews = [{
+                    "id": 12, "user": {"login": reviewer},
+                    "state": "CHANGES_REQUESTED",
+                    "submitted_at": "2026-10-11T09:25:00Z",
+                }]
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertTrue(any("/pulls/35/reviews?" in p for p in api.calls))
+
+    def test_dismissed_and_approved_reviews_are_not_change_requests(self):
+        # Recognized non-blocking external review states remain compatible.
+        for state in ("APPROVED", "DISMISSED", "COMMENTED", "PENDING"):
+            with self.subTest(state=state):
+                api = API()
+                api.reviews = [{
+                    "id": 12, "user": {"login": "other"},
+                    "state": state, "submitted_at": "2026-10-11T09:25:00Z",
+                }]
+                self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
+        for state in ("INVALID", None, "", 7):
+            with self.subTest(invalid_state=state):
+                api = API()
+                api.reviews = [{
+                    "id": 12, "user": {"login": "other"},
+                    "state": state, "submitted_at": "2026-10-11T09:25:00Z",
+                }]
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+
+    def test_unverifiable_now_timezone_fails_closed(self):
+        """No inferir la zona local del runner para decidir inactividad V3."""
+        class UndefinedOffset(tzinfo):
+            def utcoffset(self, dt):
+                return None
+
+            def dst(self, dt):
+                return None
+
+        class ExplodingOffset(UndefinedOffset):
+            def utcoffset(self, dt):
+                raise RuntimeError("unverifiable UTC offset")
+
+        for invalid_clock in (
+            NOW.replace(tzinfo=None),
+            NOW.replace(tzinfo=UndefinedOffset()),
+            NOW.replace(tzinfo=ExplodingOffset()),
+        ):
+            with self.subTest(clock=type(invalid_clock.tzinfo).__name__):
+                api = API()
+                self.assertEqual(
+                    collect_activity(api, 21, now=invalid_clock),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertEqual(api.calls, [])
+
+    def test_valid_timezone_now_preserves_snapshot(self):
+        """Offsets auténticos representan el mismo instante UTC."""
+        baseline = collect_activity(API(), 21, now=NOW)
+        self.assertTrue(baseline["evidence_complete"])
+        for offset in (timedelta(hours=-5), timedelta(hours=5, minutes=30)):
+            with self.subTest(offset=offset):
+                api = API()
+                observed = collect_activity(
+                    api, 21, now=NOW.astimezone(timezone(offset)))
+                self.assertEqual(observed, baseline)
+                self.assertGreater(len(api.calls), 0)
+
+    def test_assignee_authority_requires_exactly_one_owner(self):
+        good = collect_activity(API(), 21, now=NOW)
+        self.assertTrue(good["evidence_complete"])
+        cases = (
+            [],
+            [{"login": "other"}],
+            [{"login": "pl0n3r"}, {"login": "other"}],
+            [{"login": 123}],
+            [{"user": "pl0n3r"}],
+            [None],
+            "pl0n3r",
+        )
+        for assignees in cases:
+            with self.subTest(assignees=assignees):
+                api = API()
+                api.issue["assignees"] = assignees
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+        missing = API()
+        missing.issue.pop("assignees")
+        self.assertEqual(
+            collect_activity(missing, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
+    def test_assignee_authority_race_fails_closed(self):
+        api = API()
+        api.change_assignees_on_recheck = True
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(api.issue_reads, 2)
+
     def test_complete_authenticated_snapshots_track_owner_activity(self):
         api = API()
         result = collect_activity(api, 21, now=NOW)
         self.assertTrue(result["evidence_complete"])
         self.assertEqual(result["status"], "estado: reservado")
-        self.assertEqual(result["last_activity_at"], "2026-10-11T09:10:00Z")
+        self.assertEqual(result["last_activity_at"], "2026-10-11T09:40:00Z")
         self.assertEqual(result["branch_sha"], SHA)
         self.assertEqual(result["branch"], "trabajo/issue-21")
         self.assertEqual(result["repository_id"], 123)
@@ -276,7 +484,7 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         api.commits[0]["author"]["login"] = "other"
         api.reviews[0]["user"]["login"] = "other"
         out = collect_activity(api, 21, now=NOW)
-        self.assertEqual(out["last_activity_at"], "2026-10-11T08:00:00Z")
+        self.assertEqual(out["last_activity_at"], "2026-10-11T09:40:00Z")
         self.assertTrue(out["ci_running"])  # protege, sin atribuirlo al titular
         api.comments[1]["user"]["login"] = "pl0n3r"
         self.assertEqual(

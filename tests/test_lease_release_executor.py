@@ -248,6 +248,62 @@ class LeaseReleaseExecutorTests(unittest.TestCase):
             "dry_run")
         self.assertEqual(fake.writes, [])
 
+    def test_trailing_slash_equivalent_claims_fail_closed(self):
+        for paths in (
+            ["docs/", "docs"],
+            ["src/app/", "src/app"],
+            ["DOCS/", "docs"],
+            ["café/", "cafe\u0301"],
+            ["Straße/", "STRASSE"],
+        ):
+            with self.subTest(paths=paths):
+                base = snapshot()
+                port = FakePort(replace(base, marker={
+                    **base.marker, "task_paths": paths}))
+                result = execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "untrusted_snapshot")
+                self.assertEqual(port.writes, [])
+
+    def test_parent_child_claim_aliases_fail_closed(self):
+        for paths in (
+            ["docs", "docs/a"],
+            ["docs/", "docs/a"],
+            ["docs/a/", "docs/a/b"],
+            ["DOCS/", "docs/a"],
+            ["café/", "cafe\u0301/a"],
+        ):
+            with self.subTest(paths=paths):
+                base = snapshot()
+                port = FakePort(replace(base, marker={
+                    **base.marker, "task_paths": paths}))
+                result = execute(1191, port, decision,
+                                 feature_enabled=True, dry_run=False)
+                self.assertEqual(result.reason, "untrusted_snapshot")
+                self.assertEqual(port.writes, [])
+
+    def test_sibling_claims_remain_compatible(self):
+        for paths in (
+            ["docs/a", "docs/ab"],
+            ["docs", "docs2"],
+            ["a", "b"],
+            ["src/app", "src/apple"],
+        ):
+            with self.subTest(paths=paths):
+                base = snapshot()
+                port = FakePort(replace(base, marker={
+                    **base.marker, "task_paths": paths}))
+                result = execute(1191, port, decision, feature_enabled=True)
+                self.assertEqual(result.reason, "dry_run")
+                self.assertEqual(port.writes, [])
+                # A subsequent conflicting claim must fail closed.
+                port.item = replace(port.item, marker={
+                    **port.item.marker, "task_paths": paths + [paths[0] + "/"]})
+                veto = execute(1191, port, decision,
+                               feature_enabled=True, dry_run=False)
+                self.assertEqual(veto.reason, "untrusted_snapshot")
+                self.assertEqual(port.writes, [])
+
     def test_mark_recovery_and_release_revalidate_under_shared_lock(self):
         port = FakePort(snapshot(recovery=False))
         answer = execute(1191, port, decision, feature_enabled=True,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -46,7 +46,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(repo) is not str
                 or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None
                 or type(max_requests) is not int or not 1 <= max_requests <= 40
-                or not isinstance(now, datetime) or now.tzinfo is None):
+                or type(now) is not datetime or now.tzinfo is None
+                or now.utcoffset() is None):
             return unknown
         now = now.astimezone(timezone.utc)
         used = 0
@@ -176,6 +177,15 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(lease.get("reservation_id")) is not str):
             raise IncompleteEvidence()
 
+        # Un marker V3 solo no acredita autoridad: el Issue debe tener
+        # exactamente un asignado, idéntico al titular autenticado del bot.
+        assignees = issue.get("assignees")
+        if (not isinstance(assignees, list) or len(assignees) != 1
+                or not isinstance(assignees[0], dict)
+                or type(assignees[0].get("login")) is not str
+                or assignees[0]["login"] != owner):
+            raise IncompleteEvidence()
+
         refpath = f"{base}/git/ref/heads/{branch}"
         def branch_sha() -> str:
             value = get(refpath)
@@ -206,9 +216,10 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             if author["login"] == owner:
                 details = commit.get("commit")
                 actor = details.get("author") if isinstance(details, dict) else None
-                when = _time(actor.get("date") if isinstance(actor, dict) else None, now)
-                if when >= since:
-                    latest = max(latest, when)
+                # Commit author/committer dates are editable Git metadata,
+                # NOT authenticated evidence of when GitHub received a push.
+                # Keep parsing for hostile values, never advance the lease clock.
+                _time(actor.get("date") if isinstance(actor, dict) else None, now)
 
         pulls = pages(f"{base}/pulls?state=open", name="pulls")
         matching = []
@@ -236,7 +247,16 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 if (not isinstance(author, dict) or type(author.get("login")) is not str
                         or not author["login"]):
                     raise IncompleteEvidence()
-                if author["login"] == owner and review.get("state") != "PENDING":
+                # Any authenticated reviewer may veto the PR.  A missing or
+                # unknown state cannot prove that no review gate is pending.
+                review_state = review.get("state")
+                if review_state not in (
+                        "PENDING", "COMMENTED", "APPROVED", "DISMISSED",
+                        "CHANGES_REQUESTED"):
+                    raise IncompleteEvidence()
+                if review_state == "CHANGES_REQUESTED":
+                    raise IncompleteEvidence()
+                if author["login"] == owner and review_state != "PENDING":
                     when = _time(review.get("submitted_at"), now)
                     if when >= since:
                         # La review pertenece al login, no a la sesión V3.
@@ -278,10 +298,29 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             if status != "completed":
                 running = True
 
+        # A run created by GitHub's push event on this exact branch and SHA
+        # is positive evidence of a recent update; it is NOT proof that no
+        # other pushes took place. A trustworthy V3 marker younger than the
+        # release grace period is likewise safe because it cannot yet expire.
+        # Never certify inactivity from commit.author.date or a truncated
+        # /commits?since= query. Once this bounded positive evidence ages out,
+        # report UNKNOWN until an authoritative complete push audit exists.
+        grace = timedelta(minutes=30)
+        recent = now - since < grace
+        for run in workflow_runs:
+            if run.get("event") != "push" or run.get("head_sha") != sha:
+                continue
+            pushed_at = _time(run.get("created_at"), now)
+            if pushed_at >= since and now - pushed_at < grace:
+                latest = max(latest, pushed_at)
+                recent = True
+        if not recent:
+            raise IncompleteEvidence()
+
         verify = get(path)
         if (not isinstance(verify, dict)
                 or any(verify.get(k) != issue.get(k)
-                       for k in ("state", "number", "comments", "updated_at", "labels"))
+                       for k in ("state", "number", "comments", "updated_at", "labels", "assignees"))
                 or branch_sha() != sha):
             raise IncompleteEvidence()
         # GitHub puede lanzar/rerun CI sin cambiar Issue ni ref.
