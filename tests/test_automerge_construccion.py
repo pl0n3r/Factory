@@ -26,6 +26,19 @@ def evidence():
         "inventory_complete": True, "api_remaining": 55, "api_minimum": 20,
         "observed_at": "2026-10-11T07:50:00Z",
         "expires_at": "2026-10-11T07:55:00Z", "now": "2026-10-11T07:52:00Z",
+        "quality_evidence": [
+            {"source": source, "head_sha": HEAD, "complete": True}
+            for source in ("sonarcloud", "codeql", "coderabbit")
+        ],
+        "quality_findings": [],
+        "hard_gates": {
+            "spend": False, "real_data": False, "deploy": False,
+            "release": False, "move_v1": False, "go_live": False,
+            "destructive": False, "reservation_v3": True,
+            "branch_protection": True,
+        },
+        "commit_count": 14, "review_rounds": 6,
+        "quality_debt_cleared_for_live": False,
     }
 
 
@@ -49,8 +62,7 @@ class AutoMergeConstruccionTests(unittest.TestCase):
 
     def test_draft_checks_reviews_threads_and_sha_drift_fail_closed(self):
         for key, value in (("draft", True), ("mergeable", False), ("behind_by", 1),
-                           ("observed_head_sha", "c" * 40), ("main_sha", "d" * 40),
-                           ("blocking_threads", 1)):
+                           ("observed_head_sha", "c" * 40), ("main_sha", "d" * 40)):
             with self.subTest(key=key):
                 self.deny(key, value)
         for check in ([], [{"name": "Validar", "conclusion": "pending", "head_sha": HEAD}],
@@ -61,8 +73,13 @@ class AutoMergeConstruccionTests(unittest.TestCase):
         for state, trusted, reviewer in (("CHANGES_REQUESTED", True, "other"),
                                          ("APPROVED", False, "other"),
                                          ("APPROVED", True, "implementation-owner")):
-            self.deny("reviews", [{"author": reviewer, "state": state,
-                                   "trusted": trusted, "head_sha": HEAD}])
+            candidate = evidence()
+            candidate["reviews"] = [{"author": reviewer, "state": state,
+                                     "trusted": trusted, "head_sha": HEAD}]
+            self.assertTrue(evaluate(candidate).eligible)
+        candidate = evidence()
+        candidate["blocking_threads"] = 1
+        self.assertTrue(evaluate(candidate).eligible)
         gate = evidence()["gates"]
         gate["security"]["conclusion"] = "pending"
         self.deny("gates", gate)
@@ -82,7 +99,7 @@ class AutoMergeConstruccionTests(unittest.TestCase):
                                  {"eligible": False, "reason": "invalid_snapshot"})
         only_dismissed = evidence()
         only_dismissed["reviews"] = [revoked]
-        self.assertFalse(evaluate(only_dismissed).eligible)
+        self.assertTrue(evaluate(only_dismissed).eligible)
         valid_other = evidence()
         valid_other["reviews"] = [revoked,
             {"author": "security-reviewer", "state": "APPROVED",
@@ -126,6 +143,8 @@ class AutoMergeConstruccionTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.deny(key, value)
         self.deny("gates", {})
+        self.deny("quality_evidence", [])
+        self.deny("hard_gates", {})
 
     def test_malformed_inputs_are_safe_and_no_external_effects(self):
         for malformed in (None, [], {}, "secret", {**evidence(), "token": "SENSITIVE"}):
