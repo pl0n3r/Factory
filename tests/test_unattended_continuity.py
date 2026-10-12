@@ -116,6 +116,7 @@ def kill_switch_issue(body: str) -> dict[str, object]:
         "number": 767,
         "url": CANONICAL_SOURCE_URL,
         "repository_url": CANONICAL_REPOSITORY_URL,
+        "state": "closed",
         "user": {"login": CANONICAL_OWNER},
         "body": body,
     }
