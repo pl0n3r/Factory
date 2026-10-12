@@ -613,10 +613,11 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
-    """Escritor exclusivo con rollback; los lectores deben respetar la marca.
+    """Excluye escritores y revierte errores de E/S recuperables.
 
-    Dos renames no son atómicos como pareja ante lectores concurrentes. Una
-    marca persistente deniega escrituras futuras tras un rollback fallido/crash.
+    Dos renames no son transacción para lectores, ni garantizan durabilidad
+    ante apagones sin fsync de archivos/directorios. La marca, si persiste,
+    bloquea nuevas escrituras; la evidencia offline no autoriza publicación.
     """
     payloads = {
         "recomendaciones.json": json.dumps(
