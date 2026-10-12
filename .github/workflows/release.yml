@@ -97,8 +97,30 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           TARGET_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BOOTSTRAP: ${{ inputs.factory_bootstrap }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          # RELEASE_EXACT_MAIN_TAG_GUARD_BEGIN
+          verify_remote_main() {
+            local remote_sha
+            if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::SHA candidato inválido antes de publicar"
+              exit 1
+            fi
+            if [[ "$BOOTSTRAP" == "true" && "$EXPECTED_SHA" != "$TARGET_SHA" ]]; then
+              echo "::error::SHA de bootstrap no coincide con candidato"
+              exit 1
+            fi
+            remote_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+            if [[ ! "$remote_sha" =~ ^[0-9a-f]{40}$ || "$remote_sha" != "$TARGET_SHA" ]]; then
+              echo "::error::main cambió antes de publicar tag/release"
+              exit 1
+            fi
+          }
+          # RELEASE_EXACT_MAIN_TAG_GUARD_END
+          verify_remote_main
           if git show-ref --verify --quiet "refs/tags/$TAG"; then
             [[ "$(git cat-file -t "refs/tags/$TAG")" == "tag" ]] || { echo "::error::$TAG no es anotado"; exit 1; }
             existing_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
@@ -106,6 +128,16 @@ jobs:
             exit 0
           fi
           object="$(gh api --method POST "repos/$REPOSITORY/git/tags" -f tag="$TAG" -f message="Release $TAG — $TARGET_SHA" -f object="$TARGET_SHA" -f type=commit --jq '.sha')"
+          [[ "$object" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Objeto de tag sin SHA válido"; exit 1; }
+          verify_remote_main
+          # Validar identidad semántica del objeto ANTES de mutar refs/tags.
+          tag_record="$(gh api "repos/$REPOSITORY/git/tags/$object" --jq '[.tag, .object.type, .object.sha] | @tsv')"
+          if [[ "$tag_record" != "$TAG"$'\t'commit$'\t'"$TARGET_SHA" ]]; then
+            echo "::error::Objeto tag creado no corresponde al nombre, tipo o commit aprobados"
+            exit 1
+          fi
+          # El GET del objeto puede observar deriva: verificar main justo antes del POST mutante.
+          verify_remote_main
           if response="$(gh api --include --silent --method POST "repos/$REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" 2>&1)"; then
             exit 0
           fi
@@ -121,10 +153,78 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
           REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BOOTSTRAP: ${{ inputs.factory_bootstrap }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
-          if ! url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url' 2>/dev/null)"; then
+          # RELEASE_EXACT_MAIN_RELEASE_GUARD_BEGIN
+          verify_remote_main() {
+            local remote_sha
+            if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::SHA candidato inválido antes de publicar"
+              exit 1
+            fi
+            if [[ "$BOOTSTRAP" == "true" && "$EXPECTED_SHA" != "$TARGET_SHA" ]]; then
+              echo "::error::SHA de bootstrap no coincide con candidato"
+              exit 1
+            fi
+            remote_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+            if [[ ! "$remote_sha" =~ ^[0-9a-f]{40}$ || "$remote_sha" != "$TARGET_SHA" ]]; then
+              echo "::error::main cambió antes de publicar tag/release"
+              exit 1
+            fi
+          }
+          # RELEASE_EXACT_MAIN_RELEASE_GUARD_END
+          # RELEASE_REMOTE_TAG_GUARD_BEGIN
+          verify_remote_tag() {
+            local object_sha tag_record
+            object_sha="$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" --jq '.object | select(.type == "tag") | .sha')"
+            if [[ ! "$object_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Tag remoto ausente, ligero o inválido"
+              exit 1
+            fi
+            tag_record="$(gh api "repos/$REPOSITORY/git/tags/$object_sha" --jq '[.tag, .object.type, .object.sha] | @tsv')"
+            if [[ "$tag_record" != "$TAG"$'\t'commit$'\t'"$TARGET_SHA" ]]; then
+              echo "::error::Tag remoto: nombre, tipo o SHA no coinciden"
+              exit 1
+            fi
+          }
+          # RELEASE_REMOTE_TAG_GUARD_END
+          verify_remote_main
+          # También validar el tag en la ruta idempotente de HTTP 200.
+          verify_remote_tag
+          # RELEASE_STATUS_EXACT_GUARD_BEGIN
+          # Probe the authenticated REST endpoint: errors are not evidence of absence.
+          probe_rc=0
+          probe="$(gh api --include --silent "repos/$REPOSITORY/releases/tags/$TAG" 2>&1)" || probe_rc=$?
+          status_lines="$(grep -E '^HTTP/[0-9.]+[[:space:]]+[0-9]{3}([[:space:]]|$)' <<< "$probe" || true)"
+          if [[ "$(grep -c '^HTTP/' <<< "$status_lines")" != "1" ]]; then
+            echo "::error::Consulta de Release sin estado HTTP inequívoco"
+            exit 1
+          fi
+          if (( probe_rc == 0 )) && grep -Eq '^HTTP/[0-9.]+[[:space:]]+200([[:space:]]|$)' <<< "$status_lines"; then
+            url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
+            [[ -n "$url" ]] || { echo "::error::Release existente sin URL válida"; exit 1; }
+          elif (( probe_rc != 0 )) && grep -Eq '^HTTP/[0-9.]+[[:space:]]+404([[:space:]]|$)' <<< "$status_lines"; then
+            verify_remote_main
+            verify_remote_tag
+            # El GET del objeto tag puede observar deriva: revalidar main antes del POST.
+            verify_remote_main
             gh release create "$TAG" --repo "$REPOSITORY" --verify-tag --title "Release $TAG (V $VERSION)" --generate-notes
             url="$(gh release view "$TAG" --repo "$REPOSITORY" --json url --jq '.url')"
+            [[ -n "$url" ]] || { echo "::error::Release creado sin URL verificable"; exit 1; }
+          else
+            echo "::error::Consulta de Release falló o retornó estado distinto de 200/404"
+            exit 1
+          fi
+          # RELEASE_STATUS_EXACT_GUARD_END
+          verify_remote_main
+          verify_remote_tag
+          url_prefix="${url%/releases/tag/"$TAG"}"
+          if [[ "$url_prefix" == "$url" || "${url_prefix,,}" != "https://github.com/${REPOSITORY,,}" ]]; then
+            echo "::error::URL de Release no corresponde al repo y tag aprobados"
+            exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"

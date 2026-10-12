@@ -34,6 +34,39 @@ def parse(*, repo="Factory", page=1, request=None, status=200,
 
 
 class GitHubPageTests(unittest.TestCase):
+    def test_malformed_request_query_clears_exception_context(self):
+        # The invalid field is deliberately synthetic and must stay unreachable.
+        bad = url(1) + "&private-token-SYNTHETIC"
+        with self.assertRaises(GitHubPageError) as raised:
+            parse(request=bad)
+        self.assertEqual(str(raised.exception), "invalid_request_url")
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_malformed_link_query_clears_exception_context(self):
+        bad = f'<{url(2)}&private-token-SYNTHETIC>; rel="next"'
+        synthetic_rows = full_items()
+        with self.assertRaises(GitHubPageError) as raised:
+            parse(header=bad, items=synthetic_rows)
+        self.assertEqual(str(raised.exception), "invalid_request_url")
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_canonical_pages_remain_compatible_after_error_hardening(self):
+        self.assertEqual(parse()["page_number"], 1)
+        self.assertEqual(parse(repo="brvtal", request=url(1, "brvtal"))["issues"], [])
+        self.assertTrue(parse(header=link(2, "next"), items=full_items())["has_next"])
+        self.assertFalse(parse(page=2, header=link(1, "prev"), items=[])["has_next"])
+        encoded_alias = url(1).replace("state=open", "state=%6fpen")
+        with self.assertRaises(GitHubPageError):
+            parse(request=encoded_alias)
+        projected = parse(items=[{"number": 71, "state": "open",
+                                  "labels": [{"name": "estado: disponible"}],
+                                  "title": "PRIVATE-SYNTHETIC"}])
+        self.assertEqual(projected["issues"], [{"number": 71,
+            "labels": ["estado: disponible"], "pull_request": False, "blocker": None}])
+        self.assertNotIn("PRIVATE-SYNTHETIC", str(projected))
+
     def test_only_canonical_rest_issue_request_is_accepted(self):
         self.assertEqual(parse()["page_number"], 1)
         self.assertEqual(parse(repo="brvtal", request=url(1, "brvtal"))["issues"], [])

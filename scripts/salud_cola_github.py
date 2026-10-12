@@ -47,8 +47,14 @@ def _page_from_url(url: object, repo: str) -> int:
     try:
         u = urlsplit(url)
         query = parse_qsl(u.query, strict_parsing=True, keep_blank_values=True)
-    except ValueError as exc:
-        raise GitHubPageError("invalid_request_url") from None
+    except ValueError:
+        invalid_query = True
+    else:
+        invalid_query = False
+    # Never raise while handling the untrusted ValueError: from None only
+    # hides traceback chaining but retains its sensitive __context__.
+    if invalid_query:
+        raise GitHubPageError("invalid_request_url")
     if (u.scheme != "https" or u.netloc != "api.github.com"
             or u.path != f"/repos/pl0n3r/{repo}/issues"
             or u.fragment or len(query) != 3):
