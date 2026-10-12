@@ -108,6 +108,21 @@ class DietaFase1CTests(unittest.TestCase):
         for ledger in ("## Ledger F1A", "## Ledger F1B", "## Ledger F1C"):
             self.assertIn(ledger, self.document)
 
+    def test_sonar_watch_runbook_marks_scheduler_disabled_and_preserves_offline_qa(self):
+        runbook = (ROOT / "docs" / "quality-sonar-watch.md").read_text(encoding="utf-8")
+        self.assertNotIn(REMOVED, self.actual())
+        for phrase in ("no se ejecuta automáticamente", "cron cada seis horas",
+                       "workflow_dispatch", "desactivados",
+                       "no se refrescan automáticamente", "#1052/#1053",
+                       "Sonar CI-based", "CodeQL", "no sustituyen"):
+            self.assertIn(phrase, runbook)
+        for path in ("scripts/sonar-watch.py", "quality/sonar-watch-config.json",
+                     "tests/test_sonar_watch.py"):
+            self.assertIn(path, runbook)
+            self.assertTrue((ROOT / path).is_file())
+        self.assertNotIn("conserva `schedule` y `workflow_dispatch`", runbook)
+        self.assertNotIn("Factory ejecuta vigilancia Sonar centralizada", runbook)
+
     def test_f1c_ledger_exact_only_one_deletion_and_reversible(self):
         section = self.document.split("## Ledger F1C de baja de Sonar Watch\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("main@" + BASE_SHA, section)
