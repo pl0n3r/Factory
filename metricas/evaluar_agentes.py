@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import stat
 import sys
 import tempfile
@@ -612,6 +611,18 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _remove_staging_files(stage: Path) -> None:
+    """Borrar solo ficheros conocidos, nunca subárboles ajenos."""
+    for name in (
+        "recomendaciones.json.next", "dashboard.md.next",
+        "recomendaciones.json.bak", "dashboard.md.bak",
+    ):
+        (stage / name).unlink(missing_ok=True)
+    # Cualquier entrada inesperada hace fallar rmdir y conserva la marca
+    # de generación incompleta para impedir otro intento automático.
+    stage.rmdir()
+
+
 def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
     """Excluye escritores y revierte errores de E/S recuperables.
 
@@ -679,7 +690,7 @@ def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
         if restored:
             try:
                 if stage is not None:
-                    shutil.rmtree(stage)
+                    _remove_staging_files(stage)
                 marker.unlink()
             except OSError:
                 # Conserva la marca: una limpieza parcial no acredita éxito.
@@ -689,7 +700,7 @@ def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
 
     # No retirar el lock hasta terminar toda la preparación y limpieza.
     # Un fallo después de publicar conserva la marca e impide nuevas escrituras.
-    shutil.rmtree(stage)
+    _remove_staging_files(stage)
     marker.unlink()
 
 

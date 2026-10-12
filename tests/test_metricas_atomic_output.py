@@ -99,6 +99,33 @@ class MetricAtomicOutputTests(unittest.TestCase):
                 _write_artifact_pair(report(), directory)
 
 
+    def test_unexpected_staging_entry_fails_closed_without_recursive_deletion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            original_mkdtemp = tempfile.mkdtemp
+            stages = []
+
+            def unexpected_file(*args, **kwargs):
+                stage = Path(original_mkdtemp(*args, **kwargs))
+                (stage / "unknown.txt").write_text("do-not-delete", encoding="utf-8")
+                stages.append(stage)
+                return str(stage)
+
+            with patch("metricas.evaluar_agentes.tempfile.mkdtemp",
+                       side_effect=unexpected_file):
+                with self.assertRaises(OSError):
+                    _write_artifact_pair(report(), directory)
+            self.assertEqual(len(stages), 1)
+            self.assertEqual(
+                (stages[0] / "unknown.txt").read_text(encoding="utf-8"),
+                "do-not-delete",
+            )
+            self.assertTrue(
+                (directory / ".metricas-generation-incomplete").exists()
+            )
+            with self.assertRaises(OSError):
+                _write_artifact_pair(report(), directory)
+
     def test_dangling_symlink_marker_does_not_escape_output_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp) / "artifacts"
