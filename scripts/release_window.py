@@ -164,6 +164,20 @@ def _legacy_factory_release_intent(body: str) -> bool:
     return False
 
 
+# La búsqueda amplia de GitHub devuelve también documentación que cita markers.
+# El título de una puerta canónica aporta intención para rechazar fuentes rotas;
+# no concede aprobación (que depende del gate validado y del journal del bot).
+RELEASE_GATE_TITLE_RE = re.compile(
+    r"^decisión en espera: Factory v\\d+\\.\\d+\\.\\d+ sobre HEAD exacto [0-9a-f]{8}$",
+    re.IGNORECASE,
+)
+
+
+def _canonical_release_issue_intent(issue: dict[str, Any]) -> bool:
+    title = issue.get("title")
+    return isinstance(title, str) and RELEASE_GATE_TITLE_RE.fullmatch(title) is not None
+
+
 def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
     if not isinstance(body, str):
         return None
@@ -343,7 +357,11 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
             continue
         window_intent = WINDOW_INTENT_RE.search(body) is not None
         legacy_release_intent = _legacy_factory_release_intent(body)
-        if not window_intent and not legacy_release_intent:
+        canonical_release_intent = _canonical_release_issue_intent(issue)
+        # Un encabezado citado por un Issue documental no es, por sí solo,
+        # una puerta de release. Preservar los gates legacy completos y tratar
+        # toda fuente canónica malformada como error, nunca como aprobación.
+        if not legacy_release_intent and not canonical_release_intent:
             continue
         if window_intent:
             gate_info = _gate_from_body(body)
