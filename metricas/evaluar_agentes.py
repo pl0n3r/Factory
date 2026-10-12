@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from collections import defaultdict
@@ -650,9 +651,17 @@ def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
             target = output_dir / name
             if target.is_symlink():
                 raise OSError("Archivo de salida simbólico no permitido.")
+            mode = 0o600
             if target.exists():
-                (stage / f"{name}.bak").write_bytes(target.read_bytes())
+                metadata = target.stat()
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise OSError("Salida no regular.")
+                mode = stat.S_IMODE(metadata.st_mode) & 0o600
+                backup = stage / f"{name}.bak"
+                backup.write_bytes(target.read_bytes())
+                backup.chmod(mode)
                 originals.add(name)
+            (stage / f"{name}.next").chmod(mode)
         for name in payloads:
             os.replace(stage / f"{name}.next", output_dir / name)
             installed.append(name)
