@@ -10,6 +10,9 @@ Fuente pública canónica:
 
 El Issue debe contener exactamente un marker:
 
+El Issue canónico **#767 debe estar cerrado** (`state: "closed"`) antes de admitir `RUNNING`. Si está reabierto, falta el estado o tiene otro valor, el lector retorna `UNKNOWN` y `global_pause=true` aunque el marker indique `RUNNING`.
+
+
 `<!-- factory-unattended-kill-switch {"version":1,"state":"RUNNING","owner":"pl0n3r"} -->`
 
 Estados válidos:
@@ -40,6 +43,9 @@ Si la URL no puede leerse, apunta a otro Issue/repositorio/autor, el marker falt
 4. informa una única línea al dueño con la razón auditable.
 
 No intentes “reparar” el marker automáticamente.
+
+La detección de encabezados `factory-unattended-kill-switch` ignora diferencias de **mayúsculas** y detecta encabezados **truncados**. Un segundo encabezado sospechoso, incluso si usa otra capitalización o está incompleto, obliga a `UNKNOWN` y `global_pause=true`; nunca se toma el primer `RUNNING` como permiso.
+
 
 La API del Issue expone `user.login` del **creador** del Issue. Esa señal ayuda a rechazar una fuente inesperada, pero **no demuestra quién hizo la última edición** del body. La regla “solo el dueño cambia el marker” sigue siendo una frontera de gobernanza y no debe presentarse como provenance técnica del último editor.
 
