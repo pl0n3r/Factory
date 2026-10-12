@@ -1,0 +1,94 @@
+# Dieta Factory: inventario exacto y plan reversible
+
+> **Hoja 0 de [Factory #1296](https://github.com/pl0n3r/Factory/issues/1296), ejecución [#1297](https://github.com/pl0n3r/Factory/issues/1297).** Inventario observado en `main@b0713650194e9a0c464d625bc6136eecad776377` el 2026-10-12. No es una orden de borrar archivos ni una autorización de publicar o desplegar.
+
+## Evidencia y alcance
+
+El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningún `.yaml` adicional; la estimación de 40 de la épica es orientativa y no debe sustituir este conteo. Hay 67 scripts Python bajo `scripts/` y 234 pruebas Python bajo `tests/` según el mismo árbol. Los nombres de tests de la tabla son **impactos a revisar**, no una instrucción de eliminarlos; incluyen pruebas indirectas. «Ninguno directo» indica que el workflow no llama de forma literal a un script local, no que carezca de dependencias. Ningún cambio de runtime/CI forma parte de esta hoja.
+
+**Regla de seguridad:** conservar CI de tests/lint/build, CodeQL, Sonar, CodeRabbit (integración externa, sin workflow propio), privacidad, releases/deploy/observación y puertas de gasto, datos reales, borrado, freeze, credenciales y go-live. «Simplificar» jamás significa saltar una puerta dura. La futura política de severidades pertenece a #1295 y requiere su propia reserva, regresiones y gates. **Excepciones justificadas frente a la poda tentativa de #1296:** `costos.yml` conserva la evidencia de presupuesto del PR (`presupuesto-pr`) y `unattended-watchdog.yml` conserva vigilancia de actividad + resumen diario. Ninguno se sustituye por una frase genérica sobre gasto ni por el kill switch de Factory#767.
+
+## Inventario de workflows
+
+| Workflow | Disparador(es) | Líneas | Scripts/dependencias directas | Tests afectados por revisar | Decisión | Fase |
+| --- | --- | ---: | --- | --- | --- | ---: |
+| `.github/workflows/aceptacion.yml` | workflow_call | 154 | scripts/aceptacion_kit.py | tests/test_aceptacion_kit.py, tests/test_aceptacion_workflow_contract.py | **simplificar** | 3 |
+| `.github/workflows/auditoria-privacidad.yml` | workflow_call | 198 | scripts/auditar_privacidad.py | tests/test_auditar_privacidad.py | **quedarse** | 0 |
+| `.github/workflows/automerge-construccion.yml` | pull_request | 321 | scripts/automerge_construccion.py (indirecto) | tests/test_automerge_construccion.py, tests/test_automerge_workflow.py | **simplificar** | 3 |
+| `.github/workflows/bootstrap-coordination.yml` | issue_comment, workflow_dispatch | 144 | scripts/bootstrap_coordination.py | tests/test_bootstrap_coordination_workflow.py | **quedarse** | 0 |
+| `.github/workflows/cabina.yml` | schedule, workflow_dispatch, push | 66 | scripts/cabina.py | tests/test_cabina.py, tests/test_cabina_sentry.py, tests/test_cabina_workflow_contract.py | **eliminar** | 1 |
+| `.github/workflows/captura-leccion.yml` | issues, pull_request | 128 | ninguno directo (Python inline) | tests/test_captura_leccion.py, tests/test_captura_leccion_workflow.py | **eliminar** | 1 |
+| `.github/workflows/ci.yml` | workflow_call | 249 | ninguno directo | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |
+| `.github/workflows/codeql-evidence.yml` | pull_request, push | 60 | scripts/codeql_sarif_summary.py | tests/test_codeql_evidence_workflow.py, tests/test_codeql_sarif_summary.py | **quedarse** | 0 |
+| `.github/workflows/coordinacion-trabajo.yml` | schedule, workflow_dispatch, pull_request, issues, issue_comment | 342 | scripts/coordinar_trabajo.py | tests/test_coordinar_trabajo.py, tests/test_coordinar_trabajo_unblock_validation.py | **simplificar** | 4 |
+| `.github/workflows/coordinacion.yml` | workflow_call | 236 | scripts/coordinar_trabajo.py | tests/test_coordinacion_reusable_contract.py | **quedarse** | 0 |
+| `.github/workflows/costos.yml` | pull_request, workflow_dispatch, schedule | 167 | metricas/costos.py | metricas/test_costos.py | **quedarse** | 0 |
+| `.github/workflows/deploy.yml` | workflow_call | 86 | scripts/deploy_kit.py | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |
+| `.github/workflows/etiquetas-pr.yml` | workflow_call | 107 | scripts/labels_kit.py | tests/test_etiquetas_workflow_contract.py | **eliminar** | 2 |
+| `.github/workflows/etiquetas.yml` | workflow_call | 230 | scripts/labels_kit.py, scripts/pr_label_governance.py | tests/test_etiquetas_workflow_contract.py, tests/test_labels_kit.py | **eliminar** | 2 |
+| `.github/workflows/evolution-lab.yml` | pull_request, workflow_dispatch | 43 | ninguno directo (invoca tests) | tests/test_factory_lab_contract.py, tests/test_experiment_evidence.py | **eliminar** | 1 |
+| `.github/workflows/factory-ci.yml` | pull_request, push | 382 | scripts/politica_kit.py, scripts/release_window.py, scripts/coordinar_trabajo.py, scripts/aceptacion_kit.py | tests/test_quality_gates.py | **quedarse** | 0 |
+| `.github/workflows/feedback-producto.yml` | pull_request, workflow_dispatch, schedule | 89 | producto/feedback.py | producto/test_feedback.py, tests/test_feedback_contract.py | **eliminar** | 1 |
+| `.github/workflows/liberar-reservas.yml` | schedule, workflow_dispatch, pull_request | 84 | scripts/lease_auto_release.py | tests/test_lease_auto_release.py | **quedarse** | 0 |
+| `.github/workflows/metricas.yml` | pull_request, workflow_dispatch, schedule | 86 | metricas/evaluar_agentes.py | metricas/test_evaluar_agentes.py, metricas/test_producto_diario.py, tests/test_metricas_integer_bounds.py | **eliminar** | 1 |
+| `.github/workflows/observar.yml` | workflow_call | 176 | scripts/observe_kit.py | tests/test_observar_workflow_contract.py | **quedarse** | 0 |
+| `.github/workflows/orquestador.yml` | issue_comment, workflow_dispatch | 57 | scripts/orquestar_fabrica.py | tests/test_orquestador_workflow_contract.py | **quedarse** | 0 |
+| `.github/workflows/politica-comentario.yml` | workflow_call | 186 | scripts/politica_kit.py | tests/test_politica_workflow_contract.py | **simplificar** | 3 |
+| `.github/workflows/politica.yml` | workflow_call | 417 | scripts/politica_kit.py | tests/test_politica_kit.py, tests/test_politica_workflow_contract.py | **simplificar** | 3 |
+| `.github/workflows/preview.yml` | workflow_call | 114 | scripts/preview_kit.py | tests/test_preview_workflow_contract.py | **quedarse** | 0 |
+| `.github/workflows/privacidad.yml` | workflow_call | 48 | scripts/privacidad_gate.py | tests/test_privacidad_gate.py | **quedarse** | 0 |
+| `.github/workflows/provision-project.yml` | workflow_dispatch | 65 | scripts/provision_project.py | tests/test_provision_project.py (verificar nombre al implementar) | **quedarse** | 0 |
+| `.github/workflows/readme.yml` | workflow_call | 102 | ninguno directo (Python inline) | tests/test_readme_contract.py, tests/test_readme_contract_v2.py | **eliminar** | 2 |
+| `.github/workflows/release-bootstrap.yml` | workflow_dispatch | 368 | scripts/verificar_ruleset_v1.py | tests/test_release_bootstrap_workflow.py | **simplificar** | 3 |
+| `.github/workflows/release-window.yml` | workflow_dispatch, workflow_run | 296 | scripts/release_window.py | tests/test_release_window.py, tests/test_release_window_on_demand.py | **simplificar** | 3 |
+| `.github/workflows/release.yml` | workflow_call | 231 | ninguno directo | tests/test_release_workflow_contract.py | **quedarse** | 0 |
+| `.github/workflows/reusable-release-watchdog.yml` | push, schedule, workflow_dispatch | 269 | ninguno directo (shell/API) | tests/test_reusable_release_watchdog.py | **simplificar** | 3 |
+| `.github/workflows/reusable-selftest.yml` | pull_request | 23 | scripts/ci_retry.py | tests/test_reusable_release_preflight.py | **quedarse** | 0 |
+| `.github/workflows/roles.yml` | workflow_call | 207 | scripts/roles_kit.py | tests/test_roles_kit.py, tests/test_roles_workflow_contract.py | **eliminar** | 2 |
+| `.github/workflows/seguridad.yml` | pull_request, push, issues, issue_comment, workflow_dispatch | 297 | ninguno directo (CodeQL/seguridad) | tests/test_template_security_workflow_contract.py | **quedarse** | 0 |
+| `.github/workflows/sonar-watch.yml` | schedule, workflow_dispatch | 37 | scripts/sonar-watch.py | tests/test_sonar_watch.py | **eliminar** | 1 |
+| `.github/workflows/sonar.yml` | pull_request, push, workflow_dispatch | 201 | scripts/generate_coverage.py | tests/test_sonar_ci_analysis_workflow.py | **quedarse** | 0 |
+| `.github/workflows/sync-label-colors.yml` | issue_comment | 50 | scripts/sync_label_colors.py | tests/test_sync_label_colors.py | **eliminar** | 2 |
+| `.github/workflows/unattended-watchdog.yml` | push, schedule, workflow_dispatch | 63 | scripts/unattended_watchdog_runtime.py, scripts/unattended_daily_summary.py | tests/test_unattended_watchdog_runtime.py, tests/test_unattended_daily_summary.py, tests/test_unattended_kill_switch.py | **quedarse** | 0 |
+
+## Plan por fases (cambios futuros, independientes de esta hoja)
+
+### Fase 1: apagar telemetría y aprendizaje, sin suprimir controles
+
+**Rutas exactas:** `.github/workflows/evolution-lab.yml`, `.github/workflows/feedback-producto.yml`, `.github/workflows/metricas.yml`, `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`, `.github/workflows/sonar-watch.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
+
+**Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumidor. **No borrar** `scripts/unattended_kill_switch.py`, `scripts/unattended_guards.py` ni la comprobación obligatoria de #767. **Conservar explícitamente:**
+- `.github/workflows/costos.yml`: el job `presupuesto-pr` evalúa `metricas/costos.py pr` contra la **base confiable** y publica artifacts de presupuesto; `tendencia-ci` sí es telemetría programada y solo podría simplificarse mediante otra hoja con reserva, pruebas y evidencia de preservación de `presupuesto-pr`.
+- `.github/workflows/unattended-watchdog.yml`: el job `watchdog` comprueba actividad y degrada la salud operativa cuando corresponde; `daily-summary` envía reporte al dueño. El interruptor #767 únicamente pausa nuevas mutaciones; no reemplaza estas funciones ni `reusable-release-watchdog.yml`.
+
+Hasta demostrar replacements con contratos equivalentes, ambos workflows quedan **quedarse / fase 0**. **Reversión:** revertir únicamente el PR de fase 1; recuperar los workflows programados y sus tests si se cambian. Ninguna publicación/live.
+
+### Fase 2: quitar validadores de forma
+
+**Rutas exactas:** `.github/workflows/etiquetas.yml`, `.github/workflows/etiquetas-pr.yml`, `.github/workflows/sync-label-colors.yml`, `.github/workflows/readme.yml`, `.github/workflows/roles.yml`. **Dependencias a revisar:** `scripts/labels_kit.py`, `scripts/pr_label_governance.py`, `scripts/sync_label_colors.py`, `scripts/roles_kit.py`, `tests/test_etiquetas_workflow_contract.py`, `tests/test_labels_kit.py`, `tests/test_sync_label_colors.py`, `tests/test_readme_contract.py`, `tests/test_readme_contract_v2.py`, `tests/test_roles_kit.py`, `tests/test_roles_workflow_contract.py`. Mantener etiquetas/roles y procedencia que sean **requisitos de autoridad de Coordinación**, hasta que la fase 4 los reemplace con pruebas equivalentes. Antes de retirar `roles.yml`, buscar en **los siete repositorios consumidores** sus referencias `uses: .../roles.yml@v1` y sus required checks (p. ej., `Validar evidencia de roles`), documentar el reemplazo en el PR y validar que ningún branch protection check quede ausente. La lista local de tests por sí sola no es prueba de compatibilidad.
+
+**Reversión:** revertir el PR de fase 2 y reactivar los mismos reusable workflows; verificar los repos consumidores antes de volver a exigirlos.
+
+### Fase 3: reducir política y release sin soltar puertas duras
+
+**Rutas exactas:** `.github/workflows/aceptacion.yml`, `.github/workflows/automerge-construccion.yml`, `.github/workflows/politica.yml`, `.github/workflows/politica-comentario.yml`, `.github/workflows/release-window.yml`, `.github/workflows/release-bootstrap.yml`, `.github/workflows/reusable-release-watchdog.yml`, `scripts/politica_kit.py`, `scripts/release_window.py`, `scripts/release_bootstrap.py`, `scripts/automerge_construccion.py`, `scripts/aceptacion_kit.py`, `tests/test_politica_kit.py`, `tests/test_politica_workflow_contract.py`, `tests/test_release_window.py`, `tests/test_release_bootstrap_workflow.py`, `tests/test_automerge_construccion.py`, `tests/test_aceptacion_kit.py`. **No tocar** `.github/workflows/release.yml`, `.github/workflows/deploy.yml`, `.github/workflows/observar.yml`, `.github/workflows/seguridad.yml`, `.github/workflows/sonar.yml`, `.github/workflows/codeql-evidence.yml` ni CodeRabbit. Antes de simplificar, reconciliar #1295 y las decisiones humanas existentes.
+
+**Reversión:** squash-revert solo de fase 3; restaurar el comportamiento previo de política y release, con pruebas de freeze, aceptación y go-live exact-SHA.
+
+### Fase 4: reducir coordinación y el PLAN al final
+
+**Rutas exactas:** `.github/workflows/coordinacion-trabajo.yml`, `scripts/coordinar_trabajo.py`, `tests/test_coordinar_trabajo.py`, `tests/test_coordinar_trabajo_unblock_validation.py`, `PLAN-AGENTES.md`, `agentes/NUCLEO.md`. Conservar `.github/workflows/coordinacion.yml` hasta tener reemplazo compatible y pruebas de reservas V3, claims disjuntos, rotación de UUID, carrera y recuperación segura. Los scripts `scripts/dispatcher_v2.py` y `scripts/dispatch_inventory.py` **no aparecen como llamadas directas de los 38 workflows actuales**; `PLAN-AGENTES.md`, `AGENTES.md`, `agentes/NUCLEO.md`, `README.md`, `docs/orquestador.md` y `scripts/orquestar_fabrica.py` tampoco contienen el nombre literal `dispatcher_v2`. Esto **no demuestra ausencia de consumidores externos**, así que no eliminarlos sin búsqueda de referencias en todos los consumidores y prueba negativa.
+
+**Reversión:** squash-revert solo de fase 4 y restaurar protocolo, coordinación y prevención de colisiones. Toda fase conserva CI y la autoridad de #767; `main` protegido, no merges directos. Cada fase se propone como PR independiente con tests de sus consumidores antes de fusionarla.
+
+## Revisión de cobertura y trade-offs
+
+- **Fase 1 primero:** menor impacto en ruta de código y gasto; riesgo: consumidores de resúmenes silenciosamente rotos. Mitigar con búsqueda literal y tests de rutas antes de borrar.
+- **Fase 2 después:** reduce fricción de forma, pero las etiquetas aún se usan como estado de coordinación; mantener intactas las exigencias de seguridad hasta fase 4.
+- **Fase 3:** máxima mejora potencial del tiempo de entrega; riesgo alto de falsa autorización. No modificar privilegios, secretos, freezes ni puertas duras.
+- **Fase 4 al final:** cambiar primero Coordinación crearía colisiones/duplicados; exigir preflight de lease y simulaciones de carreras.
+- **Alternativa descartada:** borrar los 38 workflows o quitar tests de contrato sin reemplazo, porque no preserva compatibilidad ni una reversión verificable.
+
+## Validación de este inventario
+
+`python3 -m unittest tests.test_factory_diet_inventory -v` verifica cobertura del árbol, disparadores, scripts/test a revisar, preservación de puertas duras y orden/reversibilidad de las fases. Este inventario **no es evidencia de ejecución de ese comando** hasta obtener un run que lo confirme en el HEAD exacto.
