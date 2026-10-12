@@ -47,6 +47,11 @@ EXECUTED_RE = re.compile(
 EXCEPTION_RE = re.compile(
     r"<!--\s*factory-release-freeze-exception\s+(\{[^\n]*\})\s*-->"
 )
+EXCEPTION_HEADER_RE = re.compile(
+    r"<!--\s*factory\s*-\s*release\s*-\s*freeze\s*-\s*exception\b",
+    re.IGNORECASE,
+)
+
 DUPLICATE_RE = re.compile(
     r"<!--\s*factory-human-gate-duplicate\s+canonical=([1-9][0-9]*)\s*-->"
 )
@@ -448,7 +453,7 @@ def _critical_exception(pr: Any, work_issue: Any) -> bool:
     if not isinstance(body, str):
         return False
     matches = EXCEPTION_RE.findall(body)
-    if len(matches) != 1:
+    if len(matches) != 1 or len(EXCEPTION_HEADER_RE.findall(body)) != 1:
         return False
     try:
         raw = _strict_json_loads(matches[0])

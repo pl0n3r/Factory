@@ -1019,6 +1019,101 @@ class ReleaseWindowTests(unittest.TestCase):
         )
 
 
+    def test_critical_exception_rejects_valid_plus_malformed_header(self) -> None:
+        marker = (
+            '<!-- factory-release-freeze-exception '
+            '{"version":1,"reason":"critical-repair","issue":921} -->'
+        )
+        work = {
+            "number": 921,
+            "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        rows = [gate_row(number=922, body=gate["body"])]
+        malformed = (
+            "<!-- factory-release-freeze-exception TRUNCATED -->",
+            "<!-- factory-release-freeze-exception {",
+        )
+        for fragment in malformed:
+            for body in (marker + "\n" + fragment, fragment + "\n" + marker):
+                with self.subTest(fragment=fragment, prefix=body.startswith(fragment)):
+                    self.assertFalse(rw._critical_exception({"body": body}, work))
+                    result = rw.check_pull_request({
+                        "now": "2026-10-03T10:10:00Z",
+                        "gates": rows,
+                        "pr": {"number": 1234, "body": body},
+                        "work_issue": work,
+                    })
+                    self.assertFalse(result["allowed"])
+                    self.assertEqual(result["reason"], "factory_release_window_active")
+
+    def test_critical_exception_rejects_uppercase_or_truncated_duplicate(self) -> None:
+        marker = (
+            '<!-- factory-release-freeze-exception '
+            '{"version":1,"reason":"critical-repair","issue":921} -->'
+        )
+        work = {
+            "number": 921,
+            "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        variants = (
+            '<!-- FACTORY-RELEASE-FREEZE-EXCEPTION {"version":1} -->',
+            "<!-- factory - release - freeze - exception {",
+            "<!-- FACTORY - RELEASE - FREEZE - EXCEPTION",
+            "<!-- factory-release-freeze-exception",
+        )
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        rows = [gate_row(number=922, body=gate["body"])]
+        for fragment in variants:
+            for body in (marker + "\n" + fragment, fragment + "\n" + marker):
+                with self.subTest(fragment=fragment, prefix=body.startswith(fragment)):
+                    self.assertFalse(rw._critical_exception({"body": body}, work))
+                    actual = rw.check_pull_request({
+                        "now": "2026-10-03T10:10:00Z",
+                        "gates": rows,
+                        "pr": {"number": 1234, "body": body},
+                        "work_issue": work,
+                    })
+                    self.assertEqual(actual["reason"], "factory_release_window_active")
+                    self.assertFalse(actual["allowed"])
+
+    def test_critical_exception_unique_authorized_marker_preserved(self) -> None:
+        marker = (
+            '<!-- factory-release-freeze-exception '
+            '{"version":1,"reason":"critical-repair","issue":921} -->'
+        )
+        work = {
+            "number": 921,
+            "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        unrelated = "\n<!-- factory-human-decision unrelated -->"
+        self.assertTrue(rw._critical_exception({"body": marker}, work))
+        self.assertTrue(rw._critical_exception({"body": marker + unrelated}, work))
+        self.assertFalse(rw._critical_exception({"body": marker + "\n" + marker}, work))
+        self.assertFalse(rw._critical_exception({"body": "<!-- factory-release-freeze-exception {"}, work))
+        self.assertFalse(rw._critical_exception({
+            "body": marker.replace('"issue":921', '"issue":922'),
+        }, work))
+        self.assertFalse(rw._critical_exception({
+            "body": marker.replace('"issue":921', '"issue":921,"issue":921'),
+        }, work))
+        self.assertFalse(rw._critical_exception({"body": marker}, {**work, "state": "closed"}))
+        self.assertFalse(rw._critical_exception({
+            "body": marker,
+        }, {**work, "labels": [{"name": "prioridad: alta"}]}))
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        result = rw.check_pull_request({
+            "now": "2026-10-03T10:10:00Z",
+            "gates": [gate_row(number=922, body=gate["body"])],
+            "pr": {"number": 1234, "body": marker + unrelated},
+            "work_issue": work,
+        })
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["reason"], "critical_repair_exception")
+
     def test_critical_exception_requires_exact_schema_open_issue_and_critical_label(self) -> None:
         body = (
             '<!-- factory-release-freeze-exception '
