@@ -322,6 +322,49 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
             audit(first, released, {**second, "active": False, "reason": "liberar"})
         self.assertEqual(len(audit(first, released, second).active), 1)
 
+    def test_contract_renewal_tracks_new_bot_pin_and_claims_fail_closed(self):
+        # The real coordinator rotates to a new UUID on /renovar-contrato
+        # after changing the acceptance or task marker fingerprint.
+        first = marker(12)
+        next_uid = "3fd88a50-e48a-4a16-9dc2-a9414eb27691"
+        renewed = marker(12, uid=next_uid)
+        renewed.update(reason="renovar-contrato",
+                       acceptance_sha256="c" * 64,
+                       task_marker_sha256="d" * 64,
+                       task_paths=["scripts/lease_authority_snapshot.py", "docs/new.md"],
+                       task_depends_on=[11])
+
+        def audit(*history):
+            return audit_active_claims(
+                [issue(12, "estado: en revisión")],
+                {12: [comment(index, item)
+                      for index, item in enumerate(history, start=1)]},
+                complete=True,
+            )
+
+        result = audit(first, renewed)
+        self.assertEqual(len(result.active), 1)
+        self.assertEqual(result.active[0].reservation_id, next_uid)
+        self.assertEqual(result.active[0].paths, tuple(renewed["task_paths"]))
+        # A renewal may rotate only one contract fingerprint.
+        acceptance_only = {**renewed, "task_marker_sha256": first["task_marker_sha256"],
+                           "task_paths": first["task_paths"], "task_depends_on": []}
+        self.assertEqual(audit(first, acceptance_only).active[0].reservation_id, next_uid)
+        for bad in (
+            {**renewed, "owner": "intruso"},
+            {**renewed, "branch": "trabajo/issue-13"},
+            {**renewed, "acceptance_sha256": first["acceptance_sha256"],
+             "task_marker_sha256": first["task_marker_sha256"]},
+            {**renewed, "active": False},
+            {**renewed, "reason": "tomar"},
+        ):
+            with self.subTest(invalid=bad), self.assertRaises(LeaseSnapshotError):
+                audit(first, bad)
+        with self.assertRaisesRegex(LeaseSnapshotError, "marker_rotacion"):
+            audit(first, {**first, "active": False, "reason": "liberar"}, renewed)
+        with self.assertRaisesRegex(LeaseSnapshotError, "marker_reactivado"):
+            audit(first, renewed, first)
+
     def test_missing_or_invalid_comment_update_timestamp_fails_closed(self):
         original = comment(1, marker(12))
         for stamp in (None, "", "ayer", "2026-99-10T12:00:00Z",
