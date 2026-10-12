@@ -1537,9 +1537,27 @@ class _SweepGuardedGitHub:
         self._check()
         self._api.comment(number, body)
 
+    def request(self, method: str, path: str, payload=None, allow=()):
+        """Revalidar antes de cada escritura REST interna del barrido."""
+        if method.upper() not in ("GET", "HEAD"):
+            self._check()
+        return self._api.request(method, path, payload, allow)
+
     def set_status(self, number: int, status: str | None) -> None:
         self._check()
-        self._api.set_status(number, status)
+        if not isinstance(self._api, GitHub):
+            # Los dobles de prueba solo ofrecen la operación agregada.
+            self._api.set_status(number, status)
+            return
+        # Reusar semántica GitHub sin suplantar al cliente: cada subescritura
+        # atraviesa request(), que vuelve a comprobar #767.
+        for name, (color, description) in STATUS_LABELS.items():
+            GitHub.ensure_label(self, name, color, description)
+        if status:
+            GitHub.add_labels(self, number, [status])
+        for label in STATUS_LABELS:
+            if label != status:
+                GitHub.remove_label(self, number, label)
 
 
 def run_scheduled_sweep(api: GitHub) -> dict[str, int]:
