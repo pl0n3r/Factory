@@ -91,5 +91,29 @@ class ReleaseGateSearchTests(unittest.TestCase):
             self.assertIn("Search Issues evidence rejected", bad.stderr)
 
 
+    def test_duplicate_json_keys_fail_closed_at_cli_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            p1, p2, pv = (Path(tmp) / n for n in
+                          ("first.json", "second.json", "verified.json"))
+            p2.write_text(json.dumps(self.second), encoding="utf-8")
+            pv.write_text(json.dumps(self.projection), encoding="utf-8")
+            original = json.dumps(self.first)
+            for needle, duplicate in (
+                ('"total_count": 116,', '"total_count": 0, "total_count": 116,'),
+                ('"items": [', '"items": [], "items": ['),
+                ('"number": 2000,', '"number": 9, "number": 2000,'),
+            ):
+                with self.subTest(duplicate=needle):
+                    self.assertIn(needle, original)
+                    p1.write_text(original.replace(needle, duplicate, 1),
+                                  encoding="utf-8")
+                    args = [sys.executable, "-m", "scripts.release_gate_search",
+                            str(p1), str(p2), str(pv)]
+                    result = subprocess.run(args, cwd=ROOT, capture_output=True,
+                                            text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Search Issues evidence rejected", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
