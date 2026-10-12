@@ -350,6 +350,29 @@ class LeaseAuthoritySnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(LeaseSnapshotError, "labels_invalidas"):
             audit_active_claims([duplicate], {12: [comment(1, marker(12))]}, complete=True)
 
+    def test_active_status_casefold_alias_requires_live_bot_marker(self):
+        # A single uppercase status must not silently become "unreserved".
+        for status in ("ESTADO: RESERVADO", "ESTADO: EN REVISIÓN",
+                       "STATUS: RESERVED", "STATUS: IN REVIEW"):
+            with self.subTest(status=status):
+                without_authority = issue(12, status)
+                with self.assertRaisesRegex(LeaseSnapshotError, "estado_activo_sin_marker"):
+                    audit_active_claims([without_authority], {12: []}, complete=True)
+                with self.assertRaisesRegex(LeaseSnapshotError, "estado_activo_sin_marker"):
+                    audit_active_claims(
+                        [without_authority],
+                        {12: [comment(1, marker(12, active=False))]},
+                        complete=True,
+                    )
+                # The same status with a genuine marker retains its claims.
+                audited = audit_active_claims(
+                    [without_authority],
+                    {12: [comment(1, marker(12))]},
+                    complete=True,
+                )
+                self.assertEqual(len(audited.active), 1)
+                self.assertEqual(audited.active[0].issue, 12)
+
     def test_uuid_identity_must_match_coordinator_versions_and_variant(self):
         self.assertEqual(len(audit_active_claims(
             [issue(12)], {12: [comment(1, marker(12))]}, complete=True).active), 1)
