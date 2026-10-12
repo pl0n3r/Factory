@@ -362,6 +362,11 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         # una puerta de release. Preservar los gates legacy completos y tratar
         # toda fuente canónica malformada como error, nunca como aprobación.
         if not legacy_release_intent and not canonical_release_intent:
+            # El inventario del workflow exige título no vacío. Una fuente
+            # incompleta no puede usarse para descartar evidencia sospechosa.
+            title = issue.get("title")
+            if window_intent and (not isinstance(title, str) or not title.strip()):
+                raise ReleaseWindowError("Issue de release sin título válido.")
             continue
         if window_intent:
             gate_info = _gate_from_body(body)
