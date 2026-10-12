@@ -313,6 +313,30 @@ class SonarWatchTests(unittest.TestCase):
         self.assertEqual(calls[:6], [(500, 1), (500, 2), (500, 3), (500, 4), (500, 5), (250, 1)])
         self.assertIn((31, 1), calls)
 
+    def test_sonar_rejects_incomplete_and_malformed_page_without_fake_green(self):
+        sonar = sonar_watch.SonarApi(token="")
+        cases = [
+            (None, "paginación Sonar inválida"),
+            ([], "paginación Sonar inválida"),
+            ({"issues": "not-a-list", "paging": {}}, "paginación Sonar inválida"),
+            ({"issues": [], "paging": {"pageIndex": 1, "pageSize": 500,
+                                      "total": True}}, "paginación Sonar incoherente"),
+            ({"issues": [], "paging": {"pageIndex": 2, "pageSize": 500,
+                                      "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [], "paging": {"pageIndex": 1, "pageSize": 500,
+                                      "total": 1}}, "Sonar truncó filas"),
+            ({"issues": [{"key": ""}], "paging": {"pageIndex": 1,
+                   "pageSize": 500, "total": 1}}, "identidad Sonar inválida"),
+            ({"issues": [{"key": "a"}, {"key": "b"}],
+              "paging": {"pageIndex": 1, "pageSize": 500,
+                         "total": 1}}, "Sonar devolvió filas excedentes"),
+        ]
+        for payload, reason in cases:
+            with self.subTest(reason=reason, payload=payload):
+                sonar.get = lambda _path, _params, value=payload: value
+                with self.assertRaisesRegex(sonar_watch.SonarWatchError, reason):
+                    sonar._all_issues("project-key")
+
     def test_auto_alert_creation_has_canonical_labels_and_block_reason(self):
         api = FakeIssues()
         raw = snapshot()
