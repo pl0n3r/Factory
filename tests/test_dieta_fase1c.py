@@ -111,10 +111,27 @@ class DietaFase1CTests(unittest.TestCase):
     def test_f1c_ledger_exact_only_one_deletion_and_reversible(self):
         section = self.document.split("## Ledger F1C de baja de Sonar Watch\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("main@" + BASE_SHA, section)
-        self.assertIn(
-            "| F1C | `.github/workflows/" + REMOVED + "` | `" + BLOB_SHA +
-            "` | 35 → 34 | squash-revert PR F1C |", section,
+        expected_row = (
+            "| F1C | `.github/workflows/" + REMOVED + "` | `" + BLOB_SHA
+            + "` | 35 → 34 | squash-revert PR F1C |"
         )
+        def verify_single_baja(document):
+            # Cualquier segunda fila de datos (incluido id diferente) es inválida.
+            rows = [
+                line for line in document.splitlines()
+                if line.startswith("| ") and not line.startswith("| Baja |")
+                and not line.startswith("| ---")
+            ]
+            if rows != [expected_row]:
+                raise AssertionError("Ledger F1C debe contener exactamente una baja autorizada")
+        verify_single_baja(section)
+        with self.assertRaises(AssertionError):
+            verify_single_baja(section + "\n" + expected_row)
+        with self.assertRaises(AssertionError):
+            verify_single_baja(
+                section + "\n| F1C | `.github/workflows/extra.yml` | `"
+                + "0" * 40 + "` | 35 → 33 | squash-revert PR F1C |"
+            )
         self.assertIn("cada seis horas", section)
         self.assertIn("Sonar CI-based", section)
         self.assertIn("squash-revert solo del PR F1C", section)
