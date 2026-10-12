@@ -8,6 +8,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from scripts.politica_kit import PolicyError, validate_other_gates_green
+
 ROOT = Path(__file__).resolve().parents[1]
 W = (ROOT / ".github/workflows/politica.yml").read_text()
 COMMENT_W = (ROOT / ".github/workflows/politica-comentario.yml").read_text()
@@ -452,8 +454,6 @@ print(json.dumps(pages[index]))
 
     def test_check_collection_does_not_bypass_policy_gates_or_authentication(self):
         """AC-03: REST autenticada read-only, exact SHA y Policy obligatoria."""
-        print("AC03 isolated: BEGIN", flush=True)
-        from scripts.politica_kit import PolicyError, validate_other_gates_green
         self.assertIn("GH_TOKEN: ${{ github.token }}", W)
         self.assertIn('"${checks_url_base}&page=$page"', W)
         self.assertIn('--checks-file "$checks_file"', W)
@@ -461,7 +461,6 @@ print(json.dumps(pages[index]))
                         W.index("POLICY_OUTPUT="))
         self.assertIn('recheck_pr_identity "$PR_JSON_FINAL"', W)
         self.assertNotIn("checks: write", W)
-        print("AC03 isolated: static OK", flush=True)
         good = [
             (10, "validate", "github-actions", 15368),
             (11, "SonarCloud Code Analysis", "sonarqubecloud", 12526),
@@ -476,10 +475,7 @@ print(json.dumps(pages[index]))
                 "app": {"slug": slug, "id": app_id},
                 "status": "completed", "conclusion": "success",
             }) for num, name, slug, app_id in items]
-        print("AC03 isolated: positive start", flush=True)
         validate_other_gates_green(records(good), head_sha="a" * 40)
-        print("AC03 isolated: positive OK", flush=True)
-        print("AC03 isolated: negative start", flush=True)
         with self.assertRaises(PolicyError):
             validate_other_gates_green(
                 records([*good[:2], (12, "CodeQL", "fake-app", 1234),
