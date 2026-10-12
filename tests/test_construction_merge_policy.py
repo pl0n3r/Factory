@@ -14,6 +14,15 @@ HEAD = "a" * 40
 
 def check(*, check_id, name, conclusion="success", status="completed",
           head_sha=HEAD, completed_at="2026-10-04T05:00:00Z"):
+    # Identidades reales verificadas de las GitHub Apps de checks.
+    slug = ("sonarqubecloud" if name == "SonarCloud Code Analysis"
+            else "github-advanced-security" if name == "CodeQL"
+            else "github-actions")
+    app_id = {
+        "sonarqubecloud": 12526,
+        "github-advanced-security": 57789,
+        "github-actions": 15368,
+    }[slug]
     return json.dumps({
         "id": check_id,
         "name": name,
@@ -21,6 +30,7 @@ def check(*, check_id, name, conclusion="success", status="completed",
         "status": status,
         "conclusion": conclusion,
         "completed_at": completed_at,
+        "app": {"slug": slug, "id": app_id},
     })
 
 
