@@ -148,7 +148,13 @@ class T(unittest.TestCase):
         self.assertIn('"$FINAL_BASE" != "$PR_BASE_SHA"', COMMENT_W)
         self.assertIn('"$FINAL_HEAD_REPO" != "$PR_HEAD_REPO"', COMMENT_W)
         self.assertIn('"$FINAL_BASE_REPO" != "$PR_BASE_REPO"', COMMENT_W)
-        self.assertLess(COMMENT_W.index("PR_JSON_FINAL="), COMMENT_W.index("check-runs"))
+        # La evidencia debe leerse ANTES de la revalidación final del PR.
+        # Cambiar HEAD/BASE durante la lectura no autoriza publicar un check.
+        self.assertLess(COMMENT_W.index("check-runs"), COMMENT_W.index("PR_JSON_FINAL="))
+        self.assertLess(
+            COMMENT_W.index("PR_JSON_FINAL="),
+            COMMENT_W.index('gh api --method POST "repos/$REPOSITORY/check-runs"'),
+        )
 
     def test_comment_revalidation_permissions_are_minimal(self):
         self.assertIn("checks: write", COMMENT_W)
