@@ -151,12 +151,12 @@ def _claim_path_ok(path: Any) -> bool:
 
 
 def _claim_paths_disjoint(paths: list[str]) -> bool:
-    folded = [normalize("NFC", path).casefold() for path in paths]
+    folded = [normalize("NFC", path).casefold().removesuffix("/") for path in paths]
     for pos, left in enumerate(folded):
         for right in folded[pos + 1:]:
             if (left == right or
-                    (left.endswith("/") and right.startswith(left)) or
-                    (right.endswith("/") and left.startswith(right))):
+                    right.startswith(left + "/") or
+                    left.startswith(right + "/")):
                 return False
     return True
 
