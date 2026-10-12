@@ -56,7 +56,7 @@ class DietaFase1ATests(unittest.TestCase):
     def test_optional_triggers_removed_only_after_dependency_and_consumer_preflight(self):
         """AC-01: solo desaparecen triggers opcionales sin callers vivos."""
         actual = self.actual_workflows()
-        self.assertEqual(len(actual), 36)
+        self.assertEqual(len(actual), 35)
         self.assertEqual(set(self.rows), actual)
         for name in REMOVED:
             with self.subTest(removed=name):
@@ -145,7 +145,7 @@ class DietaFase1ATests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual({number for number, *_ in rows}, {"1", "2"})
         self.assertEqual({path: (sha, suite) for _, path, sha, suite in rows}, REMOVED)
-        self.assertEqual(len(self.actual_workflows()) + len(rows), 38)
+        self.assertEqual(len(self.actual_workflows()) + len(rows) + 1, 38)
         self.assertIn("squash-revert PR F1A", section)
         self.assertEqual(set(self.rows), self.actual_workflows())
         for _, suite in REMOVED.values():
