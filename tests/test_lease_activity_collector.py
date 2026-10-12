@@ -208,9 +208,12 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         result = collect_activity(api, 21, now=NOW)
         self.assertTrue(result["evidence_complete"])
         self.assertEqual(result["last_activity_at"], "2026-10-11T09:50:00Z")
-        api.change_assignees_on_recheck = True
+        # Fresh fake: the first two reads above already consumed the
+        # recheck counter; reuse would not trigger a deterministic race.
+        race = API()
+        race.change_assignees_on_recheck = True
         self.assertEqual(
-            collect_activity(api, 21, now=NOW),
+            collect_activity(race, 21, now=NOW),
             {"status": "UNKNOWN", "evidence_complete": False},
         )
 
