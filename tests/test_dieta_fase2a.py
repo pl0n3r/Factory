@@ -41,6 +41,19 @@ class DietaFase2ATests(unittest.TestCase):
         phase1 = doc.split("### Fase 1:", 1)[1].split("### Fase 2:", 1)[0]
         self.assertNotIn("`.github/workflows/cabina.yml`", phase1)
 
+    def test_owner_command_runbook_marks_trigger_disabled(self):
+        runbook = (ROOT / "docs/label-color-sync.md").read_text(encoding="utf-8")
+        self.assertFalse((WF / RETIRED).exists())
+        self.assertIn("trigger remoto está desactivado", runbook)
+        self.assertIn("ya no ejecuta", runbook)
+        self.assertIn("Factory #874", runbook)
+        self.assertIn("scripts/sync_label_colors.py", runbook)
+        self.assertIn("--dry-run", runbook)
+        self.assertIn("No ejecutar `--apply`", runbook)
+        self.assertIn("FACTORY_PROVISION_TOKEN", runbook)
+        self.assertNotIn("El primer comando ejecuta", runbook)
+        self.assertNotIn("El segundo comando requiere", runbook)
+
     def test_exact_f2a_ledger_single_row_and_revert(self):
         doc = (ROOT / "docs/dieta-factory.md").read_text(encoding="utf-8")
         section = doc.split("## Ledger F2A de baja de Sync Label Colors\n", 1)[1].split("\n## ", 1)[0]
