@@ -372,8 +372,15 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         # una puerta de release. Preservar los gates legacy completos y tratar
         # toda fuente canónica malformada como error, nunca como aprobación.
         if not legacy_release_intent and not canonical_release_intent:
-            # El inventario del workflow exige título no vacío. Una fuente
-            # incompleta no puede usarse para descartar evidencia sospechosa.
+            # Un título editado no elimina evidencia estructural de una
+            # ventana real con puerta humana incompleta o duplicada.
+            # Los ejemplos aislados de ventana en documentación no conceden
+            # autoridad ni impiden CI.
+            if window_intent and WINDOW_RE.search(body):
+                header_count = len(GATE_HEADER_RE.findall(body))
+                marker_count = len(MARKER_RE.findall(body))
+                if header_count and (header_count != 1 or marker_count != 1):
+                    raise AmbiguousReleaseMarker("Puerta humana de release ambigua.")
             title = issue.get("title")
             if window_intent and (not isinstance(title, str) or not title.strip()):
                 raise ReleaseWindowError("Issue de release sin título válido.")
@@ -389,10 +396,15 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
                 # Una fuente ambigua no debe omitirse como gate legacy inválido.
                 raise
             except ReleaseWindowError:
-                # Gates legacy sin window no conceden autoridad por sí solos.
-                # Si su schema/target ya no es demostrable, se omiten.
+                # Una identidad canónica de release no se descarta si el
+                # esquema está roto; solo las fuentes legacy no autoritativas
+                # pueden omitirse en ausencia de ventana.
+                if canonical_release_intent:
+                    raise
                 continue
             if gate_info is None:
+                if canonical_release_intent:
+                    raise ReleaseWindowError("Puerta canónica sin gate factory-release.")
                 continue
         gate, version, target_sha = gate_info
         number = issue.get("number")
