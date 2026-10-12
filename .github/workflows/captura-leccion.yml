@@ -15,9 +15,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  issue-identity-unknown:
+    name: Identidad de cierre de Issue no acreditada
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && github.event_name == 'issues' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.unknown.outputs.status }}
+      publication_allowed: ${{ steps.unknown.outputs.publication_allowed }}
+    steps:
+      - id: unknown
+        name: Registrar UNKNOWN sin candidato ni checkout
+        run: |
+          set -euo pipefail
+          # ISSUE_UNKNOWN_BEGIN
+          printf 'status=UNKNOWN\nreason=ambiguous_issue_closure\npublication_allowed=false\n' >> "$GITHUB_OUTPUT"
+          printf 'lesson_capture_status=UNKNOWN reason=ambiguous_issue_closure publication_allowed=false\n'
+          # ISSUE_UNKNOWN_END
+
   candidato-offline:
     name: Verificar evento y preparar candidato
-    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && (github.event_name == 'issues' || github.event.pull_request.merged == true)
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && github.event_name == 'pull_request' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -57,16 +77,14 @@ jobs:
                   raise ValueError("foreign_or_unclosed_event")
 
               if event == "issues":
-                  issue = payload.get("issue")
-                  if (not isinstance(issue, dict) or type(issue.get("number")) is not int
-                          or issue["number"] < 1 or issue.get("state") != "closed"):
-                      raise ValueError("issue_identity_invalid")
-                  number = issue["number"]
-                  when = issue.get("closed_at")
-                  event_kind = "issue_closed"
-                  summary = "Cierre de issue validado en GitHub"
+                  # GitHub's issue.closed payload has only second-resolution
+                  # closed_at; two real closures can share this timestamp.
+                  # GITHUB_RUN_ID is delivery context, not an event identity.
+                  # Do not claim a unique business event without evidence.
+                  raise ValueError("ambiguous_issue_closure")
               else:
                   pr = payload.get("pull_request")
+                  merge_sha = pr.get("merge_commit_sha") if isinstance(pr, dict) else None
                   if (not isinstance(pr, dict) or type(pr.get("number")) is not int
                           or pr["number"] < 1 or pr.get("merged") is not True
                           or pr.get("state") != "closed"
@@ -74,7 +92,8 @@ jobs:
                           or pr["base"].get("ref") != "main"
                           or not isinstance(pr["base"].get("repo"), dict)
                           or pr["base"]["repo"].get("full_name") != repo
-                          or pr.get("merge_commit_sha") != sha):
+                          or type(merge_sha) is not str
+                          or not re.fullmatch(r"[0-9a-f]{40}", merge_sha)):
                       raise ValueError("merge_identity_invalid")
                   number = pr["number"]
                   when = pr.get("merged_at")
@@ -87,8 +106,9 @@ jobs:
               closed_time = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ")
 
               candidate = {
-                  "event_id": f"{event_kind}-{number}-{closed_time:%Y%m%dT%H%M%SZ}",
-                  "repo": repo, "issue": number, "sha": sha,
+                  "event_id": f"{event_kind}-{number}-{merge_sha}",
+                  "repo": repo, "issue": number, "sha": merge_sha,
+                  "run_sha": sha,
                   "occurred_at": when, "event": event_kind, "summary": summary,
                   "issuer": "github-actions[bot]", "verified": True,
               }
