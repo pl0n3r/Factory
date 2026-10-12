@@ -732,6 +732,128 @@ class ReleaseWindowTests(unittest.TestCase):
             })
 
 
+    def test_duplicate_json_decision_keys_fail_closed(self) -> None:
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        gate, _, _ = rw._gate_from_body(rendered["body"])
+        fingerprint = rw._gate_fingerprint(gate)
+        for raw in (
+            '{"version":2,"option":"B","option":"A","gate_sha256":"' + fingerprint + '"}',
+            '{"version":1,"version":2,"option":"A","gate_sha256":"' + fingerprint + '"}',
+            '{"version":2,"option":"A","gate_sha256":"0","gate_sha256":"' + fingerprint + '"}',
+        ):
+            with self.subTest(raw=raw), self.assertRaises(rw.ReleaseWindowError):
+                rw._decision_a([{
+                    "user": {"login": "github-actions[bot]"},
+                    "body": "<!-- factory-human-decision " + raw + " -->",
+                }], fingerprint)
+
+        for fields in (
+            '"category":"factory-release","category":"brand"',
+            '"category":"brand","category":"factory-release"',
+            '"category":"factory-\\u0072elease","category":"brand"',
+            '"category":"brand","category":"factory-\\u0072elease"',
+        ):
+            body = (
+                "<!-- factory-human-gate {" + fields
+                + ',"context":"Factory 1.0.23 main@' + OLD_SHA + '"} -->'
+            )
+            with self.subTest(fields=fields), self.assertRaises(rw.ReleaseWindowError):
+                rw.gate_records([gate_row(number=901, body=body)])
+
+        self.assertEqual(rw.gate_records([gate_row(
+            number=902,
+            body='<!-- factory-human-gate {"category":"brand","category":"legal"} -->',
+        )]), [])
+
+    def test_duplicate_json_window_keys_fail_closed(self) -> None:
+        prefix = (
+            '{"version":1,"sha":"' + OLD_SHA
+            + '","opened_at":"2026-10-03T10:00:00Z",'
+        )
+        fragments = (
+            '"expires_at":"2026-10-03T10:30:00Z","expires_at":"2026-10-03T11:00:00Z"',
+            '"sha":"' + OLD_SHA + '","expires_at":"2026-10-03T11:00:00Z"',
+            '"expires_at":"2026-10-03T11:00:00Z","nested":{"key":1,"key":2}',
+        )
+        for tail in fragments:
+            body = "<!-- factory-release-window " + prefix + tail + "} -->"
+            with self.subTest(tail=tail), self.assertRaises(rw.ReleaseWindowError):
+                rw._window_from_body(body, OLD_SHA)
+
+    def test_duplicate_json_execution_and_exception_fail_closed(self) -> None:
+        duplicated = (
+            '{"version":1,"sha":"' + OLD_SHA
+            + '","run_id":1,"run_id":2,"executed_at":"2026-10-03T10:05:00Z"}'
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([{
+                "user": {"login": "github-actions[bot]"},
+                "body": "<!-- factory-release-executed " + duplicated + " -->",
+            }], OLD_SHA)
+
+        work = {
+            "number": 921, "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        marker = (
+            "<!-- factory-release-freeze-exception "
+            '{"version":1,"reason":"critical-repair","issue":0,"issue":921} -->'
+        )
+        self.assertFalse(rw._critical_exception({"body": marker}, work))
+        self.assertFalse(rw._critical_exception({
+            "body": (
+                "<!-- factory-release-freeze-exception "
+                '{"version":1,"reason":"critical-repair","issue":921,'
+                '"nested":{"x":1,"x":2}} -->'
+            ),
+        }, work))
+
+    def test_unique_json_release_contracts_still_pass(self) -> None:
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        gate, version, sha = rw._gate_from_body(rendered["body"])
+        self.assertEqual((version, sha), ("1.0.23", OLD_SHA))
+        self.assertIsNotNone(rw._window_from_body(rendered["body"], OLD_SHA))
+        decision = approved_comment(rendered["body"])
+        self.assertTrue(rw._decision_a([decision], rw._gate_fingerprint(gate)))
+        execution = {
+            "version": 1, "sha": OLD_SHA, "run_id": 123,
+            "executed_at": "2026-10-03T10:05:00Z",
+        }
+        bot = {
+            "user": {"login": "github-actions[bot]"},
+            "body": (
+                "<!-- factory-release-executed "
+                + json.dumps(execution, separators=(",", ":"), sort_keys=True)
+                + " -->"
+            ),
+        }
+        self.assertEqual(rw._execution([bot], OLD_SHA)["run_id"], 123)
+        work = {
+            "number": 921, "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        self.assertTrue(rw._critical_exception({
+            "body": (
+                '<!-- factory-release-freeze-exception '
+                '{"version":1,"reason":"critical-repair","issue":921} -->'
+            ),
+        }, work))
+        self.assertEqual(rw.gate_records([gate_row(
+            number=901,
+            body='<!-- factory-human-gate {"category":"brand"} -->',
+        )]), [])
+
+        with (
+            patch.object(rw.sys, "stdin", io.StringIO(
+                '{"gates":[],"gates":[]}'
+            )),
+            patch.object(rw.sys, "argv", ["release_window.py", "summary"]),
+            patch.object(rw.sys, "stdout", io.StringIO()),
+            patch.object(rw.sys, "stderr", io.StringIO()) as stderr,
+        ):
+            self.assertEqual(rw.main(), 2)
+            self.assertIn("JSON inválido", stderr.getvalue())
+
     def test_cli_dispatches_all_modes_and_reports_invalid_json(self) -> None:
         def cli(mode: str, payload: object | None = None, raw: str | None = None):
             stdout = io.StringIO()

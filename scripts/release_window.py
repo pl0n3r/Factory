@@ -54,6 +54,23 @@ class ReleaseWindowError(ValueError):
     """Evidencia ambigua/inválida: no se debe ampliar autoridad."""
 
 
+class AmbiguousReleaseJSON(ReleaseWindowError):
+    """Claves JSON repetidas invalidan la evidencia de release."""
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise AmbiguousReleaseJSON("JSON contiene claves duplicadas.")
+        result[key] = value
+    return result
+
+
+def _strict_json_loads(raw: str) -> Any:
+    return json.loads(raw, object_pairs_hook=_unique_json_object)
+
+
 def _canonical_time(value: Any, field: str) -> datetime:
     if not isinstance(value, str) or len(value) > 40:
         raise ReleaseWindowError(f"{field} inválido.")
@@ -109,7 +126,19 @@ def _legacy_factory_release_intent(body: str) -> bool:
         return False
     for marker in matches:
         try:
-            raw = json.loads(marker)
+            raw = _strict_json_loads(marker)
+        except AmbiguousReleaseJSON:
+            # Inspeccionar pares del objeto raíz incluso si la categoría usa
+            # escapes Unicode. No convertir puertas legacy ajenas en bloqueos.
+            pairs = json.loads(marker, object_pairs_hook=lambda items: items)
+            if isinstance(pairs, list) and any(
+                key == "category" and value == "factory-release"
+                for key, value in pairs
+            ):
+                return True
+            if "factory-release" in marker:
+                return True
+            continue
         except json.JSONDecodeError:
             if "factory-release" in marker:
                 return True
@@ -128,8 +157,10 @@ def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
     if len(matches) != 1:
         raise ReleaseWindowError("Puerta humana ambigua.")
     try:
-        raw = json.loads(matches[0])
+        raw = _strict_json_loads(matches[0])
         gate = validate_gate(raw)
+    except AmbiguousReleaseJSON:
+        raise
     except (json.JSONDecodeError, GateValidationError) as exc:
         raise ReleaseWindowError("Puerta humana inválida.") from exc
     if gate["category"] != "factory-release":
@@ -150,7 +181,7 @@ def _window_from_body(body: str, target_sha: str) -> dict[str, Any] | None:
     if len(matches) != 1:
         raise ReleaseWindowError("Marker release-window ambiguo.")
     try:
-        raw = json.loads(matches[0])
+        raw = _strict_json_loads(matches[0])
     except json.JSONDecodeError as exc:
         raise ReleaseWindowError("Marker release-window inválido.") from exc
     if not isinstance(raw, dict) or set(raw) != {
@@ -222,7 +253,7 @@ def _decision_a(
         if len(matches) != 1:
             raise ReleaseWindowError("Journal de decisión ambiguo.")
         try:
-            raw = json.loads(matches[0])
+            raw = _strict_json_loads(matches[0])
         except json.JSONDecodeError as exc:
             raise ReleaseWindowError("Journal de decisión inválido.") from exc
         if not isinstance(raw, dict) or set(raw) != {
@@ -256,7 +287,7 @@ def _execution(
             continue
         for match in EXECUTED_RE.findall(body):
             try:
-                raw = json.loads(match)
+                raw = _strict_json_loads(match)
             except json.JSONDecodeError as exc:
                 raise ReleaseWindowError("Marker executed inválido.") from exc
             if not isinstance(raw, dict) or set(raw) != {
@@ -304,6 +335,8 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         else:
             try:
                 gate_info = _gate_from_body(body)
+            except AmbiguousReleaseJSON:
+                raise
             except ReleaseWindowError:
                 # Gates legacy sin window no conceden autoridad por sí solos.
                 # Si su schema/target ya no es demostrable, se omiten.
@@ -405,8 +438,8 @@ def _critical_exception(pr: Any, work_issue: Any) -> bool:
     if len(matches) != 1:
         return False
     try:
-        raw = json.loads(matches[0])
-    except json.JSONDecodeError:
+        raw = _strict_json_loads(matches[0])
+    except (json.JSONDecodeError, AmbiguousReleaseJSON):
         return False
     if raw != {"version": 1, "reason": "critical-repair", "issue": work_issue.get("number")}:
         return False
@@ -791,8 +824,8 @@ def _read_payload() -> Any:
     if len(raw) > 2_000_000:
         raise ReleaseWindowError("Payload demasiado grande.")
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
+        return _strict_json_loads(raw)
+    except (json.JSONDecodeError, AmbiguousReleaseJSON) as exc:
         raise ReleaseWindowError("JSON inválido.") from exc
 
 
