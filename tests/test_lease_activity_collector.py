@@ -129,6 +129,45 @@ class API:
 
 
 class LeaseActivityCollectorTests(unittest.TestCase):
+    def test_external_changes_requested_fail_closed(self):
+        # An authenticated third-party review is a veto, not owner activity.
+        # The Fake API raises if a non-GET operation is attempted.
+        for reviewer in ("other", "pl0n3r"):
+            with self.subTest(reviewer=reviewer):
+                api = API()
+                api.reviews = [{
+                    "id": 12, "user": {"login": reviewer},
+                    "state": "CHANGES_REQUESTED",
+                    "submitted_at": "2026-10-11T09:25:00Z",
+                }]
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertTrue(any("/pulls/35/reviews?" in p for p in api.calls))
+
+    def test_dismissed_and_approved_reviews_are_not_change_requests(self):
+        # Recognized non-blocking external review states remain compatible.
+        for state in ("APPROVED", "DISMISSED", "COMMENTED", "PENDING"):
+            with self.subTest(state=state):
+                api = API()
+                api.reviews = [{
+                    "id": 12, "user": {"login": "other"},
+                    "state": state, "submitted_at": "2026-10-11T09:25:00Z",
+                }]
+                self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
+        for state in ("INVALID", None, "", 7):
+            with self.subTest(invalid_state=state):
+                api = API()
+                api.reviews = [{
+                    "id": 12, "user": {"login": "other"},
+                    "state": state, "submitted_at": "2026-10-11T09:25:00Z",
+                }]
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+
     def test_unverifiable_now_timezone_fails_closed(self):
         """No inferir la zona local del runner para decidir inactividad V3."""
         class UndefinedOffset(tzinfo):

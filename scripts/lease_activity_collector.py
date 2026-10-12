@@ -246,7 +246,16 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 if (not isinstance(author, dict) or type(author.get("login")) is not str
                         or not author["login"]):
                     raise IncompleteEvidence()
-                if author["login"] == owner and review.get("state") != "PENDING":
+                # Any authenticated reviewer may veto the PR.  A missing or
+                # unknown state cannot prove that no review gate is pending.
+                review_state = review.get("state")
+                if review_state not in (
+                        "PENDING", "COMMENTED", "APPROVED", "DISMISSED",
+                        "CHANGES_REQUESTED"):
+                    raise IncompleteEvidence()
+                if review_state == "CHANGES_REQUESTED":
+                    raise IncompleteEvidence()
+                if author["login"] == owner and review_state != "PENDING":
                     when = _time(review.get("submitted_at"), now)
                     if when >= since:
                         # La review pertenece al login, no a la sesión V3.
