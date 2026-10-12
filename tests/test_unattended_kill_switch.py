@@ -254,6 +254,17 @@ class UnattendedKillSwitchTests(unittest.TestCase):
             ("PAUSED", True, "kill_switch_paused", "unchanged"),
         )
 
+    def test_runbook_documents_closed_state_and_variant_header_ambiguity(self):
+        guide = (ROOT / "docs" / "unattended-kill-switch.md").read_text(encoding="utf-8")
+        self.assertIn("#767 debe estar cerrado", guide)
+        self.assertIn('state: "closed"', guide)
+        self.assertIn("global_pause=true", guide)
+        self.assertIn("mayúsculas", guide)
+        self.assertIn("truncados", guide)
+        self.assertIn("UNKNOWN", guide)
+        self.assertIn("RUNNING", guide)
+        self.assertLessEqual(len(guide.splitlines()), 90)
+
     def test_owner_runbook_is_short_and_explicit(self):
         guide = (ROOT / "docs" / "unattended-kill-switch.md").read_text(encoding="utf-8")
         self.assertIn(CANONICAL_SOURCE_URL, guide)
