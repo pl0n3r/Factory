@@ -72,13 +72,15 @@ class CaptureLessonTests(unittest.TestCase):
                       sha="d" * 40)
         self.assertEqual(len(capture_lessons([first, other, first])), 2)
         self.assertEqual(len(capture_lessons([first, first])), 1)
-        for conflict in ({**first, "issue": 46},
-                         {**first, "summary": "Otro cierre del mismo PR"}):
-            with self.subTest(conflict=conflict):
-                with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
-                    capture_lessons([first, conflict])
+        # Identity mismatches are rejected before deduplicating by event_id.
+        for invalid_identity in ({**first, "issue": 46},
+                                 {**first, "sha": "b" * 40}):
+            with self.subTest(invalid_identity=invalid_identity):
+                with self.assertRaisesRegex(CaptureError, "invalid_business_event_identity"):
+                    capture_lessons([first, invalid_identity])
+        # A genuine change to semantic data under the same valid ID is a conflict.
         with self.assertRaisesRegex(CaptureError, "conflicting_event_id"):
-            capture_lessons([first, {**first, "sha": "b" * 40}])
+            capture_lessons([first, {**first, "summary": "Otro cierre del mismo PR"}])
 
     def test_unicode_surrogates_are_rejected_with_typed_error(self):
         """JSON can decode lone surrogates; they cannot reach UTF-8 hashing."""
