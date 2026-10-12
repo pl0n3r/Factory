@@ -179,11 +179,24 @@ def _comment_fields(comment: Any, previous_id: int) -> tuple[int, str, Any, str,
 
 
 def _verify_new_uuid(previous: dict[str, Any], current: dict[str, Any]) -> None:
-    """Una rotación nunca elimina claims ni cambia fingerprints sin autoridad."""
+    """Rotaciones V3: recuperación estable o renovación bot contractual."""
+    if not current["active"]:
+        _reject("marker_rotacion")
+    # El coordinador emite /renovar-contrato con UUID nuevo y nuevos pins.
+    # Solo un marker bot para el MISMO titular/rama puede ampliar claims;
+    # nunca se infiere esta autoridad del cuerpo editable de un Issue.
+    if current["reason"] == "renovar-contrato":
+        if (not previous["active"] or previous["version"] != 3
+                or current["version"] != 3
+                or current["branch"] != previous["branch"]
+                or current["owner"] != previous["owner"]
+                or (current["acceptance_sha256"] == previous["acceptance_sha256"]
+                    and current["task_marker_sha256"] == previous["task_marker_sha256"])):
+            _reject("marker_rotacion")
+        return
     stable = ("version", "branch", "acceptance_sha256",
               "task_marker_sha256", "task_paths", "task_depends_on")
-    if (not current["active"]
-            or any(current.get(field) != previous.get(field) for field in stable)):
+    if any(current.get(field) != previous.get(field) for field in stable):
         _reject("marker_rotacion")
     if previous["active"]:
         if current["reason"] not in ("transferir", "recuperacion-inactividad"):
