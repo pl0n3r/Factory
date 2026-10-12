@@ -145,7 +145,7 @@ class DietaFase1ATests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual({number for number, *_ in rows}, {"1", "2"})
         self.assertEqual({path: (sha, suite) for _, path, sha, suite in rows}, REMOVED)
-        self.assertEqual(len(self.actual_workflows()) + len(rows) + 2, 38)
+        self.assertEqual(len(self.actual_workflows()) + len(rows) + 3, 38)
         self.assertIn("squash-revert PR F1A", section)
         self.assertEqual(set(self.rows), self.actual_workflows())
         for _, suite in REMOVED.values():
