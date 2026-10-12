@@ -630,6 +630,8 @@ def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
     ante apagones sin fsync de archivos/directorios. La marca, si persiste,
     bloquea nuevas escrituras; la evidencia offline no autoriza publicación.
     """
+    # Rutas estáticas: los datos del reporte solo afectan el contenido.
+    artifact_names = ("recomendaciones.json", "dashboard.md")
     payloads = {
         "recomendaciones.json": json.dumps(
             report, ensure_ascii=False, indent=2, sort_keys=True,
@@ -658,8 +660,8 @@ def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
     originals: set[str] = set()
     try:
         stage = Path(tempfile.mkdtemp(prefix=".metricas-txn-", dir=output_dir))
-        for name, contents in payloads.items():
-            (stage / f"{name}.next").write_text(contents, encoding="utf-8")
+        for name in artifact_names:
+            (stage / f"{name}.next").write_text(payloads[name], encoding="utf-8")
             target = output_dir / name
             if target.is_symlink():
                 raise OSError("Archivo de salida simbólico no permitido.")
@@ -674,7 +676,7 @@ def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
                 backup.chmod(mode)
                 originals.add(name)
             (stage / f"{name}.next").chmod(mode)
-        for name in payloads:
+        for name in artifact_names:
             os.replace(stage / f"{name}.next", output_dir / name)
             installed.append(name)
     except OSError:
