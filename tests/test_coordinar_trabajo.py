@@ -365,6 +365,29 @@ class WorkflowCoordinacionTests(unittest.TestCase):
 
         return "\n".join(block)
 
+    def test_scheduled_sweep_workflow_guard_is_authenticated_and_fail_closed(self):
+        """schedule y workflow_dispatch pasan por CLI y revalidación #767."""
+        import inspect
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github" / "workflows"
+                    / "coordinacion-trabajo.yml").read_text(encoding="utf-8")
+        job = self.yaml_block(workflow, "marcar-reservas-inactivas:", 2)
+        self.assertIn("github.event_name == 'schedule'", job)
+        self.assertIn("github.event_name == 'workflow_dispatch'", job)
+        self.assertIn("GH_TOKEN:", job)
+        self.assertIn("github.token", job)
+        self.assertIn("marcar-inactivas --repo", job)
+        self.assertIn("guard canónico", job)
+        self.assertIn("scripts/coordinar_trabajo.py", job)
+        self.assertIn(
+            "guarded._check()",
+            inspect.getsource(coordinator.run_scheduled_sweep),
+        )
+        self.assertIn(
+            "evaluate_unattended_kill_switch",
+            inspect.getsource(coordinator.require_sweep_running),
+        )
+
     def test_pr_synchronize_revalidates_scope_read_only(self) -> None:
         """Cada push en PR interno se inspecciona sin token de escritura."""
         workflow = (
@@ -1681,8 +1704,220 @@ class CoordinacionTests(unittest.TestCase):
             [row for row in api.comments if "factory-unblock-evidence" in row["body"]]
         )
 
-    def test_scheduled_sweep_runs_reservations_and_blockers(self) -> None:
+    @staticmethod
+    def _sweep_switch_api(*states: str):
+        """Fuente #767 simulada y autenticada en FakeGitHub, sin red."""
         api = FakeGitHub()
+        api.repo = "pl0n3r/Factory"
+        original = api.issue
+        observed = {"reads": 0}
+
+        def read_issue(number):
+            if number != 767:
+                return original(number)
+            n = observed["reads"]
+            observed["reads"] += 1
+            mode = states[min(n, len(states) - 1)]
+            if mode == "403":
+                raise GitHubError(403, "403 de instalación simulado")
+            payload = {
+                "number": 767,
+                "url": coordinator.CANONICAL_SOURCE_URL,
+                "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                "state": "closed",
+                "user": {"login": "pl0n3r"},
+                "body": (
+                    '<!-- factory-unattended-kill-switch '
+                    + json.dumps({
+                        "version": 1, "state": "RUNNING", "owner": "pl0n3r"
+                    }) + ' -->'
+                ),
+            }
+            if mode == "PAUSED":
+                payload["body"] = payload["body"].replace("RUNNING", "PAUSED")
+            elif mode == "duplicate":
+                payload["body"] += payload["body"]
+            elif mode == "invalid":
+                payload["body"] = "<!-- factory-unattended-kill-switch nope -->"
+            elif mode == "wrong-owner":
+                payload["user"] = {"login": "attacker"}
+            elif mode == "unclosed":
+                payload["state"] = "open"
+            return payload
+
+        api.issue = read_issue
+        return api, observed
+
+    def test_scheduled_sweep_paused_invalid_switch_zero_writes(self):
+        for mode in ("PAUSED", "403", "duplicate", "invalid",
+                     "wrong-owner", "unclosed"):
+            with self.subTest(mode=mode):
+                api, _ = self._sweep_switch_api(mode)
+                add_active_reservation(api)
+                api.commit_times["abc123"] = datetime(
+                    2020, 1, 1, tzinfo=timezone.utc)
+                before_comments = len(api.comments)
+                with self.assertRaises(CoordinationError):
+                    run_scheduled_sweep(api)
+                self.assertEqual(len(api.comments), before_comments)
+                self.assertEqual(api.status_history, [STATUS_RESERVED])
+                self.assertNotIn("coordinacion/lock-issue-12", api.branches)
+
+    def test_scheduled_sweep_pause_race_cleans_own_lock_without_status(self):
+        api, observed = self._sweep_switch_api(
+            "RUNNING", "RUNNING", "PAUSED")
+        add_active_reservation(api)
+        api.commit_times["abc123"] = datetime(
+            2020, 1, 1, tzinfo=timezone.utc)
+        old = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = old
+        api.comments[-1]["updated_at"] = old
+        with self.assertRaisesRegex(CoordinationError, "Barrido pausado"):
+            run_scheduled_sweep(api)
+        self.assertGreaterEqual(observed["reads"], 3)
+        self.assertNotIn("coordinacion/lock-issue-12", api.branches)
+        self.assertEqual(api.status_history, [STATUS_RESERVED])
+        self.assertEqual(len(api.comments), 1)
+
+    def test_scheduled_sweep_pause_race_prevents_unblock_and_reblock(self):
+        for status, expected_sha in (
+            (STATUS_BLOCKED, "a" * 40),
+            (STATUS_AVAILABLE, "f" * 40),
+        ):
+            with self.subTest(status=status):
+                api, observed = self._sweep_switch_api("RUNNING", "PAUSED")
+                api.branches["main"] = "a" * 40
+                api.issue_data["labels"] = [{"name": status}]
+                api.issue_data["body"] = unblock_marker(
+                    kind="branch_sha", branch="main", sha=expected_sha,
+                )
+                with self.assertRaisesRegex(CoordinationError, "Barrido pausado"):
+                    run_scheduled_sweep(api)
+                self.assertGreaterEqual(observed["reads"], 2)
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.status_history, [])
+                self.assertEqual(
+                    coordinator.label_names(api.issue_data), {status})
+
+    def test_scheduled_sweep_running_preserves_safety_checks(self):
+        recent, _ = self._sweep_switch_api("RUNNING")
+        add_active_reservation(recent)
+        self.assertEqual(run_scheduled_sweep(recent)["stale_reservations"], 0)
+        self.assertEqual(recent.status_history, [STATUS_RESERVED])
+
+        stale, observed = self._sweep_switch_api("RUNNING")
+        add_active_reservation(stale)
+        when = "2020-01-01T00:00:00+00:00"
+        stale.comments[-1]["created_at"] = when
+        stale.comments[-1]["updated_at"] = when
+        stale.commit_times["abc123"] = datetime(
+            2020, 1, 1, tzinfo=timezone.utc)
+        result = run_scheduled_sweep(stale)
+        self.assertEqual(result["stale_reservations"], 1)
+        self.assertGreaterEqual(observed["reads"], 3)
+        self.assertEqual(stale.status_history[-1], STATUS_RECOVERY)
+        self.assertNotIn("coordinacion/lock-issue-12", stale.branches)
+
+    def test_scheduled_sweep_cleanup_failure_preserves_owned_lock(self) -> None:
+        """Un fallo REST no quita autoridad del lock propio ni toca uno ajeno."""
+        api = FakeGitHub()
+        guarded = coordinator._SweepGuardedGitHub(api)
+        own = "coordinacion/lock-issue-12"
+        other = "coordinacion/lock-issue-99"
+        api.branches[other] = "abc123"
+        with patch.object(coordinator, "require_sweep_running"):
+            self.assertTrue(guarded.create_branch(own, "abc123"))
+
+        original_delete = api.delete_branch
+        fail_once = {"remaining": 1}
+
+        def flaky_delete(branch):
+            if fail_once["remaining"]:
+                fail_once["remaining"] -= 1
+                raise GitHubError(403, "API transitoriamente indisponible")
+            original_delete(branch)
+
+        with patch.object(api, "delete_branch", side_effect=flaky_delete):
+            with self.assertRaises(GitHubError):
+                guarded.delete_branch(own)
+            self.assertIn(own, guarded._own_locks)
+            self.assertIn(own, api.branches)
+            with self.assertRaises(CoordinationError):
+                guarded.delete_branch(other)
+            guarded.delete_branch(own)
+
+        self.assertNotIn(own, guarded._own_locks)
+        self.assertNotIn(own, api.branches)
+        self.assertIn(other, api.branches)
+
+    def test_sweep_guard_lock_cleanup_retry_only_owned(self):
+        """Un DELETE remoto fallido no pierde la propiedad del lock propio."""
+        api, _ = self._sweep_switch_api("RUNNING")
+        guarded = coordinator._SweepGuardedGitHub(api)
+        lock = "coordinacion/lock-issue-12"
+        self.assertTrue(guarded.create_branch(lock, "abc123"))
+        original_delete = api.delete_branch
+        calls = {"count": 0}
+
+        def transient(branch):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise CoordinationError("DELETE transitorio")
+            original_delete(branch)
+
+        api.delete_branch = transient
+        with self.assertRaisesRegex(CoordinationError, "DELETE transitorio"):
+            guarded.delete_branch(lock)
+        self.assertIn(lock, api.branches)
+        self.assertIn(lock, guarded._own_locks)
+        guarded.delete_branch(lock)
+        self.assertNotIn(lock, api.branches)
+        self.assertNotIn(lock, guarded._own_locks)
+        with self.assertRaisesRegex(CoordinationError, "ramas ajenas"):
+            guarded.delete_branch("otra-rama")
+
+    def test_sweep_guard_set_status_rechecks_each_mutating_request(self):
+        """RUNNING→PAUSED tras agregar estado prohíbe borrar labels."""
+        api = GitHub("pl0n3r/Factory", "token-de-prueba")
+        switch = {"state": "RUNNING", "reads": 0}
+        writes = []
+
+        def read_issue(number):
+            self.assertEqual(number, 767)
+            switch["reads"] += 1
+            return {
+                "number": 767,
+                "url": coordinator.CANONICAL_SOURCE_URL,
+                "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                "state": "closed",
+                "user": {"login": "pl0n3r"},
+                "body": '<!-- factory-unattended-kill-switch '
+                        + json.dumps({"version": 1,
+                                      "state": switch["state"],
+                                      "owner": "pl0n3r"}) + ' -->',
+            }
+
+        def request(method, path, payload=None, allow=()):
+            if method == "GET" and "/labels/" in path:
+                return {"name": "already-exists"}
+            writes.append((method, path))
+            if method == "POST" and path.endswith("/issues/12/labels"):
+                switch["state"] = "PAUSED"
+            return {}
+
+        api.issue = read_issue
+        api.request = request
+        guarded = coordinator._SweepGuardedGitHub(api)
+        with self.assertRaisesRegex(CoordinationError, "Barrido pausado"):
+            guarded.set_status(12, STATUS_RESERVED)
+        self.assertGreaterEqual(switch["reads"], 3)
+        self.assertEqual(
+            writes,
+            [("POST", "/repos/pl0n3r/Factory/issues/12/labels")],
+        )
+
+    def test_scheduled_sweep_runs_reservations_and_blockers(self) -> None:
+        api, observed = self._sweep_switch_api("RUNNING")
         with (
             patch.object(
                 coordinator,
@@ -1696,9 +1931,11 @@ class CoordinacionTests(unittest.TestCase):
             ) as blockers,
         ):
             result = run_scheduled_sweep(api)
-
-        stale.assert_called_once_with(api)
-        blockers.assert_called_once_with(api)
+        self.assertEqual(observed["reads"], 1)
+        stale.assert_called_once()
+        blockers.assert_called_once()
+        self.assertIs(stale.call_args.args[0]._api, api)
+        self.assertIs(blockers.call_args.args[0]._api, api)
         self.assertEqual(
             result,
             {"stale_reservations": 2, "satisfied_blocks": 3},
