@@ -57,6 +57,81 @@ class ReleaseMarkerScopeTests(unittest.TestCase):
             issue_row(900, rendered["title"], rendered["body"]),
         ])), 1)
 
+    def test_canonical_gate_complete_invalid_schema_fails_closed_without_window(self) -> None:
+        rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
+        title = rendered["title"]
+        malformed = (
+            '<!-- factory-human-gate {"category":"factory-release"} -->',
+            '<!-- factory-human-gate {"category":"factory-release","context":"'
+            + "Factory v1.0.23 main@" + SHA + '"} -->',
+        )
+        for body in malformed:
+            with self.subTest(body=body), self.assertRaises(rw.ReleaseWindowError):
+                rw.gate_records([issue_row(1200, title, body)])
+
+    def test_legacy_noncanonical_invalid_gate_is_not_authoritative(self) -> None:
+        bad_legacy = (
+            '<!-- factory-human-gate {"category":"factory-release"} -->'
+        )
+        self.assertEqual(
+            rw.gate_records([issue_row(1201, "docs: old gate schema", bad_legacy)]),
+            [],
+        )
+        unrelated = (
+            '<!-- factory-human-gate {"category":"product-direction"} -->'
+        )
+        self.assertEqual(
+            rw.gate_records([issue_row(1202, "docs: another category", unrelated)]),
+            [],
+        )
+
+    def test_canonical_valid_gate_and_documentation_examples_preserved(self) -> None:
+        rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
+        records = rw.gate_records([issue_row(1203, rendered["title"], rendered["body"])])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["sha"], SHA)
+        self.assertIsNotNone(records[0]["window"])
+        self.assertEqual(
+            rw.freeze_gate(records, NOW)["number"], 1203,
+        )
+        legacy_body = "\n".join(
+            line for line in rendered["body"].splitlines()
+            if "factory-release-window" not in line
+            and "factory-release-rearm" not in line
+        )
+        legacy = rw.gate_records([issue_row(1204, "legacy", legacy_body)])
+        self.assertEqual(len(legacy), 1)
+        self.assertIsNone(legacy[0]["window"])
+        example = (
+            "Example: " + TICK
+            + '<!-- factory-release-window {"version":1,"sha":"' + SHA
+            + '","opened_at":"2026-10-03T10:00:00Z",'
+            + '"expires_at":"2026-10-03T11:00:00Z"} -->' + TICK
+            + "\nReferenced: factory-human-gate factory-release"
+        )
+        self.assertEqual(
+            rw.gate_records([issue_row(1205, "docs: release marker", example)]),
+            [],
+        )
+        broken = "release gate " + TICK + "<!-- factory-human-gate {" + TICK
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([issue_row(1206, rendered["title"], broken)])
+
+    def test_edited_release_gate_title_with_malformed_marker_keeps_fail_closed(self) -> None:
+        rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
+        body = "\n".join(
+            "<!-- factory-human-gate {"
+            if line.startswith("<!-- factory-human-gate ")
+            else line
+            for line in rendered["body"].splitlines()
+        )
+        self.assertIn("factory-release-window", body)
+        self.assertIn("factory-release-rearm", body)
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([
+                issue_row(1207, "docs: revisión con título editado", body),
+            ])
+
     def test_real_release_gate_with_extra_malformed_header_remains_fail_closed(self) -> None:
         rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
         fragments = (
