@@ -98,7 +98,7 @@ class FactoryDietInventoryTests(unittest.TestCase):
                 self.assertIn(row["decision"], {"quedarse", "simplificar", "eliminar"})
                 self.assertEqual(row["events"], workflow_events(ROOT / rel_path))
                 self.assertGreater(row["lines"], 0)
-                self.assertEqual(row["lines"], len((ROOT / rel_path).read_text(encoding="utf-8").splitlines()))
+                self.assertEqual(row["lines"], len((ROOT / rel_path).read_text(encoding="utf-8").split("\n")))
                 self.assertIn(row["phase"], {0, 1, 2, 3, 4})
 
     def test_every_removal_names_its_script_and_test_references(self) -> None:
