@@ -41,7 +41,8 @@ def _validated_sources(sources: list[Any]) -> tuple[dict[str, str], set[str], st
     repos: set[str] = set()
     canonical_repos: set[str] = set()
     for source in sources:
-        if type(source) is not dict:
+        # A native dict may still hold hostile keys: reject before any .get().
+        if type(source) is not dict or any(type(key) is not str for key in source):
             return {}, set(), "invalid_source"
         sid, repo, sha = (source.get(x) for x in ("id", "repo", "sha"))
         if (type(sid) is not str or not 1 <= len(sid) <= 100
@@ -66,7 +67,8 @@ def _validated_events(
     """Validate every event before projecting any counts or public output."""
     dedup: dict[tuple[str, str], tuple[str, str, str, datetime]] = {}
     for item in events:
-        if type(item) is not dict:
+        # Iterating keys of an exact dict avoids hostile __hash__ and __eq__.
+        if type(item) is not dict or any(type(key) is not str for key in item):
             return {}, "invalid_event"
         eid, sid, repo, kind = (item.get(x) for x in ("id", "source_id", "repo", "kind"))
         stamp = _utc(item.get("occurred_at"))
