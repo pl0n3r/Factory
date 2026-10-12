@@ -242,6 +242,28 @@ class UnattendedKillSwitchTests(unittest.TestCase):
             ("UNKNOWN", True, "kill_switch_marker_invalid_syntax"),
         )
 
+    def test_issue_number_requires_exact_json_integer(self):
+        valid = evaluate_unattended_kill_switch(issue())
+        self.assertEqual((valid.state, valid.global_pause), ("RUNNING", False))
+
+        for bad_number in (767.0, True, "767", None, 768, [], {}):
+            with self.subTest(number=bad_number):
+                payload = issue()
+                payload["number"] = bad_number
+                decision = evaluate_unattended_kill_switch(payload)
+                self.assertEqual(
+                    (decision.state, decision.global_pause, decision.reason),
+                    ("UNKNOWN", True, "unexpected_issue"),
+                )
+
+        missing_number = issue()
+        del missing_number["number"]
+        decision = evaluate_unattended_kill_switch(missing_number)
+        self.assertEqual(
+            (decision.state, decision.global_pause, decision.reason),
+            ("UNKNOWN", True, "unexpected_issue"),
+        )
+
     def test_single_closed_running_and_paused_remain_valid(self):
         running = evaluate_unattended_kill_switch(issue(MARKER_RUNNING))
         self.assertEqual(
