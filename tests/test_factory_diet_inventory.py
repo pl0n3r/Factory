@@ -125,6 +125,99 @@ class FactoryDietInventoryTests(unittest.TestCase):
         with patch.object(Path, "read_text", read_with_future_edit):
             self.test_inventory_lists_every_workflow_with_trigger_and_decision()
 
+    def test_f1a_ledger_matches_exact_two_deletions(self) -> None:
+        """F1A conserva la baseline y no encubre workflows desaparecidos."""
+        baseline = "main@173519bde16498a796afd6a5af96b517d7e3a091"
+        self.assertIn(baseline, self.content)
+        self.assertIn("38 workflows", self.content)
+        self.assertIn("36 workflows", self.content)
+        ledger = self.content.split("## Ledger F1A de bajas autorizadas\n", 1)[1].split(
+            "\n## ", 1
+        )[0]
+        match = re.findall(
+            r"^\| ([12]) \| \x60(\.github/workflows/[^\x60]+\.yml)\x60 \| "
+            r"\x60([0-9a-f]{40})\x60 \| F1A / fase 1 \| "
+            r"squash-revert PR F1A \| \x60([^\x60]+)\x60 \|$",
+            ledger,
+            flags=re.MULTILINE,
+        )
+        self.assertEqual(
+            {path: (sha, suite) for _, path, sha, suite in match},
+            {
+                ".github/workflows/evolution-lab.yml": (
+                    "645cd08c9d9f79e23e945f798d14b225eaf0e95d",
+                    "tests/test_factory_lab_contract.py",
+                ),
+                ".github/workflows/feedback-producto.yml": (
+                    "fe107d7f3a39a30d4fecefd0ca1c9ece68f5e490",
+                    "tests/test_feedback_contract.py",
+                ),
+            },
+        )
+        self.assertEqual({number for number, *_ in match}, {"1", "2"})
+        actual = {
+            path.relative_to(ROOT).as_posix()
+            for ext in ("*.yml", "*.yaml")
+            for path in WORKFLOWS.glob(ext)
+            if path.is_file()
+        }
+        baseline_paths = {
+            ".github/workflows/aceptacion.yml",
+            ".github/workflows/auditoria-privacidad.yml",
+            ".github/workflows/automerge-construccion.yml",
+            ".github/workflows/bootstrap-coordination.yml",
+            ".github/workflows/cabina.yml",
+            ".github/workflows/captura-leccion.yml",
+            ".github/workflows/ci.yml",
+            ".github/workflows/codeql-evidence.yml",
+            ".github/workflows/coordinacion-trabajo.yml",
+            ".github/workflows/coordinacion.yml",
+            ".github/workflows/costos.yml",
+            ".github/workflows/deploy.yml",
+            ".github/workflows/etiquetas-pr.yml",
+            ".github/workflows/etiquetas.yml",
+            ".github/workflows/evolution-lab.yml",
+            ".github/workflows/factory-ci.yml",
+            ".github/workflows/feedback-producto.yml",
+            ".github/workflows/liberar-reservas.yml",
+            ".github/workflows/metricas.yml",
+            ".github/workflows/observar.yml",
+            ".github/workflows/orquestador.yml",
+            ".github/workflows/politica-comentario.yml",
+            ".github/workflows/politica.yml",
+            ".github/workflows/preview.yml",
+            ".github/workflows/privacidad.yml",
+            ".github/workflows/provision-project.yml",
+            ".github/workflows/readme.yml",
+            ".github/workflows/release-bootstrap.yml",
+            ".github/workflows/release-window.yml",
+            ".github/workflows/release.yml",
+            ".github/workflows/reusable-release-watchdog.yml",
+            ".github/workflows/reusable-selftest.yml",
+            ".github/workflows/roles.yml",
+            ".github/workflows/seguridad.yml",
+            ".github/workflows/sonar-watch.yml",
+            ".github/workflows/sonar.yml",
+            ".github/workflows/sync-label-colors.yml",
+            ".github/workflows/unattended-watchdog.yml",
+        }
+        removed = {path for _, path, _, _ in match}
+        # Prueba el conjunto, no solo el cardinal y la tabla mutable.
+        self.assertEqual(baseline_paths - removed, actual)
+        victim = next(path for path in sorted(actual) if path not in removed)
+        unauthorized_swap = (actual - {victim}) | {
+            ".github/workflows/trigger-no-autorizado.yml"
+        }
+        self.assertEqual(len(unauthorized_swap), len(actual))
+        with self.assertRaises(AssertionError):
+            self.assertEqual(baseline_paths - removed, unauthorized_swap)
+        self.assertEqual(len(actual), 36)
+        self.assertEqual(set(self.rows), actual)
+        self.assertEqual(len(actual) + len(match), 38)
+        for _, path, _, suite in match:
+            self.assertNotIn(path, actual)
+            self.assertTrue((ROOT / suite).is_file())
+
     def test_every_removal_names_its_script_and_test_references(self) -> None:
         removals = {path: row for path, row in self.rows.items() if row["decision"] == "eliminar"}
         self.assertGreater(len(removals), 0)

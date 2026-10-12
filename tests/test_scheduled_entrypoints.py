@@ -17,7 +17,6 @@ EXPECTED = {
     "metricas/costos.py",
     "metricas/evaluar_agentes.py",
     "scripts/sonar-watch.py",
-    "producto/feedback.py",
     "scripts/cabina.py",
 }
 
@@ -84,6 +83,9 @@ class ScheduledEntrypointTests(unittest.TestCase):
     def test_all_scheduled_python_path_entrypoints_are_import_safe(self) -> None:
         discovered = self._scheduled_paths()
         self.assertEqual(EXPECTED, discovered)
+        # F1A retira exclusivamente el cron de Feedback, no su motor offline.
+        self.assertNotIn("producto/feedback.py", discovered)
+        self.assertTrue((ROOT / "producto/feedback.py").is_file())
 
         for script, args in SAFE_ARGS.items():
             result = self._run(script, *args)
