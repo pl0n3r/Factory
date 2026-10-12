@@ -2072,8 +2072,13 @@ def recovery_issue_numbers(api: GitHub) -> list[int]:
 
 
 def parallel_file_grants_enabled() -> bool:
-    """Permitir grants de archivo solo con opt-in explícito (fail-closed)."""
-    return os.getenv("CONDOR_PARALLEL_FILE_GRANTS", "0").strip() == "1"
+    """Negar excepciones de claims hasta tener enforcement de pushes futuros.
+
+    Un diff exact-SHA solo refleja archivos ya editados. Aunque exista un
+    opt-in, la lease activa de un directorio aún permite editar otros archivos
+    del directorio; no puede coexistir con una lease de esos archivos.
+    """
+    return False
 
 
 def verified_parallel_file_evidence(
@@ -2306,11 +2311,9 @@ def reserve_work(
             active_task_snapshots,
             active_dependency_states,
             active_reservation_numbers,
-            # Solo opt-in explícito con evidencia exact-SHA completa; sin
-            # flag, la exclusividad tradicional permanece intacta.
-            verified_file_independence=(
-                verified if parallel_file_grants_enabled() else set()
-            ),
+            # La evidencia del diff es solo diagnóstica: nunca delega
+            # exclusividad futura de un claim amplio, tampoco con opt-in.
+            verified_file_independence=set(),
         )
     except PlanError as exc:
         raise CoordinationError(
