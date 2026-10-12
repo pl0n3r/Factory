@@ -132,6 +132,47 @@ class ReleaseMarkerScopeTests(unittest.TestCase):
                 issue_row(1207, "docs: revisión con título editado", body),
             ])
 
+    def test_markdown_window_with_unrelated_complete_gate_is_not_authority(self) -> None:
+        rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
+        window = next(
+            line for line in rendered["body"].splitlines()
+            if line.startswith("<!-- factory-release-window ")
+        )
+        doc_body = (
+            "Markdown example with unrelated gate:\n"
+            + '<!-- factory-human-gate {"category":"brand"} -->'
+            + "\n" + window
+        )
+        # Hay exactamente un encabezado humano y un marker completo, pero
+        # no una puerta factory-release ni un título de autoridad.
+        self.assertEqual(len(rw.GATE_HEADER_RE.findall(doc_body)), 1)
+        self.assertEqual(len(rw.MARKER_RE.findall(doc_body)), 1)
+        self.assertEqual(
+            rw.gate_records([issue_row(1208, "docs: unrelated gate", doc_body)]),
+            [],
+        )
+
+    def test_canonical_title_missing_gate_does_not_silently_disappear(self) -> None:
+        rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([issue_row(1209, rendered["title"], "plain text")])
+
+    def test_edited_title_rejects_duplicate_incomplete_headers_with_window(self) -> None:
+        rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
+        window = next(
+            line for line in rendered["body"].splitlines()
+            if line.startswith("<!-- factory-release-window ")
+        )
+        malformed = (
+            window + "\n"
+            + "<!-- FACTORY - HUMAN - GATE {\n"
+            + "<!-- factory-human-gate TRUNCATED -->"
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([
+                issue_row(1210, "docs: renamed canonical release", malformed),
+            ])
+
     def test_real_release_gate_with_extra_malformed_header_remains_fail_closed(self) -> None:
         rendered = rw._render_gate("1.0.23", SHA, NOW, source_issue=900)
         fragments = (
