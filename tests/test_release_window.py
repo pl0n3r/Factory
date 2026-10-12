@@ -65,6 +65,22 @@ def approved_comment(body: str) -> dict[str, object]:
     }
 
 
+def executed_marker(sha: str = OLD_SHA, run_id: int = 1234) -> str:
+    payload = {
+        "version": 1, "sha": sha, "run_id": run_id,
+        "executed_at": "2026-10-03T10:05:00Z",
+    }
+    return (
+        "<!-- factory-release-executed "
+        + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        + " -->"
+    )
+
+
+def executed_comment(body: str, actor: str = "github-actions[bot]") -> dict[str, object]:
+    return {"user": {"login": actor}, "body": body}
+
+
 class ReleaseWindowTests(unittest.TestCase):
     def test_valid_window_plus_malformed_second_header_fails_closed(self) -> None:
         valid = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
@@ -722,6 +738,98 @@ class ReleaseWindowTests(unittest.TestCase):
                 },
                 "comments": [],
             }])
+
+    def test_executed_rejects_valid_plus_malformed_header(self) -> None:
+        valid = executed_marker()
+        malformed = (
+            "<!-- factory-release-executed {",
+            "<!-- factory-release-executed TRUNCATED -->",
+            "<!-- factory-release-executed",
+        )
+        for fragment in malformed:
+            for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                with self.subTest(fragment=fragment, first=body.startswith(fragment)):
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw._execution([executed_comment(body)], OLD_SHA)
+        for fragment in malformed:
+            with self.subTest(only=fragment), self.assertRaises(rw.ReleaseWindowError):
+                rw._execution([executed_comment(fragment)], OLD_SHA)
+
+    def test_executed_rejects_uppercase_or_spaced_duplicate_header(self) -> None:
+        valid = executed_marker()
+        variants = (
+            "<!-- FACTORY-RELEASE-EXECUTED {",
+            "<!-- FACTORY-RELEASE-EXECUTED TRUNCATED -->",
+            "<!-- factory - release - executed {",
+            "<!-- FACTORY - RELEASE - EXECUTED TRUNCATED -->",
+        )
+        for fragment in variants:
+            for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                with self.subTest(fragment=fragment, first=body.startswith(fragment)):
+                    self.assertEqual(len(rw.EXECUTED_RE.findall(body)), 1)
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw._execution([executed_comment(body)], OLD_SHA)
+
+    def test_ambiguous_executed_comment_preserves_freeze(self) -> None:
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        valid = executed_marker()
+        ambiguous = executed_comment(
+            valid + "\n<!-- FACTORY - RELEASE - EXECUTED {"
+        )
+        row = gate_row(number=922, body=gate["body"], comments=[ambiguous])
+        payload = {
+            "now": "2026-10-03T10:10:00Z",
+            "gates": [row],
+            "pr": {"number": 1234, "body": ""},
+            "work_issue": {
+                "number": 1234, "state": "open",
+                "labels": [{"name": "prioridad: alta"}],
+            },
+        }
+        # El parser debe rechazar todo el snapshot ambiguo: no puede generar
+        # records con executed válido ni llegar a "no_active_release_window".
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([row])
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.check_pull_request(payload)
+        # Control negativo: un comentario no autenticado no libera freeze.
+        clean_row = gate_row(
+            number=922, body=gate["body"],
+            comments=[executed_comment(valid, actor="not-the-bot")],
+        )
+        records = rw.gate_records([clean_row])
+        self.assertEqual(rw.freeze_gate(records, NOW + timedelta(minutes=10))["number"], 922)
+        payload["gates"] = [clean_row]
+        self.assertEqual(
+            rw.check_pull_request(payload)["reason"],
+            "factory_release_window_active",
+        )
+
+    def test_unique_authorized_execution_and_nonbot_comments(self) -> None:
+        valid = executed_marker()
+        bot = executed_comment(valid)
+        self.assertEqual(rw._execution([bot], OLD_SHA)["run_id"], 1234)
+        self.assertIsNone(
+            rw._execution([executed_comment(valid, actor="ordinary-user")], OLD_SHA)
+        )
+        self.assertIsNone(rw._execution([], OLD_SHA))
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        records = rw.gate_records([
+            gate_row(number=922, body=gate["body"], comments=[bot]),
+        ])
+        self.assertIsNone(rw.freeze_gate(records, NOW + timedelta(minutes=10)))
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([executed_comment(executed_marker(NEW_SHA))], OLD_SHA)
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([executed_comment(valid + "\n" + valid)], OLD_SHA)
+        duplicated = (
+            "<!-- factory-release-executed "
+            '{"version":1,"sha":"' + OLD_SHA
+            + '","sha":"' + OLD_SHA
+            + '","run_id":1234,"executed_at":"2026-10-03T10:05:00Z"} -->'
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([executed_comment(duplicated)], OLD_SHA)
 
     def test_execution_markers_reject_ambiguous_or_invalid_evidence(self) -> None:
         rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
