@@ -229,7 +229,7 @@ class UnattendedKillSwitchTests(unittest.TestCase):
         )
         for suspicious in suspicious_headers:
             with self.subTest(suspicious=suspicious):
-                for body in (MARKER_RUNNING + "\\n" + suspicious, suspicious + "\\n" + MARKER_RUNNING):
+                for body in (MARKER_RUNNING + "\n" + suspicious, suspicious + "\n" + MARKER_RUNNING):
                     decision = evaluate_unattended_kill_switch(issue(body))
                     self.assertEqual(
                         (decision.state, decision.global_pause, decision.reason),
