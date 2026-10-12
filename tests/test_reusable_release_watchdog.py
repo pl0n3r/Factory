@@ -56,6 +56,47 @@ def payload(*observations):
 
 
 class ReusableReleaseWatchdogTests(unittest.TestCase):
+
+    def test_main_push_triggers_watchdog_with_strict_repository_and_event_guard(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        trigger = workflow.split("\npermissions:\n", 1)[0]
+        self.assertIn("on:\n  push:\n    branches:\n      - main\n", trigger)
+        self.assertNotIn("pull_request:", trigger)
+        self.assertNotIn("pull_request_target:", trigger)
+
+        job = workflow.split("\njobs:\n", 1)[1].split("\n    steps:\n", 1)[0]
+        expected_guard = (
+            "if: github.repository == 'pl0n3r/Factory' "
+            "&& github.ref == 'refs/heads/main' "
+            "&& (github.event_name == 'push' || "
+            "github.event_name == 'schedule' || "
+            "github.event_name == 'workflow_dispatch')"
+        )
+        self.assertIn(expected_guard, job)
+        self.assertEqual(job.count("    if: "), 1)
+        self.assertLess(workflow.index(expected_guard), workflow.index("- name: Descargar Factory"))
+
+    def test_push_liveness_retains_offset_cron_permissions_and_advisory_only(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("cron: '7,22,37,52 * * * *'"), 1)
+        self.assertIn("  workflow_dispatch:\n", workflow)
+        self.assertIn(
+            "concurrency:\n  group: reusable-release-watchdog\n"
+            "  cancel-in-progress: false",
+            workflow,
+        )
+        self.assertIn("permissions:\n  contents: read\n", workflow)
+        self.assertIn(
+            "    permissions:\n      contents: read\n"
+            "      actions: read\n      issues: write",
+            workflow,
+        )
+        self.assertNotIn("contents: write", workflow)
+        self.assertIn("(( total_count <= 100 ))", workflow)
+        self.assertIn("authority=unchanged", workflow)
+        self.assertIn("execute_rollback=false", workflow)
+        self.assertNotIn("git push", workflow)
+
     def test_startup_failures_are_bound_to_repo_workflow_run_and_factory_sha(self):
         item = observation()
         result = evaluate_release_watchdog(payload(item))

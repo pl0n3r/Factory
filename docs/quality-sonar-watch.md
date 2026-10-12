@@ -1,12 +1,12 @@
 # Sonar Watch v1
 
-Factory ejecuta vigilancia Sonar centralizada para Condor, GrindFlow, BRVTAL, Factory, FactoryRunner y ControlBot. El watcher **solo lee** Sonar, normaliza la evidencia mediante `quality.sonar`, la proyecta por Quality Health y mantiene Issues `[AUTO] Sonar` en Factory.
+**Estado post-F1C (#1308 / PR #1309): Sonar Watch no se ejecuta automáticamente.** Se eliminó el cron cada seis horas y `workflow_dispatch` al retirar `.github/workflows/sonar-watch.yml`. Los Issues `[AUTO] Sonar` (#1052/#1053) **no se refrescan automáticamente**. El motor offline `scripts/sonar-watch.py` y la proyección `quality.sonar` permanecen disponibles solo para ejecuciones expresamente autorizadas.
 
 ## Runtime versionado
 
-La fuente canónica es `quality/sonar-watch-config.json`. El workflow no depende de `SONAR_WATCH_CONFIG_JSON`.
+La configuración versionada para ejecución manual/offline es `quality/sonar-watch-config.json`; el motor no depende de `SONAR_WATCH_CONFIG_JSON`. No hay scheduler activo.
 
-La política productiva vigente proviene de la **Opción C aprobada en #516**:
+El contrato versionado histórico proviene de la **Opción C aprobada en #516**; no implica ejecución automática vigente:
 
 | Proyecto | Sonar key | GitHub | Método | Freshness | Vulnerabilities / Bugs |
 | --- | --- | --- | --- | ---: | ---: |
@@ -41,13 +41,11 @@ El método de análisis se observa exclusivamente con:
 
 El parser exige exactamente un setting `sonar.autoscan.enabled` con valor textual `true` o `false`, normalizado a `automatic` o `ci`. Ausencia, duplicidad, key inesperada o cualquier otro valor falla cerrado.
 
-## Workflow
+## Ejecución manual/offline (scheduler desactivado)
 
-`.github/workflows/sonar-watch.yml` conserva `schedule` y `workflow_dispatch`. Ambos ejecutan el mismo entrypoint:
+Después de F1C **no existe** `.github/workflows/sonar-watch.yml`; el cron cada seis horas (`schedule`) y `workflow_dispatch` están **desactivados**. Se conservan `scripts/sonar-watch.py`, `quality/sonar-watch-config.json` y `tests/test_sonar_watch.py` para análisis y pruebas offline. El entrypoint histórico es `python3 scripts/sonar-watch.py`; esto **no autoriza ejecutarlo** ni sincronizar Issues reales. El antiguo job tenía `contents: read` e `issues: write`, pero ya no está activo.
 
-`python3 scripts/sonar-watch.py`
-
-Permisos GitHub: `contents: read` y `issues: write` únicamente en el job que sincroniza Issues. No se concede escritura de código, Actions, deployments ni administración.
+Los checks **Sonar CI-based** (`sonar.yml`) y **CodeQL** siguen como validadores CI de PR y **no sustituyen** la sincronización periódica Sonar→GitHub Issues.
 
 ## Idempotencia y evidencia
 

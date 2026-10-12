@@ -10,6 +10,7 @@ PLAN = (ROOT / "PLAN-AGENTES.md").read_text(encoding="utf-8")
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 AGENTS = (ROOT / "AGENTES.md").read_text(encoding="utf-8")
 DECISIONS = json.loads((ROOT / "decisiones.yml").read_text(encoding="utf-8"))
+TEMPLATE = (ROOT / "template/AGENTES.md").read_text(encoding="utf-8")
 
 
 class PlanContractTests(unittest.TestCase):
@@ -45,6 +46,34 @@ class PlanContractTests(unittest.TestCase):
         )
         positions = [PLAN.index(value) for value in ordered]
         self.assertEqual(positions, sorted(positions))
+
+    def test_construction_merge_requires_exact_head_and_freeze_precedence(self):
+        """La regla del dueño debe estar activa en decisiones, plan y template."""
+        rule = [d for d in DECISIONS["decisions"] if d["id"] == "D-069"]
+        self.assertEqual(len(rule), 1)
+        self.assertEqual(rule[0]["status"], "active")
+        for token in ("construccion", "squash", "HEAD exacto",
+                      "CHANGES_REQUESTED", "freeze Factory#921",
+                      "Factory#912/D-043/D-059", "Factory@v1", "live",
+                      "APPROVED independiente", "--admin"):
+            with self.subTest(source="decisiones", token=token):
+                self.assertIn(token, rule[0]["text"])
+        for token in ("D-069 / Factory#1189", "HEAD exacto",
+                      "CHANGES_REQUESTED", "DRAFT", "freeze Factory#921",
+                      "Factory#912/D-043/D-059", "Factory@v1",
+                      "no hay auto-merge", "--admin"):
+            with self.subTest(source="plan", token=token):
+                self.assertIn(token, PLAN)
+        for token in ("fusiona por squash su propio PR",
+                      "sin aprobación independiente", "HEAD exacto",
+                      "CHANGES_REQUESTED", "freeze", "Factory#921",
+                      "Factory#912/D-043/D-059", "Factory@v1", "live",
+                      "no se fusiona automáticamente", "--admin"):
+            with self.subTest(source="template", token=token):
+                self.assertIn(token, TEMPLATE)
+        self.assertNotIn(
+            "esto no autoriza merges, activación, go-live", TEMPLATE,
+        )
 
     def test_canonical_product_queue_is_exact(self):
         queue = (

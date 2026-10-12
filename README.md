@@ -264,6 +264,36 @@ Trabajas en el repositorio pl0n3r/Condor. Lee y ejecuta https://github.com/pl0n3
 Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md en modo despachador.
 ```
 
+### Mensaje de continuación (AutoFactory)
+
+El mensaje de continuación ayuda a completar **una unidad de trabajo por turno** y a reducir informes y mensajes repetidos por hora. Sirve tanto para un agente como para varios, en **modo dirigido o despachador**: pega una de las siguientes variantes en el **campo de prompt personalizado** de cada perfil de AutoFactory.
+
+**Mensaje estándar (copiar completo):**
+
+~~~text
+Preflight obligatorio: verifica el interruptor global canónico Factory #767. Solo RUNNING permite evaluar trabajo; PAUSED, UNKNOWN, fallo de lectura o marcador inválido: detén el turno, no tomes otro Issue, no mutas y no fusionas.
+RUNNING no basta: exige reserva V3, CI exact-SHA y demás gates. Un bloqueo local de Issue permite buscar otro solo con RUNNING y Coordinación válida.
+Continúa sin parar hasta terminar una unidad de trabajo completa.
+Pasos:
+(1) relee el estado de tu issue reservado y de su PR;
+(2) si no tienes reserva, toma el siguiente issue disponible con prioridad crítica;
+(3) implementa, prueba y deja el PR en verde;
+(4) si todos los controles están en verde y no hay cambios pedidos, fusiónalo (squash) y comenta el SHA;
+(5) pasa de inmediato al siguiente issue disponible.
+No te detengas a dar informes de estado; comenta solo hitos (PR abierto, fusionado, bloqueo real).
+Si algo está bloqueado de verdad, di el motivo concreto, etiqueta el issue y toma otro.
+~~~
+
+**Variante breve para QA/seguridad (copiar completo):**
+
+~~~text
+Preflight obligatorio: verifica el interruptor global canónico Factory #767. Solo RUNNING permite evaluar trabajo; PAUSED, UNKNOWN, fallo de lectura o marcador inválido: detén el turno, no tomes otro Issue, no mutas y no fusionas.
+RUNNING no basta: exige reserva V3, CI exact-SHA y demás gates. Un bloqueo local de Issue permite buscar otro solo con RUNNING y Coordinación válida.
+Completa una unidad verificable de QA o seguridad: relee el issue y el PR exactos; revisa el cambio y sus controles; reproduce una regresión concreta cuando sea posible; registra un único hallazgo nuevo y accionable o la evidencia de cierre. No te apropies de una reserva ajena, no repitas comentarios de estado ni apruebes por inferencia. Si el frente está bloqueado, documenta la causa y pasa al siguiente frente seguro.
+~~~
+
+Estos bloques se mantienen idénticos a la [fuente canónica](template/docs/PROMPT-CONTINUACION.md). No sustituyen el interruptor global, la reserva V3, el CI exact-SHA ni la pausa manual de AutoFactory.
+
 El despachador elige en este orden: HEALTH degradado → incidente abierto → reparación activa válida → decisión tuya ya respondida → prioridad crítica → alta → media. Antes de elegir aplica readiness, reservas, dependencias, PR equivalente y claims de paths para no duplicar trabajo; anuncia en el Issue por qué eligió ese frente y, al terminar, vuelve a elegir. Detalle en la sección 0 de [PLAN-AGENTES.md](PLAN-AGENTES.md).
 
 ### Cómo combinarlos
@@ -274,9 +304,10 @@ El despachador elige en este orden: HEALTH degradado → incidente abierto → r
 
 ### Qué más te toca
 
-1. Cuando un agente termine o se detenga, vuelve a lanzarlo con el mismo prompt: él sabe en qué va.
-2. Responder solo las decisiones que te corresponden (**producto, marca, dinero, legal, datos reales de clientes, mover/publicar el canal `v1` de Factory o pasar a live**). Te llegan asignadas en GitHub con la etiqueta `decisión: dueño` y aparecen en la cabina.
-3. Mirar la **cabina de mando**: https://pl0n3r.github.io/factory/ (estado de todos los proyectos, actualizado cada hora).
+1. Pegar y guardar el mensaje de continuación adecuado en el campo de prompt personalizado de **cada perfil de AutoFactory** (estándar o QA/seguridad), sin copiar credenciales ni contenido de chats.
+2. Cuando un agente termine o se detenga, vuelve a lanzarlo con el mismo prompt: él sabe en qué va.
+3. Responder solo las decisiones que te corresponden (**producto, marca, dinero, legal, datos reales de clientes, mover/publicar el canal `v1` de Factory o pasar a live**). Te llegan asignadas en GitHub con la etiqueta `decisión: dueño` y aparecen en la cabina.
+4. Mirar la **cabina de mando**: https://pl0n3r.github.io/factory/ (estado de todos los proyectos, actualizado cada hora).
 
 ### Cómo funciona por dentro
 
