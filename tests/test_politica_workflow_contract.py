@@ -1,4 +1,10 @@
+import copy
 import json
+import os
+import shutil
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -154,6 +160,85 @@ class T(unittest.TestCase):
 
 
 class PoliticaWorkflowContractTests(unittest.TestCase):
+    def test_sha_less_fallback_preserves_canonical_gates_and_ref_revalidation(self):
+        self.assertNotIn('PRIMARY_STATUS == 0', W)
+        self.assertIn('recheck_pr_identity "$PR_JSON_FINAL" || {', W)
+        self.assertLess(W.index('reviewThreads(first:100)'), W.index('POLICY_OUTPUT='))
+        self.assertLess(W.index('checks_url_base='), W.index('POLICY_OUTPUT='))
+        self.assertIn('repos/$REPOSITORY/pulls/$PR', W)
+        for gate in ('"$PR_HEAD_SHA"', '"$PR_BASE_SHA"', '"$PR_HEAD_REF"',
+                     '"$PR_BASE_REF"', '"$PR_HEAD_REPO"', '"$PR_BASE_REPO"'):
+            self.assertIn(gate, W)
+        self.assertLess(W.index('recheck_pr_identity "$PR_JSON_FINAL" || {'),
+                        W.index('printf \'%s\\n\' "$POLICY_OUTPUT"'))
+        self.assertIn('GITHUB_RUN_ATTEMPT > 1', W)
+        self.assertIn('validate_rate_limit_fallback', (
+            ROOT / 'scripts/politica_kit.py').read_text(encoding='utf-8'))
+
+    def test_primary_review_revalidates_head_and_base_before_success(self):
+        """Ejecuta el helper Bash exacto del workflow contra GET REST simulado."""
+        if shutil.which('jq') is None:
+            self.skipTest('jq requerido para simular el workflow real')
+        start = '          # POLICY_PR_RECHECK_BEGIN\n'
+        stop = '          # POLICY_PR_RECHECK_END'
+        self.assertEqual(W.count(start), 1)
+        self.assertEqual(W.count(stop), 1)
+        helper = textwrap.dedent(W.split(start, 1)[1].split(stop, 1)[0])
+        self.assertIn('gh api "repos/$REPOSITORY/pulls/$PR"', helper)
+        self.assertIn('jq -e', helper)
+
+        repo = 'pl0n3r/Factory'
+        head = 'a' * 40
+        base = 'b' * 40
+        stable = {
+            'state': 'open',
+            'head': {'sha': head, 'ref': 'trabajo/issue-17',
+                     'repo': {'full_name': repo}},
+            'base': {'sha': base, 'ref': 'main',
+                     'repo': {'full_name': repo}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            gh = Path(directory) / 'gh'
+            gh.write_text('#!/bin/sh\nprintf "%s\\n" "$PR_JSON_FIXTURE"\n',
+                          encoding='utf-8')
+            gh.chmod(0o755)
+            env = dict(os.environ)
+            env.update({
+                'PATH': directory + os.pathsep + env.get('PATH', ''),
+                'REPOSITORY': repo, 'PR': '17',
+                'PR_HEAD_SHA': head, 'PR_BASE_SHA': base,
+                'PR_HEAD_REF': 'trabajo/issue-17',
+                'PR_BASE_REF': 'main',
+                'PR_HEAD_REPO': repo,
+                'PR_BASE_REPO': repo,
+            })
+            cases = [('estable', None, True),
+                     ('HEAD SHA distinto', ('head', 'sha', 'c' * 40), False),
+                     ('BASE SHA distinto', ('base', 'sha', 'd' * 40), False),
+                     ('BASE ref retarget sin cambio SHA',
+                      ('base', 'ref', 'dev'), False),
+                     ('PR cerrado', ('state', '', 'closed'), False),
+                     ('fork distinto', ('head', 'repo', {'full_name': 'other/Factory'}),
+                      False),
+                     ('base de otra fuente', ('base', 'repo',
+                         {'full_name': 'other/Factory'}), False)]
+            for label, mutation, should_pass in cases:
+                with self.subTest(case=label):
+                    observed = copy.deepcopy(stable)
+                    if mutation:
+                        first, second, value = mutation
+                        if second:
+                            observed[first][second] = value
+                        else:
+                            observed[first] = value
+                    env['PR_JSON_FIXTURE'] = json.dumps(observed)
+                    result = subprocess.run(
+                        ['bash', '-c', 'set -euo pipefail\n' + helper
+                         + '\nrecheck_pr_identity'],
+                        env=env, capture_output=True, text=True, timeout=8)
+                    self.assertEqual(result.returncode == 0, should_pass,
+                                     msg=result.stderr)
+
     def test_authenticated_paginated_timeline_is_bounded_fail_closed(self):
         self.assertIn('repos/$REPOSITORY/issues/$PR/timeline?per_page=100&page=$page', W)
         self.assertIn('if (( GITHUB_RUN_ATTEMPT > 1 )); then', W)
