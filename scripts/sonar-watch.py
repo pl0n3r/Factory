@@ -69,6 +69,27 @@ class SonarWatchError(ValueError):
     """El watcher no puede demostrar una operación segura."""
 
 
+class SonarWatchResponseTooLarge(SonarWatchError):
+    """Una respuesta supera el presupuesto; se puede reintentar con página menor."""
+
+
+def _safe_response_family(base_url: str, path: str) -> str:
+    """Identificador fijo para logs: jamás incluye URL, query ni payload remoto."""
+    route = path.partition("?")[0]
+    if base_url == "https://sonarcloud.io":
+        return {
+            "/api/issues/search": "sonar.issues",
+            "/api/hotspots/search": "sonar.hotspots",
+        }.get(route, "sonar.other")
+    if base_url == "https://api.github.com":
+        if re.fullmatch(r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues", route):
+            return "github.issues"
+        if re.fullmatch(r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*/comments", route):
+            return "github.comments"
+        return "github.other"
+    return "remote.other"
+
+
 def issue_marker(project: str, signal: str) -> str:
     fingerprint = hashlib.sha256(f"{project}|{signal}".encode()).hexdigest()[:24]
     payload = {"fingerprint": fingerprint, "project": project, "signal": signal, "version": 1}
@@ -290,7 +311,10 @@ class HttpJson:
         except (HTTPError, URLError, TimeoutError) as exc:
             raise SonarWatchError("falló una API remota.") from exc
         if len(raw) > 1_000_000:
-            raise SonarWatchError("respuesta remota excede tamaño máximo.")
+            family = _safe_response_family(self.base_url, path)
+            raise SonarWatchResponseTooLarge(
+                f"respuesta remota excede tamaño máximo. source={family}"
+            )
         try:
             return json.loads(raw or b"{}")
         except json.JSONDecodeError as exc:
@@ -454,30 +478,74 @@ class SonarApi:
         return _ALLOWED_AUTOSCAN_VALUES[value]
 
     def _paged(self, path, *, key_name, key, result_name, extra=None):
-        rows, page, total = [], 1, None
+        # Si una página excede 1 MB, recomenzar desde la primera con menos
+        # filas. Nunca mezclar páginas recogidas con tamaños distintos.
+        page_size = _SONAR_PAGE_SIZE
+        requests_made = 0
+        # Reintentos de distinto page_size deben conservar el primer total
+        # y las identidades ya observadas; de lo contrario el conjunto final
+        # podría ser diferente y aparentar un snapshot completo.
+        expected_total = None
+        observed_ids = set()
         while True:
-            params = {key_name: key, "ps": _SONAR_PAGE_SIZE, "p": page, **(extra or {})}
-            payload = self.get(path, params)
-            batch, paging = payload.get(result_name), payload.get("paging")
-            if not isinstance(batch, list) or not isinstance(paging, dict):
-                raise SonarWatchError("paginación Sonar inválida.")
-            candidate = paging.get("total")
-            if (
-                type(candidate) is not int or candidate < 0 or candidate > _MAX_SONAR_ISSUES
-                or paging.get("pageIndex") != page or paging.get("pageSize") != _SONAR_PAGE_SIZE
-            ):
-                raise SonarWatchError("paginación Sonar incoherente.")
-            total = candidate if total is None else total
-            if candidate != total:
-                raise SonarWatchError("total Sonar cambió durante paginación.")
-            rows.extend(batch)
-            if len(rows) > total:
-                raise SonarWatchError("Sonar devolvió filas excedentes.")
-            if len(rows) == total:
-                return rows
-            if not batch or len(batch) < _SONAR_PAGE_SIZE:
-                raise SonarWatchError("Sonar truncó filas antes del total.")
-            page += 1
+            rows, page, total, seen = [], 1, None, set()
+            while True:
+                if page > 120:
+                    raise SonarWatchError("presupuesto de páginas Sonar excedido.")
+                params = {key_name: key, "ps": page_size, "p": page, **(extra or {})}
+                if requests_made >= 120:
+                    raise SonarWatchError("presupuesto total de páginas Sonar excedido.")
+                requests_made += 1
+                try:
+                    payload = self.get(path, params)
+                except SonarWatchResponseTooLarge:
+                    if page_size <= 25:
+                        raise
+                    observed_ids.update(seen)
+                    page_size = max(25, page_size // 2)
+                    break
+                if not isinstance(payload, dict):
+                    raise SonarWatchError("paginación Sonar inválida.")
+                batch, paging = payload.get(result_name), payload.get("paging")
+                if not isinstance(batch, list) or not isinstance(paging, dict):
+                    raise SonarWatchError("paginación Sonar inválida.")
+                candidate = paging.get("total")
+                page_index, reported_size = paging.get("pageIndex"), paging.get("pageSize")
+                if (
+                    type(candidate) is not int or candidate < 0 or candidate > _MAX_SONAR_ISSUES
+                    or type(page_index) is not int or page_index != page
+                    or type(reported_size) is not int or reported_size != page_size
+                    or len(batch) > page_size
+                ):
+                    raise SonarWatchError("paginación Sonar incoherente.")
+                if expected_total is None:
+                    expected_total = candidate
+                if candidate != expected_total:
+                    raise SonarWatchError("total Sonar cambió entre reintentos.")
+                total = candidate if total is None else total
+                if candidate != total:
+                    raise SonarWatchError("total Sonar cambió durante paginación.")
+                if (total + page_size - 1) // page_size > 120:
+                    raise SonarWatchError("presupuesto de páginas Sonar excedido.")
+                for item in batch:
+                    if (
+                        not isinstance(item, dict)
+                        or not isinstance(item.get("key"), str)
+                        or not item["key"]
+                        or item["key"] in seen
+                    ):
+                        raise SonarWatchError("identidad Sonar inválida o duplicada.")
+                    seen.add(item["key"])
+                rows.extend(batch)
+                if len(rows) > total:
+                    raise SonarWatchError("Sonar devolvió filas excedentes.")
+                if len(rows) == total:
+                    if not observed_ids.issubset(seen):
+                        raise SonarWatchError("identidades Sonar cambiaron entre reintentos.")
+                    return rows
+                if not batch or len(batch) < page_size:
+                    raise SonarWatchError("Sonar truncó filas antes del total.")
+                page += 1
 
     def _all_issues(self, key):
         return {"issues": self._paged(
