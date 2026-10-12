@@ -279,6 +279,40 @@ class SonarWatchTests(unittest.TestCase):
         with self.assertRaisesRegex(sonar_watch.SonarWatchError, "duplicada"):
             sonar._all_issues("project-key")
 
+    def test_sonar_paging_limits_total_requests_across_restarts(self):
+        sonar = sonar_watch.SonarApi(token="")
+        calls = []
+        total = 2500
+
+        def oversized_last_page(_path, params):
+            size, page = params["ps"], params["p"]
+            calls.append((size, page))
+            offset = (page - 1) * size
+            if offset <= total - 1 < offset + size:
+                raise sonar_watch.SonarWatchResponseTooLarge(
+                    "respuesta remota excede tamaño máximo. source=sonar.issues"
+                )
+            return {
+                "issues": [
+                    {"key": f"large-list-{index}"}
+                    for index in range(offset, min(offset + size, total))
+                ],
+                "paging": {
+                    "pageIndex": page,
+                    "pageSize": size,
+                    "total": total,
+                },
+            }
+
+        sonar.get = oversized_last_page
+        with self.assertRaisesRegex(
+            sonar_watch.SonarWatchError, "presupuesto total de páginas Sonar"
+        ):
+            sonar._all_issues("project-key")
+        self.assertEqual(len(calls), 120)
+        self.assertEqual(calls[:6], [(500, 1), (500, 2), (500, 3), (500, 4), (500, 5), (250, 1)])
+        self.assertIn((31, 1), calls)
+
     def test_auto_alert_creation_has_canonical_labels_and_block_reason(self):
         api = FakeIssues()
         raw = snapshot()

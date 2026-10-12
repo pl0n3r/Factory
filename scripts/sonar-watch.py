@@ -481,12 +481,16 @@ class SonarApi:
         # Si una página excede 1 MB, recomenzar desde la primera con menos
         # filas. Nunca mezclar páginas recogidas con tamaños distintos.
         page_size = _SONAR_PAGE_SIZE
+        requests_made = 0
         while True:
             rows, page, total, seen = [], 1, None, set()
             while True:
                 if page > 120:
                     raise SonarWatchError("presupuesto de páginas Sonar excedido.")
                 params = {key_name: key, "ps": page_size, "p": page, **(extra or {})}
+                if requests_made >= 120:
+                    raise SonarWatchError("presupuesto total de páginas Sonar excedido.")
+                requests_made += 1
                 try:
                     payload = self.get(path, params)
                 except SonarWatchResponseTooLarge:
