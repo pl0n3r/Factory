@@ -847,6 +847,82 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
     }
 
 
+
+def _trusted_renewal_lineage(comments: list[dict], current: dict) -> dict:
+    """Verifica una cadena V3 bot renovación -> recuperación, solo lectura.
+
+    La prueba de procedencia NO autoriza por sí sola restaurar Validar.
+    La invalidación, HEAD, locks, reviews y bootstrap siguen gates separados.
+    """
+    from scripts.coordinar_trabajo import reservation_from_text
+
+    if not isinstance(comments, list) or not isinstance(current, dict):
+        raise EvidenceUnavailable("renewal_lineage_invalid")
+    chain: list[tuple[dict, datetime]] = []
+    for comment in comments:
+        if not isinstance(comment, dict):
+            raise EvidenceUnavailable("renewal_lineage_invalid")
+        actor = comment.get("user")
+        body = comment.get("body")
+        if not isinstance(actor, dict) or actor.get("login") != "github-actions[bot]":
+            continue
+        if not isinstance(body, str) or "<!-- condor-reserva" not in body:
+            continue
+        marker = reservation_from_text(body)
+        created = _time(comment.get("created_at"))
+        updated = _time(comment.get("updated_at"))
+        if (actor.get("type") != "Bot" or body.count("<!-- condor-reserva") != 1
+            or not isinstance(marker, dict) or marker.get("version") != 3
+            or created is None or updated != created):
+            raise EvidenceUnavailable("renewal_lineage_untrusted_marker")
+        chain.append((marker, created))
+    if not chain or chain[-1][0] != current:
+        raise EvidenceUnavailable("renewal_lineage_current_lease_mismatch")
+    renewal_indices = [
+        idx for idx, (marker, _) in enumerate(chain)
+        if marker.get("reason") == "renovar-contrato"
+    ]
+    if not renewal_indices:
+        raise EvidenceUnavailable("renewal_lineage_original_missing")
+    start = renewal_indices[-1]
+    original, started = chain[start]
+    unchanged = (
+        "owner", "branch", "acceptance_sha256",
+        "task_marker_sha256", "task_paths", "task_depends_on",
+    )
+    ident = original.get("reservation_id")
+    if (original.get("active") is not True or original.get("owner") != "pl0n3r"
+        or not isinstance(ident, str) or _UUID.fullmatch(ident) is None
+        or not isinstance(original.get("acceptance_sha256"), str)
+        or _PIN.fullmatch(original["acceptance_sha256"]) is None
+        or not isinstance(original.get("task_marker_sha256"), str)
+        or _PIN.fullmatch(original["task_marker_sha256"]) is None
+        or not isinstance(original.get("task_paths"), list)
+        or not original["task_paths"]
+        or not isinstance(original.get("task_depends_on"), list)):
+        raise EvidenceUnavailable("renewal_lineage_original_invalid")
+    seen = {ident}
+    previous = started
+    for marker, stamp in chain[start + 1:]:
+        successor_id = marker.get("reservation_id")
+        if (marker.get("reason") != "recuperacion-inactividad"
+            or marker.get("active") is not True
+            or not isinstance(successor_id, str)
+            or _UUID.fullmatch(successor_id) is None
+            or successor_id in seen or stamp <= previous
+            or any(marker.get(field) != original.get(field) for field in unchanged)):
+            raise EvidenceUnavailable("renewal_lineage_successor_invalid")
+        previous = stamp
+        seen.add(successor_id)
+    return {
+        "renewal_uuid": ident,
+        "current_uuid": current["reservation_id"],
+        "acceptance_sha256": original["acceptance_sha256"],
+        "renewed_at": started.isoformat(),
+        "recovery_count": len(chain) - start - 1,
+    }
+
+
 def _invalidation_present(api: Any, sha: str, before: datetime, issue_number: int,
                           reservation_id: str, acceptance_pin: str) -> bool:
     """Acepta solo la invalidación auténtica de ESTA reserva y contrato V3."""

@@ -653,6 +653,64 @@ Ninguno.
             with self.subTest(change=str(change)):
                 self.assertFalse(evaluate(sample).ready)
 
+    def test_recovered_renewal_lineage_is_exact_and_fail_closed(self):
+        from scripts.coordinar_trabajo import reservation_marker, reservation_from_text
+        from scripts.renovacion_checks import (
+            _trusted_renewal_lineage, EvidenceUnavailable)
+
+        recovered_id = "22222222-3333-4444-8555-666666666666"
+        claims = {"task_marker_sha256": "c" * 64,
+                  "task_paths": ["scripts/renovacion_checks.py"],
+                  "task_depends_on": [1081]}
+
+        def mark(uuid, reason, when, owner="pl0n3r", active=True,
+                 pin=PIN, paths=None, actor_type="Bot"):
+            task = copy.deepcopy(claims)
+            if paths is not None:
+                task["task_paths"] = paths
+            body = reservation_marker(
+                owner, uuid, "trabajo/issue-1114", active,
+                reason, pin, task_snapshot=task)
+            return {"user": {"login": "github-actions[bot]", "type": actor_type},
+                    "body": body, "created_at": when, "updated_at": when}
+
+        first = mark(UUID, "renovar-contrato", TIME)
+        second = mark(recovered_id, "recuperacion-inactividad", FRESH)
+        current = reservation_from_text(second["body"])
+        proof = _trusted_renewal_lineage([first, second], current)
+        self.assertEqual(proof["renewal_uuid"], UUID)
+        self.assertEqual(proof["current_uuid"], recovered_id)
+        self.assertEqual(proof["acceptance_sha256"], PIN)
+        self.assertEqual(proof["recovery_count"], 1)
+
+        negatives = [
+            mark(recovered_id, "recuperacion-inactividad", FRESH, owner="intruder"),
+            mark(recovered_id, "recuperacion-inactividad", FRESH, pin="d" * 64),
+            mark(recovered_id, "recuperacion-inactividad", FRESH,
+                 paths=["scripts/foreign.py"]),
+            mark(recovered_id, "recuperacion-inactividad", FRESH, active=False),
+            mark(UUID, "recuperacion-inactividad", FRESH),
+            mark(recovered_id, "transferir", FRESH),
+            mark(recovered_id, "recuperacion-inactividad", TIME),
+            mark(recovered_id, "recuperacion-inactividad", FRESH,
+                 actor_type="User"),
+        ]
+        for invalid in negatives:
+            with self.subTest(reason=invalid["body"]):
+                with self.assertRaises(EvidenceUnavailable):
+                    _trusted_renewal_lineage(
+                        [first, invalid],
+                        reservation_from_text(invalid["body"]))
+        edited = dict(second, updated_at=FINISH)
+        with self.assertRaises(EvidenceUnavailable):
+            _trusted_renewal_lineage([first, edited], current)
+        duplicate = dict(second, body=second["body"] +
+                         "\n<!-- condor-reserva {} -->")
+        with self.assertRaises(EvidenceUnavailable):
+            _trusted_renewal_lineage([first, duplicate], current)
+        with self.assertRaises(EvidenceUnavailable):
+            _trusted_renewal_lineage([second], current)
+
     def test_invalidation_happens_before_bot_reservation_marker(self):
         from unittest.mock import Mock
         from scripts.renovacion_checks import _invalidation_present
