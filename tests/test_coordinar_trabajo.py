@@ -1850,6 +1850,72 @@ class CoordinacionTests(unittest.TestCase):
         self.assertNotIn(own, api.branches)
         self.assertIn(other, api.branches)
 
+    def test_sweep_guard_lock_cleanup_retry_only_owned(self):
+        """Un DELETE remoto fallido no pierde la propiedad del lock propio."""
+        api, _ = self._sweep_switch_api("RUNNING")
+        guarded = coordinator._SweepGuardedGitHub(api)
+        lock = "coordinacion/lock-issue-12"
+        self.assertTrue(guarded.create_branch(lock, "abc123"))
+        original_delete = api.delete_branch
+        calls = {"count": 0}
+
+        def transient(branch):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise CoordinationError("DELETE transitorio")
+            original_delete(branch)
+
+        api.delete_branch = transient
+        with self.assertRaisesRegex(CoordinationError, "DELETE transitorio"):
+            guarded.delete_branch(lock)
+        self.assertIn(lock, api.branches)
+        self.assertIn(lock, guarded._own_locks)
+        guarded.delete_branch(lock)
+        self.assertNotIn(lock, api.branches)
+        self.assertNotIn(lock, guarded._own_locks)
+        with self.assertRaisesRegex(CoordinationError, "ramas ajenas"):
+            guarded.delete_branch("otra-rama")
+
+    def test_sweep_guard_set_status_rechecks_each_mutating_request(self):
+        """RUNNING→PAUSED tras agregar estado prohíbe borrar labels."""
+        api = GitHub("pl0n3r/Factory", "token-de-prueba")
+        switch = {"state": "RUNNING", "reads": 0}
+        writes = []
+
+        def read_issue(number):
+            self.assertEqual(number, 767)
+            switch["reads"] += 1
+            return {
+                "number": 767,
+                "url": coordinator.CANONICAL_SOURCE_URL,
+                "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                "state": "closed",
+                "user": {"login": "pl0n3r"},
+                "body": '<!-- factory-unattended-kill-switch '
+                        + json.dumps({"version": 1,
+                                      "state": switch["state"],
+                                      "owner": "pl0n3r"}) + ' -->',
+            }
+
+        def request(method, path, payload=None, allow=()):
+            if method == "GET" and "/labels/" in path:
+                return {"name": "already-exists"}
+            writes.append((method, path))
+            if method == "POST" and path.endswith("/issues/12/labels"):
+                switch["state"] = "PAUSED"
+            return {}
+
+        api.issue = read_issue
+        api.request = request
+        guarded = coordinator._SweepGuardedGitHub(api)
+        with self.assertRaisesRegex(CoordinationError, "Barrido pausado"):
+            guarded.set_status(12, STATUS_RESERVED)
+        self.assertGreaterEqual(switch["reads"], 3)
+        self.assertEqual(
+            writes,
+            [("POST", "/repos/pl0n3r/Factory/issues/12/labels")],
+        )
+
     def test_scheduled_sweep_runs_reservations_and_blockers(self) -> None:
         api, observed = self._sweep_switch_api("RUNNING")
         with (
