@@ -1781,11 +1781,12 @@ class CoordinacionTests(unittest.TestCase):
 
     def test_scheduled_sweep_pause_race_prevents_unblock_and_reblock(self):
         for status, expected_sha in (
-            (STATUS_BLOCKED, "abc123"),
+            (STATUS_BLOCKED, "a" * 40),
             (STATUS_AVAILABLE, "f" * 40),
         ):
             with self.subTest(status=status):
                 api, observed = self._sweep_switch_api("RUNNING", "PAUSED")
+                api.branches["main"] = "a" * 40
                 api.issue_data["labels"] = [{"name": status}]
                 api.issue_data["body"] = unblock_marker(
                     kind="branch_sha", branch="main", sha=expected_sha,
