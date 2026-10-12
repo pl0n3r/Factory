@@ -717,11 +717,11 @@ Ninguno.
         from scripts.coordinar_trabajo import reservation_marker
         from scripts.renovacion_checks import collect_snapshot, EvidenceUnavailable
 
-        body = ("### Contexto\\nContexto verificable.\\n\\n### Alcance\\n"
-                "Reserva vigente.\\n\\n### Criterios de aceptación\\n"
-                "- [ ] [AC-01] Test.\\n\\n### Contrato ejecutable\\n"
+        body = ("### Contexto\nContexto verificable.\n\n### Alcance\n"
+                "Reserva vigente.\n\n### Criterios de aceptación\n"
+                "- [ ] [AC-01] Test.\n\n### Contrato ejecutable\n"
                 '<!-- factory-acceptance {"version":1,"criteria":'
-                '[{"id":"AC-01","kind":"check","target":"Tests de scripts"}]} -->\\n')
+                '[{"id":"AC-01","kind":"check","target":"Tests de scripts"}]} -->\n')
         pin = contract_fingerprint(body)
         newer = "22222222-3333-4444-8555-666666666666"
         task = {"task_marker_sha256": "c" * 64,
