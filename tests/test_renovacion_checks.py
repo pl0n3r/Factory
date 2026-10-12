@@ -718,7 +718,8 @@ Ninguno.
         from scripts.renovacion_checks import collect_snapshot, EvidenceUnavailable
 
         body = ("### Contexto\nContexto verificable.\n\n### Alcance\n"
-                "Reserva vigente.\n\n### Criterios de aceptación\n"
+                "Reserva vigente.\n\n### Fuera de alcance\n"
+                "Sin datos reales, escritura privilegiada ni producción.\n\n### Criterios de aceptación\n"
                 "- [ ] [AC-01] Test.\n\n### Contrato ejecutable\n"
                 '<!-- factory-acceptance {"version":1,"criteria":'
                 '[{"id":"AC-01","kind":"check","target":"Tests de scripts"}]} -->\n')
