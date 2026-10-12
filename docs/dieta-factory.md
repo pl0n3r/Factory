@@ -30,7 +30,6 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/etiquetas.yml` | workflow_call | 230 | scripts/labels_kit.py, scripts/pr_label_governance.py | tests/test_etiquetas_workflow_contract.py, tests/test_labels_kit.py | **eliminar** | 2 |
 | `.github/workflows/factory-ci.yml` | pull_request, push | 382 | scripts/politica_kit.py, scripts/release_window.py, scripts/coordinar_trabajo.py, scripts/aceptacion_kit.py | tests/test_quality_gates.py | **quedarse** | 0 |
 | `.github/workflows/liberar-reservas.yml` | schedule, workflow_dispatch, pull_request | 84 | scripts/lease_auto_release.py | tests/test_lease_auto_release.py | **quedarse** | 0 |
-| `.github/workflows/metricas.yml` | pull_request, workflow_dispatch, schedule | 86 | metricas/evaluar_agentes.py | metricas/test_evaluar_agentes.py, metricas/test_producto_diario.py, tests/test_metricas_integer_bounds.py | **eliminar** | 1 |
 | `.github/workflows/observar.yml` | workflow_call | 176 | scripts/observe_kit.py | tests/test_observar_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/orquestador.yml` | issue_comment, workflow_dispatch | 57 | scripts/orquestar_fabrica.py | tests/test_orquestador_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/politica-comentario.yml` | workflow_call | 332 | scripts/politica_kit.py | tests/test_politica_workflow_contract.py | **simplificar** | 3 |
@@ -53,7 +52,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 
 ## Ledger F1A de bajas autorizadas
 
-**Baseline histórica inmutable:** 38 workflows en `main@173519bde16498a796afd6a5af96b517d7e3a091` (después de #1297). **36 workflows activos** tras retirar exclusivamente los dos triggers F1A. La tabla anterior enumera los workflows actuales: la línea base histórica y los blobs previos quedan registrados en este ledger, no se reemplazan por recuentos futuros.
+**Baseline histórica inmutable:** 38 workflows en `main@173519bde16498a796afd6a5af96b517d7e3a091` (después de #1297). **36 workflows tras F1A** al retirar esos dos triggers; **35 workflows activos tras F1B** al apagar el cron mensual accesorio de métricas. La tabla anterior enumera los workflows actuales: la línea base histórica y los blobs previos quedan registrados en este ledger, no se reemplazan por recuentos futuros.
 
 **Preflight de consumidores:** se leyeron 88 workflows de consumidores en Condor (17), GrindFlow (25), brvtal (18), ControlBot (14), AutoFactory (6) y FactoryRunner (8), bajo sus SHA de `main` anotados en Factory #1301; ningún workflow hace `uses` de los dos YAML retirados. No están declarados como required checks ni puertas duras en el preflight F1A; la publicación de nuevos consumers requiere revisar de nuevo estos contratos.
 
@@ -65,11 +64,23 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 **Compensaciones conservadas en CI común:** compilación offline de todos los `lab/*.py`, suites shadow/experimentos, `producto/feedback.py` y `producto/test_feedback.py`, además de validación JSON de `producto/metricas.json`. El informe semanal automatizado de Feedback se suspende; el motor/reporte manual siguen presentes. No se tocan seguridad, presupuesto, privacidad, coordinación V3, release ni despliegue.
 
 **Reversión:** squash-revert PR F1A restaura estos dos YAML, las dos filas originales del inventario, el contrato histórico de tests y la sección original de fase 1; sin movimiento de `Factory@v1` ni autorización live.
-## Plan por fases (F1A aplicada; siguientes hojas independientes)
+## Ledger F1B de baja del cron de métricas
+
+**Baseline F1A:** 36 workflows en `main@2e20aef7fd8b019c677acec37e18d711341662cc`. Después de retirar **solo** `metricas.yml`, quedan **35 workflows activos**. El inventario histórico de 38 y las dos bajas F1A permanecen en su ledger independiente.
+
+| Baja | Workflow retirado | Blob SHA previo | Transición | Reversión |
+| --- | --- | --- | --- | --- |
+| F1B | `.github/workflows/metricas.yml` | `f76a0bac2f9fc7b3669fbc58b968f1136c05d527` | 36 → 35 | squash-revert PR F1B |
+
+**Efecto intencional:** se suspende el ranking mensual automático y sus artifacts `evaluacion-agentes-<run_id>` (`artifacts/recomendaciones.json`, `artifacts/dashboard.md`, retención anterior de 90 días); no se inventa otro cron. El motor offline `metricas/evaluar_agentes.py` y las pruebas `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py` continúan en el CI común. `costos.yml/presupuesto-pr` y los watchdogs, guardas de seguridad, privacidad, release y Coordinación permanecen.
+
+**Preflight:** el YAML retirado era `pull_request`, `workflow_dispatch`, `schedule`, y no `workflow_call`. El check requerido observable de `main` es `Validar`; el CI común ejecuta las suites de métricas. Revalidar callers externos si se añaden referencias nuevas a ese trigger local. **Reversión:** squash-revert solo del PR F1B restaura cron, YAML, fila y pruebas anteriores sin deshacer F1A. No mover `Factory@v1`, publicar, gastar, desplegar ni activar live.
+
+## Plan por fases (F1A y F1B aplicadas; siguientes hojas independientes)
 
 ### Fase 1: apagar telemetría y aprendizaje, sin suprimir controles
 
-**Rutas exactas:** `.github/workflows/metricas.yml`, `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`, `.github/workflows/sonar-watch.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
+**Rutas exactas:** `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`, `.github/workflows/sonar-watch.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
 
 **Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumidor. **No borrar** `scripts/unattended_kill_switch.py`, `scripts/unattended_guards.py` ni la comprobación obligatoria de #767. **Conservar explícitamente:**
 - `.github/workflows/costos.yml`: el job `presupuesto-pr` evalúa `metricas/costos.py pr` contra la **base confiable** y publica artifacts de presupuesto; `tendencia-ci` sí es telemetría programada y solo podría simplificarse mediante otra hoja con reserva, pruebas y evidencia de preservación de `presupuesto-pr`.

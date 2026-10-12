@@ -15,7 +15,6 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 EXPECTED = {
     "scripts/coordinar_trabajo.py",
     "metricas/costos.py",
-    "metricas/evaluar_agentes.py",
     "scripts/sonar-watch.py",
     "scripts/cabina.py",
 }
@@ -85,6 +84,9 @@ class ScheduledEntrypointTests(unittest.TestCase):
         self.assertEqual(EXPECTED, discovered)
         # F1A retira exclusivamente el cron de Feedback, no su motor offline.
         self.assertNotIn("producto/feedback.py", discovered)
+        # F1B retira el cron mensual, no la importación offline.
+        self.assertNotIn("metricas/evaluar_agentes.py", discovered)
+        self.assertTrue((ROOT / "metricas/evaluar_agentes.py").is_file())
         self.assertTrue((ROOT / "producto/feedback.py").is_file())
 
         for script, args in SAFE_ARGS.items():
