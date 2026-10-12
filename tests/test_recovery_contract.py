@@ -30,6 +30,75 @@ def manifest():
 
 
 class RecoveryContractTests(unittest.TestCase):
+    def test_offsite_object_storage_requires_exact_string(self):
+        class SpoofStr(str):
+            def __ne__(self, other):
+                return False
+
+        for invalid in (SpoofStr("WRONG"), SpoofStr("REQUIRED"), "WRONG",
+                        None, True, 1, [], {}):
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["offsite"]["object_storage"] = invalid
+                with self.subTest(value=repr(invalid), fn=validator.__name__):
+                    with self.assertRaisesRegex(
+                        RecoveryContractError,
+                        "offsite incompatible con contrato 3-2-1-1-0",
+                    ) as caught:
+                        validator(case)
+                    self.assertIsNone(caught.exception.__cause__)
+                    self.assertIsNone(caught.exception.__context__)
+
+    def test_offsite_object_storage_hostile_comparisons_fail_closed(self):
+        class EqualAlias(str):
+            def __eq__(self, other):
+                return True
+
+            def __ne__(self, other):
+                return False
+
+        class ExplodingComparison(str):
+            def __ne__(self, other):
+                raise AssertionError("sensitive-sentinel")
+
+            def __eq__(self, other):
+                raise AssertionError("sensitive-sentinel")
+
+        for invalid in (EqualAlias("NOT_REQUIRED"), ExplodingComparison("WRONG")):
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["offsite"]["object_storage"] = invalid
+                with self.subTest(value=type(invalid).__name__, fn=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertEqual(
+                        str(caught.exception),
+                        "offsite incompatible con contrato 3-2-1-1-0.",
+                    )
+                    self.assertNotIn("sensitive-sentinel", str(caught.exception))
+                    self.assertIsNone(caught.exception.__cause__)
+                    self.assertIsNone(caught.exception.__context__)
+
+    def test_offsite_object_storage_canonical_input_unchanged(self):
+        valid = manifest()
+        before = json.dumps(
+            valid, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+            with self.subTest(fn=validator.__name__):
+                result = validator(copy.deepcopy(valid))
+                if validator is validate_recovery_manifest:
+                    self.assertEqual(result, valid)
+                    self.assertIs(type(result["offsite"]["object_storage"]), str)
+                else:
+                    self.assertEqual(result, before)
+        reordered = copy.deepcopy(valid)
+        reordered["offsite"] = {
+            "cold_copy": "google_drive", "object_storage": "REQUIRED",
+        }
+        self.assertEqual(canonical_recovery_manifest(reordered), before)
+
     def test_manifest_v1_schema_and_validator_are_closed_and_deterministic(self):
         first = manifest()
         second = copy.deepcopy(first)
