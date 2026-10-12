@@ -482,6 +482,11 @@ class SonarApi:
         # filas. Nunca mezclar páginas recogidas con tamaños distintos.
         page_size = _SONAR_PAGE_SIZE
         requests_made = 0
+        # Reintentos de distinto page_size deben conservar el primer total
+        # y las identidades ya observadas; de lo contrario el conjunto final
+        # podría ser diferente y aparentar un snapshot completo.
+        expected_total = None
+        observed_ids = set()
         while True:
             rows, page, total, seen = [], 1, None, set()
             while True:
@@ -496,6 +501,7 @@ class SonarApi:
                 except SonarWatchResponseTooLarge:
                     if page_size <= 25:
                         raise
+                    observed_ids.update(seen)
                     page_size = max(25, page_size // 2)
                     break
                 if not isinstance(payload, dict):
@@ -504,11 +510,18 @@ class SonarApi:
                 if not isinstance(batch, list) or not isinstance(paging, dict):
                     raise SonarWatchError("paginación Sonar inválida.")
                 candidate = paging.get("total")
+                page_index, reported_size = paging.get("pageIndex"), paging.get("pageSize")
                 if (
                     type(candidate) is not int or candidate < 0 or candidate > _MAX_SONAR_ISSUES
-                    or paging.get("pageIndex") != page or paging.get("pageSize") != page_size
+                    or type(page_index) is not int or page_index != page
+                    or type(reported_size) is not int or reported_size != page_size
+                    or len(batch) > page_size
                 ):
                     raise SonarWatchError("paginación Sonar incoherente.")
+                if expected_total is None:
+                    expected_total = candidate
+                if candidate != expected_total:
+                    raise SonarWatchError("total Sonar cambió entre reintentos.")
                 total = candidate if total is None else total
                 if candidate != total:
                     raise SonarWatchError("total Sonar cambió durante paginación.")
@@ -527,6 +540,8 @@ class SonarApi:
                 if len(rows) > total:
                     raise SonarWatchError("Sonar devolvió filas excedentes.")
                 if len(rows) == total:
+                    if not observed_ids.issubset(seen):
+                        raise SonarWatchError("identidades Sonar cambiaron entre reintentos.")
                     return rows
                 if not batch or len(batch) < page_size:
                     raise SonarWatchError("Sonar truncó filas antes del total.")

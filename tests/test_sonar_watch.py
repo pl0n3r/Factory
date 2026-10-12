@@ -279,6 +279,51 @@ class SonarWatchTests(unittest.TestCase):
         with self.assertRaisesRegex(sonar_watch.SonarWatchError, "duplicada"):
             sonar._all_issues("project-key")
 
+    def test_sonar_retries_preserve_total_and_previously_seen_identities(self):
+        sonar = sonar_watch.SonarApi(token="")
+        records = [{"key": f"original-{i:04d}"} for i in range(501)]
+        for scenario in ("total_drift", "identity_replaced", "same_snapshot"):
+            calls = []
+            def fake_get(_path, params):
+                size, page = params["ps"], params["p"]
+                calls.append((size, page))
+                if size == 500 and page == 2:
+                    raise sonar_watch.SonarWatchResponseTooLarge(
+                        "respuesta remota excede tamaño máximo. source=sonar.issues"
+                    )
+                if size == 500:
+                    selected = records
+                    total = len(records)
+                elif scenario == "total_drift":
+                    selected = records[:250]
+                    total = 250
+                elif scenario == "identity_replaced":
+                    selected = [{"key": f"replacement-{i:04d}"} for i in range(501)]
+                    total = 501
+                else:
+                    selected = records
+                    total = len(records)
+                offset = (page - 1) * size
+                return {
+                    "issues": selected[offset:offset + size],
+                    "paging": {"pageIndex": page, "pageSize": size, "total": total},
+                }
+
+            with self.subTest(scenario=scenario):
+                sonar.get = fake_get
+                if scenario == "same_snapshot":
+                    actual = sonar._all_issues("project-key")["issues"]
+                    self.assertEqual(actual, records)
+                else:
+                    expected_error = (
+                        "total Sonar cambió" if scenario == "total_drift"
+                        else "identidades Sonar cambiaron"
+                    )
+                    with self.assertRaisesRegex(sonar_watch.SonarWatchError, expected_error):
+                        sonar._all_issues("project-key")
+                self.assertEqual(calls[:3], [(500, 1), (500, 2), (250, 1)])
+                self.assertLessEqual(len(calls), 120)
+
     def test_sonar_paging_limits_total_requests_across_restarts(self):
         sonar = sonar_watch.SonarApi(token="")
         calls = []
@@ -321,6 +366,15 @@ class SonarWatchTests(unittest.TestCase):
             ({"issues": "not-a-list", "paging": {}}, "paginación Sonar inválida"),
             ({"issues": [], "paging": {"pageIndex": 1, "pageSize": 500,
                                       "total": True}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": "a"}], "paging": {"pageIndex": True,
+             "pageSize": 500, "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": "a"}], "paging": {"pageIndex": 1.0,
+             "pageSize": 500, "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": "a"}], "paging": {"pageIndex": 1,
+             "pageSize": 500.0, "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": f"overflow-{i}"} for i in range(501)],
+              "paging": {"pageIndex": 1, "pageSize": 500,
+                         "total": 501}}, "paginación Sonar incoherente"),
             ({"issues": [], "paging": {"pageIndex": 2, "pageSize": 500,
                                       "total": 1}}, "paginación Sonar incoherente"),
             ({"issues": [], "paging": {"pageIndex": 1, "pageSize": 500,
