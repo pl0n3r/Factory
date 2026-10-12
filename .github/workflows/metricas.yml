@@ -40,6 +40,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile metricas/evaluar_agentes.py
           PYTHONPATH=metricas python3 -m unittest discover -s metricas -p 'test_evaluar_agentes.py'
+          PYTHONPATH=. python3 -m unittest metricas.test_producto_diario -v
 
   evaluar:
     if: github.event_name != 'pull_request'
