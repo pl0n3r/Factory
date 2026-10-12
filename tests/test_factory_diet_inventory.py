@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "dieta-factory.md"
@@ -100,8 +101,29 @@ class FactoryDietInventoryTests(unittest.TestCase):
                 self.assertIn(row["decision"], {"quedarse", "simplificar", "eliminar"})
                 self.assertEqual(row["events"], workflow_events(ROOT / rel_path))
                 self.assertGreater(row["lines"], 0)
-                self.assertEqual(row["lines"], len((ROOT / rel_path).read_text(encoding="utf-8").split("\n")))
+                # El recuento procede de un snapshot histórico, no del HEAD vivo.
                 self.assertIn(row["phase"], {0, 1, 2, 3, 4})
+
+    def test_historical_line_counts_are_provenance_not_immutable_runtime(self) -> None:
+        """Un workflow puede crecer después del snapshot sin invalidar la tabla."""
+        self.assertIn("main@b0713650194e9a0c464d625bc6136eecad776377", self.content)
+        target = WORKFLOWS / "politica-comentario.yml"
+        recorded = int(self.rows[target.relative_to(ROOT).as_posix()]["lines"])
+        original_read_text = Path.read_text
+        current = original_read_text(target, encoding="utf-8")
+        # Diferencia deliberada aunque el workflow cambie en otros PRs futuros.
+        future = current + "\n# Cambio futuro permitido" * (
+            abs(recorded - len(current.split("\n"))) + 2
+        )
+        self.assertNotEqual(recorded, len(future.split("\n")))
+
+        def read_with_future_edit(path: Path, *args: object, **kwargs: object) -> str:
+            if path == target:
+                return future
+            return original_read_text(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read_with_future_edit):
+            self.test_inventory_lists_every_workflow_with_trigger_and_decision()
 
     def test_every_removal_names_its_script_and_test_references(self) -> None:
         removals = {path: row for path, row in self.rows.items() if row["decision"] == "eliminar"}
