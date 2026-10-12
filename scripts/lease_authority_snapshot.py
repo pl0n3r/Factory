@@ -314,7 +314,7 @@ def _audit_issue(
     if number not in comments_by_issue:
         _reject("comentarios_incompletos")
     marker, comments_hash = _last_bot_marker(comments_by_issue[number], number, uuid_origins)
-    if ACTIVE_LABELS.intersection(labels) and (marker is None or not marker["active"]):
+    if ACTIVE_LABELS.intersection(name.casefold() for name in labels) and (marker is None or not marker["active"]):
         _reject("estado_activo_sin_marker")
     if marker is not None and marker["active"]:
         # Incluso un Issue BLOCKED debe conservar sus claims activos.
