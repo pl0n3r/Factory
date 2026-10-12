@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -216,9 +216,10 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             if author["login"] == owner:
                 details = commit.get("commit")
                 actor = details.get("author") if isinstance(details, dict) else None
-                when = _time(actor.get("date") if isinstance(actor, dict) else None, now)
-                if when >= since:
-                    latest = max(latest, when)
+                # Commit author/committer dates are editable Git metadata,
+                # NOT authenticated evidence of when GitHub received a push.
+                # Keep parsing for hostile values, never advance the lease clock.
+                _time(actor.get("date") if isinstance(actor, dict) else None, now)
 
         pulls = pages(f"{base}/pulls?state=open", name="pulls")
         matching = []
@@ -296,6 +297,25 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 raise IncompleteEvidence()
             if status != "completed":
                 running = True
+
+        # A run created by GitHub's push event on this exact branch and SHA
+        # is positive evidence of a recent update; it is NOT proof that no
+        # other pushes took place. A trustworthy V3 marker younger than the
+        # release grace period is likewise safe because it cannot yet expire.
+        # Never certify inactivity from commit.author.date or a truncated
+        # /commits?since= query. Once this bounded positive evidence ages out,
+        # report UNKNOWN until an authoritative complete push audit exists.
+        grace = timedelta(minutes=30)
+        recent = now - since < grace
+        for run in workflow_runs:
+            if run.get("event") != "push" or run.get("head_sha") != sha:
+                continue
+            pushed_at = _time(run.get("created_at"), now)
+            if pushed_at >= since and now - pushed_at < grace:
+                latest = max(latest, pushed_at)
+                recent = True
+        if not recent:
+            raise IncompleteEvidence()
 
         verify = get(path)
         if (not isinstance(verify, dict)
