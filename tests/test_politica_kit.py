@@ -82,7 +82,15 @@ def owner_review_retry(*, comment_id=201, created_at="2026-10-04T05:02:00Z",
 
 
 def check(*, check_id, name, conclusion="success", status="completed",
-          head_sha=HEAD, completed_at="2026-10-04T05:00:00Z"):
+          head_sha=HEAD, completed_at="2026-10-04T05:00:00Z",
+          app_slug=None, app_id=None):
+    if app_slug is None:
+        app_slug = ("sonarqubecloud" if name == "SonarCloud Code Analysis"
+                    else "github-advanced-security" if name == "CodeQL"
+                    else "github-actions")
+    if app_id is None:
+        app_id = {"github-actions": 15368, "sonarqubecloud": 12526,
+                  "github-advanced-security": 57789}.get(app_slug, 90000)
     return json.dumps({
         "id": check_id,
         "name": name,
@@ -90,6 +98,7 @@ def check(*, check_id, name, conclusion="success", status="completed",
         "status": status,
         "conclusion": conclusion,
         "completed_at": completed_at,
+        "app": {"slug": app_slug, "id": app_id},
     })
 
 
@@ -240,6 +249,54 @@ class T(unittest.TestCase):
                 head_committed_at="2026-10-04T04:59:00Z", phase="construccion",
                 review_lines=[], comment_lines=comments, check_lines=checks,
                 thread_lines=[], run_attempt=1)
+
+    def test_gates_require_expected_app_identity_for_each_category(self):
+        """AC-01: un nombre de check no suple identidad de la app."""
+        base = green_gate_checks()
+        for bad in (
+            check(check_id=15, name="CodeQL", app_slug="foreign", app_id=9000),
+            check(check_id=15, name="CodeQL", app_slug="github-actions", app_id=15368),
+            check(check_id=11, name="SonarCloud Code Analysis",
+                  app_slug="github-actions", app_id=15368),
+        ):
+            name = json.loads(bad)["name"]
+            rows = [x for x in base if json.loads(x)["name"] != name] + [bad]
+            with self.subTest(bad=bad), self.assertRaises(PolicyError):
+                policy.validate_other_gates_green(rows, head_sha=HEAD)
+        rogue = base + [
+            check(check_id=900, name="CodeQL", app_slug="foreign", app_id=9000)]
+        with self.assertRaises(PolicyError):
+            policy.validate_other_gates_green(rogue, head_sha=HEAD)
+        missing = json.loads(check(check_id=18, name="CodeQL"))
+        missing.pop("app")
+        with self.assertRaises(PolicyError):
+            policy.validate_other_gates_green(
+                [x for x in base if json.loads(x)["name"] != "CodeQL"]
+                + [json.dumps(missing)], head_sha=HEAD)
+
+    def test_gates_require_distinct_authenticated_check_ids(self):
+        """AC-02: una cadena con seis substrings no acredita seis gates."""
+        compound = check(check_id=87, name="ci sonar codeql tests coordinación privacy")
+        with self.assertRaisesRegex(PolicyError, "IDs distintos"):
+            policy.validate_other_gates_green([compound], head_sha=HEAD)
+        policy.validate_other_gates_green(green_gate_checks(), head_sha=HEAD)
+        with self.assertRaises(PolicyError):
+            policy.validate_other_gates_green(green_gate_checks() +
+                [check(check_id=10, name="privacy duplicate")], head_sha=HEAD)
+
+    def test_gates_fail_closed_on_missing_pending_failed_or_wrong_head(self):
+        """AC-03: inventario íntegro, exact-HEAD y terminal."""
+        base = green_gate_checks()
+        cases = [
+            base[:-1],
+            base + [check(check_id=900, name="security",
+                          status="in_progress", conclusion=None)],
+            base + [check(check_id=900, name="security", conclusion="failure")],
+            base + [check(check_id=900, name="security", head_sha="b" * 40)],
+        ]
+        for rows in cases:
+            with self.subTest(rows=rows), self.assertRaises(PolicyError):
+                policy.validate_other_gates_green(rows, head_sha=HEAD)
 
     def test_required_bot_primary_rejects_rate_limit_only_review(self):
         for phrase in ("Review rate limited.", "Review limit reached"):
