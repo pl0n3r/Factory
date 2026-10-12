@@ -45,7 +45,6 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/roles.yml` | workflow_call | 207 | scripts/roles_kit.py | tests/test_roles_kit.py, tests/test_roles_workflow_contract.py | **eliminar** | 2 |
 | `.github/workflows/seguridad.yml` | pull_request, push, issues, issue_comment, workflow_dispatch | 297 | ninguno directo (CodeQL/seguridad) | tests/test_template_security_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/sonar.yml` | pull_request, push, workflow_dispatch | 201 | scripts/generate_coverage.py | tests/test_sonar_ci_analysis_workflow.py | **quedarse** | 0 |
-| `.github/workflows/sync-label-colors.yml` | issue_comment | 50 | scripts/sync_label_colors.py | tests/test_sync_label_colors.py | **eliminar** | 2 |
 | `.github/workflows/unattended-watchdog.yml` | push, schedule, workflow_dispatch | 63 | scripts/unattended_watchdog_runtime.py, scripts/unattended_daily_summary.py | tests/test_unattended_watchdog_runtime.py, tests/test_unattended_daily_summary.py, tests/test_unattended_kill_switch.py | **quedarse** | 0 |
 
 ## Ledger F1A de bajas autorizadas
@@ -92,7 +91,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 
 ### Fase 1: apagar telemetría y aprendizaje, sin suprimir controles
 
-**Rutas exactas:** `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
+**Rutas exactas:** `.github/workflows/captura-leccion.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
 
 **Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumidor. **No borrar** `scripts/unattended_kill_switch.py`, `scripts/unattended_guards.py` ni la comprobación obligatoria de #767. **Conservar explícitamente:**
 - `.github/workflows/costos.yml`: el job `presupuesto-pr` evalúa `metricas/costos.py pr` contra la **base confiable** y publica artifacts de presupuesto; `tendencia-ci` sí es telemetría programada y solo podría simplificarse mediante otra hoja con reserva, pruebas y evidencia de preservación de `presupuesto-pr`.
@@ -102,7 +101,7 @@ Hasta demostrar replacements con contratos equivalentes, ambos workflows quedan 
 
 ### Fase 2: quitar validadores de forma
 
-**Rutas exactas:** `.github/workflows/etiquetas.yml`, `.github/workflows/etiquetas-pr.yml`, `.github/workflows/sync-label-colors.yml`, `.github/workflows/readme.yml`, `.github/workflows/roles.yml`. **Dependencias a revisar:** `scripts/labels_kit.py`, `scripts/pr_label_governance.py`, `scripts/sync_label_colors.py`, `scripts/roles_kit.py`, `tests/test_etiquetas_workflow_contract.py`, `tests/test_labels_kit.py`, `tests/test_sync_label_colors.py`, `tests/test_readme_contract.py`, `tests/test_readme_contract_v2.py`, `tests/test_roles_kit.py`, `tests/test_roles_workflow_contract.py`. Mantener etiquetas/roles y procedencia que sean **requisitos de autoridad de Coordinación**, hasta que la fase 4 los reemplace con pruebas equivalentes. Antes de retirar `roles.yml`, buscar en **los siete repositorios consumidores** sus referencias `uses: .../roles.yml@v1` y sus required checks (p. ej., `Validar evidencia de roles`), documentar el reemplazo en el PR y validar que ningún branch protection check quede ausente. La lista local de tests por sí sola no es prueba de compatibilidad.
+**Rutas exactas:** `.github/workflows/etiquetas.yml`, `.github/workflows/etiquetas-pr.yml`, `.github/workflows/readme.yml`, `.github/workflows/roles.yml`. **Dependencias a revisar:** `scripts/labels_kit.py`, `scripts/pr_label_governance.py`, `scripts/sync_label_colors.py`, `scripts/roles_kit.py`, `tests/test_etiquetas_workflow_contract.py`, `tests/test_labels_kit.py`, `tests/test_sync_label_colors.py`, `tests/test_readme_contract.py`, `tests/test_readme_contract_v2.py`, `tests/test_roles_kit.py`, `tests/test_roles_workflow_contract.py`. Mantener etiquetas/roles y procedencia que sean **requisitos de autoridad de Coordinación**, hasta que la fase 4 los reemplace con pruebas equivalentes. Antes de retirar `roles.yml`, buscar en **los siete repositorios consumidores** sus referencias `uses: .../roles.yml@v1` y sus required checks (p. ej., `Validar evidencia de roles`), documentar el reemplazo en el PR y validar que ningún branch protection check quede ausente. La lista local de tests por sí sola no es prueba de compatibilidad.
 
 **Reversión:** revertir el PR de fase 2 y reactivar los mismos reusable workflows; verificar los repos consumidores antes de volver a exigirlos.
 
@@ -139,3 +138,13 @@ Hasta demostrar replacements con contratos equivalentes, ambos workflows quedan 
 | F1D | `.github/workflows/cabina.yml` | `8fbbd85b5697a43d196223292961c77976d45f96` | 34 → 33 | squash-revert PR F1D |
 
 Reversión: squash-revert solo del PR F1D, sin tocar F1A/F1B/F1C ni modificar publicación, secretos o producción. La pérdida de generación privada automática es deliberada; el motor sigue disponible offline.
+
+## Ledger F2A de baja de Sync Label Colors
+
+**Baseline F1D:** 33 workflows en `main@26c585070d1b8524f5b4562092f610c5c327de82`. F2A retira exclusivamente el disparador `sync-label-colors.yml`, quedando **32 workflows**; historial 38 → 36 → 35 → 34 → 33 → 32 workflows. Se pierde la invocación remota por comentario en #874 (`/sync-label-colors dry-run|apply`). No se modifican colores ni etiquetas reales, y se conserva `scripts/sync_label_colors.py` con su QA offline. Sin reemplazo remoto y sin ejecutar `--apply`.
+
+| Baja | Workflow | Blob previo | Secuencia | Reversión |
+| --- | --- | --- | --- | --- |
+| F2A | `.github/workflows/sync-label-colors.yml` | `7005e0cddab8fe5dfc7635a05f3001cd61497d5f` | 33 → 32 | squash-revert PR F2A |
+
+**Reversión:** squash-revert solo del PR F2A, independiente de las fases F1A/B/C/D. Mantener gates de seguridad, CI y autoridad.
