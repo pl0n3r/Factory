@@ -44,6 +44,11 @@ DECISION_RE = re.compile(
 EXECUTED_RE = re.compile(
     r"<!--\s*factory-release-executed\s+(\{[^\n]*\})\s*-->"
 )
+# Detecta intentos incompletos o alternativos aunque no formen un JSON válido.
+EXECUTED_HEADER_RE = re.compile(
+    r"<!--\s*factory\s*-\s*release\s*-\s*executed\b",
+    re.IGNORECASE,
+)
 EXCEPTION_RE = re.compile(
     r"<!--\s*factory-release-freeze-exception\s+(\{[^\n]*\})\s*-->"
 )
@@ -316,7 +321,12 @@ def _execution(
         body = comment.get("body")
         if not isinstance(body, str):
             continue
-        for match in EXECUTED_RE.findall(body):
+        matches = EXECUTED_RE.findall(body)
+        header_count = len(EXECUTED_HEADER_RE.findall(body))
+        if header_count or matches:
+            if header_count != 1 or len(matches) != 1:
+                raise ReleaseWindowError("Marker executed ambiguo o incompleto.")
+        for match in matches:
             try:
                 raw = _strict_json_loads(match)
             except json.JSONDecodeError as exc:
