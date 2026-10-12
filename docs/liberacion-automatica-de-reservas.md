@@ -15,6 +15,28 @@ como auditoría de solo lectura cada 10 minutos: ejecuta contratos locales tras
 preflight de cuota >=20%; **no consulta actividad real ni modifica reservas**.
 La integración autenticada/ejecutora queda pendiente de otra etapa.
 
+## Inspector REST agregado en la rama de #1175 (NO operativo)
+
+El PR #1248 incorpora `scripts/lease_github_port.py` como **frontera
+únicamente de lectura**, y `tests/test_lease_github_port.py` con fakes.
+El inspector consume `collect_activity()` y vuelve a consultar el
+interruptor **global** `/repos/pl0n3r/Factory/issues/767` antes y después.
+Valida el objeto mediante el parser canónico (incluido el rechazo de claves
+JSON repetidas), sin sustituir la fuente por un Issue local del consumidor.
+Una observación positiva emite solo `RECENT_ACTIVITY`; la ausencia,
+ambigüedad, cuota baja, 403, 429, paginación parcial o carrera emite `UNKNOWN`.
+Ninguno de esos resultados autoriza liberación.
+
+**Aún falta** un audit trail autenticado y completo para demostrar que no hubo
+push/actividad del titular durante toda la ventana, con procedencia de sesión,
+más el lock/CAS compartido real y prueba de recuperación parcial. Por ello los
+métodos `read/lock/append/status/recovery_note/recovery_label` del Port
+siguen rechazados de forma explícita, incluso si el caller intenta activar
+`mutations_authorized`. El workflow cron de 10 minutos **no importa** ese
+Port y continúa solo en modo auditoría, `contents: read`, cero escrituras.
+Las pruebas de este inspector no satisfacen por sí solas AC-03/04 de mutación
+ni autorizan activar `FACTORY_LEASE_AUTO_RELEASE_ENABLED`.
+
 ## Semántica temporal explícita
 
 Hay una contradicción en la solicitud original: «liberar a los 30 minutos»
