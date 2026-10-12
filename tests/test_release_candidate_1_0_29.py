@@ -122,6 +122,14 @@ class ReleaseCandidate1029Tests(unittest.TestCase):
         for name in self._declared_control_changes():
             with self.subTest(required_control=name):
                 path = self.root / name
+                if name == ".github/workflows/captura-leccion.yml":
+                    # F1E retires this optional trigger. Preserve the historical
+                    # v1...main diff fixture and execute trust-gate regressions.
+                    from tests.test_captura_leccion_workflow import HISTORICAL_WORKFLOW
+                    self.assertFalse(path.exists(), "retired_capture_trigger_reactivated")
+                    self.assertIn("TRUST_GATE_START", HISTORICAL_WORKFLOW)
+                    self.assertIn("ambiguous_issue_closure", HISTORICAL_WORKFLOW)
+                    continue
                 self.assertTrue(path.is_file(), "required_control_missing")
                 self.assertGreater(path.stat().st_size, 0)
 

@@ -18,7 +18,6 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/auditoria-privacidad.yml` | workflow_call | 198 | scripts/auditar_privacidad.py | tests/test_auditar_privacidad.py | **quedarse** | 0 |
 | `.github/workflows/automerge-construccion.yml` | pull_request | 321 | scripts/automerge_construccion.py (indirecto) | tests/test_automerge_construccion.py, tests/test_automerge_workflow.py | **simplificar** | 3 |
 | `.github/workflows/bootstrap-coordination.yml` | issue_comment, workflow_dispatch | 144 | scripts/bootstrap_coordination.py | tests/test_bootstrap_coordination_workflow.py | **quedarse** | 0 |
-| `.github/workflows/captura-leccion.yml` | issues, pull_request | 128 | ninguno directo (Python inline) | tests/test_captura_leccion.py, tests/test_captura_leccion_workflow.py | **eliminar** | 1 |
 | `.github/workflows/ci.yml` | workflow_call | 249 | ninguno directo | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/codeql-evidence.yml` | pull_request, push | 60 | scripts/codeql_sarif_summary.py | tests/test_codeql_evidence_workflow.py, tests/test_codeql_sarif_summary.py | **quedarse** | 0 |
 | `.github/workflows/coordinacion-trabajo.yml` | schedule, workflow_dispatch, pull_request, issues, issue_comment | 342 | scripts/coordinar_trabajo.py | tests/test_coordinar_trabajo.py, tests/test_coordinar_trabajo_unblock_validation.py | **simplificar** | 4 |
@@ -91,7 +90,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 
 ### Fase 1: apagar telemetría y aprendizaje, sin suprimir controles
 
-**Rutas exactas:** `.github/workflows/captura-leccion.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
+**Rutas exactas:** ninguna de fase 1 permanece activa tras F1E; el motor de captura queda offline. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
 
 **Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumidor. **No borrar** `scripts/unattended_kill_switch.py`, `scripts/unattended_guards.py` ni la comprobación obligatoria de #767. **Conservar explícitamente:**
 - `.github/workflows/costos.yml`: el job `presupuesto-pr` evalúa `metricas/costos.py pr` contra la **base confiable** y publica artifacts de presupuesto; `tendencia-ci` sí es telemetría programada y solo podría simplificarse mediante otra hoja con reserva, pruebas y evidencia de preservación de `presupuesto-pr`.
@@ -148,3 +147,13 @@ Reversión: squash-revert solo del PR F1D, sin tocar F1A/F1B/F1C ni modificar pu
 | F2A | `.github/workflows/sync-label-colors.yml` | `7005e0cddab8fe5dfc7635a05f3001cd61497d5f` | 33 → 32 | squash-revert PR F2A |
 
 **Reversión:** squash-revert solo del PR F2A, independiente de las fases F1A/B/C/D. Mantener gates de seguridad, CI y autoridad.
+
+## Ledger F1E de baja de Captura de lecciones
+
+**Baseline tras F2A:** 32 workflows en `main@ae88faecaf228b376d8fd26d23ca1c012edd8873`. F1E retira exclusivamente el trigger `.github/workflows/captura-leccion.yml`: **31 workflows activos**, secuencia histórica **38 → 36 → 35 → 34 → 33 → 32 → 31**. El blob previo autenticado es `df7cdd904b9370600a897f174d28322e5a99d84e`. Los eventos `issues.closed` y `pull_request.closed` ya no generan candidatos automáticos; se conserva `scripts/captura_leccion.py` offline, sin reemplazo remoto. Las pruebas de identidad fail-closed y deduplicación sobreviven mediante una copia histórica del gate en `tests/test_captura_leccion_workflow.py`.
+
+| Baja | Workflow retirado | Blob SHA previo | Transición | Reversión |
+| --- | --- | --- | --- | --- |
+| F1E | `.github/workflows/captura-leccion.yml` | `df7cdd904b9370600a897f174d28322e5a99d84e` | 32 → 31 | squash-revert PR F1E |
+
+**Preflight:** árboles Git completos de los siete repos, sin callers literales en otros workflows; esa lectura no garantiza ausencia de automatizaciones externas. El check requerido de Factory es `Validar`, no Captura. Sin cambios de permisos, secretos, datos, etiquetas reales, release, despliegue ni go-live. **Reversión:** squash-revert solo del PR F1E restaura el disparador, tabla y QA originales sin afectar F1A/F1B/F1C/F1D/F2A.
