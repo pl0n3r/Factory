@@ -1,12 +1,12 @@
 # Dieta Factory: inventario exacto y plan reversible
 
-> **Hoja 0 de [Factory #1296](https://github.com/pl0n3r/Factory/issues/1296), ejecución [#1297](https://github.com/pl0n3r/Factory/issues/1297).** Inventario observado en `main@7ff69d504328e86ef3eeab1d95a6b38743868e55` el 2026-10-12. No es una orden de borrar archivos ni una autorización de publicar o desplegar.
+> **Hoja 0 de [Factory #1296](https://github.com/pl0n3r/Factory/issues/1296), ejecución [#1297](https://github.com/pl0n3r/Factory/issues/1297).** Inventario observado en `main@b0713650194e9a0c464d625bc6136eecad776377` el 2026-10-12. No es una orden de borrar archivos ni una autorización de publicar o desplegar.
 
 ## Evidencia y alcance
 
 El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningún `.yaml` adicional; la estimación de 40 de la épica es orientativa y no debe sustituir este conteo. Hay 67 scripts Python bajo `scripts/` y 234 pruebas Python bajo `tests/` según el mismo árbol. Los nombres de tests de la tabla son **impactos a revisar**, no una instrucción de eliminarlos; incluyen pruebas indirectas. «Ninguno directo» indica que el workflow no llama de forma literal a un script local, no que carezca de dependencias. Ningún cambio de runtime/CI forma parte de esta hoja.
 
-**Regla de seguridad:** conservar CI de tests/lint/build, CodeQL, Sonar, CodeRabbit (integración externa, sin workflow propio), privacidad, releases/deploy/observación y puertas de gasto, datos reales, borrado, freeze, credenciales y go-live. «Simplificar» jamás significa saltar una puerta dura. La futura política de severidades pertenece a #1295 y requiere su propia reserva, regresiones y gates.
+**Regla de seguridad:** conservar CI de tests/lint/build, CodeQL, Sonar, CodeRabbit (integración externa, sin workflow propio), privacidad, releases/deploy/observación y puertas de gasto, datos reales, borrado, freeze, credenciales y go-live. «Simplificar» jamás significa saltar una puerta dura. La futura política de severidades pertenece a #1295 y requiere su propia reserva, regresiones y gates. **Excepciones justificadas frente a la poda tentativa de #1296:** `costos.yml` conserva la evidencia de presupuesto del PR (`presupuesto-pr`) y `unattended-watchdog.yml` conserva vigilancia de actividad + resumen diario. Ninguno se sustituye por una frase genérica sobre gasto ni por el kill switch de Factory#767.
 
 ## Inventario de workflows
 
@@ -22,7 +22,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/codeql-evidence.yml` | pull_request, push | 60 | scripts/codeql_sarif_summary.py | tests/test_codeql_evidence_workflow.py, tests/test_codeql_sarif_summary.py | **quedarse** | 0 |
 | `.github/workflows/coordinacion-trabajo.yml` | schedule, workflow_dispatch, pull_request, issues, issue_comment | 342 | scripts/coordinar_trabajo.py | tests/test_coordinar_trabajo.py, tests/test_coordinar_trabajo_unblock_validation.py | **simplificar** | 4 |
 | `.github/workflows/coordinacion.yml` | workflow_call | 236 | scripts/coordinar_trabajo.py | tests/test_coordinacion_reusable_contract.py | **quedarse** | 0 |
-| `.github/workflows/costos.yml` | pull_request, workflow_dispatch, schedule | 167 | metricas/costos.py | metricas/test_costos.py | **eliminar** | 1 |
+| `.github/workflows/costos.yml` | pull_request, workflow_dispatch, schedule | 167 | metricas/costos.py | metricas/test_costos.py | **quedarse** | 0 |
 | `.github/workflows/deploy.yml` | workflow_call | 86 | scripts/deploy_kit.py | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/etiquetas-pr.yml` | workflow_call | 107 | scripts/labels_kit.py | tests/test_etiquetas_workflow_contract.py | **eliminar** | 2 |
 | `.github/workflows/etiquetas.yml` | workflow_call | 230 | scripts/labels_kit.py, scripts/pr_label_governance.py | tests/test_etiquetas_workflow_contract.py, tests/test_labels_kit.py | **eliminar** | 2 |
@@ -34,7 +34,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/observar.yml` | workflow_call | 176 | scripts/observe_kit.py | tests/test_observar_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/orquestador.yml` | issue_comment, workflow_dispatch | 57 | scripts/orquestar_fabrica.py | tests/test_orquestador_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/politica-comentario.yml` | workflow_call | 186 | scripts/politica_kit.py | tests/test_politica_workflow_contract.py | **simplificar** | 3 |
-| `.github/workflows/politica.yml` | workflow_call | 380 | scripts/politica_kit.py | tests/test_politica_kit.py, tests/test_politica_workflow_contract.py | **simplificar** | 3 |
+| `.github/workflows/politica.yml` | workflow_call | 417 | scripts/politica_kit.py | tests/test_politica_kit.py, tests/test_politica_workflow_contract.py | **simplificar** | 3 |
 | `.github/workflows/preview.yml` | workflow_call | 114 | scripts/preview_kit.py | tests/test_preview_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/privacidad.yml` | workflow_call | 48 | scripts/privacidad_gate.py | tests/test_privacidad_gate.py | **quedarse** | 0 |
 | `.github/workflows/provision-project.yml` | workflow_dispatch | 65 | scripts/provision_project.py | tests/test_provision_project.py (verificar nombre al implementar) | **quedarse** | 0 |
@@ -49,19 +49,23 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/sonar-watch.yml` | schedule, workflow_dispatch | 37 | scripts/sonar-watch.py | tests/test_sonar_watch.py | **eliminar** | 1 |
 | `.github/workflows/sonar.yml` | pull_request, push, workflow_dispatch | 201 | scripts/generate_coverage.py | tests/test_sonar_ci_analysis_workflow.py | **quedarse** | 0 |
 | `.github/workflows/sync-label-colors.yml` | issue_comment | 50 | scripts/sync_label_colors.py | tests/test_sync_label_colors.py | **eliminar** | 2 |
-| `.github/workflows/unattended-watchdog.yml` | push, schedule, workflow_dispatch | 63 | scripts/unattended_watchdog_runtime.py, scripts/unattended_daily_summary.py | tests/test_unattended_watchdog_runtime.py, tests/test_unattended_daily_summary.py, tests/test_unattended_kill_switch.py | **eliminar** | 1 |
+| `.github/workflows/unattended-watchdog.yml` | push, schedule, workflow_dispatch | 63 | scripts/unattended_watchdog_runtime.py, scripts/unattended_daily_summary.py | tests/test_unattended_watchdog_runtime.py, tests/test_unattended_daily_summary.py, tests/test_unattended_kill_switch.py | **quedarse** | 0 |
 
 ## Plan por fases (cambios futuros, independientes de esta hoja)
 
-### Fase 1: apagar telemetría y aprendizaje
+### Fase 1: apagar telemetría y aprendizaje, sin suprimir controles
 
-**Rutas exactas:** `.github/workflows/evolution-lab.yml`, `.github/workflows/feedback-producto.yml`, `.github/workflows/metricas.yml`, `.github/workflows/costos.yml`, `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`, `.github/workflows/sonar-watch.yml`, `.github/workflows/unattended-watchdog.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `scripts/unattended_watchdog_runtime.py`, `scripts/unattended_daily_summary.py`, `metricas/costos.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_costos.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py`, `tests/test_sonar_watch.py`, `tests/test_unattended_watchdog_runtime.py` y `tests/test_unattended_daily_summary.py`.
+**Rutas exactas:** `.github/workflows/evolution-lab.yml`, `.github/workflows/feedback-producto.yml`, `.github/workflows/metricas.yml`, `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`, `.github/workflows/sonar-watch.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
 
-**Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumidor. **No borrar** `scripts/unattended_kill_switch.py`, `scripts/unattended_guards.py` ni la comprobación obligatoria de #767; quitar el watchdog programado no quita el kill switch de seguridad. **Reversión:** revertir únicamente el PR de fase 1; recuperar los workflows programados y sus tests si se cambian. Ninguna publicación/live.
+**Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumidor. **No borrar** `scripts/unattended_kill_switch.py`, `scripts/unattended_guards.py` ni la comprobación obligatoria de #767. **Conservar explícitamente:**
+- `.github/workflows/costos.yml`: el job `presupuesto-pr` evalúa `metricas/costos.py pr` contra la **base confiable** y publica artifacts de presupuesto; `tendencia-ci` sí es telemetría programada y solo podría simplificarse mediante otra hoja con reserva, pruebas y evidencia de preservación de `presupuesto-pr`.
+- `.github/workflows/unattended-watchdog.yml`: el job `watchdog` comprueba actividad y degrada la salud operativa cuando corresponde; `daily-summary` envía reporte al dueño. El interruptor #767 únicamente pausa nuevas mutaciones; no reemplaza estas funciones ni `reusable-release-watchdog.yml`.
+
+Hasta demostrar replacements con contratos equivalentes, ambos workflows quedan **quedarse / fase 0**. **Reversión:** revertir únicamente el PR de fase 1; recuperar los workflows programados y sus tests si se cambian. Ninguna publicación/live.
 
 ### Fase 2: quitar validadores de forma
 
-**Rutas exactas:** `.github/workflows/etiquetas.yml`, `.github/workflows/etiquetas-pr.yml`, `.github/workflows/sync-label-colors.yml`, `.github/workflows/readme.yml`, `.github/workflows/roles.yml`. **Dependencias a revisar:** `scripts/labels_kit.py`, `scripts/pr_label_governance.py`, `scripts/sync_label_colors.py`, `scripts/roles_kit.py`, `tests/test_etiquetas_workflow_contract.py`, `tests/test_labels_kit.py`, `tests/test_sync_label_colors.py`, `tests/test_readme_contract.py`, `tests/test_readme_contract_v2.py`, `tests/test_roles_kit.py`, `tests/test_roles_workflow_contract.py`. Mantener etiquetas/roles y procedencia que sean **requisitos de autoridad de Coordinación**, hasta que la fase 4 los reemplace con pruebas equivalentes.
+**Rutas exactas:** `.github/workflows/etiquetas.yml`, `.github/workflows/etiquetas-pr.yml`, `.github/workflows/sync-label-colors.yml`, `.github/workflows/readme.yml`, `.github/workflows/roles.yml`. **Dependencias a revisar:** `scripts/labels_kit.py`, `scripts/pr_label_governance.py`, `scripts/sync_label_colors.py`, `scripts/roles_kit.py`, `tests/test_etiquetas_workflow_contract.py`, `tests/test_labels_kit.py`, `tests/test_sync_label_colors.py`, `tests/test_readme_contract.py`, `tests/test_readme_contract_v2.py`, `tests/test_roles_kit.py`, `tests/test_roles_workflow_contract.py`. Mantener etiquetas/roles y procedencia que sean **requisitos de autoridad de Coordinación**, hasta que la fase 4 los reemplace con pruebas equivalentes. Antes de retirar `roles.yml`, buscar en **los siete repositorios consumidores** sus referencias `uses: .../roles.yml@v1` y sus required checks (p. ej., `Validar evidencia de roles`), documentar el reemplazo en el PR y validar que ningún branch protection check quede ausente. La lista local de tests por sí sola no es prueba de compatibilidad.
 
 **Reversión:** revertir el PR de fase 2 y reactivar los mismos reusable workflows; verificar los repos consumidores antes de volver a exigirlos.
 

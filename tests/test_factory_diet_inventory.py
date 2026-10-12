@@ -27,6 +27,8 @@ REQUIRED_KEEP = {
     "observar.yml",
     "liberar-reservas.yml",
     "coordinacion.yml",
+    "costos.yml",
+    "unattended-watchdog.yml",
 }
 REQUIRED_SIMPLIFY = {
     "politica.yml",
@@ -144,6 +146,19 @@ class FactoryDietInventoryTests(unittest.TestCase):
         ):
             self.assertIn(critical, self.content)
         self.assertIn("No borrar", self.content)
+        guarded_jobs = {
+            "costos.yml": ("presupuesto-pr:", "metricas/costos.py pr", "ref: ${{ github.event.pull_request.base.sha }}"),
+            "unattended-watchdog.yml": ("watchdog:", "daily-summary:", "scripts.unattended_watchdog_runtime", "scripts.unattended_daily_summary"),
+        }
+        for filename, tokens in guarded_jobs.items():
+            with self.subTest(guard=filename):
+                body = (WORKFLOWS / filename).read_text(encoding="utf-8")
+                for token in tokens:
+                    self.assertIn(token, body, f"{filename}: control perdido: {token}")
+                self.assertEqual(
+                    self.rows[f".github/workflows/{filename}"]["phase"], 0,
+                    f"{filename}: no debe asignarse a una fase de borrado",
+                )
 
     def test_phases_are_ordered_and_reversible(self) -> None:
         positions = [
