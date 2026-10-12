@@ -155,3 +155,53 @@ class MetricAtomicOutputTests(unittest.TestCase):
             self.assertEqual((directory / "dashboard.md").read_text(),
                              render_markdown(first) + "\n")
             self.assertFalse((directory / ".metricas-generation-incomplete").exists())
+
+
+    def test_private_permissions_survive_success_and_rollback(self):
+        import stat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            names = ("recomendaciones.json", "dashboard.md")
+            for name in names:
+                target = output / name
+                target.write_text("previous\n")
+                target.chmod(0o600)
+            old_umask = os.umask(0o022)
+            try:
+                _write_artifact_pair(report(), output)
+                prior = {name: (output / name).read_bytes() for name in names}
+                for name in names:
+                    self.assertEqual(stat.S_IMODE((output / name).stat().st_mode),
+                                     0o600)
+                original = os.replace
+
+                def fail_dashboard(source, destination):
+                    if str(source).endswith("dashboard.md.next"):
+                        raise OSError("fallo artificial")
+                    return original(source, destination)
+
+                with patch("metricas.evaluar_agentes.os.replace",
+                           side_effect=fail_dashboard):
+                    with self.assertRaises(OSError):
+                        _write_artifact_pair(report(), output)
+                for name in names:
+                    self.assertEqual((output / name).read_bytes(), prior[name])
+                    self.assertEqual(stat.S_IMODE((output / name).stat().st_mode),
+                                     0o600)
+            finally:
+                os.umask(old_umask)
+
+    def test_new_outputs_are_private_even_with_umask_022(self):
+        import stat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_umask = os.umask(0o022)
+            try:
+                output = Path(tmp)
+                _write_artifact_pair(report(), output)
+                for name in ("recomendaciones.json", "dashboard.md"):
+                    self.assertEqual(stat.S_IMODE((output / name).stat().st_mode),
+                                     0o600)
+            finally:
+                os.umask(old_umask)
