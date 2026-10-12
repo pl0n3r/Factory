@@ -711,6 +711,56 @@ Ninguno.
         with self.assertRaises(EvidenceUnavailable):
             _trusted_renewal_lineage([second], current)
 
+    def test_recovered_lineage_snapshot_remains_fail_closed_without_ancestry(self):
+        from unittest.mock import Mock
+        from scripts.aceptacion_kit import contract_fingerprint
+        from scripts.coordinar_trabajo import reservation_marker
+        from scripts.renovacion_checks import collect_snapshot, EvidenceUnavailable
+
+        body = ("### Contexto\\nContexto verificable.\\n\\n### Alcance\\n"
+                "Reserva vigente.\\n\\n### Criterios de aceptación\\n"
+                "- [ ] [AC-01] Test.\\n\\n### Contrato ejecutable\\n"
+                '<!-- factory-acceptance {"version":1,"criteria":'
+                '[{"id":"AC-01","kind":"check","target":"Tests de scripts"}]} -->\\n')
+        pin = contract_fingerprint(body)
+        newer = "22222222-3333-4444-8555-666666666666"
+        task = {"task_marker_sha256": "c" * 64,
+                "task_paths": ["scripts/renovacion_checks.py"],
+                "task_depends_on": [1081]}
+
+        def message(reservation, reason, stamp, pin_value=pin):
+            return {"user": {"login": "github-actions[bot]", "type": "Bot"},
+                    "created_at": stamp, "updated_at": stamp,
+                    "body": reservation_marker(
+                        "pl0n3r", reservation, "trabajo/issue-1114", True,
+                        reason, pin_value, task_snapshot=task)}
+
+        original = message(UUID, "renovar-contrato", TIME)
+        recovery = message(newer, "recuperacion-inactividad", FRESH)
+        api = Mock()
+        api.repo = "pl0n3r/Factory"
+        api.pull.return_value = {
+            "head": {"sha": SHA, "ref": "trabajo/issue-1114",
+                     "repo": {"full_name": "pl0n3r/Factory"}},
+            "base": {"sha": BASE_SHA, "ref": "main"},
+            "state": "open", "draft": False,
+            "body": "<!-- condor-reserva-id: " + newer + " -->",
+        }
+        api.issue.return_value = {"number": 1114, "state": "open", "body": body}
+        api.issue_comments.return_value = [original, recovery]
+        with self.assertRaisesRegex(
+                EvidenceUnavailable, "recovered_generation_pending_ancestry_proof"):
+            collect_snapshot(api, 1242)
+        api.request.assert_not_called()
+
+        bad = copy.deepcopy(recovery)
+        bad["user"]["type"] = "User"
+        api.issue_comments.return_value = [original, bad]
+        with self.assertRaisesRegex(EvidenceUnavailable,
+                                    "renewal_lineage_untrusted_marker"):
+            collect_snapshot(api, 1242)
+        api.request.assert_not_called()
+
     def test_invalidation_happens_before_bot_reservation_marker(self):
         from unittest.mock import Mock
         from scripts.renovacion_checks import _invalidation_present

@@ -758,10 +758,18 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
         or issue.get("number") != num or issue.get("state") != "open"
         or lease.get("active") is not True or lease.get("version") != 3
         or lease.get("branch") != branch
-        or lease.get("reason") != "renovar-contrato"
+        or lease.get("reason") not in ("renovar-contrato", "recuperacion-inactividad")
         or lease.get("reservation_id") != reservation_from_pr_body(pr.get("body") or "")
         or lease.get("acceptance_sha256") != contract_fingerprint(issue.get("body") or "")):
         raise EvidenceUnavailable("active_renewed_lease_mismatch")
+
+    # Read-only staging: an authenticated recovery succession is necessary,
+    # but not sufficient for a fresh invalidation on the current HEAD.
+    # Fail closed until the original generation and exact-SHA ancestry proof
+    # are added; never publish a check from this branch alone.
+    if lease.get("reason") == "recuperacion-inactividad":
+        _trusted_renewal_lineage(comments, lease)
+        raise EvidenceUnavailable("recovered_generation_pending_ancestry_proof")
 
     renewal = [
         c for c in comments
