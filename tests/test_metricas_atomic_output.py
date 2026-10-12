@@ -232,3 +232,24 @@ class MetricAtomicOutputTests(unittest.TestCase):
                                      0o600)
             finally:
                 os.umask(old_umask)
+
+
+    def test_report_paths_never_escape_named_artifacts(self):
+        """Los valores del reporte no se convierten en nombres de archivo."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            destination = root / "artifacts"
+            suspicious = report()
+            suspicious["period"] = "../../escape"
+            suspicious["../escape"] = {"../../other": "untrusted"}
+            _write_artifact_pair(suspicious, destination)
+            self.assertEqual(
+                sorted(item.name for item in destination.iterdir()),
+                ["dashboard.md", "recomendaciones.json"],
+            )
+            self.assertFalse((root / "escape").exists())
+            self.assertFalse((root / "other").exists())
+            self.assertEqual(
+                json.loads((destination / "recomendaciones.json").read_text()),
+                suspicious,
+            )
