@@ -18,7 +18,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 if __package__:
-    from scripts.unattended_kill_switch import CANONICAL_ISSUE_NUMBER, evaluate_unattended_kill_switch
+    from scripts.unattended_kill_switch import CANONICAL_ISSUE_NUMBER, CANONICAL_SOURCE_URL, CANONICAL_REPOSITORY_URL, evaluate_unattended_kill_switch
     from scripts.aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
     from scripts.orquestador_kit import (
         PlanError,
@@ -34,7 +34,7 @@ if __package__:
         task_marker_fingerprint,
     )
 else:
-    from unattended_kill_switch import CANONICAL_ISSUE_NUMBER, evaluate_unattended_kill_switch
+    from unattended_kill_switch import CANONICAL_ISSUE_NUMBER, CANONICAL_SOURCE_URL, CANONICAL_REPOSITORY_URL, evaluate_unattended_kill_switch
     from aceptacion_kit import AcceptanceError, contract_fingerprint, parse_contract
     from orquestador_kit import (
         PlanError,

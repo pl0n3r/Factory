@@ -1719,7 +1719,7 @@ class CoordinacionTests(unittest.TestCase):
             observed["reads"] += 1
             mode = states[min(n, len(states) - 1)]
             if mode == "403":
-                raise GitHubError("403 de instalación simulado")
+                raise GitHubError(403, "403 de instalación simulado")
             payload = {
                 "number": 767,
                 "url": coordinator.CANONICAL_SOURCE_URL,
