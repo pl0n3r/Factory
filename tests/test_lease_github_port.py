@@ -109,7 +109,7 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(LeaseGithubPort(FakeAPI()).inspect(True, now=NOW).state,
                          UNKNOWN)
 
-    def test_partial_pages_403_429_and_ref_race_fail_closed(self):
+    def test_partial_pages_403_429_and_race_fail_closed_without_release(self):
         cases = []
         a = FakeAPI(); a.fail_switch = True; cases.append(a)
         a = FakeAPI(); a.block = "/issues/21/comments"; cases.append(a)
@@ -129,6 +129,15 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.assertTrue(all(p == "/rate_limit" or
                                     p.startswith("/repos/") for p in api.calls))
                 self.assertNotIn("secret-cannot-be-logged", str(observed))
+                # Even deliberately forcing every caller-level mutation switch
+                # cannot override the Port's read/lock/append denial.
+                unsafe_attempt = run_cycle(
+                    [21], LeaseGithubPort(api), feature_enabled=True,
+                    dry_run=False, mutations_authorized=True,
+                )
+                self.assertEqual(unsafe_attempt.results[0][1].action, "unknown")
+                self.assertFalse(unsafe_attempt.results[0][1].wrote)
+                self.assertEqual(unsafe_attempt.results[0][1].write_state, "unknown")
 
     def test_report_boundary_never_accepts_stale_or_spoofed_fields(self):
         from unittest.mock import patch

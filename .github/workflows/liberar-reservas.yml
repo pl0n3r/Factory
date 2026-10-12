@@ -10,6 +10,10 @@ on:
       - 'scripts/lease_auto_release.py'
       - 'tests/test_lease_auto_release.py'
       - 'docs/liberacion-automatica-de-reservas.md'
+      - 'scripts/lease_auto_release_run.py'
+      - 'scripts/lease_github_port.py'
+      - 'tests/test_lease_auto_release_run.py'
+      - 'tests/test_lease_github_port.py'
 
 permissions:
   contents: read
@@ -81,3 +85,24 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_lease_auto_release.py' -v
           echo "AUDITORÍA SOLAMENTE: 0 reservas liberadas, 0 etiquetas modificadas."
           echo "No se concede autoridad a acciones mark_recovery/release."
+
+      - name: Confirmar runner OFF sin transporte ni mutaciones
+        if: steps.budget.outputs.allow == 'true'
+        shell: bash
+        env:
+          FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from scripts.lease_auto_release_run import run_cycle
+
+          class NoAccessPort:
+              def __getattr__(self, name):
+                  raise AssertionError("disabled runner must not access Port")
+
+          cycle = run_cycle([1175], NoAccessPort())
+          assert cycle.state == "feature_disabled"
+          assert len(cycle.results) == 1
+          assert cycle.results[0][1].wrote is False
+          print("AUDITORÍA OFFLINE: flag OFF, 0 escrituras, 0 reservas liberadas.")
+          PY
