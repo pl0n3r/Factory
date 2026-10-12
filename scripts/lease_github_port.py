@@ -9,8 +9,11 @@ solo acredita una observación positiva acotada, nunca inactividad.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
+
+from scripts.lease_release_executor import SESSION_RE, SHA
 
 from scripts.lease_activity_collector import collect_activity
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
@@ -33,6 +36,51 @@ class Inspection:
     lease_id: str | None = None
     branch_sha: str | None = None
     last_activity_at: str | None = None
+
+
+_RECENT_STATES = frozenset({
+    "estado: reservado", "estado: en revisión", "estado: requiere recuperación",
+})
+_STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\Z")
+
+
+def _recent_report_ok(report: Any, issue: int, repo: Any, now: Any) -> bool:
+    """Defensa adicional del límite inspector/collector; nunca ausencia."""
+    if (type(report) is not dict or report.get("evidence_complete") is not True
+            or report.get("status") not in _RECENT_STATES
+            or type(repo) is not str or report.get("repo") != repo
+            or type(report.get("issue_number")) is not int
+            or report["issue_number"] != issue
+            or type(report.get("repository_id")) is not int
+            or report["repository_id"] <= 0
+            or type(report.get("owner")) is not str
+            or not report["owner"]
+            or report.get("branch") != f"trabajo/issue-{issue}"
+            or type(report.get("lease_id")) is not str
+            or SESSION_RE.fullmatch(report["lease_id"]) is None
+            or type(report.get("branch_sha")) is not str
+            or SHA.fullmatch(report["branch_sha"]) is None
+            or type(report.get("ci_running")) is not bool
+            or type(report.get("rate_limit")) is not int
+            or type(report.get("rate_remaining")) is not int
+            or report["rate_limit"] <= 0 or report["rate_remaining"] < 0
+            or report["rate_remaining"] > report["rate_limit"]
+            or report["rate_remaining"] * 5 < report["rate_limit"]
+            or type(report.get("pagination")) is not dict
+            or type(report.get("api_requests")) is not int
+            or not 1 <= report["api_requests"] <= 32
+            or type(now) is not datetime or now.tzinfo is None
+            or now.utcoffset() is None):
+        return False
+    stamp = report.get("last_activity_at")
+    if type(stamp) is not str or _STAMP.fullmatch(stamp) is None:
+        return False
+    try:
+        activity = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        observed = now.astimezone(timezone.utc)
+        return (timedelta(0) <= observed - activity < timedelta(minutes=30))
+    except (ValueError, OverflowError, TypeError):
+        return False
 
 
 class LeaseGithubPort:
@@ -60,9 +108,8 @@ class LeaseGithubPort:
             if not self._running():
                 return invalid
             report = collect_activity(self._api, issue, now=now)
-            if (type(report) is not dict or report.get("status") == UNKNOWN
-                    or report.get("evidence_complete") is not True
-                    or report.get("issue_number") != issue):
+            if not _recent_report_ok(report, issue, getattr(self._api, "repo", None),
+                                     now):
                 return invalid
             # Volver a leer #767: RUNNING no es un permiso duradero.
             if not self._running():
