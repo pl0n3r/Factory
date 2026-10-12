@@ -309,7 +309,7 @@ class FactoryDietInventoryTests(unittest.TestCase):
         self.assertIn("coordinación", self._phase_text(4).lower())
         self.assertEqual(
             seen,
-            {path for path, row in self.rows.items() if row["phase"] in {1, 2, 3, 4}} | {".github/workflows/cabina.yml"},
+            {path for path, row in self.rows.items() if row["phase"] in {1, 2, 3, 4}},
         )
 
     @classmethod
