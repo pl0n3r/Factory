@@ -114,6 +114,26 @@ class ReleaseGateSearchTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("Search Issues evidence rejected", result.stderr)
 
+            # Ambiguity in the second page or published projection is equally
+            # untrustworthy, even when the first page is canonical.
+            p1.write_text(original, encoding="utf-8")
+            for path, data, needle, duplicate in (
+                (p2, self.second, '"number": 2100,',
+                 '"number": 9, "number": 2100,'),
+                (pv, self.projection, '"body": "No gate",',
+                 '"body": "tampered", "body": "No gate",'),
+            ):
+                with self.subTest(source=path.name):
+                    raw = json.dumps(data)
+                    self.assertIn(needle, raw)
+                    path.write_text(raw.replace(needle, duplicate, 1),
+                                    encoding="utf-8")
+                    result = subprocess.run(args, cwd=ROOT, capture_output=True,
+                                            text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Search Issues evidence rejected", result.stderr)
+                    path.write_text(raw, encoding="utf-8")
+
 
 if __name__ == "__main__":
     unittest.main()
