@@ -127,7 +127,19 @@ def _legacy_factory_release_intent(body: str) -> bool:
     for marker in matches:
         try:
             raw = _strict_json_loads(marker)
-        except (json.JSONDecodeError, AmbiguousReleaseJSON):
+        except AmbiguousReleaseJSON:
+            # Inspeccionar pares del objeto raíz incluso si la categoría usa
+            # escapes Unicode. No convertir puertas legacy ajenas en bloqueos.
+            pairs = json.loads(marker, object_pairs_hook=lambda items: items)
+            if isinstance(pairs, list) and any(
+                key == "category" and value == "factory-release"
+                for key, value in pairs
+            ):
+                return True
+            if "factory-release" in marker:
+                return True
+            continue
+        except json.JSONDecodeError:
             if "factory-release" in marker:
                 return True
             continue

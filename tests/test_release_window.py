@@ -750,6 +750,8 @@ class ReleaseWindowTests(unittest.TestCase):
         for fields in (
             '"category":"factory-release","category":"brand"',
             '"category":"brand","category":"factory-release"',
+            '"category":"factory-\\u0072elease","category":"brand"',
+            '"category":"brand","category":"factory-\\u0072elease"',
         ):
             body = (
                 "<!-- factory-human-gate {" + fields
@@ -757,6 +759,11 @@ class ReleaseWindowTests(unittest.TestCase):
             )
             with self.subTest(fields=fields), self.assertRaises(rw.ReleaseWindowError):
                 rw.gate_records([gate_row(number=901, body=body)])
+
+        self.assertEqual(rw.gate_records([gate_row(
+            number=902,
+            body='<!-- factory-human-gate {"category":"brand","category":"legal"} -->',
+        )]), [])
 
     def test_duplicate_json_window_keys_fail_closed(self) -> None:
         prefix = (
