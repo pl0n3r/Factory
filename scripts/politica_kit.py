@@ -157,7 +157,9 @@ def resolve_required_review_bot(base_required: str, caller_required: str) -> str
     return caller_required
 
 
-def _parse_ndjson(lines: list[str], *, noun: str) -> list[dict[str, Any]]:
+def _parse_ndjson(
+    lines: list[str], *, noun: str, reject_duplicate_ids: bool = False
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen_ids: set[int] = set()
     for line in lines:
@@ -174,6 +176,8 @@ def _parse_ndjson(lines: list[str], *, noun: str) -> list[dict[str, Any]]:
         item_id = item.get("id")
         if isinstance(item_id, int) and not isinstance(item_id, bool):
             if item_id in seen_ids:
+                if reject_duplicate_ids:
+                    raise PolicyError(f"{noun} con ID duplicado.")
                 continue
             seen_ids.add(item_id)
         items.append(item)
@@ -189,7 +193,9 @@ def parse_comments(lines: list[str]) -> list[dict[str, Any]]:
 
 
 def parse_checks(lines: list[str]) -> list[dict[str, Any]]:
-    return _parse_ndjson(lines, noun="Check")
+    # Nunca descartar silenciosamente un check con ID duplicado: otro
+    # nombre, estado o emisor con ese ID invalida la evidencia íntegra.
+    return _parse_ndjson(lines, noun="Check", reject_duplicate_ids=True)
 
 
 def parse_threads(lines: list[str]) -> list[dict[str, Any]]:
@@ -376,12 +382,23 @@ def load_phase(path: Path | None) -> str:
     return parse_phase_payload(payload)
 
 
+# Identidades app verificadas contra la API REST canónica de checks GitHub.
+# Un nombre de check no es por sí solo una prueba de autoridad.
+TRUSTED_CHECK_APPS = {
+    "github-actions": 15368,
+    "sonarqubecloud": 12526,
+    "github-advanced-security": 57789,
+}
+
+
 def _latest_checks_by_name(
     lines: list[str],
     *,
     head_sha: str,
 ) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
+    issuer_by_name: dict[str, tuple[str, int]] = {}
+    name_by_id: dict[int, str] = {}
     for check in parse_checks(lines):
         name = check.get("name")
         check_head = check.get("head_sha")
@@ -392,6 +409,24 @@ def _latest_checks_by_name(
             raise PolicyError("Check observado sobre HEAD distinto.")
         if type(check_id) is not int or check_id <= 0:
             raise PolicyError("Check sin id válido.")
+        app = check.get("app")
+        if not isinstance(app, dict):
+            raise PolicyError("Check sin emisor autenticado.")
+        slug = app.get("slug")
+        app_id = app.get("id")
+        if (
+            not isinstance(slug, str)
+            or type(app_id) is not int
+            or TRUSTED_CHECK_APPS.get(slug) != app_id
+        ):
+            raise PolicyError(f"Check con emisor desconocido: {name}.")
+        issuer = (slug, app_id)
+        if name in issuer_by_name and issuer_by_name[name] != issuer:
+            raise PolicyError(f"Check homónimo con emisores contradictorios: {name}.")
+        issuer_by_name[name] = issuer
+        if check_id in name_by_id and name_by_id[check_id] != name:
+            raise PolicyError("Un check id aparece con nombres distintos.")
+        name_by_id[check_id] = name
         current = latest.get(name)
         if current is None or check_id > current["id"]:
             latest[name] = check
@@ -407,7 +442,33 @@ def validate_other_gates_green(
     if not latest:
         raise PolicyError("No hay evidencia de checks exact-HEAD.")
 
-    successful_names: list[str] = []
+    # Las seis categorías son requisitos distintos y requieren seis check IDs
+    # diferentes; un nombre compuesto jamás puede cubrirlos todos.
+    # No inferir autoridad de substrings arbitrarios en nombres de jobs.
+    # GitHub Actions permite nombrar checks; la identidad de la App también
+    # debe corresponder al scanner externo o al workflow interno esperado.
+    categories = {
+        "ci": lambda name: name in {
+            "validate", "ci factory v1 / validar", "factory-ci / validar",
+            "factory ci reusable / validar", "ci factory / validar",
+        },
+        "sonar": lambda name: name == "sonarcloud code analysis",
+        "codeql": lambda name: name == "codeql",
+        "tests": lambda name: name in {
+            "tests", "tests de scripts", "fast",
+            "pruebas de contrato e integración", "criterios de aceptación",
+            "acceptance / criterios de aceptación",
+        },
+        "coordinacion": lambda name: (
+            name == "validar coordinación"
+            or name.endswith(" / validar coordinación")
+        ),
+        "privacidad": lambda name: name in {
+            "privacidad / privacidad como código",
+            "privacy / privacidad como código",
+        },
+    }
+    candidates: dict[str, list[int]] = {category: [] for category in categories}
     for name, check in latest.items():
         if name in {POLICY_CHECK_NAME, ACCEPTANCE_CHECK_NAME, "Validar"}:
             continue
@@ -417,38 +478,44 @@ def validate_other_gates_green(
             raise PolicyError(f"Check pendiente: {name}.")
         if conclusion not in ALLOWED_GATE_CONCLUSIONS:
             raise PolicyError(f"Check no verde: {name}={conclusion}.")
-        if conclusion == "success":
-            successful_names.append(name.lower())
+        if conclusion != "success":
+            continue
+        name_lower = name.lower()
+        issuer = check["app"]["slug"]
+        for category, predicate in categories.items():
+            if not predicate(name_lower):
+                continue
+            # SonarCloud y CodeQL tienen apps canónicas distintas de Actions;
+            # las alternativas de CI-based solo pertenecen a github-actions.
+            expected = {
+                "sonar": "sonarqubecloud",
+                "codeql": "github-advanced-security",
+            }.get(category, "github-actions")
+            if issuer != expected:
+                raise PolicyError(f"Emisor no autorizado para {category}: {name}.")
+            candidates[category].append(check["id"])
 
-    categories = {
-        "ci": lambda name: (
-            name == "validate"
-            or "factory ci reusable / validar" in name
-            or name.startswith("ci ")
-            or " ci / validate" in name
-        ),
-        "sonar": lambda name: "sonar" in name,
-        "codeql": lambda name: "codeql" in name or name.startswith("analyze ("),
-        "tests": lambda name: (
-            name == "tests"
-            or "test" in name
-            or "acceptance" in name
-            or "criterios de aceptación" in name
-        ),
-        "coordinacion": lambda name: (
-            "coordinación" in name or "coordinacion" in name
-        ),
-        "privacidad": lambda name: "privacidad" in name or "privacy" in name,
-    }
-    missing = [
-        category
-        for category, predicate in categories.items()
-        if not any(predicate(name) for name in successful_names)
-    ]
+    missing = [cat for cat, ids in candidates.items() if not ids]
     if missing:
-        raise PolicyError(
-            "Faltan gates obligatorios verdes: " + ", ".join(missing) + "."
-        )
+        raise PolicyError("Faltan gates obligatorios verdes: " + ", ".join(missing) + ".")
+    # Emparejamiento bipartito acotado entre categorías e IDs de checks.
+    # El algoritmo no permite acreditar dos categorías con la misma evidencia.
+    assigned: dict[int, str] = {}
+
+    def assign(category: str, seen: set[int]) -> bool:
+        for check_id in candidates[category]:
+            if check_id in seen:
+                continue
+            seen.add(check_id)
+            previous = assigned.get(check_id)
+            if previous is None or assign(previous, seen):
+                assigned[check_id] = category
+                return True
+        return False
+
+    for category in categories:
+        if not assign(category, set()):
+            raise PolicyError("Las categorías obligatorias no tienen IDs distintos.")
 
 
 def _has_open_blocking_finding(
