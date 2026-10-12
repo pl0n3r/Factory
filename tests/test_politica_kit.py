@@ -267,6 +267,21 @@ class T(unittest.TestCase):
             check(check_id=900, name="CodeQL", app_slug="foreign", app_id=9000)]
         with self.assertRaises(PolicyError):
             policy.validate_other_gates_green(rogue, head_sha=HEAD)
+        # El ID/App de Actions es legítimo, pero un nombre arbitrario de
+        # job no equivale a una ejecución auténtica de CodeQL o Sonar.
+        for genuine, impostor in (
+            ("CodeQL", "fake-codeql"),
+            ("SonarCloud Code Analysis", "sonar-placeholder"),
+            ("CodeQL", "ci / fake-codeql"),
+        ):
+            rows = [
+                item for item in base if json.loads(item)["name"] != genuine
+            ] + [check(
+                check_id=990, name=impostor,
+                app_slug="github-actions", app_id=15368,
+            )]
+            with self.subTest(impostor=impostor), self.assertRaises(PolicyError):
+                policy.validate_other_gates_green(rows, head_sha=HEAD)
         missing = json.loads(check(check_id=18, name="CodeQL"))
         missing.pop("app")
         with self.assertRaises(PolicyError):
@@ -277,12 +292,20 @@ class T(unittest.TestCase):
     def test_gates_require_distinct_authenticated_check_ids(self):
         """AC-02: una cadena con seis substrings no acredita seis gates."""
         compound = check(check_id=87, name="ci sonar codeql tests coordinación privacy")
-        with self.assertRaisesRegex(PolicyError, "IDs distintos"):
+        # Los substrings inventados nunca son seis gates genuinos.
+        with self.assertRaisesRegex(PolicyError, "Faltan gates obligatorios verdes"):
             policy.validate_other_gates_green([compound], head_sha=HEAD)
         policy.validate_other_gates_green(green_gate_checks(), head_sha=HEAD)
-        with self.assertRaises(PolicyError):
+        # Un ID auténtico no puede pertenecer a dos checks distintos.
+        with self.assertRaisesRegex(PolicyError, "ID duplicado"):
             policy.validate_other_gates_green(green_gate_checks() +
                 [check(check_id=10, name="privacy duplicate")], head_sha=HEAD)
+        # Tampoco descartar un duplicado con el mismo nombre y resultado rojo:
+        # sería un falso PASS por deduplicación previa al control de estado.
+        with self.assertRaisesRegex(PolicyError, "ID duplicado"):
+            policy.validate_other_gates_green(green_gate_checks() +
+                [check(check_id=10, name="validate", conclusion="failure")],
+                head_sha=HEAD)
 
     def test_gates_fail_closed_on_missing_pending_failed_or_wrong_head(self):
         """AC-03: inventario íntegro, exact-HEAD y terminal."""
