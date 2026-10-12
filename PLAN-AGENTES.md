@@ -96,6 +96,23 @@ Si no existe trabajo `ready`, aplica la **escalera no ociosa ya integrada por Fa
 6. Lo mismo con `prioridad: alta` y después `media`, aplicando el mismo desempate.
 7. Dentro de la misma prioridad: desbloqueo → impacto transversal → continuidad → menor riesgo/esfuerzo → antigüedad.
 
+
+### Presupuesto de creación de Issues — decisión del dueño (2026-10-12)
+
+**Norma transversal Factory #1289:** evitar cadenas infinitas de endurecimiento y priorizar el MVP. Antes de abrir cualquier Issue nuevo debe acreditarse al menos uno de estos **únicos cuatro motivos autorizados**, con evidencia verificable:
+
+1. **Impacto demostrado en producción:** afectación real probada en servicio desplegado; una hipótesis sintética no basta.
+2. **Bloqueo de CI o release en un repositorio ya desplegado:** ejecución o gate fallido comprobable, con run y SHA identificados.
+3. **Solicitud explícita del dueño:** instrucción específica del owner dentro de las decisiones vigentes; no derivarla de un simple «sigue».
+4. **Hoja de épica del roadmap vigente:** descomposición acotada, aprobada y necesaria para el MVP, sin duplicados.
+
+- **Hallazgos de QA, hardening o casos extremos de trabajo ya fusionado:** van como **comentario en el Issue o PR padre** o en **un único Issue backlog de deuda técnica por repositorio**. No abrir un Issue nuevo por cada hallazgo.
+- **Sin cadenas de endurecimiento:** un hallazgo sobre un fix de endurecimiento **no puede generar otro Issue de endurecimiento**. Agrégalo como comentario o deuda técnica acumulada; un incidente productivo comprobado requiere evidencia independiente.
+- **Sin preempción inventada:** un hardening sin explotación ni impacto demostrado **no usa tipo: incidente**; se clasifica como **tipo: mejora, prioridad: baja**. No preempta HEALTH, incidencias reales ni tareas MVP por la regla 2.
+- **Tope por repositorio:** con **10 o más Issues abiertos de endurecimiento** no se abren más; se agrega el hallazgo al backlog de deuda técnica único. No se elude mediante épicas artificiales.
+- Esta regla no autoriza cerrar ni reclasificar Issues existentes, saltar CI/V3/kill switch, ni crear tareas para el dueño. Conserva las autoridades y prioridades existentes de las secciones 0 y 6.
+
+
 Reglas del despachador:
 - Una reserva activa conserva exclusividad para trabajo no planificado. Solo pueden coexistir líneas cuando el candidato y cada línea activa relevante están materializados por el orquestador, sus dependencias están completadas y los claims de paths son disjuntos. Si Factory no puede demostrarlo, falla cerrado y pasa al siguiente candidato. **Una lease ajena, un claim overlap o una carrera de reserva perdida excluyen solo ese candidato. Tras perder una carrera de reserva, la sesión relee el estado actual y continúa inmediatamente con el siguiente candidato del ranking entre los siete repos. No publica `overlap` ni `NO_WORK` hasta agotar los candidatos ejecutables del ciclo.**
 - **Equidad entre repos (Factory#942):** una vez que un mismo repositorio acumula **3 despachos consecutivos**, el siguiente despacho dentro de la **misma clase de autoridad/prioridad** prefiere un candidato `ready` de otro repositorio canónico si existe. Esta rotación nunca hace que `high`/`medium` desplace un `critical`, ni altera HEALTH/incidente/reparación activa/decisión resuelta.
