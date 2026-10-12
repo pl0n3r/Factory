@@ -24,6 +24,7 @@ def issue(body: str = MARKER_RUNNING) -> dict[str, object]:
         "number": 767,
         "url": CANONICAL_SOURCE_URL,
         "repository_url": CANONICAL_REPOSITORY_URL,
+        "state": "closed",
         "user": {"login": CANONICAL_OWNER},
         "body": body,
     }
@@ -198,6 +199,59 @@ class UnattendedKillSwitchTests(unittest.TestCase):
         self.assertEqual(
             (resumed.state, resumed.global_pause, resumed_guard.action),
             ("RUNNING", False, "ALLOW"),
+        )
+
+
+    def test_reopened_canonical_source_fails_closed(self):
+        for bad_state in ("open", "CLOSED", "", None, True, 1, []):
+            with self.subTest(state=bad_state):
+                payload = issue()
+                payload["state"] = bad_state
+                decision = evaluate_unattended_kill_switch(payload)
+                self.assertEqual(
+                    (decision.state, decision.global_pause, decision.reason),
+                    ("UNKNOWN", True, "unexpected_issue_state"),
+                )
+
+        missing_state = issue()
+        del missing_state["state"]
+        decision = evaluate_unattended_kill_switch(missing_state)
+        self.assertEqual(
+            (decision.state, decision.global_pause, decision.reason),
+            ("UNKNOWN", True, "unexpected_issue_state"),
+        )
+
+    def test_case_variant_duplicate_header_fails_closed(self):
+        suspicious_headers = (
+            '<!-- FACTORY-UNATTENDED-KILL-SWITCH {"version":1,"state":"PAUSED","owner":"pl0n3r"} -->',
+            '<!-- FACTORY-UNATTENDED-KILL-SWITCH',
+            '<!-- FaCtOrY-UnAtTeNdEd-KiLl-SwItCh {"version":1',
+        )
+        for suspicious in suspicious_headers:
+            with self.subTest(suspicious=suspicious):
+                for body in (MARKER_RUNNING + "\\n" + suspicious, suspicious + "\\n" + MARKER_RUNNING):
+                    decision = evaluate_unattended_kill_switch(issue(body))
+                    self.assertEqual(
+                        (decision.state, decision.global_pause, decision.reason),
+                        ("UNKNOWN", True, "kill_switch_marker_count_invalid"),
+                    )
+
+        only_variant = evaluate_unattended_kill_switch(issue(suspicious_headers[0]))
+        self.assertEqual(
+            (only_variant.state, only_variant.global_pause, only_variant.reason),
+            ("UNKNOWN", True, "kill_switch_marker_invalid_syntax"),
+        )
+
+    def test_single_closed_running_and_paused_remain_valid(self):
+        running = evaluate_unattended_kill_switch(issue(MARKER_RUNNING))
+        self.assertEqual(
+            (running.state, running.global_pause, running.reason, running.authority),
+            ("RUNNING", False, "kill_switch_running", "unchanged"),
+        )
+        paused = evaluate_unattended_kill_switch(issue(MARKER_PAUSED))
+        self.assertEqual(
+            (paused.state, paused.global_pause, paused.reason, paused.authority),
+            ("PAUSED", True, "kill_switch_paused", "unchanged"),
         )
 
     def test_owner_runbook_is_short_and_explicit(self):
