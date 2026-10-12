@@ -216,6 +216,69 @@ class RetroDailyTests(unittest.TestCase):
                 "status": "UNKNOWN", "reason": "missing_or_unbounded_evidence",
             })
 
+
+    def test_hostile_mapping_keys_fail_closed_before_lookup(self):
+        class HostileKey(str):
+            def __hash__(self):
+                return hash("id")
+
+            def __eq__(self, _other):
+                raise RuntimeError("sensitive-hostile-key-equality")
+
+        # Both containers are exact dicts, but their colliding keys are not str.
+        bad_source = {
+            HostileKey("id"): SOURCE["id"],
+            "repo": SOURCE["repo"],
+            "sha": SOURCE["sha"],
+            "authenticated": True,
+            "complete": True,
+        }
+        self.assertIs(type(bad_source), dict)
+        with self.assertRaisesRegex(RuntimeError, "sensitive-hostile-key"):
+            bad_source.get("id")
+        result = evaluate_retro_daily(
+            events=[event("e1", "2026-10-11T08:00:00Z")],
+            sources=[bad_source], now=NOW)
+        self.assertEqual(result, {"status": "UNKNOWN", "reason": "invalid_source"})
+
+        good_event = event("e1", "2026-10-11T08:00:00Z")
+        bad_event = {
+            HostileKey("id"): good_event["id"],
+            "source_id": good_event["source_id"],
+            "repo": good_event["repo"],
+            "kind": good_event["kind"],
+            "occurred_at": good_event["occurred_at"],
+        }
+        self.assertIs(type(bad_event), dict)
+        with self.assertRaisesRegex(RuntimeError, "sensitive-hostile-key"):
+            bad_event.get("id")
+        result = evaluate_retro_daily(
+            events=[bad_event], sources=[dict(SOURCE)], now=NOW)
+        self.assertEqual(result, {"status": "UNKNOWN", "reason": "invalid_event"})
+        self.assertNotIn("sensitive-hostile-key", str(result))
+
+    def test_native_mapping_keys_preserve_ready_snapshot(self):
+        import json
+
+        # JSON round-trip guarantees exact native keys, including nested objects.
+        native_source = json.loads(json.dumps(SOURCE))
+        native_events = json.loads(json.dumps([
+            event("edge", "2026-10-10T09:00:00+00:00", "incident_closed"),
+            event("recent", "2026-10-11T08:00:00Z"),
+            event("old", "2026-10-10T08:59:59Z"),
+        ]))
+        result = evaluate_retro_daily(
+            events=native_events, sources=[native_source], now=NOW)
+        self.assertEqual(result["status"], "READY")
+        self.assertEqual(result["window_start"], "2026-10-10T09:00:00Z")
+        self.assertEqual(result["window_end"], NOW)
+        self.assertEqual(len(result["events"]), 2)
+        self.assertEqual(
+            result["counts_by_repo"]["pl0n3r/Factory"]["incident_closed"], 1)
+        self.assertEqual(
+            result["counts_by_repo"]["pl0n3r/Factory"]["pr_merged"], 1)
+        self.assertFalse(result["publication_allowed"])
+
     def test_missing_authenticated_evidence_fails_closed(self):
         good = [event("new", "2026-10-11T08:00:00Z")]
         scenarios = [

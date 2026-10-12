@@ -161,15 +161,16 @@ class T(unittest.TestCase):
 
 class PoliticaWorkflowContractTests(unittest.TestCase):
     def test_sha_less_fallback_preserves_canonical_gates_and_ref_revalidation(self):
-        self.assertIn('PRIMARY_STATUS == 0', W)
-        self.assertIn('recheck_pr_identity || {', W)
+        self.assertNotIn('PRIMARY_STATUS == 0', W)
         self.assertIn('recheck_pr_identity "$PR_JSON_FINAL" || {', W)
+        self.assertLess(W.index('reviewThreads(first:100)'), W.index('POLICY_OUTPUT='))
+        self.assertLess(W.index('checks_url_base='), W.index('POLICY_OUTPUT='))
         self.assertIn('repos/$REPOSITORY/pulls/$PR', W)
         for gate in ('"$PR_HEAD_SHA"', '"$PR_BASE_SHA"', '"$PR_HEAD_REF"',
                      '"$PR_BASE_REF"', '"$PR_HEAD_REPO"', '"$PR_BASE_REPO"'):
             self.assertIn(gate, W)
-        self.assertLess(W.index('recheck_pr_identity || {'),
-                        W.index('printf \'%s\\n\' "$PRIMARY_OUTPUT"'))
+        self.assertLess(W.index('recheck_pr_identity "$PR_JSON_FINAL" || {'),
+                        W.index('printf \'%s\\n\' "$POLICY_OUTPUT"'))
         self.assertIn('GITHUB_RUN_ATTEMPT > 1', W)
         self.assertIn('validate_rate_limit_fallback', (
             ROOT / 'scripts/politica_kit.py').read_text(encoding='utf-8'))

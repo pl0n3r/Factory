@@ -934,6 +934,12 @@ def validate_required_bot_review_or_fallback(
         head_sha,
         comment_lines=comment_lines,
     ):
+        # Review primaria no elude los hilos ni el CI sobre el SHA exacto.
+        if _has_open_blocking_finding(
+            thread_lines, required_review_bot=required_review_bot
+        ):
+            raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
+        validate_other_gates_green(check_lines, head_sha=head_sha)
         return {"review_fallback": False}
 
     phase = load_phase(phase_file)

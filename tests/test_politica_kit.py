@@ -878,6 +878,31 @@ class T(unittest.TestCase):
                         run_attempt=2,
                     )
 
+    def test_primary_review_rejects_open_bot_thread_and_failed_gates(self):
+        genuine = [review(state="COMMENTED", body="Revisión sustantiva")]
+        kwargs = dict(
+            required_review_bot="coderabbitai[bot]", head_sha=HEAD,
+            comment_lines=[], check_lines=green_gate_checks(),
+            thread_lines=[], phase_file=None,
+        )
+        self.assertEqual(validate_required_bot_review_or_fallback(
+            genuine, **kwargs), {"review_fallback": False})
+        with self.assertRaisesRegex(PolicyError, "finding bloqueante"):
+            validate_required_bot_review_or_fallback(
+                genuine, **{**kwargs, "thread_lines": [review_thread(resolved=False)]})
+        self.assertEqual(validate_required_bot_review_or_fallback(
+            genuine, **{**kwargs, "thread_lines": [review_thread(resolved=True)]}),
+            {"review_fallback": False})
+        red = green_gate_checks() + [check(
+            check_id=199, name="SonarCloud Code Analysis",
+            conclusion="failure", completed_at="2026-10-04T05:10:00Z")]
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review_or_fallback(
+                genuine, **{**kwargs, "check_lines": red})
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review_or_fallback(
+                genuine, **{**kwargs, "check_lines": []})
+
     def test_invalid_run_attempt_fails_closed(self):
         for value in (0, -1, True, "2", None):
             with self.subTest(value=value):

@@ -147,10 +147,6 @@ jobs:
             exit 1
           }
 
-          primary_args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA")
-          [[ -z "${BASE_POLICY_FILE:-}" ]] || primary_args+=(--base-policy-file "$BASE_POLICY_FILE")
-          primary_args+=(--comments-file "$comments_file")
-
           # POLICY_PR_RECHECK_BEGIN
           recheck_pr_identity() {
             # Lee PR nuevo incluso con primary review verde; no hereda permisos
@@ -173,18 +169,7 @@ jobs:
           }
           # POLICY_PR_RECHECK_END
 
-          set +e
-          PRIMARY_OUTPUT="$(python3 .factory/scripts/politica_kit.py "${primary_args[@]}" < "$reviews_file" 2>&1)"
-          PRIMARY_STATUS=$?
-          set -e
-          if (( PRIMARY_STATUS == 0 )); then
-            recheck_pr_identity || {
-              echo "::error::PR cambió durante revisión primaria exact-HEAD"
-              exit 1
-            }
-            printf '%s\n' "$PRIMARY_OUTPUT"
-            exit 0
-          fi
+          # Una revisión primaria atraviesa el mismo gate autenticado que el fallback.
 
           phase_args=()
           if gh api -H "Accept: application/vnd.github.raw+json" \
