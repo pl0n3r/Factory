@@ -17,7 +17,6 @@ EXPECTED_ACTIVE = frozenset([
     "auditoria-privacidad.yml",
     "automerge-construccion.yml",
     "bootstrap-coordination.yml",
-    "captura-leccion.yml",
     "ci.yml",
     "codeql-evidence.yml",
     "coordinacion-trabajo.yml",
@@ -66,7 +65,7 @@ class DietaFase1CTests(unittest.TestCase):
     def test_sonar_watch_optional_workflow_removed_after_consumer_preflight(self):
         active = self.actual()
         self.assertEqual(active, EXPECTED_ACTIVE)
-        self.assertEqual(len(active), 32)
+        self.assertEqual(len(active), 31)
         self.assertNotIn(REMOVED, active)
         self.assertIn("122 YAML", self.document)
         self.assertIn("check requerido `Validar`", self.document)
@@ -153,7 +152,7 @@ class DietaFase1CTests(unittest.TestCase):
         self.assertEqual(active, EXPECTED_ACTIVE)
         victim = next(iter(sorted(active)))
         swapped = (active - {victim}) | {"workflow-no-autorizado.yml"}
-        self.assertEqual(len(swapped), 32)
+        self.assertEqual(len(swapped), 31)
         self.assertNotEqual(swapped, EXPECTED_ACTIVE)
 
 

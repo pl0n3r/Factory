@@ -1,15 +1,165 @@
-"""Acceptance checks for the offline lesson-capture workflow."""
+"""Historical lesson-capture trust-gate regressions after F1E retirement."""
 from pathlib import Path
 import unittest
 
 from scripts.captura_leccion import capture_lessons, CaptureError
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/captura-leccion.yml"
+# Frozen fixture: original F1E YAML; NOT a live scheduler or workflow.
+HISTORICAL_WORKFLOW = r'''name: Captura de lecciones (offline)
+
+on:
+  issues:
+    types: [closed]
+  pull_request:
+    types: [closed]
+
+# Solo lectura: ningún permiso para publicar, comentar, cerrar o modificar.
+permissions:
+  contents: read
+
+concurrency:
+  group: captura-leccion-${{ github.event_name }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  issue-identity-unknown:
+    name: Identidad de cierre de Issue no acreditada
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && github.event_name == 'issues' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.unknown.outputs.status }}
+      publication_allowed: ${{ steps.unknown.outputs.publication_allowed }}
+    steps:
+      - id: unknown
+        name: Registrar UNKNOWN sin candidato ni checkout
+        run: |
+          set -euo pipefail
+          # ISSUE_UNKNOWN_BEGIN
+          printf 'status=UNKNOWN\nreason=ambiguous_issue_closure\npublication_allowed=false\n' >> "$GITHUB_OUTPUT"
+          printf 'lesson_capture_status=UNKNOWN reason=ambiguous_issue_closure publication_allowed=false\n'
+          # ISSUE_UNKNOWN_END
+
+  candidato-offline:
+    name: Verificar evento y preparar candidato
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Validar identidad, evento y SHA ANTES del checkout
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          # TRUST_GATE_START
+          import json
+          import os
+          import re
+          from datetime import datetime
+          from pathlib import Path
+
+          def validate():
+              repo = os.environ["GITHUB_REPOSITORY"]
+              event = os.environ["GITHUB_EVENT_NAME"]
+              sha = os.environ["GITHUB_SHA"]
+              ref = os.environ["GITHUB_REF"]
+              run_id = os.environ["GITHUB_RUN_ID"]
+              if (repo != "pl0n3r/Factory" or ref != "refs/heads/main"
+                      or not re.fullmatch(r"[0-9a-f]{40}", sha)
+                      or not re.fullmatch(r"[1-9][0-9]*", run_id)
+                      or event not in ("issues", "pull_request")):
+                  raise ValueError("invalid_context")
+
+              path = Path(os.environ["GITHUB_EVENT_PATH"])
+              if path.stat().st_size > 512_000:
+                  raise ValueError("oversize_event")
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              if (not isinstance(payload, dict)
+                      or not isinstance(payload.get("repository"), dict)
+                      or payload["repository"].get("full_name") != repo
+                      or payload.get("action") != "closed"):
+                  raise ValueError("foreign_or_unclosed_event")
+
+              if event == "issues":
+                  # GitHub's issue.closed payload has only second-resolution
+                  # closed_at; two real closures can share this timestamp.
+                  # GITHUB_RUN_ID is delivery context, not an event identity.
+                  # Do not claim a unique business event without evidence.
+                  raise ValueError("ambiguous_issue_closure")
+              else:
+                  pr = payload.get("pull_request")
+                  merge_sha = pr.get("merge_commit_sha") if isinstance(pr, dict) else None
+                  if (not isinstance(pr, dict) or type(pr.get("number")) is not int
+                          or pr["number"] < 1 or pr.get("merged") is not True
+                          or pr.get("state") != "closed"
+                          or not isinstance(pr.get("base"), dict)
+                          or pr["base"].get("ref") != "main"
+                          or not isinstance(pr["base"].get("repo"), dict)
+                          or pr["base"]["repo"].get("full_name") != repo
+                          or type(merge_sha) is not str
+                          or not re.fullmatch(r"[0-9a-f]{40}", merge_sha)):
+                      raise ValueError("merge_identity_invalid")
+                  number = pr["number"]
+                  when = pr.get("merged_at")
+                  event_kind = "pr_merged"
+                  summary = "Fusion de PR verificada en GitHub"
+
+              if (not isinstance(when, str)
+                      or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", when)):
+                  raise ValueError("time_invalid")
+              closed_time = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ")
+
+              candidate = {
+                  "event_id": f"{event_kind}-{number}-{merge_sha}",
+                  "repo": repo, "issue": number, "sha": merge_sha,
+                  "run_sha": sha,
+                  "occurred_at": when, "event": event_kind, "summary": summary,
+                  "issuer": "github-actions[bot]", "verified": True,
+              }
+              out = Path(os.environ["RUNNER_TEMP"]) / "factory-lesson-event.json"
+              out.write_text(json.dumps(candidate, sort_keys=True), encoding="utf-8")
+
+          try:
+              validate()
+          except (OSError, KeyError, TypeError, ValueError, OverflowError):
+              raise SystemExit("trusted_event_rejected")
+          # TRUST_GATE_END
+          PY
+
+      - name: Descargar exclusivamente commit main autenticado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Validar candidato offline sin publicar ni escribir remotamente
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from scripts.captura_leccion import capture_lessons
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "factory-lesson-event.json"
+          candidate = json.loads(source.read_text(encoding="utf-8"))
+          records = capture_lessons([candidate, candidate])
+          if len(records) != 1 or records[0]["event_id"] != candidate["event_id"]:
+              raise SystemExit("deduplication_failed")
+          print("validated_offline_lesson_candidate=1")
+          PY
+'''
 
 
 class CaptureLessonWorkflowTests(unittest.TestCase):
     def test_minimal_permissions_and_no_untrusted_checkout(self):
-        config = WORKFLOW.read_text(encoding="utf-8")
+        self.assertFalse(WORKFLOW.exists(), 'F1E trigger remains disabled')
+        config = HISTORICAL_WORKFLOW
         self.assertIn("permissions:\n  contents: read", config)
         self.assertIn("persist-credentials: false", config)
         self.assertIn("refs/heads/main", config)
@@ -26,7 +176,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
         import tempfile
         import textwrap
 
-        config = WORKFLOW.read_text(encoding="utf-8")
+        config = HISTORICAL_WORKFLOW
         self.assertIn("  issues:\n    types: [closed]", config)
         self.assertIn("  issue-identity-unknown:", config)
         job = config.split("  issue-identity-unknown:\n", 1)[1].split(
@@ -62,7 +212,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
             self.assertNotIn("candidate=", result.stdout)
 
     def test_duplicates_failed_events_and_missing_sha_do_not_publish(self):
-        config = WORKFLOW.read_text(encoding="utf-8")
+        config = HISTORICAL_WORKFLOW
         self.assertIn('not re.fullmatch(r"[0-9a-f]{40}", merge_sha)', config)
         self.assertIn('pr.get("merged") is not True', config)
         self.assertIn('payload.get("action") != "closed"', config)
@@ -90,7 +240,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
         import tempfile
         import textwrap
 
-        source = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        source = HISTORICAL_WORKFLOW.splitlines()
         start = next(i for i, line in enumerate(source)
                      if line.strip() == "# TRUST_GATE_START")
         end = next(i for i, line in enumerate(source)
@@ -166,7 +316,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
         import tempfile
         import textwrap
 
-        source = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        source = HISTORICAL_WORKFLOW.splitlines()
         begin = next(i for i, line in enumerate(source)
                      if line.strip() == "# TRUST_GATE_START")
         end = next(i for i, line in enumerate(source)
@@ -253,7 +403,7 @@ class CaptureLessonWorkflowTests(unittest.TestCase):
 
     def test_same_second_closure_without_authoritative_identity_fails_closed(self):
         """A GitHub Issue closure has no unique per-closure action identifier."""
-        source = WORKFLOW.read_text(encoding="utf-8")
+        source = HISTORICAL_WORKFLOW
         self.assertIn("ambiguous_issue_closure", source)
         self.assertIn("github.event_name == 'pull_request'", source)
         base = {"repository": {"full_name": "pl0n3r/Factory"},

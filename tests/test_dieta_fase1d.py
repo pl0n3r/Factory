@@ -17,7 +17,7 @@ class DietaFase1DTests(unittest.TestCase):
     def test_cabina_optional_workflow_removed_after_consumers_preflight(self):
         active = self.active()
         self.assertEqual(active, set(EXPECTED_ACTIVE) - {CANDIDATE})
-        self.assertEqual(len(active), 32)
+        self.assertEqual(len(active), 31)
         self.assertNotIn(CANDIDATE, active)
         for name in active:
             content = (WF / name).read_text(encoding="utf-8")
