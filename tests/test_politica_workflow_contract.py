@@ -175,6 +175,119 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         self.assertIn('validate_rate_limit_fallback', (
             ROOT / 'scripts/politica_kit.py').read_text(encoding='utf-8'))
 
+    def test_primary_and_fallback_apply_same_trusted_gates(self):
+        """AC-04: ambos caminos utilizan el mismo inventario autenticado."""
+        from scripts.politica_kit import (
+            PolicyError, validate_rate_limit_fallback,
+            validate_required_bot_review_or_fallback,
+        )
+        head = "a" * 40
+
+        def item(identifier, name, slug="github-actions", app_id=15368,
+                 status="completed", conclusion="success"):
+            return json.dumps({
+                "id": identifier, "name": name, "head_sha": head,
+                "app": {"slug": slug, "id": app_id},
+                "status": status, "conclusion": conclusion,
+                "completed_at": "2026-10-04T05:01:00Z",
+            })
+
+        checks = [
+            item(10, "validate"),
+            item(11, "SonarCloud Code Analysis", "sonarqubecloud", 12526),
+            item(12, "CodeQL", "github-advanced-security", 57789),
+            item(13, "tests"),
+            item(14, "validar-pr / Validar coordinación"),
+            item(15, "privacidad / Privacidad como código"),
+        ]
+        review = json.dumps({
+            "id": 1, "state": "COMMENTED", "body": "Revisión sustantiva",
+            "commit_id": head, "user": {"login": "coderabbitai[bot]", "type": "Bot"}
+        })
+
+        def primary(rows):
+            return validate_required_bot_review_or_fallback(
+                [review], "coderabbitai[bot]", head,
+                comment_lines=[], check_lines=rows, thread_lines=[],
+                phase_file=None)
+
+        def fallback(rows):
+            return validate_rate_limit_fallback(
+                required_review_bot="coderabbitai[bot]", head_sha=head,
+                head_committed_at="2026-10-04T04:59:00Z",
+                phase="construccion", review_lines=[], comment_lines=[],
+                check_lines=rows, thread_lines=[], run_attempt=2)
+
+        self.assertEqual(primary(checks), {"review_fallback": False})
+        wrong_issuer = [*checks[:2], item(12, "CodeQL", "foreign", 9999),
+                        *checks[3:]]
+        for bad in (
+            wrong_issuer,
+            checks[:-1],
+            [*checks[:3], item(13, "tests", status="in_progress",
+                              conclusion=None), *checks[4:]],
+            [*checks[:3], item(13, "tests", conclusion="failure"), *checks[4:]],
+        ):
+            for method in (primary, fallback):
+                with self.subTest(method=method.__name__, rows=bad):
+                    with self.assertRaises(PolicyError):
+                        method(bad)
+
+    def test_primary_review_requires_complete_checks_threads_and_final_refs(self):
+        """AC-05: bash real de recheck y vetos previos a emitir éxito."""
+        from scripts.politica_kit import PolicyError, validate_required_bot_review_or_fallback
+        self.assertNotIn("PRIMARY_STATUS == 0", W)
+        self.assertLess(W.index('checks_url_base='), W.index('POLICY_OUTPUT='))
+        self.assertLess(W.index('reviewThreads(first:100)'), W.index('POLICY_OUTPUT='))
+        self.assertLess(W.index('recheck_pr_identity "$PR_JSON_FINAL"'), W.index(
+            "printf '%s\\n' \"$POLICY_OUTPUT\""))
+        # Ejecuta el helper Bash real contra respuesta REST mockeada, incluyendo
+        # HEAD/BASE drift y PR cerrado, no solamente búsqueda de strings.
+        self.test_primary_review_revalidates_head_and_base_before_success()
+        head = "a" * 40
+        review = json.dumps({
+            "id": 1, "state": "COMMENTED", "body": "Revisión sustantiva",
+            "commit_id": head, "user": {"login": "coderabbitai[bot]", "type": "Bot"}
+        })
+        checks = [
+            (10, "validate", "github-actions", 15368),
+            (11, "SonarCloud Code Analysis", "sonarqubecloud", 12526),
+            (12, "CodeQL", "github-advanced-security", 57789),
+            (13, "tests", "github-actions", 15368),
+            (14, "validar-pr / Validar coordinación", "github-actions", 15368),
+            (15, "privacidad / Privacidad como código", "github-actions", 15368),
+        ]
+        rows = [json.dumps({
+            "id": idx, "name": name, "head_sha": head,
+            "app": {"slug": slug, "id": app_id},
+            "status": "completed", "conclusion": "success",
+        }) for idx, name, slug, app_id in checks]
+        args = dict(required_review_bot="coderabbitai[bot]", head_sha=head,
+                    comment_lines=[], phase_file=None)
+        self.assertEqual(validate_required_bot_review_or_fallback(
+            [review], check_lines=rows, thread_lines=[], **args),
+            {"review_fallback": False})
+        malformed = [
+            rows[:-1],
+            [*rows[:3], json.dumps({
+                "id": 13, "name": "tests", "head_sha": head,
+                "app": {"slug": "github-actions", "id": 15368},
+                "status": "completed", "conclusion": "failure",
+            }), *rows[4:]],
+        ]
+        for case in malformed:
+            with self.assertRaises(PolicyError):
+                validate_required_bot_review_or_fallback(
+                    [review], check_lines=case, thread_lines=[], **args)
+        unresolved = [json.dumps({
+            "isResolved": False,
+            "comments": {"pageInfo": {"hasNextPage": False},
+                         "nodes": [{"author": {"login": "coderabbitai"}}]},
+        })]
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review_or_fallback(
+                [review], check_lines=rows, thread_lines=unresolved, **args)
+
     def test_primary_review_revalidates_head_and_base_before_success(self):
         """Ejecuta el helper Bash exacto del workflow contra GET REST simulado."""
         if shutil.which('jq') is None:
