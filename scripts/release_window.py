@@ -168,7 +168,7 @@ def _legacy_factory_release_intent(body: str) -> bool:
 # El título de una puerta canónica aporta intención para rechazar fuentes rotas;
 # no concede aprobación (que depende del gate validado y del journal del bot).
 RELEASE_GATE_TITLE_RE = re.compile(
-    r"^decisión en espera: Factory v\\d+\\.\\d+\\.\\d+ sobre HEAD exacto [0-9a-f]{8}$",
+    r"^decisión en espera: Factory v[0-9]+[.][0-9]+[.][0-9]+ sobre HEAD exacto [0-9a-f]{8}$",
     re.IGNORECASE,
 )
 
