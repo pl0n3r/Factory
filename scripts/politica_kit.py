@@ -587,12 +587,15 @@ def _exact_head_rate_limit_evidence(
             observed_at = _parse_iso_timestamp(
                 updated_raw, noun="Timestamp actualizado de comentario rate-limit"
             )
-        elif updated_raw is None:
-            observed_at = created_at
         else:
-            observed_at = _parse_iso_timestamp(
-                updated_raw, noun="Timestamp actualizado de comentario rate-limit"
-            )
+            # En reruns, editar una respuesta antigua no acredita un evento nuevo.
+            observed_at = created_at
+            if updated_raw is not None:
+                updated_at = _parse_iso_timestamp(
+                    updated_raw, noun="Timestamp actualizado de comentario rate-limit"
+                )
+                if updated_at < created_at:
+                    raise PolicyError("Comentario rate-limit con timestamps incoherentes.")
         if observed_at < created_at:
             raise PolicyError("Comentario rate-limit actualizado tiene timestamps incoherentes.")
         if observed_at <= not_before:
@@ -849,6 +852,10 @@ def validate_rate_limit_fallback(
         )
         for retry_at, _retry_id in owner_retries:
             if retry_at <= committed_at:
+                continue
+            # Un fallo Policy posterior no demuestra causalidad para este retry.
+            if not any(committed_at < failed_at < retry_at
+                       for failed_at in failed_policy_checks):
                 continue
             rate_limit_events = _exact_head_rate_limit_events(
                 comment_lines,

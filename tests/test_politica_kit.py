@@ -636,6 +636,58 @@ class T(unittest.TestCase):
         )
         self.assertEqual(result, (101, "2026-10-04T05:03:00Z"))
 
+    def test_rerun_exact_head_needs_prior_failure(self):
+        comments = [
+            owner_review_retry(created_at="2026-10-04T05:02:00Z"),
+            rate_limit_comment(
+                comment_id=301, created_at="2026-10-04T05:03:00Z", head_sha=HEAD),
+        ]
+        for timestamp in ("2026-10-04T05:05:00Z",
+                          "2026-10-04T05:02:00Z",
+                          "2026-10-04T04:58:00Z"):
+            checks = green_gate_checks() + [check(
+                check_id=99, name=policy.POLICY_CHECK_NAME,
+                conclusion="failure", completed_at=timestamp)]
+            with self.subTest(timestamp=timestamp), self.assertRaises(PolicyError):
+                validate_rate_limit_fallback(
+                    required_review_bot="coderabbitai[bot]", head_sha=HEAD,
+                    head_committed_at="2026-10-04T04:59:00Z",
+                    phase="construccion", review_lines=[], comment_lines=comments,
+                    check_lines=checks, thread_lines=[], run_attempt=2)
+        checks = green_gate_checks() + [check(
+            check_id=99, name=policy.POLICY_CHECK_NAME,
+            conclusion="failure", completed_at="2026-10-04T05:01:00Z")]
+        self.assertEqual(validate_rate_limit_fallback(
+            required_review_bot="coderabbitai[bot]", head_sha=HEAD,
+            head_committed_at="2026-10-04T04:59:00Z",
+            phase="construccion", review_lines=[], comment_lines=comments,
+            check_lines=checks, thread_lines=[], run_attempt=2)[0], 301)
+
+    def test_rerun_exact_head_rejects_edited_old_reply(self):
+        owner = owner_review_retry(created_at="2026-10-04T05:02:00Z")
+        checks = green_gate_checks() + [check(
+            check_id=99, name=policy.POLICY_CHECK_NAME,
+            conclusion="failure", completed_at="2026-10-04T05:01:00Z")]
+        for created_at in ("2026-10-04T04:58:00Z",
+                           "2026-10-04T05:01:30Z"):
+            comments = [owner, rate_limit_comment(
+                comment_id=301, created_at=created_at,
+                updated_at="2026-10-04T05:03:00Z", head_sha=HEAD)]
+            with self.subTest(created_at=created_at), self.assertRaises(PolicyError):
+                validate_rate_limit_fallback(
+                    required_review_bot="coderabbitai[bot]", head_sha=HEAD,
+                    head_committed_at="2026-10-04T04:59:00Z",
+                    phase="construccion", review_lines=[], comment_lines=comments,
+                    check_lines=checks, thread_lines=[], run_attempt=2)
+        fresh = [owner, rate_limit_comment(
+            comment_id=302, created_at="2026-10-04T05:03:00Z",
+            updated_at="2026-10-04T05:03:00Z", head_sha=HEAD)]
+        self.assertEqual(validate_rate_limit_fallback(
+            required_review_bot="coderabbitai[bot]", head_sha=HEAD,
+            head_committed_at="2026-10-04T04:59:00Z",
+            phase="construccion", review_lines=[], comment_lines=fresh,
+            check_lines=checks, thread_lines=[], run_attempt=2)[0], 302)
+
     def test_rerun_attempt_requires_failed_policy_even_with_exact_head_rate_limit(self):
         comments = [
             owner_review_retry(created_at="2026-10-04T05:02:00Z"),
