@@ -176,6 +176,15 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(lease.get("reservation_id")) is not str):
             raise IncompleteEvidence()
 
+        # Un marker V3 solo no acredita autoridad: el Issue debe tener
+        # exactamente un asignado, idéntico al titular autenticado del bot.
+        assignees = issue.get("assignees")
+        if (not isinstance(assignees, list) or len(assignees) != 1
+                or not isinstance(assignees[0], dict)
+                or type(assignees[0].get("login")) is not str
+                or assignees[0]["login"] != owner):
+            raise IncompleteEvidence()
+
         refpath = f"{base}/git/ref/heads/{branch}"
         def branch_sha() -> str:
             value = get(refpath)
@@ -281,7 +290,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         verify = get(path)
         if (not isinstance(verify, dict)
                 or any(verify.get(k) != issue.get(k)
-                       for k in ("state", "number", "comments", "updated_at", "labels"))
+                       for k in ("state", "number", "comments", "updated_at", "labels", "assignees"))
                 or branch_sha() != sha):
             raise IncompleteEvidence()
         # GitHub puede lanzar/rerun CI sin cambiar Issue ni ref.
