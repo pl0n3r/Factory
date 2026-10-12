@@ -297,6 +297,9 @@ class FactoryDietInventoryTests(unittest.TestCase):
                 for path in paths:
                     if not path.endswith(".py") and not path.endswith(".yml") and not path.endswith(".md"):
                         continue
+                    if path == ".github/workflows/cabina.yml":
+                        self.assertFalse((ROOT / path).exists(), "F1D retira el disparador Cabina")
+                        continue
                     self.assertTrue((ROOT / path).exists(), f"Ruta de fase {phase} ausente: {path}")
                 # Se permiten menciones informativas como «no borrar» en otra fase;
                 # la colisión prohibida es la doble asignación de workflows a eliminar/simplificar.
@@ -306,7 +309,7 @@ class FactoryDietInventoryTests(unittest.TestCase):
         self.assertIn("coordinación", self._phase_text(4).lower())
         self.assertEqual(
             seen,
-            {path for path, row in self.rows.items() if row["phase"] in {1, 2, 3, 4}},
+            {path for path, row in self.rows.items() if row["phase"] in {1, 2, 3, 4}} | {".github/workflows/cabina.yml"},
         )
 
     @classmethod
