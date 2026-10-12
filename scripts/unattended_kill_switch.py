@@ -54,7 +54,7 @@ def evaluate_unattended_kill_switch(issue_payload: object) -> KillSwitchDecision
     if not isinstance(issue_payload, dict):
         return _paused("source_unreadable")
 
-    if issue_payload.get("number") != CANONICAL_ISSUE_NUMBER:
+    if type(issue_payload.get("number")) is not int or issue_payload["number"] != CANONICAL_ISSUE_NUMBER:
         return _paused("unexpected_issue")
     if issue_payload.get("url") != CANONICAL_SOURCE_URL:
         return _paused("unexpected_issue_url")
