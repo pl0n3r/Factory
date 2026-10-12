@@ -66,6 +66,68 @@ def approved_comment(body: str) -> dict[str, object]:
 
 
 class ReleaseWindowTests(unittest.TestCase):
+    def test_valid_window_plus_malformed_second_header_fails_closed(self) -> None:
+        valid = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
+        malformed = (
+            "<!-- factory-release-window TRUNCATED -->",
+            "<!-- FACTORY-RELEASE-WINDOW {\"version\":1} -->",
+            "<!-- factory - release - window {",
+            "<!-- factory-release-window",
+        )
+        for fragment in malformed:
+            for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                with self.subTest(fragment=fragment, prefix=body.startswith(fragment)):
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw._window_from_body(body, OLD_SHA)
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw.gate_records([gate_row(number=900, body=body)])
+
+    def test_valid_gate_plus_malformed_second_header_fails_closed(self) -> None:
+        modern = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        malformed = (
+            "<!-- factory-human-gate TRUNCATED -->",
+            "<!-- FACTORY-HUMAN-GATE {\"category\":\"factory-release\"} -->",
+            "<!-- factory - human - gate {",
+            "<!-- factory-human-gate",
+        )
+        for fragment in malformed:
+            for valid in (modern, legacy):
+                for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                    with self.subTest(fragment=fragment, modern=valid == modern,
+                                      prefix=body.startswith(fragment)):
+                        with self.assertRaises(rw.ReleaseWindowError):
+                            rw._gate_from_body(body)
+                        with self.assertRaises(rw.ReleaseWindowError):
+                            rw.gate_records([gate_row(number=901, body=body)])
+
+    def test_unique_valid_and_unrelated_legacy_gates_preserve_behavior(self) -> None:
+        modern = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        self.assertIsNotNone(rw._gate_from_body(modern))
+        self.assertIsNotNone(rw._window_from_body(modern, OLD_SHA))
+        self.assertEqual(len(rw.gate_records([gate_row(number=902, body=modern)])), 1)
+        records = rw.gate_records([gate_row(number=903, body=legacy)])
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0]["window"])
+        # El alias canónico "duplicate" no es un segundo marker de gate.
+        with_alias = modern + "\n<!-- factory-human-gate-duplicate canonical=901 -->"
+        self.assertEqual(len(rw.gate_records([
+            gate_row(number=904, body=with_alias),
+        ])), 1)
+        unrelated = (
+            '<!-- factory-human-gate '
+            '{"category":"product-direction","context":"legacy schema"} -->'
+        )
+        self.assertEqual(rw.gate_records([gate_row(number=905, body=unrelated)]), [])
+        # Se conserva el rechazo estricto de claves JSON duplicadas de #1270.
+        duplicate_window = modern + (
+            '\n<!-- factory-release-window '
+            '{"version":1,"version":1} -->'
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([gate_row(number=906, body=duplicate_window)])
+
     def test_active_window_blocks_normal_merges_and_allows_only_explicit_critical_repair(self) -> None:
         rendered = rw._render_gate(
             "1.0.23",

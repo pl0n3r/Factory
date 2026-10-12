@@ -30,7 +30,14 @@ TARGET_RE = re.compile(
 WINDOW_RE = re.compile(
     r"<!--\s*factory-release-window\s+(\{[^\n]*\})\s*-->"
 )
-WINDOW_INTENT_RE = re.compile(r"<!--\s*factory-release-window\b")
+WINDOW_INTENT_RE = re.compile(
+    r"<!--\s*factory\s*-\s*release\s*-\s*window\b", re.IGNORECASE,
+)
+# Excluye el marker de alias legítimo "factory-human-gate-duplicate".
+GATE_HEADER_RE = re.compile(
+    r"<!--\s*factory\s*-\s*human\s*-\s*gate\b(?!-duplicate\b)",
+    re.IGNORECASE,
+)
 DECISION_RE = re.compile(
     r"<!--\s*factory-human-decision\s+(\{[^\n]*\})\s*-->"
 )
@@ -56,6 +63,10 @@ class ReleaseWindowError(ValueError):
 
 class AmbiguousReleaseJSON(ReleaseWindowError):
     """Claves JSON repetidas invalidan la evidencia de release."""
+
+
+class AmbiguousReleaseMarker(ReleaseWindowError):
+    """Encabezados de autoridad incompletos/duplicados niegan el release."""
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -152,10 +163,11 @@ def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
     if not isinstance(body, str):
         return None
     matches = MARKER_RE.findall(body)
-    if not matches:
+    header_count = len(GATE_HEADER_RE.findall(body))
+    if not matches and not header_count:
         return None
-    if len(matches) != 1:
-        raise ReleaseWindowError("Puerta humana ambigua.")
+    if header_count != 1 or len(matches) != 1:
+        raise AmbiguousReleaseMarker("Puerta humana ambigua o incompleta.")
     try:
         raw = _strict_json_loads(matches[0])
         gate = validate_gate(raw)
@@ -173,12 +185,12 @@ def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
 
 def _window_from_body(body: str, target_sha: str) -> dict[str, Any] | None:
     matches = WINDOW_RE.findall(body)
-    intent = WINDOW_INTENT_RE.search(body) is not None
+    header_count = len(WINDOW_INTENT_RE.findall(body))
     if not matches:
-        if intent:
+        if header_count:
             raise ReleaseWindowError("Marker release-window incompleto.")
         return None
-    if len(matches) != 1:
+    if header_count != 1 or len(matches) != 1:
         raise ReleaseWindowError("Marker release-window ambiguo.")
     try:
         raw = _strict_json_loads(matches[0])
@@ -335,7 +347,8 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         else:
             try:
                 gate_info = _gate_from_body(body)
-            except AmbiguousReleaseJSON:
+            except (AmbiguousReleaseJSON, AmbiguousReleaseMarker):
+                # Una fuente ambigua no debe omitirse como gate legacy inválido.
                 raise
             except ReleaseWindowError:
                 # Gates legacy sin window no conceden autoridad por sí solos.
