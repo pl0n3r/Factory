@@ -18,7 +18,6 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/auditoria-privacidad.yml` | workflow_call | 198 | scripts/auditar_privacidad.py | tests/test_auditar_privacidad.py | **quedarse** | 0 |
 | `.github/workflows/automerge-construccion.yml` | pull_request | 321 | scripts/automerge_construccion.py (indirecto) | tests/test_automerge_construccion.py, tests/test_automerge_workflow.py | **simplificar** | 3 |
 | `.github/workflows/bootstrap-coordination.yml` | issue_comment, workflow_dispatch | 144 | scripts/bootstrap_coordination.py | tests/test_bootstrap_coordination_workflow.py | **quedarse** | 0 |
-| `.github/workflows/cabina.yml` | schedule, workflow_dispatch, push | 66 | scripts/cabina.py | tests/test_cabina.py, tests/test_cabina_sentry.py, tests/test_cabina_workflow_contract.py | **eliminar** | 1 |
 | `.github/workflows/captura-leccion.yml` | issues, pull_request | 128 | ninguno directo (Python inline) | tests/test_captura_leccion.py, tests/test_captura_leccion_workflow.py | **eliminar** | 1 |
 | `.github/workflows/ci.yml` | workflow_call | 249 | ninguno directo | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/codeql-evidence.yml` | pull_request, push | 60 | scripts/codeql_sarif_summary.py | tests/test_codeql_evidence_workflow.py, tests/test_codeql_sarif_summary.py | **quedarse** | 0 |
@@ -130,3 +129,13 @@ Hasta demostrar replacements con contratos equivalentes, ambos workflows quedan 
 ## Validación de este inventario
 
 `python3 -m unittest tests.test_factory_diet_inventory -v` verifica cobertura del árbol, disparadores, scripts/test a revisar, preservación de puertas duras y orden/reversibilidad de las fases. Este inventario **no es evidencia de ejecución de ese comando** hasta obtener un run que lo confirme en el HEAD exacto.
+
+## Ledger F1D de baja de Cabina
+
+**Baseline post-F1C/runbook:** 34 workflows en `main@4544f63ef3aebddfcddda5f2e88ebe9870035f3f`. F1D retira solamente Cabina programada y deja 33 workflows; historial 38 → 36 → 35 → 34 → 33 workflows. Sin automatización horaria, `workflow_dispatch`, push-trigger de Cabina ni artefacto Pages automático. `scripts/cabina.py` y QA de Sentry permanecen offline. La decisión #35 es no publicar Pages **todavía** sin nueva autorización del dueño; ninguna exposición nueva.
+
+| Baja | Workflow | Blob previo | Secuencia | Reversión |
+| --- | --- | --- | --- | --- |
+| F1D | `.github/workflows/cabina.yml` | `8fbbd85b5697a43d196223292961c77976d45f96` | 34 → 33 | squash-revert PR F1D |
+
+Reversión: squash-revert solo del PR F1D, sin tocar F1A/F1B/F1C ni modificar publicación, secretos o producción. La pérdida de generación privada automática es deliberada; el motor sigue disponible offline.
