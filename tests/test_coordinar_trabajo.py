@@ -4713,14 +4713,18 @@ class GranularReserveWorkIntegrationTests(unittest.TestCase):
                 reserve_work(api, 12, "pl0n3r", "OWNER")
         self.assertNotIn("trabajo/issue-12", api.branches)
 
-    def test_tomar_grants_parallel_exact_file_when_active_diff_is_verified_disjoint(self) -> None:
-        # Opt-in: solo archivos exactos con diff exact-SHA completo y disjunto.
+    def test_tomar_rejects_parallel_file_grant_without_future_push_enforcement(self) -> None:
+        # Un diff disjunto hoy NO limita futuros pushes de la lease src/.
+        # El opt-in no es suficiente para conceder claims solapados.
         api, comments, diff = self._ready_api()
         with patch.dict(os.environ, {"CONDOR_PARALLEL_FILE_GRANTS": "1"}), (
             patch.object(api, "issue_comments", side_effect=comments)
         ), patch.object(api, "pull_files_exact_head", side_effect=diff, create=True):
-            reserve_work(api, 12, "pl0n3r", "OWNER")
-        self.assertIn("trabajo/issue-12", api.branches)
+            with self.assertRaisesRegex(CoordinationError, "colisión con tarea activa"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.status_history, [])
 
     def test_tomar_still_denies_legacy_v2_without_snapshot(self) -> None:
         api, comments, diff = self._ready_api(legacy=True)
