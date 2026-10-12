@@ -2,7 +2,7 @@
 import copy
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 from scripts.lease_activity_collector import collect_activity
 
@@ -129,6 +129,44 @@ class API:
 
 
 class LeaseActivityCollectorTests(unittest.TestCase):
+    def test_unverifiable_now_timezone_fails_closed(self):
+        """No inferir la zona local del runner para decidir inactividad V3."""
+        class UndefinedOffset(tzinfo):
+            def utcoffset(self, dt):
+                return None
+
+            def dst(self, dt):
+                return None
+
+        class ExplodingOffset(UndefinedOffset):
+            def utcoffset(self, dt):
+                raise RuntimeError("unverifiable UTC offset")
+
+        for invalid_clock in (
+            NOW.replace(tzinfo=None),
+            NOW.replace(tzinfo=UndefinedOffset()),
+            NOW.replace(tzinfo=ExplodingOffset()),
+        ):
+            with self.subTest(clock=type(invalid_clock.tzinfo).__name__):
+                api = API()
+                self.assertEqual(
+                    collect_activity(api, 21, now=invalid_clock),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertEqual(api.calls, [])
+
+    def test_valid_timezone_now_preserves_snapshot(self):
+        """Offsets auténticos representan el mismo instante UTC."""
+        baseline = collect_activity(API(), 21, now=NOW)
+        self.assertTrue(baseline["evidence_complete"])
+        for offset in (timedelta(hours=-5), timedelta(hours=5, minutes=30)):
+            with self.subTest(offset=offset):
+                api = API()
+                observed = collect_activity(
+                    api, 21, now=NOW.astimezone(timezone(offset)))
+                self.assertEqual(observed, baseline)
+                self.assertGreater(len(api.calls), 0)
+
     def test_assignee_authority_requires_exactly_one_owner(self):
         good = collect_activity(API(), 21, now=NOW)
         self.assertTrue(good["evidence_complete"])

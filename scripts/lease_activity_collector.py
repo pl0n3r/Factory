@@ -46,7 +46,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(repo) is not str
                 or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None
                 or type(max_requests) is not int or not 1 <= max_requests <= 40
-                or not isinstance(now, datetime) or now.tzinfo is None):
+                or type(now) is not datetime or now.tzinfo is None
+                or now.utcoffset() is None):
             return unknown
         now = now.astimezone(timezone.utc)
         used = 0
