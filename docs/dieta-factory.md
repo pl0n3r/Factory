@@ -8,6 +8,8 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 
 **Regla de seguridad:** conservar CI de tests/lint/build, CodeQL, Sonar, CodeRabbit (integración externa, sin workflow propio), privacidad, releases/deploy/observación y puertas de gasto, datos reales, borrado, freeze, credenciales y go-live. «Simplificar» jamás significa saltar una puerta dura. La futura política de severidades pertenece a #1295 y requiere su propia reserva, regresiones y gates. **Excepciones justificadas frente a la poda tentativa de #1296:** `costos.yml` conserva la evidencia de presupuesto del PR (`presupuesto-pr`) y `unattended-watchdog.yml` conserva vigilancia de actividad + resumen diario. Ninguno se sustituye por una frase genérica sobre gasto ni por el kill switch de Factory#767.
 
+**Nota de actualización (#1068/#1300, 2026-10-12):** la línea base `main@b0713650194e9a0c464d625bc6136eecad776377` tenía 186 líneas en `.github/workflows/politica-comentario.yml`; la fila activa registra 332 tras el refuerzo de seguridad. El recuento histórico se conserva aquí como procedencia, sin añadir ni eliminar workflows. La separación permanente entre métricas históricas y pruebas de inventario corresponde a #1302.
+
 ## Inventario de workflows
 
 | Workflow | Disparador(es) | Líneas | Scripts/dependencias directas | Tests afectados por revisar | Decisión | Fase |
@@ -33,7 +35,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/metricas.yml` | pull_request, workflow_dispatch, schedule | 86 | metricas/evaluar_agentes.py | metricas/test_evaluar_agentes.py, metricas/test_producto_diario.py, tests/test_metricas_integer_bounds.py | **eliminar** | 1 |
 | `.github/workflows/observar.yml` | workflow_call | 176 | scripts/observe_kit.py | tests/test_observar_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/orquestador.yml` | issue_comment, workflow_dispatch | 57 | scripts/orquestar_fabrica.py | tests/test_orquestador_workflow_contract.py | **quedarse** | 0 |
-| `.github/workflows/politica-comentario.yml` | workflow_call | 186 | scripts/politica_kit.py | tests/test_politica_workflow_contract.py | **simplificar** | 3 |
+| `.github/workflows/politica-comentario.yml` | workflow_call | 332 | scripts/politica_kit.py | tests/test_politica_workflow_contract.py | **simplificar** | 3 |
 | `.github/workflows/politica.yml` | workflow_call | 417 | scripts/politica_kit.py | tests/test_politica_kit.py, tests/test_politica_workflow_contract.py | **simplificar** | 3 |
 | `.github/workflows/preview.yml` | workflow_call | 114 | scripts/preview_kit.py | tests/test_preview_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/privacidad.yml` | workflow_call | 48 | scripts/privacidad_gate.py | tests/test_privacidad_gate.py | **quedarse** | 0 |
