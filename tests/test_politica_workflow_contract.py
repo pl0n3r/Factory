@@ -352,6 +352,134 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
                     self.assertEqual(result.returncode == 0, should_pass,
                                      msg=result.stderr)
 
+    @staticmethod
+    def _mock_check_page(total, ids):
+        return {"total_count": total, "check_runs": [
+            {"id": value, "name": f"test-{value}", "head_sha": "a" * 40,
+             "app": {"slug": "github-actions", "id": 15368},
+             "status": "completed", "conclusion": "success"} for value in ids
+        ]}
+
+    def _execute_checks_snapshot_shell(self, responses, *, expected_pass,
+                                       expected_count=0):
+        """Ejecuta el Bash de producción con gh REST simulado y contador."""
+        if shutil.which("jq") is None:
+            self.skipTest("jq no disponible")
+        start = "          # POLICY_CHECK_SNAPSHOT_BEGIN\n"
+        end = "          # POLICY_CHECK_SNAPSHOT_END"
+        self.assertEqual(W.count(start), 1)
+        self.assertEqual(W.count(end), 1)
+        shell = textwrap.dedent(W.split(start, 1)[1].split(end, 1)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mock = root / "gh"
+            mock.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+counter = Path(os.environ["MOCK_GH_COUNTER"])
+index = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(index + 1))
+pages = json.loads(os.environ["MOCK_GH_RESPONSES"])
+if index >= len(pages) or pages[index] is None:
+    sys.exit(22)
+if not any("check-runs?per_page=100&page=" in x for x in sys.argv):
+    sys.exit(23)
+print(json.dumps(pages[index]))
+''', encoding="utf-8")
+            mock.chmod(0o755)
+            checks = root / "checks.ndjson"
+            marker = root / "evaluated"
+            env = dict(os.environ)
+            env.update({
+                "PATH": directory + os.pathsep + env.get("PATH", ""),
+                "REPOSITORY": "pl0n3r/Factory", "PR_HEAD_SHA": "a" * 40,
+                "checks_file": str(checks),
+                "checks_json": str(root / "page.json"),
+                "MAX_EVIDENCE_BYTES": "2000000", "MAX_PUBLIC_CHECKS": "500",
+                "MOCK_GH_COUNTER": str(root / "calls"),
+                "MOCK_GH_RESPONSES": json.dumps(responses),
+                "EVAL_MARKER": str(marker),
+            })
+            result = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n" + shell +
+                 '\nprintf "1" > "$EVAL_MARKER"\n'],
+                env=env, capture_output=True, text=True, timeout=25)
+            self.assertEqual(result.returncode == 0, expected_pass,
+                             msg=result.stderr[-2500:])
+            if expected_pass:
+                self.assertEqual(marker.read_text(), "1")
+                rows = [json.loads(x) for x in checks.read_text().splitlines()]
+                self.assertEqual(len(rows), expected_count)
+                self.assertEqual(len({row["id"] for row in rows}), expected_count)
+            else:
+                self.assertFalse(marker.exists(), "No ejecutar evaluador sin prueba")
+            return int((root / "calls").read_text())
+
+    def test_authenticated_checks_restart_complete_snapshot_after_total_drift(self):
+        """AC-01: deriva inicial 119->120 y dos snapshots íntegros de 120."""
+        p = self._mock_check_page
+        cases = [
+            p(119, range(1, 101)), p(120, range(101, 121)),
+            p(120, range(1, 101)), p(120, range(101, 121)),
+            p(120, range(1, 101)), p(120, range(101, 121)),
+        ]
+        self.assertEqual(self._execute_checks_snapshot_shell(
+            cases, expected_pass=True, expected_count=120), 6)
+
+    def test_authenticated_checks_persistent_drift_and_partial_snapshot_fail_closed(self):
+        """AC-02: drift persistente, IDs variables, truncado, duplicado y >500."""
+        p = self._mock_check_page
+        cases = {
+            "drift persistente": [
+                p(119, range(1, 101)), p(120, range(101, 121))] * 3,
+            "igual total e IDs distintos": [
+                p(2, (1, 2)), p(2, (1, 3)), p(2, (1, 4))],
+            "igual total y estado distinto": [
+                p(1, (1,)),
+                {"total_count": 1, "check_runs": [
+                    {**p(1, (1,))["check_runs"][0], "conclusion": "failure"}]},
+                p(1, (1,))],
+            "incompleto": [
+                p(120, range(1, 101)), p(120, range(101, 111)),
+                p(120, ()), p(120, ()), p(120, ())],
+            "ID duplicado": [p(2, (1, 1))],
+            "más de 500": [p(501, range(1, 101))],
+            "HTTP no-200": [None],
+        }
+        for reason, pages in cases.items():
+            with self.subTest(reason=reason):
+                self._execute_checks_snapshot_shell(pages, expected_pass=False)
+
+    def test_check_collection_does_not_bypass_policy_gates_or_authentication(self):
+        """AC-03: REST autenticada read-only, exact SHA y Policy obligatoria."""
+        from scripts.politica_kit import PolicyError, validate_other_gates_green
+        self.assertIn("GH_TOKEN: ${{ github.token }}", W)
+        self.assertIn('"${checks_url_base}&page=$page"', W)
+        self.assertIn('--checks-file "$checks_file"', W)
+        self.assertLess(W.index("# POLICY_CHECK_SNAPSHOT_END"),
+                        W.index("POLICY_OUTPUT="))
+        self.assertIn('recheck_pr_identity "$PR_JSON_FINAL"', W)
+        self.assertNotIn("checks: write", W)
+        good = [
+            (10, "validate", "github-actions", 15368),
+            (11, "SonarCloud Code Analysis", "sonarqubecloud", 12526),
+            (12, "CodeQL", "github-advanced-security", 57789),
+            (13, "tests", "github-actions", 15368),
+            (14, "validar-pr / Validar coordinación", "github-actions", 15368),
+            (15, "privacidad / Privacidad como código", "github-actions", 15368),
+        ]
+        def records(items):
+            return [json.dumps({
+                "id": num, "name": name, "head_sha": "a" * 40,
+                "app": {"slug": slug, "id": app_id},
+                "status": "completed", "conclusion": "success",
+            }) for num, name, slug, app_id in items]
+        validate_other_gates_green(records(good), head_sha="a" * 40)
+        with self.assertRaises(PolicyError):
+            validate_other_gates_green(
+                records([*good[:2], (12, "CodeQL", "fake-app", 1234),
+                         *good[3:]]), head_sha="a" * 40)
+
     def test_authenticated_paginated_timeline_is_bounded_fail_closed(self):
         self.assertIn('repos/$REPOSITORY/issues/$PR/timeline?per_page=100&page=$page', W)
         self.assertIn('if (( GITHUB_RUN_ATTEMPT > 1 )); then', W)
