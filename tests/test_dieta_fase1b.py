@@ -38,7 +38,7 @@ class DietaFase1BTests(unittest.TestCase):
     def test_only_metrics_trigger_is_removed_and_other_workflows_remain(self):
         """AC-01: inventario exacto, una sola baja y cero callers locales."""
         active = self.workflows()
-        self.assertEqual(len(active), 35)
+        self.assertEqual(len(active), 34)
         self.assertEqual(set(self.rows), active)
         self.assertNotIn(METRICS, active)
         self.assertFalse((ROOT / METRICS).exists())
@@ -94,7 +94,7 @@ class DietaFase1BTests(unittest.TestCase):
             + "` | 36 → 35 | squash-revert PR F1B |"
         )
         self.assertIn(expected_row, section)
-        self.assertEqual(len(self.workflows()), 35)
+        self.assertEqual(len(self.workflows()), 34)
         # F1A conserva manifiesto inmutable de 38 rutas, veto exact-set
         # y una prueba negativa de swap con cardinalidad idéntica.
         case = FactoryDietInventoryTests(

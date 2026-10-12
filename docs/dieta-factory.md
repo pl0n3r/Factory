@@ -45,7 +45,6 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/reusable-selftest.yml` | pull_request | 23 | scripts/ci_retry.py | tests/test_reusable_release_preflight.py | **quedarse** | 0 |
 | `.github/workflows/roles.yml` | workflow_call | 207 | scripts/roles_kit.py | tests/test_roles_kit.py, tests/test_roles_workflow_contract.py | **eliminar** | 2 |
 | `.github/workflows/seguridad.yml` | pull_request, push, issues, issue_comment, workflow_dispatch | 297 | ninguno directo (CodeQL/seguridad) | tests/test_template_security_workflow_contract.py | **quedarse** | 0 |
-| `.github/workflows/sonar-watch.yml` | schedule, workflow_dispatch | 37 | scripts/sonar-watch.py | tests/test_sonar_watch.py | **eliminar** | 1 |
 | `.github/workflows/sonar.yml` | pull_request, push, workflow_dispatch | 201 | scripts/generate_coverage.py | tests/test_sonar_ci_analysis_workflow.py | **quedarse** | 0 |
 | `.github/workflows/sync-label-colors.yml` | issue_comment | 50 | scripts/sync_label_colors.py | tests/test_sync_label_colors.py | **eliminar** | 2 |
 | `.github/workflows/unattended-watchdog.yml` | push, schedule, workflow_dispatch | 63 | scripts/unattended_watchdog_runtime.py, scripts/unattended_daily_summary.py | tests/test_unattended_watchdog_runtime.py, tests/test_unattended_daily_summary.py, tests/test_unattended_kill_switch.py | **quedarse** | 0 |
@@ -76,11 +75,25 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 
 **Preflight:** el YAML retirado era `pull_request`, `workflow_dispatch`, `schedule`, y no `workflow_call`. El check requerido observable de `main` es `Validar`; el CI común ejecuta las suites de métricas. Revalidar callers externos si se añaden referencias nuevas a ese trigger local. **Reversión:** squash-revert solo del PR F1B restaura cron, YAML, fila y pruebas anteriores sin deshacer F1A. No mover `Factory@v1`, publicar, gastar, desplegar ni activar live.
 
-## Plan por fases (F1A y F1B aplicadas; siguientes hojas independientes)
+## Ledger F1C de baja de Sonar Watch
+
+**Baseline F1B:** 35 workflows activos en `main@d9d9681720b258ad871c14260a254d389fbb96d2`. Tras retirar **solo** `.github/workflows/sonar-watch.yml` quedan **34 workflows activos**. Persisten la baseline histórica 38, F1A 36 y F1B 35; las cuatro bajas acumuladas son distintas y verificables.
+
+| Baja | Workflow retirado | Blob SHA previo | Transición | Reversión |
+| --- | --- | --- | --- | --- |
+| F1C | `.github/workflows/sonar-watch.yml` | `8dd0f9cfed97be7a804c8248a89b17b817639a7a` | 35 → 34 | squash-revert PR F1C |
+
+**Preflight de consumidores:** se inspeccionaron por contenido 122 YAML distintos del disparador candidato: 34 de Factory y 88 de Condor (17), GrindFlow (25), brvtal (18), ControlBot (14), AutoFactory (6) y FactoryRunner (8). No existen referencias literales a `sonar-watch.yml`, `Sonar Watch` o `sonar-watch.py` en esos workflows. La ficha `GET /repos/pl0n3r/Factory/branches/main` confirma `protected=true` y check requerido `Validar`; Sonar Watch no es ese check. No se elimina un reusable `workflow_call`: su entrada era solo `schedule` cada seis horas y `workflow_dispatch`.
+
+**Pérdida funcional deliberada:** cesan tanto la sincronización automática Sonar → GitHub Issues cada seis horas como la invocación manual desde GitHub Actions. En particular, las alertas Sonar ya abiertas #1052/#1053 **dejan de actualizarse por este cron**. Los checks Sonar CI-based y CodeQL **no reemplazan** esta vigilancia. El motor offline `scripts/sonar-watch.py`, `quality/sonar-watch-config.json`, `tests/test_sonar_watch.py` y sus escenarios de API/fail-closed siguen preservados, sin un trigger nuevo de escritura.
+
+**Seguridad:** sin cambios en `factory-ci.yml`, `sonar.yml`, `codeql-evidence.yml`, `costos.yml`, `unattended-watchdog.yml`, coordinación V3, release/bootstrap/freeze, deploy, kill switch ni `Factory@v1`. **Reversión:** squash-revert solo del PR F1C restaura workflow, cron/manual, fila del inventario y las tres pruebas de integración YAML anteriores sin revertir F1A/F1B. No se publica ni despliega.
+
+## Plan por fases (F1A, F1B y F1C aplicadas; siguientes hojas independientes)
 
 ### Fase 1: apagar telemetría y aprendizaje, sin suprimir controles
 
-**Rutas exactas:** `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`, `.github/workflows/sonar-watch.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
+**Rutas exactas:** `.github/workflows/captura-leccion.yml`, `.github/workflows/cabina.yml`. **Dependencias a revisar antes del PR:** `scripts/cabina.py`, `scripts/captura_leccion.py`, `scripts/sonar-watch.py`, `metricas/evaluar_agentes.py`, `producto/feedback.py`, `metricas/test_evaluar_agentes.py`, `metricas/test_producto_diario.py`, `producto/test_feedback.py`, `tests/test_cabina_workflow_contract.py`, `tests/test_captura_leccion_workflow.py`, `tests/test_factory_lab_contract.py`, `tests/test_feedback_contract.py`, `tests/test_metricas_integer_bounds.py` y `tests/test_sonar_watch.py`.
 
 **Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumidor. **No borrar** `scripts/unattended_kill_switch.py`, `scripts/unattended_guards.py` ni la comprobación obligatoria de #767. **Conservar explícitamente:**
 - `.github/workflows/costos.yml`: el job `presupuesto-pr` evalúa `metricas/costos.py pr` contra la **base confiable** y publica artifacts de presupuesto; `tendencia-ci` sí es telemetría programada y solo podría simplificarse mediante otra hoja con reserva, pruebas y evidencia de preservación de `presupuesto-pr`.
