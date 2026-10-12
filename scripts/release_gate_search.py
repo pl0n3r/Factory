@@ -22,6 +22,16 @@ class SearchEvidenceError(ValueError):
     """The remote inventory is not sufficiently complete to decide a freeze."""
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous JSON, including duplicate keys in nested issue records."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise SearchEvidenceError("duplicate evidence field")
+        result[key] = value
+    return result
+
+
 def _issue(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("pull_request") is not None:
         raise SearchEvidenceError("invalid issue record")
@@ -83,7 +93,8 @@ def _main(paths: list[str]) -> int:
     if any(not path or len(path) > 300 for path in paths):
         raise SearchEvidenceError("invalid evidence file path")
     try:
-        p1, p2, inventory = (json.loads(Path(path).read_text(encoding="utf-8"))
+        p1, p2, inventory = (json.loads(Path(path).read_text(encoding="utf-8"),
+                                      object_pairs_hook=_unique_object)
                              for path in paths)
     except (OSError, ValueError, UnicodeError) as exc:
         raise SearchEvidenceError("unreadable search evidence") from exc
