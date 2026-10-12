@@ -1,12 +1,13 @@
-"""Pruebas independientes del criterio de fusión en construcción D-069.
+"""Distingue el diagnóstico esencial #1295 del Policy versionado aún estricto.
 
-Las pruebas de Policy compartidas por otros PR permanecen sin modificaciones.
+El motor publicado en consumidores no se modifica mediante este PR.
 """
 import json
 import unittest
 
 from scripts import politica_kit as policy
 from scripts.politica_kit import PolicyError
+from scripts.automerge_construccion import FIELDS
 
 
 HEAD = "a" * 40
@@ -46,8 +47,8 @@ def green_gate_checks(*, head_sha=HEAD):
 
 
 class ConstructionMergePolicyTests(unittest.TestCase):
-    def test_construction_merge_policy_preserves_restricted_gates(self):
-        """Eximir la segunda cuenta no habilita checks rojos o ajenos al HEAD."""
+    def test_versioned_policy_keeps_existing_checks_until_separate_rollout(self):
+        """Policy externo sigue estricto aunque el diagnóstico puro sea esencial."""
         policy.validate_other_gates_green(green_gate_checks(), head_sha=HEAD)
 
         failed = green_gate_checks() + [
@@ -75,6 +76,9 @@ class ConstructionMergePolicyTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(PolicyError, "tests"):
             policy.validate_other_gates_green(missing, head_sha=HEAD)
+
+    def test_essential_diagnostic_has_complete_quality_and_hard_gate_evidence(self):
+        self.assertTrue({"quality_evidence", "quality_findings", "hard_gates"}.issubset(FIELDS))
 
 
 if __name__ == "__main__":
