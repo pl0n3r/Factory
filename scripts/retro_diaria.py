@@ -20,7 +20,7 @@ UTC_OFFSET = "+00:00"
 
 def _utc(value: Any) -> datetime | None:
     """Rechaza timestamps ingenuos, bool, epoch y cadenas malformadas."""
-    if not isinstance(value, str) or not value or len(value) > 40:
+    if type(value) is not str or not value or len(value) > 40:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", UTC_OFFSET))
@@ -41,12 +41,12 @@ def _validated_sources(sources: list[Any]) -> tuple[dict[str, str], set[str], st
     repos: set[str] = set()
     canonical_repos: set[str] = set()
     for source in sources:
-        if not isinstance(source, dict):
+        if type(source) is not dict:
             return {}, set(), "invalid_source"
         sid, repo, sha = (source.get(x) for x in ("id", "repo", "sha"))
-        if (not isinstance(sid, str) or not 1 <= len(sid) <= 100
-                or not isinstance(repo, str) or not REPO_RE.fullmatch(repo)
-                or not isinstance(sha, str) or not SHA_RE.fullmatch(sha)
+        if (type(sid) is not str or not 1 <= len(sid) <= 100
+                or type(repo) is not str or not REPO_RE.fullmatch(repo)
+                or type(sha) is not str or not SHA_RE.fullmatch(sha)
                 or source.get("authenticated") is not True
                 or source.get("complete") is not True):
             return {}, set(), "unauthenticated_or_incomplete_source"
@@ -66,7 +66,7 @@ def _validated_events(
     """Validate every event before projecting any counts or public output."""
     dedup: dict[tuple[str, str], tuple[str, str, str, datetime]] = {}
     for item in events:
-        if not isinstance(item, dict):
+        if type(item) is not dict:
             return {}, "invalid_event"
         eid, sid, repo, kind = (item.get(x) for x in ("id", "source_id", "repo", "kind"))
         stamp = _utc(item.get("occurred_at"))
@@ -107,8 +107,8 @@ def evaluate_retro_daily(*, events: Any, sources: Any, now: Any) -> dict[str, An
     anchor = _utc(now)
     if anchor is None:
         return _deny("invalid_clock")
-    if (not isinstance(sources, list) or not 1 <= len(sources) <= MAX_SOURCES
-            or not isinstance(events, list) or len(events) > MAX_EVENTS):
+    if (type(sources) is not list or not 1 <= len(sources) <= MAX_SOURCES
+            or type(events) is not list or len(events) > MAX_EVENTS):
         return _deny("missing_or_unbounded_evidence")
 
     valid_sources, repos, source_problem = _validated_sources(sources)

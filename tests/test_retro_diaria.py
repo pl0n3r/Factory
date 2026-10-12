@@ -131,6 +131,91 @@ class RetroDailyTests(unittest.TestCase):
         self.assertEqual(positive["counts_by_repo"]["pl0n3r/Factory"]["pr_merged"], 1)
         self.assertFalse(positive["publication_allowed"])
 
+
+    def test_hostile_source_dict_and_identity_fail_closed(self):
+        class BadMapping(dict):
+            def get(self, *_args, **_kwargs):
+                raise AssertionError("sensitive-source-get")
+
+        class BadString(str):
+            def __hash__(self):
+                raise AssertionError("sensitive-source-hash")
+
+            def __eq__(self, _other):
+                raise AssertionError("sensitive-source-eq")
+
+            def casefold(self):
+                raise AssertionError("sensitive-source-casefold")
+
+        clean = event("e1", "2026-10-11T08:00:00Z")
+        self.assertEqual(
+            evaluate_retro_daily(events=[clean], sources=[BadMapping(SOURCE)], now=NOW),
+            {"status": "UNKNOWN", "reason": "invalid_source"},
+        )
+        for field in ("id", "repo", "sha"):
+            with self.subTest(field=field):
+                record = {**SOURCE, field: BadString(SOURCE[field])}
+                result = evaluate_retro_daily(
+                    events=[clean], sources=[record], now=NOW)
+                self.assertEqual(result, {
+                    "status": "UNKNOWN",
+                    "reason": "unauthenticated_or_incomplete_source",
+                })
+                self.assertNotIn("sensitive-source", str(result))
+
+        class BadEvent(dict):
+            def get(self, *_args, **_kwargs):
+                raise AssertionError("sensitive-event-get")
+
+        result = evaluate_retro_daily(
+            events=[BadEvent(clean)], sources=[SOURCE], now=NOW)
+        self.assertEqual(result, {"status": "UNKNOWN", "reason": "invalid_event"})
+
+    def test_hostile_timestamp_subclass_fails_closed(self):
+        class BadTime(str):
+            def replace(self, *_args, **_kwargs):
+                raise AssertionError("sensitive-time-replace")
+
+        invalid_clock = evaluate_retro_daily(
+            events=[], sources=[SOURCE], now=BadTime(NOW))
+        self.assertEqual(invalid_clock, {
+            "status": "UNKNOWN", "reason": "invalid_clock",
+        })
+        invalid_event = evaluate_retro_daily(
+            events=[event("e1", BadTime("2026-10-11T08:00:00Z"))],
+            sources=[SOURCE], now=NOW)
+        self.assertEqual(invalid_event, {
+            "status": "UNKNOWN", "reason": "invalid_event_time",
+        })
+        self.assertNotIn("sensitive-time", str(invalid_clock) + str(invalid_event))
+
+    def test_native_json_sources_and_utc_events_preserve_results(self):
+        class BadList(list):
+            def __len__(self):
+                raise AssertionError("sensitive-list-len")
+
+        rows = [
+            event("new", "2026-10-11T08:00:00Z"),
+            event("edge", "2026-10-10T09:00:00+00:00", "incident_closed"),
+            event("old", "2026-10-10T08:59:59Z"),
+        ]
+        result = evaluate_retro_daily(events=rows, sources=[dict(SOURCE)], now=NOW)
+        self.assertEqual(result["status"], "READY")
+        self.assertEqual(result["window_start"], "2026-10-10T09:00:00Z")
+        self.assertEqual(result["window_end"], NOW)
+        self.assertEqual(len(result["events"]), 2)
+        self.assertEqual(result["counts_by_repo"]["pl0n3r/Factory"]["pr_merged"], 1)
+        self.assertEqual(result["counts_by_repo"]["pl0n3r/Factory"]["incident_closed"], 1)
+        self.assertFalse(result["publication_allowed"])
+        for events, sources in (
+            (BadList(rows), [SOURCE]),
+            (rows, BadList([SOURCE])),
+        ):
+            denied = evaluate_retro_daily(events=events, sources=sources, now=NOW)
+            self.assertEqual(denied, {
+                "status": "UNKNOWN", "reason": "missing_or_unbounded_evidence",
+            })
+
     def test_missing_authenticated_evidence_fails_closed(self):
         good = [event("new", "2026-10-11T08:00:00Z")]
         scenarios = [
