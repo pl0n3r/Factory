@@ -30,12 +30,15 @@ class API:
         self.block = ""
         self.race = False
         self.ref_reads = 0
+        self.issue_reads = 0
+        self.change_assignees_on_recheck = False
         self.remaining = 80
         self.repo_id = 123
         self.issue = {
             "number": 21, "state": "open", "comments": 2,
             "updated_at": "2026-10-11T09:45:00Z",
             "labels": [{"name": "estado: reservado"}],
+            "assignees": [{"login": "pl0n3r"}],
         }
         self.comments = [
             {"id": 1, "user": {"login": "github-actions[bot]", "type": "Bot"},
@@ -78,7 +81,11 @@ class API:
         if path == f"/repos/{REPO}":
             return {"id": self.repo_id, "full_name": REPO}
         if path == f"/repos/{REPO}/issues/21":
-            return copy.deepcopy(self.issue)
+            self.issue_reads += 1
+            observed = copy.deepcopy(self.issue)
+            if self.change_assignees_on_recheck and self.issue_reads == 2:
+                observed["assignees"] = [{"login": "other"}]
+            return observed
         if path.endswith("/git/ref/heads/trabajo/issue-21"):
             self.ref_reads += 1
             return {"object": {"sha": "b" * 40 if self.race and self.ref_reads > 1 else SHA}}
@@ -122,6 +129,42 @@ class API:
 
 
 class LeaseActivityCollectorTests(unittest.TestCase):
+    def test_assignee_authority_requires_exactly_one_owner(self):
+        good = collect_activity(API(), 21, now=NOW)
+        self.assertTrue(good["evidence_complete"])
+        cases = (
+            [],
+            [{"login": "other"}],
+            [{"login": "pl0n3r"}, {"login": "other"}],
+            [{"login": 123}],
+            [{"user": "pl0n3r"}],
+            [None],
+            "pl0n3r",
+        )
+        for assignees in cases:
+            with self.subTest(assignees=assignees):
+                api = API()
+                api.issue["assignees"] = assignees
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+        missing = API()
+        missing.issue.pop("assignees")
+        self.assertEqual(
+            collect_activity(missing, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
+    def test_assignee_authority_race_fails_closed(self):
+        api = API()
+        api.change_assignees_on_recheck = True
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(api.issue_reads, 2)
+
     def test_complete_authenticated_snapshots_track_owner_activity(self):
         api = API()
         result = collect_activity(api, 21, now=NOW)
