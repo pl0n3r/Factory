@@ -1529,8 +1529,9 @@ class _SweepGuardedGitHub:
         # La pausa posterior permite limpiar exclusivamente nuestro lock.
         if branch not in self._own_locks:
             raise CoordinationError("El barrido no puede borrar ramas ajenas.")
-        self._own_locks.remove(branch)
         self._api.delete_branch(branch)
+        # Solo al confirmar el borrado se pierde la autoridad sobre el lock.
+        self._own_locks.remove(branch)
 
     def comment(self, number: int, body: str) -> None:
         self._check()

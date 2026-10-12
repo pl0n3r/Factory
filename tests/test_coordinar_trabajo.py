@@ -1818,6 +1818,38 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(stale.status_history[-1], STATUS_RECOVERY)
         self.assertNotIn("coordinacion/lock-issue-12", stale.branches)
 
+    def test_scheduled_sweep_cleanup_failure_preserves_owned_lock(self) -> None:
+        """Un fallo REST no quita autoridad del lock propio ni toca uno ajeno."""
+        api = FakeGitHub()
+        guarded = coordinator._SweepGuardedGitHub(api)
+        own = "coordinacion/lock-issue-12"
+        other = "coordinacion/lock-issue-99"
+        api.branches[other] = "abc123"
+        with patch.object(coordinator, "require_sweep_running"):
+            self.assertTrue(guarded.create_branch(own, "abc123"))
+
+        original_delete = api.delete_branch
+        fail_once = {"remaining": 1}
+
+        def flaky_delete(branch):
+            if fail_once["remaining"]:
+                fail_once["remaining"] -= 1
+                raise GitHubError(403, "API transitoriamente indisponible")
+            original_delete(branch)
+
+        with patch.object(api, "delete_branch", side_effect=flaky_delete):
+            with self.assertRaises(GitHubError):
+                guarded.delete_branch(own)
+            self.assertIn(own, guarded._own_locks)
+            self.assertIn(own, api.branches)
+            with self.assertRaises(CoordinationError):
+                guarded.delete_branch(other)
+            guarded.delete_branch(own)
+
+        self.assertNotIn(own, guarded._own_locks)
+        self.assertNotIn(own, api.branches)
+        self.assertIn(other, api.branches)
+
     def test_scheduled_sweep_runs_reservations_and_blockers(self) -> None:
         api, observed = self._sweep_switch_api("RUNNING")
         with (
