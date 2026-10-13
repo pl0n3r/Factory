@@ -669,6 +669,15 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 result = self.run_generated(mutated)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("FAIL", result.stderr)
+        # A YAML comment must not spoof the runner that executes the router.
+        with self.subTest(unsafe_preflight="self_hosted_runner_spoof"):
+            original = "    runs-on: ubuntu-latest"
+            self.assertEqual(strict.count(original), 1)
+            mutated = strict.replace(original, "    runs-on: self-hosted\n    # runs-on: ubuntu-latest", 1)
+            result = self.run_generated(mutated)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("FAIL", result.stderr)
+
         # The preflight job itself must enforce authorization and resources.
         for before, after in (
             ("github.event_name == 'issue_comment'", "github.event_name == 'issues'"),
