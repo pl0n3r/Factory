@@ -2407,6 +2407,63 @@ class CoordinacionTests(unittest.TestCase):
             ("GET", "/repos/pl0n3r/Factory/git/ref/heads/coordinacion/lock-issue-12")
         ])
 
+    def test_consumer_real_authenticated_switch_pauses_between_lock_posts(self) -> None:
+        """La guarda real lee Factory#767 autenticado y corta el segundo POST."""
+        api = GitHub("pl0n3r/Condor", "fake-token")
+        calls = []
+        switch_reads = 0
+        switch_state = "RUNNING"
+        nonce = "c" * 40
+
+        def rest(method, path, payload=None, allow=()):
+            nonlocal switch_reads, switch_state
+            calls.append((method, path))
+            if method == "GET" and path == "/repos/pl0n3r/Factory/issues/767":
+                switch_reads += 1
+                state = switch_state
+                return {
+                    "number": 767,
+                    "url": coordinator.CANONICAL_SOURCE_URL,
+                    "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                    "state": "closed",
+                    "user": {"login": "pl0n3r"},
+                    "body": (
+                        '<!-- factory-unattended-kill-switch '
+                        + json.dumps({"version": 1, "state": state, "owner": "pl0n3r"})
+                        + " -->"
+                    ),
+                }
+            if method == "GET" and path.endswith(
+                "/git/ref/heads/coordinacion/lock-issue-12"
+            ):
+                return None
+            if method == "GET" and path.endswith("/git/commits/" + "a" * 40):
+                return {"tree": {"sha": "b" * 40}}
+            if method == "POST" and path.endswith("/git/commits"):
+                switch_state = "PAUSED"
+                return {"sha": nonce}
+            if method == "POST" and path.endswith("/git/refs"):
+                raise AssertionError("No crear la ref después de PAUSED")
+            raise AssertionError("REST inesperado: " + method + " " + path)
+
+        api.request = rest
+        api.public_request = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("La guarda no puede usar una lectura anónima")
+        )
+        with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+            api.acquire_issue_lock(12, "a" * 40)
+
+        self.assertEqual(switch_reads, 2)
+        self.assertEqual(
+            [method for method, _ in calls if method == "POST"], ["POST"]
+        )
+        self.assertTrue(any(
+            method == "POST" and path.endswith("/git/commits")
+            for method, path in calls
+        ))
+        self.assertFalse(any(path.endswith("/git/refs") for _, path in calls))
+        self.assertEqual(switch_state, "PAUSED")
+
     def test_atomic_lock_acquisition_rechecks_global_pause_per_write(self) -> None:
         """PAUSED antes del nonce = 0 POST; PAUSED entre nonce/ref = 1 POST."""
         api = GitHub("pl0n3r/Factory", "fake-token")
