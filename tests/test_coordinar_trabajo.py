@@ -1806,8 +1806,10 @@ class CoordinacionTests(unittest.TestCase):
             n = observed["reads"]
             observed["reads"] += 1
             mode = states[min(n, len(states) - 1)]
-            if mode == "403":
-                raise GitHubError(403, "403 de instalación simulado")
+            if mode in ("403", "404", "429"):
+                raise GitHubError(int(mode), "error de instalación simulado")
+            if mode == "timeout":
+                raise OSError("timeout simulado")
             payload = {
                 "number": 767,
                 "url": coordinator.CANONICAL_SOURCE_URL,
@@ -1834,6 +1836,15 @@ class CoordinacionTests(unittest.TestCase):
             return payload
 
         api.issue = read_issue
+
+        def request(method, path, payload=None, allow=()):
+            if (method, path) != (
+                "GET", "/repos/pl0n3r/Factory/issues/767"
+            ):
+                raise AssertionError("Lectura REST no canónica")
+            return read_issue(767)
+
+        api.request = request
         return api, observed
 
     def test_scheduled_sweep_paused_invalid_switch_zero_writes(self):
@@ -1986,6 +1997,10 @@ class CoordinacionTests(unittest.TestCase):
             }
 
         def request(method, path, payload=None, allow=()):
+            if (method, path) == (
+                "GET", "/repos/pl0n3r/Factory/issues/767"
+            ):
+                return read_issue(767)
             if method == "GET" and "/labels/" in path:
                 return {"name": "already-exists"}
             writes.append((method, path))
