@@ -90,10 +90,11 @@ def verified_inventory(first: Any, second: Any, published: Any) -> list[dict[str
 
 
 def _evidence_path(raw: str) -> Path:
-    """Resolve an evidence path and keep it inside the runner temp directory."""
-    base = os.path.realpath(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
+    """Resolve an evidence path and keep it inside a temp directory."""
+    roots = {os.path.realpath(root) for root in (
+        os.environ.get("RUNNER_TEMP"), tempfile.gettempdir(), "/tmp") if root}
     resolved = os.path.realpath(raw)
-    if os.path.commonpath([base, resolved]) != base:
+    if not any(os.path.commonpath([root, resolved]) == root for root in roots):
         raise SearchEvidenceError("evidence file outside temp directory")
     return Path(resolved)
 
