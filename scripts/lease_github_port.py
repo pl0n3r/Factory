@@ -348,10 +348,16 @@ class LeaseGithubPort:
                     if type(raw_marker) is not dict or payload != raw_marker:
                         raise ValueError("malformed_v3_marker")
                     active_markers.append((comment["id"], payload))
-                if "<!-- factory-lease-recovery " not in body:
+                # Contar incluso los encabezados malformados antes de
+                # aceptar una nota legítima: un segundo encabezado con
+                # otra caja o truncado debe fallar cerrado.
+                note_heads = re.findall(
+                    r"<!--\s*factory-lease-recovery\b", body,
+                    flags=re.IGNORECASE)
+                if not note_heads:
                     continue
-                if not is_bot or body.count("<!-- factory-lease-recovery ") != 1:
-                    raise ValueError("untrusted_note_actor")
+                if not is_bot or len(note_heads) != 1:
+                    raise ValueError("untrusted_note_actor_or_count")
                 match = re.search(
                     r"<!-- factory-lease-recovery (\{[^\n]*\}) -->", body)
                 if match is None:

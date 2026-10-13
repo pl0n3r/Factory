@@ -381,6 +381,14 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: x.notes[0].update(
                 body=x.notes[0]["body"] + "\n<!-- CONDOR-RESERVA {"),
             lambda x: x.notes[1].update(
+                body=x.notes[1]["body"] + "\n" + x.notes[1]["body"]),
+            lambda x: x.notes[1].update(
+                body=x.notes[1]["body"] +
+                     "\n<!-- FACTORY-LEASE-RECOVERY {"),
+            lambda x: x.notes[1].update(
+                body=x.notes[1]["body"] +
+                     "\n<!-- factory-lease-recovery {"),
+            lambda x: x.notes[1].update(
                 body=x.notes[1]["body"].replace(
                     '"version": 1', '"version": 1, "version": 1')),
         )
