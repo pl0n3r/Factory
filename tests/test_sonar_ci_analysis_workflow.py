@@ -36,8 +36,36 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         )
         self.assertIn("vars.SONAR_CI_ENABLED == 'true'", text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)
-        self.assertIn("github.event.pull_request.draft == false", text)
+        self.assertNotIn("github.event.pull_request.draft == false", text)
         self.assertNotIn("pull_request_target:", text)
+
+    def test_draft_pull_request_runs_sonar_without_automerge(self):
+        """Un draft interno puede analizarse, pero no solicitar merge."""
+        text = self.text
+        self.assertIn(
+            "types: [opened, synchronize, reopened, ready_for_review]", text
+        )
+        self.assertNotIn("github.event.pull_request.draft == false", text)
+        self.assertEqual(
+            text.count(
+                "github.event.pull_request.head.repo.full_name == github.repository"
+            ), 3
+        )
+        self.assertEqual(text.count("github.actor != 'dependabot[bot]'"), 3)
+        self.assertGreaterEqual(
+            text.count("vars.SONAR_CI_ENABLED == 'true'"), 3
+        )
+        self.assertIn("needs.sonar.result == 'success'", text)
+        self.assertNotIn("pull_request_target:", text)
+
+        automerge = (
+            ROOT / ".github" / "workflows" / "automerge.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "if: github.event.pull_request.draft == false &&", automerge
+        )
+        self.assertIn("ready_for_review", automerge)
+        self.assertIn('gh pr merge --auto --squash "$PR_URL"', automerge)
 
     def test_coverage_report_is_wired_into_scanner(self):
         text = self.text
