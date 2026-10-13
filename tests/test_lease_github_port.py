@@ -103,6 +103,9 @@ class LeaseGithubPortTests(unittest.TestCase):
                 ]
                 self.sentinel = []
                 self.reject = None
+                self.issue_reads = 0
+                self.drift_labels = False
+                self.drift_assignees = False
 
             def request(self, method, path):
                 assert method == "GET"
@@ -118,11 +121,17 @@ class LeaseGithubPortTests(unittest.TestCase):
                 if path == "/repos/pl0n3r/Factory":
                     return {"id": 123, "full_name": self.repo}
                 if path == "/repos/pl0n3r/Factory/issues/1191":
+                    self.issue_reads += 1
+                    # Mismo updated_at con nuevo titular o nueva etiqueta:
+                    # el segundo GET debe invalidar el proof de la primera.
+                    late = self.issue_reads > 1
                     return {
                         "number": 1191, "state": "open",
                         "comments": len(self.notes), "updated_at": self.revision,
-                        "assignees": [{"login": target.owner}],
-                        "labels": [{"name": target.status}],
+                        "assignees": [{"login": "intruder" if late and
+                                      self.drift_assignees else target.owner}],
+                        "labels": [{"name": "estado: disponible" if late and
+                                    self.drift_labels else target.status}],
                     }
                 if path == "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-1191":
                     return {"object": {"sha": self.branch_sha}}
@@ -188,6 +197,8 @@ class LeaseGithubPortTests(unittest.TestCase):
                 "/repos/pl0n3r/Factory/issues/1191/comments?per_page=100&page=1"),
             lambda x: setattr(x, "pause_on_second", True),
             lambda x: setattr(x, "switch_state", "open"),
+            lambda x: setattr(x, "drift_labels", True),
+            lambda x: setattr(x, "drift_assignees", True),
             lambda x: x.notes[0].update(body="spoofed bot marker"),
             lambda x: x.notes[1].update(
                 body=x.notes[1]["body"].replace(
