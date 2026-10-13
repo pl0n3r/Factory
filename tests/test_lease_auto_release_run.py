@@ -132,6 +132,41 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertNotIn("issues: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
 
+    def test_scheduled_lock_matches_coordinator_and_pr_does_not_take_it(self):
+        root = Path(__file__).resolve().parents[1]
+        lease = (root / ".github/workflows/liberar-reservas.yml").read_text(
+            encoding="utf-8")
+        coordination = (root / ".github/workflows/coordinacion-trabajo.yml"
+                        ).read_text(encoding="utf-8")
+        self.assertEqual(lease.count("\nconcurrency:\n"), 1)
+        self.assertEqual(coordination.count("\nconcurrency:\n"), 1)
+        # schedule/dispatch heredan EXACTAMENTE el candado del coordinador
+        # y conservan cola no destructiva. No es CAS ni habilita escritura.
+        self.assertIn(
+            "group: factory-coordination-${{ github.repository_id }}",
+            coordination)
+        self.assertIn("queue: max", coordination)
+        self.assertIn("cancel-in-progress: false", coordination)
+        self.assertIn(
+            "format('factory-coordination-{0}', github.repository_id)",
+            lease)
+        self.assertIn(
+            "github.event_name == 'pull_request' && "
+            "format('factory-lease-audit-pr-{0}', "
+            "github.event.pull_request.number)",
+            lease)
+        self.assertNotIn(
+            "group: factory-lease-audit-${{ github.repository_id }}",
+            lease)
+        self.assertIn("queue: max", lease)
+        self.assertIn("cancel-in-progress: false", lease)
+        self.assertIn("permissions:\n  contents: read\n  issues: read",
+                      lease)
+        self.assertNotIn("issues: write", lease)
+        self.assertNotIn("pull-requests: write", lease)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'",
+                      lease)
+
     def test_scheduled_dry_run_defaults_off_and_never_writes(self):
         workflow = (Path(__file__).resolve().parents[1] /
                     ".github/workflows/liberar-reservas.yml").read_text(
