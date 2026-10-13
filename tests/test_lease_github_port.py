@@ -1,6 +1,7 @@
 """Pruebas offline del futuro Port GitHub: observación != autoridad de release."""
 import unittest
 import json
+from collections import UserString
 from datetime import timedelta
 
 from scripts.lease_auto_release_run import run_cycle
@@ -703,6 +704,9 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(boundary_transport.switch_reads, 2)
 
         bad_fields = (
+            ("status", UserString("estado: en revisión")),
+            ("repo", UserString("pl0n3r/Factory")),
+            ("branch", UserString("trabajo/issue-21")),
             ("repo", "other/repository"),
             ("status", "estado: disponible"),
             ("status", True),
