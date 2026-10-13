@@ -113,6 +113,18 @@ class FakeGitHub:
 
     def issue(self, number: int) -> dict:
         """Devuelve el Issue falso o una dependencia configurada."""
+        if number == 767 and self.repo.lower() == "pl0n3r/factory":
+            return {
+                "number": 767,
+                "url": coordinator.CANONICAL_SOURCE_URL,
+                "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                "state": getattr(self, "kill_switch_issue_state", "closed"),
+                "user": {"login": "pl0n3r"},
+                "body": ("<!-- factory-unattended-kill-switch "
+                         '{"version":1,"state":"' +
+                         getattr(self, "kill_switch_marker", "RUNNING") +
+                         '","owner":"pl0n3r"} -->'),
+            }
         if number == 12:
             return {
                 **self.issue_data,
@@ -123,6 +135,22 @@ class FakeGitHub:
         if number in self.related_issues:
             return self.related_issues[number]
         raise AssertionError(f"Issue falso desconocido: {number}")
+
+    def public_request(self, path: str, allow: tuple[int, ...] = ()) -> dict:
+        """Fixture del único interruptor público válido entre repositorios."""
+        if path != "/repos/pl0n3r/Factory/issues/767":
+            raise AssertionError("Fuente pública no canónica: " + path)
+        return {
+            "number": 767,
+            "url": coordinator.CANONICAL_SOURCE_URL,
+            "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+            "state": getattr(self, "kill_switch_issue_state", "closed"),
+            "user": {"login": "pl0n3r"},
+            "body": ("<!-- factory-unattended-kill-switch "
+                     '{"version":1,"state":"' +
+                     getattr(self, "kill_switch_marker", "RUNNING") +
+                     '","owner":"pl0n3r"} -->'),
+        }
 
     def pull(self, number: int) -> dict:
         """Devuelve un PR falso."""
@@ -192,6 +220,18 @@ class FakeGitHub:
     def delete_branch(self, branch: str) -> None:
         """Elimina una rama si existe."""
         self.branches.pop(branch, None)
+
+    def acquire_issue_lock(self, issue_number: int, sha: str) -> str | None:
+        branch = coordinator.recovery_lock_branch(issue_number)
+        self.lock_counter = getattr(self, "lock_counter", 0) + 1
+        token = f"lock-generation-{self.lock_counter}-{sha}"
+        return token if self.create_branch(branch, token) else None
+
+    def release_issue_lock(self, issue_number: int, token: str) -> None:
+        branch = coordinator.recovery_lock_branch(issue_number)
+        if self.branch_sha(branch) != token:
+            raise CoordinationError("Lock V3: CAS V3 denegado: no liberar lock ajeno.")
+        self.delete_branch(branch)
 
     def issue_comments(self, issue_number: int) -> list[dict]:
         """Devuelve comentarios por Issue sin asumir un único objetivo."""
@@ -418,6 +458,54 @@ class WorkflowCoordinacionTests(unittest.TestCase):
             "EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}",
             job,
         )
+
+    def test_claims_authority_ignores_timestamp_noise_but_rejects_real_drift(self) -> None:
+        """Una referencia de commit no cambia contrato; body, labels y dueño sí."""
+        import ast
+        import hashlib
+        import textwrap
+
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/coordinacion-trabajo.yml"
+        ).read_text(encoding="utf-8")
+        job = self.yaml_block(workflow, "claims-pr:", 2)
+        script = textwrap.dedent(
+            job.split("python3 - <<'PY'", 1)[1].split("\n          PY", 1)[0]
+        )
+        functions = [node for node in ast.parse(script).body
+                     if isinstance(node, ast.FunctionDef)
+                     and node.name == "issue_authority"]
+        self.assertEqual(len(functions), 1)
+        record = {
+            "number": 1114, "state": "open", "body": "acceptance body v1",
+            "updated_at": "2026-10-12T19:21:20Z",
+            "labels": [{"name": "estado: en revisión"},
+                       {"name": "prioridad: alta"}],
+            "assignees": [{"login": "pl0n3r"}],
+        }
+        context = {"get": lambda _url: record, "repo": "pl0n3r/Factory",
+                   "issue": 1114, "lease": {"owner": "pl0n3r"},
+                   "hashlib": hashlib}
+        module = ast.Module(body=functions, type_ignores=[])
+        exec(compile(module, "<claims-pr>", "exec"), context)
+        authority = context["issue_authority"]
+        baseline = authority()
+        record["updated_at"] = "2026-10-12T19:21:24Z"
+        self.assertEqual(authority(), baseline)
+        record["body"] = "acceptance body v2"
+        self.assertNotEqual(authority(), baseline)
+        record["body"] = "acceptance body v1"
+        record["labels"][1]["name"] = "prioridad: crítica"
+        self.assertNotEqual(authority(), baseline)
+        record["labels"][1]["name"] = "prioridad: alta"
+        record["assignees"][0]["login"] = "intruso"
+        with self.assertRaisesRegex(AssertionError, "issue authority invalid"):
+            authority()
+        record["assignees"][0]["login"] = "pl0n3r"
+        record["body"] = None
+        with self.assertRaisesRegex(AssertionError, "issue authority invalid"):
+            authority()
 
     def test_issue_comment_routes_only_supported_commands_to_coordinator(self) -> None:
         """El job correcto recibe el evento, identidad y argumentos esperados."""
@@ -2113,6 +2201,280 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(reservation["reservation_id"], SESSION_B)
         self.assertNotIn("coordinacion/lock-issue-12", api.branches)
 
+    def test_stale_sweep_cas_preserves_successor_when_lock_is_replaced(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api, owner="agente-anterior")
+        old = "2020-01-01T00:00:00+00:00"
+        api.comments[-1]["created_at"] = old
+        api.comments[-1]["updated_at"] = old
+        api.commit_times["abc123"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        initial_status = list(api.status_history)
+        lock = coordinator.recovery_lock_branch(12)
+        def takeover(*args):
+            api.branches[lock] = "successor-session"
+            return True
+        with patch.object(coordinator, "recovery_candidate_still_valid",
+                          side_effect=takeover):
+            with self.assertRaisesRegex(CoordinationError, "Lock V3"):
+                coordinator.mark_stale_reservation(api, api.issue_data)
+        self.assertEqual(api.branches[lock], "successor-session")
+        self.assertEqual(api.status_history, initial_status)
+
+    def test_sweep_guard_checks_kill_switch_for_both_lock_writes(self) -> None:
+        api = GitHub("pl0n3r/Factory", "fake-token")
+        seen = []
+        def request(method, path, payload=None, allow=()):
+            seen.append((method, path))
+            if method == "GET" and "/git/ref/heads/coordinacion/lock-issue-" in path:
+                return None
+            if path.endswith("/git/commits/" + "a" * 40):
+                return {"tree": {"sha": "b" * 40}}
+            if path.endswith("/git/commits") and method == "POST":
+                return {"sha": "c" * 40}
+            if path.endswith("/git/refs") and method == "POST":
+                return {"ref": "refs/heads/coordinacion/lock-issue-12"}
+            raise AssertionError("unexpected REST " + path)
+        api.request = request
+        guard = coordinator._SweepGuardedGitHub(api)
+        checks = []
+        with patch.object(coordinator, "require_sweep_running",
+                          side_effect=lambda unused: checks.append("running")):
+            token = guard.acquire_issue_lock(12, "a" * 40)
+        self.assertEqual(token, "c" * 40)
+        self.assertEqual([method for method, _ in seen], ["GET", "GET", "POST", "POST"])
+        self.assertGreaterEqual(len(checks), 3)
+
+    def test_busy_v3_lock_avoids_unreachable_nonce_commit(self) -> None:
+        """Lock ya existente no hace POST y no confía en el valor del HEAD."""
+        api = GitHub("pl0n3r/Factory", "fake-token")
+        observed = []
+
+        def rest(method, path, payload=None, allow=()):
+            observed.append((method, path))
+            if method == "GET" and path.endswith("/git/ref/heads/coordinacion/lock-issue-12"):
+                return {"object": {"sha": "f" * 40}}
+            raise AssertionError("No se autorizan más API calls bajo contención.")
+        api.request = rest
+        self.assertIsNone(api.acquire_issue_lock(12, "a" * 40))
+        self.assertEqual(observed, [
+            ("GET", "/repos/pl0n3r/Factory/git/ref/heads/coordinacion/lock-issue-12")
+        ])
+
+    def test_atomic_lock_acquisition_rechecks_global_pause_per_write(self) -> None:
+        """PAUSED antes del nonce = 0 POST; PAUSED entre nonce/ref = 1 POST."""
+        api = GitHub("pl0n3r/Factory", "fake-token")
+        calls = []
+
+        def rest(method, path, payload=None, allow=()):
+            calls.append((method, path))
+            if method == "GET" and "/git/ref/heads/coordinacion/lock-issue-" in path:
+                return None
+            if method == "GET" and path.endswith("/git/commits/" + "a" * 40):
+                return {"tree": {"sha": "b" * 40}}
+            if method == "POST" and path.endswith("/git/commits"):
+                return {"sha": "c" * 40}
+            if method == "POST" and path.endswith("/git/refs"):
+                return {"ref": "refs/heads/coordinacion/lock-issue-12"}
+            raise AssertionError("unexpected request " + path)
+
+        api.request = rest
+        from unittest.mock import call
+
+        for decisions, expected_posts in (
+            ([CoordinationError("Kill switch #767 PAUSED")], 0),
+            ([None, CoordinationError("Kill switch #767 PAUSED")], 1),
+        ):
+            calls.clear()
+            with self.subTest(expected_posts=expected_posts):
+                with patch.object(coordinator, "require_global_running",
+                                  side_effect=decisions) as check:
+                    with self.assertRaisesRegex(CoordinationError, "PAUSED"):
+                        api.acquire_issue_lock(12, "a" * 40)
+                    self.assertEqual(check.call_count, len(decisions))
+                self.assertEqual(
+                    sum(method == "POST" for method, _ in calls), expected_posts
+                )
+                self.assertFalse(any(path.endswith("/git/refs")
+                                     for _, path in calls))
+
+        calls.clear()
+        with patch.object(coordinator, "require_global_running") as check:
+            self.assertEqual(api.acquire_issue_lock(12, "a" * 40), "c" * 40)
+            self.assertEqual(check.call_count, 2)
+        self.assertEqual(sum(m == "POST" for m, _ in calls), 2)
+
+    def test_missing_recovery_branch_rechecks_pause_after_main_lookup(self) -> None:
+        """RUNNING inicial no permite POST tras una pausa al leer main."""
+        api = FakeGitHub()
+        branch = "trabajo/issue-12"
+        api.branches.pop(branch, None)
+        api.branches["main"] = "a" * 40
+        create = api.create_branch
+        writes = []
+        def record_create(name, sha):
+            writes.append((name, sha))
+            return create(name, sha)
+        api.create_branch = record_create
+        original = api.branch_sha
+        def pause_during_main(name):
+            result = original(name)
+            if name == "main":
+                api.kill_switch_marker = "PAUSED"
+            return result
+        with patch.object(api, "branch_sha", side_effect=pause_during_main):
+            with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+                coordinator.ensure_recovery_branch(api, branch)
+        self.assertNotIn(branch, api.branches)
+        self.assertEqual(writes, [])
+
+        api.kill_switch_marker = "RUNNING"
+        self.assertTrue(coordinator.ensure_recovery_branch(api, branch))
+        self.assertEqual(api.branches[branch], "a" * 40)
+        self.assertEqual(writes, [(branch, "a" * 40)])
+
+    def test_recovery_pause_blocks_before_branch_or_lock_create(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api, owner="agente-anterior")
+        api.set_status(12, STATUS_RECOVERY)
+        lock = coordinator.recovery_lock_branch(12)
+        old_comments = list(api.comments)
+        for state in ("PAUSED", "INVALID"):
+            api.kill_switch_marker = state
+            with self.subTest(state=state):
+                with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+                    coordinator.recover_existing_work_if_stale(
+                        api, 12, "pl0n3r", "trabajo/issue-12",
+                        coordinator.active_reservation(api, 12))
+                self.assertNotIn(lock, api.branches)
+                self.assertEqual(api.comments, old_comments)
+
+    def test_recovery_pause_after_lock_vetoes_reservation_writes(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api, owner="agente-anterior")
+        api.set_status(12, STATUS_RECOVERY)
+        lock = coordinator.recovery_lock_branch(12)
+        old_comments = list(api.comments)
+        old_statuses = list(api.status_history)
+        recover = coordinator.recover_stale_work
+
+        def pause_after_lock(guarded, number, actor, branch, previous):
+            api.kill_switch_marker = "PAUSED"
+            return recover(guarded, number, actor, branch, previous)
+
+        with patch.object(coordinator, "recover_stale_work",
+                          side_effect=pause_after_lock):
+            with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+                coordinator.recover_existing_work_if_stale(
+                    api, 12, "pl0n3r", "trabajo/issue-12",
+                    coordinator.active_reservation(api, 12))
+        self.assertEqual(api.comments, old_comments)
+        self.assertEqual(api.status_history, old_statuses)
+        self.assertNotIn(lock, api.branches)
+
+    def test_consumer_global_kill_switch_cannot_use_local_issue_or_bad_marker(self) -> None:
+        api = FakeGitHub()
+        self.assertIsNone(coordinator.require_global_running(api))
+        for state, issue_state in (("PAUSED", "closed"),
+                                   ("RUNNING", "open"),
+                                   ("INVALID", "closed")):
+            api.kill_switch_marker = state
+            api.kill_switch_issue_state = issue_state
+            with self.subTest(state=state):
+                with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+                    coordinator.require_global_running(api)
+        api.kill_switch_marker = "RUNNING"
+        api.kill_switch_issue_state = "closed"
+        api.public_request = lambda path: {"number": 767, "state": "closed"}
+        with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+            coordinator.require_global_running(api)
+
+    def test_recovery_label_mutations_recheck_pause_and_lease_each_rest_write(self) -> None:
+        """Nunca emitir DELETE posterior a PAUSED o reemplazo de nonce."""
+        for lose in ("PAUSED", "stolen"):
+            with self.subTest(lose=lose):
+                api = GitHub("pl0n3r/Factory", "fake-token")
+                lock = coordinator.recovery_lock_branch(12)
+                state = {"running": True, "token": "a" * 40}
+                sent = []
+
+                def rest(method, path, payload=None, allow=()):
+                    sent.append((method, path))
+                    if method == "GET" and "/labels/" in path:
+                        return {"name": "existing"}
+                    if method == "POST" and path.endswith("/issues/12/labels"):
+                        if lose == "PAUSED":
+                            state["running"] = False
+                        else:
+                            state["token"] = "b" * 40
+                    return {}
+
+                api.request = rest
+                def branch_sha(name):
+                    if name == lock:
+                        return state["token"]
+                    if name == "trabajo/issue-12":
+                        return "c" * 40
+                    raise AssertionError(name)
+                api.branch_sha = branch_sha
+                guarded = coordinator._RecoveryGuardedGitHub(
+                    api, 12, "c" * 40, "a" * 40)
+                def running(_):
+                    if not state["running"]:
+                        raise CoordinationError("Kill switch #767 PAUSED")
+                with patch.object(coordinator, "require_global_running",
+                                  side_effect=running):
+                    with self.assertRaisesRegex(
+                        CoordinationError, "PAUSED|Lock V3"):
+                        guarded.set_status(12, STATUS_RESERVED)
+                mutations = [(m, p) for m, p in sent if m in ("POST", "DELETE")]
+                self.assertEqual(mutations, [
+                    ("POST", "/repos/pl0n3r/Factory/issues/12/labels")
+                ])
+                self.assertFalse(any(m == "DELETE" for m, _ in sent))
+
+    def test_stale_recovery_stolen_cas_lock_cannot_publish_reservation(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api, owner="agente-anterior")
+        api.set_status(12, STATUS_RECOVERY)
+        comments_before = list(api.comments)
+        status_before = list(api.status_history)
+        lock = coordinator.recovery_lock_branch(12)
+        original = coordinator.recover_stale_work
+
+        def steal(locked_api, issue_number, actor, branch, previous):
+            api.branches[lock] = "successor-token"
+            return original(locked_api, issue_number, actor, branch, previous)
+
+        with patch.object(coordinator, "recover_stale_work", side_effect=steal):
+            with self.assertRaisesRegex(CoordinationError, "Lock V3"):
+                coordinator.recover_existing_work_if_stale(
+                    api, 12, "pl0n3r", "trabajo/issue-12",
+                    coordinator.active_reservation(api, 12))
+        self.assertEqual(api.branches[lock], "successor-token")
+        self.assertEqual(api.comments, comments_before)
+        self.assertEqual(api.status_history, status_before)
+
+    def test_stale_recovery_checks_lock_before_status_after_comment(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api, owner="agente-anterior")
+        api.set_status(12, STATUS_RECOVERY)
+        lock = coordinator.recovery_lock_branch(12)
+        original_comment = api.comment
+        initial_status = list(api.status_history)
+
+        def lose_lock_after_reservation(number, body):
+            original_comment(number, body)
+            api.branches[lock] = "different-token"
+
+        api.comment = lose_lock_after_reservation
+        with self.assertRaisesRegex(CoordinationError, "Lock V3"):
+            coordinator.recover_existing_work_if_stale(
+                api, 12, "pl0n3r", "trabajo/issue-12",
+                coordinator.active_reservation(api, 12))
+        self.assertEqual(api.branches[lock], "different-token")
+        self.assertEqual(api.status_history, initial_status)
+        self.assertEqual(len(api.comments), 2)
+
     def test_new_work_waits_while_recovery_is_pending(self) -> None:
         """Un Issue disponible no salta por encima de recuperación pendiente."""
         api = FakeGitHub()
@@ -2606,6 +2968,7 @@ class CoordinacionTests(unittest.TestCase):
 
     def _renew_fixture(self) -> FakeGitHub:
         api = FakeGitHub()
+        api.repo = "pl0n3r/Factory"
         add_active_reservation(api)
         api.pulls[15] = {
             "number": 15, "state": "open", "draft": False,
@@ -2634,6 +2997,220 @@ class CoordinacionTests(unittest.TestCase):
             active["acceptance_sha256"],
             contract_fingerprint(api.issue_data["body"]),
         )
+
+    def test_renewal_acquires_shared_issue_lock_before_invalidating(self) -> None:
+        api = self._renew_fixture()
+        lock = coordinator.recovery_lock_branch(12)
+        original = api.create_failed_check
+        observed = []
+
+        def validate_lock(name, sha, title, summary):
+            observed.append(api.branch_sha(lock))
+            self.assertNotEqual(api.branch_sha(lock), api.branch_sha("trabajo/issue-12"))
+            original(name, sha, title, summary)
+
+        api.create_failed_check = validate_lock
+        renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(len(observed), 1)
+        self.assertTrue(observed[0].startswith("lock-generation-"))
+        self.assertIsNone(api.branch_sha(lock))
+        self.assertEqual(len(api.check_runs), 1)
+
+    def test_renewal_existing_lock_prevents_any_writes(self) -> None:
+        api = self._renew_fixture()
+        lock = coordinator.recovery_lock_branch(12)
+        api.branches[lock] = "other-session-sha"
+        original_body = api.pulls[15]["body"]
+        original_comments = list(api.comments)
+        with self.assertRaisesRegex(CoordinationError, "Lock V3 ocupado"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(api.branches[lock], "other-session-sha")
+        self.assertEqual(api.check_runs, [])
+        self.assertEqual(api.pulls[15]["body"], original_body)
+        self.assertEqual(api.comments, original_comments)
+
+    def test_renewal_cleans_owned_lock_and_never_removes_replacement(self) -> None:
+        api = self._renew_fixture()
+        lock = coordinator.recovery_lock_branch(12)
+        api.issue_data["body"] = VALID_ACCEPTANCE_BODY
+        with self.assertRaisesRegex(CoordinationError, "No hay cambio"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertIsNone(api.branch_sha(lock))
+        self.assertEqual(api.check_runs, [])
+
+        api = self._renew_fixture()
+        original = api.create_failed_check
+        def replaced_during_write(name, sha, title, summary):
+            api.branches[lock] = "another-owner-sha"
+            original(name, sha, title, summary)
+        api.create_failed_check = replaced_during_write
+        with self.assertRaisesRegex(CoordinationError, "no liberar lock ajeno"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(api.branches[lock], "another-owner-sha")
+
+    def test_renewal_detects_lock_loss_before_first_mutation(self) -> None:
+        api = self._renew_fixture()
+        lock = coordinator.recovery_lock_branch(12)
+        original_pull = api.pull
+        original_pr = api.pulls[15]["body"]
+        initial_comments = list(api.comments)
+
+        def lose_lock_before_veto(number):
+            row = original_pull(number)
+            api.branches[lock] = "stolen-after-preflight"
+            return row
+
+        api.pull = lose_lock_before_veto
+        with self.assertRaisesRegex(CoordinationError, "Lock V3"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(api.check_runs, [])
+        self.assertEqual(api.pulls[15]["body"], original_pr)
+        self.assertEqual(api.comments, initial_comments)
+        self.assertEqual(api.branches[lock], "stolen-after-preflight")
+
+    def test_renewal_prevents_pr_write_if_lock_lost_after_veto(self) -> None:
+        api = self._renew_fixture()
+        lock = coordinator.recovery_lock_branch(12)
+        old_body = api.pulls[15]["body"]
+        old_comments = list(api.comments)
+        emit = api.create_failed_check
+
+        def lose_lock_after_veto(name, sha, title, summary):
+            emit(name, sha, title, summary)
+            api.branches[lock] = "stolen-after-veto"
+
+        api.create_failed_check = lose_lock_after_veto
+        with self.assertRaisesRegex(CoordinationError, "Lock V3"):
+            renew_pinned_acceptance(api, 12, "pl0n3r", "OWNER", SESSION_A)
+        # El veto ya emitido permanece rojo; no se modifica la reserva.
+        self.assertEqual(len(api.check_runs), 1)
+        self.assertEqual(api.check_runs[0]["conclusion"], "failure")
+        self.assertEqual(api.pulls[15]["body"], old_body)
+        self.assertEqual(api.comments, old_comments)
+        self.assertEqual(api.branches[lock], "stolen-after-veto")
+
+    def test_renewal_global_pause_prevents_first_lock_write(self) -> None:
+        api = self._renew_fixture()
+        lock = coordinator.recovery_lock_branch(12)
+        for state, issue_state in (("PAUSED", "closed"),
+                                   ("RUNNING", "open"),
+                                   ("INVALID", "closed")):
+            api.kill_switch_marker = state
+            api.kill_switch_issue_state = issue_state
+            with self.subTest(state=state, issue_state=issue_state):
+                with self.assertRaisesRegex(CoordinationError, "kill switch"):
+                    renew_pinned_acceptance(
+                        api, 12, "pl0n3r", "OWNER", SESSION_A)
+                self.assertNotIn(lock, api.branches)
+                self.assertEqual(api.check_runs, [])
+
+    def test_renewal_pause_after_lock_vetoes_check_and_keeps_lease(self) -> None:
+        api = self._renew_fixture()
+        original_pull = api.pull
+        body = api.pulls[15]["body"]
+        old_comments = list(api.comments)
+        def pause_before_veto(number):
+            pr = original_pull(number)
+            api.kill_switch_marker = "PAUSED"
+            return pr
+        api.pull = pause_before_veto
+        with self.assertRaisesRegex(CoordinationError, "kill switch"):
+            renew_pinned_acceptance(
+                api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(api.check_runs, [])
+        self.assertEqual(api.pulls[15]["body"], body)
+        self.assertEqual(api.comments, old_comments)
+        self.assertNotIn(coordinator.recovery_lock_branch(12), api.branches)
+
+    def test_renewal_pause_after_check_vetoes_pr_and_comment_writes(self) -> None:
+        api = self._renew_fixture()
+        original_check = api.create_failed_check
+        body = api.pulls[15]["body"]
+        old_comments = list(api.comments)
+        def pause_after_veto(*args):
+            original_check(*args)
+            api.kill_switch_marker = "PAUSED"
+        api.create_failed_check = pause_after_veto
+        with self.assertRaisesRegex(CoordinationError, "kill switch"):
+            renew_pinned_acceptance(
+                api, 12, "pl0n3r", "OWNER", SESSION_A)
+        self.assertEqual(len(api.check_runs), 1)
+        self.assertEqual(api.check_runs[0]["conclusion"], "failure")
+        self.assertEqual(api.pulls[15]["body"], body)
+        self.assertEqual(api.comments, old_comments)
+
+    def test_lock_recreated_on_same_head_cannot_be_released_by_old_owner(self):
+        api = self._renew_fixture()
+        lock = coordinator.recovery_lock_branch(12)
+        head = api.branch_sha("trabajo/issue-12")
+        token_a = api.acquire_issue_lock(12, head)
+        api.delete_branch(lock)
+        token_b = api.acquire_issue_lock(12, head)
+        self.assertNotEqual(token_a, token_b)
+        with self.assertRaisesRegex(CoordinationError, "CAS V3 denegado"):
+            api.release_issue_lock(12, token_a)
+        self.assertEqual(api.branch_sha(lock), token_b)
+        api.release_issue_lock(12, token_b)
+        self.assertIsNone(api.branch_sha(lock))
+
+    def test_git_hub_lock_release_uses_atomic_before_oid(self):
+        api = GitHub("pl0n3r/Factory", "token-test")
+        calls = []
+        def request(method, path, payload=None, allow=()):
+            calls.append((method, path, payload))
+            if method == "GET":
+                return {"node_id": "R_test"}
+            return {"data": {"updateRefs": {"clientMutationId": None}}}
+        api.request = request
+        token = "a" * 40
+        with patch.object(coordinator, "require_global_running") as switch:
+            api.release_issue_lock(12, token)
+            self.assertEqual(switch.call_count, 1)
+        method, path, payload = calls[-1]
+        self.assertEqual((method, path), ("POST", "/graphql"))
+        self.assertIn("UpdateRefsInput", payload["query"])
+        item = payload["variables"]["input"]["refUpdates"][0]
+        self.assertEqual(item["beforeOid"], token)
+        self.assertEqual(item["afterOid"], "0" * 40)
+        self.assertEqual(item["name"], "refs/heads/coordinacion/lock-issue-12")
+        self.assertFalse(any(m == "DELETE" for m, _, _ in calls))
+        def race(method, path, payload=None, allow=()):
+            if method == "GET":
+                return {"node_id": "R_test"}
+            return {"errors": [{"message": "beforeOid mismatch"}]}
+        api.request = race
+        with patch.object(coordinator, "require_global_running"):
+            with self.assertRaisesRegex(CoordinationError, "CAS V3 denegado"):
+                api.release_issue_lock(12, token)
+
+    def test_atomic_lock_release_rechecks_global_pause_before_graphql(self):
+        """PAUSED tras GET repo_id impide POST incluso con CAS correcto."""
+        api = GitHub("pl0n3r/Factory", "fake-token")
+        seen = []
+
+        def request(method, path, payload=None, allow=()):
+            seen.append((method, path))
+            if (method, path) == ("GET", "/repos/pl0n3r/Factory"):
+                return {"node_id": "R_test"}
+            if (method, path) == ("POST", "/graphql"):
+                return {"data": {"updateRefs": {"clientMutationId": None}}}
+            raise AssertionError("Petición inesperada: " + path)
+
+        api.request = request
+        token = "a" * 40
+        with patch.object(coordinator, "require_global_running",
+                          side_effect=CoordinationError("Kill switch #767 PAUSED")) as gate:
+            with self.assertRaisesRegex(CoordinationError, "PAUSED"):
+                api.release_issue_lock(12, token)
+            self.assertEqual(gate.call_count, 1)
+        self.assertEqual(seen, [("GET", "/repos/pl0n3r/Factory")])
+
+        seen.clear()
+        with patch.object(coordinator, "require_global_running") as gate:
+            api.release_issue_lock(12, token)
+            self.assertEqual(gate.call_count, 1)
+        self.assertEqual(seen, [("GET", "/repos/pl0n3r/Factory"),
+                                ("POST", "/graphql")])
 
     def test_renew_acceptance_invalidates_old_head_evidence(self) -> None:
         api = self._renew_fixture()
@@ -4382,6 +4959,61 @@ class V3ClaimScopePRTests(unittest.TestCase):
                         coordinator.validate_pr_claims(api, 15)
 
 
+class StrictGithubPaginationTests(unittest.TestCase):
+    """Un inventario parcialmente legible nunca autoriza coordinación."""
+
+    def test_complete_pagination_accepts_empty_and_multiple_pages(self) -> None:
+        api = GitHub("pl0n3r/Factory", "fake-token")
+        pages = [[], [{"number": 1}]]
+        seen = []
+        api.request = lambda method, path: (
+            seen.append((method, path)) or pages[0]
+        )
+        self.assertEqual(api.paginate("/repos/pl0n3r/Factory/pulls?state=open"), [])
+        self.assertEqual(len(seen), 1)
+        self.assertIn("per_page=100&page=1", seen[0][1])
+
+        first = [{"number": number} for number in range(1, 101)]
+        tail = [{"number": 101}]
+        seen.clear()
+        def serve(method, path):
+            seen.append((method, path))
+            return first if path.endswith("&page=1") else tail
+        api.request = serve
+        rows = api.paginate("/repos/pl0n3r/Factory/pulls?state=open")
+        self.assertEqual(rows, first + tail)
+        self.assertEqual(len(seen), 2)
+        self.assertIn("&per_page=100&page=2", seen[-1][1])
+
+    def test_partial_or_invalid_later_page_fails_closed(self) -> None:
+        api = GitHub("pl0n3r/Factory", "fake-token")
+        first = [{"number": n} for n in range(100)]
+        for bad in (None, {"items": []}, [{"number": 101}, None],
+                    [{"number": 101}] * 101):
+            with self.subTest(bad_type=type(bad).__name__):
+                observed = []
+                def serve(method, path):
+                    observed.append(path)
+                    return first if path.endswith("&page=1") else bad
+                api.request = serve
+                with self.assertRaisesRegex(
+                    CoordinationError, "Inventario paginado incompleto"
+                ):
+                    api.paginate("/repos/pl0n3r/Factory/pulls?state=open")
+                self.assertEqual(len(observed), 2)
+
+    def test_unbounded_full_pages_fail_closed_without_loop(self) -> None:
+        api = GitHub("pl0n3r/Factory", "fake-token")
+        observed = []
+        def serve(method, path):
+            observed.append(path)
+            return [{"number": 1}] * 100
+        api.request = serve
+        with self.assertRaisesRegex(CoordinationError, "excede 3100"):
+            api.paginate("/repos/pl0n3r/Factory/pulls?state=open")
+        self.assertEqual(len(observed), 31)
+
+
 class ExactHeadPullFileEvidenceTests(unittest.TestCase):
     """Pruebas HTTP simuladas de diff de PR paginado exact-HEAD (#1081)."""
 
@@ -4566,6 +5198,92 @@ class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
             )
         ), patch.object(api, "pull", side_effect=fake_pull):
             return coordinator.collision_validation_errors(api, 42)
+
+    def test_exact_collision_uses_two_complete_inventory_snapshots(self) -> None:
+        """Con HEAD/BASE completos, 2 inventarios en lugar de N GET /pulls."""
+        api = GitHub("pl0n3r/Factory", "fake-test-token")
+        sources = {
+            42: {"head_sha": "a" * 40, "base_sha": "b" * 40,
+                 "files": ["src/a.py"]},
+            43: {"head_sha": "c" * 40, "base_sha": "b" * 40,
+                 "files": ["src/b.py"]},
+            44: {"head_sha": "d" * 40, "base_sha": "b" * 40,
+                 "files": ["src/c.py"]},
+        }
+        inventory = [{
+            "number": n, "state": "open",
+            "head": {"sha": proof["head_sha"], "ref": f"trabajo/issue-{n}"},
+            "base": {"sha": proof["base_sha"], "ref": "main"},
+        } for n, proof in sources.items()]
+        def proof(n):
+            return {**sources[n], "complete": True}
+        with (patch.object(api, "open_pulls", side_effect=[
+                  inventory, [dict(row) for row in inventory]]) as open_pulls,
+              patch.object(api, "pull_files_exact_head",
+                           side_effect=proof) as files,
+              patch.object(api, "pull", side_effect=AssertionError(
+                  "Revalidación individual redundante"))):
+            self.assertEqual(coordinator.collision_validation_errors(api, 42), [])
+        self.assertEqual(open_pulls.call_count, 2)
+        self.assertEqual(files.call_count, 3)
+
+    def test_exact_collision_refuses_new_pr_or_sha_drift_in_second_inventory(self) -> None:
+        """Ningún PR nuevo, rebase o rama movida puede evadir colisiones."""
+        api = GitHub("pl0n3r/Factory", "fake-test-token")
+        initial = [{
+            "number": 42, "state": "open",
+            "head": {"sha": "a" * 40, "ref": "trabajo/issue-42"},
+            "base": {"sha": "b" * 40, "ref": "main"},
+        }]
+        proof = {"head_sha": "a" * 40, "base_sha": "b" * 40,
+                 "files": ["src/a.py"], "complete": True}
+        variants = (
+            initial + [{
+                "number": 43, "state": "open",
+                "head": {"sha": "c" * 40, "ref": "trabajo/issue-43"},
+                "base": {"sha": "b" * 40, "ref": "main"},
+            }],
+            [{**initial[0], "head": {
+                "sha": "c" * 40, "ref": "trabajo/issue-42"}}],
+            [{**initial[0], "base": {"sha": "d" * 40, "ref": "main"}}],
+        )
+        for after in variants:
+            with (self.subTest(after=after),
+                  patch.object(api, "open_pulls", side_effect=[initial, after]),
+                  patch.object(api, "pull_files_exact_head",
+                               return_value=proof)):
+                with self.assertRaisesRegex(
+                    CoordinationError, "Inventario de PRs cambió"
+                ):
+                    coordinator.collision_validation_errors(api, 42)
+
+    def test_collision_refuses_invalid_ids_and_duplicate_rows(self) -> None:
+        """Una fila opaca nunca permite omitir colisiones de otro PR."""
+        api = GitHub("pl0n3r/Factory", token="fake-test-token")
+        first = {"number": 42, "base": {"ref": "main"}}
+        other = {"number": 43, "base": {"ref": "main"}}
+        proof = {"head_sha": "a" * 40, "base_sha": "b" * 40,
+                 "files": ["src/one.py"], "complete": True}
+        inventories = (
+            [first, {**other, "number": None}],
+            [first, {**other, "number": "43"}],
+            [first, {**other, "number": True}],
+            [first, {**other, "number": 0}],
+            [first, dict(first)],
+            [first, {**other, "base": None}],
+            [first, {**other, "base": {}}],
+            [first, {**other, "state": "closed"}],
+            [first, None],
+        )
+        for rows in inventories:
+            with (self.subTest(rows=rows),
+                  patch.object(api, "open_pulls", return_value=rows),
+                  patch.object(api, "pull_files_exact_head",
+                               return_value=proof)):
+                with self.assertRaisesRegex(
+                    CoordinationError, "Inventario de PRs"
+                ):
+                    coordinator.collision_validation_errors(api, 42)
 
     def test_exact_pr_collision_allows_fully_disjoint_changed_files(self) -> None:
         self.assertEqual(self._validate(), [])

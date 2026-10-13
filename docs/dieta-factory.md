@@ -20,7 +20,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/bootstrap-coordination.yml` | issue_comment, workflow_dispatch | 144 | scripts/bootstrap_coordination.py | tests/test_bootstrap_coordination_workflow.py | **quedarse** | 0 |
 | `.github/workflows/ci.yml` | workflow_call | 249 | ninguno directo | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/codeql-evidence.yml` | pull_request, push | 60 | scripts/codeql_sarif_summary.py | tests/test_codeql_evidence_workflow.py, tests/test_codeql_sarif_summary.py | **quedarse** | 0 |
-| `.github/workflows/coordinacion-trabajo.yml` | schedule, workflow_dispatch, pull_request, issues, issue_comment | 342 | scripts/coordinar_trabajo.py | tests/test_coordinar_trabajo.py, tests/test_coordinar_trabajo_unblock_validation.py | **simplificar** | 4 |
+| `.github/workflows/coordinacion-trabajo.yml` | schedule, workflow_dispatch, workflow_run, pull_request, issues, issue_comment | 342 | scripts/coordinar_trabajo.py | tests/test_coordinar_trabajo.py, tests/test_coordinar_trabajo_unblock_validation.py | **simplificar** | 4 |
 | `.github/workflows/coordinacion.yml` | workflow_call | 236 | scripts/coordinar_trabajo.py | tests/test_coordinacion_reusable_contract.py | **quedarse** | 0 |
 | `.github/workflows/costos.yml` | pull_request | 167 | metricas/costos.py | metricas/test_costos.py | **quedarse** | 0 |
 | `.github/workflows/deploy.yml` | workflow_call | 86 | scripts/deploy_kit.py | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |

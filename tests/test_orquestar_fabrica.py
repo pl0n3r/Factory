@@ -42,6 +42,8 @@ class FakeGitHub:
         self.fail_pull_page_two = False
         self.short_pull_pages = False
         self.fail_issue_page_two = False
+        self.omit_issue_from_inventory = None
+        self.omit_issue_only_ascending = None
         self.foreign_counter_override = None
         self.foreign_counter_race = False
         self.foreign_read_count = 0
@@ -51,7 +53,9 @@ class FakeGitHub:
 
     def issue(self, number):
         if number != 44:
-            return self.issues[number]
+            issue = self.issues[number]
+            # El fake emula el contador obligatorio que devuelve GitHub REST.
+            return {**issue, "comments": issue.get("comments", 0)}
         self.foreign_read_count += 1
         result = dict(self.issues[number])
         count = len(self.comments)
@@ -101,11 +105,23 @@ class FakeGitHub:
         })
 
     def request(self, method, path, payload=None):
-        if method == "GET" and "/issues?state=all&per_page=100&page=" in path:
+        if (
+            method == "GET" and "/issues?state=all&sort=created&direction=" in path
+            and "&per_page=100&page=" in path
+        ):
             page = int(path.rsplit("page=", 1)[1])
             if page == 2 and self.fail_issue_page_two:
                 return {"message": "partial issue inventory"}
-            issues = list(self.issues.values())
+            reverse = "direction=desc" in path
+            issues = sorted(
+                self.issues.values(), key=lambda item: item["number"],
+                reverse=reverse,
+            )
+            omitted = self.omit_issue_from_inventory
+            if omitted is None and not reverse:
+                omitted = self.omit_issue_only_ascending
+            if omitted is not None:
+                issues = [item for item in issues if item["number"] != omitted]
             return [
                 {**item, "id": item.get("id", item["number"])}
                 for item in issues[(page - 1) * 100:page * 100]
@@ -429,6 +445,144 @@ class OrquestarFabricaTests(unittest.TestCase):
             )
         )
 
+    def test_blocked_task_with_active_lease_cannot_be_rewritten(self):
+        for has_lease in (False, True):
+            with self.subTest(has_lease=has_lease):
+                api = FakeGitHub()
+                number = sync_plan(api, 3)["issues"]["B"]
+                api.issues[number]["labels"] = [{"name": "estado: bloqueado"}]
+                if has_lease:
+                    api.comments.append({
+                        "id": 9, "user": {"login": "github-actions[bot]", "type": "Bot"},
+                        "body": reservation_marker(
+                            "pl0n3r", "12345678-1234-4234-8234-123456789abc",
+                            f"trabajo/issue-{number}", True, "tomar",
+                            acceptance_sha256="a" * 64,
+                            task_snapshot={
+                                "task_marker_sha256": "b" * 64,
+                                "task_paths": ["docs/b.md"],
+                                "task_depends_on": [],
+                            }),
+                    })
+                api.issues[number]["comments"] = len(api.comments)
+                api.requests.clear()
+                if has_lease:
+                    with self.assertRaisesRegex(PlanError, "reserva V3 activa"):
+                        sync_plan(api, 3)
+                    self.assertFalse(api.requests)
+                else:
+                    self.assertEqual(sync_plan(api, 3)["issues"]["B"], number)
+
+    def test_available_v3_evidence_fails_closed_without_rewriting(self):
+        # El estado AVAILABLE no desactiva una lease bot todavía activa.
+        for defect in ("active", "inactive", "malformed", "untrusted",
+                       "truncated", "missing_counter"):
+            with self.subTest(defect=defect):
+                api = FakeGitHub()
+                number = sync_plan(api, 3)["issues"]["B"]
+                issued = api.issues[number]
+                before_body = issued["body"]
+                before_assignees = list(issued.get("assignees", []))
+                marker = reservation_marker(
+                    "pl0n3r", "12345678-1234-4234-8234-123456789abc",
+                    f"trabajo/issue-{number}", defect != "inactive",
+                    "tomar", acceptance_sha256="a" * 64,
+                    task_snapshot={
+                        "task_marker_sha256": "b" * 64,
+                        "task_paths": ["docs/b.md"], "task_depends_on": [],
+                    },
+                )
+                if defect == "malformed":
+                    marker = "<!-- condor-reserva {invalid json} -->"
+                api.comments.append({
+                    "id": 9,
+                    "user": {
+                        "login": ("external" if defect == "untrusted"
+                                  else "github-actions[bot]"),
+                        "type": ("User" if defect == "untrusted" else "Bot"),
+                    },
+                    "body": marker,
+                })
+                issued["comments"] = len(api.comments)
+                if defect == "truncated":
+                    issued["comments"] += 1
+                if defect == "missing_counter":
+                    original_issue = api.issue
+
+                    def without_counter(issue_number):
+                        actual = original_issue(issue_number)
+                        if issue_number == number:
+                            actual.pop("comments")
+                        return actual
+
+                    api.issue = without_counter
+                api.requests.clear()
+                if defect == "inactive":
+                    self.assertEqual(sync_plan(api, 3)["issues"]["B"], number)
+                else:
+                    with self.assertRaisesRegex(
+                        PlanError, "reserva (V3 activa|ambigua|no verificable)"
+                    ):
+                        sync_plan(api, 3)
+                    self.assertFalse(api.requests)
+                    self.assertEqual(issued["body"], before_body)
+                    self.assertEqual(issued["assignees"], before_assignees)
+
+    def test_reservation_appears_after_inventory_and_aborts_before_writes(self):
+        api = FakeGitHub()
+        numbers = sync_plan(api, 3)["issues"]
+        target = numbers["B"]
+        original_issue = api.issue
+
+        def raced_issue(number):
+            if number == target:
+                api.issues[target]["labels"] = [{"name": "estado: reservado"}]
+            return original_issue(number)
+
+        api.issue = raced_issue
+        api.requests.clear()
+        with self.assertRaisesRegex(PlanError, "cambió durante la sincronización"):
+            sync_plan(api, 3)
+        self.assertFalse(api.requests)
+        self.assertEqual(
+            api.issues[numbers["B"]]["labels"],
+            [{"name": "estado: reservado"}],
+        )
+
+    def test_later_active_task_preflight_prevents_partial_writes(self):
+        api = FakeGitHub()
+        issues = sync_plan(api, 3)["issues"]
+        first_body = api.issues[issues["A"]]["body"]
+        later = api.issues[issues["B"]]
+        later["labels"] = [{"name": "estado: reservado"}]
+        original = later["body"]
+        api.issues[3]["body"] = api.issues[3]["body"].replace(
+            '"paths":["docs/b.md"]',
+            '"paths":["docs/b.md","docs/b-extra.md"]',
+        )
+        api.requests.clear()
+        with self.assertRaisesRegex(PlanError, "activo; su plan no puede mutar"):
+            sync_plan(api, 3)
+        self.assertFalse(api.requests)
+        self.assertEqual(first_body, api.issues[issues["A"]]["body"])
+        self.assertEqual(original, later["body"])
+
+    def test_active_unchanged_contract_preserves_reservation_assignment(self):
+        api = FakeGitHub()
+        number = sync_plan(api, 3)["issues"]["A"]
+        task = api.issues[number]
+        task["labels"] = [{"name": "estado: reservado"}]
+        task["assignees"] = [{"login": "other-agent"}]
+        before_body = task["body"]
+        api.requests.clear()
+        sync_plan(api, 3)
+        self.assertEqual(task["body"], before_body)
+        self.assertEqual(task["assignees"], [{"login": "other-agent"}])
+        self.assertEqual(task["labels"], [{"name": "estado: reservado"}])
+        self.assertFalse(any(
+            f"/issues/{number}" in path for _, path, _ in api.requests
+        ))
+
     @staticmethod
     def _legacy_foreign_marker(epic=999):
         marker = json.dumps({
@@ -453,6 +607,138 @@ class OrquestarFabricaTests(unittest.TestCase):
             "labels": [{"name": name} for name in labels],
         }
         return api.issues[44]
+
+    def test_partial_issue_page_fails_closed_without_children(self):
+        api = FakeGitHub()
+        first = sync_plan(api, 3)
+        missing = first["issues"]["B"]
+        # [99, []] parece normal en ambos barridos, pero el reporte conoce B.
+        for number in range(100, 197):
+            api.issues[number] = {
+                "number": number, "state": "open", "body": "",
+                "labels": [], "title": f"Unrelated {number}",
+            }
+        api.omit_issue_from_inventory = missing
+        before = {key: dict(value) for key, value in api.issues.items()}
+        api.requests.clear()
+
+        with self.assertRaisesRegex(PlanError, "reporte anterior"):
+            sync_plan(api, 3)
+
+        self.assertFalse(api.requests)
+        self.assertEqual(api.issues, before)
+        self.assertIn(missing, api.issues)
+
+    def test_valid_paginated_inventory_remains_idempotent(self):
+        api = FakeGitHub()
+        for number in range(4, 103):
+            api.issues[number] = {
+                "number": number, "state": "open", "body": "",
+                "labels": [], "title": f"Unrelated {number}",
+            }
+        api.next_issue = 103
+        first = sync_plan(api, 3)
+        self.assertEqual(first["issues"]["B"], 104)
+        self.assertEqual(len(api.issues), 102)
+
+        second = sync_plan(api, 3)
+        third = sync_plan(api, 3)
+        self.assertEqual(second["issues"], first["issues"])
+        self.assertEqual(third["issues"], first["issues"])
+        self.assertEqual(len(api.issues), 102)
+        self.assertEqual(len(api.comments), 1)
+
+    def test_ambiguous_issue_inventory_is_atomic(self):
+        for defect in (
+            "duplicate_number", "missing_one_direction", "page_two",
+            "truncated_report_comments", "missing_report",
+        ):
+            with self.subTest(defect=defect):
+                api = FakeGitHub()
+                if defect == "duplicate_number":
+                    api.issues[44] = {
+                        "id": 44, "number": 3, "state": "open",
+                        "body": "", "labels": [], "title": "Duplicate",
+                    }
+                elif defect == "missing_one_direction":
+                    api.issues[44] = {
+                        "number": 44, "state": "open", "body": "",
+                        "labels": [], "title": "Omitted",
+                    }
+                    api.omit_issue_only_ascending = 44
+                elif defect == "page_two":
+                    for number in range(100, 199):
+                        api.issues[number] = {
+                            "number": number, "state": "open", "body": "",
+                            "labels": [], "title": f"Unrelated {number}",
+                        }
+                    api.fail_issue_page_two = True
+                if defect in ("truncated_report_comments", "missing_report"):
+                    sync_plan(api, 3)
+                    if defect == "truncated_report_comments":
+                        api.comments.extend({
+                            "id": number, "user": {"login": "someone"},
+                            "body": "noise",
+                        } for number in range(2, 102))
+                        api.fail_comment_page_two = True
+                    else:
+                        api.comments.clear()
+                    api.requests.clear()
+                next_issue = api.next_issue
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertFalse(api.requests)
+                self.assertEqual(api.next_issue, next_issue)
+
+    def test_report_missing_existing_task_is_rejected_before_writes(self):
+        api = FakeGitHub()
+        result = sync_plan(api, 3)
+        task_b = result["issues"]["B"]
+        report = api.comments[0]
+        report["body"] = "\n".join(
+            line for line in report["body"].splitlines()
+            if f"#{task_b} · B" not in line
+        )
+        api.requests.clear()
+        before = json.dumps(api.issues, sort_keys=True)
+        with self.assertRaisesRegex(PlanError, "Reporte anterior incompleto"):
+            sync_plan(api, 3)
+        self.assertFalse(api.requests)
+        self.assertEqual(before, json.dumps(api.issues, sort_keys=True))
+
+    def test_report_second_read_truncation_cannot_duplicate_comment(self):
+        api = FakeGitHub()
+        sync_plan(api, 3)
+        original = api.comments[0]
+        api.comments = [
+            {"id": 1000 + idx, "user": {"login": "someone"},
+             "body": "unrelated"} for idx in range(100)
+        ] + [original]
+        request = api.request
+        page_two_reads = 0
+
+        def flaky_request(method, path, payload=None):
+            nonlocal page_two_reads
+            if (method == "GET"
+                    and "/issues/3/comments?per_page=100&page=2" in path):
+                page_two_reads += 1
+                if page_two_reads == 2:
+                    return {"message": "incomplete second read"}
+            return request(method, path, payload)
+
+        api.request = flaky_request
+        api.requests.clear()
+        with self.assertRaises(PlanError):
+            sync_plan(api, 3)
+        self.assertEqual(page_two_reads, 2)
+        self.assertEqual(sum(
+            "<!-- factory-plan-report:3 -->" in entry["body"]
+            for entry in api.comments
+        ), 1)
+        self.assertFalse(any(
+            method == "PATCH" and "/issues/comments/" in path
+            for method, path, _ in api.requests
+        ))
 
     def test_global_issue_inventory_must_be_complete_and_unambiguous(self):
         api = FakeGitHub()

@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+  workflow_run:
+    workflows: ['CI factory']
+    types: [completed]
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft, closed]
   issues:
@@ -20,6 +23,39 @@ concurrency:
   queue: max
 
 jobs:
+  reconciliar-renovacion:
+    name: Reconciliar Validar con prueba fresca
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == 'pl0n3r/Factory'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+      pull-requests: read
+      checks: read
+    steps:
+      # Nunca hacer checkout del PR en un workflow_run privilegiado.
+      - name: Checkout coordinador de main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Recuperación idempotente con evidencias de GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          ORIGIN_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.renovacion_checks \
+            --repo "$REPOSITORIO" \
+            --run-id "$ORIGIN_RUN_ID"
+
   comando-comentario:
     name: Procesar comando de coordinación
     if: >-
@@ -121,7 +157,7 @@ jobs:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           python3 - <<'PY'
-          import json, os, re, unicodedata
+          import hashlib, json, os, re, unicodedata
           from urllib.parse import quote
           from urllib.request import Request, urlopen
           
@@ -181,9 +217,12 @@ jobs:
               assigned = record.get("assignees") if isinstance(record, dict) else None
               assert isinstance(labels, list) and isinstance(assigned, list), "issue authority missing"
               names = [label.get("name") for label in labels if isinstance(label, dict)]
-              statuses = [name for name in names if isinstance(name, str)
-                          and name.startswith(("estado: ", "status: "))]
+              assert (len(names) == len(labels)
+                      and all(isinstance(name, str) and name for name in names)
+                      and len(set(names)) == len(names)), "issue labels malformed"
+              statuses = [name for name in names if name.startswith(("estado: ", "status: "))]
               owner = lease.get("owner")
+              body = record.get("body")
               assert (record.get("number") == issue
                       and record.get("state") == "open"
                       and statuses in (["estado: reservado"], ["estado: en revisión"])
@@ -191,9 +230,9 @@ jobs:
                       and len(assigned) == 1
                       and isinstance(assigned[0], dict)
                       and assigned[0].get("login") == owner
-                      and isinstance(record.get("updated_at"), str)
-                      and bool(record["updated_at"])), "issue authority invalid"
-              return (record["updated_at"], tuple(statuses), owner)
+                      and isinstance(body, str) and bool(body)), "issue authority invalid"
+              return (hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                      tuple(sorted(names)), tuple(statuses), owner)
 
           initial_issue = issue_authority()
           
