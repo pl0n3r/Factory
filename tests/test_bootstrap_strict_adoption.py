@@ -634,6 +634,20 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
 
     def test_strict_generated_adoption_catches_preflight_regressions(self):
         strict = consumer_caller(strict=True)
+        for name, output in (
+            ("constant_true", "      route: ${{ 'true' }}\\n      # route: ${{ steps.route.outputs.route }}"),
+            ("wrong_step", "      route: ${{ steps.other.outputs.route }}\\n      # route: ${{ steps.route.outputs.route }}"),
+            ("extra_output", "      route: ${{ steps.route.outputs.route }}\\n      extra: ${{ 'true' }}"),
+        ):
+            with self.subTest(spoofed_job_output=name):
+                original = "      route: ${{ steps.route.outputs.route }}"
+                self.assertEqual(strict.count(original), 1)
+                mutated = strict.replace(original, output, 1)
+                self.assertNotEqual(mutated, strict)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL", result.stderr)
+
         # The audited Python router must not be preceded or followed by
         # arbitrary shell commands, nor accompanied by extra workflow steps.
         cases = (
