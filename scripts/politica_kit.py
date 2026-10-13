@@ -1255,6 +1255,7 @@ def args() -> argparse.Namespace:
     parser.add_argument("--comments-file", default="")
     parser.add_argument("--checks-file", default="")
     parser.add_argument("--threads-file", default="")
+    parser.add_argument("--verified-status-file", default="")
     parser.add_argument("--timeline-file", default="")
     parser.add_argument("--phase-file", default="")
     return parser.parse_args()
@@ -1294,6 +1295,15 @@ def main() -> int:
             if options.checks_file
             else []
         )
+        verified_status_lines = (
+            _read_bounded_lines(
+                Path(options.verified_status_file),
+                max_bytes=MAX_CHECKS_BYTES,
+                noun="estatus verificados de CodeRabbit",
+            )
+            if options.verified_status_file
+            else []
+        )
         thread_lines = (
             _read_bounded_lines(
                 Path(options.threads_file),
@@ -1329,6 +1339,7 @@ def main() -> int:
             phase_file=Path(options.phase_file) if options.phase_file else None,
             run_attempt=run_attempt,
             timeline_lines=timeline_lines,
+            verified_status_lines=verified_status_lines,
         )
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
