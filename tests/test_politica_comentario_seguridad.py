@@ -132,7 +132,7 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
             '                max_bytes=MAX_CHECKS_BYTES,\n'
             '                noun="estatus verificados de CodeRabbit",\n'
             '            )\n'
-            '            if options.verified_status_file\n'
+            '            if getattr(options, "verified_status_file", "")\n'
             '            else []\n'
             '        )\n'
         )
