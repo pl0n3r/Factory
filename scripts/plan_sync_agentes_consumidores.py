@@ -24,7 +24,7 @@ class SyncPlanError(ValueError):
 
 
 def _validate_text(raw: object) -> str:
-    if not isinstance(raw, str) or not raw or "\x00" in raw or "\r" in raw:
+    if type(raw) is not str or not raw or "\x00" in raw or "\r" in raw:
         raise SyncPlanError("invalid_document")
     try:
         size = len(raw.encode("utf-8"))
@@ -165,14 +165,15 @@ def plan_sync(template_text: str, consumer_text_by_repo: Mapping[str, str]) -> d
                 or any(type(name) is not str for name in names)
                 or set(names) != set(REPOSITORIES)):
             raise SyncPlanError("incomplete_consumer_inventory")
-        documents = [
-            (name, _validate_text(consumer_text_by_repo[name]))
-            for name in REPOSITORIES
-        ]
-    except SyncPlanError:
-        raise
+        # No invocar validación interna dentro del bloque de lectura
+        # no confiable: Mapping.__getitem__ también puede lanzar nuestro
+        # SyncPlanError con mensajes privados elegidos por el caller.
+        raw_documents = [(name, consumer_text_by_repo[name])
+                         for name in REPOSITORIES]
     except Exception:
         raise SyncPlanError("incomplete_consumer_inventory") from None
+    documents = [(name, _validate_text(value))
+                 for name, value in raw_documents]
     entries = []
     for repository_ref, existing in documents:
         projected, action = _render_consumer(existing, principles)

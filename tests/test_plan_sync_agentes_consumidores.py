@@ -153,6 +153,8 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
             def __iter__(self):
                 if self.stage == "keys":
                     raise RuntimeError("private-secret-fixture")
+                if self.stage == "keys_typed":
+                    raise SyncPlanError("private-secret-fixture")
                 return iter(REPOSITORIES)
 
             def __len__(self):
@@ -161,14 +163,36 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
             def __getitem__(self, name):
                 if self.stage == "value":
                     raise RuntimeError("private-secret-fixture")
+                if self.stage == "value_typed":
+                    raise SyncPlanError("private-secret-fixture")
                 return consumers()[name]
 
-        for stage in ("keys", "value"):
+        for stage in ("keys", "value", "keys_typed", "value_typed"):
             with self.subTest(mapping_stage=stage):
                 with self.assertRaisesRegex(
                     SyncPlanError, "incomplete_consumer_inventory"
                 ) as raised:
                     plan_sync(template(), BrokenMapping(stage))
+                self.assertNotIn("private-secret-fixture", str(raised.exception))
+
+        # Una subclase str maliciosa puede interceptar encode/count.
+        # Solo se acepta str nativo antes de consultar métodos del texto.
+        class HostileText(str):
+            def encode(self, *args, **kwargs):
+                raise RuntimeError("private-secret-fixture")
+
+        for kind in ("template", "consumer"):
+            docs = consumers()
+            source = template()
+            if kind == "template":
+                source = HostileText(source)
+            else:
+                docs[REPOSITORIES[0]] = HostileText(docs[REPOSITORIES[0]])
+            with self.subTest(hostile_text=kind):
+                with self.assertRaisesRegex(
+                    SyncPlanError, "invalid_document"
+                ) as raised:
+                    plan_sync(source, docs)
                 self.assertNotIn("private-secret-fixture", str(raised.exception))
 
         # Unicode con sustitutos sueltos no debe escapar como error Unicode
