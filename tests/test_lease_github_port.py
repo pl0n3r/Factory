@@ -454,6 +454,12 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: setattr(x, "rows", [event, {**event, "id": 16}]),
             lambda x: setattr(x, "rows", [{**event, "actor": {
                 "login": "intruder", "type": "User"}}]),
+            lambda x: setattr(x, "rows", [{**event, "actor": {
+                **event["actor"],
+                "login": UserString(event["actor"]["login"])}}]),
+            lambda x: setattr(x, "rows", [{**event, "actor": {
+                **event["actor"],
+                "type": UserString(event["actor"]["type"])}}]),
             lambda x: setattr(x, "rows", [{**event, "event": "unlabeled"}]),
             lambda x: setattr(x, "rows", [{**event,
                 "created_at": "2026-10-11T10:29:00Z"}]),
