@@ -184,6 +184,21 @@ class PhaseReviewBotTests(unittest.TestCase):
                 self.assertEqual(politica_kit.main(), 0)
             self.assertEqual(decide.call_args.kwargs["verified_status_lines"], [status_receipt()])
 
+    def test_main_rejects_unsafe_status_input_before_policy_decision(self):
+        with tempfile.TemporaryDirectory() as folder:
+            missing = Path(folder) / "missing.jsonl"
+            with (
+                patch("sys.argv", ["politica_kit.py", "--verified-status-file", str(missing)]),
+                patch("sys.stdin", io.StringIO("")),
+                patch.object(politica_kit, "load_policy", return_value={"decisions": [], "review_round_limit": 3}),
+                patch.object(politica_kit, "load_reviewer_policy", return_value=BOT),
+                patch.object(politica_kit, "validate_required_bot_review_or_fallback") as decide,
+                patch("sys.stderr", new_callable=io.StringIO) as errors,
+            ):
+                self.assertEqual(politica_kit.main(), 1)
+            decide.assert_not_called()
+            self.assertIn("ERROR:", errors.getvalue())
+
     def test_construction_can_advisory_only_with_complete_trusted_security_evidence(self):
         report = evaluate()
         self.assertEqual(report["review_fallback"], False)
