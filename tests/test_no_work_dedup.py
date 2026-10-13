@@ -188,6 +188,19 @@ class NoWorkDedupTests(unittest.TestCase):
                     inventory_fingerprint(candidate)
                 with self.assertRaises(NoWorkInventoryError):
                     decide_no_work(candidate, None, 100)
+        # Membership in ("open", "closed") uses equality; a caller-supplied
+        # object must never impersonate a real GitHub state string.
+        class SpoofOpen:
+            def __eq__(self, other):
+                return other == "open"
+
+        spoof = inventory()
+        spoof["repositories"]["Condor"]["pull_requests"][0]["state"] = SpoofOpen()
+        with self.assertRaisesRegex(NoWorkInventoryError, "pull_request_state_invalid"):
+            inventory_fingerprint(spoof)
+        with self.assertRaises(NoWorkInventoryError):
+            decide_no_work(spoof, None, 100)
+
         known_closed = inventory()
         known_closed["repositories"]["Condor"]["pull_requests"][0]["state"] = "closed"
         known_closed["repositories"]["Condor"]["pull_requests"] = []
@@ -813,6 +826,49 @@ class NoWorkDedupTests(unittest.TestCase):
         self.assertEqual(
             revalidate_no_work_application(decision, other_fingerprint).reason,
             "fingerprint_changed",
+        )
+
+    def test_omit_rechecks_canonical_sink_before_suppressing_publication(self):
+        baseline = inventory()
+        created = decide_no_work(baseline, None, 100)
+        prior = state_after(created, comment_id=904_250,
+                            published_at=100, observed_at=100)
+        omitted = decide_no_work(baseline, prior, 110, observed_at=105)
+        self.assertEqual(omitted.action, "omit")
+        self.assertEqual(revalidate_no_work_application(omitted, prior).action, "omit")
+
+        self.assertEqual(
+            (revalidate_no_work_application(omitted, None).action,
+             revalidate_no_work_application(omitted, None).reason),
+            ("recompute", "canonical_missing_before_omit"),
+        )
+        changed_id = NoWorkPublicationState(
+            comment_id=904_251, fingerprint=prior.fingerprint,
+            published_at=100, observed_at=100)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, changed_id).reason,
+            "comment_id_changed",
+        )
+        changed_fingerprint = NoWorkPublicationState(
+            comment_id=prior.comment_id, fingerprint="f" * 64,
+            published_at=100, observed_at=100)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, changed_fingerprint).reason,
+            "fingerprint_changed",
+        )
+        refreshed = NoWorkPublicationState(
+            comment_id=prior.comment_id, fingerprint=prior.fingerprint,
+            published_at=101, observed_at=100)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, refreshed).reason,
+            "publication_changed",
+        )
+        newer_observation = NoWorkPublicationState(
+            comment_id=prior.comment_id, fingerprint=prior.fingerprint,
+            published_at=100, observed_at=106)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, newer_observation).reason,
+            "canonical_observation_newer",
         )
 
     def test_prewrite_rejects_tampered_decision_authority(self):

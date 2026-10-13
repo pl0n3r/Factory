@@ -231,7 +231,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         if not isinstance(pr, dict):
             raise NoWorkInventoryError(f"pull_request_invalid:{name}")
         state = pr.get("state")
-        if state not in ("open", "closed"):
+        if type(state) is not str or state not in ("open", "closed"):
             raise NoWorkInventoryError(f"pull_request_state_invalid:{name}")
         if state == "closed":
             continue
@@ -462,9 +462,6 @@ def revalidate_no_work_application(
         ):
             raise NoWorkInventoryError("decision_provenance_invalid")
 
-    if decision.action == "omit":
-        return NoWorkApplicationDecision("omit", "decision_already_omit")
-
     live = _valid_previous(current)
 
     if decision.action == "create":
@@ -473,7 +470,11 @@ def revalidate_no_work_application(
         return NoWorkApplicationDecision("recompute", "canonical_created_concurrently")
 
     if live is None:
-        return NoWorkApplicationDecision("recompute", "canonical_missing_before_update")
+        return NoWorkApplicationDecision(
+            "recompute",
+            "canonical_missing_before_omit" if decision.action == "omit"
+            else "canonical_missing_before_update",
+        )
 
     if live.comment_id != decision.expected_comment_id:
         return NoWorkApplicationDecision("recompute", "comment_id_changed")
@@ -490,4 +491,6 @@ def revalidate_no_work_application(
     if live.published_at != decision.expected_published_at:
         return NoWorkApplicationDecision("recompute", "publication_changed")
 
+    if decision.action == "omit":
+        return NoWorkApplicationDecision("omit", "canonical_still_identical")
     return NoWorkApplicationDecision("apply", "prewrite_revalidation_passed")
