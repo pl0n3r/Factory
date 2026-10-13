@@ -979,6 +979,181 @@ def validate_rate_limit_fallback(
     )
 
 
+# F3C_REVIEW_RISK_HELPER_BEGIN
+def _verified_bot_risk_advisory(
+    comment_lines: list[str],
+    check_lines: list[str],
+    thread_lines: list[str],
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    head_committed_at: str,
+    verified_status_lines: list[str],
+) -> bool:
+    """Permite advisory solo tras informe terminal del bot autenticado.
+
+    Un check verde llamado CodeRabbit NO es una atestación: GitHub puede
+    marcarlo success incluso cuando el bot no revisó el PR (por ejemplo,
+    por configuración de drafts o elegibilidad). Sin informe propio del bot
+    con el HEAD exacto y todos los riesgos conocidos, se conserva el veto.
+    """
+    signal = None
+
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise PolicyError("Informe de riesgo duplicó una clave.")
+            result[key] = value
+        return result
+
+    def completed_review_status() -> bool:
+        # GitHub status API autentica este context/issuer; el cuerpo de un
+        # comentario del bot no demuestra que haya concluido el análisis.
+        # El caller actual no suministra este snapshot: fail-closed.
+        if not verified_status_lines:
+            return False
+        if len(verified_status_lines) != 1:
+            raise PolicyError("Snapshot de CodeRabbit ambiguo.")
+        try:
+            snapshot = json.loads(
+                verified_status_lines[0], object_pairs_hook=unique_pairs
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise PolicyError("Snapshot de CodeRabbit inválido.") from exc
+        if not isinstance(snapshot, dict) or snapshot.get("sha") != head_sha:
+            return False
+        entries = snapshot.get("statuses")
+        count = snapshot.get("total_count")
+        if (
+            not isinstance(entries, list)
+            or type(count) is not int
+            or count != len(entries)
+            or count > 100
+        ):
+            raise PolicyError("Snapshot de CodeRabbit incompleto o paginado.")
+        exact = [
+            row for row in entries
+            if isinstance(row, dict) and row.get("context") == "CodeRabbit"
+        ]
+        if not exact:
+            return False
+        if any(type(row.get("id")) is not int or row["id"] <= 0 for row in exact):
+            raise PolicyError("Status CodeRabbit sin identidad válida.")
+        if len({row["id"] for row in exact}) != len(exact):
+            raise PolicyError("Status CodeRabbit duplicado.")
+        latest = max(exact, key=lambda row: row["id"])
+        creator = latest.get("creator")
+        if not (
+            isinstance(creator, dict)
+            and creator.get("login") == "coderabbitai[bot]"
+            and creator.get("type") == "Bot"
+            and type(creator.get("id")) is int
+            and creator["id"] == 136622811
+        ):
+            return False
+        if (
+            latest.get("state") != "success"
+            or latest.get("description") != "Review completed"
+        ):
+            return False
+        started = _parse_iso_timestamp(
+            latest.get("created_at"), noun="Inicio del status de CodeRabbit"
+        )
+        ended = _parse_iso_timestamp(
+            latest.get("updated_at"), noun="Final del status de CodeRabbit"
+        )
+        committed = _parse_iso_timestamp(
+            head_committed_at, noun="Timestamp del HEAD exacto"
+        )
+        if started > ended or ended < committed:
+            return False
+        return True
+
+    for comment in parse_comments(comment_lines):
+        user = comment.get("user")
+        body = comment.get("body")
+        if not (
+            isinstance(user, dict)
+            and user.get("type") == "Bot"
+            and user.get("login") == required_review_bot
+            and isinstance(body, str)
+            and "factory-review-risk-summary" in body
+        ):
+            continue
+        matches = list(re.finditer(
+            r"<!-- factory-review-risk-summary (\{[^{}]*\}) -->", body
+        ))
+        if len(matches) != 1 or body.count("factory-review-risk-summary") != 1:
+            raise PolicyError("Informe de riesgo del bot incompleto o ambiguo.")
+        # Solo un documento de atestación completo es confiable. Un bot
+        # podría citar texto controlado por el PR sin haber hecho análisis.
+        if body.strip() != matches[0].group(0):
+            raise PolicyError("Informe de riesgo citado, no atestación independiente.")
+        try:
+            risk = json.loads(matches[0].group(1), object_pairs_hook=unique_pairs)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise PolicyError("Informe de riesgo del bot inválido.") from exc
+        expected_keys = {
+            "version", "head_sha", "status", "analyzed",
+            "high", "critical", "unknown",
+        }
+        if not isinstance(risk, dict) or set(risk) != expected_keys:
+            raise PolicyError("Informe de riesgo del bot sin campos completos.")
+        if type(risk["version"]) is not int or risk["version"] != 1:
+            raise PolicyError("Versión de informe de riesgo inválida.")
+        if not isinstance(risk["head_sha"], str) or not SHA_RE.fullmatch(risk["head_sha"]):
+            raise PolicyError("SHA de informe de riesgo inválido.")
+        if risk["head_sha"] != head_sha:
+            continue  # Evidencia obsoleta jamás autoriza el HEAD actual.
+        if signal is not None:
+            raise PolicyError("Informes de riesgo de bot duplicados en HEAD.")
+        if (
+            risk["status"] != "complete"
+            or risk["analyzed"] is not True
+            or any(
+                type(risk[field]) is not int or risk[field] != 0
+                for field in ("high", "critical", "unknown")
+            )
+        ):
+            raise PolicyError("Revisión de riesgos grave, incompleta o desconocida.")
+        signal = risk
+
+    if signal is None:
+        return False  # CodeRabbit ausente/omitido => UNKNOWN, sin bypass.
+    if not completed_review_status():
+        return False  # Green con review omitido/limitado nunca habilita advisory.
+    committed = _parse_iso_timestamp(
+        head_committed_at, noun="Timestamp del HEAD exacto"
+    )
+    # Un rate-limit posterior al HEAD niega cobertura, incluso si el bot
+    # también publicó un marker puro. Sin marker, conservar fallback antiguo.
+    for comment in parse_comments(comment_lines):
+        user = comment.get("user")
+        body = comment.get("body")
+        if (
+            isinstance(user, dict)
+            and user.get("type") == "Bot"
+            and user.get("login") == required_review_bot
+            and isinstance(body, str)
+            and _is_rate_limit_body(body)
+        ):
+            observed = _parse_iso_timestamp(
+                comment.get("created_at"), noun="Rate-limit del reviewer"
+            )
+            if observed >= committed:
+                raise PolicyError("Rate-limit del reviewer en HEAD sin análisis completo.")
+    if _has_open_blocking_finding(thread_lines, required_review_bot=required_review_bot):
+        raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
+    # Seis categorías disjuntas, HEAD exacto y apps autenticadas. No suplantar
+    # revisiones por nombres arbitrarios de checks ni reciclar checks stale.
+    validate_other_gates_green(check_lines, head_sha=head_sha)
+    return True
+
+
+# F3C_REVIEW_RISK_HELPER_END
+
+
 def validate_required_bot_review_or_fallback(
     lines: list[str],
     required_review_bot: str,
@@ -991,6 +1166,7 @@ def validate_required_bot_review_or_fallback(
     phase_file: Path | None,
     timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
+    verified_status_lines: list[str] | None = None,
 ) -> dict[str, Any]:
     run_attempt = _validate_run_attempt(run_attempt)
     if required_review_bot == "":
@@ -1010,6 +1186,19 @@ def validate_required_bot_review_or_fallback(
         return {"review_fallback": False}
 
     phase = load_phase(phase_file)
+    if phase == "construccion" and _verified_bot_risk_advisory(
+        comment_lines, check_lines, thread_lines,
+        required_review_bot=required_review_bot,
+        head_sha=head_sha,
+        head_committed_at=head_committed_at,
+        verified_status_lines=verified_status_lines or [],
+    ):
+        return {
+            "review_fallback": False,
+            "review_advisory": True,
+            "review_reason": "reviewer-bot-presence-only",
+            "risk_status": "clear",
+        }
     retry_id, retry_at = validate_rate_limit_fallback(
         required_review_bot=required_review_bot,
         head_sha=head_sha,
@@ -1066,6 +1255,7 @@ def args() -> argparse.Namespace:
     parser.add_argument("--comments-file", default="")
     parser.add_argument("--checks-file", default="")
     parser.add_argument("--threads-file", default="")
+    parser.add_argument("--verified-status-file", default="")
     parser.add_argument("--timeline-file", default="")
     parser.add_argument("--phase-file", default="")
     return parser.parse_args()
@@ -1105,6 +1295,15 @@ def main() -> int:
             if options.checks_file
             else []
         )
+        verified_status_lines = (
+            _read_bounded_lines(
+                Path(options.verified_status_file),
+                max_bytes=MAX_CHECKS_BYTES,
+                noun="estatus verificados de CodeRabbit",
+            )
+            if getattr(options, "verified_status_file", "")
+            else []
+        )
         thread_lines = (
             _read_bounded_lines(
                 Path(options.threads_file),
@@ -1140,6 +1339,7 @@ def main() -> int:
             phase_file=Path(options.phase_file) if options.phase_file else None,
             run_attempt=run_attempt,
             timeline_lines=timeline_lines,
+            verified_status_lines=verified_status_lines,
         )
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
