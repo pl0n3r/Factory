@@ -40,7 +40,10 @@ def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
     La paginación la efectúa gh api --paginate --slurp; este contador nunca
     certifica liveness, exclusividad ni ausencia de actualizaciones concurrentes.
     """
-    if type(pages) is not list or not 1 <= len(pages) <= 100:
+    if (type(pages) is not list or not 1 <= len(pages) <= 100
+            # Una última página llena sin página vacía de cierre podría ser
+            # un prefijo truncado; no publicar un censo aparentemente íntegro.
+            or type(pages[-1]) is not list or len(pages[-1]) == 100):
         return None
     seen: set[int] = set()
     open_count = recovery = reserved = in_review = 0
