@@ -513,7 +513,7 @@ class GitHubGateway:
             and pr["head"].get("ref")==branch
             and isinstance(pr["head"].get("repo"),dict)
             and pr["head"]["repo"].get("full_name")==name
-            and marker(req) in str(pr.get("body") or "")
+            and parse_marker(pr.get("body")) == parse_marker(marker(req))
         )
     def main_descends_from(self,name: str,ancestor: str,current: str)->bool:
         if ancestor == current:

@@ -235,6 +235,41 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                     [detail],
                 )
 
+    def test_existing_bootstrap_pr_requires_one_exact_identity_marker(self):
+        """A canonical marker hidden among contradictory markers is not sufficient."""
+        gateway = bootstrap.GitHubGateway("fake-token")
+        req = bootstrap.validate_request({
+            "target_repository": "pl0n3r/Consumer",
+            "target_issue": "187",
+            "expected_main_sha": "a" * 40,
+            "governance_ref": bootstrap.GOVERNANCE_REF,
+            "idempotency_key": "b" * 64,
+        })
+        repo, branch = req["target_repository"], bootstrap.branch_name(req)
+        canonical = bootstrap.marker(req)
+        valid = {
+            "number": 77,
+            "state": "open",
+            "base": {"ref": "main", "sha": req["expected_main_sha"]},
+            "head": {"ref": branch, "repo": {"full_name": repo}},
+            "body": "Bootstrap gobernado para consumidor.\n\n" + canonical,
+        }
+        self.assertTrue(gateway.pr_matches(repo, branch, valid, req))
+
+        different_req = {**req, "target_issue": req["target_issue"] + 1}
+        contradictory = bootstrap.marker(different_req)
+        variants = (
+            canonical + "\n" + canonical,
+            canonical + "\n" + contradictory,
+            contradictory + "\n" + canonical,
+            canonical + "\n<!-- factory-coordination-bootstrap {not-json} -->",
+        )
+        for body in variants:
+            with self.subTest(body=body):
+                self.assertFalse(gateway.pr_matches(repo, branch, {**valid, "body": body}, req))
+        self.assertFalse(gateway.pr_matches(repo, branch, {**valid, "body": contradictory}, req))
+        self.assertFalse(gateway.pr_matches(repo, branch, {**valid, "body": None}, req))
+
     def test_bootstrap_pr_numbers_require_exact_positive_integers(self):
         """Boolean, float and string REST identifiers cannot impersonate PR #1."""
         gateway = bootstrap.GitHubGateway("fake-token")
