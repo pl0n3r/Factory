@@ -360,6 +360,59 @@ class NoWorkDedupTests(unittest.TestCase):
         self.assertEqual(stable, inventory_fingerprint(valid))
         self.assertEqual(decide_no_work(valid, None, 100).action, "create")
 
+    def test_hostile_text_subclasses_never_execute_during_inventory_validation(self):
+        # JSON from GitHub contains native strings, not objects whose methods
+        # may raise private caller exceptions during normalization.
+        class HostileText(str):
+            def encode(self, *args, **kwargs):
+                raise RuntimeError("private-caller-value")
+
+            def strip(self, *args, **kwargs):
+                raise RuntimeError("private-caller-value")
+
+            def __len__(self):
+                raise RuntimeError("private-caller-value")
+
+        samples = []
+        nested = inventory()
+        nested["repositories"]["Factory"]["blockers"].append(
+            {"issue": 1099, "evidence": HostileText("private-caller-value")}
+        )
+        samples.append(nested)
+        lease = inventory()
+        lease["repositories"]["ControlBot"]["reservations"][0][
+            "reservation_id"
+        ] = HostileText("lease-634")
+        samples.append(lease)
+        timestamp = inventory()
+        timestamp["repositories"]["ControlBot"]["reservations"][0][
+            "observed_at"
+        ] = HostileText("2026-10-13T04:00:00Z")
+        samples.append(timestamp)
+        pr = inventory()
+        pr["repositories"]["Condor"]["pull_requests"][0][
+            "head_sha"
+        ] = HostileText("a" * 40)
+        samples.append(pr)
+        for sample in samples:
+            with self.subTest(case=samples.index(sample)):
+                with self.assertRaises(NoWorkInventoryError) as raised:
+                    inventory_fingerprint(sample)
+                self.assertNotIn("private-caller-value", str(raised.exception))
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
+
+        baseline = inventory()
+        decision = decide_no_work(baseline, None, 100)
+        invalid_previous = NoWorkPublicationState(
+            comment_id=9041, fingerprint=HostileText(decision.fingerprint),
+            published_at=100,
+        )
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "publication_fingerprint_invalid"
+        ):
+            decide_no_work(baseline, invalid_previous, 110)
+
     def test_nonfinite_and_undecodable_inventory_evidence_fails_closed(self):
         from math import inf, nan
 

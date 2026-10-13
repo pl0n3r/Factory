@@ -75,7 +75,7 @@ class NoWorkApplicationDecision:
 def _stable(value: object) -> object:
     if value is None or type(value) in (int, bool):
         return value
-    if isinstance(value, str):
+    if type(value) is str:
         try:
             value.encode("utf-8")
         except UnicodeEncodeError:
@@ -111,7 +111,7 @@ def _stable(value: object) -> object:
 def _observation_timestamp(value: object) -> bool:
     if type(value) is int:
         return value >= 0
-    if not isinstance(value, str) or not value.strip():
+    if type(value) is not str or not value.strip():
         return False
     try:
         instant = datetime.fromisoformat(value)
@@ -134,7 +134,7 @@ def _material_entry(value: object, *, noun: str) -> object:
     if "observation_metadata" in value:
         metadata = value["observation_metadata"]
         if not isinstance(metadata, dict) or any(
-            not isinstance(key, str)
+            type(key) is not str
             or key not in OBSERVATION_METADATA_KEYS
             or not _observation_timestamp(timestamp)
             for key, timestamp in metadata.items()
@@ -190,7 +190,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         ):
             raise NoWorkInventoryError(f"reservation_invalid:{name}:issue")
         reservation_id = reservation.get("reservation_id")
-        if not isinstance(reservation_id, str) or not reservation_id.strip():
+        if type(reservation_id) is not str or not reservation_id.strip():
             raise NoWorkInventoryError(f"reservation_invalid:{name}:reservation_id")
         # Inactive leases are excluded from the fingerprint, but must still
         # be valid JSON-shaped evidence (including nested material). Validate
@@ -245,7 +245,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         if type(number) is not int or number <= 0:
             raise NoWorkInventoryError(f"pull_request_number_invalid:{name}")
         if (
-            not isinstance(head_sha, str)
+            type(head_sha) is not str
             or len(head_sha) not in (40, 64)
             or any(ch not in "0123456789abcdef" for ch in head_sha)
         ):
@@ -326,7 +326,7 @@ def _valid_previous(value: object) -> NoWorkPublicationState | None:
     if type(value.comment_id) is not int or value.comment_id <= 0:
         raise NoWorkInventoryError("comment_id_invalid")
     if (
-        not isinstance(value.fingerprint, str)
+        type(value.fingerprint) is not str
         or len(value.fingerprint) != 64
         or any(ch not in "0123456789abcdef" for ch in value.fingerprint)
     ):
@@ -444,7 +444,7 @@ def revalidate_no_work_application(
         raise NoWorkInventoryError("decision_sink_invalid")
     if (
         type(decision.observed_at) is not int or decision.observed_at < 0
-        or not isinstance(decision.fingerprint, str)
+        or type(decision.fingerprint) is not str
         or len(decision.fingerprint) != 64
         or any(ch not in "0123456789abcdef" for ch in decision.fingerprint)
     ):
@@ -459,7 +459,7 @@ def revalidate_no_work_application(
         if (
             type(decision.comment_id) is not int or decision.comment_id <= 0
             or decision.comment_id != decision.expected_comment_id
-            or not isinstance(decision.expected_fingerprint, str)
+            or type(decision.expected_fingerprint) is not str
             or len(decision.expected_fingerprint) != 64
             or any(
                 ch not in "0123456789abcdef"
