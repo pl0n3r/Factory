@@ -1035,6 +1035,16 @@ def validate_rounds(rounds: int, limit: int) -> None:
         raise PolicyError(f"Rondas automáticas={rounds} supera límite {limit}.")
 
 
+def validate_rounds_for_phase(rounds: int, limit: int, phase_file: Path | None) -> None:
+    """Rondas informativas solo si datos.yml base acredita construccion.
+
+    Fase ausente conserva el veto historico. Fase invalida falla cerrado.
+    El caller obtiene datos.yml desde BASE autenticada, no del HEAD del PR.
+    """
+    if load_phase(phase_file) != "construccion":
+        validate_rounds(rounds, limit)
+
+
 def _read_bounded_lines(path: Path, *, max_bytes: int, noun: str) -> list[str]:
     resolved = _resolve_temp_input(path, noun=noun)
     try:
@@ -1114,7 +1124,11 @@ def main() -> int:
             else None
         )
         rounds = count_review_rounds(lines)
-        validate_rounds(rounds, policy["review_round_limit"])
+        validate_rounds_for_phase(
+            rounds,
+            policy["review_round_limit"],
+            Path(options.phase_file) if options.phase_file else None,
+        )
         review_result = validate_required_bot_review_or_fallback(
             lines,
             effective_required,

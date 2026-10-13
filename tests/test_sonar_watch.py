@@ -487,35 +487,14 @@ class SonarWatchTests(unittest.TestCase):
         self.assertEqual(calls[1][1]["payload"]["labels"], labels)
         self.assertEqual(calls[1][1]["payload"]["state"], "open")
 
-    def test_workflow_is_scheduled_manual_and_minimum_privilege(self):
-        text = (
-            ROOT / ".github" / "workflows" / "sonar-watch.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("schedule:", text)
-        self.assertIn("workflow_dispatch:", text)
-        self.assertIn(
-            "permissions:\n  contents: read\n\nconcurrency:",
-            text,
-        )
-        self.assertIn(
-            "    permissions:\n      contents: read\n      issues: write",
-            text,
-        )
-        for forbidden in (
-            "contents: write",
-            "actions: write",
-            "deployments: write",
-            "packages: write",
-            "pull-requests: write",
-        ):
-            self.assertNotIn(forbidden, text)
-        self.assertIn("SONAR_TOKEN", text)
-        self.assertNotIn("SONAR_WATCH_CONFIG_JSON", text)
-        self.assertIn("CONFIG_PATH", (
-            ROOT / "scripts" / "sonar-watch.py"
-        ).read_text(encoding="utf-8"))
+    def test_retired_workflow_and_offline_engine_are_preserved(self):
+        """F1C suprime el cron sin borrar el motor ni sus parámetros seguros."""
+        workflow = ROOT / ".github" / "workflows" / "sonar-watch.yml"
+        self.assertFalse(workflow.exists())
+        script = ROOT / "scripts" / "sonar-watch.py"
+        self.assertTrue(script.is_file())
+        self.assertIn("CONFIG_PATH", script.read_text(encoding="utf-8"))
         self.assertTrue((ROOT / "quality" / "sonar-watch-config.json").is_file())
-        self.assertIn("python3 scripts/sonar-watch.py", text)
 
     def test_non_pass_signal_upserts_one_issue_by_project_and_signal(self):
         api = FakeIssues()
@@ -1305,21 +1284,12 @@ class SonarWatchTests(unittest.TestCase):
                 with self.assertRaises(sonar_watch.SonarWatchError):
                     sonar_watch.SonarApi.analysis_method_from_settings(payload)
 
-    def test_workflow_loads_versioned_config_with_minimum_privilege(self):
-        workflow = (
-            ROOT / ".github" / "workflows" / "sonar-watch.yml"
-        ).read_text(encoding="utf-8")
-        script = (
-            ROOT / "scripts" / "sonar-watch.py"
-        ).read_text(encoding="utf-8")
+    def test_offline_runtime_loads_versioned_config_without_workflow(self):
+        """Conservar la configuración versionada, no los permisos del cron."""
+        self.assertFalse((ROOT / ".github" / "workflows" / "sonar-watch.yml").exists())
+        script = (ROOT / "scripts" / "sonar-watch.py").read_text(encoding="utf-8")
         self.assertIn("quality/sonar-watch-config.json", script)
-        self.assertNotIn("SONAR_WATCH_CONFIG_JSON", workflow)
-        self.assertIn("SONAR_TOKEN", workflow)
-        self.assertIn("contents: read", workflow)
-        self.assertIn("issues: write", workflow)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("actions: write", workflow)
-        self.assertIn("python3 scripts/sonar-watch.py", workflow)
+        self.assertTrue((ROOT / "quality" / "sonar-watch-config.json").is_file())
 
     def test_runtime_auth_and_settings_scenarios_are_fail_closed_without_sonar_writes(self):
         api = sonar_watch.SonarApi(token="")
@@ -1429,13 +1399,12 @@ class SonarWatchTests(unittest.TestCase):
                 sonar_watch._MAX_GITHUB_ISSUE_PAGES,
             ) = original
 
-    def test_workflow_keeps_scheduled_and_manual_triggers(self):
-        text = (
-            ROOT / ".github" / "workflows" / "sonar-watch.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("  schedule:", text)
-        self.assertIn("  workflow_dispatch:", text)
-        self.assertEqual(text.count("python3 scripts/sonar-watch.py"), 1)
+    def test_sonar_watch_no_longer_has_scheduled_or_manual_triggers(self):
+        self.assertFalse((ROOT / ".github" / "workflows" / "sonar-watch.yml").exists())
+        for active in (ROOT / ".github" / "workflows").glob("*.yml"):
+            text = active.read_text(encoding="utf-8")
+            self.assertNotIn("python3 scripts/sonar-watch.py", text)
+
     def test_ci_missing_coverage_remains_actionable(self):
         configs = {
             row["project"]: row

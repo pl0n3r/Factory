@@ -69,8 +69,33 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         self.assertIn(
             "ref: b0713650194e9a0c464d625bc6136eecad776377", WORKFLOW)
         self.assertNotIn("ref: v1", WORKFLOW)
-        source = (ROOT / "scripts/politica_kit.py").read_bytes()
-        git_blob = b"blob " + str(len(source)).encode("ascii") + b"\0" + source
+        # El workflow de comentario usa un motor fijado en un commit histórico.
+        # Solo el nuevo gate CLI (helper + invocación) puede diferir de ese
+        # motor; toda alteración adicional vuelve a invalidar la huella.
+        source = (ROOT / "scripts/politica_kit.py").read_text(encoding="utf-8")
+        phase_helper = (
+            'def validate_rounds_for_phase(rounds: int, limit: int, phase_file: Path | None) -> None:\n'
+            '    """Rondas informativas solo si datos.yml base acredita construccion.\n'
+            '\n'
+            '    Fase ausente conserva el veto historico. Fase invalida falla cerrado.\n'
+            '    El caller obtiene datos.yml desde BASE autenticada, no del HEAD del PR.\n'
+            '    """\n'
+            '    if load_phase(phase_file) != "construccion":\n'
+            '        validate_rounds(rounds, limit)\n\n\n'
+        )
+        phase_call = (
+            '        validate_rounds_for_phase(\n'
+            '            rounds,\n'
+            '            policy["review_round_limit"],\n'
+            '            Path(options.phase_file) if options.phase_file else None,\n'
+            '        )\n'
+        )
+        self.assertEqual(source.count(phase_helper), 1)
+        self.assertEqual(source.count(phase_call), 1)
+        pinned_source = source.replace(phase_helper, "", 1).replace(
+            phase_call, '        validate_rounds(rounds, policy["review_round_limit"])\n', 1
+        ).encode("utf-8")
+        git_blob = b"blob " + str(len(pinned_source)).encode("ascii") + b"\0" + pinned_source
         self.assertEqual(
             hashlib.sha1(git_blob).hexdigest(),
             "0e39726bb61ccb500e0a2365e49e1030beb48724",

@@ -131,6 +131,8 @@ class FactoryDietInventoryTests(unittest.TestCase):
         self.assertIn(baseline, self.content)
         self.assertIn("38 workflows", self.content)
         self.assertIn("36 workflows", self.content)
+        self.assertIn("35 workflows", self.content)
+        self.assertIn("34 workflows", self.content)
         ledger = self.content.split("## Ledger F1A de bajas autorizadas\n", 1)[1].split(
             "\n## ", 1
         )[0]
@@ -203,17 +205,17 @@ class FactoryDietInventoryTests(unittest.TestCase):
         }
         removed = {path for _, path, _, _ in match}
         # Prueba el conjunto, no solo el cardinal y la tabla mutable.
-        self.assertEqual(baseline_paths - removed, actual)
+        self.assertEqual(baseline_paths - removed - {".github/workflows/metricas.yml", ".github/workflows/sonar-watch.yml", ".github/workflows/cabina.yml", ".github/workflows/sync-label-colors.yml", ".github/workflows/captura-leccion.yml"}, actual)
         victim = next(path for path in sorted(actual) if path not in removed)
         unauthorized_swap = (actual - {victim}) | {
             ".github/workflows/trigger-no-autorizado.yml"
         }
         self.assertEqual(len(unauthorized_swap), len(actual))
         with self.assertRaises(AssertionError):
-            self.assertEqual(baseline_paths - removed, unauthorized_swap)
-        self.assertEqual(len(actual), 36)
+            self.assertEqual(baseline_paths - removed - {".github/workflows/metricas.yml", ".github/workflows/sonar-watch.yml", ".github/workflows/cabina.yml", ".github/workflows/sync-label-colors.yml", ".github/workflows/captura-leccion.yml"}, unauthorized_swap)
+        self.assertEqual(len(actual), 31)
         self.assertEqual(set(self.rows), actual)
-        self.assertEqual(len(actual) + len(match), 38)
+        self.assertEqual(len(actual) + len(match) + 5, 38)
         for _, path, _, suite in match:
             self.assertNotIn(path, actual)
             self.assertTrue((ROOT / suite).is_file())

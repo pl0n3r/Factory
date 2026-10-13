@@ -30,8 +30,25 @@ class CaptureError(ValueError):
     """An event cannot be used as a trustworthy lesson candidate."""
 
 
+def _validate_run_provenance(event: dict[str, Any]) -> None:
+    """Validate optional execution SHA without confusing it with event identity."""
+    run_sha = event.get("run_sha")
+    if "run_sha" in event and (type(run_sha) is not str or not SHA.fullmatch(run_sha)):
+        raise CaptureError("invalid_run_provenance")
+
+
+def _validate_summary(summary: Any) -> None:
+    """Reject malformed Unicode before stable UTF-8 fingerprinting."""
+    if (type(summary) is not str or summary != summary.strip()
+            or not (5 <= len(summary) <= 300)
+            or any(ord(c) < 32 or ord(c) == 127
+                   or 0xD800 <= ord(c) <= 0xDFFF for c in summary)
+            or SENSITIVE.search(summary)):
+        raise CaptureError("unsafe_summary")
+
+
 def _parse(event: Any) -> dict[str, Any]:
-    if type(event) is not dict or set(event) != KEYS:
+    if type(event) is not dict or set(event) not in (KEYS, KEYS | {"run_sha"}):
         raise CaptureError("invalid_event_envelope")
     if event["issuer"] != "github-actions[bot]" or event["verified"] is not True:
         raise CaptureError("unverified_source")
@@ -41,6 +58,13 @@ def _parse(event: Any) -> dict[str, Any]:
             or type(event["event_id"]) is not str or not EVENT_ID.fullmatch(event["event_id"])
             or type(event["event"]) is not str or event["event"] not in EVENTS):
         raise CaptureError("invalid_identity")
+    # Runner SHA is execution context only, not a business event identifier.
+    _validate_run_provenance(event)
+    # Defense in depth: same GitHub merge must never have two business IDs.
+    # This is a structural consistency check, not source authentication.
+    if (event["event"] == "pr_merged"
+            and event["event_id"] != f"pr_merged-{event['issue']}-{event['sha']}"):
+        raise CaptureError("invalid_business_event_identity")
     timestamp = event["occurred_at"]
     if type(timestamp) is not str or not re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp
@@ -53,11 +77,7 @@ def _parse(event: Any) -> dict[str, Any]:
     if when.tzinfo != timezone.utc:
         raise CaptureError("invalid_timestamp")
     summary = event["summary"]
-    if (type(summary) is not str or summary != summary.strip()
-            or not (5 <= len(summary) <= 300)
-            or any(ord(c) < 32 or ord(c) == 127 for c in summary)
-            or SENSITIVE.search(summary)):
-        raise CaptureError("unsafe_summary")
+    _validate_summary(summary)
     record = {"event_id": event["event_id"], "repo": event["repo"],
               "issue": event["issue"], "sha": event["sha"],
               "occurred_at": when.isoformat().replace("+00:00", "Z"),
