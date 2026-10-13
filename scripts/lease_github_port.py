@@ -113,8 +113,11 @@ def _verified_recovery_timeline(events: Any, note: Any, expected: Any) -> Recove
             continue
         author = event.get("actor")
         stamp = event.get("created_at")
-        if (type(author) is not dict or author.get("login") != "github-actions[bot]"
-                or author.get("type") != "Bot" or type(stamp) is not str
+        if (type(author) is not dict
+                or type(author.get("login")) is not str
+                or author["login"] != "github-actions[bot]"
+                or type(author.get("type")) is not str
+                or author["type"] != "Bot" or type(stamp) is not str
                 or _STAMP.fullmatch(stamp) is None):
             raise ValueError("untrusted_label_actor_or_time")
         at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
