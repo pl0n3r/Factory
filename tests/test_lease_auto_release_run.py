@@ -69,7 +69,7 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid, now=instant):
                 answer = observe_recent_activity(invalid, port, now=instant)
-                if instant > NOW + timedelta(days=100):
+                if instant.tzinfo is not None and instant.year > NOW.year:
                     # Fecha lejana significa UNKNOWN autenticado; NO ETA.
                     self.assertEqual(answer.state, "read_only")
                     self.assertIsNone(answer.observations[0].libera_en_min)
