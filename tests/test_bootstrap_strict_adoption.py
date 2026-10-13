@@ -613,6 +613,25 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn("FAIL", result.stderr)
 
+    def test_generated_adoption_rejects_renamed_preflight_with_legacy_comment_spoof(self):
+        """An unsafe strict caller cannot evade preflight checks as 'legacy'."""
+        strict = consumer_caller(strict=True)
+        self.assertEqual(strict.count("preflight_comentario"), 3)
+        renamed = strict.replace("preflight_comentario", "shadow_preflight")
+        self.assertNotIn("  preflight_comentario:\n", renamed)
+        target = "    permissions:\n      contents: write"
+        self.assertIn(target, renamed)
+        spoofed = renamed.replace(
+            target,
+            "    # github.event.comment.body == '/tomar'\n"
+            "    # startsWith(github.event.comment.body, '/renovar-contrato ')\n"
+            + target,
+            1,
+        )
+        result = self.run_generated(spoofed)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("FAIL", result.stderr)
+
     def test_strict_generated_adoption_catches_preflight_regressions(self):
         strict = consumer_caller(strict=True)
         # The audited Python router must not be preceded or followed by
