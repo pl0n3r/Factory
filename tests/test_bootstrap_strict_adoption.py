@@ -615,6 +615,28 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
 
     def test_strict_generated_adoption_catches_preflight_regressions(self):
         strict = consumer_caller(strict=True)
+        # The audited Python router must not be preceded or followed by
+        # arbitrary shell commands, nor accompanied by extra workflow steps.
+        cases = (
+            ("additional_step",
+             strict.replace("    steps:\n      - id: route",
+                            "    steps:\n      - run: echo INJECTED\n      - id: route", 1)),
+            ("shell_before_router",
+             strict.replace("          python3 - <<'PY'",
+                            "          echo INJECTED\n          python3 - <<'PY'", 1)),
+            ("shell_after_router",
+             strict.replace("          PY\n\n  comentario:",
+                            "          PY\n          echo INJECTED\n\n  comentario:", 1)),
+            ("router_shell_changed",
+             strict.replace("        shell: bash", "        shell: pwsh", 1)),
+        )
+        for case, mutated in cases:
+            with self.subTest(unsafe_execution=case):
+                self.assertNotEqual(mutated, strict, case)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL", result.stderr)
+
         roles = """contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)"""
         route = "needs.preflight_comentario.outputs.route == 'true'"
         for mutation, original, unsafe in (
