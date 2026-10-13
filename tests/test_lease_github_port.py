@@ -1,5 +1,7 @@
 """Pruebas offline del futuro Port GitHub: observación != autoridad de release."""
 import unittest
+import json
+from datetime import timedelta
 
 from scripts.lease_auto_release_run import run_cycle
 from scripts.lease_github_port import (
@@ -58,6 +60,143 @@ class FakeAPI(ActivityAPI):
 
 
 class LeaseGithubPortTests(unittest.TestCase):
+    def test_paginated_authenticated_recovery_note_is_read_only_and_fail_closed(self):
+        from scripts.lease_release_executor import _note_ok
+        from test_lease_release_executor import START, snapshot
+
+        target = snapshot()
+        payload = {
+            "version": 1, "owner": target.owner,
+            "reservation_id": target.reservation_id,
+            "branch": target.branch, "branch_sha": target.branch_sha,
+            "last_activity_at": target.last_activity_at.isoformat(),
+            "acceptance_sha256": target.marker["acceptance_sha256"],
+            "task_marker_sha256": target.marker["task_marker_sha256"],
+        }
+
+        class NoteAPI(FakeAPI):
+            def __init__(self):
+                super().__init__()
+                self.repo = "pl0n3r/Factory"
+                self.quota = 90
+                self.branch_sha = target.branch_sha
+                self.revision = "2026-10-11T10:32:00Z"
+                self.notes = [
+                    {
+                        "id": 1, "user": {
+                            "login": "github-actions[bot]", "type": "Bot",
+                        },
+                        "body": "<!-- condor-reserva " +
+                                json.dumps(target.marker) + " -->",
+                        "created_at": "2026-10-11T10:00:00Z",
+                        "updated_at": "2026-10-11T10:00:00Z",
+                    },
+                    {
+                        "id": 2, "user": {
+                            "login": "github-actions[bot]", "type": "Bot",
+                        },
+                        "body": "<!-- factory-lease-recovery " +
+                                json.dumps(payload) + " -->",
+                        "created_at": "2026-10-11T10:30:00Z",
+                        "updated_at": "2026-10-11T10:30:00Z",
+                    },
+                ]
+                self.sentinel = []
+                self.reject = None
+
+            def request(self, method, path):
+                assert method == "GET"
+                if path == GLOBAL_SWITCH:
+                    return super().request(method, path)
+                self.calls.append(path)
+                if path == self.reject:
+                    raise RuntimeError("403 token or secret")
+                if path == "/rate_limit":
+                    return {"resources": {"core": {
+                        "remaining": self.quota, "limit": 100,
+                    }}}
+                if path == "/repos/pl0n3r/Factory":
+                    return {"id": 123, "full_name": self.repo}
+                if path == "/repos/pl0n3r/Factory/issues/1191":
+                    return {
+                        "number": 1191, "state": "open",
+                        "comments": len(self.notes), "updated_at": self.revision,
+                        "assignees": [{"login": target.owner}],
+                        "labels": [{"name": target.status}],
+                    }
+                if path == "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-1191":
+                    return {"object": {"sha": self.branch_sha}}
+                if path.endswith("/comments?per_page=100&page=1"):
+                    return self.notes
+                if path.endswith("/comments?per_page=100&page=2"):
+                    return self.sentinel
+                raise AssertionError("unexpected GET")
+
+        api = NoteAPI()
+        port = LeaseGithubPort(api)
+        proof = port.recovery_note(1191, target)
+        self.assertTrue(proof.complete)
+        self.assertTrue(proof.authenticated)
+        self.assertEqual(proof.count, 1)
+        self.assertTrue(_note_ok(proof, target))
+        self.assertEqual(api.switch_reads, 2)
+        self.assertTrue(all(path.startswith("/repos/") or path == "/rate_limit"
+                            for path in api.calls))
+        self.assertTrue(all(type(path) is str for path in api.calls))
+        with self.assertRaises(PortNotArmed):
+            port.read(1191)
+        with self.assertRaises(PortNotArmed):
+            port.lock("factory-coordination-123")
+        with self.assertRaises(PortNotArmed):
+            port.append(1191, "forbidden", target)
+        with self.assertRaises(PortNotArmed):
+            port.status(1191, "estado: disponible", target)
+
+        missing = NoteAPI()
+        missing.notes = missing.notes[:1]
+        empty = LeaseGithubPort(missing).recovery_note(1191, target)
+        self.assertEqual(empty.count, 0)
+        self.assertTrue(_note_ok(empty, target))
+
+        def tampered_case(modifier):
+            variant = NoteAPI()
+            modifier(variant)
+            with self.assertRaisesRegex(
+                PortNotArmed, "authenticated_recovery_proof_unavailable"
+            ) as caught:
+                LeaseGithubPort(variant).recovery_note(1191, target)
+            self.assertNotIn("secret", str(caught.exception))
+            self.assertTrue(all(path.startswith("/repos/") or path == "/rate_limit"
+                                for path in variant.calls))
+            return variant
+
+        cases = (
+            lambda x: x.notes[1]["user"].update(login="counterfeit"),
+            lambda x: x.notes[1].update(updated_at="2026-10-11T10:31:00Z"),
+            lambda x: x.notes[1].update(
+                body=x.notes[1]["body"].replace(
+                    target.branch_sha, "e" * 40)),
+            lambda x: x.notes.append(dict(x.notes[1], id=3)),
+            lambda x: x.notes.append(dict(x.notes[0], id=1)),
+            lambda x: x.notes[1].update(
+                created_at="2026-10-11T10:29:00Z",
+                updated_at="2026-10-11T10:29:00Z"),
+            lambda x: setattr(x, "sentinel", [{"id": 3}]),
+            lambda x: setattr(x, "quota", 19),
+            lambda x: setattr(x, "branch_sha", "f" * 40),
+            lambda x: setattr(x, "reject",
+                "/repos/pl0n3r/Factory/issues/1191/comments?per_page=100&page=1"),
+            lambda x: setattr(x, "pause_on_second", True),
+            lambda x: setattr(x, "switch_state", "open"),
+            lambda x: x.notes[0].update(body="spoofed bot marker"),
+            lambda x: x.notes[1].update(
+                body=x.notes[1]["body"].replace(
+                    '"version": 1', '"version": 1, "version": 1')),
+        )
+        for index, change in enumerate(cases):
+            with self.subTest(case=index):
+                tampered_case(change)
+
     def test_canonical_switch_and_recent_activity_never_authorize_release(self):
         api = FakeAPI()
         port = LeaseGithubPort(api)
