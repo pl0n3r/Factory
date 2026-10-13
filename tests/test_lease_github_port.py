@@ -64,6 +64,7 @@ class LeaseGithubPortTests(unittest.TestCase):
     def test_paginated_authenticated_recovery_note_is_read_only_and_fail_closed(self):
         from dataclasses import replace
         from scripts.aceptacion_kit import contract_fingerprint
+        from scripts.orquestador_kit import task_marker_fingerprint
         from scripts.lease_release_executor import _note_ok
         from test_aceptacion_kit import issue_body
         from test_lease_release_executor import START, snapshot
@@ -72,10 +73,20 @@ class LeaseGithubPortTests(unittest.TestCase):
             "- [ ] [AC-01] Debe pasar.",
             [{"id": "AC-01", "kind": "check", "target": "Tests de scripts"}],
         )
+        # Un proof positivo necesita también el pin de factory-plan-task
+        # del Issue real, no solo el contrato de aceptación.
+        task = {
+            "version": 1, "epic": 1191, "task_key": "LEASE_PROOF",
+            "order": 1, "owner": "pl0n3r",
+            "roles": ["ingenieria-software"],
+            "depends_on": [], "paths": ["scripts/x.py"],
+        }
+        task_tag = "<!-- factory-plan-task " + json.dumps(task) + " -->"
         original = snapshot()
         target = replace(original, marker={
             **original.marker,
             "acceptance_sha256": contract_fingerprint(contract),
+            "task_marker_sha256": task_marker_fingerprint(task),
         })
         payload = {
             "version": 1, "owner": target.owner,
@@ -120,7 +131,7 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.drift_assignees = False
                 self.drift_issue_body = False
                 self.omit_issue_body = False
-                self.issue_body = contract
+                self.issue_body = contract + "\n" + task_tag
                 self.comment_page_reads = 0
                 self.drift_note_comment = False
                 self.drift_marker_comment = False
@@ -378,6 +389,13 @@ class LeaseGithubPortTests(unittest.TestCase):
                 "Debe pasar.", "Debe pasar sin revisar.")),
             lambda x: setattr(x, "issue_body", x.issue_body.replace(
                 "factory-acceptance", "marker-invalido")),
+            # Ningún cambio del plan puede conservar el pin V3 en el Port:
+            # AC-03 exige identidad de claims además del UUID y SHA.
+            lambda x: setattr(x, "issue_body", x.issue_body.replace(
+                '"task_key": "LEASE_PROOF"', '"task_key": "LEASE_DRIFT"')),
+            lambda x: setattr(x, "issue_body", x.issue_body.replace(
+                "<!-- factory-plan-task ", "<!-- invalid-plan-task ")),
+            lambda x: setattr(x, "issue_body", x.issue_body + "\n" + task_tag),
             lambda x: setattr(x, "drift_note_comment", True),
             lambda x: setattr(x, "drift_marker_comment", True),
             lambda x: x.notes[0].update(body="spoofed bot marker"),
