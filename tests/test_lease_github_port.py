@@ -61,10 +61,21 @@ class FakeAPI(ActivityAPI):
 
 class LeaseGithubPortTests(unittest.TestCase):
     def test_paginated_authenticated_recovery_note_is_read_only_and_fail_closed(self):
+        from dataclasses import replace
+        from scripts.aceptacion_kit import contract_fingerprint
         from scripts.lease_release_executor import _note_ok
+        from test_aceptacion_kit import issue_body
         from test_lease_release_executor import START, snapshot
 
-        target = snapshot()
+        contract = issue_body(
+            "- [ ] [AC-01] Debe pasar.",
+            [{"id": "AC-01", "kind": "check", "target": "Tests de scripts"}],
+        )
+        original = snapshot()
+        target = replace(original, marker={
+            **original.marker,
+            "acceptance_sha256": contract_fingerprint(contract),
+        })
         payload = {
             "version": 1, "owner": target.owner,
             "reservation_id": target.reservation_id,
@@ -108,6 +119,7 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.drift_assignees = False
                 self.drift_issue_body = False
                 self.omit_issue_body = False
+                self.issue_body = contract
                 self.comment_page_reads = 0
                 self.drift_note_comment = False
                 self.drift_marker_comment = False
@@ -134,7 +146,7 @@ class LeaseGithubPortTests(unittest.TestCase):
                         "number": 1191, "state": "open",
                         "comments": len(self.notes), "updated_at": self.revision,
                         **({} if self.omit_issue_body else {
-                            "body": "contrato-issue-consistente"
+                            "body": self.issue_body
                                     + (" cambiado-en-el-mismo-segundo"
                                        if late and self.drift_issue_body else ""),
                         }),
@@ -167,6 +179,11 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertTrue(_note_ok(proof, target))
         self.assertEqual(api.switch_reads, 2)
         self.assertEqual(api.comment_page_reads, 2)
+        # Los cambios periféricos no alteran el contrato fijado.
+        peripheral = NoteAPI()
+        peripheral.issue_body = peripheral.issue_body.replace(
+            "Contexto verificable.", "Contexto verificable con nota adicional.")
+        self.assertTrue(LeaseGithubPort(peripheral).recovery_note(1191, target).authenticated)
         self.assertTrue(all(path.startswith("/repos/") or path == "/rate_limit"
                             for path in api.calls))
         self.assertTrue(all(type(path) is str for path in api.calls))
@@ -219,6 +236,10 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: setattr(x, "drift_assignees", True),
             lambda x: setattr(x, "drift_issue_body", True),
             lambda x: setattr(x, "omit_issue_body", True),
+            lambda x: setattr(x, "issue_body", x.issue_body.replace(
+                "Debe pasar.", "Debe pasar sin revisar.")),
+            lambda x: setattr(x, "issue_body", x.issue_body.replace(
+                "factory-acceptance", "marker-invalido")),
             lambda x: setattr(x, "drift_note_comment", True),
             lambda x: setattr(x, "drift_marker_comment", True),
             lambda x: x.notes[0].update(body="spoofed bot marker"),
