@@ -89,6 +89,22 @@ class RecoveryMediaManifestTests(unittest.TestCase):
         self.assertEqual(verified["verified_copy_count"], 1)
         self.assertEqual(verified["pending_uploads"], [])
 
+    def test_distinct_assets_must_not_share_metadata_key(self):
+        """Two independent assets cannot point to the same restore metadata."""
+        first = asset("asset_A")
+        second = asset("asset_B", digest=SHA2)
+        second["metadata_key"] = first["metadata_key"]
+        with self.assertRaises(MediaManifestError) as caught:
+            plan_media_backup("grindflow", [first, second])
+        self.assertEqual(str(caught.exception), "Conflicting metadata keys.")
+        # Shared immutable content remains legal when metadata is distinct.
+        second["object_key"] = first["object_key"]
+        second["sha256"] = first["sha256"]
+        second["metadata_key"] = "metadata/asset_B.json"
+        plan = plan_media_backup("grindflow", [first, second])
+        self.assertEqual(len(plan["pending_uploads"]), 1)
+        self.assertEqual(len(plan["restore_plan"]), 2)
+
     def test_metadata_key_must_not_alias_any_original_blob(self):
         """A restore plan cannot assign one key to incompatible blob roles."""
         first = asset("asset_A")

@@ -78,6 +78,9 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
     # All keys share one remote namespace. Metadata must not alias
     # immutable originals, including originals declared by later assets.
     metadata_keys = {asset["metadata_key"] for asset in assets}
+    # A restore cannot distinguish different assets pointing to one metadata blob.
+    if len(metadata_keys) != len(assets):
+        raise MediaManifestError("Conflicting metadata keys.")
     if metadata_keys.intersection(keys):
         raise MediaManifestError("Conflicting original and metadata keys.")
     return {"version": 1, "project": project,
