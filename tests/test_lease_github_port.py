@@ -253,6 +253,43 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(current.count, 1)
         self.assertTrue(_note_ok(current, target))
         self.assertEqual(previous.comment_page_reads, 2)
+
+        def released_prior_lease():
+            # El bot publicó un marker terminal para la reserva anterior,
+            # después de la nota que acredita esa misma lease.
+            api = recovered_issue()
+            old_payload = json.loads(
+                api.notes[0]["body"].split(
+                    "<!-- condor-reserva ", 1)[1].split(" -->", 1)[0])
+            terminal = {
+                **old_payload,
+                "active": False,
+                "reason": "auto-inactivity-release",
+            }
+            api.notes.insert(2, {
+                **api.notes[0],
+                "id": 3,
+                "body": "<!-- condor-reserva " +
+                        json.dumps(terminal) + " -->",
+                "created_at": "2026-10-11T10:10:00Z",
+                "updated_at": "2026-10-11T10:10:00Z",
+            })
+            api.notes[3]["id"] = 4
+            api.notes[4]["id"] = 5
+            return api
+
+        terminal = released_prior_lease()
+        verified = LeaseGithubPort(terminal).recovery_note(1191, target)
+        self.assertEqual(verified.count, 1)
+        self.assertTrue(_note_ok(verified, target))
+        stale_terminal = released_prior_lease()
+        stale_terminal.notes[2]["body"] = (
+            stale_terminal.notes[2]["body"].replace(
+                '"task_marker_sha256": "' + "f" * 64,
+                '"task_marker_sha256": "' + "a" * 64))
+        with self.assertRaises(PortNotArmed):
+            LeaseGithubPort(stale_terminal).recovery_note(1191, target)
+
         no_current = recovered_issue()
         no_current.notes.pop()
         self.assertEqual(LeaseGithubPort(no_current).recovery_note(
