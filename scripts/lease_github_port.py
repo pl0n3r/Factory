@@ -207,7 +207,17 @@ class LeaseGithubPort:
                     raise ValueError("request_budget")
                 return self._api.request("GET", endpoint)
 
-            if not self._running():
+            def running_with_budget() -> bool:
+                # #767 también cuesta una petición autenticada; las dos
+                # lecturas deben compartir el límite de 32 y la reserva
+                # mínima del 20 % con el resto de la prueba.
+                nonlocal calls
+                calls += 1
+                if calls > 32:
+                    raise ValueError("request_budget")
+                return self._running()
+
+            if not running_with_budget():
                 raise ValueError("global_pause")
             quota = get("/rate_limit")
             core = quota.get("resources", {}).get("core", {}) if type(quota) is dict else {}
@@ -360,7 +370,7 @@ class LeaseGithubPort:
                     or type(ref_after) is not dict
                     or ref_after.get("object", {}).get("sha") != expected.branch_sha
                     or read_comments() != comments
-                    or not self._running()
+                    or not running_with_budget()
                     or remaining - calls < 0
                     or (remaining - calls) * 5 < limit):
                 raise ValueError("recheck_mismatch")
