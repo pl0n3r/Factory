@@ -434,6 +434,12 @@ class LeaseGithubPortTests(unittest.TestCase):
                 {"name": target.status}, {"name": "tipo: producto"},
                 {"name": "tipo: producto"}]),
             lambda x: setattr(x, "bad_labels", [
+                {"name": target.status}, {"name": "TIPO: PRODUCTO"},
+                {"name": "tipo: producto"}]),
+            lambda x: setattr(x, "bad_labels", [
+                {"name": target.status},
+                {"name": "ESTADO: reservado"}]),
+            lambda x: setattr(x, "bad_labels", [
                 {"name": target.status}, "unexpected-string-label"]),
             lambda x: setattr(x, "bad_assignees", [
                 {"login": UserString(target.owner)}]),
