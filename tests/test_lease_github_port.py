@@ -106,6 +106,9 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.issue_reads = 0
                 self.drift_labels = False
                 self.drift_assignees = False
+                self.comment_page_reads = 0
+                self.drift_note_comment = False
+                self.drift_marker_comment = False
 
             def request(self, method, path):
                 assert method == "GET"
@@ -136,6 +139,13 @@ class LeaseGithubPortTests(unittest.TestCase):
                 if path == "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-1191":
                     return {"object": {"sha": self.branch_sha}}
                 if path.endswith("/comments?per_page=100&page=1"):
+                    self.comment_page_reads += 1
+                    if self.comment_page_reads > 1 and (
+                            self.drift_note_comment or self.drift_marker_comment):
+                        copied = [dict(row) for row in self.notes]
+                        changed = 0 if self.drift_marker_comment else -1
+                        copied[changed]["body"] += " edited_same_timestamp"
+                        return copied
                     return self.notes
                 if path.endswith("/comments?per_page=100&page=2"):
                     return self.sentinel
@@ -149,6 +159,7 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(proof.count, 1)
         self.assertTrue(_note_ok(proof, target))
         self.assertEqual(api.switch_reads, 2)
+        self.assertEqual(api.comment_page_reads, 2)
         self.assertTrue(all(path.startswith("/repos/") or path == "/rate_limit"
                             for path in api.calls))
         self.assertTrue(all(type(path) is str for path in api.calls))
@@ -199,6 +210,8 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: setattr(x, "switch_state", "open"),
             lambda x: setattr(x, "drift_labels", True),
             lambda x: setattr(x, "drift_assignees", True),
+            lambda x: setattr(x, "drift_note_comment", True),
+            lambda x: setattr(x, "drift_marker_comment", True),
             lambda x: x.notes[0].update(body="spoofed bot marker"),
             lambda x: x.notes[1].update(
                 body=x.notes[1]["body"].replace(
