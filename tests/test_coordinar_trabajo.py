@@ -1849,8 +1849,11 @@ class CoordinacionTests(unittest.TestCase):
 
     def test_scheduled_sweep_consumer_reads_exact_factory_767(self):
         """Factory y consumidores leen #767 con GET autenticado canónico."""
-        for repo in ("pl0n3r/Factory", "pl0n3r/Condor",
-                     "pl0n3r/FactoryRunner"):
+        for repo in (
+            "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        ):
             with self.subTest(repo=repo):
                 api, observed = self._sweep_switch_api("RUNNING")
                 api.repo = repo
