@@ -158,6 +158,24 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
         self.assertNotEqual(negative.returncode, 0)
         self.assertIn("FAIL", negative.stderr)
 
+    def test_generated_adoption_rejects_untrusted_embedded_python_without_execution(self):
+        """Consumer-controlled workflow snippets are parsed, never run unless audited."""
+        strict = consumer_caller(strict=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            sentinel = Path(tmp) / "unauthorized-write"
+            payload = (
+                "          __import__('pathlib').Path("
+                + repr(str(sentinel))
+                + ").write_text('unauthorized', encoding='utf-8')\n"
+            )
+            target = "          route = bool(parts and parts[0] in supported)"
+            mutated = strict.replace(target, payload + target, 1)
+            self.assertNotEqual(mutated, strict)
+            failure = self.run_generated(mutated)
+            self.assertNotEqual(failure.returncode, 0, failure.stdout + failure.stderr)
+            self.assertIn("FAIL", failure.stderr)
+            self.assertFalse(sentinel.exists(), "A rejected script must never execute")
+
     def test_generated_adoption_preserves_reusable_guards(self):
         source = bootstrap.adoption_test(bootstrap.CALLER_PATH)
         self.assertIn("checks: write", source)
@@ -257,6 +275,9 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
             ("preflight_or_true", strict.replace(
                 "contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)\n    runs-on:",
                 "contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association) || true\n    runs-on:", 1)),
+            ("comment_or_true", strict.replace(
+                "needs.preflight_comentario.outputs.route == 'true'",
+                "needs.preflight_comentario.outputs.route == 'true' || true", 1)),
             ("comment_profile_wrong", strict.replace(
                 "      profile: es", "      profile: en", 1).replace(
                 "      operation: label", "      operation: label\n      profile: es", 1)),
