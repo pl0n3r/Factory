@@ -16,7 +16,7 @@ EXPECTED_BEFORE = "e88c1e5986c56264ce97b5341b8af4fa9a41e0e0"
 
 def job_block(text: str, name: str) -> str:
     match = re.search(
-        rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n|\\Z)",
+        rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n|\Z)",
         text,
     )
     if match is None:
