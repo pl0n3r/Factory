@@ -141,18 +141,14 @@ class SecurityBoundaryTests(unittest.TestCase):
             "permissions:\n  contents: read\n  actions: read",
             costs,
         )
-        pr_job = costs.split("  presupuesto-pr:", 1)[1].split(
-            "  tendencia-ci:", 1
+        candidate_job = costs.split("  validar-candidato:", 1)[1].split(
+            "  presupuesto-pr:", 1
         )[0]
-        self.assertIn(
-            "    permissions:\n      contents: read",
-            pr_job,
-        )
-        trend_job = costs.split("  tendencia-ci:", 1)[1]
-        self.assertIn(
-            "    permissions:\n"
-            "      contents: read\n"
-            "      actions: read",
-            trend_job,
-        )
+        pr_job = costs.split("  presupuesto-pr:", 1)[1]
+        for job in (candidate_job, pr_job):
+            self.assertIn("    permissions:\n      contents: read", job)
+        self.assertNotIn("  tendencia-ci:", costs)
+        self.assertNotIn("actions: read", costs)
+        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", pr_job)
+        self.assertIn("retention-days: 30", pr_job)
 
