@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from scripts.lease_auto_release import Decision, Evidence, decide
-from scripts.lease_release_executor import Result, Snapshot, execute
+from scripts.lease_release_executor import (
+    Result, Snapshot, _eligible, _trusted, execute,
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,16 @@ def decision_from_snapshot(snapshot: Any) -> Decision:
     """Adaptador tipado, sin otorgar autoridad distinta a la del Port."""
     if type(snapshot) is not Snapshot:
         return Decision("unknown", "invalid_snapshot")
+    # Una liberación parcialmente escrita no equivale a una V3 activa.
+    # Reconciliar exclusivamente el marker terminal auténtico, con todos
+    # los vetos de autoridad/tiempo del ejecutor; éste revalida lock, CAS,
+    # procedencia de nota y etiqueta antes de cualquier cambio de estado.
+    if (type(snapshot.marker) is dict
+            and snapshot.marker.get("active") is False):
+        if (_trusted(snapshot, allow_partial=True)
+                and _eligible(snapshot, "release")):
+            return Decision("release", "authenticated_partial_reconciliation")
+        return Decision("unknown", "partial_marker_not_authorized")
     return decide(Evidence(
         now=snapshot.now,
         last_activity_at=snapshot.last_activity_at,
