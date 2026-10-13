@@ -18,6 +18,7 @@ from scripts.lease_release_executor import (
     SESSION_RE, SHA, RecoveryLabelProof, RecoveryNoteProof, Snapshot,
     _trusted, _note_ok, _recovery_label_ok, _utc,
 )
+from scripts.aceptacion_kit import contract_fingerprint
 from scripts.coordinar_trabajo import reservation_from_text
 
 from scripts.lease_activity_collector import collect_activity
@@ -230,6 +231,10 @@ class LeaseGithubPort:
                     or not 1 <= initial["comments"] <= 500
                     or type(initial.get("updated_at")) is not str
                     or type(initial.get("body")) is not str
+                    # El pin de aceptación de la V3 debe corresponder al
+                    # contrato ejecutable REAL del Issue, no solo a la nota.
+                    or contract_fingerprint(initial["body"]) !=
+                       expected.marker["acceptance_sha256"]
                     or type(initial.get("labels")) is not list
                     or type(initial.get("assignees")) is not list
                     or len(initial["assignees"]) != 1
