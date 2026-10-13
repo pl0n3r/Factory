@@ -6,7 +6,6 @@ on:
       - main
   schedule:
     - cron: '*/15 * * * *'
-    - cron: '0 13 * * *'
   workflow_dispatch:
 
 permissions:
@@ -19,7 +18,7 @@ concurrency:
 jobs:
   watchdog:
     name: Vigilar actividad desatendida
-    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule != '0 13 * * *'))
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -39,24 +38,3 @@ jobs:
           set -euo pipefail
           python3 -m scripts.unattended_watchdog_runtime
 
-  daily-summary:
-    name: Entregar resumen diario al dueño
-    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && github.event_name == 'schedule' && github.event.schedule == '0 13 * * *'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Descargar Factory
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-
-      - name: Publicar resumen diario idempotente
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          python3 -m scripts.unattended_daily_summary

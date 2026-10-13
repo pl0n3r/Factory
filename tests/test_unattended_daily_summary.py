@@ -255,14 +255,14 @@ class UnattendedDailySummaryTests(unittest.TestCase):
             self.assertIn("user-agent", headers)
             self.assertIn("api.github.com/repos/pl0n3r/Condor/issues/1/comments", request.full_url)
 
-    def test_workflow_delivers_once_per_local_day_at_0800_bogota(self):
+    def test_offline_publish_once_survives_without_daily_trigger(self):
         workflow = (
             ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("cron: '*/15 * * * *'", workflow)
-        self.assertIn("cron: '0 13 * * *'", workflow)
-        self.assertIn("github.event.schedule == '0 13 * * *'", workflow)
-        self.assertIn("python3 -m scripts.unattended_daily_summary", workflow)
+        self.assertNotIn("cron: '0 13 * * *'", workflow)
+        self.assertNotIn("  daily-summary:", workflow)
+        self.assertNotIn("python3 -m scripts.unattended_daily_summary", workflow)
         self.assertIn("issues: write", workflow)
         self.assertNotIn("secrets.", workflow)
 
