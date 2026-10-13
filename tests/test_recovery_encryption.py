@@ -104,6 +104,55 @@ class RecoveryEncryptionTests(unittest.TestCase):
                 call()
             self.assertNotIn("sensitive-backend-sentinel", str(caught.exception))
 
+    def test_fake_errors_do_not_retain_provider_exception_context(self):
+        """Synthetic backend failures must not remain attached to public errors."""
+        sentinel = "DUMMY_SECRET_NOT_REAL"
+
+        class FailingKeys:
+            def resolve(self, ref):
+                raise RuntimeError(sentinel)
+
+        class FailingBackend:
+            simulation_only = True
+
+            def seal(self, data, key, aad):
+                raise RuntimeError(sentinel)
+
+            def open(self, token, key, aad):
+                raise RuntimeError(sentinel)
+
+        class GetterFailureBackend:
+            @property
+            def simulation_only(self):
+                raise RuntimeError(sentinel)
+
+        keys = FakeKeys()
+        working = OpaqueInMemoryFake()
+        artifact = seal_backup("grindflow", "epoch1", b"fake-only-data", keys, working)
+
+        cases = (
+            ("getter_seal", lambda: seal_backup(
+                "grindflow", "epoch1", b"fake-only-data", keys, GetterFailureBackend())),
+            ("getter_open", lambda: open_backup(
+                "grindflow", artifact, keys, GetterFailureBackend())),
+            ("key_resolve_seal", lambda: seal_backup(
+                "grindflow", "epoch1", b"fake-only-data", FailingKeys(), working)),
+            ("backend_seal", lambda: seal_backup(
+                "grindflow", "epoch1", b"fake-only-data", keys, FailingBackend())),
+            ("key_resolve_open", lambda: open_backup(
+                "grindflow", artifact, FailingKeys(), working)),
+            ("backend_open", lambda: open_backup(
+                "grindflow", artifact, keys, FailingBackend())),
+        )
+        for label, operation in cases:
+            with self.subTest(case=label):
+                with self.assertRaises(EncryptionContractError) as captured:
+                    operation()
+                error = captured.exception
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+                self.assertNotIn(sentinel, str(error))
+
     def test_fake_restore_rejects_short_token_before_key_or_backend(self):
         """Only a token which seal_backup could have emitted may reach the fake."""
         class RecordingKeys:

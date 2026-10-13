@@ -25,7 +25,9 @@ def _validated(project: object, key_ref: object, backend: object) -> None:
                    and callable(getattr(backend, "seal", None))
                    and callable(getattr(backend, "open", None)))
     except Exception:
-        raise EncryptionContractError("Untrusted key or crypto backend.") from None
+        allowed = False
+    # Raise outside the handler so hostile backend errors cannot survive
+    # through EncryptionContractError.__context__.
     if not allowed:
         raise EncryptionContractError("Untrusted key or crypto backend.")
 
@@ -41,7 +43,9 @@ def seal_backup(project: str, key_ref: str, data: bytes, keys: object, backend: 
         if not isinstance(sealed, bytes) or sealed == data or not 8 <= len(sealed) <= 12_000_000:
             raise ValueError("Invalid simulated seal")
     except Exception:
-        raise EncryptionContractError("Encryption simulation failed.") from None
+        sealed = None
+    if sealed is None:
+        raise EncryptionContractError("Encryption simulation failed.")
     return {"version": 1, "project": project, "key_ref": key_ref,
             "payload_b64": base64.b64encode(sealed).decode("ascii"),
             "simulation_only": True, "external_transfer_allowed": False}
@@ -80,6 +84,8 @@ def open_backup(project: str, artifact: dict, keys: object, backend: object) -> 
         plain = backend.open(sealed, keys.resolve(artifact["key_ref"]), project.encode("ascii"))
         if not isinstance(plain, bytes) or len(plain) > 8_000_000:
             raise ValueError("Invalid opened bytes")
-        return plain
     except Exception:
-        raise EncryptionContractError("Decrypt simulation failed.") from None
+        plain = None
+    if plain is None:
+        raise EncryptionContractError("Decrypt simulation failed.")
+    return plain
