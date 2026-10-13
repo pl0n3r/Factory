@@ -124,7 +124,11 @@ jobs:
           from pathlib import Path
           from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
           payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          print(evaluate_unattended_kill_switch(payload).state)
+          if (type(payload) is not dict or payload.get("state") != "closed"
+                  or type(payload.get("number")) is not int):
+              print("UNKNOWN")
+          else:
+              print(evaluate_unattended_kill_switch(payload).state)
           PY
           )"
           case "$verdict" in
@@ -145,13 +149,21 @@ jobs:
           gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
             "/repos/pl0n3r/Factory/issues?state=open&per_page=100" \
             > "$RUNNER_TEMP/lease-open-issues.json"
-          python3 - "$RUNNER_TEMP/lease-open-issues.json" <<'PY'
+          # El primer RUNNING no es persistente: revalidar la fuente absoluta
+          # después de paginar y ANTES de publicar siquiera el censo agregado.
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-switch-after.json"
+          python3 - "$RUNNER_TEMP/lease-switch.json" \
+              "$RUNNER_TEMP/lease-switch-after.json" \
+              "$RUNNER_TEMP/lease-open-issues.json" <<'PY'
           import json
           import sys
           from pathlib import Path
-          from scripts.lease_auto_release_run import inventory_from_paginated_issues
-          pages = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          result = inventory_from_paginated_issues(pages)
+          from scripts.lease_auto_release_run import inventory_after_switch_recheck
+          before = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          after = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          pages = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+          result = inventory_after_switch_recheck(before, after, pages)
           if result is None or result.release_authorized:
               print("::error::Inventario de recuperación UNKNOWN, sin autoridad.")
               raise SystemExit(1)
