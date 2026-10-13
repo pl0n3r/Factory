@@ -321,8 +321,11 @@ class LeaseGithubPort:
             for comment in comments:
                 author = comment["user"]
                 body = comment["body"]
-                is_bot = (author["login"] == "github-actions[bot]"
-                          and author.get("type") == "Bot")
+                # read_comments() ya exige login str; impedir que un
+                # subtipo comparable a texto suplante el tipo Bot de API.
+                is_bot = (type(author.get("type")) is str
+                          and author["login"] == "github-actions[bot]"
+                          and author["type"] == "Bot")
                 if "<!-- condor-reserva " in body:
                     if not is_bot:
                         raise ValueError("untrusted_marker_actor")
