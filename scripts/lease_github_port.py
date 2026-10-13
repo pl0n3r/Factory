@@ -15,7 +15,8 @@ import re
 from typing import Any
 
 from scripts.lease_release_executor import (
-    SESSION_RE, SHA, RecoveryNoteProof, Snapshot, _trusted, _note_ok, _utc,
+    SESSION_RE, SHA, RecoveryLabelProof, RecoveryNoteProof, Snapshot,
+    _trusted, _note_ok, _recovery_label_ok, _utc,
 )
 from scripts.coordinar_trabajo import reservation_from_text
 
@@ -85,6 +86,48 @@ def _recent_report_ok(report: Any, issue: int, repo: Any, now: Any) -> bool:
         return (timedelta(0) <= observed - activity < timedelta(minutes=30))
     except (ValueError, OverflowError, TypeError):
         return False
+
+
+def _verified_recovery_timeline(events: Any, note: Any, expected: Any) -> RecoveryLabelProof:
+    """Prueba pura de etiquetado por bot: no demuestra lock ni CAS."""
+    if (type(events) is not list or type(expected) is not Snapshot
+            or not _note_ok(note, expected) or note.count != 1):
+        raise ValueError("untrusted_timeline")
+    matches: list[datetime] = []
+    for event in events:
+        if type(event) is not dict or type(event.get("event")) is not str:
+            raise ValueError("invalid_event")
+        if event["event"] not in ("labeled", "unlabeled"):
+            continue
+        label = event.get("label")
+        if type(label) is not dict or type(label.get("name")) is not str:
+            raise ValueError("missing_label")
+        if label["name"] != "estado: requiere recuperación":
+            continue
+        author = event.get("actor")
+        stamp = event.get("created_at")
+        if (type(author) is not dict or author.get("login") != "github-actions[bot]"
+                or author.get("type") != "Bot" or type(stamp) is not str
+                or _STAMP.fullmatch(stamp) is None):
+            raise ValueError("untrusted_label_actor_or_time")
+        at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if at > _utc(expected.now):
+            raise ValueError("future_event")
+        if event["event"] == "unlabeled":
+            raise ValueError("recovery_relabelled")
+        matches.append(at)
+    if len(matches) != 1:
+        raise ValueError("recovery_label_count")
+    proof = RecoveryLabelProof(
+        complete=True, authenticated=True, count=1,
+        owner=expected.owner, reservation_id=expected.reservation_id,
+        branch=expected.branch, branch_sha=expected.branch_sha,
+        label="estado: requiere recuperación", created_at=matches[0],
+        author="github-actions[bot]",
+    )
+    if not _recovery_label_ok(note, proof, expected):
+        raise ValueError("label_not_bound_to_note_and_snapshot")
+    return proof
 
 
 class LeaseGithubPort:
