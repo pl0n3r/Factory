@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from scripts.lease_auto_release_run import (
-    decision_from_snapshot, run_cycle,
+    decision_from_snapshot, inventory_from_paginated_issues, run_cycle,
 )
 from test_lease_release_executor import FakePort, snapshot
 
@@ -15,6 +15,53 @@ class NoAccessPort:
 
 
 class LeaseAutoReleaseRunTests(unittest.TestCase):
+    def test_paginated_real_issue_inventory_is_only_an_observation(self):
+        def issue(n, state="estado: en revisión", *, is_pr=False):
+            row = {
+                "number": n, "state": "open",
+                "labels": [{"name": state}],
+                "title": "private title not printed",
+                "body": "private body must not be logged",
+            }
+            if is_pr:
+                row["pull_request"] = {"url": "https://example.invalid/pr"}
+            return row
+
+        first_page = [issue(n) for n in range(1, 101)]
+        second_page = [
+            issue(101, "estado: requiere recuperación"),
+            issue(102, "estado: reservado"),
+            issue(103, "estado: en revisión", is_pr=True),
+        ]
+        pages = [first_page, second_page]
+        counted = inventory_from_paginated_issues(pages)
+        self.assertIsNotNone(counted)
+        self.assertEqual(counted.open_issues, 102)
+        self.assertEqual(counted.recovery, 1)
+        self.assertEqual(counted.reserved, 1)
+        self.assertEqual(counted.in_review, 100)
+        self.assertFalse(counted.release_authorized)
+        self.assertNotIn("private", str(counted))
+
+        invalid = [
+            [], {}, [[issue(1)], [issue(2)]],  # first page truncated
+            [[issue(True)]], [[issue(1), issue(1)]],
+            [[{**issue(1), "state": "closed"}]],
+            [[{**issue(1), "labels": "estado: reservado"}]],
+            [[{**issue(1), "labels": [{"name": "estado: en revisión"},
+                                      {"name": "estado: reservado"}]}]],
+            [[{**issue(1), "labels": [{"name": "estado: reservado"},
+                                      {"name": "estado: reservado"}]}]],
+            [[{**issue(1), "pull_request": "untrusted"}]],
+        ]
+        for value in invalid:
+            with self.subTest(value=str(value)[:60]):
+                self.assertIsNone(inventory_from_paginated_issues(value))
+        empty = inventory_from_paginated_issues([[]])
+        self.assertIsNotNone(empty)
+        self.assertEqual(empty.open_issues, 0)
+        self.assertFalse(empty.release_authorized)
+
     def test_scheduled_dry_run_defaults_off_and_never_writes(self):
         workflow = (Path(__file__).resolve().parents[1] /
                     ".github/workflows/liberar-reservas.yml").read_text(
