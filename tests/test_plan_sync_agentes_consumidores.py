@@ -110,12 +110,25 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
             "### Principio 6 — ejemplo",
             "```\n" + "### Principio 6 — ejemplo", 1,
         )
-        for fake_source in (fenced_heading, fenced_principle):
+        # "tt" is not legal whitespace after a Markdown fence delimiter.
+        false_closer = template().replace(
+            "## Principios de construcción de la fábrica",
+            "```python\n```tt\n" + "## Principios de construcción de la fábrica", 1,
+        )
+        for fake_source in (fenced_heading, fenced_principle, false_closer):
             with self.subTest(source=fake_source[:100]):
                 with self.assertRaisesRegex(
                     SyncPlanError, "invalid_principles_source"
                 ):
                     plan_sync(fake_source, consumers())
+
+        # A trailing tab is legitimate closing-fence whitespace.
+        valid_tab_closer = template().replace(
+            "## Principios de construcción de la fábrica",
+            "```python\nliteral example\n```\t\n" + "## Principios de construcción de la fábrica", 1,
+        )
+        self.assertEqual(plan_sync(valid_tab_closer, consumers())["status"],
+                         "planned")
 
         # Una sección sin cuerpo, aunque retenga título y cierre auténticos,
         # no constituye un principio apto para planificar seis consumidores.

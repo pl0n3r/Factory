@@ -48,7 +48,7 @@ def _principles(template: object) -> str:
                 fence_char = opening.group(1)[0]
                 fence_width = len(opening.group(1))
         else:
-            closing = re.fullmatch(r" {0,3}(`{3,}|~{3,})[ \\t]*", line)
+            closing = re.fullmatch(r" {0,3}(`{3,}|~{3,})[ \t]*", line)
             if (closing is not None and closing.group(1)[0] == fence_char
                     and len(closing.group(1)) >= fence_width):
                 fence_char = None
