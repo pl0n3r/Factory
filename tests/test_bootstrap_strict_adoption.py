@@ -514,6 +514,23 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 self.assertIn("FAIL", result.stderr)
 
 
+    def test_generated_adoption_rejects_noncanonical_reusable_in_each_job(self):
+        """Other jobs must not redirect to an untrusted reusable at a non-main ref."""
+        canonical = "    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
+        rogue = "    uses: attacker/fork/.github/workflows/coordinacion.yml@v1"
+        for strict in (False, True):
+            caller = consumer_caller(strict=strict)
+            for job in ("etiqueta", "pr", "validar-pr", "issue", "sweep"):
+                with self.subTest(strict=strict, job=job):
+                    start = caller.index(f"  {job}:\n")
+                    offset = caller.index(canonical, start)
+                    changed = caller[:offset] + caller[offset:].replace(canonical, rogue, 1)
+                    self.assertNotEqual(caller, changed)
+                    self.assertNotIn("@main", changed)
+                    result = self.run_generated(changed)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("FAIL", result.stderr)
+
     def test_generated_adoption_rejects_spoofed_operations_and_missing_actor_guards(self):
         operation = "      operation: comment"
         spoofed_operation = "      operation: label\n      # operation: comment"
