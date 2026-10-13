@@ -326,11 +326,26 @@ class LeaseGithubPort:
                 is_bot = (type(author.get("type")) is str
                           and author["login"] == "github-actions[bot]"
                           and author["type"] == "Bot")
-                if "<!-- condor-reserva " in body:
-                    if not is_bot:
-                        raise ValueError("untrusted_marker_actor")
+                # Un solo encabezado V3 sospechoso por comentario. Un
+                # duplicado (incluso truncado o con mayúsculas) no debe
+                # esconderse detrás de un marker válido.
+                marker_heads = re.findall(
+                    r"<!--\\s*condor-reserva\\b", body, flags=re.IGNORECASE)
+                if marker_heads:
+                    if not is_bot or len(marker_heads) != 1:
+                        raise ValueError("untrusted_marker_actor_or_count")
+                    marker_match = re.search(
+                        r"<!-- condor-reserva (\\{[^\\n]*\\}) -->", body)
+                    if marker_match is None:
+                        raise ValueError("malformed_v3_marker")
+                    # El parser V3 compartido comprueba schema/claims. La
+                    # lectura estricta adicional rechaza claves JSON dobles
+                    # que json.loads ordinario resolvería silenciosamente.
+                    raw_marker = json.loads(
+                        marker_match.group(1),
+                        object_pairs_hook=no_duplicate_keys)
                     payload = reservation_from_text(body)
-                    if payload is None:
+                    if type(raw_marker) is not dict or payload != raw_marker:
                         raise ValueError("malformed_v3_marker")
                     active_markers.append((comment["id"], payload))
                 if "<!-- factory-lease-recovery " not in body:

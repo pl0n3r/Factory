@@ -369,6 +369,17 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: setattr(x, "drift_note_comment", True),
             lambda x: setattr(x, "drift_marker_comment", True),
             lambda x: x.notes[0].update(body="spoofed bot marker"),
+            # El parser compartido tolera JSON duplicate keys por defecto;
+            # el Port autenticado no debe aceptarlas ni omitir encabezados.
+            lambda x: x.notes[0].update(
+                body=x.notes[0]["body"].replace(
+                    '"owner": "' + target.owner + '"',
+                    '"owner": "' + target.owner + '", '
+                    '"owner": "' + target.owner + '"')),
+            lambda x: x.notes[0].update(
+                body=x.notes[0]["body"] + "\\n" + x.notes[0]["body"]),
+            lambda x: x.notes[0].update(
+                body=x.notes[0]["body"] + "\\n<!-- CONDOR-RESERVA {"),
             lambda x: x.notes[1].update(
                 body=x.notes[1]["body"].replace(
                     '"version": 1', '"version": 1, "version": 1')),
