@@ -627,6 +627,9 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
             ("shell_after_router",
              strict.replace("          PY\n\n  comentario:",
                             "          PY\n          echo INJECTED\n\n  comentario:", 1)),
+            ("extra_shell_hidden_by_second_heredoc",
+             strict.replace("          PY\n\n  comentario:",
+                            "          PY\n          echo INJECTED\n          : <<'PY'\n          PY\n\n  comentario:", 1)),
             ("router_shell_changed",
              strict.replace("        shell: bash", "        shell: pwsh", 1)),
         )
