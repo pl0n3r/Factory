@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from math import ceil
 import json
 import re
 from typing import Any
@@ -42,6 +43,7 @@ class Inspection:
     lease_id: str | None = None
     branch_sha: str | None = None
     last_activity_at: str | None = None
+    libera_en_min: int | None = None  # Cota inferior; nunca autoridad.
 
 
 _RECENT_STATES = frozenset({
@@ -172,6 +174,14 @@ class LeaseGithubPort:
             if not _recent_report_ok(report, issue, getattr(self._api, "repo", None),
                                      now):
                 return invalid
+            # Cota inferior: 30 minutos inactivo + 10 de gracia. La prueba
+            # positiva de actividad NO permite declarar ausencia de actividad.
+            activity = datetime.fromisoformat(
+                report["last_activity_at"].replace("Z", "+00:00"))
+            seconds = (activity + timedelta(minutes=40)
+                       - now.astimezone(timezone.utc)).total_seconds()
+            if seconds <= 0:
+                return invalid
             # Volver a leer #767: RUNNING no es un permiso duradero.
             if not self._running():
                 return invalid
@@ -180,6 +190,7 @@ class LeaseGithubPort:
                 lease_id=report["lease_id"],
                 branch_sha=report["branch_sha"],
                 last_activity_at=report["last_activity_at"],
+                libera_en_min=ceil(seconds / 60),
             )
         except Exception:
             return invalid
