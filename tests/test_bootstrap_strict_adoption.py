@@ -223,6 +223,23 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("FAIL", result.stderr)
 
+        for strict in (False, True):
+            caller = consumer_caller(strict=strict)
+            for name, before, after in (
+                ("comment_profile_yaml_spoof",
+                 "      profile: es",
+                 "      profile: en\n      # profile: es"),
+                ("comment_reusable_yaml_spoof",
+                 "    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1",
+                 "    uses: attacker/fork/.github/workflows/coordinacion.yml@main\n    # uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"),
+            ):
+                with self.subTest(strict=strict, spoof=name):
+                    mutated = caller.replace(before, after, 1)
+                    self.assertNotEqual(mutated, caller)
+                    result = self.run_generated(mutated)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("FAIL", result.stderr)
+
         strict = consumer_caller(strict=True)
         roles = """contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)"""
         for condition in ("github.event.comment.user.type == 'User'", roles):
