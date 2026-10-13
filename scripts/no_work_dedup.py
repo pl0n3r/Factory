@@ -173,6 +173,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
     live_reservations = []
     active_issue_ids = set()
     active_reservation_ids = set()
+    observed_lease_pairs = set()
     for reservation in value["reservations"]:
         if not isinstance(reservation, dict):
             raise NoWorkInventoryError(f"reservation_invalid:{name}:shape")
@@ -197,6 +198,12 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         material = _stable(_material_entry(
             reservation, noun=f"reservation:{name}"
         ))
+        # Un único UUID/Issue no puede ser activo e inactivo a la vez
+        # dentro de la misma fotografía: no omitir la fila contradictoria.
+        identity = (issue_id, reservation_id)
+        if identity in observed_lease_pairs:
+            raise NoWorkInventoryError(f"reservation_duplicate:{name}")
+        observed_lease_pairs.add(identity)
         if not reservation["active"]:
             continue
         if issue_id in active_issue_ids or reservation_id in active_reservation_ids:
@@ -233,8 +240,6 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         state = pr.get("state")
         if type(state) is not str or state not in ("open", "closed"):
             raise NoWorkInventoryError(f"pull_request_state_invalid:{name}")
-        if state == "closed":
-            continue
         number = pr.get("number")
         head_sha = pr.get("head_sha")
         if type(number) is not int or number <= 0:
@@ -245,6 +250,9 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
             or any(ch not in "0123456789abcdef" for ch in head_sha)
         ):
             raise NoWorkInventoryError(f"pull_request_head_invalid:{name}")
+        # Ignorar PRs cerrados solo después de demostrar su identidad.
+        if state == "closed":
+            continue
         if number in open_pr_numbers:
             raise NoWorkInventoryError(f"pull_request_duplicate:{name}")
         open_pr_numbers.add(number)

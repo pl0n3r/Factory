@@ -165,6 +165,30 @@ class NoWorkDedupTests(unittest.TestCase):
                 ):
                     inventory_fingerprint(duplicate)
 
+    def test_inactive_and_active_same_lease_cannot_hide_conflict(self):
+        # La misma identidad UUID/Issue con flags contradictorios es
+        # evidencia ambigua aun si la fila inactive no va al fingerprint.
+        baseline = inventory_fingerprint(inventory())
+        for flag in (False, True):
+            sample = inventory()
+            sample["repositories"]["ControlBot"]["reservations"].append({
+                "issue": 634, "reservation_id": "lease-634",
+                "active": flag,
+            })
+            with self.subTest(active=flag):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "reservation_duplicate"
+                ):
+                    inventory_fingerprint(sample)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
+        valid = inventory()
+        valid["repositories"]["ControlBot"]["reservations"].append({
+            "issue": 634, "reservation_id": "historic-634",
+            "active": False,
+        })
+        self.assertEqual(inventory_fingerprint(valid), baseline)
+
     def test_valid_inventory_and_scalar_blockers_keep_existing_fingerprint(self):
         base = inventory()
         fingerprint = inventory_fingerprint(base)
@@ -209,6 +233,22 @@ class NoWorkDedupTests(unittest.TestCase):
             "number": 448, "state": "closed", "head_sha": "a" * 40
         })
         self.assertEqual(inventory_fingerprint(known_closed), closed_baseline)
+
+        # Un PR cerrado válido se excluye; uno cerrado sin identidad
+        # verificable NO puede eliminarse silenciosamente del snapshot.
+        for invalid in (
+            {"state": "closed"},
+            {"state": "closed", "number": True, "head_sha": "a" * 40},
+            {"state": "closed", "number": 448, "head_sha": "bad"},
+            {"state": "closed", "number": 1.0, "head_sha": "a" * 40},
+        ):
+            sample = inventory()
+            sample["repositories"]["Condor"]["pull_requests"] = [invalid]
+            with self.subTest(closed=invalid):
+                with self.assertRaises(NoWorkInventoryError):
+                    inventory_fingerprint(sample)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
 
         for bad in (True, False, 0, -4, "904", None):
             candidate = inventory()
