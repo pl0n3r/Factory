@@ -14,7 +14,9 @@ CANONICAL_SOURCE_URL = "https://api.github.com/repos/pl0n3r/Factory/issues/767"
 CANONICAL_REPOSITORY_URL = "https://api.github.com/repos/pl0n3r/Factory"
 CANONICAL_ISSUE_NUMBER = 767
 CANONICAL_OWNER = "pl0n3r"
-MARKER_START_RE = re.compile(r"<!--\s*factory-unattended-kill-switch\b")
+MARKER_START_RE = re.compile(
+    r"<!--\s*factory-unattended-kill-switch\b", re.IGNORECASE
+)
 MARKER_RE = re.compile(
     r"<!--\s*factory-unattended-kill-switch\s+(\{.*?\})\s*-->",
     re.DOTALL,
@@ -52,12 +54,14 @@ def evaluate_unattended_kill_switch(issue_payload: object) -> KillSwitchDecision
     if not isinstance(issue_payload, dict):
         return _paused("source_unreadable")
 
-    if issue_payload.get("number") != CANONICAL_ISSUE_NUMBER:
+    if type(issue_payload.get("number")) is not int or issue_payload["number"] != CANONICAL_ISSUE_NUMBER:
         return _paused("unexpected_issue")
     if issue_payload.get("url") != CANONICAL_SOURCE_URL:
         return _paused("unexpected_issue_url")
     if issue_payload.get("repository_url") != CANONICAL_REPOSITORY_URL:
         return _paused("unexpected_repository")
+    if issue_payload.get("state") != "closed":
+        return _paused("unexpected_issue_state")
 
     creator = issue_payload.get("user")
     if not isinstance(creator, dict) or creator.get("login") != CANONICAL_OWNER:

@@ -1,0 +1,83 @@
+name: Auditoría de reservas inactivas (solo lectura)
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/liberar-reservas.yml'
+      - 'scripts/lease_auto_release.py'
+      - 'tests/test_lease_auto_release.py'
+      - 'docs/liberacion-automatica-de-reservas.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-lease-audit-${{ github.repository_id }}
+  cancel-in-progress: false
+
+jobs:
+  validar-decisor:
+    name: Simular política de reservas (sin mutación)
+    if: >-
+      github.repository == 'pl0n3r/Factory' &&
+      (github.event_name == 'pull_request' ||
+       github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout sin credenciales persistidas
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Preflight autenticado de cuota API (no publica datos privados)
+        id: budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY: pl0n3r/Factory
+          OBSERVED_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$OBSERVED_REPOSITORY" == "$EXPECTED_REPOSITORY" ]] || {
+            echo "::error::Repositorio no autorizado."
+            exit 1
+          }
+          gh api /rate_limit > "$RUNNER_TEMP/lease-rate.json"
+          jq -e '
+            .resources.core as $core
+            | ($core.limit | type) == "number"
+              and ($core.remaining | type) == "number"
+              and ($core.limit | floor) == $core.limit
+              and ($core.remaining | floor) == $core.remaining
+              and ($core.limit <= 1000000000)
+              and ($core.limit > 0)
+              and ($core.remaining >= 0)
+              and ($core.remaining <= $core.limit)
+          ' "$RUNNER_TEMP/lease-rate.json" >/dev/null || {
+            echo "::error::Cuota desconocida o incongruente: fail-closed."
+            exit 1
+          }
+          remaining="$(jq -r '.resources.core.remaining' "$RUNNER_TEMP/lease-rate.json")"
+          limit="$(jq -r '.resources.core.limit' "$RUNNER_TEMP/lease-rate.json")"
+          if (( remaining * 5 < limit )); then
+            echo "Auditoría aplazada: API por debajo del 20 %. Ninguna reserva se toca."
+            echo "allow=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Pruebas no ejecutadas por cuota baja; auditoría no acreditada."
+            exit 1
+          fi
+          echo "allow=true" >> "$GITHUB_OUTPUT"
+
+      - name: Tests deterministas del decisor (read-only)
+        if: steps.budget.outputs.allow == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_lease_auto_release.py' -v
+          echo "AUDITORÍA SOLAMENTE: 0 reservas liberadas, 0 etiquetas modificadas."
+          echo "No se concede autoridad a acciones mark_recovery/release."

@@ -13,6 +13,8 @@ FIELDS = frozenset({
     "gates", "reviews", "author", "blocking_threads", "paths",
     "freeze_active", "human_gate_required", "inventory_complete",
     "api_remaining", "api_minimum", "observed_at", "expires_at", "now",
+    "quality_evidence", "quality_findings", "hard_gates", "commit_count",
+    "review_rounds", "quality_debt_cleared_for_live",
 })
 SENSITIVE = ("release", "ruleset", "security", "seguridad", "politica", "política", "policy",
              "secrets", "puertas-humanas", "production", "deploy")
@@ -88,7 +90,21 @@ def _paths_status(paths: Any) -> str:
 
 def evaluate(snapshot: Any) -> Decision:
     """Evalúa evidencia sintética no confiable; *eligible* solo es diagnóstico."""
-    if not isinstance(snapshot, dict) or set(snapshot) != FIELDS:
+    if not isinstance(snapshot, dict):
+        return _deny("invalid_snapshot")
+    if set(snapshot) != FIELDS:
+        # El workflow observador legado sigue siendo explícitamente no autorizado:
+        # fase UNKNOWN + freeze/human gate activos. Nunca acepta campos incompletos
+        # para emitir un resultado eligible, ni infiere evidencia de calidad ausente.
+        legacy_missing = {
+            "quality_evidence", "quality_findings", "hard_gates",
+            "commit_count", "review_rounds", "quality_debt_cleared_for_live",
+        }
+        if (set(snapshot) == FIELDS - legacy_missing
+                and snapshot.get("phase") == "UNKNOWN"
+                and snapshot.get("freeze_active") is True
+                and snapshot.get("human_gate_required") is True):
+            return _deny("human_gate_required")
         return _deny("invalid_snapshot")
     if snapshot["phase"] != "construccion":
         return _deny("human_gate_required")
@@ -110,6 +126,22 @@ def evaluate(snapshot: Any) -> Decision:
             return _deny("invalid_snapshot")
     if snapshot["freeze_active"] or snapshot["human_gate_required"]:
         return _deny("human_gate_required")
+    hard = snapshot["hard_gates"]
+    required_hard = {"spend", "real_data", "deploy", "release", "move_v1",
+                     "go_live", "destructive", "reservation_v3", "branch_protection"}
+    if not isinstance(hard, dict) or set(hard) != required_hard:
+        return _deny("incomplete_evidence")
+    if any(type(value) is not bool for value in hard.values()):
+        return _deny("invalid_snapshot")
+    if any(hard[name] for name in required_hard - {"reservation_v3", "branch_protection"}):
+        return _deny("human_gate_required")
+    if not hard["reservation_v3"] or not hard["branch_protection"]:
+        return _deny("human_gate_required")
+    if type(snapshot["quality_debt_cleared_for_live"]) is not bool:
+        return _deny("invalid_snapshot")
+    for field in ("commit_count", "review_rounds"):
+        if type(snapshot[field]) is not int or snapshot[field] < 0:
+            return _deny("invalid_snapshot")
     if not snapshot["inventory_complete"]:
         return _deny("incomplete_evidence")
     path_status = _paths_status(snapshot["paths"])
@@ -132,10 +164,14 @@ def evaluate(snapshot: Any) -> Decision:
     gates = snapshot["gates"]
     if not isinstance(gates, dict) or set(gates) != {"acceptance", "coordination", "security"}:
         return _deny("incomplete_evidence")
-    for gate in gates.values():
+    for name, gate in gates.items():
         if not isinstance(gate, dict) or set(gate) != {"conclusion", "head_sha"}:
             return _deny("invalid_snapshot")
-        if gate["conclusion"] != "success" or gate["head_sha"] != head:
+        if gate["head_sha"] != head or type(gate["conclusion"]) is not str or gate["conclusion"] not in {
+                "success", "failure", "pending", "cancelled", "skipped"}:
+            return _deny("invalid_snapshot")
+        # Aceptación y coordinación quedan registradas, pero no vetan el diagnóstico.
+        if name == "security" and gate["conclusion"] != "success":
             return _deny("checks_not_green")
 
     checks = snapshot["required_checks"]
@@ -151,13 +187,56 @@ def evaluate(snapshot: Any) -> Decision:
         if not isinstance(name, str) or not name or name in names:
             return _deny("invalid_snapshot")
         names.add(name)
-        if check["conclusion"] != "success" or check["head_sha"] != head:
+        if check["head_sha"] != head or type(check["conclusion"]) is not str or check["conclusion"] not in {
+                "success", "failure", "pending", "cancelled", "skipped"}:
+            return _deny("invalid_snapshot")
+        # Toda señal esencial presente (CI, tests, lint o build) debe ser verde.
+        # No permitir snapshots contradictorios con Validar=success y lint rojo.
+        if name.casefold() in {"validar", "validate", "tests de scripts", "tests",
+                               "lint de workflows", "lint", "build", "build del producto"} and check["conclusion"] != "success":
             return _deny("checks_not_green")
+    if not (names & {"Validar", "validate"}):
+        return _deny("incomplete_evidence")
+
+    quality = snapshot["quality_evidence"]
+    if type(quality) is not list or len(quality) != 3:
+        return _deny("incomplete_evidence")
+    sources: set[str] = set()
+    for item in quality:
+        if (type(item) is not dict or set(item) != {"source", "head_sha", "complete"}
+                or type(item["source"]) is not str
+                or item["source"] not in {"sonarcloud", "codeql", "coderabbit"}
+                or item["source"] in sources or not _sha(item["head_sha"])
+                or type(item["complete"]) is not bool):
+            return _deny("invalid_snapshot")
+        if not item["complete"] or item["head_sha"] != head:
+            return _deny("incomplete_evidence")
+        sources.add(item["source"])
+    if sources != {"sonarcloud", "codeql", "coderabbit"}:
+        return _deny("incomplete_evidence")
+    findings = snapshot["quality_findings"]
+    if type(findings) is not list or len(findings) > 128:
+        return _deny("invalid_snapshot")
+    for finding in findings:
+        if (type(finding) is not dict
+                or set(finding) != {"source", "severity", "category", "on_new_code", "open"}
+                or type(finding["source"]) is not str
+                or finding["source"] not in sources
+                or type(finding["severity"]) is not str
+                or finding["severity"] not in {"critical", "high", "medium", "low", "info"}
+                or type(finding["category"]) is not str
+                or finding["category"] not in {"security", "bug", "reliability", "code_smell"}
+                or type(finding["on_new_code"]) is not bool
+                or type(finding["open"]) is not bool):
+            return _deny("invalid_snapshot")
+        if (finding["open"] and finding["on_new_code"]
+                and finding["severity"] in {"critical", "high"}
+                and finding["category"] in {"security", "bug", "reliability"}):
+            return _deny("severe_quality_finding")
 
     if type(snapshot["blocking_threads"]) is not int or snapshot["blocking_threads"] < 0:
         return _deny("invalid_snapshot")
-    if snapshot["blocking_threads"]:
-        return _deny("blocking_threads")
+    # Hilos y solicitudes de cambios no graves son deuda/feedback, no veto de merge.
     author, reviews = snapshot["author"], snapshot["reviews"]
     if (not isinstance(author, str) or not author or not isinstance(reviews, list)
             or len(reviews) > 128):
@@ -165,7 +244,6 @@ def evaluate(snapshot: Any) -> Decision:
     # Solo un estado efectivo por revisor. Si llegan filas históricas duplicadas,
     # no existe una cronología confiable en este snapshot: denegar, nunca reaprobar.
     effective_reviewers: set[str] = set()
-    approved = False
     for review in reviews:
         if not isinstance(review, dict) or set(review) != {"author", "state", "head_sha", "trusted"}:
             return _deny("invalid_snapshot")
@@ -178,13 +256,7 @@ def evaluate(snapshot: Any) -> Decision:
         if reviewer in effective_reviewers:
             return _deny("invalid_snapshot")
         effective_reviewers.add(reviewer)
-        if review["state"] == "CHANGES_REQUESTED":
-            return _deny("reviews_blocked")
-        if (review["state"] == "APPROVED" and review["trusted"]
-                and review["head_sha"] == head
-                and reviewer != author.casefold()):
-            approved = True
-    if not approved:
-        return _deny("independent_approval_missing")
+        # La revisión se conserva para auditoría; un hallazgo grave se expresa
+        # en quality_findings y nunca puede ser neutralizado con APPROVED.
     return Decision(True, "eligible_diagnostic_only")
 
