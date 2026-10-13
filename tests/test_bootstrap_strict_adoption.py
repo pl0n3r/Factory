@@ -514,6 +514,25 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 self.assertIn("FAIL", result.stderr)
 
 
+    def test_generated_adoption_rejects_missing_or_spoofed_validate_reservation(self):
+        """Reservation enforcement must be active in validar-pr, not spoofed in YAML."""
+        for strict in (False, True):
+            caller = consumer_caller(strict=strict)
+            before = "      require_reservation: true"
+            self.assertEqual(caller.count(before), 1)
+            for name, after in (
+                ("disabled", "      require_reservation: false"),
+                ("missing", ""),
+                ("comment_only", "      # require_reservation: true"),
+                ("comment_spoof", "      require_reservation: false\n      # require_reservation: true"),
+            ):
+                with self.subTest(strict=strict, attack=name):
+                    changed = caller.replace(before, after, 1)
+                    self.assertNotEqual(changed, caller)
+                    result = self.run_generated(changed)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("FAIL", result.stderr)
+
     def test_generated_adoption_rejects_noncanonical_reusable_in_each_job(self):
         """Other jobs must not redirect to an untrusted reusable at a non-main ref."""
         canonical = "    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
