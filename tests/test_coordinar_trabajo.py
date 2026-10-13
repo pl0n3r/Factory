@@ -117,7 +117,19 @@ class FakeGitHub:
             raise AssertionError("REST sintético no canónico: " + path)
         if self.repo.lower() == "pl0n3r/factory":
             return self.issue(767)
-        return self.public_request(path, allow)
+        # Simula la misma respuesta canónica por el canal autenticado; no
+        # delegar al fixture anónimo public_request, que debe poder fallar.
+        return {
+            "number": 767,
+            "url": coordinator.CANONICAL_SOURCE_URL,
+            "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+            "state": getattr(self, "kill_switch_issue_state", "closed"),
+            "user": {"login": "pl0n3r"},
+            "body": ("<!-- factory-unattended-kill-switch "
+                     '{"version":1,"state":"' +
+                     getattr(self, "kill_switch_marker", "RUNNING") +
+                     '","owner":"pl0n3r"} -->'),
+        }
 
     def issue(self, number: int) -> dict:
         """Devuelve el Issue falso o una dependencia configurada."""
