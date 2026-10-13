@@ -1573,11 +1573,13 @@ def sweep_satisfied_blocks(api: GitHub) -> int:
 
 def require_sweep_running(api: GitHub) -> None:
     """Revalida el Issue global #767, siempre fail-closed."""
-    if str(getattr(api, "repo", "")).lower() != "pl0n3r/factory":
+    if str(getattr(api, "repo", "")).lower() not in PUBLIC_WORKFLOW_RUN_REPOS:
         raise CoordinationError("Barrido pausado: repositorio no canónico.")
     try:
-        issue = api.issue(CANONICAL_ISSUE_NUMBER)
-    except (CoordinationError, GitHubError, OSError) as exc:
+        issue = api.request(
+            "GET", f"/repos/pl0n3r/Factory/issues/{CANONICAL_ISSUE_NUMBER}"
+        )
+    except Exception as exc:
         raise CoordinationError("Barrido pausado: fuente #767 ilegible.") from exc
     decision = evaluate_unattended_kill_switch(issue)
     if (not isinstance(issue, dict) or issue.get("state") != "closed"
