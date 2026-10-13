@@ -321,7 +321,7 @@ def _valid_now(value: object) -> int:
 def _valid_previous(value: object) -> NoWorkPublicationState | None:
     if value is None:
         return None
-    if not isinstance(value, NoWorkPublicationState):
+    if type(value) is not NoWorkPublicationState:
         raise NoWorkInventoryError("publication_state_invalid")
     if type(value.comment_id) is not int or value.comment_id <= 0:
         raise NoWorkInventoryError("comment_id_invalid")
@@ -434,13 +434,13 @@ def revalidate_no_work_application(
     El caller debe recomputar desde inventario vivo cuando esta función devuelve
     ``recompute``. ``apply`` es la única autorización para create/update.
     """
-    if not isinstance(decision, NoWorkDecision):
+    if type(decision) is not NoWorkDecision:
         raise NoWorkInventoryError("decision_invalid")
     # Frozen dataclasses are not runtime-validated. A hand-built or corrupted
     # decision must never authorize a write to a different sink/action.
-    if decision.action not in ("create", "update", "omit"):
+    if type(decision.action) is not str or decision.action not in ("create", "update", "omit"):
         raise NoWorkInventoryError("decision_action_invalid")
-    if decision.sink != CANONICAL_SINK:
+    if type(decision.sink) is not str or decision.sink != CANONICAL_SINK:
         raise NoWorkInventoryError("decision_sink_invalid")
     if (
         type(decision.observed_at) is not int or decision.observed_at < 0

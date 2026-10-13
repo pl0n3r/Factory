@@ -7,6 +7,7 @@ import unittest
 
 from scripts.no_work_dedup import (
     CANONICAL_SINK,
+    NoWorkDecision,
     NoWorkInventoryError,
     NoWorkPublicationState,
     decide_no_work,
@@ -1072,6 +1073,67 @@ class NoWorkDedupTests(unittest.TestCase):
             with self.subTest(action=decision.action, expected=expected):
                 with self.assertRaisesRegex(NoWorkInventoryError, expected):
                     revalidate_no_work_application(decision, live)
+
+    def test_publication_authority_rejects_hostile_dataclass_and_text_subclasses(self):
+        # No se deben leer atributos ni comparar texto de objetos hostiles
+        # antes de acreditar su tipo exacto como evidencia de autoridad.
+        from dataclasses import replace
+
+        class HostilePublication(NoWorkPublicationState):
+            def __getattribute__(self, name):
+                raise RuntimeError("private-caller-data")
+
+        class HostileDecision(NoWorkDecision):
+            def __getattribute__(self, name):
+                raise RuntimeError("private-caller-data")
+
+        class HostileText(str):
+            def __eq__(self, other):
+                raise RuntimeError("private-caller-data")
+
+            def __ne__(self, other):
+                raise RuntimeError("private-caller-data")
+
+        snapshot = inventory()
+        created = decide_no_work(snapshot, None, 100)
+        previous = state_after(created, comment_id=904_300,
+                               published_at=100, observed_at=100)
+        hostile_state = HostilePublication(
+            comment_id=previous.comment_id,
+            fingerprint=previous.fingerprint,
+            published_at=previous.published_at,
+            observed_at=previous.observed_at,
+        )
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "publication_state_invalid"
+        ) as result:
+            decide_no_work(snapshot, hostile_state, 101)
+        self.assertNotIn("private-caller-data", str(result.exception))
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "publication_state_invalid"
+        ):
+            revalidate_no_work_application(created, hostile_state)
+
+        hostile_decision = HostileDecision(**vars(created))
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "decision_invalid"
+        ):
+            revalidate_no_work_application(hostile_decision, None)
+
+        for field, value, expected in (
+            ("action", HostileText("create"), "decision_action_invalid"),
+            ("sink", HostileText(CANONICAL_SINK), "decision_sink_invalid"),
+        ):
+            altered = replace(created, **{field: value})
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(NoWorkInventoryError, expected) as raised:
+                    revalidate_no_work_application(altered, None)
+                self.assertNotIn("private-caller-data", str(raised.exception))
+
+        # Instancias dataclass nativas y cadenas nativas siguen autorizadas.
+        self.assertEqual(
+            revalidate_no_work_application(created, None).action, "apply"
+        )
 
     def test_prewrite_rejects_concurrent_refresh_with_same_fingerprint(self):
         snapshot = inventory()
