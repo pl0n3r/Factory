@@ -8,7 +8,10 @@ controles separados: ninguno se infiere de un resultado del decisor.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+
+from scripts.lease_github_port import Inspection, LeaseGithubPort, RECENT, UNKNOWN
 
 from scripts.lease_auto_release import Decision, Evidence, decide
 from scripts.lease_release_executor import (
@@ -32,6 +35,64 @@ class RecoveryInventory:
     reserved: int
     in_review: int
     release_authorized: bool = False
+
+
+@dataclass(frozen=True)
+class RecentActivityObservation:
+    """Resumen público mínimo: nunca incluye UUID, owner ni cuerpos."""
+    issue: int
+    state: str
+    libera_en_min: int | None
+    release_authorized: bool = False
+
+
+@dataclass(frozen=True)
+class RecentActivityReport:
+    """Lectura positiva individual; no certifica inactividad ni CAS."""
+    state: str
+    observations: tuple[RecentActivityObservation, ...]
+    release_authorized: bool = False
+
+
+def observe_recent_activity(issues: Any, port: Any, *, now: Any) -> RecentActivityReport:
+    """Expone actividad RECIENTE autenticada, con presupuesto de 1 hoja/ciclo.
+
+    Jamás usa Port.read/lock/append/status. No interpreta UNKNOWN como ausencia
+    de actividad y no habilita el ejecutor aunque el caller pida mutaciones.
+    La API de inspección comprueba el #767 absoluto antes y después del GET.
+    """
+    if (type(issues) is not list or len(issues) != 1
+            or type(issues[0]) is not int or issues[0] <= 0
+            or type(port) is not LeaseGithubPort
+            or type(now) is not datetime or now.tzinfo is None):
+        return RecentActivityReport("invalid_input", ())
+    try:
+        if now.utcoffset() is None:
+            return RecentActivityReport("invalid_input", ())
+    except (OverflowError, TypeError, ValueError, RuntimeError):
+        return RecentActivityReport("invalid_input", ())
+    issue = issues[0]
+    unknown = RecentActivityObservation(issue, UNKNOWN, None)
+    try:
+        item = port.inspect(issue, now=now)
+        if (type(item) is not Inspection or item.issue != issue
+                or item.release_authorized is not False
+                or item.state not in (RECENT, UNKNOWN)):
+            return RecentActivityReport("read_only", (unknown,))
+        if item.state == UNKNOWN:
+            return RecentActivityReport("read_only", (unknown,))
+        # Únicamente el inspector auténtico puede acreditar actividad
+        # positiva, pero NUNCA inferir liberación desde este plazo.
+        if (type(item.libera_en_min) is not int
+                or not 1 <= item.libera_en_min <= 40
+                or type(item.lease_id) is not str
+                or type(item.branch_sha) is not str):
+            return RecentActivityReport("read_only", (unknown,))
+        return RecentActivityReport("read_only", (
+            RecentActivityObservation(issue, RECENT, item.libera_en_min),
+        ))
+    except Exception:
+        return RecentActivityReport("read_only", (unknown,))
 
 
 def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
