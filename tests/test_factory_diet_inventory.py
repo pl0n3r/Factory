@@ -265,7 +265,7 @@ class FactoryDietInventoryTests(unittest.TestCase):
         self.assertIn("No borrar", self.content)
         guarded_jobs = {
             "costos.yml": ("presupuesto-pr:", "metricas/costos.py pr", "ref: ${{ github.event.pull_request.base.sha }}"),
-            "unattended-watchdog.yml": ("watchdog:", "daily-summary:", "scripts.unattended_watchdog_runtime", "scripts.unattended_daily_summary"),
+            "unattended-watchdog.yml": ("watchdog:", "scripts.unattended_watchdog_runtime", "cron: '*/15 * * * *'", "issues: write"),
         }
         for filename, tokens in guarded_jobs.items():
             with self.subTest(guard=filename):
@@ -276,6 +276,25 @@ class FactoryDietInventoryTests(unittest.TestCase):
                     self.rows[f".github/workflows/{filename}"]["phase"], 0,
                     f"{filename}: no debe asignarse a una fase de borrado",
                 )
+
+        # Antes de F1G: job y cron diario siguen obligatorios.
+        # Después de F1G: su ausencia debe coincidir con el runbook, sin
+        # simular un daily-summary usando comentarios o strings ficticios.
+        watchdog = (WORKFLOWS / "unattended-watchdog.yml").read_text(
+            encoding="utf-8")
+        runbook = (ROOT / "docs" / "unattended-watchdog-runtime.md").read_text(
+            encoding="utf-8")
+        f1g_enabled = "## F1G: resumen diario accesorio suspendido" in runbook
+        if f1g_enabled:
+            self.assertNotIn("  daily-summary:", watchdog)
+            self.assertNotIn("cron: '0 13 * * *'", watchdog)
+            self.assertNotIn("python3 -m scripts.unattended_daily_summary",
+                             watchdog)
+        else:
+            self.assertIn("  daily-summary:", watchdog)
+            self.assertIn("cron: '0 13 * * *'", watchdog)
+            self.assertIn("python3 -m scripts.unattended_daily_summary",
+                          watchdog)
 
     def test_phases_are_ordered_and_reversible(self) -> None:
         positions = [
