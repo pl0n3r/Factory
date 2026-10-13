@@ -6,7 +6,9 @@ from pathlib import Path
 import re
 import unittest
 
-from tests.test_factory_diet_inventory import REQUIRED_KEEP, inventory_rows
+from tests.test_factory_diet_inventory import (
+    REQUIRED_KEEP, inventory_rows, watchdog_f1g_assertions,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -130,23 +132,7 @@ class DietaFase1ATests(unittest.TestCase):
         # watchdog ni sus puertas duras heredadas de F1A.
         runbook = (ROOT / "docs" / "unattended-watchdog-runtime.md").read_text(
             encoding="utf-8")
-        f1g_enabled = "## F1G: resumen diario accesorio suspendido" in runbook
-        self.assertIn("watchdog:", watchdog)
-        self.assertIn("scripts.unattended_watchdog_runtime", watchdog)
-        self.assertIn("cron: '*/15 * * * *'", watchdog)
-        self.assertIn("group: unattended-watchdog-${{ github.repository_id }}",
-                      watchdog)
-        self.assertIn("issues: write", watchdog)
-        if f1g_enabled:
-            self.assertNotIn("  daily-summary:", watchdog)
-            self.assertNotIn("cron: '0 13 * * *'", watchdog)
-            self.assertNotIn("python3 -m scripts.unattended_daily_summary",
-                             watchdog)
-        else:
-            self.assertIn("  daily-summary:", watchdog)
-            self.assertIn("cron: '0 13 * * *'", watchdog)
-            self.assertIn("python3 -m scripts.unattended_daily_summary",
-                          watchdog)
+        watchdog_f1g_assertions(self, watchdog, runbook)
         self.assertTrue((ROOT / "scripts" / "unattended_kill_switch.py").is_file())
         self.assertTrue((ROOT / "scripts" / "coordinar_trabajo.py").is_file())
         for token in ("CodeQL", "Sonar", "CodeRabbit", "#767", "go-live"):
