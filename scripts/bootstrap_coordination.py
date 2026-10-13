@@ -460,6 +460,21 @@ class GitHubGateway:
         value=self._request("GET",f"/repos/{name}/pulls?state=open&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
         if not isinstance(value,list) or len(value)>1: raise BootstrapError("Estado de PR ambiguo.")
         return value[0] if value else None
+    def _closed_pr_page(self,name: str,value: Any,seen: set[int])->list[dict[str,Any]]:
+        """Authenticate one bounded REST page, including every PR's details."""
+        if not isinstance(value,list) or len(value)>10:
+            raise BootstrapError("Estado histórico de PR ambiguo.")
+        details=[]
+        for item in value:
+            number=item.get("number") if isinstance(item,dict) else None
+            if type(number) is not int or number<1 or number in seen:
+                raise BootstrapError("PR histórico inválido.")
+            seen.add(number)
+            detail=self._request("GET",f"/repos/{name}/pulls/{number}")
+            if not isinstance(detail,dict) or type(detail.get("number")) is not int or detail["number"]!=number:
+                raise BootstrapError("PR histórico inválido.")
+            details.append(detail)
+        return details
     def closed_pr(self,name: str,branch: str)->dict[str,Any]|None:
         # An exact multiple of per_page is not evidence of a complete list.
         # Bound history enumeration, and fail closed if the limit is reached.
@@ -469,16 +484,7 @@ class GitHubGateway:
         for page in range(1,6):
             path=query if page==1 else f"{query}&page={page}"
             value=self._request("GET",path)
-            if not isinstance(value,list) or len(value)>10:
-                raise BootstrapError("Estado histórico de PR ambiguo.")
-            for item in value:
-                number=item.get("number") if isinstance(item,dict) else None
-                if type(number) is not int or number<1 or number in seen:
-                    raise BootstrapError("PR histórico inválido.")
-                seen.add(number)
-                detail=self._request("GET",f"/repos/{name}/pulls/{number}")
-                if not isinstance(detail,dict) or type(detail.get("number")) is not int or detail["number"]!=number:
-                    raise BootstrapError("PR histórico inválido.")
+            for detail in self._closed_pr_page(name,value,seen):
                 if detail.get("merged_at") is None:
                     candidates.append(detail)
                 if len(candidates)>1:

@@ -179,6 +179,32 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
             with self.assertRaisesRegex(bootstrap.BootstrapError, "inválido"):
                 gateway.closed_pr(repo, branch)
 
+    def test_closed_pr_page_rejects_invalid_json_identifiers_before_writes(self):
+        """The isolated pagination helper must reject booleans and bad detail IDs."""
+        gateway = bootstrap.GitHubGateway("fake-token")
+        repo = "pl0n3r/Consumer"
+        for invalid in (True, False, 0, -1, "7", 7.0):
+            with self.subTest(invalid_number=invalid), mock.patch.object(
+                gateway, "_request"
+            ) as request:
+                with self.assertRaisesRegex(bootstrap.BootstrapError, "inválido"):
+                    gateway._closed_pr_page(repo, [{"number": invalid}], set())
+                request.assert_not_called()
+
+        with mock.patch.object(
+            gateway, "_request", return_value={
+                "number": True, "state": "closed", "merged_at": None,
+            },
+        ) as request:
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "inválido"):
+                gateway._closed_pr_page(repo, [{"number": 1}], set())
+            request.assert_called_once_with("GET", f"/repos/{repo}/pulls/1")
+
+        with mock.patch.object(gateway, "_request") as request:
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "ambiguo"):
+                gateway._closed_pr_page(repo, [{"number": n} for n in range(11)], set())
+            request.assert_not_called()
+
     def test_bootstrap_marker_identity_requires_json_integers(self):
         """Historical bootstrap identity must fail closed on bool, float and strings."""
         canonical = {
