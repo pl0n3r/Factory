@@ -114,7 +114,7 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertIn("evaluate_unattended_kill_switch", workflow)
         self.assertIn("inventory_after_switch_recheck", workflow)
         self.assertIn("lease-switch-after.json", workflow)
-        self.assertIn("inventory_from_paginated_issues", workflow)
+        self.assertNotIn("inventory_from_paginated_issues(pages)", workflow)
         self.assertIn("liberaciones=0", workflow)
         self.assertNotIn("issues: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
