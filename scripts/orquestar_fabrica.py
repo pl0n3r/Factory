@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import Any
 
@@ -16,6 +17,9 @@ if __package__:
         STATUS_RESERVED,
         STATUS_REVIEW,
         label_names,
+        latest_reservation,
+        reservation_from_text,
+        branch_for_issue,
     )
     from scripts.orquestador_kit import (
         PlanError,
@@ -38,6 +42,9 @@ else:
         STATUS_RESERVED,
         STATUS_REVIEW,
         label_names,
+        latest_reservation,
+        reservation_from_text,
+        branch_for_issue,
     )
     from orquestador_kit import (
         PlanError,
@@ -57,9 +64,11 @@ REPORT_PREFIX = "<!-- factory-plan-report:"
 
 
 def _all_issues(api: GitHub) -> list[dict[str, Any]]:
+    # No interpretar un prefijo paginado como inventario global exhaustivo.
+    # Un truncamiento silencioso permitiría duplicar hojas del mismo épico.
     return [
         issue
-        for issue in api.paginate(f"/repos/{api.repo}/issues?state=all")
+        for issue in _verified_pages(api, f"/repos/{api.repo}/issues?state=all")
         if not issue.get("pull_request")
     ]
 
@@ -68,27 +77,24 @@ def _invalid_marker_epic(body: str) -> int | None:
     """Best-effort epic identity used only to isolate closed historical corruption."""
     prefix = "<!-- factory-plan-task "
     suffix = " -->"
-    if body.count(prefix) != 1:
+    if body.count(prefix) != 1 or body.count("<!-- factory-plan-task") != 1:
         return None
     start = body.index(prefix) + len(prefix)
     end = body.find(suffix, start)
     if end < 0:
         return None
-    def reject_ambiguous_epic(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
-        epic_seen = False
         for key, value in pairs:
-            if key == "epic":
-                if epic_seen:
-                    raise ValueError("epic duplicado")
-                epic_seen = True
+            if key in result:
+                raise ValueError("campo duplicado")
             result[key] = value
         return result
 
     try:
         raw = json.loads(
             body[start:end].strip(),
-            object_pairs_hook=reject_ambiguous_epic,
+            object_pairs_hook=reject_duplicate_keys,
         )
     except (json.JSONDecodeError, ValueError):
         return None
@@ -100,10 +106,54 @@ def _invalid_marker_epic(body: str) -> int | None:
     return value
 
 
+def _verified_pages(api: GitHub, path: str) -> list[dict[str, Any]]:
+    """Lee páginas completas; jamás convierte una respuesta anómala en fin de colección."""
+    result: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for page in range(1, 21):
+        sep = "&" if "?" in path else "?"
+        payload = api.request("GET", f"{path}{sep}per_page=100&page={page}")
+        if not isinstance(payload, list) or len(payload) > 100:
+            raise PlanError("Colección de autoridad incompleta o inválida.")
+        for value in payload:
+            if (
+                not isinstance(value, dict)
+                or type(value.get("id")) is not int
+                or value["id"] <= 0
+                or value["id"] in seen
+            ):
+                raise PlanError("Colección de autoridad ambigua o duplicada.")
+            seen.add(value["id"])
+            result.append(value)
+        if len(payload) == 0:
+            return result
+    raise PlanError("Colección de autoridad excede límite verificable.")
+
+
+def _linked_open_pull(pulls: list[dict[str, Any]], issue: int) -> bool:
+    """Niega aislamiento si un PR abierto alude al Issue o conserva su rama."""
+    reference = re.compile(rf"(?<![0-9])#{issue}(?![0-9])")
+    linked_branch = {f"trabajo/issue-{issue}", f"work/issue-{issue}"}
+    for pull in pulls:
+        head = pull.get("head")
+        if not isinstance(head, dict) or not isinstance(head.get("ref"), str):
+            raise PlanError("PR abierto sin procedencia de rama verificable.")
+        if head["ref"] in linked_branch:
+            return True
+        for field in ("title", "body"):
+            value = pull.get(field)
+            if value is not None and not isinstance(value, str):
+                raise PlanError("PR abierto con referencia ambigua.")
+            if isinstance(value, str) and reference.search(value):
+                return True
+    return False
+
+
 def _existing_tasks(
     issues: list[dict[str, Any]],
     epic: int,
     warnings: list[str] | None = None,
+    api: GitHub | None = None,
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for issue in issues:
@@ -122,6 +172,73 @@ def _existing_tasks(
                         f"(épico #{historical_epic})."
                     )
                 continue
+            # A foreign legacy marker is isolated only with trustworthy evidence
+            # that neither an active reservation nor a work branch exists.
+            if (
+                issue.get("state") == "open"
+                and isinstance(issue_number, int)
+                and historical_epic not in (None, epic)
+                and not _active(issue)
+                and api is not None
+            ):
+                first = api.issue(issue_number)
+                expected_count = first.get("comments")
+                stamp = first.get("updated_at")
+                if (
+                    first.get("state") != "open"
+                    or first.get("body") != body
+                    or label_names(first) != label_names(issue)
+                    or type(expected_count) is not int
+                    or expected_count < 0
+                    or not isinstance(stamp, str)
+                    or not stamp
+                ):
+                    raise PlanError(
+                        f"Issue #{issue_number}: inventario previo ambiguo."
+                    ) from exc
+                comments = _verified_pages(
+                    api, f"/repos/{api.repo}/issues/{issue_number}/comments"
+                )
+                if len(comments) != expected_count:
+                    raise PlanError(
+                        f"Issue #{issue_number}: conteo de comentarios incompleto."
+                    ) from exc
+                pulls = _verified_pages(api, f"/repos/{api.repo}/pulls?state=open")
+                latest_issue = api.issue(issue_number)
+                if (
+                    latest_issue.get("state") != first.get("state")
+                    or latest_issue.get("body") != first.get("body")
+                    or label_names(latest_issue) != label_names(first)
+                    or latest_issue.get("comments") != expected_count
+                    or latest_issue.get("updated_at") != stamp
+                ):
+                    raise PlanError(
+                        f"Issue #{issue_number}: carrera en inventario."
+                    ) from exc
+                for comment in comments:
+                    user = comment.get("user") if isinstance(comment, dict) else None
+                    payload = str(comment.get("body") or "") if isinstance(comment, dict) else ""
+                    if (
+                        isinstance(user, dict)
+                        and user.get("login") == "github-actions[bot]"
+                        and "<!-- condor-reserva" in payload
+                        and reservation_from_text(payload) is None
+                    ):
+                        raise PlanError(
+                            f"Issue #{issue_number}: marker de reserva ambiguo."
+                        ) from exc
+                reservation = latest_reservation(comments)
+                if (
+                    (reservation is None or reservation.get("active") is False)
+                    and api.branch_sha(branch_for_issue(issue_number)) is None
+                    and not _linked_open_pull(pulls, issue_number)
+                ):
+                    if warnings is not None:
+                        warnings.append(
+                            f"Issue #{issue_number}: marker abierto ajeno inválido "
+                            f"aislado (épico #{historical_epic}); sin lease ni rama."
+                        )
+                    continue
             if str(exc) == "Marker factory-plan-task malformado.":
                 raise PlanError(
                     "Body enriquecido ambiguo: "
@@ -389,7 +506,7 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     ordered = topological_order(tasks)
     all_issues = _all_issues(api)
     historical_warnings: list[str] = []
-    existing = _existing_tasks(all_issues, epic_number, historical_warnings)
+    existing = _existing_tasks(all_issues, epic_number, historical_warnings, api=api)
     planned_keys = {task.key for task in tasks}
     orphaned = sorted(set(existing) - planned_keys)
     if orphaned:

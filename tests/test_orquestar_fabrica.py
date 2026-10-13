@@ -1,7 +1,9 @@
+import json
 import unittest
 from datetime import datetime, timezone
 
 from scripts.orquestador_kit import PlanError, parse_task_marker
+from scripts.coordinar_trabajo import reservation_marker
 from scripts.orquestar_fabrica import sync_plan
 
 
@@ -34,9 +36,31 @@ class FakeGitHub:
         self.comments = []
         self.labels = set()
         self.requests = []
+        self.branches = set()
+        self.pulls = []
+        self.fail_comment_page_two = False
+        self.fail_pull_page_two = False
+        self.short_pull_pages = False
+        self.fail_issue_page_two = False
+        self.foreign_counter_override = None
+        self.foreign_counter_race = False
+        self.foreign_read_count = 0
+
+    def branch_sha(self, branch):
+        return "a" * 40 if branch in self.branches else None
 
     def issue(self, number):
-        return self.issues[number]
+        if number != 44:
+            return self.issues[number]
+        self.foreign_read_count += 1
+        result = dict(self.issues[number])
+        count = len(self.comments)
+        if self.foreign_counter_override is not None:
+            count = self.foreign_counter_override
+        if self.foreign_counter_race and self.foreign_read_count >= 2:
+            count += 1
+        result["comments"] = count
+        return result
 
     def paginate(self, path):
         if "/issues?state=all" in path:
@@ -77,6 +101,27 @@ class FakeGitHub:
         })
 
     def request(self, method, path, payload=None):
+        if method == "GET" and "/issues?state=all&per_page=100&page=" in path:
+            page = int(path.rsplit("page=", 1)[1])
+            if page == 2 and self.fail_issue_page_two:
+                return {"message": "partial issue inventory"}
+            issues = list(self.issues.values())
+            return [
+                {**item, "id": item.get("id", item["number"])}
+                for item in issues[(page - 1) * 100:page * 100]
+            ]
+        if method == "GET" and "/comments?per_page=100&page=" in path:
+            page = int(path.rsplit("page=", 1)[1])
+            if page == 2 and self.fail_comment_page_two:
+                return {"message": "partial collection"}
+            return self.comments[(page - 1) * 100:page * 100]
+        if method == "GET" and "/pulls?state=open&per_page=100&page=" in path:
+            page = int(path.rsplit("page=", 1)[1])
+            if page == 2 and self.fail_pull_page_two:
+                return {"message": "partial collection"}
+            if self.short_pull_pages:
+                return self.pulls[page - 1:page]
+            return self.pulls[(page - 1) * 100:page * 100]
         self.requests.append((method, path, payload))
         if method == "POST" and path.endswith("/issues"):
             number = self.next_issue
@@ -384,6 +429,219 @@ class OrquestarFabricaTests(unittest.TestCase):
             )
         )
 
+    @staticmethod
+    def _legacy_foreign_marker(epic=999):
+        marker = json.dumps({
+            "version": 1,
+            "epic": epic,
+            "task_key": "LEGACY_TASK_KEY_TOO_LONG_FOR_CURRENT_CONTRACT",
+            "order": 1,
+            "owner": "pl0n3r",
+            "roles": ["qa"],
+            "depends_on": [],
+            "paths": ["tests/old-task.py"],
+        }, sort_keys=True, separators=(",", ":"))
+        return f"<!-- factory-plan-task {marker} -->"
+
+    def _inject_foreign(self, api, body=None, labels=()):
+        api.issues[44] = {
+            "number": 44,
+            "state": "open",
+            "title": "Foreign legacy task",
+            "updated_at": "2026-10-11T07:00:00Z",
+            "body": body if body is not None else self._legacy_foreign_marker(),
+            "labels": [{"name": name} for name in labels],
+        }
+        return api.issues[44]
+
+    def test_global_issue_inventory_must_be_complete_and_unambiguous(self):
+        api = FakeGitHub()
+        for number in range(100, 199):
+            api.issues[number] = {"number": number, "state": "open", "body": "",
+                                  "labels": [], "title": f"Unrelated {number}"}
+        api.fail_issue_page_two = True
+        with self.assertRaisesRegex(PlanError, "Colección de autoridad incompleta"):
+            sync_plan(api, 3)
+        self.assertFalse(api.requests, "no mutations before inventory proof")
+        self.assertEqual(len(api.issues), 100)
+        for bad_id in (3, 0, True, "untrusted"):
+            with self.subTest(bad_id=bad_id):
+                api = FakeGitHub()
+                api.issues[44] = {"id": bad_id, "number": 44, "state": "open",
+                                  "body": "", "labels": [], "title": "Unrelated"}
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertFalse(api.requests)
+
+    def test_foreign_unreserved_invalid_marker_is_isolated(self):
+        api = FakeGitHub()
+        foreign = self._inject_foreign(api, labels=["estado: bloqueado"])
+        before = dict(foreign)
+        result = sync_plan(api, 3)
+        self.assertEqual(result["tasks"], 2)
+        self.assertEqual(set(result["issues"]), {"A", "B"})
+        self.assertEqual(foreign, before, "foreign issue must not be rewritten")
+        self.assertTrue(any("#44" in w and "#999" in w for w in result["warnings"]))
+        self.assertEqual(len(api.issues), 4)
+        self.assertFalse(any(
+            method == "PATCH" and path.endswith("/issues/44")
+            for method, path, _ in api.requests
+        ))
+
+    def test_target_or_ambiguous_invalid_marker_remains_blocking(self):
+        original = self._legacy_foreign_marker()
+        ambiguous = [
+            self._legacy_foreign_marker(epic=3),
+            original.replace('"epic":999', '"epic":999,"epic":999'),
+            original.replace('"version":1', '"version":1,"version":1'),
+            original + "\n" + original,
+            original.replace('"epic":999,', ''),
+            original + "\n<!-- factory-plan-task-->",
+        ]
+        for body in ambiguous:
+            with self.subTest(body=body[-100:]):
+                api = FakeGitHub()
+                foreign = self._inject_foreign(api, body=body)
+                before = dict(foreign)
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(foreign, before)
+                self.assertEqual(api.requests, [], "reject before any mutation")
+
+    def test_foreign_active_invalid_marker_remains_blocking(self):
+        cases = ("estado: reservado", "estado: en revisión",
+                 "estado: requiere recuperación", "active_lease",
+                 "orphan_branch", "malformed_lease")
+        for case in cases:
+            with self.subTest(case=case):
+                api = FakeGitHub()
+                label = case if case.startswith("estado:") else "estado: bloqueado"
+                self._inject_foreign(api, labels=[label])
+                if case == "active_lease":
+                    api.comments.append({
+                        "id": 9, "user": {"login": "github-actions[bot]"},
+                        "body": reservation_marker(
+                            "pl0n3r", "12345678-1234-1234-1234-123456789abc",
+                            "trabajo/issue-44", True, "tomar"),
+                    })
+                elif case == "orphan_branch":
+                    api.branches.add("trabajo/issue-44")
+                elif case == "malformed_lease":
+                    api.comments.append({
+                        "id": 9, "user": {"login": "github-actions[bot]"},
+                        "body": '<!-- condor-reserva {"active":true} -->',
+                    })
+                pattern = "reserva ambiguo" if case == "malformed_lease" else "."
+                with self.assertRaisesRegex(PlanError, pattern):
+                    sync_plan(api, 3)
+                self.assertEqual(api.requests, [])
+
+    def test_foreign_open_pr_blocks_isolation_even_without_canonical_branch(self):
+        for ref, title, body, short in (
+            ("feature/alternative", "Implementar", "Closes #44", False),
+            ("trabajo/issue-44", "Implementar", "", False),
+            ("work/issue-44", "Implementar", "", False),
+            ("feature/alternative", "Implementar", "Closes #44", True),
+        ):
+            with self.subTest(ref=ref, body=body):
+                api = FakeGitHub()
+                foreign = self._inject_foreign(api, labels=["estado: bloqueado"])
+                before = dict(foreign)
+                api.pulls.append({"id": 71, "number": 71, "title": title,
+                                  "body": body, "head": {"ref": ref}})
+                if short:
+                    api.short_pull_pages = True
+                    api.pulls.insert(0, {"id": 70, "number": 70, "title": "Other",
+                                         "body": "", "head": {"ref": "feature/other"}})
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(foreign, before)
+                self.assertFalse(api.requests)
+
+    def test_foreign_incomplete_comment_or_pr_pagination_fails_closed(self):
+        for which in ("comment", "pull"):
+            with self.subTest(which=which):
+                api = FakeGitHub()
+                self._inject_foreign(api, labels=["estado: bloqueado"])
+                if which == "comment":
+                    api.comments.extend({"id": n, "user": {"login": "someone"},
+                                         "body": "noise"} for n in range(100, 200))
+                    api.fail_comment_page_two = True
+                else:
+                    api.pulls.extend({"id": n, "number": n, "title": "Other",
+                                      "body": "", "head": {"ref": f"feature/{n}"}}
+                                     for n in range(100, 200))
+                    api.fail_pull_page_two = True
+                with self.assertRaisesRegex(PlanError, "incompleta o inválida"):
+                    sync_plan(api, 3)
+                self.assertFalse(api.requests)
+
+    def test_foreign_duplicate_collection_ids_and_malformed_pr_fail_closed(self):
+        for kind in ("duplicate_comments", "duplicate_pulls", "malformed_pull"):
+            with self.subTest(kind=kind):
+                api = FakeGitHub()
+                self._inject_foreign(api, labels=["estado: bloqueado"])
+                if kind == "duplicate_comments":
+                    api.comments.extend({"id": 9, "user": {"login": "someone"},
+                                         "body": "noise"} for _ in range(2))
+                if kind == "duplicate_pulls":
+                    api.pulls.extend({"id": 9, "number": 9, "title": "Other",
+                                      "body": "", "head": {"ref": "feature/a"}}
+                                     for _ in range(2))
+                if kind == "malformed_pull":
+                    api.pulls.append({"id": 9, "number": 9, "title": "Other"})
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertFalse(api.requests)
+
+    def test_foreign_second_page_active_lease_is_not_ignored(self):
+        api = FakeGitHub()
+        self._inject_foreign(api, labels=["estado: bloqueado"])
+        api.comments.extend({"id": n, "body": "filler",
+                             "user": {"login": "someone"}} for n in range(1, 101))
+        api.comments.append({
+            "id": 101, "user": {"login": "github-actions[bot]"},
+            "body": reservation_marker(
+                "pl0n3r", "12345678-1234-1234-1234-123456789abc",
+                "trabajo/issue-44", True, "tomar"),
+        })
+        with self.assertRaises(PlanError):
+            sync_plan(api, 3)
+        self.assertEqual(api.requests, [])
+
+    def test_foreign_comment_count_and_snapshot_race_fail_closed(self):
+        for scenario in ("undercount", "overcount", "second_read_race"):
+            with self.subTest(scenario=scenario):
+                api = FakeGitHub()
+                self._inject_foreign(api, labels=["estado: bloqueado"])
+                api.comments.append({
+                    "id": 3, "body": "ordinary", "user": {"login": "someone"},
+                })
+                if scenario == "undercount":
+                    api.foreign_counter_override = 0
+                elif scenario == "overcount":
+                    api.foreign_counter_override = 2
+                else:
+                    api.foreign_counter_race = True
+                with self.assertRaises(PlanError):
+                    sync_plan(api, 3)
+                self.assertEqual(api.requests, [])
+
+    def test_foreign_missing_counter_is_not_proof_of_no_lease(self):
+        api = FakeGitHub()
+        self._inject_foreign(api, labels=["estado: bloqueado"])
+        original_issue = api.issue
+
+        def incomplete_issue(number):
+            result = original_issue(number)
+            if number == 44:
+                result.pop("comments", None)
+            return result
+
+        api.issue = incomplete_issue
+        with self.assertRaisesRegex(PlanError, "inventario previo ambiguo"):
+            sync_plan(api, 3)
+        self.assertEqual(api.requests, [])
 
 if __name__ == "__main__":
     unittest.main()

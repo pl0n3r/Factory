@@ -65,7 +65,85 @@ def approved_comment(body: str) -> dict[str, object]:
     }
 
 
+def executed_marker(sha: str = OLD_SHA, run_id: int = 1234) -> str:
+    payload = {
+        "version": 1, "sha": sha, "run_id": run_id,
+        "executed_at": "2026-10-03T10:05:00Z",
+    }
+    return (
+        "<!-- factory-release-executed "
+        + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        + " -->"
+    )
+
+
+def executed_comment(body: str, actor: str = "github-actions[bot]") -> dict[str, object]:
+    return {"user": {"login": actor}, "body": body}
+
+
 class ReleaseWindowTests(unittest.TestCase):
+    def test_valid_window_plus_malformed_second_header_fails_closed(self) -> None:
+        valid = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
+        malformed = (
+            "<!-- factory-release-window TRUNCATED -->",
+            "<!-- FACTORY-RELEASE-WINDOW {\"version\":1} -->",
+            "<!-- factory - release - window {",
+            "<!-- factory-release-window",
+        )
+        for fragment in malformed:
+            for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                with self.subTest(fragment=fragment, prefix=body.startswith(fragment)):
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw._window_from_body(body, OLD_SHA)
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw.gate_records([gate_row(number=900, body=body)])
+
+    def test_valid_gate_plus_malformed_second_header_fails_closed(self) -> None:
+        modern = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        malformed = (
+            "<!-- factory-human-gate TRUNCATED -->",
+            "<!-- FACTORY-HUMAN-GATE {\"category\":\"factory-release\"} -->",
+            "<!-- factory - human - gate {",
+            "<!-- factory-human-gate",
+        )
+        for fragment in malformed:
+            for valid in (modern, legacy):
+                for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                    with self.subTest(fragment=fragment, modern=valid == modern,
+                                      prefix=body.startswith(fragment)):
+                        with self.assertRaises(rw.ReleaseWindowError):
+                            rw._gate_from_body(body)
+                        with self.assertRaises(rw.ReleaseWindowError):
+                            rw.gate_records([gate_row(number=901, body=body)])
+
+    def test_unique_valid_and_unrelated_legacy_gates_preserve_behavior(self) -> None:
+        modern = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
+        legacy = legacy_gate_body("1.0.23", OLD_SHA)
+        self.assertIsNotNone(rw._gate_from_body(modern))
+        self.assertIsNotNone(rw._window_from_body(modern, OLD_SHA))
+        self.assertEqual(len(rw.gate_records([gate_row(number=902, body=modern)])), 1)
+        records = rw.gate_records([gate_row(number=903, body=legacy)])
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0]["window"])
+        # El alias canónico "duplicate" no es un segundo marker de gate.
+        with_alias = modern + "\n<!-- factory-human-gate-duplicate canonical=901 -->"
+        self.assertEqual(len(rw.gate_records([
+            gate_row(number=904, body=with_alias),
+        ])), 1)
+        unrelated = (
+            '<!-- factory-human-gate '
+            '{"category":"product-direction","context":"legacy schema"} -->'
+        )
+        self.assertEqual(rw.gate_records([gate_row(number=905, body=unrelated)]), [])
+        # Se conserva el rechazo estricto de claves JSON duplicadas de #1270.
+        duplicate_window = modern + (
+            '\n<!-- factory-release-window '
+            '{"version":1,"version":1} -->'
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([gate_row(number=906, body=duplicate_window)])
+
     def test_active_window_blocks_normal_merges_and_allows_only_explicit_critical_repair(self) -> None:
         rendered = rw._render_gate(
             "1.0.23",
@@ -661,6 +739,98 @@ class ReleaseWindowTests(unittest.TestCase):
                 "comments": [],
             }])
 
+    def test_executed_rejects_valid_plus_malformed_header(self) -> None:
+        valid = executed_marker()
+        malformed = (
+            "<!-- factory-release-executed {",
+            "<!-- factory-release-executed TRUNCATED -->",
+            "<!-- factory-release-executed",
+        )
+        for fragment in malformed:
+            for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                with self.subTest(fragment=fragment, first=body.startswith(fragment)):
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw._execution([executed_comment(body)], OLD_SHA)
+        for fragment in malformed:
+            with self.subTest(only=fragment), self.assertRaises(rw.ReleaseWindowError):
+                rw._execution([executed_comment(fragment)], OLD_SHA)
+
+    def test_executed_rejects_uppercase_or_spaced_duplicate_header(self) -> None:
+        valid = executed_marker()
+        variants = (
+            "<!-- FACTORY-RELEASE-EXECUTED {",
+            "<!-- FACTORY-RELEASE-EXECUTED TRUNCATED -->",
+            "<!-- factory - release - executed {",
+            "<!-- FACTORY - RELEASE - EXECUTED TRUNCATED -->",
+        )
+        for fragment in variants:
+            for body in (valid + "\n" + fragment, fragment + "\n" + valid):
+                with self.subTest(fragment=fragment, first=body.startswith(fragment)):
+                    self.assertEqual(len(rw.EXECUTED_RE.findall(body)), 1)
+                    with self.assertRaises(rw.ReleaseWindowError):
+                        rw._execution([executed_comment(body)], OLD_SHA)
+
+    def test_ambiguous_executed_comment_preserves_freeze(self) -> None:
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        valid = executed_marker()
+        ambiguous = executed_comment(
+            valid + "\n<!-- FACTORY - RELEASE - EXECUTED {"
+        )
+        row = gate_row(number=922, body=gate["body"], comments=[ambiguous])
+        payload = {
+            "now": "2026-10-03T10:10:00Z",
+            "gates": [row],
+            "pr": {"number": 1234, "body": ""},
+            "work_issue": {
+                "number": 1234, "state": "open",
+                "labels": [{"name": "prioridad: alta"}],
+            },
+        }
+        # El parser debe rechazar todo el snapshot ambiguo: no puede generar
+        # records con executed válido ni llegar a "no_active_release_window".
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.gate_records([row])
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw.check_pull_request(payload)
+        # Control negativo: un comentario no autenticado no libera freeze.
+        clean_row = gate_row(
+            number=922, body=gate["body"],
+            comments=[executed_comment(valid, actor="not-the-bot")],
+        )
+        records = rw.gate_records([clean_row])
+        self.assertEqual(rw.freeze_gate(records, NOW + timedelta(minutes=10))["number"], 922)
+        payload["gates"] = [clean_row]
+        self.assertEqual(
+            rw.check_pull_request(payload)["reason"],
+            "factory_release_window_active",
+        )
+
+    def test_unique_authorized_execution_and_nonbot_comments(self) -> None:
+        valid = executed_marker()
+        bot = executed_comment(valid)
+        self.assertEqual(rw._execution([bot], OLD_SHA)["run_id"], 1234)
+        self.assertIsNone(
+            rw._execution([executed_comment(valid, actor="ordinary-user")], OLD_SHA)
+        )
+        self.assertIsNone(rw._execution([], OLD_SHA))
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        records = rw.gate_records([
+            gate_row(number=922, body=gate["body"], comments=[bot]),
+        ])
+        self.assertIsNone(rw.freeze_gate(records, NOW + timedelta(minutes=10)))
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([executed_comment(executed_marker(NEW_SHA))], OLD_SHA)
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([executed_comment(valid + "\n" + valid)], OLD_SHA)
+        duplicated = (
+            "<!-- factory-release-executed "
+            '{"version":1,"sha":"' + OLD_SHA
+            + '","sha":"' + OLD_SHA
+            + '","run_id":1234,"executed_at":"2026-10-03T10:05:00Z"} -->'
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([executed_comment(duplicated)], OLD_SHA)
+
     def test_execution_markers_reject_ambiguous_or_invalid_evidence(self) -> None:
         rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
         approved = approved_comment(rendered["body"])
@@ -731,6 +901,128 @@ class ReleaseWindowTests(unittest.TestCase):
                 "gates": [],
             })
 
+
+    def test_duplicate_json_decision_keys_fail_closed(self) -> None:
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        gate, _, _ = rw._gate_from_body(rendered["body"])
+        fingerprint = rw._gate_fingerprint(gate)
+        for raw in (
+            '{"version":2,"option":"B","option":"A","gate_sha256":"' + fingerprint + '"}',
+            '{"version":1,"version":2,"option":"A","gate_sha256":"' + fingerprint + '"}',
+            '{"version":2,"option":"A","gate_sha256":"0","gate_sha256":"' + fingerprint + '"}',
+        ):
+            with self.subTest(raw=raw), self.assertRaises(rw.ReleaseWindowError):
+                rw._decision_a([{
+                    "user": {"login": "github-actions[bot]"},
+                    "body": "<!-- factory-human-decision " + raw + " -->",
+                }], fingerprint)
+
+        for fields in (
+            '"category":"factory-release","category":"brand"',
+            '"category":"brand","category":"factory-release"',
+            '"category":"factory-\\u0072elease","category":"brand"',
+            '"category":"brand","category":"factory-\\u0072elease"',
+        ):
+            body = (
+                "<!-- factory-human-gate {" + fields
+                + ',"context":"Factory 1.0.23 main@' + OLD_SHA + '"} -->'
+            )
+            with self.subTest(fields=fields), self.assertRaises(rw.ReleaseWindowError):
+                rw.gate_records([gate_row(number=901, body=body)])
+
+        self.assertEqual(rw.gate_records([gate_row(
+            number=902,
+            body='<!-- factory-human-gate {"category":"brand","category":"legal"} -->',
+        )]), [])
+
+    def test_duplicate_json_window_keys_fail_closed(self) -> None:
+        prefix = (
+            '{"version":1,"sha":"' + OLD_SHA
+            + '","opened_at":"2026-10-03T10:00:00Z",'
+        )
+        fragments = (
+            '"expires_at":"2026-10-03T10:30:00Z","expires_at":"2026-10-03T11:00:00Z"',
+            '"sha":"' + OLD_SHA + '","expires_at":"2026-10-03T11:00:00Z"',
+            '"expires_at":"2026-10-03T11:00:00Z","nested":{"key":1,"key":2}',
+        )
+        for tail in fragments:
+            body = "<!-- factory-release-window " + prefix + tail + "} -->"
+            with self.subTest(tail=tail), self.assertRaises(rw.ReleaseWindowError):
+                rw._window_from_body(body, OLD_SHA)
+
+    def test_duplicate_json_execution_and_exception_fail_closed(self) -> None:
+        duplicated = (
+            '{"version":1,"sha":"' + OLD_SHA
+            + '","run_id":1,"run_id":2,"executed_at":"2026-10-03T10:05:00Z"}'
+        )
+        with self.assertRaises(rw.ReleaseWindowError):
+            rw._execution([{
+                "user": {"login": "github-actions[bot]"},
+                "body": "<!-- factory-release-executed " + duplicated + " -->",
+            }], OLD_SHA)
+
+        work = {
+            "number": 921, "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        marker = (
+            "<!-- factory-release-freeze-exception "
+            '{"version":1,"reason":"critical-repair","issue":0,"issue":921} -->'
+        )
+        self.assertFalse(rw._critical_exception({"body": marker}, work))
+        self.assertFalse(rw._critical_exception({
+            "body": (
+                "<!-- factory-release-freeze-exception "
+                '{"version":1,"reason":"critical-repair","issue":921,'
+                '"nested":{"x":1,"x":2}} -->'
+            ),
+        }, work))
+
+    def test_unique_json_release_contracts_still_pass(self) -> None:
+        rendered = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)
+        gate, version, sha = rw._gate_from_body(rendered["body"])
+        self.assertEqual((version, sha), ("1.0.23", OLD_SHA))
+        self.assertIsNotNone(rw._window_from_body(rendered["body"], OLD_SHA))
+        decision = approved_comment(rendered["body"])
+        self.assertTrue(rw._decision_a([decision], rw._gate_fingerprint(gate)))
+        execution = {
+            "version": 1, "sha": OLD_SHA, "run_id": 123,
+            "executed_at": "2026-10-03T10:05:00Z",
+        }
+        bot = {
+            "user": {"login": "github-actions[bot]"},
+            "body": (
+                "<!-- factory-release-executed "
+                + json.dumps(execution, separators=(",", ":"), sort_keys=True)
+                + " -->"
+            ),
+        }
+        self.assertEqual(rw._execution([bot], OLD_SHA)["run_id"], 123)
+        work = {
+            "number": 921, "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        self.assertTrue(rw._critical_exception({
+            "body": (
+                '<!-- factory-release-freeze-exception '
+                '{"version":1,"reason":"critical-repair","issue":921} -->'
+            ),
+        }, work))
+        self.assertEqual(rw.gate_records([gate_row(
+            number=901,
+            body='<!-- factory-human-gate {"category":"brand"} -->',
+        )]), [])
+
+        with (
+            patch.object(rw.sys, "stdin", io.StringIO(
+                '{"gates":[],"gates":[]}'
+            )),
+            patch.object(rw.sys, "argv", ["release_window.py", "summary"]),
+            patch.object(rw.sys, "stdout", io.StringIO()),
+            patch.object(rw.sys, "stderr", io.StringIO()) as stderr,
+        ):
+            self.assertEqual(rw.main(), 2)
+            self.assertIn("JSON inválido", stderr.getvalue())
 
     def test_cli_dispatches_all_modes_and_reports_invalid_json(self) -> None:
         def cli(mode: str, payload: object | None = None, raw: str | None = None):
@@ -834,6 +1126,101 @@ class ReleaseWindowTests(unittest.TestCase):
             900,
         )
 
+
+    def test_critical_exception_rejects_valid_plus_malformed_header(self) -> None:
+        marker = (
+            '<!-- factory-release-freeze-exception '
+            '{"version":1,"reason":"critical-repair","issue":921} -->'
+        )
+        work = {
+            "number": 921,
+            "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        rows = [gate_row(number=922, body=gate["body"])]
+        malformed = (
+            "<!-- factory-release-freeze-exception TRUNCATED -->",
+            "<!-- factory-release-freeze-exception {",
+        )
+        for fragment in malformed:
+            for body in (marker + "\n" + fragment, fragment + "\n" + marker):
+                with self.subTest(fragment=fragment, prefix=body.startswith(fragment)):
+                    self.assertFalse(rw._critical_exception({"body": body}, work))
+                    result = rw.check_pull_request({
+                        "now": "2026-10-03T10:10:00Z",
+                        "gates": rows,
+                        "pr": {"number": 1234, "body": body},
+                        "work_issue": work,
+                    })
+                    self.assertFalse(result["allowed"])
+                    self.assertEqual(result["reason"], "factory_release_window_active")
+
+    def test_critical_exception_rejects_uppercase_or_truncated_duplicate(self) -> None:
+        marker = (
+            '<!-- factory-release-freeze-exception '
+            '{"version":1,"reason":"critical-repair","issue":921} -->'
+        )
+        work = {
+            "number": 921,
+            "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        variants = (
+            '<!-- FACTORY-RELEASE-FREEZE-EXCEPTION {"version":1} -->',
+            "<!-- factory - release - freeze - exception {",
+            "<!-- FACTORY - RELEASE - FREEZE - EXCEPTION",
+            "<!-- factory-release-freeze-exception",
+        )
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        rows = [gate_row(number=922, body=gate["body"])]
+        for fragment in variants:
+            for body in (marker + "\n" + fragment, fragment + "\n" + marker):
+                with self.subTest(fragment=fragment, prefix=body.startswith(fragment)):
+                    self.assertFalse(rw._critical_exception({"body": body}, work))
+                    actual = rw.check_pull_request({
+                        "now": "2026-10-03T10:10:00Z",
+                        "gates": rows,
+                        "pr": {"number": 1234, "body": body},
+                        "work_issue": work,
+                    })
+                    self.assertEqual(actual["reason"], "factory_release_window_active")
+                    self.assertFalse(actual["allowed"])
+
+    def test_critical_exception_unique_authorized_marker_preserved(self) -> None:
+        marker = (
+            '<!-- factory-release-freeze-exception '
+            '{"version":1,"reason":"critical-repair","issue":921} -->'
+        )
+        work = {
+            "number": 921,
+            "state": "open",
+            "labels": [{"name": "prioridad: crítica"}],
+        }
+        unrelated = "\n<!-- factory-human-decision unrelated -->"
+        self.assertTrue(rw._critical_exception({"body": marker}, work))
+        self.assertTrue(rw._critical_exception({"body": marker + unrelated}, work))
+        self.assertFalse(rw._critical_exception({"body": marker + "\n" + marker}, work))
+        self.assertFalse(rw._critical_exception({"body": "<!-- factory-release-freeze-exception {"}, work))
+        self.assertFalse(rw._critical_exception({
+            "body": marker.replace('"issue":921', '"issue":922'),
+        }, work))
+        self.assertFalse(rw._critical_exception({
+            "body": marker.replace('"issue":921', '"issue":921,"issue":921'),
+        }, work))
+        self.assertFalse(rw._critical_exception({"body": marker}, {**work, "state": "closed"}))
+        self.assertFalse(rw._critical_exception({
+            "body": marker,
+        }, {**work, "labels": [{"name": "prioridad: alta"}]}))
+        gate = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=918)
+        result = rw.check_pull_request({
+            "now": "2026-10-03T10:10:00Z",
+            "gates": [gate_row(number=922, body=gate["body"])],
+            "pr": {"number": 1234, "body": marker + unrelated},
+            "work_issue": work,
+        })
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["reason"], "critical_repair_exception")
 
     def test_critical_exception_requires_exact_schema_open_issue_and_critical_label(self) -> None:
         body = (
