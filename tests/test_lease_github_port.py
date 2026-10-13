@@ -233,6 +233,43 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(empty.count, 0)
         self.assertTrue(_note_ok(empty, target))
 
+        # Una marca terminal previa para el MISMO UUID no puede revivir
+        # con un marker active:true más nuevo. Tampoco se permiten pins
+        # distintos en comentarios de la misma reserva, aunque la nota
+        # actual y el último marker concuerden.
+        def same_uuid_history(kind):
+            api = NoteAPI()
+            first = dict(api.notes[0], id=1)
+            middle_marker = dict(target.marker)
+            if kind == "resurrected":
+                middle_marker.update(
+                    active=False, reason="auto-inactivity-release")
+            elif kind == "pin_changed":
+                middle_marker["task_marker_sha256"] = "e" * 64
+            else:
+                raise AssertionError("unsupported_history")
+            middle = {
+                **api.notes[0], "id": 2,
+                "body": "<!-- condor-reserva " +
+                        json.dumps(middle_marker) + " -->",
+            }
+            latest = dict(api.notes[0], id=3)
+            note = dict(api.notes[1], id=4)
+            api.notes = [first, middle, latest, note]
+            return api
+
+        for history in ("resurrected", "pin_changed"):
+            with self.subTest(reused_uuid=history):
+                sample = same_uuid_history(history)
+                with self.assertRaisesRegex(
+                    PortNotArmed, "authenticated_recovery_proof_unavailable"
+                ):
+                    LeaseGithubPort(sample).recovery_note(1191, target)
+                self.assertEqual(sample.switch_reads, 1)
+                self.assertTrue(all(
+                    call == "/rate_limit" or call.startswith("/repos/")
+                    for call in sample.calls))
+
         # /tomar crea una reserva nueva conservando las notas históricas.
         # La evidencia del UUID vigente no debe confundirse con la anterior.
         def recovered_issue():
