@@ -1,6 +1,7 @@
 """Acceptance #1130: generated consumer tests work for both coordination caller generations."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -119,6 +120,37 @@ def consumer_caller(*, strict: bool) -> str:
 
 
 class BootstrapStrictAdoptionTests(unittest.TestCase):
+    def test_bootstrap_marker_identity_requires_json_integers(self):
+        """Historical bootstrap identity must fail closed on bool, float and strings."""
+        canonical = {
+            "version": 1,
+            "identity": "a" * 64,
+            "target_issue": 1130,
+            "expected_main_sha": "b" * 40,
+            "governance_ref": bootstrap.GOVERNANCE_REF,
+        }
+
+        def encoded(marker):
+            return "<!-- factory-coordination-bootstrap " + json.dumps(
+                marker, sort_keys=True, separators=(",", ":")
+            ) + " -->"
+
+        for issue in (1, 1130):
+            with self.subTest(valid_issue=issue):
+                positive = {**canonical, "target_issue": issue}
+                self.assertEqual(bootstrap.parse_marker(encoded(positive)), positive)
+
+        for key, invalid in (
+            ("version", True), ("version", False),
+            ("version", "1"), ("version", 1.0), ("version", 0),
+            ("target_issue", True), ("target_issue", False),
+            ("target_issue", "1"), ("target_issue", 1.0),
+            ("target_issue", 0), ("target_issue", -1),
+        ):
+            with self.subTest(field=key, invalid=invalid):
+                changed = {**canonical, key: invalid}
+                self.assertIsNone(bootstrap.parse_marker(encoded(changed)))
+
     def run_generated(self, caller: str) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

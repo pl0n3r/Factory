@@ -97,9 +97,9 @@ def parse_marker(body: Any) -> dict[str, Any] | None:
     required = {"version", "identity", "target_issue", "expected_main_sha", "governance_ref"}
     if not isinstance(value, dict) or set(value) != required:
         return None
-    if value.get("version") != 1 or value.get("governance_ref") != GOVERNANCE_REF:
+    if type(value.get("version")) is not int or value["version"] != 1 or value.get("governance_ref") != GOVERNANCE_REF:
         return None
-    if not isinstance(value.get("target_issue"), int) or value["target_issue"] < 1:
+    if type(value.get("target_issue")) is not int or value["target_issue"] < 1:
         return None
     if not isinstance(value.get("identity"), str) or KEY_RE.fullmatch(value["identity"]) is None:
         return None
