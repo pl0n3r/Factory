@@ -858,7 +858,7 @@ class NoWorkDedupTests(unittest.TestCase):
         )
         refreshed = NoWorkPublicationState(
             comment_id=prior.comment_id, fingerprint=prior.fingerprint,
-            published_at=101, observed_at=100)
+            published_at=101, observed_at=90)
         self.assertEqual(
             revalidate_no_work_application(omitted, refreshed).reason,
             "publication_changed",
