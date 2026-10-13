@@ -5,7 +5,7 @@ from pathlib import Path
 
 from scripts.lease_auto_release_run import (
     decision_from_snapshot, inventory_after_switch_recheck,
-    inventory_from_paginated_issues, run_cycle,
+    inventory_from_paginated_issues, observe_recent_activity, run_cycle,
 )
 from test_lease_release_executor import FakePort, snapshot
 
@@ -16,6 +16,71 @@ class NoAccessPort:
 
 
 class LeaseAutoReleaseRunTests(unittest.TestCase):
+    def test_authenticated_recent_activity_inventory_is_bounded_and_never_writes(self):
+        from datetime import timedelta
+        from scripts.lease_github_port import LeaseGithubPort, RECENT, UNKNOWN
+        from test_lease_github_port import FakeAPI, NOW
+
+        api = FakeAPI()
+        observed = observe_recent_activity(
+            [21], LeaseGithubPort(api), now=NOW)
+        self.assertEqual(observed.state, "read_only")
+        self.assertFalse(observed.release_authorized)
+        self.assertEqual(len(observed.observations), 1)
+        item = observed.observations[0]
+        self.assertEqual((item.issue, item.state, item.libera_en_min),
+                         (21, RECENT, 35))
+        self.assertFalse(item.release_authorized)
+        self.assertNotIn("pl0n3r", str(observed))
+        self.assertNotIn("e33f1859", str(observed))
+        self.assertEqual(api.switch_reads, 2)
+        self.assertEqual(api.calls[0], "/repos/pl0n3r/Factory/issues/767")
+        self.assertEqual(api.calls[-1], "/repos/pl0n3r/Factory/issues/767")
+
+        for change in ("pause", "quota", "race", "partial"):
+            with self.subTest(fail_closed=change):
+                fake = FakeAPI()
+                if change == "pause":
+                    fake.pause_on_second = True
+                elif change == "quota":
+                    fake.remaining = 19
+                elif change == "race":
+                    fake.race = True
+                else:
+                    fake.runs_count_override = 2
+                report = observe_recent_activity(
+                    [21], LeaseGithubPort(fake), now=NOW)
+                self.assertEqual(report.state, "read_only")
+                self.assertEqual(
+                    (report.observations[0].state,
+                     report.observations[0].libera_en_min),
+                    (UNKNOWN, None))
+                self.assertFalse(report.release_authorized)
+                self.assertTrue(all(
+                    path == "/rate_limit" or path.startswith("/repos/")
+                    for path in fake.calls))
+
+        blocked = FakeAPI()
+        port = LeaseGithubPort(blocked)
+        for invalid, instant in (
+            ([], NOW), ([21, 22], NOW), ([True], NOW),
+            ([0], NOW), ([21], NOW.replace(tzinfo=None)),
+            ([21], NOW + timedelta(days=400)),
+        ):
+            with self.subTest(invalid=invalid, now=instant):
+                answer = observe_recent_activity(invalid, port, now=instant)
+                if instant > NOW + timedelta(days=100):
+                    # Fecha lejana significa UNKNOWN autenticado; NO ETA.
+                    self.assertEqual(answer.state, "read_only")
+                    self.assertIsNone(answer.observations[0].libera_en_min)
+                else:
+                    self.assertEqual(answer.state, "invalid_input")
+                    self.assertEqual(answer.observations, ())
+                self.assertFalse(answer.release_authorized)
+        # Los inválidos sin fecha lejana no han tocado el Port; el último
+        # caso puede leer solo GET y aun así carece de autoridad.
+        self.assertEqual(blocked.switch_reads, 1)
+
     def test_switch_recheck_rejects_pause_and_untrusted_state_during_inventory(self):
         from scripts.unattended_kill_switch import (
             CANONICAL_SOURCE_URL, CANONICAL_REPOSITORY_URL,
