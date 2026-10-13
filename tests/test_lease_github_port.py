@@ -106,6 +106,8 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.issue_reads = 0
                 self.drift_labels = False
                 self.drift_assignees = False
+                self.drift_issue_body = False
+                self.omit_issue_body = False
                 self.comment_page_reads = 0
                 self.drift_note_comment = False
                 self.drift_marker_comment = False
@@ -131,6 +133,11 @@ class LeaseGithubPortTests(unittest.TestCase):
                     return {
                         "number": 1191, "state": "open",
                         "comments": len(self.notes), "updated_at": self.revision,
+                        **({} if self.omit_issue_body else {
+                            "body": "contrato-issue-consistente"
+                                    + (" cambiado-en-el-mismo-segundo"
+                                       if late and self.drift_issue_body else ""),
+                        }),
                         "assignees": [{"login": "intruder" if late and
                                       self.drift_assignees else target.owner}],
                         "labels": [{"name": "estado: disponible" if late and
@@ -210,6 +217,8 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: setattr(x, "switch_state", "open"),
             lambda x: setattr(x, "drift_labels", True),
             lambda x: setattr(x, "drift_assignees", True),
+            lambda x: setattr(x, "drift_issue_body", True),
+            lambda x: setattr(x, "omit_issue_body", True),
             lambda x: setattr(x, "drift_note_comment", True),
             lambda x: setattr(x, "drift_marker_comment", True),
             lambda x: x.notes[0].update(body="spoofed bot marker"),
