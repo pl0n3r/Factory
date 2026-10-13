@@ -12,6 +12,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "dieta-factory.md"
 WORKFLOWS = ROOT / ".github" / "workflows"
+# Adición posterior explícita: la tabla documental conserva el inventario histórico.
+POST_BASELINE_WORKFLOWS = {
+    ".github/workflows/automerge.yml": frozenset({"pull_request"}),
+}
 
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)
@@ -215,7 +219,10 @@ class FactoryDietInventoryTests(unittest.TestCase):
             for path in WORKFLOWS.glob(extension)
             if path.is_file()
         }
-        self.assertEqual(set(self.rows), actual, "Inventario obsoleto o incompleto")
+        self.assertEqual(set(self.rows) | set(POST_BASELINE_WORKFLOWS), actual, "Inventario histórico + adición explícita no coincide")
+        for rel_path, events in POST_BASELINE_WORKFLOWS.items():
+            with self.subTest(nuevo=rel_path):
+                self.assertEqual(workflow_events(ROOT / rel_path), events)
         self.assertTrue(actual)
         for rel_path, row in self.rows.items():
             with self.subTest(workflow=rel_path):
@@ -245,6 +252,21 @@ class FactoryDietInventoryTests(unittest.TestCase):
 
         with patch.object(Path, "read_text", read_with_future_edit):
             self.test_inventory_lists_every_workflow_with_trigger_and_decision()
+
+    def test_post_baseline_workflow_rejects_unknown_swap(self) -> None:
+        """Un workflow nuevo no autoriza sustituir otros con el mismo cardinal."""
+        actual = {
+            path.relative_to(ROOT).as_posix()
+            for ext in ("*.yml", "*.yaml")
+            for path in WORKFLOWS.glob(ext) if path.is_file()
+        }
+        expected = set(self.rows) | set(POST_BASELINE_WORKFLOWS)
+        self.assertEqual(actual, expected)
+        swapped = (actual - {".github/workflows/automerge.yml"}) | {
+            ".github/workflows/workflow-no-autorizado.yml"
+        }
+        self.assertEqual(len(swapped), len(expected))
+        self.assertNotEqual(swapped, expected)
 
     def test_f1a_ledger_matches_exact_two_deletions(self) -> None:
         """F1A conserva la baseline y no encubre workflows desaparecidos."""
@@ -326,17 +348,17 @@ class FactoryDietInventoryTests(unittest.TestCase):
         }
         removed = {path for _, path, _, _ in match}
         # Prueba el conjunto, no solo el cardinal y la tabla mutable.
-        self.assertEqual(baseline_paths - removed - {".github/workflows/metricas.yml", ".github/workflows/sonar-watch.yml", ".github/workflows/cabina.yml", ".github/workflows/sync-label-colors.yml", ".github/workflows/captura-leccion.yml"}, actual)
+        self.assertEqual((baseline_paths - removed - {".github/workflows/metricas.yml", ".github/workflows/sonar-watch.yml", ".github/workflows/cabina.yml", ".github/workflows/sync-label-colors.yml", ".github/workflows/captura-leccion.yml"}) | set(POST_BASELINE_WORKFLOWS), actual)
         victim = next(path for path in sorted(actual) if path not in removed)
         unauthorized_swap = (actual - {victim}) | {
             ".github/workflows/trigger-no-autorizado.yml"
         }
         self.assertEqual(len(unauthorized_swap), len(actual))
         with self.assertRaises(AssertionError):
-            self.assertEqual(baseline_paths - removed - {".github/workflows/metricas.yml", ".github/workflows/sonar-watch.yml", ".github/workflows/cabina.yml", ".github/workflows/sync-label-colors.yml", ".github/workflows/captura-leccion.yml"}, unauthorized_swap)
-        self.assertEqual(len(actual), 31)
-        self.assertEqual(set(self.rows), actual)
-        self.assertEqual(len(actual) + len(match) + 5, 38)
+            self.assertEqual((baseline_paths - removed - {".github/workflows/metricas.yml", ".github/workflows/sonar-watch.yml", ".github/workflows/cabina.yml", ".github/workflows/sync-label-colors.yml", ".github/workflows/captura-leccion.yml"}) | set(POST_BASELINE_WORKFLOWS), unauthorized_swap)
+        self.assertEqual(len(actual), 32)
+        self.assertEqual(set(self.rows) | set(POST_BASELINE_WORKFLOWS), actual)
+        self.assertEqual(len(actual) - len(POST_BASELINE_WORKFLOWS) + len(match) + 5, 38)
         for _, path, _, suite in match:
             self.assertNotIn(path, actual)
             self.assertTrue((ROOT / suite).is_file())
