@@ -134,28 +134,79 @@ jobs:
               jq '[.files[].filename]' /tmp/gate-drift.json > /tmp/changed-files-since-gate.json
             fi
 
-            gh run list --commit "$resolved_sha" --limit 100 \
-              --json name,status,conclusion,headSha > /tmp/exact-main-runs.json
+            # Leer cada workflow por ruta canonica: los runs ajenos del
+            # mismo SHA no deben agotar el presupuesto ni falsificar gates.
             require_exact_main_success() {
               local workflow_name="$1"
+              local workflow_file="$2"
+              local workflow_path=".github/workflows/$workflow_file"
+              gh api "repos/$REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$resolved_sha&per_page=100&page=1" \
+                > /tmp/exact-main-runs.json
               jq -e \
                 --arg workflow_name "$workflow_name" \
                 --arg sha "$resolved_sha" \
-                'map(select(
-                  .name == $workflow_name and
-                  .headSha == $sha and
-                  .status == "completed" and
-                  .conclusion == "success"
-                )) | length > 0' \
-                /tmp/exact-main-runs.json >/dev/null || {
-                  echo "::error::$workflow_name no tiene ejecución success sobre $resolved_sha"
-                  exit 1
-                }
+                --arg workflow_path "$workflow_path" '
+                # EXACT_MAIN_JQ_BEGIN
+                def positive_int: type == "number" and . > 0 and . == floor;
+                def utc_time:
+                  type == "string" and
+                  test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and
+                  (try (fromdateiso8601 >= 0) catch false);
+                def effective_time: (.run_started_at // .created_at);
+                def valid_run:
+                  (.id | positive_int) and
+                  (.run_attempt | positive_int) and
+                  (.name | type == "string" and length > 0) and
+                  (.path | type == "string" and test("^\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml(@main)?$")) and
+                  (.head_branch | type == "string" and length > 0) and
+                  (.head_sha | type == "string" and test("^[0-9a-f]{40}$")) and
+                  (.created_at | utc_time) and
+                  (.updated_at | utc_time) and
+                  (.run_started_at == null or (.run_started_at | utc_time)) and
+                  (.status != "completed" or .run_started_at != null) and
+                  (.run_started_at == null or
+                    ((.run_started_at | fromdateiso8601) >= (.created_at | fromdateiso8601))) and
+                  ((.updated_at | fromdateiso8601) >= (effective_time | fromdateiso8601)) and
+                  (.run_attempt == 1 or (.run_started_at != null and .status == "completed")) and
+                  (.status | type == "string") and
+                  (.conclusion == null or (.conclusion | type == "string"));
+                def complete_snapshot:
+                  . as $r |
+                  (type == "object") and
+                  ($r.total_count | type == "number" and . >= 0 and . < 100 and . == floor) and
+                  ($r.workflow_runs | type == "array") and
+                  (($r.workflow_runs | length) == $r.total_count) and
+                  ($r.workflow_runs | all(.[]; valid_run)) and
+                  (($r.workflow_runs | map(.id) | unique | length) == $r.total_count);
+                try (
+                  if complete_snapshot then
+                    [.workflow_runs[] | select(.name == $workflow_name and .head_sha == $sha)] as $matching |
+                    if ($matching | length) == 0 or
+                       ($matching | any(.[]; 
+                         (.path != $workflow_path and .path != ($workflow_path + "@main"))
+                         or .head_branch != "main"))
+                    then false
+                    else
+                      # Creation and (re)start are separate, both must be terminal.
+                      ($matching | max_by(effective_time)) as $newest_start |
+                      ($matching | max_by(.created_at)) as $newest_created |
+                      ([$matching[] | select(effective_time == ($newest_start | effective_time))] | length == 1) and
+                      ([$matching[] | select(.created_at == $newest_created.created_at)] | length == 1) and
+                      ($newest_start.status == "completed" and $newest_start.conclusion == "success") and
+                      ($newest_created.status == "completed" and $newest_created.conclusion == "success")
+                    end
+                  else false end
+                ) catch false
+                # EXACT_MAIN_JQ_END
+              ' /tmp/exact-main-runs.json >/dev/null || {
+                echo "::error::$workflow_name: no hay ejecución vigente, completa y terminal SUCCESS sobre $resolved_sha"
+                exit 1
+              }
             }
-            require_exact_main_success "CI factory"
-            require_exact_main_success "Sonar CI-based"
-            require_exact_main_success "Evidencia CodeQL"
-            require_exact_main_success "Unattended Watchdog"
+            require_exact_main_success "CI factory" "factory-ci.yml"
+            require_exact_main_success "Sonar CI-based" "sonar.yml"
+            require_exact_main_success "Evidencia CodeQL" "codeql-evidence.yml"
+            require_exact_main_success "Unattended Watchdog" "unattended-watchdog.yml"
             jq -n '{
               ci:"success",
               sonar:"success",
@@ -193,7 +244,7 @@ jobs:
 
           printf '[]\n' > /tmp/rearm-sources.json
           source_issue="$(extract_rearm_source /tmp/gate.json)"
-          for _depth in {1..8}; do
+          for _depth in {1..16}; do
             [[ -n "$source_issue" ]] || break
             [[ "$source_issue" =~ ^[1-9][0-9]*$ ]] || {
               echo "::error::source_issue de rearmado inválido"
@@ -223,7 +274,7 @@ jobs:
             source_issue="$(extract_rearm_source /tmp/rearm-source.json)"
           done
           [[ -z "$source_issue" ]] || {
-            echo "::error::cadena factory-release-rearm excede 8 saltos"
+            echo "::error::cadena factory-release-rearm excede 16 saltos"
             exit 1
           }
 
@@ -291,7 +342,26 @@ jobs:
 
           python3 -m scripts.release_bootstrap < /tmp/release-bootstrap.json             | tee /tmp/release-bootstrap-result.json
           approved_sha="$(jq -r '.sha' /tmp/release-bootstrap-result.json)"
-          echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"
+          # EXACT_MAIN_FINAL_RECHECK_BEGIN
+          # Los cuatro inventarios pueden haber cambiado sin mover main:
+          # un nuevo rerun pendiente/rojo del mismo SHA invalida SUCCESS viejo.
+          require_exact_main_success "CI factory" "factory-ci.yml"
+          require_exact_main_success "Sonar CI-based" "sonar.yml"
+          require_exact_main_success "Evidencia CodeQL" "codeql-evidence.yml"
+          require_exact_main_success "Unattended Watchdog" "unattended-watchdog.yml"
+          # Leer main al final, tras los cuatro GET, antes de emitir aprobación.
+          final_main_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
+          if [[ "$final_main_sha" =~ ^[0-9a-f]{40}$ ]] &&
+             [[ "$final_main_sha" == "$CURRENT_SHA" &&
+                "$final_main_sha" == "$default_sha" &&
+                "$final_main_sha" == "$resolved_sha" &&
+                "$final_main_sha" == "$approved_sha" ]]; then
+            echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::main cambió antes de aprobar el preflight de release"
+            exit 1
+          fi
+          # EXACT_MAIN_FINAL_RECHECK_END
 
   consumer-compat:
     name: Compatibilidad de consumidores
