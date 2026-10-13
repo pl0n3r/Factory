@@ -77,13 +77,61 @@ jobs:
           }
           work_issue="${BASH_REMATCH[1]}"
 
+          # RELEASE_API_HELPER_START (sin volcar bodies, tokens ni cabeceras).
+          release_gh_api() {
+            local phase="$1"
+            shift
+            case "$phase" in search|comments|metadata) ;; *)
+              echo "::error::release_api_phase_invalid fail_closed=true" >&2
+              return 1 ;;
+            esac
+            local error_file
+            error_file="$(mktemp)"
+            if command gh api "$@" 2>"$error_file"; then
+              rm -f "$error_file"
+              return 0
+            fi
+            if grep -Eqi 'rate limit exceeded|secondary rate limit|HTTP 429' "$error_file"; then
+              echo "::error::release_api_quota_exhausted phase=$phase fail_closed=true" >&2
+            else
+              echo "::error::release_api_transport_failure phase=$phase fail_closed=true" >&2
+            fi
+            # "gh api --paginate" puede ejecutar más de un GET: este informe
+            # solo es una cota inferior de intentos por fase y NO acredita éxito.
+            # Se emite ANTES de que set -e/pipefail cierre el job; sin stderr
+            # original, respuesta HTTP ni headers que pudieran contener secretos.
+            echo "::error::release_api_budget_min search=${search_calls:-0} comments=${comments_calls_min:-0} metadata=${metadata_calls:-0} failed_phase=$phase note=minimum_attempts_paginate_may_expand fail_closed=true" >&2
+            rm -f "$error_file"
+            return 1
+          }
+          # Reusar el mismo parser de cuotas para el gh de la tubería histórica;
+          # la lectura de comentarios mantiene su patrón de pruebas y pipefail.
+          gh() {
+            if [[ "${1:-}" != "api" ]]; then
+              command gh "$@"
+              return $?
+            fi
+            shift
+            local phase="metadata"
+            case " $* " in
+              *"search/issues"*) phase="search" ;;
+              *"/comments?"*) phase="comments" ;;
+            esac
+            release_gh_api "$phase" "$@"
+          }
+          # RELEASE_API_HELPER_END
+          search_calls=0
+          comments_calls_min=0
+          metadata_calls=0
+
           # Search Issues entrega máximo 100 filas por página; jamás decidir un freeze
           # desde un snapshot truncado (incluidos duplicados sin su canónico).
           query="repo:$REPOSITORY is:issue \"factory-human-gate\" in:body"
           # Dos consultas completas independientes evitan aceptar una mezcla
           # de páginas por un desplazamiento del índice entre lecturas.
           for pass in 1 2; do
-          gh api -X GET search/issues -f q="$query" -f per_page=100 -f page=1 \
+          search_calls=$((search_calls + 1))
+          release_gh_api search -X GET search/issues -f q="$query" -f per_page=100 -f page=1 \
             -f sort=created -f order=asc > /tmp/release-search-p1-${pass}.json
           total_count="$(jq -er '
             if (.incomplete_results == false)
@@ -96,7 +144,8 @@ jobs:
             end
           ' /tmp/release-search-p1-${pass}.json)"
           if (( total_count > 100 )); then
-            gh api -X GET search/issues -f q="$query" -f per_page=100 -f page=2 \
+            search_calls=$((search_calls + 1))
+            release_gh_api search -X GET search/issues -f q="$query" -f per_page=100 -f page=2 \
               -f sort=created -f order=asc > /tmp/release-search-p2-${pass}.json
           else
             printf 'null\n' > /tmp/release-search-p2-${pass}.json
@@ -185,11 +234,49 @@ jobs:
             echo "::error::Search Issues cambió entre dos lecturas completas"
             exit 1
           }
+          # Proyectar TODAS las filas verificadas antes de seleccionar gates.
+          # El parser canónico decide qué Issues necesitan comentarios, incluso
+          # cuando "factory-release" está escapado en JSON (p. ej. \u0072).
+          # Nunca usar un filtro textual previo que descarte markers válidos.
           jq '[
                 .[]
-                | select((.body // "") | contains("factory-release"))
                 | {number, state, title, body, updated_at}
-              ]' /tmp/release-search-verified-2.json > /tmp/release-issues.json
+              ]' /tmp/release-search-verified-2.json > /tmp/release-issues-projected.json
+          # RELEASE_GATE_CANDIDATES_START
+          # Igual que gate_records: todo window-intent pasa al evaluador y
+          # falla cerrado si es inválido. Solo los gates legacy sin ventana
+          # que el evaluador mismo descarta se pueden omitir antes de leer
+          # páginas de comentarios. No cachear decisiones ni snapshots.
+          python3 - /tmp/release-issues-projected.json <<'PY' > /tmp/release-issues.json
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.release_window import (
+              WINDOW_INTENT_RE, ReleaseWindowError, _gate_from_body,
+              _legacy_factory_release_intent,
+          )
+
+          rows = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if not isinstance(rows, list):
+              raise SystemExit("ERROR: Inventario verificado inválido")
+          selected = []
+          for item in rows:
+              if not isinstance(item, dict) or not isinstance(item.get("body"), str):
+                  raise SystemExit("ERROR: Issue verificado inválido")
+              body = item["body"]
+              if WINDOW_INTENT_RE.search(body):
+                  selected.append(item)
+              elif _legacy_factory_release_intent(body):
+                  try:
+                      gate_info = _gate_from_body(body)
+                  except ReleaseWindowError:
+                      # gate_records ignora el legacy inválido sin ventana.
+                      continue
+                  if gate_info is not None:
+                      selected.append(item)
+          print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
+          PY
+          # RELEASE_GATE_CANDIDATES_END
           # Materializar antes del bucle: Bash no propaga fallos de jq dentro de <(...).
           # -s exige una única raíz JSON array; [] es un inventario válido.
           jq -s -c 'if length == 1 and (.[0] | type) == "array" then .[0][] else error("invalid_release_inventory") end' /tmp/release-issues.json > /tmp/release-issues.jsonl
@@ -200,6 +287,7 @@ jobs:
               echo "::error::Issue de release inválido"
               exit 1
             }
+            comments_calls_min=$((comments_calls_min + 1))
             gh api --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" | jq -s -e '
               def valid_comment:
                 if type != "object" then false
@@ -237,8 +325,11 @@ jobs:
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < /tmp/release-issues.jsonl
 
+          metadata_calls=$((metadata_calls + 1))
           gh api "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
+          metadata_calls=$((metadata_calls + 1))
           gh api "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
+          echo "release_api_budget_min search=$search_calls comments=$comments_calls_min metadata=$metadata_calls note=minimum_attempts_paginate_may_expand"
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n             --arg now "$now"             --slurpfile gates /tmp/release-gates.json             --slurpfile pr /tmp/release-pr.json             --slurpfile work /tmp/release-work-item.json             '{now:$now,gates:$gates[0],pr:$pr[0],work_issue:$work[0]}'             > /tmp/release-window-input.json
 
