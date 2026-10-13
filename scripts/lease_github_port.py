@@ -247,35 +247,39 @@ class LeaseGithubPort:
             branch_sha = ref.get("object", {}).get("sha") if type(ref) is dict else None
             if branch_sha != expected.branch_sha:
                 raise ValueError("branch_mismatch")
-            comments: list[dict[str, Any]] = []
-            seen: set[int] = set()
             total = initial["comments"]
-            for page in range(1, 7):
-                rows = get(f"{path}/comments?per_page=100&page={page}")
-                if type(rows) is not list or len(rows) > 100:
-                    raise ValueError("page_invalid")
-                for comment in rows:
-                    if (type(comment) is not dict
-                            or type(comment.get("id")) is not int
-                            or comment["id"] <= 0 or comment["id"] in seen
-                            or type(comment.get("body")) is not str
-                            or type(comment.get("user")) is not dict
-                            or type(comment["user"].get("login")) is not str):
-                        raise ValueError("comment_invalid")
-                    seen.add(comment["id"])
-                    comments.append(comment)
-                if len(comments) > total:
-                    raise ValueError("count_overrun")
-                if len(rows) < 100:
-                    if len(comments) != total:
-                        raise ValueError("count_incomplete")
-                    # Una página terminal corta no basta sin página centinela.
-                    sentinel = get(f"{path}/comments?per_page=100&page={page + 1}")
-                    if type(sentinel) is not list or sentinel:
-                        raise ValueError("page_sentinel")
-                    break
-            else:
+
+            def read_comments() -> list[dict[str, Any]]:
+                # La misma paginación se repite antes de aceptar el proof:
+                # una edición de marker/nota puede no cambiar updated_at.
+                comments: list[dict[str, Any]] = []
+                seen: set[int] = set()
+                for page in range(1, 7):
+                    rows = get(f"{path}/comments?per_page=100&page={page}")
+                    if type(rows) is not list or len(rows) > 100:
+                        raise ValueError("page_invalid")
+                    for comment in rows:
+                        if (type(comment) is not dict
+                                or type(comment.get("id")) is not int
+                                or comment["id"] <= 0 or comment["id"] in seen
+                                or type(comment.get("body")) is not str
+                                or type(comment.get("user")) is not dict
+                                or type(comment["user"].get("login")) is not str):
+                            raise ValueError("comment_invalid")
+                        seen.add(comment["id"])
+                        comments.append(comment)
+                    if len(comments) > total:
+                        raise ValueError("count_overrun")
+                    if len(rows) < 100:
+                        if len(comments) != total:
+                            raise ValueError("count_incomplete")
+                        sentinel = get(f"{path}/comments?per_page=100&page={page + 1}")
+                        if type(sentinel) is not list or sentinel:
+                            raise ValueError("page_sentinel")
+                        return comments
                 raise ValueError("pagination_exhausted")
+
+            comments = read_comments()
             active_markers: list[tuple[int, dict[str, Any]]] = []
             notes: list[tuple[datetime, str]] = []
             keys = {
@@ -346,6 +350,7 @@ class LeaseGithubPort:
                     or final.get("assignees") != initial["assignees"]
                     or type(ref_after) is not dict
                     or ref_after.get("object", {}).get("sha") != expected.branch_sha
+                    or read_comments() != comments
                     or not self._running()
                     or remaining - calls < 0
                     or (remaining - calls) * 5 < limit):
