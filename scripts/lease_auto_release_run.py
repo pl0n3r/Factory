@@ -14,6 +14,7 @@ from scripts.lease_auto_release import Decision, Evidence, decide
 from scripts.lease_release_executor import (
     Result, Snapshot, _eligible, _trusted, execute,
 )
+from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,26 @@ def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
     return RecoveryInventory(open_count, recovery, reserved, in_review)
 
 
+
+
+def inventory_after_switch_recheck(
+    before: Any, after: Any, pages: Any,
+) -> RecoveryInventory | None:
+    """Publicar censo solo con dos lecturas canónicas RUNNING de #767.
+
+    No ofrece autoridad de release: una pausa durante el censo invalida
+    la instantánea aunque ya se hayan leído todas las páginas. Validar
+    state=closed explícitamente porque ramas previas del parser compartido
+    no exigían ese campo.
+    """
+    for issue in (before, after):
+        if (type(issue) is not dict or issue.get("state") != "closed"
+                or type(issue.get("number")) is not int):
+            return None
+        verdict = evaluate_unattended_kill_switch(issue)
+        if verdict.state != "RUNNING" or verdict.global_pause is not False:
+            return None
+    return inventory_from_paginated_issues(pages)
 
 
 def decision_from_snapshot(snapshot: Any) -> Decision:
