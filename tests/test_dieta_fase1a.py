@@ -7,7 +7,7 @@ import re
 import unittest
 
 from tests.test_factory_diet_inventory import (
-    REQUIRED_KEEP, inventory_rows, watchdog_f1g_assertions,
+    REQUIRED_KEEP, POST_BASELINE_WORKFLOWS, inventory_rows, watchdog_f1g_assertions,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,8 +58,8 @@ class DietaFase1ATests(unittest.TestCase):
     def test_optional_triggers_removed_only_after_dependency_and_consumer_preflight(self):
         """AC-01: solo desaparecen triggers opcionales sin callers vivos."""
         actual = self.actual_workflows()
-        self.assertEqual(len(actual), 31)
-        self.assertEqual(set(self.rows), actual)
+        self.assertEqual(len(actual), 32)
+        self.assertEqual(set(self.rows) | set(POST_BASELINE_WORKFLOWS), actual)
         for name in REMOVED:
             with self.subTest(removed=name):
                 self.assertNotIn(name, actual)
@@ -151,9 +151,9 @@ class DietaFase1ATests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual({number for number, *_ in rows}, {"1", "2"})
         self.assertEqual({path: (sha, suite) for _, path, sha, suite in rows}, REMOVED)
-        self.assertEqual(len(self.actual_workflows()) + len(rows) + 5, 38)
+        self.assertEqual(len(self.actual_workflows()) - len(POST_BASELINE_WORKFLOWS) + len(rows) + 5, 38)
         self.assertIn("squash-revert PR F1A", section)
-        self.assertEqual(set(self.rows), self.actual_workflows())
+        self.assertEqual(set(self.rows) | set(POST_BASELINE_WORKFLOWS), self.actual_workflows())
         for _, suite in REMOVED.values():
             self.assertTrue((ROOT / suite).is_file())
 

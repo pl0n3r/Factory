@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from tests.test_factory_diet_inventory import (
-    FactoryDietInventoryTests, inventory_rows, watchdog_f1g_assertions,
+    FactoryDietInventoryTests, POST_BASELINE_WORKFLOWS, inventory_rows, watchdog_f1g_assertions,
 )
 from tests.test_scheduled_entrypoints import (
     EXPECTED, SAFE_ARGS, ScheduledEntrypointTests,
@@ -38,8 +38,8 @@ class DietaFase1BTests(unittest.TestCase):
     def test_only_metrics_trigger_is_removed_and_other_workflows_remain(self):
         """AC-01: inventario exacto, una sola baja y cero callers locales."""
         active = self.workflows()
-        self.assertEqual(len(active), 31)
-        self.assertEqual(set(self.rows), active)
+        self.assertEqual(len(active), 32)
+        self.assertEqual(set(self.rows) | set(POST_BASELINE_WORKFLOWS), active)
         self.assertNotIn(METRICS, active)
         self.assertFalse((ROOT / METRICS).exists())
         for name in active:
@@ -94,7 +94,7 @@ class DietaFase1BTests(unittest.TestCase):
             + "` | 36 → 35 | squash-revert PR F1B |"
         )
         self.assertIn(expected_row, section)
-        self.assertEqual(len(self.workflows()), 31)
+        self.assertEqual(len(self.workflows()), 32)
         # F1A conserva manifiesto inmutable de 38 rutas, veto exact-set
         # y una prueba negativa de swap con cardinalidad idéntica.
         case = FactoryDietInventoryTests(
