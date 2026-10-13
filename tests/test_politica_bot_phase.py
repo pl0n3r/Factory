@@ -140,6 +140,20 @@ class PhaseReviewBotTests(unittest.TestCase):
                     noun="estatus verificados de CodeRabbit",
                 )
 
+    def test_status_evidence_rejects_symlink_and_missing_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "original.jsonl"
+            link = Path(folder) / "status-link.jsonl"
+            original.write_text(status_receipt() + "\n", encoding="utf-8")
+            link.symlink_to(original)
+            for path in (link, Path(folder) / "missing.jsonl"):
+                with self.subTest(path=path.name):
+                    with self.assertRaises(PolicyError):
+                        politica_kit._read_bounded_lines(
+                            path, max_bytes=politica_kit.MAX_CHECKS_BYTES,
+                            noun="estatus verificados de CodeRabbit",
+                        )
+
     def test_main_forwards_verified_status_lines_to_policy_decisor(self):
         with tempfile.TemporaryDirectory() as folder:
             status_file = Path(folder) / "status.jsonl"
