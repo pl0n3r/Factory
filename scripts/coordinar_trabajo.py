@@ -1593,7 +1593,7 @@ def require_global_running(api: GitHub) -> None:
     """Valida #767 canónico con GET autenticado y mantiene los errores del contrato."""
     repo = str(getattr(api, "repo", "")).lower()
     if repo not in PUBLIC_WORKFLOW_RUN_REPOS:
-        raise CoordinationError("Kill switch #767: repositorio no canónico/autorizado.")
+        raise CoordinationError("Kill switch #767: repositorio no autorizado (no canónico).")
     try:
         issue = api.request(
             "GET", f"/repos/pl0n3r/Factory/issues/{CANONICAL_ISSUE_NUMBER}"
