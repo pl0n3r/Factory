@@ -2545,10 +2545,10 @@ class CoordinacionTests(unittest.TestCase):
         for state in ("PAUSED", "INVALID"):
             api.kill_switch_marker = state
             with self.subTest(state=state):
+                previous = coordinator.active_reservation(api, 12)
                 with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                     coordinator.recover_existing_work_if_stale(
-                        api, 12, "pl0n3r", "trabajo/issue-12",
-                        coordinator.active_reservation(api, 12))
+                        api, 12, "pl0n3r", "trabajo/issue-12", previous)
                 self.assertNotIn(lock, api.branches)
                 self.assertEqual(api.comments, old_comments)
 
@@ -2567,10 +2567,10 @@ class CoordinacionTests(unittest.TestCase):
 
         with patch.object(coordinator, "recover_stale_work",
                           side_effect=pause_after_lock):
+            previous = coordinator.active_reservation(api, 12)
             with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                 coordinator.recover_existing_work_if_stale(
-                    api, 12, "pl0n3r", "trabajo/issue-12",
-                    coordinator.active_reservation(api, 12))
+                    api, 12, "pl0n3r", "trabajo/issue-12", previous)
         self.assertEqual(api.comments, old_comments)
         self.assertEqual(api.status_history, old_statuses)
         self.assertNotIn(lock, api.branches)
