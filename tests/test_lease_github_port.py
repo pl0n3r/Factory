@@ -692,6 +692,16 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(accepted.state, RECENT)
         self.assertFalse(accepted.release_authorized)
 
+        # La segunda lectura canónica de #767 también cuesta una petición:
+        # 21/100 antes de ella termina en 20/100; 20/100 cae a 19/100.
+        at_boundary = dict(baseline, rate_limit=100, rate_remaining=21)
+        boundary_transport = FakeAPI()
+        with patch("scripts.lease_github_port.collect_activity",
+                   return_value=at_boundary):
+            verified = LeaseGithubPort(boundary_transport).inspect(21, now=NOW)
+        self.assertEqual(verified.state, RECENT)
+        self.assertEqual(boundary_transport.switch_reads, 2)
+
         bad_fields = (
             ("repo", "other/repository"),
             ("status", "estado: disponible"),
@@ -706,6 +716,7 @@ class LeaseGithubPortTests(unittest.TestCase):
             ("ci_running", 0),
             ("rate_limit", 0),
             ("rate_remaining", 19),
+            ("rate_remaining", 20),  # El último GET #767 baja al 19 %.
             ("rate_remaining", True),
             ("api_requests", 33),
             ("pagination", []),
