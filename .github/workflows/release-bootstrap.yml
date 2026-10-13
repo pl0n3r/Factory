@@ -343,7 +343,13 @@ jobs:
           python3 -m scripts.release_bootstrap < /tmp/release-bootstrap.json             | tee /tmp/release-bootstrap-result.json
           approved_sha="$(jq -r '.sha' /tmp/release-bootstrap-result.json)"
           # EXACT_MAIN_FINAL_RECHECK_BEGIN
-          # Last read before exporting approval; a stale main must not pass.
+          # Los cuatro inventarios pueden haber cambiado sin mover main:
+          # un nuevo rerun pendiente/rojo del mismo SHA invalida SUCCESS viejo.
+          require_exact_main_success "CI factory" "factory-ci.yml"
+          require_exact_main_success "Sonar CI-based" "sonar.yml"
+          require_exact_main_success "Evidencia CodeQL" "codeql-evidence.yml"
+          require_exact_main_success "Unattended Watchdog" "unattended-watchdog.yml"
+          # Leer main al final, tras los cuatro GET, antes de emitir aprobación.
           final_main_sha="$(gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH" --jq '.sha')"
           if [[ "$final_main_sha" =~ ^[0-9a-f]{40}$ ]] &&
              [[ "$final_main_sha" == "$CURRENT_SHA" &&

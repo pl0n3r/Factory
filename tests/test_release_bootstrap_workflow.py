@@ -117,6 +117,14 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         block = textwrap.dedent(BOOTSTRAP.split(begin, 1)[1].split(end, 1)[0])
         self.assertIn('gh api "repos/$REPOSITORY/commits/$DEFAULT_BRANCH"', block)
         self.assertIn('echo "approved_sha=$approved_sha" >> "$GITHUB_OUTPUT"', block)
+        for name in ("CI factory", "Sonar CI-based",
+                     "Evidencia CodeQL", "Unattended Watchdog"):
+            self.assertEqual(block.count(f'require_exact_main_success "{name}"'), 1)
+        gate_fake = (
+            'require_exact_main_success() {\n'
+            '  [[ "$1" != "${FAKE_FAILED_WORKFLOW:-}" ]]\n'
+            '}\n'
+        )
         sha = "a" * 40
         moved = "b" * 40
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,12 +133,16 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
             stub.write_text("#!/bin/sh\nprintf '%s\\n' \"$FAKE_MAIN_SHA\"\n", encoding="utf-8")
             stub.chmod(0o700)
             output = tmpdir / "approval"
-            for label, current, approved, expected_success in (
-                ("unchanged", sha, sha, True),
-                ("main advanced", moved, sha, False),
-                ("approval mismatch", sha, moved, False),
-                ("malformed remote SHA", "truncated", sha, False),
-                ("remote call empty", "", sha, False),
+            for label, current, approved, failed_workflow, expected_success in (
+                ("unchanged", sha, sha, "", True),
+                ("main advanced", moved, sha, "", False),
+                ("approval mismatch", sha, moved, "", False),
+                ("malformed remote SHA", "truncated", sha, "", False),
+                ("remote call empty", "", sha, "", False),
+                ("new CI pending, same SHA", sha, sha, "CI factory", False),
+                ("new Sonar failure, same SHA", sha, sha, "Sonar CI-based", False),
+                ("new CodeQL pending, same SHA", sha, sha, "Evidencia CodeQL", False),
+                ("new Watchdog failure, same SHA", sha, sha, "Unattended Watchdog", False),
             ):
                 with self.subTest(case=label):
                     output.write_text("", encoding="utf-8")
@@ -139,9 +151,10 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
                                REPOSITORY="pl0n3r/factory", DEFAULT_BRANCH="main",
                                CURRENT_SHA=sha, default_sha=sha, resolved_sha=sha,
                                approved_sha=approved, GITHUB_OUTPUT=str(output),
-                               FAKE_MAIN_SHA=current)
+                               FAKE_MAIN_SHA=current,
+                               FAKE_FAILED_WORKFLOW=failed_workflow)
                     result = subprocess.run(
-                        ["bash", "-euo", "pipefail", "-c", block],
+                        ["bash", "-euo", "pipefail", "-c", gate_fake + block],
                         capture_output=True, text=True, timeout=10, env=env,
                     )
                     if expected_success:
