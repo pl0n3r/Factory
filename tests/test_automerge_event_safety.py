@@ -41,8 +41,9 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         source = self.source
         self.assertIn("  automerge:\n", source)
         job = source.split("  automerge:\n", 1)[1]
+        # Enabling auto-merge needs both rights, constrained to this job.
         self.assertIn(
-            "    permissions:\n      contents: read\n      pull-requests: write",
+            "    permissions:\n      contents: write\n      pull-requests: write",
             job,
         )
         for required in (
