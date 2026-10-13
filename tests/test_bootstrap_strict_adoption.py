@@ -24,13 +24,17 @@ STRICT_GUARD = """  comentario:
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request == null &&
       github.event.sender.login == github.event.comment.user.login &&
+      github.event.comment.user.type == 'User' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
       needs.preflight_comentario.outputs.route == 'true'
 """
 STRICT_PREFLIGHT = """  preflight_comentario:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request == null &&
-      github.event.sender.login == github.event.comment.user.login
+      github.event.sender.login == github.event.comment.user.login &&
+      github.event.comment.user.type == 'User' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -188,6 +192,34 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("FAIL", result.stderr)
 
+
+    def test_generated_adoption_rejects_spoofed_operations_and_missing_actor_guards(self):
+        operation = "      operation: comment"
+        spoofed_operation = "      operation: label\n      # operation: comment"
+        for strict in (False, True):
+            caller = consumer_caller(strict=strict)
+            with self.subTest(strict=strict, mutation="comment-only-in-yaml-comment"):
+                self.assertEqual(caller.count(operation), 1)
+                mutated = caller.replace(operation, spoofed_operation, 1)
+                result = self.run_generated(mutated)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL", result.stderr)
+
+        strict = consumer_caller(strict=True)
+        roles = """contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)"""
+        for condition in ("github.event.comment.user.type == 'User'", roles):
+            self.assertEqual(strict.count(condition), 2)
+            for occurrence in (0, 1):
+                with self.subTest(condition=condition, occurrence=occurrence):
+                    first = strict.find(condition)
+                    pos = first if occurrence == 0 else strict.find(
+                        condition, first + len(condition)
+                    )
+                    self.assertGreaterEqual(pos, 0)
+                    mutated = strict[:pos] + "true" + strict[pos + len(condition):]
+                    result = self.run_generated(mutated)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("FAIL", result.stderr)
 
     def test_strict_generated_adoption_catches_preflight_regressions(self):
         strict = consumer_caller(strict=True)
