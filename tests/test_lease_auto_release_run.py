@@ -158,7 +158,8 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertNotIn(
             "group: factory-lease-audit-${{ github.repository_id }}",
             lease)
-        self.assertIn("queue: max", lease)
+        # actionlint canónico aún no admite queue:max en este cron.
+        self.assertNotIn("queue: max", lease)
         self.assertIn("cancel-in-progress: false", lease)
         self.assertIn("permissions:\n  contents: read\n  issues: read",
                       lease)
