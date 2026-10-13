@@ -205,6 +205,36 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 gateway._closed_pr_page(repo, [{"number": n} for n in range(11)], set())
             request.assert_not_called()
 
+    def test_closed_pr_page_rejects_inconsistent_detail_state_and_merge_field(self):
+        """Never interpret missing merge metadata as an unmerged closed PR."""
+        gateway = bootstrap.GitHubGateway("fake-token")
+        repository = "pl0n3r/Consumer"
+        invalid_details = (
+            {"number": 1, "state": "open", "merged_at": None},
+            {"number": 1, "state": "draft", "merged_at": None},
+            {"number": 1, "state": "closed"},
+            {"number": 1, "state": "closed", "merged_at": False},
+            {"number": 1, "state": "closed", "merged_at": ""},
+            {"number": 1, "state": "closed", "merged_at": 1234},
+        )
+        for detail in invalid_details:
+            with self.subTest(detail=detail), mock.patch.object(
+                gateway, "_request", return_value=detail
+            ) as request:
+                with self.assertRaisesRegex(bootstrap.BootstrapError, "inválido"):
+                    gateway._closed_pr_page(repository, [{"number": 1}], set())
+                request.assert_called_once_with("GET", f"/repos/{repository}/pulls/1")
+
+        for merged_at in (None, "2026-10-13T00:00:00Z"):
+            detail = {"number": 1, "state": "closed", "merged_at": merged_at}
+            with self.subTest(valid_merge_date=merged_at), mock.patch.object(
+                gateway, "_request", return_value=detail
+            ):
+                self.assertEqual(
+                    gateway._closed_pr_page(repository, [{"number": 1}], set()),
+                    [detail],
+                )
+
     def test_bootstrap_marker_identity_requires_json_integers(self):
         """Historical bootstrap identity must fail closed on bool, float and strings."""
         canonical = {
