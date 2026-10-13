@@ -21,6 +21,7 @@ from scripts.lease_release_executor import (
 )
 from scripts.aceptacion_kit import contract_fingerprint
 from scripts.coordinar_trabajo import reservation_from_text
+from scripts.orquestador_kit import parse_task_marker, task_marker_fingerprint
 
 from scripts.lease_activity_collector import collect_activity
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
@@ -274,6 +275,12 @@ class LeaseGithubPort:
                     # contrato ejecutable REAL del Issue, no solo a la nota.
                     or contract_fingerprint(initial["body"]) !=
                        expected.marker["acceptance_sha256"]
+                    # El pin de claims también pertenece al cuerpo ACTUAL
+                    # del Issue; una edición del plan después de /tomar
+                    # invalida el proof aunque la aceptación no cambie.
+                    or task_marker_fingerprint(
+                        parse_task_marker(initial["body"])) !=
+                       expected.marker["task_marker_sha256"]
                     or type(initial.get("labels")) is not list
                     or type(initial.get("assignees")) is not list
                     or len(initial["assignees"]) != 1
