@@ -23,6 +23,8 @@ class FakeAPI(ActivityAPI):
         self.switch_reads = 0
         self.pause_on_second = False
         self.fail_switch = False
+        self.switch_state = "closed"
+        self.omit_switch_state = False
 
     def request(self, method, path):
         assert method == "GET", "no autorizado a escribir"
@@ -35,13 +37,17 @@ class FakeAPI(ActivityAPI):
                 body = self.switch_body.replace("RUNNING", "PAUSED")
             else:
                 body = self.switch_body
-            return {
+            result = {
                 "number": 767,
+                "state": self.switch_state,
                 "url": CANONICAL_SOURCE_URL,
                 "repository_url": CANONICAL_REPOSITORY_URL,
                 "user": {"login": "pl0n3r"},
                 "body": body,
             }
+            if self.omit_switch_state:
+                result.pop("state")
+            return result
         result = super().request(method, path)
         if "/actions/runs?branch=" in path and isinstance(result, dict):
             for run in result.get("workflow_runs", []):
@@ -80,6 +86,36 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(report.results[0][1].write_state, "unknown")
         self.assertTrue(all(p == "/rate_limit" or
                             p.startswith("/repos/") for p in api.calls))
+
+    def test_reopened_missing_or_invalid_global_switch_state_fails_closed(self):
+        for state in ("open", None, True, "CLOSED"):
+            with self.subTest(state=state):
+                api = FakeAPI()
+                api.switch_state = state
+                result = LeaseGithubPort(api).inspect(21, now=NOW)
+                self.assertEqual(result.state, UNKNOWN)
+                self.assertFalse(result.release_authorized)
+                self.assertEqual(api.switch_reads, 1)
+                self.assertEqual(api.calls, [GLOBAL_SWITCH])
+
+        api = FakeAPI()
+        api.omit_switch_state = True
+        missing = LeaseGithubPort(api).inspect(21, now=NOW)
+        self.assertEqual(missing.state, UNKNOWN)
+        self.assertFalse(missing.release_authorized)
+        self.assertEqual(api.calls, [GLOBAL_SWITCH])
+
+        class ReopeningAPI(FakeAPI):
+            def request(self, method, path):
+                if path == GLOBAL_SWITCH and self.switch_reads == 1:
+                    self.switch_state = "open"
+                return super().request(method, path)
+
+        racing = ReopeningAPI()
+        observed = LeaseGithubPort(racing).inspect(21, now=NOW)
+        self.assertEqual(observed.state, UNKNOWN)
+        self.assertFalse(observed.release_authorized)
+        self.assertEqual(racing.switch_reads, 2)
 
     def test_global_pause_invalid_json_and_recheck_race_fail_closed(self):
         for marker in (
