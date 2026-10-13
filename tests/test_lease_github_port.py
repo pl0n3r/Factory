@@ -332,6 +332,8 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.drift = False
                 self.page_one_reads = 0
                 self.reject = None
+                self.short_page = False
+                self.sentinel_nonempty = False
 
             def request(self, verb, path):
                 assert verb == "GET"
@@ -342,6 +344,10 @@ class LeaseGithubPortTests(unittest.TestCase):
                 if page == 1:
                     self.page_one_reads += 1
                 part = self.events[(page - 1) * 100:page * 100]
+                if self.short_page and page == 1:
+                    return part[:99]
+                if self.sentinel_nonempty and page == 3:
+                    return [{"id": 102, "event": "renamed"}]
                 if self.drift and self.page_one_reads >= 2 and page == 2:
                     return [{**recover, "id": 102}]
                 return part
@@ -361,11 +367,11 @@ class LeaseGithubPortTests(unittest.TestCase):
             with self.subTest(fault=fault):
                 api = PaginatedAPI()
                 if fault == "truncated_first_page":
-                    api.events.pop(2)
+                    api.short_page = True
                 elif fault == "duplicate_id":
                     api.events[-1] = {**recover, "id": 100}
                 elif fault == "nonempty_sentinel":
-                    api.events.append({"id": 102, "event": "renamed"})
+                    api.sentinel_nonempty = True
                 elif fault == "race_second_page":
                     api.drift = True
                 elif fault == "api_403":
