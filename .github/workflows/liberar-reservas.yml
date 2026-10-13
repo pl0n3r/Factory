@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: factory-lease-audit-${{ github.repository_id }}
@@ -33,6 +34,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      issues: read
     steps:
       - name: Checkout sin credenciales persistidas
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -105,4 +107,57 @@ jobs:
           assert len(cycle.results) == 1
           assert cycle.results[0][1].wrote is False
           print("AUDITORÍA OFFLINE: flag OFF, 0 escrituras, 0 reservas liberadas.")
+          PY
+
+      - name: Inventario observado de recuperación (GET paginado, solo lectura)
+        if: steps.budget.outputs.allow == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-switch.json"
+          verdict="$(python3 - "$RUNNER_TEMP/lease-switch.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          print(evaluate_unattended_kill_switch(payload).state)
+          PY
+          )"
+          case "$verdict" in
+            RUNNING) ;;
+            PAUSED)
+              echo "Auditoría pausada por #767; 0 mutaciones y sin censo."
+              exit 0
+              ;;
+            *)
+              echo "::error::Fuente #767 no autenticada; censo UNKNOWN."
+              exit 1
+              ;;
+          esac
+
+          # /issues también incluye PRs: filtrarlos después de validar páginas.
+          # El transporte y el archivo bruto permanecen en el runner; nunca
+          # imprimir títulos, cuerpos, actores, notas ni token.
+          gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues?state=open&per_page=100" \
+            > "$RUNNER_TEMP/lease-open-issues.json"
+          python3 - "$RUNNER_TEMP/lease-open-issues.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.lease_auto_release_run import inventory_from_paginated_issues
+          pages = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          result = inventory_from_paginated_issues(pages)
+          if result is None or result.release_authorized:
+              print("::error::Inventario de recuperación UNKNOWN, sin autoridad.")
+              raise SystemExit(1)
+          print("OBSERVACIÓN read-only: issues_abiertos={0}, recuperación={1}, "
+                "reservados={2}, en_revisión={3}; liberaciones=0"
+                .format(result.open_issues, result.recovery,
+                        result.reserved, result.in_review))
+          print("Sin prueba de inactividad, CAS ni autoridad de liberación.")
           PY
