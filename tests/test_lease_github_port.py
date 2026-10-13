@@ -636,6 +636,8 @@ class LeaseGithubPortTests(unittest.TestCase):
                          "e33f1859-0304-4fa8-8ce3-776de22c9707")
         self.assertEqual(result.branch_sha, SHA)
         self.assertEqual(result.last_activity_at, "2026-10-11T09:55:00Z")
+        self.assertEqual(result.libera_en_min, 35)
+        self.assertFalse(result.release_authorized)
         self.assertEqual(api.switch_reads, 2)
         self.assertEqual(api.calls[0], GLOBAL_SWITCH)
         self.assertEqual(api.calls[-1], GLOBAL_SWITCH)
@@ -729,6 +731,7 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.assertEqual(observed.state, UNKNOWN)
                 self.assertFalse(observed.release_authorized)
                 self.assertIsNone(observed.lease_id)
+                self.assertIsNone(observed.libera_en_min)
                 self.assertTrue(all(p == "/rate_limit" or
                                     p.startswith("/repos/") for p in api.calls))
                 self.assertNotIn("secret-cannot-be-logged", str(observed))
