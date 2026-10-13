@@ -103,6 +103,83 @@ La re-adopción usa el contrato existente
 la reserva previa. No inferir que \`/tomar\` puede adoptar una rama huérfana
 sin esa etapa.
 
+## Bloqueo de AC-03: CAS real entre GitHub Issues y Coordinación
+
+**Estado:** diseño de integración pendiente, no funcionalidad operativa. Esta
+sección no modifica el marker de aceptación, la reserva V3, el coordinador ni
+el permiso de escritura del cron.
+
+### Garantías disponibles (y cuáles no)
+
+- En `.github/workflows/coordinacion-trabajo.yml` los comandos /tomar,
+  /liberar y la recuperación usan el grupo
+  `factory-coordination-${{ github.repository_id }}`, con
+  `cancel-in-progress: false`. La auditoría programada comparte ese grupo;
+  sus ejecuciones de PR utilizan otro. Es exclusión entre *esas ejecuciones*,
+  no un lock arbitrario adquirible desde Python ni un CAS de Issues. Mantener
+  una cola no destructiva y verificar la procedencia del workflow antes de
+  escribir es imprescindible.
+- Las lecturas condicionales `If-None-Match` de GitHub REST son para GET.
+  GitHub documenta que las peticiones condicionales sobre POST/PATCH/PUT/DELETE
+  no están soportadas salvo indicación expresa del endpoint. Por ello un
+  GET + comparación local + PATCH del Issue **no es CAS atómico**, aun con
+  dos lecturas y `updated_at` estable.
+- GitHub GraphQL **`updateRefs`** sí ofrece un `RefUpdate.beforeOid`
+  que condiciona atómicamente el cambio de una referencia Git al OID previo.
+  Es una primitiva candidata para un journal/fence duradero de transiciones,
+  **no** un CAS de etiquetas/comentarios. No asumir que toda mutación de Issues
+  respeta ese fence. No usar el HEAD de la rama de trabajo como candado ni
+  hacer force-push para adquirirlo.
+
+Referencias oficiales: [REST y solicitudes condicionales](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api),
+[GraphQL Git: updateRefs/beforeOid](https://docs.github.com/en/graphql/reference/git) y
+[Actions concurrency](https://docs.github.com/en/actions/concepts/workflows-and-actions/concurrency).
+
+### Contrato necesario antes de implementar Port.lock/append/status
+
+1. **Escritor común**: Coordinación y liberador deben acordar el mismo
+   journal/fence y la misma exclusión. Adaptar al escritor canónico
+   `scripts/coordinar_trabajo.py` para respetar ese protocolo **requiere un
+   claim/contrato propio**, pues no está dentro de los ocho paths reservados
+   por #1175. Ninguna versión parcial de este PR puede suplantarlo.
+2. **Adquisición demostrable**: recibir el contexto autenticado de ejecución
+   de Actions desde la entrada canónica `main`, comprobar grupo y repo ID,
+   y ejecutar una transición de `beforeOid` a `afterOid` *reales* sin
+   `force`. Un error de precondición, respuesta incompleta, 403/429 o
+   timeout devuelve UNKNOWN; nunca se asume posesión del lock por un
+   objeto `with` local ni por una variable de entorno sin autenticar.
+3. **Lectura con atribución**: demostrar ausencia de actividad del *agente
+   titular*, no meramente del login `pl0n3r` compartido por otras sesiones.
+   Los timestamps editables del autor de un commit y los resultados
+   `commits?since=` no demuestran ausencia de pushes; una ventana parcial,
+   sesión no atribuible o paginación incompleta producen UNKNOWN.
+4. **Precondición bajo exclusión**: #767 CLOSED/RUNNING en su URL absoluta,
+   `construccion`, presupuesto efectivo >=20 %, último marker bot y
+   `reservation_id`, HEAD de rama, contrato de aceptación/claim pin,
+   Issue/etiquetas, comentarios completos, nota y evento de recuperación,
+   reviews/CI/push del titular revalidados. Si cualquiera cambia, no mutar.
+5. **Commit y reconciliación**: tras acreditar el fence y el estado exacto,
+   registrar un ID idempotente de operación en el journal; publicar a través
+   de un escritor autorizado el marker V3 de bot `active:false` (mismo UUID
+   y pins), transicionar la etiqueta a `estado: disponible`, releer y
+   comprobar terminalidad. Una caída entre comentario y etiqueta mantiene
+   `partial/UNKNOWN`: reanudar solo con el mismo ID y nuevo fence validado,
+   sin segundo marker y sin perder la rama huérfana.
+6. **Pruebas contractuales**: dos ejecutores concurrentes con el mismo
+   `beforeOid` (solo uno vence), cambio externo de UUID/HEAD/claim bajo
+   carrera, recuperación del titular entre lecturas, lock sin procedencia,
+   escritor de Coordinación que ignora fence, fallo después del comentario,
+   reintento idempotente, 403/429, eventos históricos ambiguos y kill switch
+   PAUSED. AC-03 debe ejercer la ruta REAL y verificar la ausencia de doble
+   escritura, no simplemente crear el método con el nombre exigido.
+
+**Criterio de salida:** hasta que ambos escritores participen del protocolo
+atómico, exista una fuente verificable de inactividad del titular y un dry-run
+autenticado muestre los negativos, `LeaseGithubPort.read/lock/append/status`
+siguen `PortNotArmed`. Feature flag OFF, cero POST/PATCH/DELETE del cron,
+PR DRAFT, y ninguna aceptación/merge/go-live por inferencia. Esta restricción
+es de seguridad de la funcionalidad, no un fallo que deba ignorar `Validar`.
+
 ## Criterios y puertas para activar
 
 - AC-01: decisor y negativos 29/30/39/40/49/50 min, quota 19/20%,
