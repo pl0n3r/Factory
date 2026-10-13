@@ -124,6 +124,80 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertFalse(result.results[0][1].wrote)
         self.assertEqual(raced.writes, [])
 
+    def test_partial_release_reconciles_under_shared_lock_without_new_marker(self):
+        # Fallo deliberado DESPUÉS del marker de bot, ANTES de la etiqueta.
+        fake = FakePort(snapshot())
+        fake.fail_status = True
+        first = run_cycle(
+            [1191], fake, feature_enabled=True,
+            dry_run=False, mutations_authorized=True,
+        )
+        self.assertEqual(first.results[0][1].reason, "port_failure_or_partial_write")
+        self.assertEqual(fake.item.status, "estado: requiere recuperación")
+        self.assertFalse(fake.item.marker["active"])
+        self.assertEqual(fake.item.marker["reason"], "auto-inactivity-release")
+        self.assertEqual(len(fake.writes), 1)
+        self.assertEqual(fake.writes[0][0], "comment")
+
+        # El marker inactivo NO se reinterpreta como claim activo.
+        planned = decision_from_snapshot(fake.item)
+        self.assertEqual(planned.action, "release")
+        self.assertEqual(planned.reason, "authenticated_partial_reconciliation")
+        dry = run_cycle([1191], fake, feature_enabled=True)
+        self.assertEqual(dry.results[0][1].reason, "dry_run_reconcile")
+        self.assertEqual(len(fake.writes), 1)
+
+        fake.fail_status = False
+        result = run_cycle(
+            [1191], fake, feature_enabled=True,
+            dry_run=False, mutations_authorized=True,
+        )
+        self.assertEqual(result.results[0][1].reason, "partial_reconciled")
+        self.assertTrue(result.results[0][1].wrote)
+        self.assertEqual(result.results[0][1].write_state, "complete")
+        self.assertEqual(len(fake.writes), 2)
+        self.assertEqual(fake.writes[1], ("status", "estado: disponible"))
+        self.assertEqual(fake.item.branch, "trabajo/issue-1191")
+        self.assertEqual(fake.item.branch_sha, "a" * 40)
+        self.assertFalse(fake.item.marker["active"])
+        self.assertFalse(fake.locked)
+
+    def test_partial_release_fails_closed_on_untrusted_evidence_or_missing_proof(self):
+        base = snapshot()
+        partial = replace(base, marker={
+            **base.marker, "active": False, "reason": "auto-inactivity-release",
+        })
+        for change in (
+            {"kill_switch_running": False}, {"ci_running": True},
+            {"changes_requested": True}, {"owner_recovered": True},
+            {"complete": False}, {"authenticated": False},
+            {"phase": "live"}, {"rate_remaining": 19},
+            {"marker": {**partial.marker, "reason": "liberar"}},
+            {"marker": {**partial.marker, "reservation_id": "bad"}},
+        ):
+            with self.subTest(changes=change):
+                unsafe = replace(partial, **change)
+                self.assertNotEqual(decision_from_snapshot(unsafe).action, "release")
+                fake = FakePort(unsafe)
+                result = run_cycle(
+                    [1191], fake, feature_enabled=True,
+                    dry_run=False, mutations_authorized=True,
+                )
+                self.assertFalse(result.results[0][1].wrote)
+                self.assertEqual(fake.writes, [])
+        for delta in ("note_complete", "note_authenticated", "label_complete",
+                      "label_authenticated"):
+            with self.subTest(unverified=delta):
+                fake = FakePort(partial)
+                setattr(fake, delta, False)
+                result = run_cycle(
+                    [1191], fake, feature_enabled=True,
+                    dry_run=False, mutations_authorized=True,
+                )
+                self.assertFalse(result.results[0][1].wrote)
+                self.assertEqual(fake.writes, [])
+
+
 
 if __name__ == "__main__":
     unittest.main()
