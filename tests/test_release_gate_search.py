@@ -91,6 +91,17 @@ class ReleaseGateSearchTests(unittest.TestCase):
             self.assertIn("Search Issues evidence rejected", bad.stderr)
 
 
+    def test_evidence_paths_outside_temp_dir_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inside = Path(tmp) / "ok.json"
+            inside.write_text("[]", encoding="utf-8")
+            outside = str(Path(tmp) / ".." / ".." / ".." / "etc" / "passwd")
+            args = [sys.executable, "-m", "scripts.release_gate_search",
+                    outside, str(inside), str(inside)]
+            bad = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("Search Issues evidence rejected", bad.stderr)
+
     def test_duplicate_json_keys_fail_closed_at_cli_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             p1, p2, pv = (Path(tmp) / n for n in

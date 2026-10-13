@@ -8,7 +8,9 @@ No API calls or writes to the repository are performed by this module.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -87,13 +89,22 @@ def verified_inventory(first: Any, second: Any, published: Any) -> list[dict[str
     return result
 
 
+def _evidence_path(raw: str) -> Path:
+    """Resolve an evidence path and keep it inside the runner temp directory."""
+    base = os.path.realpath(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
+    resolved = os.path.realpath(raw)
+    if os.path.commonpath([base, resolved]) != base:
+        raise SearchEvidenceError("evidence file outside temp directory")
+    return Path(resolved)
+
+
 def _main(paths: list[str]) -> int:
     if len(paths) != 3:
         raise SearchEvidenceError("expected page-one, page-two and verified-inventory files")
     if any(not path or len(path) > 300 for path in paths):
         raise SearchEvidenceError("invalid evidence file path")
     try:
-        p1, p2, inventory = (json.loads(Path(path).read_text(encoding="utf-8"),
+        p1, p2, inventory = (json.loads(_evidence_path(path).read_text(encoding="utf-8"),
                                       object_pairs_hook=_unique_object)
                              for path in paths)
     except (OSError, ValueError, UnicodeError) as exc:
