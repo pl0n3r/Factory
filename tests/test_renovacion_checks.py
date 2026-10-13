@@ -740,6 +740,28 @@ Ninguno.
                          "\n<!-- condor-reserva {} -->")
         with self.assertRaises(EvidenceUnavailable):
             _trusted_renewal_lineage([first, duplicate], current)
+        # Última clave prevalente: el parser genérico la normalizaría
+        # al mismo V3, pero la procedencia bot debe rechazar la ambigüedad.
+        for field, original, tampered in (
+            ("active", '"active":true', '"active":false,"active":true'),
+            ("reservation_id",
+             '"reservation_id":"' + recovered_id + '"',
+             '"reservation_id":"' + UUID + '","reservation_id":"' +
+             recovered_id + '"'),
+        ):
+            ambiguous = dict(second, body=second["body"].replace(
+                original, tampered))
+            self.assertNotEqual(ambiguous["body"], second["body"])
+            self.assertEqual(reservation_from_text(ambiguous["body"]), current)
+            with self.subTest(duplicated_field=field):
+                with self.assertRaisesRegex(
+                        EvidenceUnavailable, "renewal_lineage_untrusted_marker"):
+                    _trusted_renewal_lineage([first, ambiguous], current)
+        malformed_and_valid = dict(second, body=(
+            "<!-- condor-reserva {INVALID} -->\n" + second["body"]))
+        with self.assertRaisesRegex(
+                EvidenceUnavailable, "renewal_lineage_untrusted_marker"):
+            _trusted_renewal_lineage([first, malformed_and_valid], current)
         with self.assertRaises(EvidenceUnavailable):
             _trusted_renewal_lineage([second], current)
 

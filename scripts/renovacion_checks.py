@@ -862,7 +862,16 @@ def _trusted_renewal_lineage(comments: list[dict], current: dict) -> dict:
     La prueba de procedencia NO autoriza por sí sola restaurar Validar.
     La invalidación, HEAD, locks, reviews y bootstrap siguen gates separados.
     """
-    from scripts.coordinar_trabajo import reservation_from_text
+    from scripts.coordinar_trabajo import RESERVATION_RE, valid_reservation_payload
+
+    def no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        """La validación del dict no recupera claves duplicadas ya colapsadas."""
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate_v3_key")
+            value[key] = item
+        return value
 
     if not isinstance(comments, list) or not isinstance(current, dict):
         raise EvidenceUnavailable("renewal_lineage_invalid")
@@ -876,11 +885,21 @@ def _trusted_renewal_lineage(comments: list[dict], current: dict) -> dict:
             continue
         if not isinstance(body, str) or "<!-- condor-reserva" not in body:
             continue
-        marker = reservation_from_text(body)
+        # El lector genérico acepta el último marker válido y JSON last-key-wins:
+        # para acreditar autoridad se exige UNA representación completa, única.
+        matches = list(RESERVATION_RE.finditer(body))
+        if body.count("<!-- condor-reserva") != 1 or len(matches) != 1:
+            raise EvidenceUnavailable("renewal_lineage_untrusted_marker")
+        try:
+            marker = json.loads(matches[0].group(1),
+                                object_pairs_hook=no_duplicate_keys)
+        except (ValueError, TypeError) as exc:
+            raise EvidenceUnavailable("renewal_lineage_untrusted_marker") from exc
         created = _time(comment.get("created_at"))
         updated = _time(comment.get("updated_at"))
         if (actor.get("type") != "Bot" or body.count("<!-- condor-reserva") != 1
-            or not isinstance(marker, dict) or marker.get("version") != 3
+            or not valid_reservation_payload(marker)
+            or marker.get("version") != 3
             or created is None or updated != created):
             raise EvidenceUnavailable("renewal_lineage_untrusted_marker")
         chain.append((marker, created))
