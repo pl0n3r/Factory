@@ -6,6 +6,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from scripts import politica_kit
 
 from scripts.politica_kit import PolicyError, validate_required_bot_review_or_fallback
 
@@ -117,6 +120,25 @@ def evaluate(*, phase="construccion", comments=None, reviews=None,
 
 
 class PhaseReviewBotTests(unittest.TestCase):
+    def test_cli_accepts_bounded_authenticated_status_snapshot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            file = Path(folder) / "status.jsonl"
+            file.write_text(status_receipt() + "\n", encoding="utf-8")
+            with patch("sys.argv", ["politica_kit.py", "--verified-status-file", str(file)]):
+                options = politica_kit.args()
+            self.assertEqual(options.verified_status_file, str(file))
+            lines = politica_kit._read_bounded_lines(
+                Path(options.verified_status_file),
+                max_bytes=politica_kit.MAX_CHECKS_BYTES,
+                noun="estatus verificados de CodeRabbit",
+            )
+            self.assertEqual(lines, [status_receipt()])
+            with self.assertRaises(PolicyError):
+                politica_kit._read_bounded_lines(
+                    Path(options.verified_status_file), max_bytes=1,
+                    noun="estatus verificados de CodeRabbit",
+                )
+
     def test_construction_can_advisory_only_with_complete_trusted_security_evidence(self):
         report = evaluate()
         self.assertEqual(report["review_fallback"], False)
