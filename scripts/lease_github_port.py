@@ -330,12 +330,12 @@ class LeaseGithubPort:
                 # duplicado (incluso truncado o con mayúsculas) no debe
                 # esconderse detrás de un marker válido.
                 marker_heads = re.findall(
-                    r"<!--\\s*condor-reserva\\b", body, flags=re.IGNORECASE)
+                    r"<!--\s*condor-reserva\b", body, flags=re.IGNORECASE)
                 if marker_heads:
                     if not is_bot or len(marker_heads) != 1:
                         raise ValueError("untrusted_marker_actor_or_count")
                     marker_match = re.search(
-                        r"<!-- condor-reserva (\\{[^\\n]*\\}) -->", body)
+                        r"<!-- condor-reserva (\{[^\n]*\}) -->", body)
                     if marker_match is None:
                         raise ValueError("malformed_v3_marker")
                     # El parser V3 compartido comprueba schema/claims. La
