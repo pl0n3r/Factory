@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from scripts import bootstrap_coordination as bootstrap
@@ -120,6 +121,64 @@ def consumer_caller(*, strict: bool) -> str:
 
 
 class BootstrapStrictAdoptionTests(unittest.TestCase):
+    def test_closed_pr_scans_all_pages_and_fails_closed_on_unknown_history(self):
+        """Pagination must not hide a second unmerged PR or authorize partial history."""
+        gateway = bootstrap.GitHubGateway("fake-token")
+        repo, branch = "pl0n3r/Consumer", "factory/bootstrap-coordination-1130"
+
+        def simulate(pages, open_numbers=(), fail_page=None):
+            calls = []
+            def fetch(method, path, *args, **kwargs):
+                calls.append((method, path))
+                self.assertEqual(method, "GET", "Historical listing must be read-only")
+                if "/pulls?state=closed&" in path:
+                    page = int(path.rsplit("&page=", 1)[1]) if "&page=" in path else 1
+                    if page == fail_page:
+                        raise bootstrap.BootstrapError("GitHub API 403")
+                    return [{"number": value} for value in pages[page-1]]
+                if "/pulls/" in path:
+                    number = int(path.rsplit("/", 1)[1])
+                    return {
+                        "number": number, "state": "closed",
+                        "merged_at": None if number in open_numbers else "2026-10-01",
+                    }
+                self.fail(f"Unexpected API route: {path}")
+            return fetch, calls
+
+        ten = list(range(200, 210))
+        fetch, calls = simulate([ten, [210]], open_numbers=(200, 210))
+        with mock.patch.object(gateway, "_request", side_effect=fetch):
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "ambiguo"):
+                gateway.closed_pr(repo, branch)
+        self.assertTrue(any("&page=2" in path for _, path in calls))
+        self.assertTrue(all(method == "GET" for method, _ in calls))
+
+        fetch, calls = simulate([ten, [210]], open_numbers=(210,))
+        with mock.patch.object(gateway, "_request", side_effect=fetch):
+            match = gateway.closed_pr(repo, branch)
+        self.assertEqual(match["number"], 210)
+        self.assertIsNone(match["merged_at"])
+        self.assertTrue(any("&page=2" in path for _, path in calls))
+
+        fetch, calls = simulate([ten, [210]], open_numbers=(210,), fail_page=2)
+        with mock.patch.object(gateway, "_request", side_effect=fetch):
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "403"):
+                gateway.closed_pr(repo, branch)
+        self.assertTrue(all(method == "GET" for method, _ in calls))
+
+        pages = [list(range(300+10*i, 310+10*i)) for i in range(5)]
+        fetch, calls = simulate(pages)
+        with mock.patch.object(gateway, "_request", side_effect=fetch):
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "truncado"):
+                gateway.closed_pr(repo, branch)
+        self.assertTrue(any("&page=5" in path for _, path in calls))
+        self.assertTrue(all(method == "GET" for method, _ in calls))
+
+        fetch, calls = simulate([ten, [200]])
+        with mock.patch.object(gateway, "_request", side_effect=fetch):
+            with self.assertRaisesRegex(bootstrap.BootstrapError, "inválido"):
+                gateway.closed_pr(repo, branch)
+
     def test_bootstrap_marker_identity_requires_json_integers(self):
         """Historical bootstrap identity must fail closed on bool, float and strings."""
         canonical = {
