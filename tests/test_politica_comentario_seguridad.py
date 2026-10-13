@@ -122,6 +122,26 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         self.assertEqual(source.count(risk_call), 1)
         self.assertEqual(source.count(phase_helper), 1)
         self.assertEqual(source.count(phase_call), 1)
+        # Normalizar únicamente el cableado CLI de status verificado de F3C;
+        # el resto del motor histórico sigue bajo la huella fija.
+        status_arg = '    parser.add_argument("--verified-status-file", default="")\\n'
+        status_read = (
+            '        verified_status_lines = (\\n'
+            '            _read_bounded_lines(\\n'
+            '                Path(options.verified_status_file),\\n'
+            '                max_bytes=MAX_CHECKS_BYTES,\\n'
+            '                noun="estatus verificados de CodeRabbit",\\n'
+            '            )\\n'
+            '            if options.verified_status_file\\n'
+            '            else []\\n'
+            '        )\\n'
+        )
+        status_forward = '            verified_status_lines=verified_status_lines,\\n'
+        for chunk in (status_arg, status_read, status_forward):
+            self.assertEqual(source.count(chunk), 1)
+        source = source.replace(status_arg, "", 1).replace(
+            status_read, "", 1
+        ).replace(status_forward, "", 1)
         pinned_source = source.replace(
             "\n" + risk_block + "\n", "", 1
         ).replace(
