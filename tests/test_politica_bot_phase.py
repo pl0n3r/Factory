@@ -154,6 +154,22 @@ class PhaseReviewBotTests(unittest.TestCase):
                             noun="estatus verificados de CodeRabbit",
                         )
 
+    def test_status_evidence_rejects_invalid_utf8_and_oversized_multibyte(self):
+        with tempfile.TemporaryDirectory() as folder:
+            evidence = Path(folder) / "status.jsonl"
+            evidence.write_bytes(b"\xff")
+            with self.assertRaises(PolicyError):
+                politica_kit._read_bounded_lines(
+                    evidence, max_bytes=politica_kit.MAX_CHECKS_BYTES,
+                    noun="estatus verificados de CodeRabbit",
+                )
+            evidence.write_text("á" * 10, encoding="utf-8")
+            with self.assertRaises(PolicyError):
+                politica_kit._read_bounded_lines(
+                    evidence, max_bytes=15,
+                    noun="estatus verificados de CodeRabbit",
+                )
+
     def test_main_forwards_verified_status_lines_to_policy_decisor(self):
         with tempfile.TemporaryDirectory() as folder:
             status_file = Path(folder) / "status.jsonl"
