@@ -440,6 +440,22 @@ class LeaseGithubPort:
                 active_markers, key=lambda row: row[0])
             if current_marker != expected.marker:
                 raise ValueError("stale_v3_marker")
+            # Una V3 terminal no puede resucitar con el MISMO UUID; sólo
+            # se recupera con otra reserva bot. Incluso antes de un marker
+            # terminal, la identidad y los pins del UUID son inmutables.
+            identity_fields = (
+                "version", "owner", "reservation_id", "branch",
+                "acceptance_sha256", "task_marker_sha256",
+                "task_paths", "task_depends_on",
+            )
+            for previous_id, previous in active_markers:
+                if (previous_id < current_id
+                        and previous["reservation_id"] == expected.reservation_id):
+                    if (any(previous[key] != current_marker[key]
+                            for key in identity_fields)
+                            or (current_marker["active"]
+                                and previous["active"] is False)):
+                        raise ValueError("resurrected_or_rebound_v3_uuid")
             # La recuperación de /tomar conserva notas legítimas de otras
             # leases. Ignorar solo las anteriores a la V3 vigente y
             # asociadas a un marker bot auténtico, jamás notas huérfanas.
