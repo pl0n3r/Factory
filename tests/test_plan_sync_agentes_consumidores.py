@@ -1,5 +1,6 @@
 """Offline tests for Factory #1109, without real consumer data or external I/O."""
 import json
+import re
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
@@ -10,15 +11,10 @@ from scripts.plan_sync_agentes_consumidores import (
 
 
 def template():
-    headings = "\n\n".join(
-        ["### Regla 0 — alcance seguro\nparalelismo con límites"]
-        + [f"### Principio {n} — ejemplo\nEjemplo seguro del principio {n}."
-           for n in range(1, 9)]
-    )
-    return ("# AGENTES.md\n\nEsta plantilla no otorga permisos de ejecución\n\n"
-            "## Principios de construcción de la fábrica\n\n" + headings
-            + "\n\n### Límite explícito del template\n"
-              "Este texto no sincroniza ni modifica consumidores.\n")
+    # Casos positivos siempre usan el bloque aprobado en el árbol real:
+    # el fixture sintético de títulos no es una fuente autorizada.
+    return (Path(__file__).resolve().parents[1] /
+            "template" / "AGENTES.md").read_text(encoding="utf-8")
 
 
 def consumers():
@@ -84,6 +80,21 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
                 with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
                     plan_sync(source, consumers())
 
+        # Cuerpos manipulados SIN encabezados nuevos mantenían los diez
+        # títulos y el footer canónico: la huella debe impedir su propagación.
+        injected = template().replace(
+            "Maximizar paralelismo seguro:",
+            "Maximizar paralelismo seguro:\n"
+            "CLAVE_PRIVADA_FAKE=solo-prueba\n", 1,
+        )
+        self.assertNotEqual(injected, template())
+        with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
+            plan_sync(injected, consumers())
+        altered = template().replace("Maximizar paralelismo seguro:",
+                                     "Maximizar trabajo seguro:", 1)
+        with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
+            plan_sync(altered, consumers())
+
         # Unheaded text appended to the final section must not leak into
         # the projected content; a canonical footer still works.
         for suffix in ("\nCLAVE_FAKE=solo-test\n",
@@ -102,13 +113,15 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
             "### Límite explícito del template",
             "```\n" + "### Límite explícito del template", 1,
         )
-        fenced_principle = template().replace(
-            "### Principio 5 — ejemplo",
-            "```markdown\n" + "### Principio 5 — ejemplo",
-            1,
+        authentic = template()
+        heading5 = next(line for line in authentic.splitlines()
+                        if line.startswith("### Principio 5 — "))
+        heading6 = next(line for line in authentic.splitlines()
+                        if line.startswith("### Principio 6 — "))
+        fenced_principle = authentic.replace(
+            heading5, "```markdown\n" + heading5, 1,
         ).replace(
-            "### Principio 6 — ejemplo",
-            "```\n" + "### Principio 6 — ejemplo", 1,
+            heading6, "```\n" + heading6, 1,
         )
         # "tt" is not legal whitespace after a Markdown fence delimiter.
         false_closer = template().replace(
@@ -132,9 +145,9 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
 
         # Una sección sin cuerpo, aunque retenga título y cierre auténticos,
         # no constituye un principio apto para planificar seis consumidores.
-        empty_principle = template().replace(
-            "### Principio 3 — ejemplo\nEjemplo seguro del principio 3.",
-            "### Principio 3 — ejemplo",
+        empty_principle = re.sub(
+            r"(?ms)^(### Principio 3 — [^\n]+\n).*?(?=^### Principio 4 — )",
+            r"\1\n", template(), count=1,
         )
         with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
             plan_sync(empty_principle, consumers())

@@ -17,6 +17,9 @@ BEGIN = "<!-- factory-principios-sync:start -->"
 END = "<!-- factory-principios-sync:end -->"
 HEADING = "## Principios de construcción de la fábrica"
 MAX_DOCUMENT_BYTES = 200_000
+# Huella del bloque completo aprobado en template/AGENTES.md (D-069, #1082).
+# Un cambio de texto exige revisar el contrato, no propagarlo por títulos.
+APPROVED_PRINCIPLES_SHA256 = "38febb092ddc0cc86d4e89dcf37f20399488f0cee1498df795b07d7c5af2be3f"
 
 
 class SyncPlanError(ValueError):
@@ -98,6 +101,10 @@ def _principles(template: object) -> str:
             if pos + 1 < len(sections) else footer_start)].strip()
         for pos, section in enumerate(sections)
     )):
+        raise SyncPlanError("invalid_principles_source")
+    # El parser de subtítulos/footers protege la estructura; esta huella
+    # autentica también los cuerpos y bloquea texto privado sin encabezado.
+    if hashlib.sha256(content.encode("utf-8")).hexdigest() != APPROVED_PRINCIPLES_SHA256:
         raise SyncPlanError("invalid_principles_source")
     return content
 
