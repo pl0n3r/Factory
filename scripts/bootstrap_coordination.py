@@ -85,6 +85,15 @@ def marker(req: dict[str, Any]) -> str:
     value = {"version":1, "identity":identity(req), "target_issue":req["target_issue"], "expected_main_sha":req["expected_main_sha"], "governance_ref":req["governance_ref"]}
     return "<!-- factory-coordination-bootstrap " + json.dumps(value, sort_keys=True, separators=(",", ":")) + " -->"
 
+def _unique_marker_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Fail closed on ambiguous duplicate JSON keys in bootstrap identity."""
+    values: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in values:
+            raise ValueError("Claves JSON duplicadas.")
+        values[key] = item
+    return values
+
 def parse_marker(body: Any) -> dict[str, Any] | None:
     if not isinstance(body, str):
         return None
@@ -93,15 +102,8 @@ def parse_marker(body: Any) -> dict[str, Any] | None:
     matches = re.findall(r"<!-- factory-coordination-bootstrap (\{[^\n]*\}) -->", body)
     if len(matches) != 1:
         return None
-    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        values: dict[str, Any] = {}
-        for key, item in pairs:
-            if key in values:
-                raise ValueError("Claves JSON duplicadas.")
-            values[key] = item
-        return values
     try:
-        value = json.loads(matches[0], object_pairs_hook=unique_pairs)
+        value = json.loads(matches[0], object_pairs_hook=_unique_marker_pairs)
     except ValueError:
         return None
     required = {"version", "identity", "target_issue", "expected_main_sha", "governance_ref"}
