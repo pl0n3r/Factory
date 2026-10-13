@@ -10,10 +10,13 @@ reservas en producción.
 
 **No se autoriza activar un cron mutante** hasta integrar un colector auténtico
 de evidencia y un ejecutor serializado, y demostrar los casos de carrera.
-El workflow \`.github/workflows/liberar-reservas.yml\` está presente
-como auditoría de solo lectura cada 10 minutos: ejecuta contratos locales tras
-preflight de cuota >=20%; **no consulta actividad real ni modifica reservas**.
-La integración autenticada/ejecutora queda pendiente de otra etapa.
+El workflow \`.github/workflows/liberar-reservas.yml\` es una auditoría de
+solo lectura cada 10 minutos: en `pull_request` ejecuta contratos **offline**
+sin consumir cuota REST; en `schedule/workflow_dispatch` de `main` requiere
+cuota >=20 %, consulta por GET un **censo agregado** de Issues abiertos y
+vuelve a comprobar #767 antes de publicar conteos. Ese censo **no acredita
+inactividad individual**, no libera reservas ni modifica sus marcadores.
+La integración autenticada del mutador sigue pendiente.
 
 ## Inspector REST agregado en la rama de #1175 (NO operativo)
 
@@ -27,15 +30,24 @@ Una observación positiva emite solo `RECENT_ACTIVITY`; la ausencia,
 ambigüedad, cuota baja, 403, 429, paginación parcial o carrera emite `UNKNOWN`.
 Ninguno de esos resultados autoriza liberación.
 
-**Aún falta** un audit trail autenticado y completo para demostrar que no hubo
-push/actividad del titular durante toda la ventana, con procedencia de sesión,
-más el lock/CAS compartido real y prueba de recuperación parcial. Por ello los
-métodos `read/lock/append/status/recovery_note/recovery_label` del Port
-siguen rechazados de forma explícita, incluso si el caller intenta activar
-`mutations_authorized`. El workflow cron de 10 minutos **no importa** ese
-Port y continúa solo en modo auditoría, `contents: read`, cero escrituras.
-Las pruebas de este inspector no satisfacen por sí solas AC-03/04 de mutación
-ni autorizan activar `FACTORY_LEASE_AUTO_RELEASE_ENABLED`.
+**Implementado en modo GET-only:** `recovery_note()` verifica procedencia
+de `github-actions[bot]`, nota de recuperación, UUID/SHA/pins y comentarios
+paginados con doble lectura. `recovery_label()` comprueba el evento `labeled`
+atribuido al mismo bot, correlacionado con la nota, y repite el timeline.
+Los dos métodos fallan cerrados ante páginas incompletas, cambios concurrentes,
+403/429 o datos ambiguos. El Port compara también el conjunto de etiquetas,
+asignados y comentarios entre lecturas, aun si `updated_at` no varía.
+
+**Aún falta** una prueba autenticada y completa de **ausencia de actividad**
+del titular durante la ventana, junto con el verdadero lock del Port y las
+operaciones CAS de escritura. Por ello `read/lock/append/status` continúan
+rechazados mediante `PortNotArmed`, incluso si un caller activa
+`mutations_authorized`. El cron no importa ese Port, mantiene
+`contents: read`, `issues: read` y **cero escrituras**. Compartir el grupo
+`factory-coordination-${{ github.repository_id }}` para cron/dispatch es
+una exclusión a nivel workflow, no un CAS del Issue; los PR tienen un grupo
+independiente. Ninguna prueba parcial satisface AC-03 o autoriza activar
+`FACTORY_LEASE_AUTO_RELEASE_ENABLED`.
 
 ## Semántica temporal explícita
 
@@ -97,9 +109,15 @@ sin esa etapa.
   datos ausentes, PAUSED, fase live, CHANGES_REQUESTED, CI activo.
 - AC-02: compatibilidad del test existente de coordinación, que evita
   robar reservas sin evidencia temporal válida.
-- Bloqueos de implementación pendiente: colector GitHub y ejecución
-  serializada con pruebas de carrera, workflow programado cada 10 min,
-  permisos mínimos y revisión independiente de seguridad.
+- Preparación ya comprobada: cron de 10 minutos, modo PR offline,
+  censo GET-only con doble comprobación de #767, serialización de workflows
+  y pruebas de decisiones/carreras con fakes. Ninguna parte escribe en GitHub.
+- Bloqueos pendientes: prueba autoritativa de ausencia de push/comentarios/
+  actividad y CI del titular durante 30+10 min; `Port.read` íntegro,
+  `Port.lock` compartido real, escrituras CAS idempotentes con prueba de
+  aceptación AC-03, 403/429 y relectura de notas/etiquetas bajo lock;
+  observación de dry-run real, todas las gates exact-HEAD verdes y revisión
+  de seguridad antes de habilitar cualquier mutación.
 - No habilitar release, auto-merge, movimiento de \`v1\`, deploy ni live
   mediante este trabajo.
 
