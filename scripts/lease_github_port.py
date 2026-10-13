@@ -98,6 +98,41 @@ def _recent_report_ok(report: Any, issue: int, repo: Any, now: Any) -> bool:
         return False
 
 
+def _pinned_task_fingerprint(body: Any) -> str:
+    """Pin del plan sin claves JSON dobles ni encabezados ocultos.
+
+    parse_task_marker() sigue siendo la fuente de verdad del esquema V1,
+    pero su parser JSON estándar acepta claves duplicadas. El Port
+    autenticado debe rechazar ambigüedad antes de comprobar el pin V3.
+    """
+    if type(body) is not str:
+        raise ValueError("invalid_task_body")
+    headers = re.findall(
+        r"<!--\s*factory-plan-task\b", body, flags=re.IGNORECASE)
+    if len(headers) != 1:
+        raise ValueError("ambiguous_task_marker")
+    match = re.search(r"<!-- factory-plan-task (\{[^\r\n]*\}) -->", body)
+    if match is None:
+        raise ValueError("malformed_task_marker")
+
+    def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        obj: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError("duplicate_task_key")
+            obj[key] = value
+        return obj
+
+    raw = json.loads(match.group(1), object_pairs_hook=unique_keys)
+    parsed = parse_task_marker(body)
+    if type(raw) is not dict or parsed != raw:
+        raise ValueError("untrusted_task_marker")
+    pin = task_marker_fingerprint(parsed)
+    if type(pin) is not str:
+        raise ValueError("task_pin_unavailable")
+    return pin
+
+
 def _verified_recovery_timeline(events: Any, note: Any, expected: Any) -> RecoveryLabelProof:
     """Prueba pura de etiquetado por bot: no demuestra lock ni CAS."""
     if (type(events) is not list or type(expected) is not Snapshot
@@ -278,8 +313,7 @@ class LeaseGithubPort:
                     # El pin de claims también pertenece al cuerpo ACTUAL
                     # del Issue; una edición del plan después de /tomar
                     # invalida el proof aunque la aceptación no cambie.
-                    or task_marker_fingerprint(
-                        parse_task_marker(initial["body"])) !=
+                    or _pinned_task_fingerprint(initial["body"]) !=
                        expected.marker["task_marker_sha256"]
                     or type(initial.get("labels")) is not list
                     or type(initial.get("assignees")) is not list
