@@ -548,6 +548,25 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
 
     def test_strict_generated_adoption_catches_preflight_regressions(self):
         strict = consumer_caller(strict=True)
+        roles = """contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)"""
+        route = "needs.preflight_comentario.outputs.route == 'true'"
+        for mutation, original, unsafe in (
+            ("preflight_negated_role",
+             roles + "\n    runs-on:",
+             "!(" + roles + ")\n    runs-on:"),
+            ("comment_negated_route", route, "!(" + route + ")"),
+            ("comment_negated_user",
+             "github.event.comment.user.type == 'User' &&\n      " + roles + " &&\n      " + route,
+             "!(github.event.comment.user.type == 'User') &&\n      " + roles + " &&\n      " + route),
+        ):
+            with self.subTest(unsafe_negation=mutation):
+                self.assertIn(original, strict)
+                modified = strict.replace(original, unsafe, 1)
+                self.assertNotEqual(modified, strict)
+                result = self.run_generated(modified)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("FAIL", result.stderr)
+
         # The generated test must reject any of the seven missing commands.
         for command in ("/tomar", "/liberar-forzado", "/adoptar-contrato-huerfana",
                         "/liberar", "/transferir", "/migrar-contrato",
