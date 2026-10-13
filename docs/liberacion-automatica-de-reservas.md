@@ -74,6 +74,17 @@ cron, no sustituye el tiempo de la etiqueta de recuperación ni habilita
 escrituras: sigue pendiente la fuente completa de ausencia de actividad y el
 CAS real de AC-03. El cron actual no publica este dato por Issue.
 
+El runner de preparación ofrece `observe_recent_activity([issue], port, now=...)`
+para obtener una proyección mínima del inspector auténtico: Issue, estado
+`RECENT_ACTIVITY`/ `UNKNOWN` y `libera_en_min` si es verificable. Limita a
+**un Issue por invocación** (GETs acotados), rechaza entradas inválidas,
+mantiene UUID/titular/cuerpos fuera del resultado y fija
+`release_authorized=False`. Ante errores de red, pausa, carrera o cuota,
+la respuesta es `UNKNOWN`, plazo ausente y cero escrituras. Es una API
+inyectable y offline: **aún no está conectada al cron**, no recopila evidencia
+negativa de inactividad, no constituye aceptación AC-03 ni ejecuta la
+transición mutante.
+
 ## Evidencia que un colector futuro deberá probar
 
 - Identidad canónica del Issue, reserva V3 actual, UUID, titular, claim,
