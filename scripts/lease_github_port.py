@@ -316,10 +316,19 @@ class LeaseGithubPort:
                     or _pinned_task_fingerprint(initial["body"]) !=
                        expected.marker["task_marker_sha256"]
                     or type(initial.get("labels")) is not list
+                    # No ignorar etiquetas de tipo inesperado: son parte
+                    # de la evidencia exacta que debe mantenerse íntegra.
+                    or any(type(label) is not dict
+                           or type(label.get("name")) is not str
+                           or not label["name"]
+                           for label in initial["labels"])
+                    or len({label["name"] for label in initial["labels"]})
+                       != len(initial["labels"])
                     or type(initial.get("assignees")) is not list
                     or len(initial["assignees"]) != 1
                     or type(initial["assignees"][0]) is not dict
-                    or initial["assignees"][0].get("login") != expected.owner):
+                    or type(initial["assignees"][0].get("login")) is not str
+                    or initial["assignees"][0]["login"] != expected.owner):
                 raise ValueError("issue_mismatch")
             state_labels = [
                 z.get("name") for z in initial["labels"]
