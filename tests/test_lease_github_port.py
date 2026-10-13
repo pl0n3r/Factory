@@ -187,6 +187,18 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertTrue(LeaseGithubPort(exact_floor).recovery_note(
             1191, target).authenticated)
         self.assertEqual(exact_floor.switch_reads, 2)
+        # Un proof compuesto con GETs previos al método debe consumir cuota
+        # compartida. Antes del fix, los 12 GET locales dejaban 20/100,
+        # ignorando los 9 GET ya consumidos; el estado era falsamente apto.
+        cumulative_floor = NoteAPI()
+        cumulative_floor.quota = 32
+        shared = [9]
+        with self.assertRaisesRegex(
+            PortNotArmed, "authenticated_recovery_proof_unavailable"):
+            LeaseGithubPort(cumulative_floor).recovery_note(
+                1191, target, _budget=shared)
+        self.assertGreater(shared[0], 9)
+        self.assertEqual(cumulative_floor.switch_reads, 2)
         # Los cambios periféricos no alteran el contrato fijado.
         peripheral = NoteAPI()
         peripheral.issue_body = peripheral.issue_body.replace(

@@ -460,8 +460,10 @@ class LeaseGithubPort:
                     or ref_after.get("object", {}).get("sha") != expected.branch_sha
                     or read_comments() != comments
                     or not running_with_budget()
-                    or remaining - calls < 0
-                    or (remaining - calls) * 5 < limit):
+                    # La cuota remanente debe cubrir TODAS las
+                    # lecturas del proof compuesto, no solo este método.
+                    or remaining - _budget[0] < 0
+                    or (remaining - _budget[0]) * 5 < limit):
                 raise ValueError("recheck_mismatch")
             found = len(current_notes)
             proof = RecoveryNoteProof(
