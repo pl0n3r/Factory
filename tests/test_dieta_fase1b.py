@@ -120,7 +120,21 @@ class DietaFase1BTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("watchdog:", watchdog)
-        self.assertIn("daily-summary:", watchdog)
+        self.assertIn("scripts.unattended_watchdog_runtime", watchdog)
+        self.assertIn("cron: '*/15 * * * *'", watchdog)
+        runbook = (ROOT / "docs" / "unattended-watchdog-runtime.md").read_text(
+            encoding="utf-8")
+        f1g_enabled = "## F1G: resumen diario accesorio suspendido" in runbook
+        if f1g_enabled:
+            self.assertNotIn("  daily-summary:", watchdog)
+            self.assertNotIn("cron: '0 13 * * *'", watchdog)
+            self.assertNotIn("python3 -m scripts.unattended_daily_summary",
+                             watchdog)
+        else:
+            self.assertIn("  daily-summary:", watchdog)
+            self.assertIn("cron: '0 13 * * *'", watchdog)
+            self.assertIn("python3 -m scripts.unattended_daily_summary",
+                          watchdog)
         ledger = self.document.split(
             "## Ledger F1B de baja del cron de métricas\n", 1
         )[1].split("\n## ", 1)[0]
