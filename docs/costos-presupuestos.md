@@ -20,10 +20,10 @@ El soft-block no fusiona ni gasta nada por sí mismo: aparece como warning y Job
 
 Durante la **instalación inicial** del propio control, el job hace checkout de la base confiable del PR. Si esa base todavía no contiene `metricas/costos.py`, publica `bootstrap-not-enforced` y evidencia explícita en lugar de intentar ejecutar un archivo inexistente o informar un falso `ok`. Desde el primer merge que incorpora el control, todos los PR posteriores se evalúan usando el código confiable de su base.
 
-## Tendencia de CI
+## Tendencia de CI (solo motor offline)
 
-La ejecución mensual de `.github/workflows/costos.yml` consulta las últimas corridas **completadas** de `ci.yml` disparadas por Pull Request, incluidas las exitosas, fallidas y canceladas. Suma la duración de todos los jobs por corrida y luego agrupa **todas las corridas del mismo PR**: la unidad de comparación es `ci_minutes_per_pr`, no una corrida aislada.
+Desde F1F (Factory #1323), `.github/workflows/costos.yml` **no programa** la consulta mensual ni ofrece `workflow_dispatch` para generar la tendencia; conserva exclusivamente `pull_request` y los controles de presupuesto. `metricas/costos.py trend` y sus pruebas permanecen utilizables **offline** con un inventario aportado explícitamente por un llamador autorizado, sin lectura nueva ni publicación remota automática. Históricamente, el job retirado consultaba corridas completadas de `ci.yml`, incluidas las exitosas, fallidas y canceladas. Suma la duración de todos los jobs por corrida y luego agrupa **todas las corridas del mismo PR**: la unidad de comparación es `ci_minutes_per_pr`, no una corrida aislada.
 
 El reporte conserva `before_avg`, `after_avg`, `delta_pct`, `direction`, número de PRs (`samples`), número de corridas (`run_samples`) y conclusiones incluidas. Un `run_id` duplicado falla cerrado para evitar doble conteo. Con menos de cuatro PRs devuelve `insufficient-data`; no inventa una mejora ni oculta el costo de reintentos fallidos.
 
-Los presupuestos iniciales son guardrails, no objetivos de gasto. #5 compara calidad/resultado; #7 controla consumo. La revisión mensual puede ajustar presupuestos o configuración cuando los datos lo justifiquen, sin intervención manual del dueño para recolectar métricas.
+Los presupuestos iniciales son guardrails, no objetivos de gasto. #5 compara calidad/resultado; #7 controla consumo. La revisión de presupuestos podrá hacerse con evidencia disponible y autorización propia cuando corresponda. F1F no acredita ningún informe mensual nuevo ni ahorro cuantificado de API/CI.

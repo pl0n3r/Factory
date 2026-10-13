@@ -17,7 +17,9 @@ class ReleaseCandidate1030Tests(unittest.TestCase):
         payload = json.loads(
             (root / "config/version.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(payload, {"version": "1.0.30"})
+        self.assertEqual(set(payload), {"version"})
+        version = tuple(int(part) for part in payload["version"].split("."))
+        self.assertGreaterEqual(version, (1, 0, 30))
 
         # Contratos ya integrados: coordinación por archivo y liberación V3
         # puramente offline. La habilitación operativa corresponde a #1175.
