@@ -123,25 +123,9 @@ class SyncLabelColorsTests(unittest.TestCase):
         self.assertEqual(render_plan([]), "0 drifts")
 
     def test_workflow_is_owner_only_secret_safe_and_apply_is_explicit(self):
-        workflow = (ROOT / ".github/workflows/sync-label-colors.yml").read_text(encoding="utf-8")
-        self.assertIn("github.event.issue.number == 874", workflow)
-        self.assertIn("github.event.sender.login == github.event.repository.owner.login", workflow)
-        self.assertEqual(workflow.count("/sync-label-colors dry-run"), 2)
-        self.assertEqual(workflow.count("/sync-label-colors apply"), 2)
-        self.assertIn("python3 scripts/sync_label_colors.py --dry-run", workflow)
-        self.assertIn("python3 scripts/sync_label_colors.py --apply", workflow)
-        self.assertIn("FACTORY_PROVISION_TOKEN: ${{ secrets.FACTORY_PROVISION_TOKEN }}", workflow)
-
-        dry_run_block, apply_block = workflow.split("      - name: Aplicar colores", 1)
-        self.assertNotIn("FACTORY_PROVISION_TOKEN", dry_run_block)
-        self.assertIn("FACTORY_PROVISION_TOKEN", apply_block)
-        self.assertNotIn("github.token", workflow)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("issues: write", workflow)
-        workflow_prefix, jobs_block = workflow.split("jobs:", 1)
-        self.assertNotIn("\nconcurrency:", workflow_prefix)
-        self.assertIn("    concurrency:\n      group: factory-label-color-sync", jobs_block)
-
+        self.assertFalse((ROOT / ".github/workflows/sync-label-colors.yml").exists())
+        self.assertTrue((ROOT / "scripts/sync_label_colors.py").is_file())
+        # La sincronización remota no existe; la ejecución offline sigue cubierta.
 
     def test_apply_prints_plan_before_first_patch_and_records_successes(self):
         snapshots = {

@@ -1,6 +1,14 @@
+import copy
 import json
+import os
+import shutil
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
+
+from scripts.politica_kit import PolicyError, validate_other_gates_green
 
 ROOT = Path(__file__).resolve().parents[1]
 W = (ROOT / ".github/workflows/politica.yml").read_text()
@@ -140,7 +148,13 @@ class T(unittest.TestCase):
         self.assertIn('"$FINAL_BASE" != "$PR_BASE_SHA"', COMMENT_W)
         self.assertIn('"$FINAL_HEAD_REPO" != "$PR_HEAD_REPO"', COMMENT_W)
         self.assertIn('"$FINAL_BASE_REPO" != "$PR_BASE_REPO"', COMMENT_W)
-        self.assertLess(COMMENT_W.index("PR_JSON_FINAL="), COMMENT_W.index("check-runs"))
+        # La evidencia debe leerse ANTES de la revalidación final del PR.
+        # Cambiar HEAD/BASE durante la lectura no autoriza publicar un check.
+        self.assertLess(COMMENT_W.index("check-runs"), COMMENT_W.index("PR_JSON_FINAL="))
+        self.assertLess(
+            COMMENT_W.index("PR_JSON_FINAL="),
+            COMMENT_W.index('gh api --method POST "repos/$REPOSITORY/check-runs"'),
+        )
 
     def test_comment_revalidation_permissions_are_minimal(self):
         self.assertIn("checks: write", COMMENT_W)
@@ -154,6 +168,325 @@ class T(unittest.TestCase):
 
 
 class PoliticaWorkflowContractTests(unittest.TestCase):
+    def test_sha_less_fallback_preserves_canonical_gates_and_ref_revalidation(self):
+        self.assertNotIn('PRIMARY_STATUS == 0', W)
+        self.assertIn('recheck_pr_identity "$PR_JSON_FINAL" || {', W)
+        self.assertLess(W.index('reviewThreads(first:100)'), W.index('POLICY_OUTPUT='))
+        self.assertLess(W.index('checks_url_base='), W.index('POLICY_OUTPUT='))
+        self.assertIn('repos/$REPOSITORY/pulls/$PR', W)
+        for gate in ('"$PR_HEAD_SHA"', '"$PR_BASE_SHA"', '"$PR_HEAD_REF"',
+                     '"$PR_BASE_REF"', '"$PR_HEAD_REPO"', '"$PR_BASE_REPO"'):
+            self.assertIn(gate, W)
+        self.assertLess(W.index('recheck_pr_identity "$PR_JSON_FINAL" || {'),
+                        W.index('printf \'%s\\n\' "$POLICY_OUTPUT"'))
+        self.assertIn('GITHUB_RUN_ATTEMPT > 1', W)
+        self.assertIn('validate_rate_limit_fallback', (
+            ROOT / 'scripts/politica_kit.py').read_text(encoding='utf-8'))
+
+    def test_primary_and_fallback_apply_same_trusted_gates(self):
+        """AC-04: ambos caminos utilizan el mismo inventario autenticado."""
+        from scripts.politica_kit import (
+            PolicyError, validate_rate_limit_fallback,
+            validate_required_bot_review_or_fallback,
+        )
+        head = "a" * 40
+
+        def item(identifier, name, slug="github-actions", app_id=15368,
+                 status="completed", conclusion="success"):
+            return json.dumps({
+                "id": identifier, "name": name, "head_sha": head,
+                "app": {"slug": slug, "id": app_id},
+                "status": status, "conclusion": conclusion,
+                "completed_at": "2026-10-04T05:01:00Z",
+            })
+
+        checks = [
+            item(10, "validate"),
+            item(11, "SonarCloud Code Analysis", "sonarqubecloud", 12526),
+            item(12, "CodeQL", "github-advanced-security", 57789),
+            item(13, "tests"),
+            item(14, "validar-pr / Validar coordinación"),
+            item(15, "privacidad / Privacidad como código"),
+        ]
+        review = json.dumps({
+            "id": 1, "state": "COMMENTED", "body": "Revisión sustantiva",
+            "commit_id": head, "user": {"login": "coderabbitai[bot]", "type": "Bot"}
+        })
+
+        def primary(rows):
+            return validate_required_bot_review_or_fallback(
+                [review], "coderabbitai[bot]", head,
+                comment_lines=[], check_lines=rows, thread_lines=[],
+                phase_file=None)
+
+        def fallback(rows):
+            return validate_rate_limit_fallback(
+                required_review_bot="coderabbitai[bot]", head_sha=head,
+                head_committed_at="2026-10-04T04:59:00Z",
+                phase="construccion", review_lines=[], comment_lines=[],
+                check_lines=rows, thread_lines=[], run_attempt=2)
+
+        self.assertEqual(primary(checks), {"review_fallback": False})
+        wrong_issuer = [*checks[:2], item(12, "CodeQL", "foreign", 9999),
+                        *checks[3:]]
+        for bad in (
+            wrong_issuer,
+            checks[:-1],
+            [*checks[:3], item(13, "tests", status="in_progress",
+                              conclusion=None), *checks[4:]],
+            [*checks[:3], item(13, "tests", conclusion="failure"), *checks[4:]],
+        ):
+            for method in (primary, fallback):
+                with self.subTest(method=method.__name__, rows=bad):
+                    with self.assertRaises(PolicyError):
+                        method(bad)
+
+    def test_primary_review_requires_complete_checks_threads_and_final_refs(self):
+        """AC-05: bash real de recheck y vetos previos a emitir éxito."""
+        from scripts.politica_kit import PolicyError, validate_required_bot_review_or_fallback
+        self.assertNotIn("PRIMARY_STATUS == 0", W)
+        self.assertLess(W.index('checks_url_base='), W.index('POLICY_OUTPUT='))
+        self.assertLess(W.index('reviewThreads(first:100)'), W.index('POLICY_OUTPUT='))
+        self.assertLess(W.index('recheck_pr_identity "$PR_JSON_FINAL"'), W.index(
+            "printf '%s\\n' \"$POLICY_OUTPUT\""))
+        # Ejecuta el helper Bash real contra respuesta REST mockeada, incluyendo
+        # HEAD/BASE drift y PR cerrado, no solamente búsqueda de strings.
+        self.test_primary_review_revalidates_head_and_base_before_success()
+        head = "a" * 40
+        review = json.dumps({
+            "id": 1, "state": "COMMENTED", "body": "Revisión sustantiva",
+            "commit_id": head, "user": {"login": "coderabbitai[bot]", "type": "Bot"}
+        })
+        checks = [
+            (10, "validate", "github-actions", 15368),
+            (11, "SonarCloud Code Analysis", "sonarqubecloud", 12526),
+            (12, "CodeQL", "github-advanced-security", 57789),
+            (13, "tests", "github-actions", 15368),
+            (14, "validar-pr / Validar coordinación", "github-actions", 15368),
+            (15, "privacidad / Privacidad como código", "github-actions", 15368),
+        ]
+        rows = [json.dumps({
+            "id": idx, "name": name, "head_sha": head,
+            "app": {"slug": slug, "id": app_id},
+            "status": "completed", "conclusion": "success",
+        }) for idx, name, slug, app_id in checks]
+        args = dict(required_review_bot="coderabbitai[bot]", head_sha=head,
+                    comment_lines=[], phase_file=None)
+        self.assertEqual(validate_required_bot_review_or_fallback(
+            [review], check_lines=rows, thread_lines=[], **args),
+            {"review_fallback": False})
+        malformed = [
+            rows[:-1],
+            [*rows[:3], json.dumps({
+                "id": 13, "name": "tests", "head_sha": head,
+                "app": {"slug": "github-actions", "id": 15368},
+                "status": "completed", "conclusion": "failure",
+            }), *rows[4:]],
+        ]
+        for case in malformed:
+            with self.assertRaises(PolicyError):
+                validate_required_bot_review_or_fallback(
+                    [review], check_lines=case, thread_lines=[], **args)
+        unresolved = [json.dumps({
+            "isResolved": False,
+            "comments": {"pageInfo": {"hasNextPage": False},
+                         "nodes": [{"author": {"login": "coderabbitai"}}]},
+        })]
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review_or_fallback(
+                [review], check_lines=rows, thread_lines=unresolved, **args)
+
+    def test_primary_review_revalidates_head_and_base_before_success(self):
+        """Ejecuta el helper Bash exacto del workflow contra GET REST simulado."""
+        if shutil.which('jq') is None:
+            self.skipTest('jq requerido para simular el workflow real')
+        start = '          # POLICY_PR_RECHECK_BEGIN\n'
+        stop = '          # POLICY_PR_RECHECK_END'
+        self.assertEqual(W.count(start), 1)
+        self.assertEqual(W.count(stop), 1)
+        helper = textwrap.dedent(W.split(start, 1)[1].split(stop, 1)[0])
+        self.assertIn('gh api "repos/$REPOSITORY/pulls/$PR"', helper)
+        self.assertIn('jq -e', helper)
+
+        repo = 'pl0n3r/Factory'
+        head = 'a' * 40
+        base = 'b' * 40
+        stable = {
+            'state': 'open',
+            'head': {'sha': head, 'ref': 'trabajo/issue-17',
+                     'repo': {'full_name': repo}},
+            'base': {'sha': base, 'ref': 'main',
+                     'repo': {'full_name': repo}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            gh = Path(directory) / 'gh'
+            gh.write_text('#!/bin/sh\nprintf "%s\\n" "$PR_JSON_FIXTURE"\n',
+                          encoding='utf-8')
+            gh.chmod(0o755)
+            env = dict(os.environ)
+            env.update({
+                'PATH': directory + os.pathsep + env.get('PATH', ''),
+                'REPOSITORY': repo, 'PR': '17',
+                'PR_HEAD_SHA': head, 'PR_BASE_SHA': base,
+                'PR_HEAD_REF': 'trabajo/issue-17',
+                'PR_BASE_REF': 'main',
+                'PR_HEAD_REPO': repo,
+                'PR_BASE_REPO': repo,
+            })
+            cases = [('estable', None, True),
+                     ('HEAD SHA distinto', ('head', 'sha', 'c' * 40), False),
+                     ('BASE SHA distinto', ('base', 'sha', 'd' * 40), False),
+                     ('BASE ref retarget sin cambio SHA',
+                      ('base', 'ref', 'dev'), False),
+                     ('PR cerrado', ('state', '', 'closed'), False),
+                     ('fork distinto', ('head', 'repo', {'full_name': 'other/Factory'}),
+                      False),
+                     ('base de otra fuente', ('base', 'repo',
+                         {'full_name': 'other/Factory'}), False)]
+            for label, mutation, should_pass in cases:
+                with self.subTest(case=label):
+                    observed = copy.deepcopy(stable)
+                    if mutation:
+                        first, second, value = mutation
+                        if second:
+                            observed[first][second] = value
+                        else:
+                            observed[first] = value
+                    env['PR_JSON_FIXTURE'] = json.dumps(observed)
+                    result = subprocess.run(
+                        ['bash', '-c', 'set -euo pipefail\n' + helper
+                         + '\nrecheck_pr_identity'],
+                        env=env, capture_output=True, text=True, timeout=8)
+                    self.assertEqual(result.returncode == 0, should_pass,
+                                     msg=result.stderr)
+
+    @staticmethod
+    def _mock_check_page(total, ids):
+        return {"total_count": total, "check_runs": [
+            {"id": value, "name": f"test-{value}", "head_sha": "a" * 40,
+             "app": {"slug": "github-actions", "id": 15368},
+             "status": "completed", "conclusion": "success"} for value in ids
+        ]}
+
+    def _execute_checks_snapshot_shell(self, responses, *, expected_pass,
+                                       expected_count=0):
+        """Ejecuta el Bash de producción con gh REST simulado y contador."""
+        if shutil.which("jq") is None:
+            self.skipTest("jq no disponible")
+        start = "          # POLICY_CHECK_SNAPSHOT_BEGIN\n"
+        end = "          # POLICY_CHECK_SNAPSHOT_END"
+        self.assertEqual(W.count(start), 1)
+        self.assertEqual(W.count(end), 1)
+        shell = textwrap.dedent(W.split(start, 1)[1].split(end, 1)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mock = root / "gh"
+            mock.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+counter = Path(os.environ["MOCK_GH_COUNTER"])
+index = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(index + 1))
+pages = json.loads(os.environ["MOCK_GH_RESPONSES"])
+if index >= len(pages) or pages[index] is None:
+    sys.exit(22)
+if not any("check-runs?per_page=100&page=" in x for x in sys.argv):
+    sys.exit(23)
+print(json.dumps(pages[index]))
+''', encoding="utf-8")
+            mock.chmod(0o755)
+            checks = root / "checks.ndjson"
+            marker = root / "evaluated"
+            env = dict(os.environ)
+            env.update({
+                "PATH": directory + os.pathsep + env.get("PATH", ""),
+                "REPOSITORY": "pl0n3r/Factory", "PR_HEAD_SHA": "a" * 40,
+                "checks_file": str(checks),
+                "checks_json": str(root / "page.json"),
+                "MAX_EVIDENCE_BYTES": "2000000", "MAX_PUBLIC_CHECKS": "500",
+                "MOCK_GH_COUNTER": str(root / "calls"),
+                "MOCK_GH_RESPONSES": json.dumps(responses),
+                "EVAL_MARKER": str(marker),
+            })
+            result = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n" + shell +
+                 '\nprintf "1" > "$EVAL_MARKER"\n'],
+                env=env, capture_output=True, text=True, timeout=25)
+            self.assertEqual(result.returncode == 0, expected_pass,
+                             msg=result.stderr[-2500:])
+            if expected_pass:
+                self.assertEqual(marker.read_text(), "1")
+                rows = [json.loads(x) for x in checks.read_text().splitlines()]
+                self.assertEqual(len(rows), expected_count)
+                self.assertEqual(len({row["id"] for row in rows}), expected_count)
+            else:
+                self.assertFalse(marker.exists(), "No ejecutar evaluador sin prueba")
+            return int((root / "calls").read_text())
+
+    def test_authenticated_checks_restart_complete_snapshot_after_total_drift(self):
+        """AC-01: deriva inicial 119->120 y dos snapshots íntegros de 120."""
+        p = self._mock_check_page
+        cases = [
+            p(119, range(1, 101)), p(120, range(101, 121)),
+            p(120, range(1, 101)), p(120, range(101, 121)),
+            p(120, range(1, 101)), p(120, range(101, 121)),
+        ]
+        self.assertEqual(self._execute_checks_snapshot_shell(
+            cases, expected_pass=True, expected_count=120), 6)
+
+    def test_authenticated_checks_persistent_drift_and_partial_snapshot_fail_closed(self):
+        """AC-02: drift persistente, IDs variables, truncado, duplicado y >500."""
+        p = self._mock_check_page
+        cases = {
+            "drift persistente": [
+                p(119, range(1, 101)), p(120, range(101, 121))] * 3,
+            "igual total e IDs distintos": [
+                p(2, (1, 2)), p(2, (1, 3)), p(2, (1, 4))],
+            "igual total y estado distinto": [
+                p(1, (1,)),
+                {"total_count": 1, "check_runs": [
+                    {**p(1, (1,))["check_runs"][0], "conclusion": "failure"}]},
+                p(1, (1,))],
+            "incompleto": [
+                p(120, range(1, 101)), p(120, range(101, 111)),
+                p(120, ()), p(120, ()), p(120, ())],
+            "ID duplicado": [p(2, (1, 1))],
+            "más de 500": [p(501, range(1, 101))],
+            "HTTP no-200": [None],
+        }
+        for reason, pages in cases.items():
+            with self.subTest(reason=reason):
+                self._execute_checks_snapshot_shell(pages, expected_pass=False)
+
+    def test_check_collection_does_not_bypass_policy_gates_or_authentication(self):
+        """AC-03: REST autenticada read-only, exact SHA y Policy obligatoria."""
+        self.assertIn("GH_TOKEN: ${{ github.token }}", W)
+        self.assertIn('"${checks_url_base}&page=$page"', W)
+        self.assertIn('--checks-file "$checks_file"', W)
+        self.assertLess(W.index("# POLICY_CHECK_SNAPSHOT_END"),
+                        W.index("POLICY_OUTPUT="))
+        self.assertIn('recheck_pr_identity "$PR_JSON_FINAL"', W)
+        self.assertNotIn("checks: write", W)
+        good = [
+            (10, "validate", "github-actions", 15368),
+            (11, "SonarCloud Code Analysis", "sonarqubecloud", 12526),
+            (12, "CodeQL", "github-advanced-security", 57789),
+            (13, "tests", "github-actions", 15368),
+            (14, "validar-pr / Validar coordinación", "github-actions", 15368),
+            (15, "privacidad / Privacidad como código", "github-actions", 15368),
+        ]
+        def records(items):
+            return [json.dumps({
+                "id": num, "name": name, "head_sha": "a" * 40,
+                "app": {"slug": slug, "id": app_id},
+                "status": "completed", "conclusion": "success",
+            }) for num, name, slug, app_id in items]
+        validate_other_gates_green(records(good), head_sha="a" * 40)
+        with self.assertRaises(PolicyError):
+            validate_other_gates_green(
+                records([*good[:2], (12, "CodeQL", "fake-app", 1234),
+                         *good[3:]]), head_sha="a" * 40)
+
     def test_authenticated_paginated_timeline_is_bounded_fail_closed(self):
         self.assertIn('repos/$REPOSITORY/issues/$PR/timeline?per_page=100&page=$page', W)
         self.assertIn('if (( GITHUB_RUN_ATTEMPT > 1 )); then', W)

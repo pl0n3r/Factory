@@ -1,6 +1,8 @@
 import importlib.util
+import json
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -141,6 +143,254 @@ def sync(raw, api):
 
 
 class SonarWatchTests(unittest.TestCase):
+    def test_oversized_response_identifies_safe_endpoint_family(self):
+        original = sonar_watch.urlopen
+
+        class LargeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b"private-token-never-log=" + b"x" * 1_000_001
+
+        sonar_watch.urlopen = lambda _request, timeout: LargeResponse()
+        try:
+            cases = [
+                ("https://sonarcloud.io", "/api/issues/search?token=hidden", "sonar.issues"),
+                ("https://sonarcloud.io", "/api/hotspots/search?token=hidden", "sonar.hotspots"),
+                ("https://api.github.com", "/repos/pl0n3r/Factory/issues?secret=hidden", "github.issues"),
+                ("https://example.invalid", "/my-private-path?secret=hidden", "remote.other"),
+            ]
+            for base_url, path, family in cases:
+                with self.subTest(family=family):
+                    client = sonar_watch.HttpJson(token="secret", base_url=base_url)
+                    with self.assertRaises(sonar_watch.SonarWatchResponseTooLarge) as caught:
+                        client.request(path)
+                    message = str(caught.exception)
+                    self.assertIn("respuesta remota excede tamaño máximo", message)
+                    self.assertIn("source=" + family, message)
+                    for forbidden in ("private-token", "secret=hidden", "token=hidden", "my-private-path"):
+                        self.assertNotIn(forbidden, message)
+        finally:
+            sonar_watch.urlopen = original
+
+    def test_bounded_sonar_paging_preserves_all_rows_over_one_mb(self):
+        records = [
+            {"key": f"issue-{index:04d}", "type": "BUG", "blob": "x" * 2200}
+            for index in range(501)
+        ]
+        calls = []
+        original = sonar_watch.urlopen
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = json.dumps(payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, limit):
+                return self.payload[:limit]
+
+        def fake_urlopen(request, timeout):
+            query = parse_qs(urlsplit(request.full_url).query)
+            size, page = int(query["ps"][0]), int(query["p"][0])
+            calls.append((size, page))
+            offset = (page - 1) * size
+            return FakeResponse({
+                "issues": records[offset:offset + size],
+                "paging": {"pageIndex": page, "pageSize": size, "total": len(records)},
+            })
+
+        sonar_watch.urlopen = fake_urlopen
+        try:
+            response = sonar_watch.SonarApi(token="")._all_issues("project-key")
+        finally:
+            sonar_watch.urlopen = original
+        self.assertEqual(
+            [item["key"] for item in response["issues"]],
+            [item["key"] for item in records],
+        )
+        self.assertEqual(calls, [(500, 1), (250, 1), (250, 2), (250, 3)])
+
+    def test_unrecoverable_large_page_or_paging_drift_fails_closed(self):
+        original = sonar_watch.urlopen
+        calls = []
+
+        class Oversized:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, limit):
+                return b"x" * limit
+
+        def oversize(request, timeout):
+            calls.append(request.full_url)
+            return Oversized()
+
+        sonar_watch.urlopen = oversize
+        try:
+            with self.assertRaises(sonar_watch.SonarWatchResponseTooLarge):
+                sonar_watch.SonarApi(token="")._all_issues("project-key")
+        finally:
+            sonar_watch.urlopen = original
+        self.assertEqual(len(calls), 6)  # 500, 250, 125, 62, 31, 25
+
+        sonar = sonar_watch.SonarApi(token="")
+
+        def drift(_path, params):
+            size, page = params["ps"], params["p"]
+            return {
+                "issues": [
+                    {"key": f"k-{index}"}
+                    for index in range((page - 1) * size, min(page * size, 501))
+                ],
+                "paging": {
+                    "pageIndex": page, "pageSize": size,
+                    "total": 501 if page == 1 else 502,
+                },
+            }
+
+        sonar.get = drift
+        with self.assertRaisesRegex(sonar_watch.SonarWatchError, "total Sonar cambió"):
+            sonar._all_issues("project-key")
+
+        def duplicated(_path, params):
+            size, page = params["ps"], params["p"]
+            if page == 1:
+                rows = [{"key": f"k-{index}"} for index in range(size)]
+            else:
+                rows = [{"key": f"k-{size - 1}"}]
+            return {
+                "issues": rows,
+                "paging": {"pageIndex": page, "pageSize": size, "total": size + 1},
+            }
+
+        sonar.get = duplicated
+        with self.assertRaisesRegex(sonar_watch.SonarWatchError, "duplicada"):
+            sonar._all_issues("project-key")
+
+    def test_sonar_retries_preserve_total_and_previously_seen_identities(self):
+        sonar = sonar_watch.SonarApi(token="")
+        records = [{"key": f"original-{i:04d}"} for i in range(501)]
+        for scenario in ("total_drift", "identity_replaced", "same_snapshot"):
+            calls = []
+            def fake_get(_path, params):
+                size, page = params["ps"], params["p"]
+                calls.append((size, page))
+                if size == 500 and page == 2:
+                    raise sonar_watch.SonarWatchResponseTooLarge(
+                        "respuesta remota excede tamaño máximo. source=sonar.issues"
+                    )
+                if size == 500:
+                    selected = records
+                    total = len(records)
+                elif scenario == "total_drift":
+                    selected = records[:250]
+                    total = 250
+                elif scenario == "identity_replaced":
+                    selected = [{"key": f"replacement-{i:04d}"} for i in range(501)]
+                    total = 501
+                else:
+                    selected = records
+                    total = len(records)
+                offset = (page - 1) * size
+                return {
+                    "issues": selected[offset:offset + size],
+                    "paging": {"pageIndex": page, "pageSize": size, "total": total},
+                }
+
+            with self.subTest(scenario=scenario):
+                sonar.get = fake_get
+                if scenario == "same_snapshot":
+                    actual = sonar._all_issues("project-key")["issues"]
+                    self.assertEqual(actual, records)
+                else:
+                    expected_error = (
+                        "total Sonar cambió" if scenario == "total_drift"
+                        else "identidades Sonar cambiaron"
+                    )
+                    with self.assertRaisesRegex(sonar_watch.SonarWatchError, expected_error):
+                        sonar._all_issues("project-key")
+                self.assertEqual(calls[:3], [(500, 1), (500, 2), (250, 1)])
+                self.assertLessEqual(len(calls), 120)
+
+    def test_sonar_paging_limits_total_requests_across_restarts(self):
+        sonar = sonar_watch.SonarApi(token="")
+        calls = []
+        total = 2500
+
+        def oversized_last_page(_path, params):
+            size, page = params["ps"], params["p"]
+            calls.append((size, page))
+            offset = (page - 1) * size
+            if offset <= total - 1 < offset + size:
+                raise sonar_watch.SonarWatchResponseTooLarge(
+                    "respuesta remota excede tamaño máximo. source=sonar.issues"
+                )
+            return {
+                "issues": [
+                    {"key": f"large-list-{index}"}
+                    for index in range(offset, min(offset + size, total))
+                ],
+                "paging": {
+                    "pageIndex": page,
+                    "pageSize": size,
+                    "total": total,
+                },
+            }
+
+        sonar.get = oversized_last_page
+        with self.assertRaisesRegex(
+            sonar_watch.SonarWatchError, "presupuesto total de páginas Sonar"
+        ):
+            sonar._all_issues("project-key")
+        self.assertEqual(len(calls), 120)
+        self.assertEqual(calls[:6], [(500, 1), (500, 2), (500, 3), (500, 4), (500, 5), (250, 1)])
+        self.assertIn((31, 1), calls)
+
+    def test_sonar_rejects_incomplete_and_malformed_page_without_fake_green(self):
+        sonar = sonar_watch.SonarApi(token="")
+        cases = [
+            (None, "paginación Sonar inválida"),
+            ([], "paginación Sonar inválida"),
+            ({"issues": "not-a-list", "paging": {}}, "paginación Sonar inválida"),
+            ({"issues": [], "paging": {"pageIndex": 1, "pageSize": 500,
+                                      "total": True}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": "a"}], "paging": {"pageIndex": True,
+             "pageSize": 500, "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": "a"}], "paging": {"pageIndex": 1.0,
+             "pageSize": 500, "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": "a"}], "paging": {"pageIndex": 1,
+             "pageSize": 500.0, "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [{"key": f"overflow-{i}"} for i in range(501)],
+              "paging": {"pageIndex": 1, "pageSize": 500,
+                         "total": 501}}, "paginación Sonar incoherente"),
+            ({"issues": [], "paging": {"pageIndex": 2, "pageSize": 500,
+                                      "total": 1}}, "paginación Sonar incoherente"),
+            ({"issues": [], "paging": {"pageIndex": 1, "pageSize": 500,
+                                      "total": 1}}, "Sonar truncó filas"),
+            ({"issues": [{"key": ""}], "paging": {"pageIndex": 1,
+                   "pageSize": 500, "total": 1}}, "identidad Sonar inválida"),
+            ({"issues": [{"key": "a"}, {"key": "b"}],
+              "paging": {"pageIndex": 1, "pageSize": 500,
+                         "total": 1}}, "Sonar devolvió filas excedentes"),
+        ]
+        for payload, reason in cases:
+            with self.subTest(reason=reason, payload=payload):
+                sonar.get = lambda _path, _params, value=payload: value
+                with self.assertRaisesRegex(sonar_watch.SonarWatchError, reason):
+                    sonar._all_issues("project-key")
+
     def test_auto_alert_creation_has_canonical_labels_and_block_reason(self):
         api = FakeIssues()
         raw = snapshot()
@@ -237,35 +487,14 @@ class SonarWatchTests(unittest.TestCase):
         self.assertEqual(calls[1][1]["payload"]["labels"], labels)
         self.assertEqual(calls[1][1]["payload"]["state"], "open")
 
-    def test_workflow_is_scheduled_manual_and_minimum_privilege(self):
-        text = (
-            ROOT / ".github" / "workflows" / "sonar-watch.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("schedule:", text)
-        self.assertIn("workflow_dispatch:", text)
-        self.assertIn(
-            "permissions:\n  contents: read\n\nconcurrency:",
-            text,
-        )
-        self.assertIn(
-            "    permissions:\n      contents: read\n      issues: write",
-            text,
-        )
-        for forbidden in (
-            "contents: write",
-            "actions: write",
-            "deployments: write",
-            "packages: write",
-            "pull-requests: write",
-        ):
-            self.assertNotIn(forbidden, text)
-        self.assertIn("SONAR_TOKEN", text)
-        self.assertNotIn("SONAR_WATCH_CONFIG_JSON", text)
-        self.assertIn("CONFIG_PATH", (
-            ROOT / "scripts" / "sonar-watch.py"
-        ).read_text(encoding="utf-8"))
+    def test_retired_workflow_and_offline_engine_are_preserved(self):
+        """F1C suprime el cron sin borrar el motor ni sus parámetros seguros."""
+        workflow = ROOT / ".github" / "workflows" / "sonar-watch.yml"
+        self.assertFalse(workflow.exists())
+        script = ROOT / "scripts" / "sonar-watch.py"
+        self.assertTrue(script.is_file())
+        self.assertIn("CONFIG_PATH", script.read_text(encoding="utf-8"))
         self.assertTrue((ROOT / "quality" / "sonar-watch-config.json").is_file())
-        self.assertIn("python3 scripts/sonar-watch.py", text)
 
     def test_non_pass_signal_upserts_one_issue_by_project_and_signal(self):
         api = FakeIssues()
@@ -1055,21 +1284,12 @@ class SonarWatchTests(unittest.TestCase):
                 with self.assertRaises(sonar_watch.SonarWatchError):
                     sonar_watch.SonarApi.analysis_method_from_settings(payload)
 
-    def test_workflow_loads_versioned_config_with_minimum_privilege(self):
-        workflow = (
-            ROOT / ".github" / "workflows" / "sonar-watch.yml"
-        ).read_text(encoding="utf-8")
-        script = (
-            ROOT / "scripts" / "sonar-watch.py"
-        ).read_text(encoding="utf-8")
+    def test_offline_runtime_loads_versioned_config_without_workflow(self):
+        """Conservar la configuración versionada, no los permisos del cron."""
+        self.assertFalse((ROOT / ".github" / "workflows" / "sonar-watch.yml").exists())
+        script = (ROOT / "scripts" / "sonar-watch.py").read_text(encoding="utf-8")
         self.assertIn("quality/sonar-watch-config.json", script)
-        self.assertNotIn("SONAR_WATCH_CONFIG_JSON", workflow)
-        self.assertIn("SONAR_TOKEN", workflow)
-        self.assertIn("contents: read", workflow)
-        self.assertIn("issues: write", workflow)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("actions: write", workflow)
-        self.assertIn("python3 scripts/sonar-watch.py", workflow)
+        self.assertTrue((ROOT / "quality" / "sonar-watch-config.json").is_file())
 
     def test_runtime_auth_and_settings_scenarios_are_fail_closed_without_sonar_writes(self):
         api = sonar_watch.SonarApi(token="")
@@ -1179,13 +1399,12 @@ class SonarWatchTests(unittest.TestCase):
                 sonar_watch._MAX_GITHUB_ISSUE_PAGES,
             ) = original
 
-    def test_workflow_keeps_scheduled_and_manual_triggers(self):
-        text = (
-            ROOT / ".github" / "workflows" / "sonar-watch.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("  schedule:", text)
-        self.assertIn("  workflow_dispatch:", text)
-        self.assertEqual(text.count("python3 scripts/sonar-watch.py"), 1)
+    def test_sonar_watch_no_longer_has_scheduled_or_manual_triggers(self):
+        self.assertFalse((ROOT / ".github" / "workflows" / "sonar-watch.yml").exists())
+        for active in (ROOT / ".github" / "workflows").glob("*.yml"):
+            text = active.read_text(encoding="utf-8")
+            self.assertNotIn("python3 scripts/sonar-watch.py", text)
+
     def test_ci_missing_coverage_remains_actionable(self):
         configs = {
             row["project"]: row

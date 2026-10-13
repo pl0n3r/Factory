@@ -39,7 +39,7 @@ RELEASE_WINDOW_RE = re.compile(
     r"<!--\s*factory-release-window\s+(\{[^\n]*\})\s*-->"
 )
 RELEASE_WINDOW_INTENT_RE = re.compile(r"<!--\s*factory-release-window\b")
-MAX_REARM_DEPTH = 8
+MAX_REARM_DEPTH = 16
 MAX_RELEASE_WINDOW_MINUTES = 120
 MAX_INPUT = 1_000_000
 MAX_COMMENT_BODY = 20_000
