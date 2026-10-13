@@ -60,7 +60,7 @@ Se conserva `scripts/unattended_daily_summary.py`, su método idempotente
 `publish_once`, la lógica de informes y las pruebas offline. Que el motor
 permanezca disponible **no autoriza** a un cron o agente a publicar por otro
 canal sin autoridad nueva y sin el kill switch canónico #767. El número de
-archivos workflow sigue igual: **31 antes y 31 después**, porque se eliminó
+archivos workflow sigue igual: **32 antes y 32 después**, porque se eliminó
 un job del archivo existente en vez de borrar el workflow.
 
 **Rollback exclusivo F1G:** revertir el commit de integración de #1336, o
