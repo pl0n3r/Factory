@@ -83,6 +83,16 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertEqual(counted.in_review, 100)
         self.assertFalse(counted.release_authorized)
         self.assertNotIn("private", str(counted))
+        # El último bloque lleno no prueba EOF: exigir una página corta o
+        # una página centinela vacía antes de publicar cifras agregadas.
+        self.assertIsNone(inventory_from_paginated_issues([first_page]))
+        full_second = [issue(n) for n in range(101, 201)]
+        self.assertIsNone(inventory_from_paginated_issues(
+            [first_page, full_second]))
+        with_sentinel = inventory_from_paginated_issues([first_page, []])
+        self.assertIsNotNone(with_sentinel)
+        self.assertEqual(with_sentinel.open_issues, 100)
+        self.assertFalse(with_sentinel.release_authorized)
 
         invalid = [
             [], {}, [[issue(1)], [issue(2)]],  # first page truncated
