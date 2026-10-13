@@ -227,6 +227,11 @@ jobs:
               fail("conteo incompleto")
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
+          # Contrastar la proyección usada por el freeze contra las páginas REST.
+          python3 -m scripts.release_gate_search \
+            "/tmp/release-search-p1-${pass}.json" \
+            "/tmp/release-search-p2-${pass}.json" \
+            "/tmp/release-search-verified-${pass}.json"
           done
           # Comparar filas completas, no solo cardinalidad ni IDs.
           # Cualquier variación del índice, bodies o metadatos niega el freeze.
