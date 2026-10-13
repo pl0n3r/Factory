@@ -9,6 +9,8 @@ from unittest import mock
 
 from scripts import bootstrap_coordination as b
 
+from test_coordinacion_reusable_contract import strict_caller_fixture
+
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 
@@ -1094,7 +1096,29 @@ class BootstrapCoordinationTests(unittest.TestCase):
                 )
 
     def test_grindflow_regeneration_inherits_hardened_consumer_caller(self):
-        template=(ROOT/"template/.github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+        template = (ROOT / "template/.github/workflows/coordinacion.yml").read_text(
+            encoding="utf-8"
+        )
+        for variant, candidate in (
+            ("caller_actual", template),
+            ("preflight_estricto", strict_caller_fixture(template)),
+        ):
+            with self.subTest(variant=variant):
+                self.assert_grindflow_caller_contract(candidate)
+
+    def test_grindflow_strict_preflight_rejects_extra_write_scopes(self):
+        template = (ROOT / "template/.github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+        strict = strict_caller_fixture(template)
+        old = "      contents: read\n    outputs:"
+        self.assertIn(old, strict)
+        for injected in ("      issues: write\n", "      pull-requests: write\n",
+                         "      contents: write\n"):
+            with self.subTest(extra_permission=injected.strip()):
+                bad = strict.replace(old, "      contents: read\n" + injected + "    outputs:", 1)
+                with self.assertRaises(AssertionError):
+                    self.assert_grindflow_caller_contract(bad)
+
+    def assert_grindflow_caller_contract(self, template: str):
         tmp,root=self._grindflow_fixture("0.1.144")
         self.addCleanup(tmp.cleanup)
         completed=lambda args,**kwargs: subprocess.CompletedProcess(
@@ -1111,9 +1135,29 @@ class BootstrapCoordinationTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false",caller)
         self.assertIn("queue: max",caller)
         comment=caller.split("  comentario:",1)[1].split("  etiqueta:",1)[0]
-        self.assertIn("github.event.comment.body == '/tomar'",comment)
-        self.assertIn("contains(github.event.comment.body, '/tomar')",comment)
-        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')",comment)
+        self.assertIn("github.event_name == 'issue_comment'",comment)
+        self.assertIn("github.event.issue.pull_request == null",comment)
+        self.assertIn("github.event.sender.login == github.event.comment.user.login",comment)
+        self.assertIn("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1",comment)
+        self.assertIn("operation: comment",comment)
+        if "  preflight_comentario:\n" in caller:
+            preflight=caller.split("  preflight_comentario:\n",1)[1].split("  comentario:\n",1)[0]
+            # Preflight solo lectura: cualquier scope aditivo invalida el caller.
+            grants=preflight.split("    permissions:\n",1)[1].split("    outputs:\n",1)[0]
+            self.assertEqual("      contents: read\n",grants)
+            self.assertIn("needs: preflight_comentario",comment)
+            self.assertIn("needs.preflight_comentario.outputs.route == 'true'",comment)
+            self.assertIn('os.environ["GITHUB_EVENT_PATH"]',preflight)
+            self.assertNotIn("COMMENT_BODY",preflight)
+            self.assertNotIn("github.event.comment.body",preflight)
+            self.assertIn('"/tomar"',preflight)
+            self.assertIn('"/renovar-contrato"',preflight)
+            self.assertNotIn("contains(github.event.comment.body",comment)
+        else:
+            # Legacy @v1 caller: accept the historical exact-command routing,
+            # but never require its broad unsafe substring-matching expression.
+            self.assertIn("github.event.comment.body == '/tomar'",comment)
+            self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')",comment)
         self.assertIn("profile: es",caller)
         self.assertIn("require_reservation: true",caller)
         self.assertNotIn("@main",caller)

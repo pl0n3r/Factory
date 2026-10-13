@@ -1,0 +1,320 @@
+name: Auto-merge construccion (solo simulacion)
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  issues: read
+jobs:
+  dry-run:
+    if: github.repository == 'pl0n3r/Factory' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      issues: read
+    concurrency:
+      group: automerge-simulacion-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout de codigo confiable de la base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Diagnostico fail-closed, nunca fusionar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_EVENT: ${{ github.event_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          from scripts.automerge_construccion import evaluate
+
+          API = "https://api.github.com"
+          REPOSITORY = "pl0n3r/Factory"
+          REASONS = frozenset({
+              "invalid_snapshot", "incomplete_evidence", "sha_mismatch",
+              "kill_switch_inactive", "checks_not_green", "reviews_blocked",
+              "independent_approval_missing", "blocking_threads",
+              "insufficient_budget", "human_gate_required", "sensitive_paths",
+              "stale_evidence", "pr_not_ready", "eligible_diagnostic_only",
+          })
+          SHA = re.compile(r"[0-9a-f]{40}\Z")
+          MARKER = re.compile(r'<!-- factory-unattended-kill-switch (\{[^\n]*\}) -->')
+          SUSPECT_MARKER = re.compile(r'<!--\s*factory-unattended-kill-switch\b', re.I)
+
+          def valid_sha(value):
+              return isinstance(value, str) and SHA.fullmatch(value) is not None
+
+          def number(value):
+              return type(value) is int and value > 0
+
+          def switch(issue):
+              if not isinstance(issue, dict) or issue.get("state") != "closed":
+                  return None
+              if (issue.get("user") or {}).get("login") != "pl0n3r":
+                  return None
+              if (issue.get("number") != 767
+                      or issue.get("url") !=
+                      "https://api.github.com/repos/pl0n3r/Factory/issues/767"
+                      or issue.get("repository_url") !=
+                      "https://api.github.com/repos/pl0n3r/Factory"):
+                  return None
+              body = issue.get("body")
+              if not isinstance(body, str) or len(SUSPECT_MARKER.findall(body)) != 1:
+                  return None
+              markers = MARKER.findall(body)
+              if len(markers) != 1:
+                  return None
+              try:
+                  value = json.loads(markers[0])
+              except (ValueError, TypeError):
+                  return None
+              if value != {"version": 1, "state": "RUNNING", "owner": "pl0n3r"}:
+                  return None
+              return (issue.get("id"), issue.get("updated_at"), markers[0])
+
+          def pages(fetch, path, key=None):
+              result, total, seen = [], None, set()
+              for page in range(1, 6):
+                  response = fetch(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+                  if key:
+                      if not isinstance(response, dict) or type(response.get("total_count")) is not int:
+                          raise ValueError("unknown total")
+                      if total is None:
+                          total = response["total_count"]
+                      if total != response["total_count"] or total < 0:
+                          raise ValueError("unstable total")
+                      rows = response.get(key)
+                  else:
+                      rows = response
+                  if not isinstance(rows, list) or len(rows) > 100:
+                      raise ValueError("invalid page")
+                  for row in rows:
+                      if not isinstance(row, dict):
+                          raise ValueError("invalid identity")
+                      if "/files" in path:
+                          name = row.get("filename")
+                          if not isinstance(name, str) or not name:
+                              raise ValueError("invalid filename")
+                          identity = ("file", name.casefold())
+                      else:
+                          if not number(row.get("id")):
+                              raise ValueError("invalid id")
+                          identity = ("id", row["id"])
+                      if identity in seen:
+                          raise ValueError("duplicate identity")
+                      seen.add(identity)
+                  result.extend(rows)
+                  if not rows:
+                      if total is not None and len(result) != total:
+                          raise ValueError("incomplete collection")
+                      return result
+              raise ValueError("pagination limit")
+
+          def review_instant(value):
+              if not isinstance(value, str) or len(value) > 40:
+                  raise ValueError("ambiguous review timestamp")
+              try:
+                  stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+              except ValueError as exc:
+                  raise ValueError("ambiguous review timestamp") from exc
+              if stamp.tzinfo is None or stamp.utcoffset() is None:
+                  raise ValueError("ambiguous review timezone")
+              return stamp.astimezone(timezone.utc)
+
+          def effective_reviews(rows, sha):
+              by_user = {}
+              for item in rows:
+                  user = item.get("user") or {}
+                  login = user.get("login")
+                  if not isinstance(login, str) or not login:
+                      raise ValueError("ambiguous reviewer")
+                  stamp = review_instant(item.get("submitted_at"))
+                  ident = login.casefold()
+                  prev = by_user.get(ident)
+                  if prev is not None and prev[0] == stamp:
+                      raise ValueError("tied review")
+                  if prev is None or stamp > prev[0]:
+                      by_user[ident] = (stamp, item)
+              result = []
+              for _, item in by_user.values():
+                  author = item["user"]["login"]
+                  association = item.get("author_association")
+                  result.append({
+                      "author": author,
+                      "state": item.get("state"),
+                      "head_sha": item.get("commit_id"),
+                      "trusted": association in ("OWNER", "MEMBER", "COLLABORATOR")
+                                 and (item.get("user") or {}).get("type") == "User",
+                  })
+              return result
+
+          def simulate(fetch, graph, event, now):
+              repo = event.get("repository") or {}
+              pr_event = event.get("pull_request") or {}
+              number_pr = event.get("number")
+              head = (pr_event.get("head") or {}).get("sha")
+              report = {"repository": REPOSITORY, "pr_number": number_pr if number(number_pr) else 0,
+                        "head_sha": head if valid_sha(head) else "", "eligible": False,
+                        "reason": "incomplete_evidence"}
+              try:
+                  if repo.get("full_name") != REPOSITORY or not number(number_pr) or not valid_sha(head):
+                      return report
+                  root = f"/repos/{REPOSITORY}"
+                  first = switch(fetch(root + "/issues/767"))
+                  if first is None:
+                      report["reason"] = "kill_switch_inactive"
+                      return report
+                  pr = fetch(root + f"/pulls/{number_pr}")
+                  base = pr.get("base") or {}
+                  actual_head = (pr.get("head") or {}).get("sha")
+                  main = (fetch(root + "/branches/main").get("commit") or {}).get("sha")
+                  if (pr.get("number") != number_pr or actual_head != head
+                          or base.get("ref") != "main" or not valid_sha(base.get("sha"))
+                          or not valid_sha(main) or base["sha"] != main):
+                      report["reason"] = "sha_mismatch"
+                      return report
+                  required = fetch(root + "/branches/main/protection/required_status_checks")
+                  contexts = required.get("contexts") if isinstance(required, dict) else None
+                  if not isinstance(contexts, list) or not contexts or any(
+                      not isinstance(x, str) or not x for x in contexts
+                  ):
+                      return report
+                  checks = pages(fetch, root + f"/commits/{head}/check-runs", "check_runs")
+                  by_name = {}
+                  for item in checks:
+                      label = item.get("name")
+                      if not isinstance(label, str) or label in by_name or item.get("head_sha") != head:
+                          return report
+                      by_name[label] = item
+                  if any(name not in by_name for name in contexts):
+                      report["reason"] = "checks_not_green"
+                      return report
+                  needed = [{ "name": name, "conclusion": by_name[name].get("conclusion")
+                                      if by_name[name].get("status") == "completed" else "pending",
+                              "head_sha": head } for name in contexts]
+                  gates = {}
+                  for kind, name in (("acceptance", "Criterios de aceptación"),
+                                     ("coordination", "Validar coordinación"),
+                                     ("security", "Seguridad")):
+                      row = by_name.get(name)
+                      if row is None:
+                          return report
+                      gates[kind] = {"conclusion": row.get("conclusion")
+                                     if row.get("status") == "completed" else "pending",
+                                     "head_sha": head}
+                  reviews = effective_reviews(pages(fetch, root + f"/pulls/{number_pr}/reviews"), head)
+                  files = pages(fetch, root + f"/pulls/{number_pr}/files")
+                  paths = [row.get("filename") for row in files]
+                  threads = graph(REPOSITORY, number_pr)
+                  if (not isinstance(threads, dict)
+                          or type(threads.get("has_next_page")) is not bool
+                          or threads["has_next_page"]
+                          or not isinstance(threads.get("resolved"), list)
+                          or any(type(x) is not bool for x in threads["resolved"])):
+                      return report
+                  quota = fetch("/rate_limit")
+                  remaining = ((quota.get("resources") or {}).get("core") or {}).get("remaining")
+                  if type(remaining) is not int:
+                      return report
+                  second = switch(fetch(root + "/issues/767"))
+                  check_pr = fetch(root + f"/pulls/{number_pr}")
+                  if second != first or (check_pr.get("head") or {}).get("sha") != head:
+                      report["reason"] = "sha_mismatch"
+                      return report
+                  # Freeze y fase no tienen aquí prueba canónica completa; no inventar
+                  # una autorización. La integración de esos lectores pertenece a #1145.
+                  evidence = {
+                      "phase": "UNKNOWN", "kill_switch": "RUNNING",
+                      "head_sha": head, "observed_head_sha": head,
+                      "base_sha": base["sha"], "main_sha": main,
+                      "draft": pr.get("draft"), "mergeable": pr.get("mergeable"),
+                      "behind_by": 0 if pr.get("mergeable_state") == "clean" else 1,
+                      "required_checks": needed, "gates": gates,
+                      "reviews": reviews, "author": (pr.get("user") or {}).get("login"),
+                      "blocking_threads": sum(not v for v in threads["resolved"]),
+                      "paths": paths, "freeze_active": True,
+                      "human_gate_required": True, "inventory_complete": False,
+                      "api_remaining": remaining, "api_minimum": 20,
+                      "observed_at": now, "expires_at": now, "now": now,
+                  }
+                  decision = evaluate(evidence).public()
+                  report["eligible"] = False  # dry-run nunca concede derecho de merge
+                  report["reason"] = decision["reason"] if decision["reason"] in REASONS else "invalid_snapshot"
+                  return report
+              except (ValueError, TypeError, KeyError, AttributeError, IndexError):
+                  return report
+
+          def live_fetch(path):
+              token = os.environ.get("GH_TOKEN", "")
+              if not token:
+                  raise ValueError("missing token")
+              request = urllib.request.Request(API + path, headers={
+                  "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "factory-dry-run",
+              })
+              with urllib.request.urlopen(request, timeout=8) as answer:
+                  return json.load(answer)
+
+          def live_graph(repo, number_pr):
+              token = os.environ.get("GH_TOKEN", "")
+              query = """query($owner:String!,$name:String!,$number:Int!){
+                repository(owner:$owner,name:$name){
+                  pullRequest(number:$number){
+                    reviewThreads(first:100){
+                      pageInfo{hasNextPage} nodes{isResolved}
+                    }
+                  }
+                }
+              }"""
+              body = json.dumps({"query": query, "variables": {
+                  "owner": "pl0n3r", "name": "Factory", "number": number_pr,
+              }}).encode()
+              request = urllib.request.Request(API + "/graphql", data=body,
+                  headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
+                           "User-Agent": "factory-dry-run"}, method="POST")
+              with urllib.request.urlopen(request, timeout=8) as response:
+                  data = json.load(response)
+              if data.get("errors"):
+                  raise ValueError("graphql errors")
+              threads = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+              return {"has_next_page": threads["pageInfo"]["hasNextPage"],
+                      "resolved": [x["isResolved"] for x in threads["nodes"]]}
+
+          def main():
+              report = {"repository": REPOSITORY, "pr_number": 0, "head_sha": "",
+                        "eligible": False, "reason": "incomplete_evidence"}
+              try:
+                  event = json.loads(Path(os.environ["GH_EVENT"]).read_text(encoding="utf-8"))
+                  pr_number = event.get("number")
+                  head = ((event.get("pull_request") or {}).get("head") or {}).get("sha")
+                  if (event.get("repository") or {}).get("full_name") == REPOSITORY:
+                      report["pr_number"] = pr_number if number(pr_number) else 0
+                      report["head_sha"] = head if valid_sha(head) else ""
+                  try:
+                      now = datetime.now(timezone.utc).isoformat()
+                      report = simulate(live_fetch, live_graph, event, now)
+                  except Exception:
+                      pass  # Retener identidad pública y decisión DENEGADA, nunca error HTTP.
+              except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                  pass
+              print(json.dumps(report, sort_keys=True, separators=(",", ":")))
+
+          if __name__ == "__main__":
+              main()
+          PY
