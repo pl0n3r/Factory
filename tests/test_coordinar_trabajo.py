@@ -2362,6 +2362,16 @@ class CoordinacionTests(unittest.TestCase):
         seen = []
         def request(method, path, payload=None, allow=()):
             seen.append((method, path))
+            if method == "GET" and path == "/repos/pl0n3r/Factory/issues/767":
+                return {
+                    "number": 767,
+                    "url": coordinator.CANONICAL_SOURCE_URL,
+                    "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                    "state": "closed",
+                    "user": {"login": "pl0n3r"},
+                    "body": ('<!-- factory-unattended-kill-switch '
+                             '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->'),
+                }
             if method == "GET" and "/git/ref/heads/coordinacion/lock-issue-" in path:
                 return None
             if path.endswith("/git/commits/" + "a" * 40):
