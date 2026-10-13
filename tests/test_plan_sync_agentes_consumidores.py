@@ -93,6 +93,30 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
                     plan_sync(template() + suffix, consumers())
         self.assertEqual(plan_sync(template(), consumers())["status"], "planned")
 
+        # Headings in a fenced example are not authoritative principles.
+        fenced_heading = template().replace(
+            "## Principios de construcción de la fábrica",
+            "```markdown\n" + "## Principios de construcción de la fábrica",
+            1,
+        ).replace(
+            "### Límite explícito del template",
+            "```\n" + "### Límite explícito del template", 1,
+        )
+        fenced_principle = template().replace(
+            "### Principio 5 — ejemplo",
+            "```markdown\n" + "### Principio 5 — ejemplo",
+            1,
+        ).replace(
+            "### Principio 6 — ejemplo",
+            "```\n" + "### Principio 6 — ejemplo", 1,
+        )
+        for fake_source in (fenced_heading, fenced_principle):
+            with self.subTest(source=fake_source[:100]):
+                with self.assertRaisesRegex(
+                    SyncPlanError, "invalid_principles_source"
+                ):
+                    plan_sync(fake_source, consumers())
+
         # Una sección sin cuerpo, aunque retenga título y cierre auténticos,
         # no constituye un principio apto para planificar seis consumidores.
         empty_principle = template().replace(

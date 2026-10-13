@@ -38,6 +38,27 @@ def _validate_text(raw: object) -> str:
 
 def _principles(template: object) -> str:
     source = _validate_text(template)
+    # A heading inside a Markdown code fence is an example, not a rule.
+    fence_char = None
+    fence_width = 0
+    for line in source.splitlines():
+        if fence_char is None:
+            opening = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+            if opening is not None:
+                fence_char = opening.group(1)[0]
+                fence_width = len(opening.group(1))
+        else:
+            closing = re.fullmatch(r" {0,3}(`{3,}|~{3,})[ \\t]*", line)
+            if (closing is not None and closing.group(1)[0] == fence_char
+                    and len(closing.group(1)) >= fence_width):
+                fence_char = None
+            elif (line == HEADING or re.match(
+                r"^### (?:Regla 0|Principio [1-8]|Límite explícito del template)(?: — |$)",
+                line
+            )):
+                raise SyncPlanError("invalid_principles_source")
+    if fence_char is not None:
+        raise SyncPlanError("invalid_principles_source")
     if source.count(HEADING) != 1 or "factory-principios-sync" in source:
         raise SyncPlanError("invalid_principles_source")
     pattern = re.compile(r"^## Principios de construcción de la fábrica\s*$", re.M)
