@@ -82,14 +82,17 @@ class DietaFase1FTests(unittest.TestCase):
     def test_pr_budget_jobs_and_artifacts_remain_safe(self):
         workflow = WF.read_text(encoding="utf-8")
         assert_budget_contract(workflow)
+        incorrect_base = workflow.replace(
+            "ref: ${{ github.event.pull_request.base.sha }}", "ref: main"
+        )
         with self.assertRaises(AssertionError):
-            assert_budget_contract(workflow.replace(
-                "ref: ${{ github.event.pull_request.base.sha }}", "ref: main"
-            ))
+            assert_budget_contract(incorrect_base)
+        incorrect_retention = workflow.replace("retention-days: 30", "retention-days: 0")
         with self.assertRaises(AssertionError):
-            assert_budget_contract(workflow.replace("retention-days: 30", "retention-days: 0"))
+            assert_budget_contract(incorrect_retention)
+        removed_budget = workflow.replace("  presupuesto-pr:", "  budget-removed:")
         with self.assertRaises(AssertionError):
-            assert_budget_contract(workflow.replace("  presupuesto-pr:", "  budget-removed:"))
+            assert_budget_contract(removed_budget)
 
     def test_offline_trend_and_documented_rollback(self):
         source = (ROOT / "metricas/costos.py").read_text(encoding="utf-8")
