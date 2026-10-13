@@ -505,7 +505,7 @@ class GitHubGateway:
     def pr_matches(self,name: str,branch: str,pr: Any,req: dict[str,Any])->bool:
         return bool(
             isinstance(pr,dict)
-            and isinstance(pr.get("number"),int)
+            and type(pr.get("number")) is int and pr["number"]>0
             and pr.get("state","open")=="open"
             and isinstance(pr.get("base"),dict)
             and pr["base"].get("ref")=="main"
@@ -530,7 +530,7 @@ class GitHubGateway:
     def legacy_marker(self,name: str,branch: str,pr: Any,req: dict[str,Any])->dict[str,Any]|None:
         if not (
             isinstance(pr,dict)
-            and isinstance(pr.get("number"),int)
+            and type(pr.get("number")) is int and pr["number"]>0
             and pr.get("state","open") in ("open","closed")
             and not (pr.get("state")=="closed" and pr.get("merged_at") is not None)
             and isinstance(pr.get("base"),dict)
@@ -609,7 +609,7 @@ class GitHubGateway:
     )->bool:
         pr=self.open_pr(name,branch) or self.closed_pr(name,branch)
         historical=self.legacy_marker(name,branch,pr,req)
-        if historical is None or pr.get("number")!=number:
+        if type(number) is not int or number<1 or historical is None or pr.get("number")!=number:
             return False
         if legacy_body is not None and str(pr.get("body") or "")!=legacy_body:
             return False
@@ -645,7 +645,7 @@ class GitHubGateway:
         number=None
         try:
             pr=self._request("POST",f"/repos/{name}/pulls",{"title":title,"head":branch,"base":"main","body":body})
-            if not isinstance(pr,dict) or not isinstance(pr.get("base"),dict) or pr["base"].get("ref")!="main" or not isinstance(pr.get("head"),dict) or pr["head"].get("ref")!=branch or not isinstance(pr.get("number"),int):
+            if not isinstance(pr,dict) or not isinstance(pr.get("base"),dict) or pr["base"].get("ref")!="main" or not isinstance(pr.get("head"),dict) or pr["head"].get("ref")!=branch or type(pr.get("number")) is not int or pr["number"]<1:
                 raise BootstrapError("PR bootstrap inválido.")
             number=pr["number"]
             self.classify_bootstrap_pr(name,number)

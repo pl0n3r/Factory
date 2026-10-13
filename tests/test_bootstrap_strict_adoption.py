@@ -235,6 +235,63 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                     [detail],
                 )
 
+    def test_bootstrap_pr_numbers_require_exact_positive_integers(self):
+        """Boolean, float and string REST identifiers cannot impersonate PR #1."""
+        gateway = bootstrap.GitHubGateway("fake-token")
+        req = bootstrap.validate_request({
+            "target_repository": "pl0n3r/Consumer",
+            "target_issue": "187",
+            "expected_main_sha": "a" * 40,
+            "governance_ref": bootstrap.GOVERNANCE_REF,
+            "idempotency_key": "b" * 64,
+        })
+        name, branch = req["target_repository"], bootstrap.branch_name(req)
+        legitimate = {
+            "number": 1,
+            "state": "open",
+            "base": {"ref": "main", "sha": req["expected_main_sha"]},
+            "head": {"ref": branch, "repo": {"full_name": name}},
+            "user": {"login": bootstrap.OWNER},
+            "body": bootstrap.marker(req),
+        }
+        self.assertTrue(gateway.pr_matches(name, branch, legitimate, req))
+        with mock.patch.object(gateway, "main_descends_from", return_value=True):
+            self.assertIsNotNone(gateway.legacy_marker(name, branch, legitimate, req))
+            for wrong in (True, False, "1", 1.0, 0, -1):
+                with self.subTest(wrong_number=wrong):
+                    altered = {**legitimate, "number": wrong}
+                    self.assertFalse(gateway.pr_matches(name, branch, altered, req))
+                    self.assertIsNone(gateway.legacy_marker(name, branch, altered, req))
+
+        with mock.patch.object(gateway, "open_pr", return_value=legitimate), mock.patch.object(
+            gateway, "closed_pr", return_value=None
+        ), mock.patch.object(gateway, "main_descends_from", return_value=True):
+            for wrong in (True, False, "1", 1.0, 0, -1):
+                with self.subTest(wrong_comparison=wrong):
+                    self.assertFalse(gateway.legacy_pr_matches_exact(name, branch, wrong, req))
+            self.assertTrue(gateway.legacy_pr_matches_exact(name, branch, 1, req))
+
+        for wrong in (True, False, "1", 1.0, 0, -1):
+            with self.subTest(create_pr_number=wrong), mock.patch.object(
+                gateway, "_request",
+                return_value={
+                    "number": wrong, "base": {"ref": "main"}, "head": {"ref": branch},
+                }
+            ), mock.patch.object(gateway, "delete_branch") as delete, mock.patch.object(
+                gateway, "classify_bootstrap_pr"
+            ) as classify:
+                with self.assertRaisesRegex(bootstrap.BootstrapError, "PR bootstrap inválido"):
+                    gateway.create_pr(name, branch, "fixture", "fixture")
+                classify.assert_not_called()
+                delete.assert_called_once_with(name, branch)
+
+        with mock.patch.object(
+            gateway, "_request",
+            return_value={"number": 71, "base": {"ref": "main"}, "head": {"ref": branch}},
+        ), mock.patch.object(gateway, "classify_bootstrap_pr") as classify:
+            self.assertEqual(gateway.create_pr(name, branch, "fixture", "fixture"), 71)
+            classify.assert_called_once_with(name, 71)
+
     def test_bootstrap_marker_identity_requires_json_integers(self):
         """Historical bootstrap identity must fail closed on bool, float and strings."""
         canonical = {
