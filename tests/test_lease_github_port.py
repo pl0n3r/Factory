@@ -334,6 +334,12 @@ class LeaseGithubPortTests(unittest.TestCase):
             return variant
 
         cases = (
+            # Los datos JSON de GitHub deben tener type="Bot" como str
+            # auténtico, no un objeto que solo compare igual.
+            lambda x: x.notes[0]["user"].update(
+                type=UserString(x.notes[0]["user"]["type"])),
+            lambda x: x.notes[1]["user"].update(
+                type=UserString(x.notes[1]["user"]["type"])),
             lambda x: x.notes[1]["user"].update(login="counterfeit"),
             lambda x: x.notes[1].update(updated_at="2026-10-11T10:31:00Z"),
             lambda x: x.notes[1].update(
