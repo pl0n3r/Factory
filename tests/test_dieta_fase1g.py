@@ -81,7 +81,7 @@ class DietaFase1GTests(unittest.TestCase):
     def test_document_loss_and_exact_rollback(self):
         runbook = RUNBOOK.read_text(encoding="utf-8")
         for required in ("Factory #1296", "#1336", "08:00 Bogotá",
-                         "deja de", "31 antes y 31 después",
+                         "deja de", "32 antes y 32 después",
                          "Rollback exclusivo F1G",
                          "0 13 * * *", "## Reversión",
                          "Factory#815", "*/15 * * * *",
