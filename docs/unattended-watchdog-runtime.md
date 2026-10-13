@@ -6,7 +6,7 @@ Estado: **scheduler operativo, efectos limitados a alertas propias**.
 
 `.github/workflows/unattended-watchdog.yml` conserva la cadencia periódica existente de **cada 15 minutos** (`*/15`), admite `workflow_dispatch` y ejecuta una verificación inmediata en cada `push` a `main`. El `push` funciona como evidencia post-merge temprana; no sustituye ni aumenta la frecuencia de la vigilancia periódica.
 
-El job `watchdog` valida `repository`, `refs/heads/main` y un evento allowlisted (`push`, `schedule` o `workflow_dispatch`) antes del primer checkout. El job `daily-summary` sigue restringido exclusivamente al schedule diario `0 13 * * *`; un `push` nunca publica el resumen.
+El job `watchdog` valida `repository`, `refs/heads/main` y un evento allowlisted (`push`, `schedule` o `workflow_dispatch`) antes del primer checkout. **F1G retira el job accesorio `daily-summary` y su cron `0 13 * * *`**: un `push`, un schedule del watchdog o una ejecución manual ya no publican automáticamente el resumen diario. El watchdog de seguridad mantiene `*/15 * * * *`, sin reemplazar el resumen perdido.
 
 Permisos:
 - `contents: read`;
@@ -45,6 +45,31 @@ Por seguridad, una alerta previa solo se reconcilia como resuelta cuando 4C logr
 El runtime no edita/cierra Issues ajenos, PRs, releases ni reservas. La búsqueda incluye alertas propias abiertas y cerradas: si un fingerprint resuelto reaparece, se reabre la misma Issue en vez de crear un duplicado histórico.
 
 El transporte queda fijado a `api.github.com` y al repositorio exacto `pl0n3r/Factory`; el HEAD solo se consulta como `trabajo/issue-N` derivado de un número validado. Antes de la primera escritura, el runtime relee Factory#767 con el parser canónico del kill switch. Cualquier estado distinto de `RUNNING`, lectura inválida o marker ambiguo produce cero mutaciones.
+
+## F1G: resumen diario accesorio suspendido
+
+Por la decisión del dueño en la EPIC **Factory #1296** y la hoja **#1336**,
+se suspende exclusivamente el job `daily-summary` y el disparador programado
+`0 13 * * *` del workflow. A partir de la integración **el dueño deja de
+recibir automáticamente a las 08:00 Bogotá el resumen diario en GitHub Issues**.
+No existe entrega alternativa implícita. No se ha desactivado el job
+`watchdog` ni su alerta de seguridad cada 15 minutos; `push` a `main`
+y `workflow_dispatch` siguen permitidos bajo sus guardas fail-closed.
+
+Se conserva `scripts/unattended_daily_summary.py`, su método idempotente
+`publish_once`, la lógica de informes y las pruebas offline. Que el motor
+permanezca disponible **no autoriza** a un cron o agente a publicar por otro
+canal sin autoridad nueva y sin el kill switch canónico #767. El número de
+archivos workflow sigue igual: **31 antes y 31 después**, porque se eliminó
+un job del archivo existente en vez de borrar el workflow.
+
+**Rollback exclusivo F1G:** revertir el commit de integración de #1336, o
+reponer exactamente en `.github/workflows/unattended-watchdog.yml` el
+segundo schedule `0 13 * * *`, el job `daily-summary` con permisos previos
+y la exclusión de ese cron en el `if` del job `watchdog`. Revertir asimismo
+los tests y este runbook de F1G, **sin revertir** Factory#815, F1A–F1F,
+la vigilancia `*/15 * * * *`, ni el guard #767. Un rollback vuelve a habilitar
+la entrega antigua: revalidar condiciones humanas y CI antes de fusionarlo.
 
 ## Reversión
 
