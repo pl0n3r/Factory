@@ -482,7 +482,7 @@ class GitHubGateway:
         candidates=[]
         seen=set()
         for page in range(1,6):
-            path=query if page==1 else f"{query}&page={page}"
+            path=f"{query}&page={page}"
             value=self._request("GET",path)
             for detail in self._closed_pr_page(name,value,seen):
                 if detail.get("merged_at") is None:
