@@ -129,6 +129,8 @@ class LeaseGithubPortTests(unittest.TestCase):
                 self.issue_reads = 0
                 self.drift_labels = False
                 self.drift_assignees = False
+                self.bad_assignees = None
+                self.bad_labels = None
                 self.drift_issue_body = False
                 self.omit_issue_body = False
                 self.issue_body = contract + "\n" + task_tag
@@ -162,10 +164,14 @@ class LeaseGithubPortTests(unittest.TestCase):
                                     + (" cambiado-en-el-mismo-segundo"
                                        if late and self.drift_issue_body else ""),
                         }),
-                        "assignees": [{"login": "intruder" if late and
-                                      self.drift_assignees else target.owner}],
-                        "labels": [{"name": "estado: disponible" if late and
-                                    self.drift_labels else target.status}],
+                        "assignees": (
+                            self.bad_assignees if self.bad_assignees is not None
+                            else [{"login": "intruder" if late and
+                                   self.drift_assignees else target.owner}]),
+                        "labels": (
+                            self.bad_labels if self.bad_labels is not None
+                            else [{"name": "estado: disponible" if late and
+                                   self.drift_labels else target.status}]),
                     }
                 if path == "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-1191":
                     return {"object": {"sha": self.branch_sha}}
@@ -420,6 +426,17 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: setattr(x, "switch_state", "open"),
             lambda x: setattr(x, "drift_labels", True),
             lambda x: setattr(x, "drift_assignees", True),
+            # Una etiqueta válida no puede ocultar otra etiqueta corrupta,
+            # ni un subtype str hacerse pasar por login JSON auténtico.
+            lambda x: setattr(x, "bad_labels", [
+                {"name": target.status}, {"name": None}]),
+            lambda x: setattr(x, "bad_labels", [
+                {"name": target.status}, {"name": "tipo: producto"},
+                {"name": "tipo: producto"}]),
+            lambda x: setattr(x, "bad_labels", [
+                {"name": target.status}, "unexpected-string-label"]),
+            lambda x: setattr(x, "bad_assignees", [
+                {"login": UserString(target.owner)}]),
             lambda x: setattr(x, "drift_issue_body", True),
             lambda x: setattr(x, "omit_issue_body", True),
             lambda x: setattr(x, "issue_body", x.issue_body.replace(
