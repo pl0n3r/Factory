@@ -88,6 +88,8 @@ def marker(req: dict[str, Any]) -> str:
 def parse_marker(body: Any) -> dict[str, Any] | None:
     if not isinstance(body, str):
         return None
+    if len(re.findall(r"<!--\s*factory-coordination-bootstrap\b", body)) != 1:
+        return None
     matches = re.findall(r"<!-- factory-coordination-bootstrap (\{[^\n]*\}) -->", body)
     if len(matches) != 1:
         return None

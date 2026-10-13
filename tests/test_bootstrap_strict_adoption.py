@@ -296,6 +296,9 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
             canonical + "\n" + contradictory,
             contradictory + "\n" + canonical,
             canonical + "\n<!-- factory-coordination-bootstrap {not-json} -->",
+            canonical + "\n<!-- factory-coordination-bootstrap malformed -->",
+            canonical + "\n<!--    factory-coordination-bootstrap ignored -->",
+            canonical + "\n<!-- factory-coordination-bootstrap {unclosed",
         )
         for body in variants:
             with self.subTest(body=body):
