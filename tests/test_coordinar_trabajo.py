@@ -2617,6 +2617,66 @@ class CoordinacionTests(unittest.TestCase):
             coordinator.require_global_running(unauthorized)
         self.assertEqual(observed["reads"], 0)
 
+
+    def test_consumer_transport_attaches_bearer_to_canonical_factory_get(self) -> None:
+        """Ejercita Request/urlopen real sin token ni red reales del consumidor."""
+        from io import BytesIO
+        from urllib.error import HTTPError
+
+        source = "/repos/pl0n3r/Factory/issues/767"
+        payload = {
+            "number": 767,
+            "url": coordinator.CANONICAL_SOURCE_URL,
+            "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+            "state": "closed",
+            "user": {"login": "pl0n3r"},
+            "body": ('<!-- factory-unattended-kill-switch '
+                     '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->'),
+        }
+        encoded = json.dumps(payload).encode("utf-8")
+        for repo in (
+            "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        ):
+            with self.subTest(repo=repo):
+                api = GitHub(repo, "fixture-token")
+                observed = []
+
+                def urlopen_stub(request, timeout):
+                    observed.append((request.get_method(), request.full_url,
+                                     request.get_header("Authorization"), timeout))
+                    return BytesIO(encoded)
+
+                with patch.object(coordinator, "urlopen", side_effect=urlopen_stub):
+                    coordinator.require_sweep_running(api)
+                    coordinator.require_global_running(api)
+
+                self.assertEqual(observed, [(
+                    "GET", "https://api.github.com" + source,
+                    "Bearer fixture-token", 30,
+                )] * 2)
+                self.assertEqual(api.repo, repo)
+
+        for status in (403, 404, 429):
+            with self.subTest(http_status=status):
+                api = GitHub("pl0n3r/Condor", "fixture-token")
+                observed = []
+
+                def denied(request, timeout):
+                    observed.append((request.get_method(), request.full_url))
+                    raise HTTPError(request.full_url, status, "denegado", {},
+                                    BytesIO(b'{"message":"denegado"}'))
+
+                with patch.object(coordinator, "urlopen", side_effect=denied):
+                    with self.assertRaises(CoordinationError):
+                        coordinator.require_sweep_running(api)
+                    with self.assertRaises(CoordinationError):
+                        coordinator.require_global_running(api)
+                self.assertEqual(observed, [
+                    ("GET", "https://api.github.com" + source),
+                ] * 2)
+
     def test_recovery_label_mutations_recheck_pause_and_lease_each_rest_write(self) -> None:
         """Nunca emitir DELETE posterior a PAUSED o reemplazo de nonce."""
         for lose in ("PAUSED", "stolen"):
