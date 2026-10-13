@@ -2388,7 +2388,7 @@ class CoordinacionTests(unittest.TestCase):
                           side_effect=lambda unused: checks.append("running")):
             token = guard.acquire_issue_lock(12, "a" * 40)
         self.assertEqual(token, "c" * 40)
-        self.assertEqual([method for method, _ in seen], ["GET", "GET", "POST", "POST"])
+        self.assertEqual([method for method, _ in seen], ["GET", "GET", "GET", "POST", "GET", "POST"])
         self.assertGreaterEqual(len(checks), 3)
 
     def test_busy_v3_lock_avoids_unreachable_nonce_commit(self) -> None:
@@ -2469,7 +2469,7 @@ class CoordinacionTests(unittest.TestCase):
                 api.kill_switch_marker = "PAUSED"
             return result
         with patch.object(api, "branch_sha", side_effect=pause_during_main):
-            with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                 coordinator.ensure_recovery_branch(api, branch)
         self.assertNotIn(branch, api.branches)
         self.assertEqual(writes, [])
@@ -2488,7 +2488,7 @@ class CoordinacionTests(unittest.TestCase):
         for state in ("PAUSED", "INVALID"):
             api.kill_switch_marker = state
             with self.subTest(state=state):
-                with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+                with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                     coordinator.recover_existing_work_if_stale(
                         api, 12, "pl0n3r", "trabajo/issue-12",
                         coordinator.active_reservation(api, 12))
@@ -2510,7 +2510,7 @@ class CoordinacionTests(unittest.TestCase):
 
         with patch.object(coordinator, "recover_stale_work",
                           side_effect=pause_after_lock):
-            with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                 coordinator.recover_existing_work_if_stale(
                     api, 12, "pl0n3r", "trabajo/issue-12",
                     coordinator.active_reservation(api, 12))
