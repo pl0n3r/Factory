@@ -452,6 +452,25 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(read_note.call_count, 2)
         self.assertEqual(len(api.calls), 4)
         self.assertTrue(all(verb == "GET" for verb, _ in api.calls))
+        # Prueba compuesta: dos notas y el timeline consumen un solo
+        # presupuesto de 32 GET (incluidas lecturas #767 autenticadas).
+        metered = TimelineAPI()
+        guarded = LeaseGithubPort(metered)
+        shared_budgets = []
+        def expensive_note(_issue, _expected, *, _budget):
+            shared_budgets.append(id(_budget))
+            _budget[0] += 15
+            return note
+        with patch.object(guarded, "recovery_note",
+                          side_effect=expensive_note) as reads:
+            with self.assertRaisesRegex(
+                PortNotArmed, "authenticated_timeline_proof_unavailable"):
+                guarded.recovery_label(1191, s)
+        self.assertEqual(reads.call_count, 2)
+        self.assertEqual(len(set(shared_budgets)), 1)
+        self.assertEqual(len(metered.calls), 4)
+        self.assertTrue(all(verb == "GET" for verb, _ in metered.calls))
+
         self.assertTrue(all("/repos/pl0n3r/Factory/issues/1191/events?"
                             in path for _, path in api.calls))
         with self.assertRaises(PortNotArmed):

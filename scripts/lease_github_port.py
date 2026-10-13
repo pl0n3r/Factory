@@ -195,7 +195,8 @@ class LeaseGithubPort:
     def append(self, issue: int, body: str, expected: Any) -> None:
         raise PortNotArmed("mutation_disabled")
 
-    def recovery_note(self, issue: int, expected: Any) -> RecoveryNoteProof:
+    def recovery_note(self, issue: int, expected: Any, *,
+                      _budget: list[int] | None = None) -> RecoveryNoteProof:
         """GET-only: verifica nota de bot y reserva exacta, nunca CAS.
 
         Se permite leer/probar esta evidencia, pero read/lock/append/status
@@ -208,22 +209,30 @@ class LeaseGithubPort:
                     or type(repo) is not str
                     or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None):
                 raise ValueError("untrusted_expected")
+            # La prueba compuesta nota→timeline→nota comparte un solo
+            # presupuesto de GET. No reiniciarlo durante la relectura.
+            if _budget is None:
+                _budget = [0]
+            if (type(_budget) is not list or len(_budget) != 1
+                    or type(_budget[0]) is not int
+                    or not 0 <= _budget[0] <= 32):
+                raise ValueError("invalid_request_budget")
             calls = 0
-            def get(endpoint: str) -> Any:
+            def charge() -> None:
                 nonlocal calls
                 calls += 1
-                if calls > 32:
+                _budget[0] += 1
+                if calls > 32 or _budget[0] > 32:
                     raise ValueError("request_budget")
+
+            def get(endpoint: str) -> Any:
+                charge()
                 return self._api.request("GET", endpoint)
 
             def running_with_budget() -> bool:
-                # #767 también cuesta una petición autenticada; las dos
-                # lecturas deben compartir el límite de 32 y la reserva
-                # mínima del 20 % con el resto de la prueba.
-                nonlocal calls
-                calls += 1
-                if calls > 32:
-                    raise ValueError("request_budget")
+                # Cada GET al #767 usa exactamente el mismo presupuesto
+                # que el resto de lecturas, incluidas las de timeline.
+                charge()
                 return self._running()
 
             if not running_with_budget():
@@ -479,8 +488,9 @@ class LeaseGithubPort:
                     or issue != expected.issue
                     or expected.status != "estado: requiere recuperación"):
                 raise ValueError("invalid_recovery")
-            note = self.recovery_note(issue, expected)
-            if note.count != 1:
+            budget = [0]
+            note = self.recovery_note(issue, expected, _budget=budget)
+            if note.count != 1 or budget[0] > 32:
                 raise ValueError("missing_note")
             repo = getattr(self._api, "repo", None)
             if (type(repo) is not str
@@ -489,12 +499,18 @@ class LeaseGithubPort:
                 raise ValueError("invalid_repo")
             base = f"/repos/{repo}/issues/{issue}/events"
 
+            def timeline_get(path: str) -> Any:
+                budget[0] += 1
+                if budget[0] > 32:
+                    raise ValueError("request_budget")
+                return self._api.request("GET", path)
+
             def read_timeline() -> list[dict[str, Any]]:
                 rows: list[dict[str, Any]] = []
                 seen: set[int] = set()
                 for page in range(1, 6):
                     path = f"{base}?per_page=100&page={page}"
-                    batch = self._api.request("GET", path)
+                    batch = timeline_get(path)
                     if type(batch) is not list or len(batch) > 100:
                         raise ValueError("invalid_page")
                     for event in batch:
@@ -505,8 +521,8 @@ class LeaseGithubPort:
                         seen.add(event["id"])
                         rows.append(event)
                     if len(batch) < 100:
-                        sentinel = self._api.request(
-                            "GET", f"{base}?per_page=100&page={page + 1}")
+                        sentinel = timeline_get(
+                            f"{base}?per_page=100&page={page + 1}")
                         if type(sentinel) is not list or sentinel:
                             raise ValueError("incomplete_timeline")
                         return rows
@@ -516,8 +532,9 @@ class LeaseGithubPort:
             proof = _verified_recovery_timeline(first, note, expected)
             if read_timeline() != first:
                 raise ValueError("timeline_changed")
-            if self.recovery_note(issue, expected) != note:
-                raise ValueError("note_changed")
+            if (self.recovery_note(issue, expected, _budget=budget) != note
+                    or budget[0] > 32):
+                raise ValueError("note_changed_or_request_budget")
             return proof
         except Exception:
             raise PortNotArmed("authenticated_timeline_proof_unavailable") from None
