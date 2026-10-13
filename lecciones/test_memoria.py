@@ -212,5 +212,53 @@ class MemoryTests(unittest.TestCase):
             summarize(rows, "pl0n3r/factory", max_chars=399)
 
 
+    def test_construction_lessons_dataset_valid_and_attributed(self):
+        """Carga las ocho lecciones reales y fija dos fuentes críticas."""
+        path = Path(__file__).resolve().parent / "registros" / "2026-10-construccion.jsonl"
+        rows = load_lessons([path])
+        expected_ids = {
+            "factory-20261010-cola-vacia",
+            "factory-20261010-claims-directorio",
+            "factory-20261010-fusion-manual",
+            "factory-20261011-reservas-caducan",
+            "factory-20261010-latest-gate-duplicado",
+            "factory-20261009-rate-limit-sin-sha",
+            "factory-20261010-rutas-sin-formato",
+            "factory-20261010-colector-50-senales",
+        }
+        self.assertEqual({row["id"] for row in rows}, expected_ids)
+        self.assertEqual(len(rows), len(expected_ids))
+        self.assertTrue(all(row["project"] == "pl0n3r/factory" for row in rows))
+        by_id = {row["id"]: row for row in rows}
+        self.assertEqual(
+            by_id["factory-20261010-rutas-sin-formato"]["source"],
+            "https://github.com/pl0n3r/brvtal/issues/968",
+        )
+        self.assertEqual(
+            by_id["factory-20261009-rate-limit-sin-sha"]["source"],
+            "https://github.com/pl0n3r/Factory/issues/1064",
+        )
+        prevention = by_id["factory-20261009-rate-limit-sin-sha"]["prevention"]
+        self.assertIn("no prueban causalidad", prevention)
+        self.assertIn("bot→trigger→HEAD", prevention)
+        self.assertIn("fallar cerrado", prevention)
+
+    def test_construction_lessons_appear_in_factory_summary(self):
+        """El resumen amplio contiene todas las lecciones del nuevo dataset."""
+        path = Path(__file__).resolve().parent / "registros" / "2026-10-construccion.jsonl"
+        rows = load_lessons([path])
+        result = summarize(
+            rows, "pl0n3r/factory", max_lessons=20, max_chars=12000,
+        )
+        for row in rows:
+            self.assertIn(f"## {row['id']} ·", result)
+        self.assertIn("https://github.com/pl0n3r/brvtal/issues/968", result)
+        self.assertIn("bot→trigger→HEAD", result)
+        other_project = summarize(
+            rows, "pl0n3r/Condor", max_lessons=20, max_chars=12000,
+        )
+        self.assertNotIn("factory-20261010-", other_project)
+
+
 if __name__ == "__main__":
     unittest.main()
