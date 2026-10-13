@@ -297,7 +297,7 @@ class LeaseGithubPort:
 
             comments = read_comments()
             active_markers: list[tuple[int, dict[str, Any]]] = []
-            notes: list[tuple[datetime, str]] = []
+            notes: list[tuple[int, dict[str, Any], datetime, str]] = []
             keys = {
                 "version", "reservation_id", "owner", "branch", "branch_sha",
                 "last_activity_at", "acceptance_sha256", "task_marker_sha256",
@@ -331,27 +331,66 @@ class LeaseGithubPort:
                     raise ValueError("malformed_recovery_note")
                 note = json.loads(match.group(1), object_pairs_hook=no_duplicate_keys)
                 if (type(note) is not dict or set(note) != keys
-                        or type(note["version"]) is not int or note["version"] != 1
-                        or note["owner"] != expected.owner
-                        or note["reservation_id"] != expected.reservation_id
-                        or note["branch"] != expected.branch
-                        or note["branch_sha"] != expected.branch_sha
-                        or note["last_activity_at"] != _utc(
-                            expected.last_activity_at).isoformat()
-                        or note["acceptance_sha256"] != expected.marker["acceptance_sha256"]
-                        or note["task_marker_sha256"] != expected.marker["task_marker_sha256"]):
-                    raise ValueError("recovery_identity_drift")
+                        or type(note["version"]) is not int or note["version"] != 1):
+                    raise ValueError("malformed_recovery_payload")
                 stamp = comment.get("created_at")
                 if (type(stamp) is not str
                         or re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", stamp) is None
                         or comment.get("updated_at") != stamp):
                     raise ValueError("untrusted_note_timestamp")
                 when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-                notes.append((when, author["login"]))
-            if (len(active_markers) == 0
-                    or max(active_markers, key=lambda row: row[0])[1] != expected.marker
-                    or len(notes) > 1):
-                raise ValueError("marker_or_note_count")
+                notes.append((comment["id"], note, when, author["login"]))
+            if not active_markers:
+                raise ValueError("missing_v3_marker")
+            current_id, current_marker = max(
+                active_markers, key=lambda row: row[0])
+            if current_marker != expected.marker:
+                raise ValueError("stale_v3_marker")
+            # La recuperación de /tomar conserva notas legítimas de otras
+            # leases. Ignorar solo las anteriores a la V3 vigente y
+            # asociadas a un marker bot auténtico, jamás notas huérfanas.
+            previous_markers = {
+                marker["reservation_id"]: (comment_id, marker)
+                for comment_id, marker in active_markers
+                if comment_id < current_id
+                and marker["reservation_id"] != expected.reservation_id
+            }
+            current_notes: list[tuple[datetime, str]] = []
+            old_seen: set[str] = set()
+            for note_id, note, when, actor in notes:
+                if note["reservation_id"] == expected.reservation_id:
+                    if (note_id <= current_id
+                            or note["owner"] != expected.owner
+                            or note["branch"] != expected.branch
+                            or note["branch_sha"] != expected.branch_sha
+                            or note["last_activity_at"] != _utc(
+                                expected.last_activity_at).isoformat()
+                            or note["acceptance_sha256"] !=
+                               expected.marker["acceptance_sha256"]
+                            or note["task_marker_sha256"] !=
+                               expected.marker["task_marker_sha256"]):
+                        raise ValueError("recovery_identity_drift")
+                    current_notes.append((when, actor))
+                    continue
+                old = previous_markers.get(note["reservation_id"])
+                if (old is None or note["reservation_id"] in old_seen
+                        or not old[0] < note_id < current_id
+                        or note["owner"] != old[1]["owner"]
+                        or note["branch"] != old[1]["branch"]
+                        or note["acceptance_sha256"] !=
+                           old[1]["acceptance_sha256"]
+                        or note["task_marker_sha256"] !=
+                           old[1]["task_marker_sha256"]
+                        or type(note["branch_sha"]) is not str
+                        or SHA.fullmatch(note["branch_sha"]) is None
+                        or type(note["last_activity_at"]) is not str
+                        or re.fullmatch(
+                            r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00",
+                            note["last_activity_at"]) is None):
+                    raise ValueError("historical_note_untrusted")
+                old_seen.add(note["reservation_id"])
+            if len(current_notes) > 1:
+                raise ValueError("duplicate_current_note")
             final = get(path)
             ref_after = get(branch_path)
             if (type(final) is not dict
@@ -374,7 +413,7 @@ class LeaseGithubPort:
                     or remaining - calls < 0
                     or (remaining - calls) * 5 < limit):
                 raise ValueError("recheck_mismatch")
-            found = len(notes)
+            found = len(current_notes)
             proof = RecoveryNoteProof(
                 complete=True, authenticated=True, count=found,
                 owner=expected.owner, reservation_id=expected.reservation_id,
@@ -382,8 +421,8 @@ class LeaseGithubPort:
                 last_activity_at=expected.last_activity_at,
                 acceptance_sha256=expected.marker["acceptance_sha256"],
                 task_marker_sha256=expected.marker["task_marker_sha256"],
-                created_at=notes[0][0] if found else None,
-                author=notes[0][1] if found else None,
+                created_at=current_notes[0][0] if found else None,
+                author=current_notes[0][1] if found else None,
             )
             if not _note_ok(proof, expected):
                 raise ValueError("recovery_note_ineligible")
