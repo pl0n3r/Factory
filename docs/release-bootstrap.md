@@ -130,7 +130,7 @@ Una puerta creada por `github-actions[bot]` **no se vuelve confiable por el nomb
 
 - el gate actual contiene exactamente un `factory-release-rearm` y un `factory-release-window` válidos, ambos ligados al mismo `expected_sha`;
 - el Issue fue creado dentro de esa ventana; después del vencimiento, el bootstrap solo conserva la autoridad si existe una decisión A v2 válida y el SHA/maquinaria siguen compatibles;
-- la cadena `source_issue` es acíclica, tiene como máximo ocho saltos y cada salto intermedio creado por el bot conserva markers canónicos coherentes con el SHA de su propia puerta;
+- la cadena `source_issue` es acíclica, tiene como máximo dieciséis saltos y cada salto intermedio creado por el bot conserva markers canónicos coherentes con el SHA de su propia puerta;
 - la cadena termina en una puerta `factory-release` creada por el OWNER del repositorio con `author_association=OWNER`.
 
 El workflow obtiene esa cadena únicamente mediante `issues: read` dentro del mismo repositorio y la entrega al parser puro; no amplía permisos ni confía en datos derivados del título. Marker ausente/duplicado/malformado, SHA incompatible, creación fuera de ventana, deriva de maquinaria, ciclo, profundidad excesiva o una cadena que no termina en el OWNER fallan cerrado. Esto conserva la cadena de provenance sin convertir a `github-actions[bot]` en una identidad globalmente confiable.
