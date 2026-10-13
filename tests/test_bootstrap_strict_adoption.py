@@ -121,6 +121,39 @@ def consumer_caller(*, strict: bool) -> str:
 
 
 class BootstrapStrictAdoptionTests(unittest.TestCase):
+    def test_tree_info_rejects_truncated_or_malformed_recursive_tree(self):
+        """A partial GitHub tree cannot prove the protected paths are symlink-free."""
+        gateway = bootstrap.GitHubGateway("fake-token")
+        repo, sha = "pl0n3r/Consumer", "a" * 40
+        paths = {".github/workflows/coordinacion.yml", "tests/test_factory_coordination_adoption.py"}
+        commit = {"tree": {"sha": "b" * 40}}
+        valid = [{"path": ".github/workflows", "mode": "040000"},
+                 {"path": ".github/workflows/coordinacion.yml", "mode": "100644"}]
+        cases = (
+            ({"truncated": True, "tree": valid}, "incompleto"),
+            ({"tree": valid}, "incompleto"),
+            ({"truncated": "false", "tree": valid}, "incompleto"),
+            ({"truncated": False}, "inválido"),
+            ({"truncated": False, "tree": None}, "inválido"),
+            ({"truncated": False, "tree": [None]}, "inválida"),
+            ({"truncated": False, "tree": [{"path": ".github", "mode": None}]}, "inválida"),
+            ({"truncated": False, "tree": [{"path": ".github", "mode": "120000"}]}, "symlinks"),
+        )
+        for returned, reason in cases:
+            with self.subTest(response=returned), mock.patch.object(
+                gateway, "_request", side_effect=[commit, returned]
+            ) as request:
+                with self.assertRaisesRegex(bootstrap.BootstrapError, reason):
+                    gateway.tree_info(repo, sha, paths)
+                self.assertEqual(request.call_count, 2)
+                self.assertTrue(all(call.args[0] == "GET" for call in request.call_args_list))
+
+        with mock.patch.object(gateway, "_request", side_effect=[
+            commit, {"truncated": False, "tree": valid}
+        ]) as request:
+            self.assertEqual(gateway.tree_info(repo, sha, paths), "b" * 40)
+            self.assertEqual(request.call_count, 2)
+
     def test_closed_pr_scans_all_pages_and_fails_closed_on_unknown_history(self):
         """Pagination must not hide a second unmerged PR or authorize partial history."""
         gateway = bootstrap.GitHubGateway("fake-token")

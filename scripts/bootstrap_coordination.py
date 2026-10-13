@@ -684,9 +684,16 @@ class GitHubGateway:
         commit=self._request("GET",f"/repos/{name}/git/commits/{sha}"); tree=(commit or {}).get("tree",{}).get("sha") if isinstance(commit,dict) else None
         if not isinstance(tree,str): raise BootstrapError("Árbol base inválido.")
         recursive=self._request("GET",f"/repos/{name}/git/trees/{tree}?recursive=1")
-        for item in (recursive or {}).get("tree",[]) if isinstance(recursive,dict) else []:
-            path=item.get("path","")
-            if item.get("mode")=="120000" and any(p==path or p.startswith(path+"/") for p in paths): raise BootstrapError("Patch no admite symlinks.")
+        if not isinstance(recursive,dict) or not isinstance(recursive.get("tree"),list):
+            raise BootstrapError("Árbol recursivo inválido.")
+        for item in recursive["tree"]:
+            if not isinstance(item,dict) or not isinstance(item.get("path"),str) or not isinstance(item.get("mode"),str):
+                raise BootstrapError("Entrada de árbol recursivo inválida.")
+            path=item["path"]
+            if item["mode"]=="120000" and any(p==path or p.startswith(path+"/") for p in paths):
+                raise BootstrapError("Patch no admite symlinks.")
+        if recursive.get("truncated") is not False:
+            raise BootstrapError("Inventario de árbol recursivo incompleto.")
         return tree
     def materialize(self,req: dict[str,Any],patch: dict[str,str])->tuple[str,int]:
         name,branch,expected=req["target_repository"],branch_name(req),req["expected_main_sha"]
