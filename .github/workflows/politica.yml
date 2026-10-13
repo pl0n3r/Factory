@@ -181,10 +181,18 @@ jobs:
               "$phase_file" >/dev/null; then
               phase_args=(--phase-file "$phase_file")
             else
-              echo "::warning::datos.yml BASE no define una fase válida; fallback reviewer deshabilitado."
+              echo "::error::datos.yml BASE es inválido o excede el límite; fase no verificable." >&2
+              exit 1
             fi
           else
-            echo "::warning::No se pudo leer datos.yml desde BASE exacta; fallback reviewer deshabilitado."
+            if grep -q 'HTTP 404' "$phase_err"; then
+              # Consumidor legacy sin datos.yml: no inferir construccion.
+              # Al omitir --phase-file, el motor conserva el límite histórico.
+              echo "::notice::datos.yml BASE ausente (404); fase desconocida, política estricta."
+            else
+              echo "::error::No se pudo verificar datos.yml en BASE exacta (API/transporte)." >&2
+              exit 1
+            fi
           fi
 
           HEAD_COMMIT_JSON="$(gh api "repos/$REPOSITORY/commits/$PR_HEAD_SHA")"
