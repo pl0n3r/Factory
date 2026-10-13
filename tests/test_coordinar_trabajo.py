@@ -1847,6 +1847,100 @@ class CoordinacionTests(unittest.TestCase):
         api.request = request
         return api, observed
 
+    def test_scheduled_sweep_consumer_reads_exact_factory_767(self):
+        """Factory y consumidores leen #767 con GET autenticado canónico."""
+        for repo in ("pl0n3r/Factory", "pl0n3r/Condor",
+                     "pl0n3r/FactoryRunner"):
+            with self.subTest(repo=repo):
+                api, observed = self._sweep_switch_api("RUNNING")
+                api.repo = repo
+                seen = []
+                original_request = api.request
+
+                def recording(method, path, payload=None, allow=()):
+                    seen.append((method, path))
+                    return original_request(method, path, payload, allow)
+
+                api.request = recording
+                result = run_scheduled_sweep(api)
+                self.assertEqual(result, {
+                    "stale_reservations": 0, "satisfied_blocks": 0
+                })
+                self.assertEqual(seen, [
+                    ("GET", "/repos/pl0n3r/Factory/issues/767")
+                ])
+                self.assertEqual(observed["reads"], 1)
+                self.assertEqual(api.repo, repo)
+
+    def test_scheduled_sweep_consumer_paused_unknown_has_zero_writes(self):
+        """PAUSED y fallos de lectura autenticada deniegan toda escritura."""
+        for repo in ("pl0n3r/Condor", "pl0n3r/FactoryRunner"):
+            for mode in ("PAUSED", "403", "404", "429", "timeout",
+                         "duplicate", "invalid", "wrong-owner", "unclosed"):
+                with self.subTest(repo=repo, mode=mode):
+                    api, _ = self._sweep_switch_api(mode)
+                    api.repo = repo
+                    add_active_reservation(api)
+                    api.commit_times["abc123"] = datetime(
+                        2020, 1, 1, tzinfo=timezone.utc)
+                    before = len(api.comments)
+                    with self.assertRaises(CoordinationError):
+                        run_scheduled_sweep(api)
+                    self.assertEqual(len(api.comments), before)
+                    self.assertEqual(api.status_history, [STATUS_RESERVED])
+                    self.assertNotIn("coordinacion/lock-issue-12",
+                                     api.branches)
+
+    def test_scheduled_sweep_never_reads_shadow_issue_767(self):
+        """Un #767 local RUNNING no autoriza si Factory#767 está PAUSED."""
+        api, observed = self._sweep_switch_api("PAUSED")
+        api.repo = "pl0n3r/Condor"
+        original_issue = api.issue
+        shadow_reads = []
+
+        def issue(number):
+            if number == 767:
+                shadow_reads.append(number)
+                return {
+                    "number": 767, "state": "closed",
+                    "url": coordinator.CANONICAL_SOURCE_URL,
+                    "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                    "user": {"login": "pl0n3r"},
+                    "body": ('<!-- factory-unattended-kill-switch '
+                             '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->'),
+                }
+            return original_issue(number)
+
+        api.issue = issue
+        with self.assertRaisesRegex(CoordinationError, "no RUNNING"):
+            run_scheduled_sweep(api)
+        self.assertEqual(shadow_reads, [])
+        self.assertEqual(observed["reads"], 1)
+        self.assertEqual(api.status_history, [])
+
+    def test_scheduled_sweep_factory_and_consumer_preserve_locks(self):
+        """Barridos sintéticos preservan locks ajenos y recuperan sin fuga."""
+        for repo in ("pl0n3r/Factory", "pl0n3r/Condor"):
+            with self.subTest(repo=repo):
+                api, observed = self._sweep_switch_api("RUNNING")
+                api.repo = repo
+                add_active_reservation(api)
+                old = "2020-01-01T00:00:00+00:00"
+                api.comments[-1]["created_at"] = old
+                api.comments[-1]["updated_at"] = old
+                api.commit_times["abc123"] = datetime(
+                    2020, 1, 1, tzinfo=timezone.utc)
+                foreign_lock = "coordinacion/lock-issue-99"
+                api.branches[foreign_lock] = "other-session"
+                result = run_scheduled_sweep(api)
+                self.assertEqual(result["stale_reservations"], 1)
+                self.assertEqual(api.status_history[-1], STATUS_RECOVERY)
+                self.assertNotIn("coordinacion/lock-issue-12",
+                                 api.branches)
+                self.assertEqual(api.branches[foreign_lock],
+                                 "other-session")
+                self.assertGreaterEqual(observed["reads"], 3)
+
     def test_scheduled_sweep_paused_invalid_switch_zero_writes(self):
         for mode in ("PAUSED", "403", "duplicate", "invalid",
                      "wrong-owner", "unclosed"):
