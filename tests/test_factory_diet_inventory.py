@@ -406,6 +406,39 @@ class FactoryDietInventoryTests(unittest.TestCase):
             encoding="utf-8")
         watchdog_f1g_assertions(self, watchdog, runbook)
 
+    def test_watchdog_contract_rejects_comment_only_safety_controls(self) -> None:
+        """Una línea comentada o permiso ajeno nunca certifica vigilancia."""
+        source = (WORKFLOWS / "unattended-watchdog.yml").read_text(
+            encoding="utf-8")
+        runbook = (ROOT / "docs" / "unattended-watchdog-runtime.md").read_text(
+            encoding="utf-8")
+        # Ambos estados pre/post F1G deben pasar con el workflow real.
+        watchdog_f1g_assertions(self, source, runbook)
+        mutants = (
+            (
+                "cron en comentario",
+                "    - cron: '*/15 * * * *'",
+                "    # - cron: '*/15 * * * *'",
+            ),
+            (
+                "permiso del watchdog en comentario",
+                "      issues: write",
+                "      # issues: write",
+            ),
+            (
+                "comando del watchdog en comentario",
+                "          python3 -m scripts.unattended_watchdog_runtime",
+                "          # python3 -m scripts.unattended_watchdog_runtime",
+            ),
+        )
+        for label, present, replacement in mutants:
+            with self.subTest(label=label):
+                self.assertIn(present, source)
+                self.assertNotEqual(present, replacement)
+                altered = source.replace(present, replacement, 1)
+                with self.assertRaises(AssertionError):
+                    watchdog_f1g_assertions(self, altered, runbook)
+
     def test_phases_are_ordered_and_reversible(self) -> None:
         positions = [
             self.content.index(f"### Fase {n}:")
