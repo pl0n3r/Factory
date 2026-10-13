@@ -67,7 +67,12 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
                     ".github/workflows/liberar-reservas.yml").read_text(
                         encoding="utf-8")
         self.assertIn("cron: '*/10 * * * *'", workflow)
-        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("permissions:\n  contents: read\n  issues: read", workflow)
+        self.assertIn("Inventario observado de recuperación", workflow)
+        self.assertIn("gh api --paginate --slurp", workflow)
+        self.assertIn("evaluate_unattended_kill_switch", workflow)
+        self.assertIn("inventory_from_paginated_issues", workflow)
+        self.assertIn("liberaciones=0", workflow)
         self.assertNotIn("issues: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
         self.assertIn("scripts.lease_auto_release_run import run_cycle", workflow)
