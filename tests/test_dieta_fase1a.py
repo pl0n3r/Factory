@@ -126,7 +126,27 @@ class DietaFase1ATests(unittest.TestCase):
         costs = (WORKFLOWS / "costos.yml").read_text(encoding="utf-8")
         self.assertIn("presupuesto-pr:", costs)
         watchdog = (WORKFLOWS / "unattended-watchdog.yml").read_text(encoding="utf-8")
-        self.assertIn("daily-summary:", watchdog)
+        # F1G cambia el contrato accesorio con runbook explícito, no el
+        # watchdog ni sus puertas duras heredadas de F1A.
+        runbook = (ROOT / "docs" / "unattended-watchdog-runtime.md").read_text(
+            encoding="utf-8")
+        f1g_enabled = "## F1G: resumen diario accesorio suspendido" in runbook
+        self.assertIn("watchdog:", watchdog)
+        self.assertIn("scripts.unattended_watchdog_runtime", watchdog)
+        self.assertIn("cron: '*/15 * * * *'", watchdog)
+        self.assertIn("group: unattended-watchdog-${{ github.repository_id }}",
+                      watchdog)
+        self.assertIn("issues: write", watchdog)
+        if f1g_enabled:
+            self.assertNotIn("  daily-summary:", watchdog)
+            self.assertNotIn("cron: '0 13 * * *'", watchdog)
+            self.assertNotIn("python3 -m scripts.unattended_daily_summary",
+                             watchdog)
+        else:
+            self.assertIn("  daily-summary:", watchdog)
+            self.assertIn("cron: '0 13 * * *'", watchdog)
+            self.assertIn("python3 -m scripts.unattended_daily_summary",
+                          watchdog)
         self.assertTrue((ROOT / "scripts" / "unattended_kill_switch.py").is_file())
         self.assertTrue((ROOT / "scripts" / "coordinar_trabajo.py").is_file())
         for token in ("CodeQL", "Sonar", "CodeRabbit", "#767", "go-live"):
