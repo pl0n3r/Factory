@@ -55,6 +55,7 @@ def _principles(template: object) -> str:
     if footer not in (
         "Este texto no sincroniza ni modifica consumidores.",
         "Este texto no sincroniza ni modifica consumidores, no constituye aprobación humana o revisión independiente y no activa el orquestador. Ningún cambio queda listo para merge, release, `Factory@v1`, despliegue o live sin CI, revisión independiente, protección de rama y autoridad comprobadas. Se prohíben acceso a datos reales, gasto, compra, credenciales, permisos nuevos y borrados irreversibles sin su puerta legítima.",
+        "Este texto no sincroniza ni modifica consumidores, no constituye aprobación humana o revisión independiente y no activa el orquestador. Ningún cambio queda listo para merge sin checks terminales verdes del HEAD exacto, reserva V3, protección de rama y autoridad comprobadas; en `construccion` no se exige revisión independiente ni segunda cuenta según D-069. Release, `Factory@v1`, despliegue y live conservan sus puertas propias. Se prohíben acceso a datos reales, gasto, compra, credenciales, permisos nuevos y borrados irreversibles sin su puerta legítima.",
     ):
         raise SyncPlanError("invalid_principles_source")
     headings = re.findall(r"^### (Regla 0|Principio [1-8]) — ", content, re.M)
@@ -65,6 +66,17 @@ def _principles(template: object) -> str:
             or content.count("### Límite explícito del template") != 1
             or "no otorga permisos de ejecución" not in source
             or "no sincroniza ni modifica consumidores" not in content):
+        raise SyncPlanError("invalid_principles_source")
+    # Títulos sin cuerpo no constituyen principios transferibles.
+    sections = list(re.finditer(
+        r"^### (?:Regla 0|Principio [1-8]) — [^\n]+\n", content, re.M
+    ))
+    footer_start = content.index("### Límite explícito del template")
+    if (len(sections) != 9 or any(
+        not content[section.end():(sections[pos + 1].start()
+            if pos + 1 < len(sections) else footer_start)].strip()
+        for pos, section in enumerate(sections)
+    )):
         raise SyncPlanError("invalid_principles_source")
     return content
 
@@ -92,6 +104,8 @@ def _render_consumer(existing: str, principles: str) -> tuple[str, str]:
             if (closing is not None and closing.group(1)[0] == fence_char
                     and len(closing.group(1)) >= fence_width):
                 fence_char = None
+    if fence_char is not None:
+        raise SyncPlanError("invalid_sync_markers")
     if existing.count(BEGIN) != existing.count(END) or existing.count(BEGIN) > 1:
         raise SyncPlanError("invalid_sync_markers")
     if BEGIN not in existing:
@@ -120,13 +134,26 @@ def _render_consumer(existing: str, principles: str) -> tuple[str, str]:
 def plan_sync(template_text: str, consumer_text_by_repo: Mapping[str, str]) -> dict:
     """Plan six exact consumers. Return hashes/status only, never content/apply rights."""
     principles = _principles(template_text)
-    if (not isinstance(consumer_text_by_repo, Mapping)
-            or set(consumer_text_by_repo) != set(REPOSITORIES)
-            or len(consumer_text_by_repo) != len(REPOSITORIES)):
+    if not isinstance(consumer_text_by_repo, Mapping):
         raise SyncPlanError("incomplete_consumer_inventory")
+    # Un Mapping personalizado puede lanzar errores que incluyan datos privados.
+    # Aislar la lectura completa antes de planificar cualquier consumidor.
+    try:
+        names = tuple(consumer_text_by_repo)
+        if (len(names) != len(REPOSITORIES)
+                or any(type(name) is not str for name in names)
+                or set(names) != set(REPOSITORIES)):
+            raise SyncPlanError("incomplete_consumer_inventory")
+        documents = [
+            (name, _validate_text(consumer_text_by_repo[name]))
+            for name in REPOSITORIES
+        ]
+    except SyncPlanError:
+        raise
+    except Exception:
+        raise SyncPlanError("incomplete_consumer_inventory") from None
     entries = []
-    for repository_ref in REPOSITORIES:
-        existing = _validate_text(consumer_text_by_repo[repository_ref])
+    for repository_ref, existing in documents:
         projected, action = _render_consumer(existing, principles)
         # The projected document must respect the same safety budget as the
         # input. Appending a valid principles block may overflow a near-limit

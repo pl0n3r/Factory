@@ -1,6 +1,8 @@
 """Offline tests for Factory #1109, without real consumer data or external I/O."""
 import json
 import unittest
+from collections.abc import Mapping
+from pathlib import Path
 
 from scripts.plan_sync_agentes_consumidores import (
     REPOSITORIES, SyncPlanError, _principles, _render_consumer, plan_sync,
@@ -8,8 +10,11 @@ from scripts.plan_sync_agentes_consumidores import (
 
 
 def template():
-    headings = "\n".join(["### Regla 0 — alcance seguro", "paralelismo con límites"]
-                         + [f"### Principio {n} — ejemplo" for n in range(1, 9)])
+    headings = "\n\n".join(
+        ["### Regla 0 — alcance seguro\nparalelismo con límites"]
+        + [f"### Principio {n} — ejemplo\nEjemplo seguro del principio {n}."
+           for n in range(1, 9)]
+    )
     return ("# AGENTES.md\n\nEsta plantilla no otorga permisos de ejecución\n\n"
             "## Principios de construcción de la fábrica\n\n" + headings
             + "\n\n### Límite explícito del template\n"
@@ -34,6 +39,17 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
             self.assertTrue(rendered.startswith(original))
             self.assertIn("## Reglas locales", rendered)
             self.assertIn("### Principio 8", rendered)
+
+    def test_current_factory_template_is_compatible_with_offline_planner(self):
+        # La API es pura; solo el test lee la fuente canónica del mismo árbol.
+        source = (Path(__file__).resolve().parents[1] /
+                  "template" / "AGENTES.md").read_text(encoding="utf-8")
+        planned = plan_sync(source, consumers())
+        self.assertEqual(planned["status"], "planned")
+        self.assertFalse(planned["can_apply"])
+        self.assertEqual(len(planned["consumers"]), 6)
+        self.assertTrue(all(row["action"] == "insert"
+                            for row in planned["consumers"]))
 
     def test_idempotent_sync_and_stable_fingerprints(self):
         originals = consumers()
@@ -76,6 +92,47 @@ class PlanSyncAgentesConsumidoresTests(unittest.TestCase):
                 with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
                     plan_sync(template() + suffix, consumers())
         self.assertEqual(plan_sync(template(), consumers())["status"], "planned")
+
+        # Una sección sin cuerpo, aunque retenga título y cierre auténticos,
+        # no constituye un principio apto para planificar seis consumidores.
+        empty_principle = template().replace(
+            "### Principio 3 — ejemplo\nEjemplo seguro del principio 3.",
+            "### Principio 3 — ejemplo",
+        )
+        with self.assertRaisesRegex(SyncPlanError, "invalid_principles_source"):
+            plan_sync(empty_principle, consumers())
+        # Sin cierre, los marcadores serían añadidos dentro de un fence literal.
+        for opening in ("\x60\x60\x60markdown", "~~~text"):
+            docs = consumers()
+            docs[REPOSITORIES[0]] += opening + "\nEjemplo local sin cierre\n"
+            with self.subTest(unclosed_fence=opening):
+                with self.assertRaisesRegex(SyncPlanError, "invalid_sync_markers"):
+                    plan_sync(template(), docs)
+
+        class BrokenMapping(Mapping):
+            def __init__(self, stage):
+                self.stage = stage
+
+            def __iter__(self):
+                if self.stage == "keys":
+                    raise RuntimeError("private-secret-fixture")
+                return iter(REPOSITORIES)
+
+            def __len__(self):
+                return len(REPOSITORIES)
+
+            def __getitem__(self, name):
+                if self.stage == "value":
+                    raise RuntimeError("private-secret-fixture")
+                return consumers()[name]
+
+        for stage in ("keys", "value"):
+            with self.subTest(mapping_stage=stage):
+                with self.assertRaisesRegex(
+                    SyncPlanError, "incomplete_consumer_inventory"
+                ) as raised:
+                    plan_sync(template(), BrokenMapping(stage))
+                self.assertNotIn("private-secret-fixture", str(raised.exception))
 
         # Unicode con sustitutos sueltos no debe escapar como error Unicode
         # sin tipificar, tanto en fuente como en uno de los consumidores.
