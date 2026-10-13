@@ -111,6 +111,14 @@ class FakeGitHub:
             "abc123": datetime.now(timezone.utc),
         }
 
+    def request(self, method: str, path: str, payload=None, allow=()):
+        """GET sintético autenticado de la fuente global exacta."""
+        if method != "GET" or path != "/repos/pl0n3r/Factory/issues/767":
+            raise AssertionError("REST sintético no canónico: " + path)
+        if self.repo.lower() == "pl0n3r/factory":
+            return self.issue(767)
+        return self.public_request(path, allow)
+
     def issue(self, number: int) -> dict:
         """Devuelve el Issue falso o una dependencia configurada."""
         if number == 767 and self.repo.lower() == "pl0n3r/factory":
