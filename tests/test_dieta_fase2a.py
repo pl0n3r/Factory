@@ -15,7 +15,7 @@ class DietaFase2ATests(unittest.TestCase):
 
     def test_single_label_color_workflow_retired_without_hard_gate_loss(self):
         active = self.active()
-        self.assertEqual(len(active), 31)
+        self.assertEqual(len(active), 32)
         self.assertNotIn(RETIRED, active)
         self.assertEqual(active, set(EXPECTED_ACTIVE))
         for gate in ("factory-ci.yml", "sonar.yml", "codeql-evidence.yml",

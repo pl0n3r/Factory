@@ -7,6 +7,7 @@ import unittest
 
 from scripts.no_work_dedup import (
     CANONICAL_SINK,
+    NoWorkDecision,
     NoWorkInventoryError,
     NoWorkPublicationState,
     decide_no_work,
@@ -74,6 +75,531 @@ def state_after(
 
 
 class NoWorkDedupTests(unittest.TestCase):
+    def test_available_and_recovery_reject_malformed_issue_ids(self):
+        valid = inventory()
+        valid["repositories"]["Factory"]["available"] = [1121, 904]
+        reference = inventory_fingerprint(valid)
+        valid["repositories"]["Factory"]["available"].reverse()
+        self.assertEqual(inventory_fingerprint(valid), reference)
+
+        invalid_values = (True, False, 0, -1, 1.0, "904", None, {}, [1])
+        for field in ("available", "recovery"):
+            for bad in invalid_values:
+                with self.subTest(field=field, bad=repr(bad)):
+                    candidate = inventory()
+                    candidate["repositories"]["Factory"][field] = [bad]
+                    with self.assertRaisesRegex(
+                        NoWorkInventoryError, "issue_ids_invalid"
+                    ):
+                        inventory_fingerprint(candidate)
+            duplicate = inventory()
+            duplicate["repositories"]["Factory"][field] = [1121, 1121]
+            with self.assertRaisesRegex(
+                NoWorkInventoryError, "issue_ids_duplicate"
+            ):
+                inventory_fingerprint(duplicate)
+
+        contradictory = inventory()
+        contradictory["repositories"]["Factory"]["available"] = [1121]
+        contradictory["repositories"]["Factory"]["recovery"] = [1121]
+        with self.assertRaisesRegex(NoWorkInventoryError, "issue_state_conflict"):
+            inventory_fingerprint(contradictory)
+
+        distinct = inventory()
+        distinct["repositories"]["Factory"]["available"] = [904, 1121]
+        distinct["repositories"]["Factory"]["recovery"] = [1102]
+        stable = inventory_fingerprint(distinct)
+        distinct["repositories"]["Factory"]["available"].reverse()
+        self.assertEqual(inventory_fingerprint(distinct), stable)
+
+    def test_live_reservations_require_valid_identity_and_active_bool(self):
+        invalid_entries = (
+            "lease-plain-text",
+            True,
+            {},
+            {"issue": 1121, "reservation_id": "valid", "active": 1},
+            {"issue": 1121, "reservation_id": "valid"},
+            {"issue": True, "reservation_id": "valid", "active": True},
+            {"issue": 0, "reservation_id": "valid", "active": True},
+            {"issue": 1121, "reservation_id": "", "active": True},
+            {"issue": 1121, "reservation_id": None, "active": False},
+            {"issue": 1121, "issue_number": 1122,
+             "reservation_id": "valid", "active": True},
+            {"issue": 1, "issue_number": True,
+             "reservation_id": "alias", "active": True},
+            {"issue": 1, "issue_number": 1.0,
+             "reservation_id": "alias", "active": True},
+        )
+        for entry in invalid_entries:
+            with self.subTest(entry=repr(entry)):
+                candidate = inventory()
+                candidate["repositories"]["ControlBot"]["reservations"] = [entry]
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "reservation_invalid"
+                ):
+                    inventory_fingerprint(candidate)
+
+        baseline = inventory_fingerprint(inventory())
+        inactive = inventory()
+        inactive["repositories"]["ControlBot"]["reservations"].append(
+            {"issue_number": 1121, "reservation_id": "old", "active": False}
+        )
+        self.assertEqual(inventory_fingerprint(inactive), baseline)
+        active = inventory()
+        active["repositories"]["ControlBot"]["reservations"].append(
+            {"issue_number": 1121, "reservation_id": "new", "active": True}
+        )
+        self.assertNotEqual(inventory_fingerprint(active), baseline)
+
+        for conflict in (
+            {"issue_number": 1121, "reservation_id": "another", "active": True},
+            {"issue_number": 1122, "reservation_id": "new", "active": True},
+        ):
+            duplicate = inventory()
+            duplicate["repositories"]["ControlBot"]["reservations"] = [
+                {"issue_number": 1121, "reservation_id": "new", "active": True},
+                conflict,
+            ]
+            with self.subTest(conflict=conflict):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "reservation_duplicate"
+                ):
+                    inventory_fingerprint(duplicate)
+
+    def test_inactive_and_active_same_lease_cannot_hide_conflict(self):
+        # La misma identidad UUID/Issue con flags contradictorios es
+        # evidencia ambigua aun si la fila inactive no va al fingerprint.
+        baseline = inventory_fingerprint(inventory())
+        for flag in (False, True):
+            sample = inventory()
+            sample["repositories"]["ControlBot"]["reservations"].append({
+                "issue": 634, "reservation_id": "lease-634",
+                "active": flag,
+            })
+            with self.subTest(active=flag):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "reservation_duplicate"
+                ):
+                    inventory_fingerprint(sample)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
+        valid = inventory()
+        valid["repositories"]["ControlBot"]["reservations"].append({
+            "issue": 634, "reservation_id": "historic-634",
+            "active": False,
+        })
+        self.assertEqual(inventory_fingerprint(valid), baseline)
+
+    def test_valid_inventory_and_scalar_blockers_keep_existing_fingerprint(self):
+        base = inventory()
+        fingerprint = inventory_fingerprint(base)
+        self.assertEqual(inventory_fingerprint(base), fingerprint)
+
+        with_blockers = inventory()
+        with_blockers["repositories"]["Factory"]["blockers"].extend(
+            [904, {"issue": 1121, "reason": "coordination"}]
+        )
+        first = inventory_fingerprint(with_blockers)
+        with_blockers["repositories"]["Factory"]["blockers"].reverse()
+        self.assertEqual(inventory_fingerprint(with_blockers), first)
+
+        for bad_state in ("UNKNOWN", "OPEN", "merged", "", True, None):
+            candidate = inventory()
+            candidate["repositories"]["Condor"]["pull_requests"][0]["state"] = bad_state
+            with self.subTest(pr_state=repr(bad_state)):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "pull_request_state_invalid"
+                ):
+                    inventory_fingerprint(candidate)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(candidate, None, 100)
+        # Membership in ("open", "closed") uses equality; a caller-supplied
+        # object must never impersonate a real GitHub state string.
+        class SpoofOpen:
+            def __eq__(self, other):
+                return other == "open"
+
+        spoof = inventory()
+        spoof["repositories"]["Condor"]["pull_requests"][0]["state"] = SpoofOpen()
+        with self.assertRaisesRegex(NoWorkInventoryError, "pull_request_state_invalid"):
+            inventory_fingerprint(spoof)
+        with self.assertRaises(NoWorkInventoryError):
+            decide_no_work(spoof, None, 100)
+
+        known_closed = inventory()
+        known_closed["repositories"]["Condor"]["pull_requests"][0]["state"] = "closed"
+        known_closed["repositories"]["Condor"]["pull_requests"] = []
+        closed_baseline = inventory_fingerprint(known_closed)
+        known_closed["repositories"]["Condor"]["pull_requests"].append({
+            "number": 448, "state": "closed", "head_sha": "a" * 40
+        })
+        self.assertEqual(inventory_fingerprint(known_closed), closed_baseline)
+
+        # Un PR cerrado válido se excluye; uno cerrado sin identidad
+        # verificable NO puede eliminarse silenciosamente del snapshot.
+        for invalid in (
+            {"state": "closed"},
+            {"state": "closed", "number": True, "head_sha": "a" * 40},
+            {"state": "closed", "number": 448, "head_sha": "bad"},
+            {"state": "closed", "number": 1.0, "head_sha": "a" * 40},
+        ):
+            sample = inventory()
+            sample["repositories"]["Condor"]["pull_requests"] = [invalid]
+            with self.subTest(closed=invalid):
+                with self.assertRaises(NoWorkInventoryError):
+                    inventory_fingerprint(sample)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
+
+        for bad in (True, False, 0, -4, "904", None):
+            candidate = inventory()
+            candidate["repositories"]["Factory"]["blockers"] = [bad]
+            with self.subTest(blocker=repr(bad)):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "blocker_invalid"
+                ):
+                    inventory_fingerprint(candidate)
+
+        decision = decide_no_work(base, None, 100)
+        self.assertEqual((decision.action, decision.sink),
+                         ("create", CANONICAL_SINK))
+        stored = state_after(decision, comment_id=904_123, published_at=100)
+        self.assertEqual(decide_no_work(base, stored, 101).action, "omit")
+        self.assertEqual(
+            decide_no_work(base, stored, 1900).action, "update"
+        )
+        self.assertEqual(
+            revalidate_no_work_application(decide_no_work(base, stored, 1900),
+                                           stored).action,
+            "apply",
+        )
+
+    def test_ambiguous_inventory_blocks_no_work_decisions(self):
+        # A real Issue cannot be simultaneously available and reserved/blocked.
+        for kind in ("reservation", "blocker_scalar", "blocker_dict"):
+            case = inventory()
+            repo = case["repositories"]["Factory"]
+            repo["available"] = [1121]
+            if kind == "reservation":
+                repo["reservations"] = [
+                    {"issue": 1121, "reservation_id": "lease-1121", "active": True}
+                ]
+                code = "available_reserved_conflict"
+            else:
+                repo["blockers"] = (
+                    [1121] if kind == "blocker_scalar"
+                    else [{"issue": 1121, "reason": "human"}]
+                )
+                code = "available_blocker_conflict"
+            with self.subTest(kind=kind):
+                with self.assertRaisesRegex(NoWorkInventoryError, code):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        for blocker in (
+            {}, {"reason": "human"}, {"issue": None}, {"issue": False},
+            {"issue": 0}, {"issue": 1121.0}, {"issue": "1121"},
+        ):
+            case = inventory()
+            case["repositories"]["Factory"]["blockers"] = [blocker]
+            with self.subTest(blocker=repr(blocker)):
+                with self.assertRaisesRegex(NoWorkInventoryError, "blocker_invalid"):
+                    inventory_fingerprint(case)
+        for dup in ([1121, 1121], [1121, {"issue": 1121, "reason": "human"}]):
+            case = inventory()
+            case["repositories"]["Factory"]["blockers"] = dup
+            with self.subTest(duplicate=repr(dup)):
+                with self.assertRaisesRegex(NoWorkInventoryError, "blocker_duplicate"):
+                    inventory_fingerprint(case)
+
+        for head in ("a" * 40, "b" * 40):
+            case = inventory()
+            case["repositories"]["Condor"]["pull_requests"].append(
+                {"number": 448, "state": "open", "head_sha": head}
+            )
+            with self.subTest(repeated_head=head):
+                with self.assertRaisesRegex(NoWorkInventoryError, "pull_request_duplicate"):
+                    inventory_fingerprint(case)
+
+        for state in ("UNKNOWN", "", True, False, None, 0, [], {}):
+            case = inventory()
+            case["kill_switch"]["state"] = state
+            with self.subTest(kill_state=repr(state)):
+                with self.assertRaisesRegex(NoWorkInventoryError, "kill_switch_state_invalid"):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        base = inventory()
+        fingerprint = inventory_fingerprint(base)
+        paused = inventory()
+        paused["kill_switch"]["state"] = "PAUSED"
+        self.assertNotEqual(fingerprint, inventory_fingerprint(paused))
+        inactive = inventory()
+        inactive["repositories"]["Factory"]["reservations"] = [
+            {"issue": 1121, "reservation_id": "old", "active": False}
+        ]
+        self.assertEqual(fingerprint, inventory_fingerprint(inactive))
+        # Inactive leases are excluded only after their observation shape is checked.
+        inactive["repositories"]["Factory"]["reservations"][0]["observed_at"] = "bad-date"
+        with self.assertRaisesRegex(NoWorkInventoryError, "observation_timestamp_invalid"):
+            inventory_fingerprint(inactive)
+
+        valid = inventory()
+        valid["repositories"]["Factory"]["available"] = [1121]
+        valid["repositories"]["Factory"]["blockers"] = [860, {"issue": 904, "reason": "qa"}]
+        valid["repositories"]["Factory"]["reservations"] = [
+            {"issue": 1102, "reservation_id": "lease-1102", "active": True}
+        ]
+        valid["repositories"]["Condor"]["pull_requests"].append(
+            {"number": 449, "state": "open", "head_sha": "b" * 40}
+        )
+        stable = inventory_fingerprint(valid)
+        valid["repositories"]["Factory"]["blockers"].reverse()
+        valid["repositories"]["Condor"]["pull_requests"].reverse()
+        self.assertEqual(stable, inventory_fingerprint(valid))
+        self.assertEqual(decide_no_work(valid, None, 100).action, "create")
+
+    def test_hostile_text_subclasses_never_execute_during_inventory_validation(self):
+        # JSON from GitHub contains native strings, not objects whose methods
+        # may raise private caller exceptions during normalization.
+        class HostileText(str):
+            def encode(self, *args, **kwargs):
+                raise RuntimeError("private-caller-value")
+
+            def strip(self, *args, **kwargs):
+                raise RuntimeError("private-caller-value")
+
+            def __len__(self):
+                raise RuntimeError("private-caller-value")
+
+        samples = []
+        nested = inventory()
+        nested["repositories"]["Factory"]["blockers"].append(
+            {"issue": 1099, "evidence": HostileText("private-caller-value")}
+        )
+        samples.append(nested)
+        lease = inventory()
+        lease["repositories"]["ControlBot"]["reservations"][0][
+            "reservation_id"
+        ] = HostileText("lease-634")
+        samples.append(lease)
+        timestamp = inventory()
+        timestamp["repositories"]["ControlBot"]["reservations"][0][
+            "observed_at"
+        ] = HostileText("2026-10-13T04:00:00Z")
+        samples.append(timestamp)
+        pr = inventory()
+        pr["repositories"]["Condor"]["pull_requests"][0][
+            "head_sha"
+        ] = HostileText("a" * 40)
+        samples.append(pr)
+        for sample in samples:
+            with self.subTest(case=samples.index(sample)):
+                with self.assertRaises(NoWorkInventoryError) as raised:
+                    inventory_fingerprint(sample)
+                self.assertNotIn("private-caller-value", str(raised.exception))
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
+
+        baseline = inventory()
+        decision = decide_no_work(baseline, None, 100)
+        invalid_previous = NoWorkPublicationState(
+            comment_id=9041, fingerprint=HostileText(decision.fingerprint),
+            published_at=100,
+        )
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "publication_fingerprint_invalid"
+        ):
+            decide_no_work(baseline, invalid_previous, 110)
+
+    def test_non_native_json_containers_are_fail_closed(self):
+        # The collector provides native JSON containers. Subclasses can run
+        # attacker-controlled methods (items/iter/get) during normalization.
+        class HostileDict(dict):
+            def get(self, *args, **kwargs):
+                raise RuntimeError("private-caller-data")
+
+            def __iter__(self):
+                raise RuntimeError("private-caller-data")
+
+            def items(self):
+                raise RuntimeError("private-caller-data")
+
+            def __getitem__(self, key):
+                raise RuntimeError("private-caller-data")
+
+        class HostileList(list):
+            def __iter__(self):
+                raise RuntimeError("private-caller-data")
+
+            def __len__(self):
+                raise RuntimeError("private-caller-data")
+
+        examples = []
+        examples.append(("root", HostileDict(inventory()), "inventory_invalid"))
+        top_repos = inventory()
+        top_repos["repositories"] = HostileDict(top_repos["repositories"])
+        examples.append(("repositories", top_repos, "repositories_missing"))
+        kill_switch = inventory()
+        kill_switch["kill_switch"] = HostileDict(kill_switch["kill_switch"])
+        examples.append(("kill_switch", kill_switch, "kill_switch_missing"))
+        repo = inventory()
+        repo["repositories"]["Factory"] = HostileDict(repo["repositories"]["Factory"])
+        examples.append(("repo", repo, "repository_state_invalid"))
+        field = inventory()
+        field["repositories"]["Factory"]["available"] = HostileList([11])
+        examples.append(("list", field, "repository_field_invalid"))
+        reservation = inventory()
+        reservation["repositories"]["ControlBot"]["reservations"][0] = (
+            HostileDict(reservation["repositories"]["ControlBot"]["reservations"][0])
+        )
+        examples.append(("reservation", reservation, "reservation_invalid"))
+        blocker = inventory()
+        blocker["repositories"]["Factory"]["blockers"][0] = HostileDict(
+            blocker["repositories"]["Factory"]["blockers"][0]
+        )
+        examples.append(("blocker", blocker, "blocker_invalid"))
+        pr = inventory()
+        pr["repositories"]["Condor"]["pull_requests"][0] = HostileDict(
+            pr["repositories"]["Condor"]["pull_requests"][0]
+        )
+        examples.append(("pull_request", pr, "pull_request_invalid"))
+        nested_list = inventory()
+        nested_list["repositories"]["Factory"]["blockers"][0]["details"] = (
+            HostileList(["x"])
+        )
+        examples.append(("nested_list", nested_list, "inventory_value_invalid"))
+        nested_dict = inventory()
+        nested_dict["repositories"]["Factory"]["blockers"][0]["details"] = (
+            HostileDict({"x": 1})
+        )
+        examples.append(("nested_dict", nested_dict, "inventory_value_invalid"))
+        metadata = inventory()
+        metadata["repositories"]["ControlBot"]["reservations"][0][
+            "observation_metadata"
+        ] = HostileDict({"observed_at": 100})
+        examples.append(("metadata", metadata, "observation_metadata_invalid"))
+
+        for name, sample, reason in examples:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(NoWorkInventoryError, reason) as raised:
+                    inventory_fingerprint(sample)
+                self.assertNotIn("private-caller-data", str(raised.exception))
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
+
+        # Identical native JSON values remain valid and deterministic.
+        baseline = inventory()
+        self.assertEqual(inventory_fingerprint(baseline),
+                         inventory_fingerprint(inventory()))
+
+    def test_nonfinite_and_undecodable_inventory_evidence_fails_closed(self):
+        from math import inf, nan
+
+        baseline = inventory_fingerprint(inventory())
+        for malicious in (nan, inf, -inf):
+            for section in ("reservation", "blocker"):
+                with self.subTest(value=repr(malicious), section=section):
+                    case = inventory()
+                    if section == "reservation":
+                        case["repositories"]["ControlBot"]["reservations"][0][
+                            "material_score"
+                        ] = malicious
+                    else:
+                        case["repositories"]["Factory"]["blockers"][0][
+                            "material_score"
+                        ] = malicious
+                    with self.assertRaisesRegex(
+                        NoWorkInventoryError, "inventory_nonfinite_number"
+                    ):
+                        inventory_fingerprint(case)
+                    with self.assertRaises(NoWorkInventoryError):
+                        decide_no_work(case, None, 100)
+
+        lone_surrogate = chr(0xD800)
+        for place in ("material_value", "material_key", "nested_value"):
+            case = inventory()
+            marker = case["repositories"]["Factory"]["blockers"][0]
+            if place == "material_key":
+                marker[lone_surrogate] = "synthetic"
+            elif place == "nested_value":
+                marker["details"] = ["normal", {"text": lone_surrogate}]
+            else:
+                marker["details"] = lone_surrogate
+            with self.subTest(place=place):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "inventory_unicode_invalid"
+                ):
+                    inventory_fingerprint(case)
+
+        good = inventory()
+        good["repositories"]["Factory"]["blockers"][0]["material_score"] = 0.5
+        good["repositories"]["Factory"]["blockers"][0]["description"] = "éxito"
+        self.assertNotEqual(inventory_fingerprint(good), baseline)
+
+    def test_inactive_reservations_validate_material_before_exclusion(self):
+        from math import inf, nan
+
+        baseline = inventory_fingerprint(inventory())
+        examples = (
+            ({"material_score": nan}, "inventory_nonfinite_number"),
+            ({"material_score": inf}, "inventory_nonfinite_number"),
+            ({"details": {1: "untrusted"}}, "inventory_key_invalid"),
+            ({"details": {"set": {1, 2}}}, "inventory_value_invalid"),
+            ({"details": chr(0xD800)}, "inventory_unicode_invalid"),
+        )
+        for extra, code in examples:
+            case = inventory()
+            case["repositories"]["ControlBot"]["reservations"].append({
+                "issue": 1121, "reservation_id": "old", "active": False,
+                **extra,
+            })
+            with self.subTest(code=code, extra=repr(extra)):
+                with self.assertRaisesRegex(NoWorkInventoryError, code):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        valid = inventory()
+        valid["repositories"]["ControlBot"]["reservations"].append({
+            "issue": 1121, "reservation_id": "old", "active": False,
+            "details": {"version": 1, "value": "éxito"},
+        })
+        self.assertEqual(inventory_fingerprint(valid), baseline)
+        self.assertEqual(decide_no_work(valid, None, 100).action, "create")
+
+    def test_non_string_material_keys_cannot_alias_json_keys(self):
+        baseline = inventory_fingerprint(inventory())
+        bad_keys = (
+            {1: "first", "1": "second"},
+            {True: "first", "True": "second"},
+            {None: "synthetic"},
+            {1.5: "synthetic"},
+        )
+        for details in bad_keys:
+            case = inventory()
+            case["repositories"]["Factory"]["blockers"][0]["details"] = details
+            with self.subTest(keys=repr(list(details))):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "inventory_key_invalid"
+                ):
+                    inventory_fingerprint(case)
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(case, None, 100)
+
+        valid = inventory()
+        valid["repositories"]["Factory"]["blockers"][0]["details"] = {
+            "1": "first", "True": "second"
+        }
+        self.assertNotEqual(inventory_fingerprint(valid), baseline)
+        same = inventory()
+        same["repositories"]["Factory"]["blockers"][0]["details"] = {
+            "True": "second", "1": "first"
+        }
+        self.assertEqual(inventory_fingerprint(valid), inventory_fingerprint(same))
+
     def test_nested_observation_timestamps_do_not_change_fingerprint(self):
         """Cambiar la hora de captura no convierte una lease igual en trabajo nuevo."""
         baseline = inventory_fingerprint(inventory())
@@ -382,6 +908,27 @@ class NoWorkDedupTests(unittest.TestCase):
         with self.assertRaisesRegex(NoWorkInventoryError, "time_moved_backwards"):
             decide_no_work(base, previous, 9)
 
+    def test_paused_kill_switch_never_produces_publication_decisions(self):
+        active = inventory()
+        paused = inventory()
+        paused["kill_switch"]["state"] = "PAUSED"
+
+        # Preserve the audit fingerprint for valid PAUSED evidence without
+        # offering an actionable create/update/omit NO_WORK decision.
+        self.assertNotEqual(
+            inventory_fingerprint(paused), inventory_fingerprint(active)
+        )
+        first = decide_no_work(active, None, 10)
+        prior = state_after(first, comment_id=904_901, published_at=10)
+        for previous in (None, prior):
+            with self.subTest(previous=previous):
+                with self.assertRaisesRegex(
+                    NoWorkInventoryError, "kill_switch_paused"
+                ):
+                    decide_no_work(paused, previous, 100)
+        self.assertEqual(decide_no_work(active, None, 100).action, "create")
+        self.assertEqual(decide_no_work(active, prior, 100).action, "omit")
+
     def test_stale_inventory_observation_cannot_replace_newer_canonical_state(self):
         snapshot = inventory()
         first = decide_no_work(snapshot, None, 0)
@@ -454,6 +1001,173 @@ class NoWorkDedupTests(unittest.TestCase):
         self.assertEqual(
             revalidate_no_work_application(decision, other_fingerprint).reason,
             "fingerprint_changed",
+        )
+
+    def test_omit_rechecks_canonical_sink_before_suppressing_publication(self):
+        baseline = inventory()
+        created = decide_no_work(baseline, None, 100)
+        prior = state_after(created, comment_id=904_250,
+                            published_at=100, observed_at=90)
+        omitted = decide_no_work(baseline, prior, 110, observed_at=95)
+        self.assertEqual(omitted.action, "omit")
+        self.assertEqual(revalidate_no_work_application(omitted, prior).action, "omit")
+
+        self.assertEqual(
+            (revalidate_no_work_application(omitted, None).action,
+             revalidate_no_work_application(omitted, None).reason),
+            ("recompute", "canonical_missing_before_omit"),
+        )
+        changed_id = NoWorkPublicationState(
+            comment_id=904_251, fingerprint=prior.fingerprint,
+            published_at=100, observed_at=100)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, changed_id).reason,
+            "comment_id_changed",
+        )
+        changed_fingerprint = NoWorkPublicationState(
+            comment_id=prior.comment_id, fingerprint="f" * 64,
+            published_at=100, observed_at=100)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, changed_fingerprint).reason,
+            "fingerprint_changed",
+        )
+        refreshed = NoWorkPublicationState(
+            comment_id=prior.comment_id, fingerprint=prior.fingerprint,
+            published_at=101, observed_at=90)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, refreshed).reason,
+            "publication_changed",
+        )
+        newer_observation = NoWorkPublicationState(
+            comment_id=prior.comment_id, fingerprint=prior.fingerprint,
+            published_at=100, observed_at=96)
+        self.assertEqual(
+            revalidate_no_work_application(omitted, newer_observation).reason,
+            "canonical_observation_newer",
+        )
+
+    def test_prewrite_rejects_tampered_decision_authority(self):
+        from dataclasses import replace
+
+        snapshot = inventory()
+        created = decide_no_work(snapshot, None, 100)
+        previous = state_after(created, comment_id=904_450, published_at=100)
+        update = decide_no_work(snapshot, previous, 1900)
+        omitted = decide_no_work(snapshot, previous, 101)
+        self.assertEqual(revalidate_no_work_application(created, None).action, "apply")
+        self.assertEqual(revalidate_no_work_application(update, previous).action, "apply")
+        self.assertEqual(revalidate_no_work_application(omitted, previous).action, "omit")
+
+        tampered = (
+            (replace(created, action="delete"), "decision_action_invalid", None),
+            (replace(created, sink="pl0n3r/Other#904"), "decision_sink_invalid", None),
+            (replace(created, observed_at=True), "decision_provenance_invalid", None),
+            (replace(created, fingerprint="not-a-sha"), "decision_provenance_invalid", None),
+            (replace(created, comment_id=123), "decision_provenance_invalid", None),
+            (replace(update, expected_comment_id=None), "decision_provenance_invalid", previous),
+            (replace(update, expected_published_at=True), "decision_provenance_invalid", previous),
+            (replace(update, expected_fingerprint="bad"), "decision_provenance_invalid", previous),
+            (replace(omitted, sink="pl0n3r/Other#904"), "decision_sink_invalid", previous),
+        )
+        for decision, expected, live in tampered:
+            with self.subTest(action=decision.action, expected=expected):
+                with self.assertRaisesRegex(NoWorkInventoryError, expected):
+                    revalidate_no_work_application(decision, live)
+
+    def test_publication_authority_rejects_hostile_dataclass_and_text_subclasses(self):
+        # No se deben leer atributos ni comparar texto de objetos hostiles
+        # antes de acreditar su tipo exacto como evidencia de autoridad.
+        from dataclasses import replace
+
+        class HostilePublication(NoWorkPublicationState):
+            def __getattribute__(self, name):
+                raise RuntimeError("private-caller-data")
+
+        class HostileDecision(NoWorkDecision):
+            def __getattribute__(self, name):
+                raise RuntimeError("private-caller-data")
+
+        class HostileText(str):
+            def __eq__(self, other):
+                raise RuntimeError("private-caller-data")
+
+            def __ne__(self, other):
+                raise RuntimeError("private-caller-data")
+
+        snapshot = inventory()
+        created = decide_no_work(snapshot, None, 100)
+        previous = state_after(created, comment_id=904_300,
+                               published_at=100, observed_at=100)
+        hostile_state = HostilePublication(
+            comment_id=previous.comment_id,
+            fingerprint=previous.fingerprint,
+            published_at=previous.published_at,
+            observed_at=previous.observed_at,
+        )
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "publication_state_invalid"
+        ) as result:
+            decide_no_work(snapshot, hostile_state, 101)
+        self.assertNotIn("private-caller-data", str(result.exception))
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "publication_state_invalid"
+        ):
+            revalidate_no_work_application(created, hostile_state)
+
+        hostile_decision = HostileDecision(**vars(created))
+        with self.assertRaisesRegex(
+            NoWorkInventoryError, "decision_invalid"
+        ):
+            revalidate_no_work_application(hostile_decision, None)
+
+        for field, value, expected in (
+            ("action", HostileText("create"), "decision_action_invalid"),
+            ("sink", HostileText(CANONICAL_SINK), "decision_sink_invalid"),
+        ):
+            altered = replace(created, **{field: value})
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(NoWorkInventoryError, expected) as raised:
+                    revalidate_no_work_application(altered, None)
+                self.assertNotIn("private-caller-data", str(raised.exception))
+
+        # Instancias dataclass nativas y cadenas nativas siguen autorizadas.
+        self.assertEqual(
+            revalidate_no_work_application(created, None).action, "apply"
+        )
+
+    def test_prewrite_rejects_concurrent_refresh_with_same_fingerprint(self):
+        snapshot = inventory()
+        first = decide_no_work(snapshot, None, 100)
+        previous = state_after(
+            first, comment_id=904_300, published_at=100, observed_at=100
+        )
+        pending = decide_no_work(snapshot, previous, 1_900, observed_at=150)
+        self.assertEqual(pending.action, "update")
+        self.assertEqual(pending.expected_published_at, 100)
+        self.assertEqual(
+            revalidate_no_work_application(pending, previous).action, "apply"
+        )
+
+        # Another session republished the same fingerprint/comment, with
+        # an observation not newer than ours. Old guards falsely allowed it.
+        concurrent = NoWorkPublicationState(
+            comment_id=previous.comment_id,
+            fingerprint=previous.fingerprint,
+            published_at=1_750,
+            observed_at=100,
+        )
+        result = revalidate_no_work_application(pending, concurrent)
+        self.assertEqual((result.action, result.reason),
+                         ("recompute", "publication_changed"))
+
+        changed = inventory()
+        changed["repositories"]["FactoryRunner"]["available"] = [904]
+        pending_changed = decide_no_work(
+            changed, previous, 200, observed_at=150
+        )
+        self.assertEqual(
+            revalidate_no_work_application(pending_changed, concurrent).reason,
+            "publication_changed",
         )
 
     def test_equal_or_newer_observation_preserves_create_update_omit_and_single_sink_contract(self):

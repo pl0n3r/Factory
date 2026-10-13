@@ -112,7 +112,7 @@ class DietaFase1FTests(unittest.TestCase):
 
     def test_inventory_preserves_exact_workflow_set(self):
         paths = {p.name for p in (ROOT / ".github/workflows").glob("*.yml")}
-        self.assertEqual(len(paths), 31)
+        self.assertEqual(len(paths), 32)
         self.assertEqual(paths, set(EXPECTED_ACTIVE))
         diet = DIET.read_text(encoding="utf-8")
         rows = [line for line in diet.splitlines()
