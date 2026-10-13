@@ -6,7 +6,9 @@ from pathlib import Path
 import re
 import unittest
 
-from tests.test_factory_diet_inventory import REQUIRED_KEEP, inventory_rows
+from tests.test_factory_diet_inventory import (
+    REQUIRED_KEEP, inventory_rows, watchdog_f1g_assertions,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -126,7 +128,11 @@ class DietaFase1ATests(unittest.TestCase):
         costs = (WORKFLOWS / "costos.yml").read_text(encoding="utf-8")
         self.assertIn("presupuesto-pr:", costs)
         watchdog = (WORKFLOWS / "unattended-watchdog.yml").read_text(encoding="utf-8")
-        self.assertIn("daily-summary:", watchdog)
+        # F1G cambia el contrato accesorio con runbook explícito, no el
+        # watchdog ni sus puertas duras heredadas de F1A.
+        runbook = (ROOT / "docs" / "unattended-watchdog-runtime.md").read_text(
+            encoding="utf-8")
+        watchdog_f1g_assertions(self, watchdog, runbook)
         self.assertTrue((ROOT / "scripts" / "unattended_kill_switch.py").is_file())
         self.assertTrue((ROOT / "scripts" / "coordinar_trabajo.py").is_file())
         for token in ("CodeQL", "Sonar", "CodeRabbit", "#767", "go-live"):

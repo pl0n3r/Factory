@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from tests.test_factory_diet_inventory import (
-    FactoryDietInventoryTests, inventory_rows,
+    FactoryDietInventoryTests, inventory_rows, watchdog_f1g_assertions,
 )
 from tests.test_scheduled_entrypoints import (
     EXPECTED, SAFE_ARGS, ScheduledEntrypointTests,
@@ -119,8 +119,9 @@ class DietaFase1BTests(unittest.TestCase):
         watchdog = (WORKFLOWS / "unattended-watchdog.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("watchdog:", watchdog)
-        self.assertIn("daily-summary:", watchdog)
+        runbook = (ROOT / "docs" / "unattended-watchdog-runtime.md").read_text(
+            encoding="utf-8")
+        watchdog_f1g_assertions(self, watchdog, runbook)
         ledger = self.document.split(
             "## Ledger F1B de baja del cron de métricas\n", 1
         )[1].split("\n## ", 1)[0]
