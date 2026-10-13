@@ -96,6 +96,10 @@ class LeaseGithubPort:
 
     def _running(self) -> bool:
         obj = self._api.request("GET", GLOBAL_SWITCH)
+        # El marcador RUNNING no basta si #767 fue reabierto: exigir el
+        # estado cerrado de la fuente canónica antes de leer otras reservas.
+        if type(obj) is not dict or obj.get("state") != "closed":
+            return False
         verdict = evaluate_unattended_kill_switch(obj)
         return verdict.state == "RUNNING" and verdict.global_pause is False
 
