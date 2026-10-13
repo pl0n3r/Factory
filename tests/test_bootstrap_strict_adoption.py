@@ -363,6 +363,34 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
             self.assertEqual(gateway.create_pr(name, branch, "fixture", "fixture"), 71)
             classify.assert_called_once_with(name, 71)
 
+    def test_bootstrap_marker_rejects_duplicate_json_identity_fields(self):
+        """JSON duplicate keys must not hide contradictory bootstrap identities."""
+        fields = {
+            "version": 1,
+            "identity": "a" * 64,
+            "target_issue": 1130,
+            "expected_main_sha": "b" * 40,
+            "governance_ref": bootstrap.GOVERNANCE_REF,
+        }
+        canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"))
+        def marker(body):
+            return "<!-- factory-coordination-bootstrap " + body + " -->"
+
+        self.assertEqual(bootstrap.parse_marker(marker(canonical)), fields)
+        mutations = (
+            ('"target_issue":1130', '"target_issue":1131,"target_issue":1130'),
+            ('"version":1', '"version":0,"version":1'),
+            ('"identity":"' + "a" * 64 + '"',
+             '"identity":"' + "c" * 64 + '","identity":"' + "a" * 64 + '"'),
+            ('"version":1', '"version":1,"version":1'),
+        )
+        for before, after in mutations:
+            with self.subTest(duplicate=after):
+                self.assertIn(before, canonical)
+                self.assertIsNone(
+                    bootstrap.parse_marker(marker(canonical.replace(before, after, 1)))
+                )
+
     def test_bootstrap_marker_identity_requires_json_integers(self):
         """Historical bootstrap identity must fail closed on bool, float and strings."""
         canonical = {
