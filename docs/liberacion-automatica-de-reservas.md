@@ -67,6 +67,13 @@ El decisor implementa conservadoramente el **alcance más restrictivo**:
 La propiedad \`libera_en_min\` es un tiempo mínimo restante según evidencia,
 **no una promesa de cron ni una fecha de expiración con autoridad propia**.
 
+El inspector de solo lectura expone este límite únicamente tras una
+observación positiva autenticada de actividad reciente (actividad + 40 min).
+Para un estado `UNKNOWN` devuelve `None`. El campo NO predice el momento del
+cron, no sustituye el tiempo de la etiqueta de recuperación ni habilita
+escrituras: sigue pendiente la fuente completa de ausencia de actividad y el
+CAS real de AC-03. El cron actual no publica este dato por Issue.
+
 ## Evidencia que un colector futuro deberá probar
 
 - Identidad canónica del Issue, reserva V3 actual, UUID, titular, claim,
