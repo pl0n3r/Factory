@@ -349,12 +349,12 @@ class LeaseGithubPort:
             # La recuperación de /tomar conserva notas legítimas de otras
             # leases. Ignorar solo las anteriores a la V3 vigente y
             # asociadas a un marker bot auténtico, jamás notas huérfanas.
-            previous_markers = {
-                marker["reservation_id"]: (comment_id, marker)
-                for comment_id, marker in active_markers
-                if comment_id < current_id
-                and marker["reservation_id"] != expected.reservation_id
-            }
+            previous_markers: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+            for comment_id, marker in active_markers:
+                if (comment_id < current_id
+                        and marker["reservation_id"] != expected.reservation_id):
+                    previous_markers.setdefault(
+                        marker["reservation_id"], []).append((comment_id, marker))
             current_notes: list[tuple[datetime, str]] = []
             old_seen: set[str] = set()
             for note_id, note, when, actor in notes:
@@ -372,15 +372,23 @@ class LeaseGithubPort:
                         raise ValueError("recovery_identity_drift")
                     current_notes.append((when, actor))
                     continue
-                old = previous_markers.get(note["reservation_id"])
-                if (old is None or note["reservation_id"] in old_seen
-                        or not old[0] < note_id < current_id
-                        or note["owner"] != old[1]["owner"]
-                        or note["branch"] != old[1]["branch"]
-                        or note["acceptance_sha256"] !=
-                           old[1]["acceptance_sha256"]
-                        or note["task_marker_sha256"] !=
-                           old[1]["task_marker_sha256"]
+                old = previous_markers.get(note["reservation_id"], [])
+                # La misma lease antigua puede haber publicado active:false
+                # después de su nota. No confundir ese marker terminal con
+                # un origen huérfano: debe existir un marker ANTERIOR a
+                # la nota, y TODOS los markers de ese UUID conservan pins.
+                if (not old or note["reservation_id"] in old_seen
+                        or not note_id < current_id
+                        or not any(marker_id < note_id
+                                   for marker_id, _ in old)
+                        or any(
+                            note["owner"] != marker["owner"]
+                            or note["branch"] != marker["branch"]
+                            or note["acceptance_sha256"] !=
+                               marker["acceptance_sha256"]
+                            or note["task_marker_sha256"] !=
+                               marker["task_marker_sha256"]
+                            for _, marker in old)
                         or type(note["branch_sha"]) is not str
                         or SHA.fullmatch(note["branch_sha"]) is None
                         or type(note["last_activity_at"]) is not str
