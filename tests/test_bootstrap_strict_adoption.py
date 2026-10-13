@@ -223,6 +223,24 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("FAIL", result.stderr)
 
+        # A YAML comment cannot substitute for the actual writer permissions.
+        for strict in (False, True):
+            caller = consumer_caller(strict=strict)
+            for name, before, after in (
+                ("comment_checks_write_spoof",
+                 "      checks: write",
+                 "      checks: read\n      # checks: write"),
+                ("comment_extra_write_scope",
+                 "      checks: write",
+                 "      checks: write\n      actions: write"),
+            ):
+                with self.subTest(strict=strict, permission_mutation=name):
+                    mutated = caller.replace(before, after, 1)
+                    self.assertNotEqual(mutated, caller)
+                    result = self.run_generated(mutated)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("FAIL", result.stderr)
+
         for strict in (False, True):
             caller = consumer_caller(strict=strict)
             for name, before, after in (
