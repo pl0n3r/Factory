@@ -298,6 +298,91 @@ class LeaseGithubPortTests(unittest.TestCase):
             **{**note.__dict__, "authenticated": False}
         ))
 
+    def test_recovery_timeline_real_page_boundary_and_second_read_race(self):
+        """Los eventos 101+ requieren todas las páginas, no solo la primera."""
+        from unittest.mock import patch
+        from test_lease_release_executor import START, snapshot
+        from scripts.lease_release_executor import (
+            RecoveryNoteProof, _recovery_label_ok,
+        )
+        target = snapshot()
+        note = RecoveryNoteProof(
+            complete=True, authenticated=True, count=1,
+            owner=target.owner, reservation_id=target.reservation_id,
+            branch=target.branch, branch_sha=target.branch_sha,
+            last_activity_at=target.last_activity_at,
+            acceptance_sha256=target.marker["acceptance_sha256"],
+            task_marker_sha256=target.marker["task_marker_sha256"],
+            created_at=START + timedelta(minutes=30),
+            author="github-actions[bot]",
+        )
+        recover = {
+            "id": 101, "event": "labeled",
+            "label": {"name": "estado: requiere recuperación"},
+            "actor": {"login": "github-actions[bot]", "type": "Bot"},
+            "created_at": "2026-10-11T10:30:00Z",
+        }
+
+        class PaginatedAPI:
+            repo = "pl0n3r/Factory"
+            def __init__(self):
+                self.events = [{"id": n, "event": "renamed"}
+                               for n in range(1, 101)] + [recover]
+                self.calls = []
+                self.drift = False
+                self.page_one_reads = 0
+                self.reject = None
+
+            def request(self, verb, path):
+                assert verb == "GET"
+                self.calls.append(path)
+                if path == self.reject:
+                    raise RuntimeError("403 secret never printed")
+                page = int(path.rsplit("page=", 1)[-1])
+                if page == 1:
+                    self.page_one_reads += 1
+                part = self.events[(page - 1) * 100:page * 100]
+                if self.drift and self.page_one_reads >= 2 and page == 2:
+                    return [{**recover, "id": 102}]
+                return part
+
+        api = PaginatedAPI()
+        port = LeaseGithubPort(api)
+        with patch.object(port, "recovery_note", return_value=note) as read:
+            proof = port.recovery_label(target.issue, target)
+        self.assertTrue(_recovery_label_ok(note, proof, target))
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(api.page_one_reads, 2)
+        self.assertEqual([path[-6:] for path in api.calls],
+                         ["page=1", "page=2", "page=3"] * 2)
+
+        for fault in ("truncated_first_page", "duplicate_id",
+                      "nonempty_sentinel", "race_second_page", "api_403"):
+            with self.subTest(fault=fault):
+                api = PaginatedAPI()
+                if fault == "truncated_first_page":
+                    api.events.pop(2)
+                elif fault == "duplicate_id":
+                    api.events[-1] = {**recover, "id": 100}
+                elif fault == "nonempty_sentinel":
+                    api.events.append({"id": 102, "event": "renamed"})
+                elif fault == "race_second_page":
+                    api.drift = True
+                elif fault == "api_403":
+                    api.reject = (
+                        "/repos/pl0n3r/Factory/issues/1191/events?"
+                        "per_page=100&page=2"
+                    )
+                port = LeaseGithubPort(api)
+                with patch.object(port, "recovery_note", return_value=note):
+                    with self.assertRaisesRegex(
+                        PortNotArmed, "authenticated_timeline_proof_unavailable"
+                    ) as e:
+                        port.recovery_label(target.issue, target)
+                self.assertNotIn("secret", str(e.exception))
+                self.assertTrue(all("/issues/1191/events?" in path
+                                    for path in api.calls))
+
     def test_canonical_switch_and_recent_activity_never_authorize_release(self):
         api = FakeAPI()
         port = LeaseGithubPort(api)
