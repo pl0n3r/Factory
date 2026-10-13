@@ -197,6 +197,107 @@ class LeaseGithubPortTests(unittest.TestCase):
             with self.subTest(case=index):
                 tampered_case(change)
 
+    def test_recovery_timeline_get_only_double_read_and_fail_closed(self):
+        from unittest.mock import patch
+        from test_lease_release_executor import START, snapshot
+        from scripts.lease_release_executor import (
+            RecoveryNoteProof, _recovery_label_ok,
+        )
+
+        s = snapshot()
+        note = RecoveryNoteProof(
+            complete=True, authenticated=True, count=1,
+            owner=s.owner, reservation_id=s.reservation_id,
+            branch=s.branch, branch_sha=s.branch_sha,
+            last_activity_at=s.last_activity_at,
+            acceptance_sha256=s.marker["acceptance_sha256"],
+            task_marker_sha256=s.marker["task_marker_sha256"],
+            created_at=START + timedelta(minutes=30),
+            author="github-actions[bot]",
+        )
+        event = {
+            "id": 14, "event": "labeled",
+            "label": {"name": "estado: requiere recuperación"},
+            "actor": {"login": "github-actions[bot]", "type": "Bot"},
+            "created_at": "2026-10-11T10:30:00Z",
+        }
+        class TimelineAPI:
+            repo = "pl0n3r/Factory"
+            def __init__(self):
+                self.rows = [event]
+                self.sentinel = []
+                self.calls = []
+                self.fail = False
+                self.race = False
+                self.round = 0
+            def request(self, verb, path):
+                if verb != "GET":
+                    raise AssertionError("write forbidden")
+                self.calls.append((verb, path))
+                if self.fail:
+                    raise RuntimeError("403 secret must never leak")
+                if path.endswith("page=1"):
+                    self.round += 1
+                    if self.race and self.round > 1:
+                        return [{**event, "id": 15}]
+                    return self.rows
+                if path.endswith("page=2"):
+                    return self.sentinel
+                raise AssertionError("unexpected endpoint")
+
+        api = TimelineAPI()
+        port = LeaseGithubPort(api)
+        with patch.object(port, "recovery_note", return_value=note) as read_note:
+            proof = port.recovery_label(1191, s)
+        self.assertTrue(_recovery_label_ok(note, proof, s))
+        self.assertEqual(read_note.call_count, 2)
+        self.assertEqual(len(api.calls), 4)
+        self.assertTrue(all(verb == "GET" for verb, _ in api.calls))
+        self.assertTrue(all("/repos/pl0n3r/Factory/issues/1191/events?"
+                            in path for _, path in api.calls))
+        with self.assertRaises(PortNotArmed):
+            port.lock("factory-coordination-123")
+        with self.assertRaises(PortNotArmed):
+            port.status(1191, "estado: disponible", s)
+
+        def rejected(change, override=None):
+            fake = TimelineAPI()
+            change(fake)
+            local = LeaseGithubPort(fake)
+            with patch.object(local, "recovery_note",
+                              return_value=note if override is None else override):
+                with self.assertRaisesRegex(
+                    PortNotArmed, "authenticated_timeline_proof_unavailable"
+                ) as cm:
+                    local.recovery_label(1191, s)
+            self.assertNotIn("secret", str(cm.exception))
+            self.assertTrue(all(verb == "GET" for verb, _ in fake.calls))
+
+        variants = (
+            lambda x: setattr(x, "rows", []),
+            lambda x: setattr(x, "rows", [{**event, "id": 14},
+                                            {**event, "id": 14}]),
+            lambda x: setattr(x, "rows", [event, {**event, "id": 16}]),
+            lambda x: setattr(x, "rows", [{**event, "actor": {
+                "login": "intruder", "type": "User"}}]),
+            lambda x: setattr(x, "rows", [{**event, "event": "unlabeled"}]),
+            lambda x: setattr(x, "rows", [{**event,
+                "created_at": "2026-10-11T10:29:00Z"}]),
+            lambda x: setattr(x, "rows", [{**event,
+                "created_at": "2026-10-11T10:42:00Z"}]),
+            lambda x: setattr(x, "rows", [{**event, "label": {
+                "name": "estado: reservado"}}]),
+            lambda x: setattr(x, "sentinel", [{**event, "id": 17}]),
+            lambda x: setattr(x, "fail", True),
+            lambda x: setattr(x, "race", True),
+        )
+        for index, change in enumerate(variants):
+            with self.subTest(case=index):
+                rejected(change)
+        rejected(lambda x: None, override=RecoveryNoteProof(
+            **{**note.__dict__, "authenticated": False}
+        ))
+
     def test_canonical_switch_and_recent_activity_never_authorize_release(self):
         api = FakeAPI()
         port = LeaseGithubPort(api)
