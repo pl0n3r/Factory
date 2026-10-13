@@ -2,6 +2,7 @@
 
 Las pruebas no hablan con GitHub ni usan datos de clientes.
 """
+import io
 import json
 import tempfile
 import unittest
@@ -138,6 +139,20 @@ class PhaseReviewBotTests(unittest.TestCase):
                     Path(options.verified_status_file), max_bytes=1,
                     noun="estatus verificados de CodeRabbit",
                 )
+
+    def test_main_forwards_verified_status_lines_to_policy_decisor(self):
+        with tempfile.TemporaryDirectory() as folder:
+            status_file = Path(folder) / "status.jsonl"
+            status_file.write_text(status_receipt() + "\n", encoding="utf-8")
+            with (
+                patch("sys.argv", ["politica_kit.py", "--verified-status-file", str(status_file)]),
+                patch("sys.stdin", io.StringIO("")),
+                patch.object(politica_kit, "load_policy", return_value={"decisions": [], "review_round_limit": 3}),
+                patch.object(politica_kit, "load_reviewer_policy", return_value=BOT),
+                patch.object(politica_kit, "validate_required_bot_review_or_fallback", return_value={"review_fallback": False}) as decide,
+            ):
+                self.assertEqual(politica_kit.main(), 0)
+            self.assertEqual(decide.call_args.kwargs["verified_status_lines"], [status_receipt()])
 
     def test_construction_can_advisory_only_with_complete_trusted_security_evidence(self):
         report = evaluate()
