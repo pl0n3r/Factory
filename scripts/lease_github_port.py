@@ -322,7 +322,10 @@ class LeaseGithubPort:
                            or type(label.get("name")) is not str
                            or not label["name"]
                            for label in initial["labels"])
-                    or len({label["name"] for label in initial["labels"]})
+                    # GitHub label names are case-insensitive. Alias
+                    # de Unicode/caja no puede fingir otro estado legítimo.
+                    or len({label["name"].casefold()
+                            for label in initial["labels"]})
                        != len(initial["labels"])
                     or type(initial.get("assignees")) is not list
                     or len(initial["assignees"]) != 1
@@ -333,7 +336,7 @@ class LeaseGithubPort:
             state_labels = [
                 z.get("name") for z in initial["labels"]
                 if type(z) is dict and type(z.get("name")) is str
-                and z["name"].startswith("estado:")
+                and z["name"].casefold().startswith("estado:")
             ]
             if len(state_labels) != 1 or state_labels[0] != expected.status:
                 raise ValueError("state_mismatch")
