@@ -1301,7 +1301,7 @@ def main() -> int:
                 max_bytes=MAX_CHECKS_BYTES,
                 noun="estatus verificados de CodeRabbit",
             )
-            if options.verified_status_file
+            if getattr(options, "verified_status_file", "")
             else []
         )
         thread_lines = (
