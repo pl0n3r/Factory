@@ -832,8 +832,8 @@ class NoWorkDedupTests(unittest.TestCase):
         baseline = inventory()
         created = decide_no_work(baseline, None, 100)
         prior = state_after(created, comment_id=904_250,
-                            published_at=100, observed_at=100)
-        omitted = decide_no_work(baseline, prior, 110, observed_at=105)
+                            published_at=100, observed_at=90)
+        omitted = decide_no_work(baseline, prior, 110, observed_at=95)
         self.assertEqual(omitted.action, "omit")
         self.assertEqual(revalidate_no_work_application(omitted, prior).action, "omit")
 
@@ -865,7 +865,7 @@ class NoWorkDedupTests(unittest.TestCase):
         )
         newer_observation = NoWorkPublicationState(
             comment_id=prior.comment_id, fingerprint=prior.fingerprint,
-            published_at=100, observed_at=106)
+            published_at=100, observed_at=96)
         self.assertEqual(
             revalidate_no_work_application(omitted, newer_observation).reason,
             "canonical_observation_newer",
