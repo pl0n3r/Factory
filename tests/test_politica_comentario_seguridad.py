@@ -90,9 +90,45 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
             '            Path(options.phase_file) if options.phase_file else None,\n'
             '        )\n'
         )
+        # El decisor F3C tiene su propia frontera explícita. Al comprobar
+        # la huella del motor histórico se retira únicamente esa inserción,
+        # nunca otro cambio del motor fijado del caller.
+        risk_start = "# F3C_REVIEW_RISK_HELPER_BEGIN\n"
+        risk_end = "# F3C_REVIEW_RISK_HELPER_END\n"
+        self.assertEqual(source.count(risk_start), 1)
+        self.assertEqual(source.count(risk_end), 1)
+        risk_block = risk_start + source.split(risk_start, 1)[1].split(
+            risk_end, 1
+        )[0] + risk_end
+        self.assertIn("validate_other_gates_green", risk_block)
+        self.assertIn("_has_open_blocking_finding", risk_block)
+        self.assertIn("factory-review-risk-summary", risk_block)
+        self.assertIn('risk["analyzed"] is not True', risk_block)
+        risk_call = (
+            '    if phase == "construccion" and _verified_bot_risk_advisory(\n'
+            '        comment_lines, check_lines, thread_lines,\n'
+            '        required_review_bot=required_review_bot,\n'
+            '        head_sha=head_sha,\n'
+            '        head_committed_at=head_committed_at,\n'
+            '        verified_status_lines=verified_status_lines or [],\n'
+            '    ):\n'
+            '        return {\n'
+            '            "review_fallback": False,\n'
+            '            "review_advisory": True,\n'
+            '            "review_reason": "reviewer-bot-presence-only",\n'
+            '            "risk_status": "clear",\n'
+            '        }\n'
+        )
+        self.assertEqual(source.count(risk_call), 1)
         self.assertEqual(source.count(phase_helper), 1)
         self.assertEqual(source.count(phase_call), 1)
-        pinned_source = source.replace(phase_helper, "", 1).replace(
+        pinned_source = source.replace(
+            "\n" + risk_block + "\n", "", 1
+        ).replace(
+            risk_call, "", 1
+        ).replace(
+            "    verified_status_lines: list[str] | None = None,\n", "", 1
+        ).replace(phase_helper, "", 1).replace(
             phase_call, '        validate_rounds(rounds, policy["review_round_limit"])\n', 1
         ).encode("utf-8")
         git_blob = b"blob " + str(len(pinned_source)).encode("ascii") + b"\0" + pinned_source
