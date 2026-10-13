@@ -103,6 +103,35 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertEqual(empty.open_issues, 0)
         self.assertFalse(empty.release_authorized)
 
+    def test_pr_validation_is_offline_and_schedule_keeps_api_budget_gate(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/liberar-reservas.yml").read_text(
+                        encoding="utf-8")
+        preflight = workflow.split(
+            "      - name: Preflight autenticado de cuota API "
+            "(no publica datos privados)\n", 1)[1].split(
+                "      - name: Tests deterministas del decisor", 1)[0]
+        self.assertIn("if: github.event_name != 'pull_request'", preflight)
+        self.assertIn("gh api /rate_limit", preflight)
+        tests = workflow.split(
+            "      - name: Tests deterministas del decisor", 1)[1].split(
+                "      - name: Confirmar runner OFF", 1)[0]
+        self.assertNotIn("if: steps.budget.outputs.allow", tests)
+        self.assertNotIn("gh api", tests)
+        self.assertIn("python3 -m unittest discover", tests)
+        runner_off = workflow.split(
+            "      - name: Confirmar runner OFF", 1)[1].split(
+                "      - name: Inventario observado de recuperación", 1)[0]
+        self.assertNotIn("if: steps.budget.outputs.allow", runner_off)
+        self.assertIn("feature_disabled", runner_off)
+        live = workflow.split(
+            "      - name: Inventario observado de recuperación", 1)[1]
+        self.assertIn("if: steps.budget.outputs.allow == 'true'", live)
+        self.assertIn("gh api --paginate --slurp", live)
+        self.assertIn("inventory_after_switch_recheck", live)
+        self.assertNotIn("issues: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+
     def test_scheduled_dry_run_defaults_off_and_never_writes(self):
         workflow = (Path(__file__).resolve().parents[1] /
                     ".github/workflows/liberar-reservas.yml").read_text(
