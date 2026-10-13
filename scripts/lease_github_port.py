@@ -339,6 +339,11 @@ class LeaseGithubPort:
                     or final.get("number") != issue
                     or final.get("comments") != total
                     or final.get("updated_at") != initial["updated_at"]
+                    # La fecha API puede tener resolución de segundos:
+                    # un cambio simultáneo de etiqueta/asignado nunca
+                    # hereda el proof autenticado del snapshot anterior.
+                    or final.get("labels") != initial["labels"]
+                    or final.get("assignees") != initial["assignees"]
                     or type(ref_after) is not dict
                     or ref_after.get("object", {}).get("sha") != expected.branch_sha
                     or not self._running()
