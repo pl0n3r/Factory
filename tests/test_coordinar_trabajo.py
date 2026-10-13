@@ -2556,7 +2556,7 @@ class CoordinacionTests(unittest.TestCase):
 
         unauthorized, observed = self._sweep_switch_api("RUNNING")
         unauthorized.repo = "attacker/repo"
-        with self.assertRaisesRegex(CoordinationError, "no canónico"):
+        with self.assertRaisesRegex(CoordinationError, "no autorizado"):
             coordinator.require_global_running(unauthorized)
         self.assertEqual(observed["reads"], 0)
 
@@ -3270,7 +3270,7 @@ class CoordinacionTests(unittest.TestCase):
             api.kill_switch_marker = state
             api.kill_switch_issue_state = issue_state
             with self.subTest(state=state, issue_state=issue_state):
-                with self.assertRaisesRegex(CoordinationError, "kill switch"):
+                with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                     renew_pinned_acceptance(
                         api, 12, "pl0n3r", "OWNER", SESSION_A)
                 self.assertNotIn(lock, api.branches)
@@ -3286,7 +3286,7 @@ class CoordinacionTests(unittest.TestCase):
             api.kill_switch_marker = "PAUSED"
             return pr
         api.pull = pause_before_veto
-        with self.assertRaisesRegex(CoordinationError, "kill switch"):
+        with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
             renew_pinned_acceptance(
                 api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(api.check_runs, [])
@@ -3303,7 +3303,7 @@ class CoordinacionTests(unittest.TestCase):
             original_check(*args)
             api.kill_switch_marker = "PAUSED"
         api.create_failed_check = pause_after_veto
-        with self.assertRaisesRegex(CoordinationError, "kill switch"):
+        with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
             renew_pinned_acceptance(
                 api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(len(api.check_runs), 1)
