@@ -209,6 +209,80 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual(empty.count, 0)
         self.assertTrue(_note_ok(empty, target))
 
+        # /tomar crea una reserva nueva conservando las notas históricas.
+        # La evidencia del UUID vigente no debe confundirse con la anterior.
+        def recovered_issue():
+            api = NoteAPI()
+            old_uuid = "6f5b9b7e-e6a3-4dcc-87af-b37be0f65e23"
+            old_marker = {
+                **target.marker, "reservation_id": old_uuid,
+                "acceptance_sha256": "e" * 64,
+                "task_marker_sha256": "f" * 64,
+            }
+            old_note = {
+                **payload, "reservation_id": old_uuid,
+                "branch_sha": "d" * 40,
+                "last_activity_at": "2026-10-11T09:30:00+00:00",
+                "acceptance_sha256": old_marker["acceptance_sha256"],
+                "task_marker_sha256": old_marker["task_marker_sha256"],
+            }
+            old_marker_comment = {
+                **api.notes[0], "id": 1,
+                "body": "<!-- condor-reserva " +
+                        json.dumps(old_marker) + " -->",
+            }
+            old_note_comment = {
+                **api.notes[1], "id": 2,
+                "body": "<!-- factory-lease-recovery " +
+                        json.dumps(old_note) + " -->",
+                "created_at": "2026-10-11T10:05:00Z",
+                "updated_at": "2026-10-11T10:05:00Z",
+            }
+            new_marker_comment = {
+                **api.notes[0], "id": 3,
+                "created_at": "2026-10-11T10:15:00Z",
+                "updated_at": "2026-10-11T10:15:00Z",
+            }
+            new_note_comment = {**api.notes[1], "id": 4}
+            api.notes = [old_marker_comment, old_note_comment,
+                         new_marker_comment, new_note_comment]
+            return api
+
+        previous = recovered_issue()
+        current = LeaseGithubPort(previous).recovery_note(1191, target)
+        self.assertEqual(current.count, 1)
+        self.assertTrue(_note_ok(current, target))
+        self.assertEqual(previous.comment_page_reads, 2)
+        no_current = recovered_issue()
+        no_current.notes.pop()
+        self.assertEqual(LeaseGithubPort(no_current).recovery_note(
+            1191, target).count, 0)
+
+        def reject_historical(change):
+            api = recovered_issue()
+            change(api)
+            with self.assertRaisesRegex(
+                PortNotArmed, "authenticated_recovery_proof_unavailable"
+            ):
+                LeaseGithubPort(api).recovery_note(1191, target)
+
+        for change in (
+            lambda x: x.notes.pop(0),  # nota antigua sin marker V3
+            lambda x: x.notes[1].update(id=5),  # nota antigua posterior
+            lambda x: x.notes[1].update(
+                body=x.notes[1]["body"].replace('"branch_sha": "'
+                    + "d" * 40, '"branch_sha": "invalid')),
+            lambda x: x.notes[1].update(
+                body=x.notes[1]["body"].replace('"acceptance_sha256": "'
+                    + "e" * 64, '"acceptance_sha256": "' + "f" * 64)),
+            lambda x: x.notes[1]["user"].update(login="untrusted"),
+            lambda x: x.notes[2].update(
+                body=x.notes[2]["body"].replace(
+                    target.reservation_id, "baea9951-9670-401f-81f2-4fb89a4f1f74")),
+        ):
+            with self.subTest(historical=str(change)):
+                reject_historical(change)
+
         def tampered_case(modifier):
             variant = NoteAPI()
             modifier(variant)
