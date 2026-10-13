@@ -42,7 +42,7 @@ def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
     if type(pages) is not list or not 1 <= len(pages) <= 100:
         return None
     seen: set[int] = set()
-    recovery = reserved = in_review = 0
+    open_count = recovery = reserved = in_review = 0
     for idx, page in enumerate(pages):
         if (type(page) is not list or len(page) > 100
                 or (idx < len(pages) - 1 and len(page) != 100)):
@@ -59,6 +59,7 @@ def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
                 if type(issue["pull_request"]) is not dict:
                     return None
                 continue
+            open_count += 1
             labels = issue["labels"]
             if any(type(label) is not dict
                    or type(label.get("name")) is not str for label in labels):
@@ -75,7 +76,7 @@ def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
                 reserved += 1
             if "estado: en revisión" in names:
                 in_review += 1
-    return RecoveryInventory(len(seen), recovery, reserved, in_review)
+    return RecoveryInventory(open_count, recovery, reserved, in_review)
 
 
 
