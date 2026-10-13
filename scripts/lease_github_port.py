@@ -363,8 +363,55 @@ class LeaseGithubPort:
             # Fail-closed y sin exponer payload, token, body ni URL secreta.
             raise PortNotArmed("authenticated_recovery_proof_unavailable") from None
 
-    def recovery_label(self, issue: int, expected: Any) -> Any:
-        raise PortNotArmed("authenticated_timeline_proof_unavailable")
+    def recovery_label(self, issue: int, expected: Any) -> RecoveryLabelProof:
+        """Evidencia GET-only; jamás confundir una etiqueta con autorización."""
+        try:
+            if (type(issue) is not int or type(expected) is not Snapshot
+                    or issue != expected.issue
+                    or expected.status != "estado: requiere recuperación"):
+                raise ValueError("invalid_recovery")
+            note = self.recovery_note(issue, expected)
+            if note.count != 1:
+                raise ValueError("missing_note")
+            repo = getattr(self._api, "repo", None)
+            if (type(repo) is not str
+                    or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo)
+                    is None):
+                raise ValueError("invalid_repo")
+            base = f"/repos/{repo}/issues/{issue}/events"
+
+            def read_timeline() -> list[dict[str, Any]]:
+                rows: list[dict[str, Any]] = []
+                seen: set[int] = set()
+                for page in range(1, 6):
+                    path = f"{base}?per_page=100&page={page}"
+                    batch = self._api.request("GET", path)
+                    if type(batch) is not list or len(batch) > 100:
+                        raise ValueError("invalid_page")
+                    for event in batch:
+                        if (type(event) is not dict
+                                or type(event.get("id")) is not int
+                                or event["id"] <= 0 or event["id"] in seen):
+                            raise ValueError("duplicate_event")
+                        seen.add(event["id"])
+                        rows.append(event)
+                    if len(batch) < 100:
+                        sentinel = self._api.request(
+                            "GET", f"{base}?per_page=100&page={page + 1}")
+                        if type(sentinel) is not list or sentinel:
+                            raise ValueError("incomplete_timeline")
+                        return rows
+                raise ValueError("timeline_over_limit")
+
+            first = read_timeline()
+            proof = _verified_recovery_timeline(first, note, expected)
+            if read_timeline() != first:
+                raise ValueError("timeline_changed")
+            if self.recovery_note(issue, expected) != note:
+                raise ValueError("note_changed")
+            return proof
+        except Exception:
+            raise PortNotArmed("authenticated_timeline_proof_unavailable") from None
 
     def status(self, issue: int, state: str, expected: Any) -> None:
         raise PortNotArmed("mutation_disabled")
