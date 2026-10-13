@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUTA = ROOT / "scripts" / "cabina.py"
-WORKFLOW = (ROOT / ".github/workflows/cabina.yml").read_text(encoding="utf-8")
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "cabina.yml"
 
 spec = importlib.util.spec_from_file_location("cabina_sentry_test", RUTA)
 assert spec is not None
@@ -95,15 +95,13 @@ class SentryTests(unittest.TestCase):
 
 
 class WorkflowSentryContractTests(unittest.TestCase):
-    def test_workflow_installs_pinned_sdk_and_uses_secret(self) -> None:
-        self.assertIn("sentry-sdk==2.70.0", WORKFLOW)
-        self.assertIn("--only-binary=:all:", WORKFLOW)
-        self.assertIn("SENTRY_DSN: ${{ secrets.SENTRY_DSN }}", WORKFLOW)
-        self.assertIn("SENTRY_RELEASE: factory@${{ github.sha }}", WORKFLOW)
-        self.assertIn("SENTRY_ENVIRONMENT: github-actions", WORKFLOW)
-        self.assertNotIn("ingest.sentry.io", WORKFLOW)
-        self.assertNotIn("ingest.us.sentry.io", WORKFLOW)
-
+    def test_offline_engine_survives_without_actions_secret_or_scheduler(self):
+        self.assertFalse(WORKFLOW_PATH.exists())
+        source = RUTA.read_text(encoding="utf-8")
+        self.assertIn("inicializar_sentry", source)
+        self.assertIn("ejecutar_con_observabilidad", source)
+        self.assertIn("send_default_pii", source)
+        self.assertIn("SENTRY_DSN", source)
 
 if __name__ == "__main__":
     unittest.main()

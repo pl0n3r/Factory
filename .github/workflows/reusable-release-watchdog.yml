@@ -1,6 +1,9 @@
 name: Vigilar startup_failure de reusables publicados
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
@@ -15,7 +18,7 @@ concurrency:
 jobs:
   watchdog:
     name: Vigilar consumidores de Factory v1
-    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main'
+    if: github.repository == 'pl0n3r/Factory' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     permissions:

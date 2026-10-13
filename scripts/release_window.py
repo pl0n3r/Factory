@@ -30,16 +30,33 @@ TARGET_RE = re.compile(
 WINDOW_RE = re.compile(
     r"<!--\s*factory-release-window\s+(\{[^\n]*\})\s*-->"
 )
-WINDOW_INTENT_RE = re.compile(r"<!--\s*factory-release-window\b")
+WINDOW_INTENT_RE = re.compile(
+    r"<!--\s*factory\s*-\s*release\s*-\s*window\b", re.IGNORECASE,
+)
+# Excluye el marker de alias legítimo "factory-human-gate-duplicate".
+GATE_HEADER_RE = re.compile(
+    r"<!--\s*factory\s*-\s*human\s*-\s*gate\b(?!-duplicate\b)",
+    re.IGNORECASE,
+)
 DECISION_RE = re.compile(
     r"<!--\s*factory-human-decision\s+(\{[^\n]*\})\s*-->"
 )
 EXECUTED_RE = re.compile(
     r"<!--\s*factory-release-executed\s+(\{[^\n]*\})\s*-->"
 )
+# Detecta intentos incompletos o alternativos aunque no formen un JSON válido.
+EXECUTED_HEADER_RE = re.compile(
+    r"<!--\s*factory\s*-\s*release\s*-\s*executed\b",
+    re.IGNORECASE,
+)
 EXCEPTION_RE = re.compile(
     r"<!--\s*factory-release-freeze-exception\s+(\{[^\n]*\})\s*-->"
 )
+EXCEPTION_HEADER_RE = re.compile(
+    r"<!--\s*factory\s*-\s*release\s*-\s*freeze\s*-\s*exception\b",
+    re.IGNORECASE,
+)
+
 DUPLICATE_RE = re.compile(
     r"<!--\s*factory-human-gate-duplicate\s+canonical=([1-9][0-9]*)\s*-->"
 )
@@ -52,6 +69,27 @@ DEFAULT_TTL_MINUTES = 60
 
 class ReleaseWindowError(ValueError):
     """Evidencia ambigua/inválida: no se debe ampliar autoridad."""
+
+
+class AmbiguousReleaseJSON(ReleaseWindowError):
+    """Claves JSON repetidas invalidan la evidencia de release."""
+
+
+class AmbiguousReleaseMarker(ReleaseWindowError):
+    """Encabezados de autoridad incompletos/duplicados niegan el release."""
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise AmbiguousReleaseJSON("JSON contiene claves duplicadas.")
+        result[key] = value
+    return result
+
+
+def _strict_json_loads(raw: str) -> Any:
+    return json.loads(raw, object_pairs_hook=_unique_json_object)
 
 
 def _canonical_time(value: Any, field: str) -> datetime:
@@ -109,7 +147,19 @@ def _legacy_factory_release_intent(body: str) -> bool:
         return False
     for marker in matches:
         try:
-            raw = json.loads(marker)
+            raw = _strict_json_loads(marker)
+        except AmbiguousReleaseJSON:
+            # Inspeccionar pares del objeto raíz incluso si la categoría usa
+            # escapes Unicode. No convertir puertas legacy ajenas en bloqueos.
+            pairs = json.loads(marker, object_pairs_hook=lambda items: items)
+            if isinstance(pairs, list) and any(
+                key == "category" and value == "factory-release"
+                for key, value in pairs
+            ):
+                return True
+            if "factory-release" in marker:
+                return True
+            continue
         except json.JSONDecodeError:
             if "factory-release" in marker:
                 return True
@@ -119,17 +169,34 @@ def _legacy_factory_release_intent(body: str) -> bool:
     return False
 
 
+# La búsqueda amplia de GitHub devuelve también documentación que cita markers.
+# El título de una puerta canónica aporta intención para rechazar fuentes rotas;
+# no concede aprobación (que depende del gate validado y del journal del bot).
+RELEASE_GATE_TITLE_RE = re.compile(
+    r"^decisión en espera: Factory v[0-9]+[.][0-9]+[.][0-9]+ sobre HEAD exacto [0-9a-f]{8}$",
+    re.IGNORECASE,
+)
+
+
+def _canonical_release_issue_intent(issue: dict[str, Any]) -> bool:
+    title = issue.get("title")
+    return isinstance(title, str) and RELEASE_GATE_TITLE_RE.fullmatch(title) is not None
+
+
 def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
     if not isinstance(body, str):
         return None
     matches = MARKER_RE.findall(body)
-    if not matches:
+    header_count = len(GATE_HEADER_RE.findall(body))
+    if not matches and not header_count:
         return None
-    if len(matches) != 1:
-        raise ReleaseWindowError("Puerta humana ambigua.")
+    if header_count != 1 or len(matches) != 1:
+        raise AmbiguousReleaseMarker("Puerta humana ambigua o incompleta.")
     try:
-        raw = json.loads(matches[0])
+        raw = _strict_json_loads(matches[0])
         gate = validate_gate(raw)
+    except AmbiguousReleaseJSON:
+        raise
     except (json.JSONDecodeError, GateValidationError) as exc:
         raise ReleaseWindowError("Puerta humana inválida.") from exc
     if gate["category"] != "factory-release":
@@ -142,15 +209,15 @@ def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
 
 def _window_from_body(body: str, target_sha: str) -> dict[str, Any] | None:
     matches = WINDOW_RE.findall(body)
-    intent = WINDOW_INTENT_RE.search(body) is not None
+    header_count = len(WINDOW_INTENT_RE.findall(body))
     if not matches:
-        if intent:
+        if header_count:
             raise ReleaseWindowError("Marker release-window incompleto.")
         return None
-    if len(matches) != 1:
+    if header_count != 1 or len(matches) != 1:
         raise ReleaseWindowError("Marker release-window ambiguo.")
     try:
-        raw = json.loads(matches[0])
+        raw = _strict_json_loads(matches[0])
     except json.JSONDecodeError as exc:
         raise ReleaseWindowError("Marker release-window inválido.") from exc
     if not isinstance(raw, dict) or set(raw) != {
@@ -222,7 +289,7 @@ def _decision_a(
         if len(matches) != 1:
             raise ReleaseWindowError("Journal de decisión ambiguo.")
         try:
-            raw = json.loads(matches[0])
+            raw = _strict_json_loads(matches[0])
         except json.JSONDecodeError as exc:
             raise ReleaseWindowError("Journal de decisión inválido.") from exc
         if not isinstance(raw, dict) or set(raw) != {
@@ -254,9 +321,14 @@ def _execution(
         body = comment.get("body")
         if not isinstance(body, str):
             continue
-        for match in EXECUTED_RE.findall(body):
+        matches = EXECUTED_RE.findall(body)
+        header_count = len(EXECUTED_HEADER_RE.findall(body))
+        if header_count or matches:
+            if header_count != 1 or len(matches) != 1:
+                raise ReleaseWindowError("Marker executed ambiguo o incompleto.")
+        for match in matches:
             try:
-                raw = json.loads(match)
+                raw = _strict_json_loads(match)
             except json.JSONDecodeError as exc:
                 raise ReleaseWindowError("Marker executed inválido.") from exc
             if not isinstance(raw, dict) or set(raw) != {
@@ -295,7 +367,16 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
             continue
         window_intent = WINDOW_INTENT_RE.search(body) is not None
         legacy_release_intent = _legacy_factory_release_intent(body)
-        if not window_intent and not legacy_release_intent:
+        canonical_release_intent = _canonical_release_issue_intent(issue)
+        # Un encabezado citado por un Issue documental no es, por sí solo,
+        # una puerta de release. Preservar los gates legacy completos y tratar
+        # toda fuente canónica malformada como error, nunca como aprobación.
+        if not legacy_release_intent and not canonical_release_intent:
+            # El inventario del workflow exige título no vacío. Una fuente
+            # incompleta no puede usarse para descartar evidencia sospechosa.
+            title = issue.get("title")
+            if window_intent and (not isinstance(title, str) or not title.strip()):
+                raise ReleaseWindowError("Issue de release sin título válido.")
             continue
         if window_intent:
             gate_info = _gate_from_body(body)
@@ -304,6 +385,9 @@ def gate_records(rows: Any) -> list[dict[str, Any]]:
         else:
             try:
                 gate_info = _gate_from_body(body)
+            except (AmbiguousReleaseJSON, AmbiguousReleaseMarker):
+                # Una fuente ambigua no debe omitirse como gate legacy inválido.
+                raise
             except ReleaseWindowError:
                 # Gates legacy sin window no conceden autoridad por sí solos.
                 # Si su schema/target ya no es demostrable, se omiten.
@@ -402,11 +486,11 @@ def _critical_exception(pr: Any, work_issue: Any) -> bool:
     if not isinstance(body, str):
         return False
     matches = EXCEPTION_RE.findall(body)
-    if len(matches) != 1:
+    if len(matches) != 1 or len(EXCEPTION_HEADER_RE.findall(body)) != 1:
         return False
     try:
-        raw = json.loads(matches[0])
-    except json.JSONDecodeError:
+        raw = _strict_json_loads(matches[0])
+    except (json.JSONDecodeError, AmbiguousReleaseJSON):
         return False
     if raw != {"version": 1, "reason": "critical-repair", "issue": work_issue.get("number")}:
         return False
@@ -791,8 +875,8 @@ def _read_payload() -> Any:
     if len(raw) > 2_000_000:
         raise ReleaseWindowError("Payload demasiado grande.")
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
+        return _strict_json_loads(raw)
+    except (json.JSONDecodeError, AmbiguousReleaseJSON) as exc:
         raise ReleaseWindowError("JSON inválido.") from exc
 
 

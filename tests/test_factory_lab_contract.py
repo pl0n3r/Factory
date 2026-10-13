@@ -286,30 +286,22 @@ class FactoryLabContractTests(unittest.TestCase):
         self.assertEqual(shadow["promotion"]["execution"], "not-performed")
         self.assertEqual(contract["execution"], "not-performed")
 
-        text = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("permissions:\n  contents: read", text)
-        self.assertNotIn("contents: write", text)
-        self.assertNotIn("secrets.", text)
-        self.assertNotIn("GH_TOKEN", text)
+        # F1A elimina el disparador opcional, nunca la garantía shadow.
+        self.assertFalse(WORKFLOW.exists(), "F1A: Evolution Lab no debe dispararse")
+        module = (REPO_ROOT / "lab" / "factory_lab.py").read_text(encoding="utf-8")
+        self.assertNotIn("secrets.", module)
+        self.assertNotIn("GH_TOKEN", module)
 
-    def test_workflow_uses_minimum_permissions_and_sha_pinned_actions(self):
-        text = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("permissions:\n  contents: read", text)
-        self.assertNotRegex(text, r"(?m)^\s*(issues|pull-requests|actions|deployments|packages):\s*write\s*$")
-        self.assertNotIn("contents: write", text)
-        self.assertNotIn("pull-requests: write", text)
-        self.assertNotIn("issues: write", text)
-
-        uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)\s*$", text)
-        self.assertTrue(uses)
-        for action in uses:
-            if action.startswith("./"):
-                continue
-            self.assertRegex(action, r"^[^@\s]+@[0-9a-f]{40}$")
-
-        self.assertIn("persist-credentials: false", text)
-        self.assertNotIn("secrets.", text)
-        self.assertNotIn("GH_TOKEN", text)
+    def test_lab_modules_compile_without_optional_workflow(self):
+        """El reemplazo de un trigger no elimina los tests ni la sintaxis del Lab."""
+        self.assertFalse(WORKFLOW.exists(), "El YAML opcional fue retirado por F1A")
+        modules = sorted((REPO_ROOT / "lab").glob("*.py"))
+        self.assertTrue(modules, "La implementación offline del Lab debe permanecer")
+        for module in modules:
+            with self.subTest(module=module.name):
+                compile(module.read_text(encoding="utf-8"), str(module), "exec")
+        for suite in ("test_factory_lab_contract.py", "test_experiment_evidence.py"):
+            self.assertTrue((REPO_ROOT / "tests" / suite).is_file())
 
 
 if __name__ == "__main__":
