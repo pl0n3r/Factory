@@ -53,7 +53,9 @@ class FakeGitHub:
 
     def issue(self, number):
         if number != 44:
-            return self.issues[number]
+            issue = self.issues[number]
+            # El fake emula el contador obligatorio que devuelve GitHub REST.
+            return {**issue, "comments": issue.get("comments", 0)}
         self.foreign_read_count += 1
         result = dict(self.issues[number])
         count = len(self.comments)
@@ -451,7 +453,7 @@ class OrquestarFabricaTests(unittest.TestCase):
                 api.issues[number]["labels"] = [{"name": "estado: bloqueado"}]
                 if has_lease:
                     api.comments.append({
-                        "id": 9, "user": {"login": "github-actions[bot]"},
+                        "id": 9, "user": {"login": "github-actions[bot]", "type": "Bot"},
                         "body": reservation_marker(
                             "pl0n3r", "12345678-1234-4234-8234-123456789abc",
                             f"trabajo/issue-{number}", True, "tomar",
@@ -470,6 +472,61 @@ class OrquestarFabricaTests(unittest.TestCase):
                     self.assertFalse(api.requests)
                 else:
                     self.assertEqual(sync_plan(api, 3)["issues"]["B"], number)
+
+    def test_available_v3_evidence_fails_closed_without_rewriting(self):
+        # El estado AVAILABLE no desactiva una lease bot todavía activa.
+        for defect in ("active", "inactive", "malformed", "untrusted",
+                       "truncated", "missing_counter"):
+            with self.subTest(defect=defect):
+                api = FakeGitHub()
+                number = sync_plan(api, 3)["issues"]["B"]
+                issued = api.issues[number]
+                before_body = issued["body"]
+                before_assignees = list(issued.get("assignees", []))
+                marker = reservation_marker(
+                    "pl0n3r", "12345678-1234-4234-8234-123456789abc",
+                    f"trabajo/issue-{number}", defect != "inactive",
+                    "tomar", acceptance_sha256="a" * 64,
+                    task_snapshot={
+                        "task_marker_sha256": "b" * 64,
+                        "task_paths": ["docs/b.md"], "task_depends_on": [],
+                    },
+                )
+                if defect == "malformed":
+                    marker = "<!-- condor-reserva {invalid json} -->"
+                api.comments.append({
+                    "id": 9,
+                    "user": {
+                        "login": ("external" if defect == "untrusted"
+                                  else "github-actions[bot]"),
+                        "type": ("User" if defect == "untrusted" else "Bot"),
+                    },
+                    "body": marker,
+                })
+                issued["comments"] = len(api.comments)
+                if defect == "truncated":
+                    issued["comments"] += 1
+                if defect == "missing_counter":
+                    original_issue = api.issue
+
+                    def without_counter(issue_number):
+                        actual = original_issue(issue_number)
+                        if issue_number == number:
+                            actual.pop("comments")
+                        return actual
+
+                    api.issue = without_counter
+                api.requests.clear()
+                if defect == "inactive":
+                    self.assertEqual(sync_plan(api, 3)["issues"]["B"], number)
+                else:
+                    with self.assertRaisesRegex(
+                        PlanError, "reserva (V3 activa|ambigua|no verificable)"
+                    ):
+                        sync_plan(api, 3)
+                    self.assertFalse(api.requests)
+                    self.assertEqual(issued["body"], before_body)
+                    self.assertEqual(issued["assignees"], before_assignees)
 
     def test_reservation_appears_after_inventory_and_aborts_before_writes(self):
         api = FakeGitHub()

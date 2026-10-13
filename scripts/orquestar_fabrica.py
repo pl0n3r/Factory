@@ -495,21 +495,31 @@ def _verify_snapshot_unchanged(api: GitHub, snapshot: dict[str, Any]) -> None:
         or ("updated_at" in snapshot and actual.get("updated_at") != snapshot["updated_at"])
     ):
         raise PlanError(f"Issue #{number}: cambió durante la sincronización.")
-    if "estado: bloqueado" in label_names(actual):
-        # Una etiqueta bloqueada no revoca por sí sola la reserva V3.
-        comments = _verified_pages(api, f"/repos/{api.repo}/issues/{number}/comments")
-        if type(actual.get("comments")) is not int or len(comments) != actual["comments"]:
+    # AVAILABLE tampoco acredita ausencia de una V3. No mutar hojas con
+    # comentarios incompletos, notas ambiguas ni reservas del bot activas.
+    states = label_names(actual)
+    if STATUS_AVAILABLE in states or "estado: bloqueado" in states:
+        count = actual.get("comments")
+        if type(count) is not int or count < 0:
             raise PlanError(f"Issue #{number}: reserva no verificable.")
-        for comment in comments:
-            user = comment.get("user")
-            body = comment.get("body")
-            if (isinstance(user, dict) and user.get("login") == "github-actions[bot]"
-                    and isinstance(body, str) and "<!-- condor-reserva" in body
-                    and reservation_from_text(body) is None):
-                raise PlanError(f"Issue #{number}: reserva ambigua.")
-        reservation = latest_reservation(comments)
-        if reservation is not None and reservation.get("active"):
-            raise PlanError(f"Issue #{number}: reserva V3 activa bajo bloqueo.")
+        if count:
+            comments = _verified_pages(
+                api, f"/repos/{api.repo}/issues/{number}/comments"
+            )
+            if len(comments) != count:
+                raise PlanError(f"Issue #{number}: reserva no verificable.")
+            for comment in comments:
+                user = comment.get("user")
+                body = comment.get("body")
+                if isinstance(body, str) and "<!-- condor-reserva" in body:
+                    if (not isinstance(user, dict)
+                            or user.get("login") != "github-actions[bot]"
+                            or user.get("type") != "Bot"
+                            or reservation_from_text(body) is None):
+                        raise PlanError(f"Issue #{number}: reserva ambigua.")
+            reservation = latest_reservation(comments)
+            if reservation is not None and reservation.get("active"):
+                raise PlanError(f"Issue #{number}: reserva V3 activa.")
 
 
 def _upsert_issue(
