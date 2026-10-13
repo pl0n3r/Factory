@@ -1845,6 +1845,11 @@ class CoordinacionTests(unittest.TestCase):
             return read_issue(767)
 
         api.request = request
+
+        def reject_anonymous_request(*args, **kwargs):
+            raise AssertionError("El barrido no debe usar lecturas anónimas.")
+
+        api.public_request = reject_anonymous_request
         return api, observed
 
     def test_scheduled_sweep_consumer_reads_exact_factory_767(self):
@@ -2483,22 +2488,47 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(api.status_history, old_statuses)
         self.assertNotIn(lock, api.branches)
 
-    def test_consumer_global_kill_switch_cannot_use_local_issue_or_bad_marker(self) -> None:
-        api = FakeGitHub()
-        self.assertIsNone(coordinator.require_global_running(api))
-        for state, issue_state in (("PAUSED", "closed"),
-                                   ("RUNNING", "open"),
-                                   ("INVALID", "closed")):
-            api.kill_switch_marker = state
-            api.kill_switch_issue_state = issue_state
-            with self.subTest(state=state):
-                with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+    def test_consumer_global_kill_switch_uses_authenticated_canonical_get(self) -> None:
+        """La guarda global reutiliza GET autenticado y nunca la API anónima."""
+        for repo in ("pl0n3r/Condor", "pl0n3r/FactoryRunner"):
+            api, observed = self._sweep_switch_api("RUNNING")
+            api.repo = repo
+            api.public_request = lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("no se permite consultar #767 sin autenticación")
+            )
+            seen = []
+            original_request = api.request
+
+            def recording(method, path, payload=None, allow=()):
+                seen.append((method, path))
+                return original_request(method, path, payload, allow)
+
+            api.request = recording
+            with self.subTest(repo=repo):
+                self.assertIsNone(coordinator.require_global_running(api))
+                self.assertEqual(seen, [
+                    ("GET", "/repos/pl0n3r/Factory/issues/767")
+                ])
+                self.assertEqual(observed["reads"], 1)
+                self.assertEqual(api.repo, repo)
+
+        for mode in ("PAUSED", "403", "404", "429", "timeout",
+                     "duplicate", "invalid", "wrong-owner", "unclosed"):
+            api, observed = self._sweep_switch_api(mode)
+            api.repo = "pl0n3r/Condor"
+            api.public_request = lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("no se permite consultar #767 sin autenticación")
+            )
+            with self.subTest(mode=mode):
+                with self.assertRaises(CoordinationError):
                     coordinator.require_global_running(api)
-        api.kill_switch_marker = "RUNNING"
-        api.kill_switch_issue_state = "closed"
-        api.public_request = lambda path: {"number": 767, "state": "closed"}
-        with self.assertRaisesRegex(CoordinationError, "Kill switch"):
-            coordinator.require_global_running(api)
+                self.assertEqual(observed["reads"], 1)
+
+        unauthorized, observed = self._sweep_switch_api("RUNNING")
+        unauthorized.repo = "attacker/repo"
+        with self.assertRaisesRegex(CoordinationError, "no canónico"):
+            coordinator.require_global_running(unauthorized)
+        self.assertEqual(observed["reads"], 0)
 
     def test_recovery_label_mutations_recheck_pause_and_lease_each_rest_write(self) -> None:
         """Nunca emitir DELETE posterior a PAUSED o reemplazo de nonce."""
