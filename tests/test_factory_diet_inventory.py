@@ -42,6 +42,127 @@ REQUIRED_SIMPLIFY = {
 }
 
 
+def _yaml_mapping_block(lines: list[str], key: str, indent: int,
+                        *, optional: bool = False) -> list[str] | None:
+    """Extrae un bloque YAML efectivo con indentación fija, sin comentarios.
+
+    Este parser de CONTRATO no interpreta todo YAML: rechaza disposiciones
+    ajenas a la estructura del workflow para no dar falsos verdes.
+    """
+    header = re.compile(r"^" + " " * indent + re.escape(key) +
+                        r":\s*(?:#.*)?$")
+    positions = [i for i, line in enumerate(lines) if header.fullmatch(line)]
+    if len(positions) != 1:
+        if optional and not positions:
+            return None
+        raise AssertionError(f"Bloque YAML ausente o duplicado: {key}")
+    start = positions[0] + 1
+    end = len(lines)
+    for i in range(start, len(lines)):
+        line = lines[i]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if "\t" in line[:len(line) - len(line.lstrip())]:
+            raise AssertionError("Indentación YAML con tabs")
+        if len(line) - len(line.lstrip(" ")) <= indent:
+            end = i
+            break
+    return lines[start:end]
+
+
+def watchdog_contract(source: str) -> dict[str, object]:
+    """Proyección estructural fail-closed de jobs, cron, permisos y steps."""
+    lines = source.splitlines()
+    trigger = _yaml_mapping_block(lines, "on", 0)
+    schedule = _yaml_mapping_block(trigger, "schedule", 2)
+    cron = set()
+    for line in schedule:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r" {4}- cron:\s*(.*?)\s*", line)
+        if match is None:
+            raise AssertionError("Schedule inesperado")
+        value = match.group(1).split(" #", 1)[0].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        cron.add(value)
+
+    jobs = _yaml_mapping_block(lines, "jobs", 0)
+    job_names = set()
+    for line in jobs:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r"  ([\w-]+):\s*(?:#.*)?", line)
+        if match:
+            if match.group(1) in job_names:
+                raise AssertionError("Job duplicado")
+            job_names.add(match.group(1))
+    watchdog = _yaml_mapping_block(jobs, "watchdog", 2)
+    permissions = _yaml_mapping_block(watchdog, "permissions", 4)
+    issues_write = any(re.fullmatch(r" {6}issues:\s*write\s*(?:#.*)?", l)
+                       for l in permissions if not l.lstrip().startswith("#"))
+    concurrency = _yaml_mapping_block(lines, "concurrency", 0)
+    group = any(re.fullmatch(
+        r"  group:\s*unattended-watchdog-\$\{\{ github\.repository_id \}\}\s*",
+        l) for l in concurrency if not l.lstrip().startswith("#"))
+
+    commands = {}
+    for name in job_names:
+        job_lines = _yaml_mapping_block(jobs, name, 2)
+        steps = _yaml_mapping_block(job_lines, "steps", 4, optional=True)
+        executable = []
+        if steps is not None:
+            for index, line in enumerate(steps):
+                if line.lstrip().startswith("#"):
+                    continue
+                match = re.fullmatch(r" {8}(run|uses):\s*(.*?)\s*", line)
+                if match is None:
+                    continue
+                value = match.group(2)
+                if match.group(1) == "run" and value.startswith(("|", ">")):
+                    block = []
+                    for next_line in steps[index + 1:]:
+                        if not next_line.strip():
+                            continue
+                        if len(next_line) - len(next_line.lstrip(" ")) <= 8:
+                            break
+                        if not next_line.lstrip().startswith("#"):
+                            block.append(next_line.strip())
+                    value = " ".join(block)
+                executable.append(value)
+        commands[name] = executable
+    return {"jobs": job_names, "cron": cron, "issues_write": issues_write,
+            "concurrency": group, "commands": commands}
+
+
+def watchdog_f1g_assertions(test: unittest.TestCase, source: str,
+                           runbook: str) -> None:
+    """Comprobar YAML activo en los dos estados de transición F1G."""
+    result = watchdog_contract(source)
+    test.assertIn("watchdog", result["jobs"])
+    test.assertIn("*/15 * * * *", result["cron"])
+    test.assertTrue(result["issues_write"])
+    test.assertTrue(result["concurrency"])
+    test.assertTrue(any("scripts.unattended_watchdog_runtime" in command
+                        for command in result["commands"]["watchdog"]))
+    enabled = "## F1G: resumen diario accesorio suspendido" in runbook
+    active = "daily-summary" in result["jobs"]
+    daily_cron = "0 13 * * *" in result["cron"]
+    invocations = [
+        item for commands in result["commands"].values() for item in commands
+        if "unattended_daily_summary" in item
+    ]
+    if enabled:
+        test.assertFalse(active, "F1G: job diario sigue activo")
+        test.assertFalse(daily_cron, "F1G: cron diario sigue activo")
+        test.assertFalse(invocations, "F1G: comando diario activo")
+    else:
+        test.assertTrue(active, "Pre-F1G: falta job diario activo")
+        test.assertTrue(daily_cron, "Pre-F1G: falta cron diario activo")
+        test.assertTrue(any("unattended_daily_summary" in command for command
+                            in result["commands"]["daily-summary"]))
+
+
 def inventory_rows(text: str) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
     for line in text.splitlines():
