@@ -396,6 +396,17 @@ class LeaseGithubPortTests(unittest.TestCase):
             lambda x: setattr(x, "issue_body", x.issue_body.replace(
                 "<!-- factory-plan-task ", "<!-- invalid-plan-task ")),
             lambda x: setattr(x, "issue_body", x.issue_body + "\n" + task_tag),
+            # Un JSON duplicado con valor idéntico puede conservar la
+            # huella semántica; el Port debe rechazarlo igual.
+            lambda x: setattr(x, "issue_body", x.issue_body.replace(
+                '"task_key": "LEASE_PROOF"',
+                '"task_key": "LEASE_PROOF", "task_key": "LEASE_PROOF"')),
+            lambda x: setattr(x, "issue_body", x.issue_body +
+                "\n<!-- FACTORY-PLAN-TASK {"),
+            lambda x: setattr(x, "issue_body", x.issue_body +
+                "\n<!-- factory-plan-task {"),
+            lambda x: setattr(x, "issue_body", x.issue_body.replace(
+                '<!-- factory-plan-task ', '<!-- FACTORY-PLAN-TASK ')),
             lambda x: setattr(x, "drift_note_comment", True),
             lambda x: setattr(x, "drift_marker_comment", True),
             lambda x: x.notes[0].update(body="spoofed bot marker"),
