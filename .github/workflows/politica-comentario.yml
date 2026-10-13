@@ -37,6 +37,7 @@ jobs:
           MAX_POLICY_BYTES: "4096"
           MAX_DECISIONS_BYTES: "262144"
           MAX_EVIDENCE_BYTES: "2000000"
+          MAX_PUBLIC_CHECKS: "500"
         run: |
           set -euo pipefail
           [[ "$EVENT_NAME" == "issue_comment" ]] || { echo "::error::Evento no permitido"; exit 1; }
@@ -120,6 +121,147 @@ jobs:
           (( $(wc -c < "$REVIEWS_FILE") <= MAX_EVIDENCE_BYTES )) || { echo "::error::Reviews exceden el límite"; exit 1; }
           (( $(wc -c < "$COMMENTS_FILE") <= MAX_EVIDENCE_BYTES )) || { echo "::error::Comentarios exceden el límite"; exit 1; }
 
+          # POLICY_COMMENT_EVIDENCE_BEGIN
+          # No publicar success desde un review aislado: seis gates exact-HEAD,
+          # inventario estable y todos los threads autenticados son obligatorios.
+          CHECKS_FILE="$(mktemp)"
+          CHECKS_JSON="$(mktemp)"
+          CHECKS_PREVIOUS="$(mktemp)"
+          CHECKS_CURRENT="$(mktemp)"
+          THREADS_FILE="$(mktemp)"
+          THREADS_JSON="$(mktemp)"
+          checks_url="repos/$REPOSITORY/commits/$CURRENT_HEAD/check-runs?per_page=100"
+          previous_complete=false
+          stable_snapshot=false
+          for attempt in 1 2 3; do
+            : > "$CHECKS_FILE"
+            expected_total=""
+            observed_count=0
+            drift=false
+            for page in 1 2 3 4 5; do
+              gh api -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "$checks_url&page=$page" > "$CHECKS_JSON" || {
+                  echo "::error::No se pudo leer check-runs autenticados"
+                  exit 1
+                }
+              (( $(wc -c < "$CHECKS_JSON") <= MAX_EVIDENCE_BYTES )) || {
+                echo "::error::Página de check-runs excesiva"
+                exit 1
+              }
+              jq -e '
+                type == "object"
+                and (.total_count | type == "number")
+                and (.total_count >= 0)
+                and (.total_count == (.total_count | floor))
+                and (.check_runs | type == "array")
+                and (.check_runs | length <= 100)
+              ' "$CHECKS_JSON" >/dev/null || {
+                echo "::error::Respuesta de check-runs malformada"
+                exit 1
+              }
+              page_total="$(jq -r '.total_count' "$CHECKS_JSON")"
+              (( page_total <= MAX_PUBLIC_CHECKS )) || {
+                echo "::error::Exceso de check-runs"
+                exit 1
+              }
+              if [[ -z "$expected_total" ]]; then
+                expected_total="$page_total"
+              elif [[ "$expected_total" != "$page_total" ]]; then
+                echo "::warning::total_count cambió entre páginas de check-runs (intento $attempt/3)"
+                drift=true
+                break
+              fi
+              jq -c '.check_runs[]' "$CHECKS_JSON" >> "$CHECKS_FILE"
+              observed_count="$(wc -l < "$CHECKS_FILE")"
+              (( observed_count <= expected_total )) || {
+                echo "::error::Páginas solapadas de check-runs"
+                exit 1
+              }
+              if (( observed_count == expected_total )); then break; fi
+            done
+            if [[ "$drift" == true ]]; then
+              previous_complete=false
+              continue
+            fi
+            [[ -n "$expected_total" && "$observed_count" == "$expected_total" ]] || {
+              echo "::error::Inventario de checks incompleto"
+              exit 1
+            }
+            (( $(wc -c < "$CHECKS_FILE") <= MAX_EVIDENCE_BYTES )) || {
+              echo "::error::Inventario de checks excesivo"
+              exit 1
+            }
+            jq -s -e '
+              all(.[]; ((.id | type) == "number" and .id > 0))
+              and (([.[].id] | length) == ([.[].id] | unique | length))
+            ' "$CHECKS_FILE" >/dev/null || {
+              echo "::error::IDs de checks duplicados o inválidos"
+              exit 1
+            }
+            jq -s -c 'sort_by(.id)' "$CHECKS_FILE" > "$CHECKS_CURRENT"
+            if [[ "$previous_complete" == true ]] && \
+               cmp -s "$CHECKS_PREVIOUS" "$CHECKS_CURRENT"; then
+              stable_snapshot=true
+              break
+            fi
+            cp "$CHECKS_CURRENT" "$CHECKS_PREVIOUS"
+            previous_complete=true
+          done
+          [[ "$stable_snapshot" == true ]] || {
+            echo "::error::check-runs sin dos snapshots completos y estables"
+            exit 1
+          }
+
+          owner_name="${REPOSITORY%%/*}"
+          repo_name="${REPOSITORY#*/}"
+          # shellcheck disable=SC2016
+          gh api graphql \
+            -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{author{login}}}}}}}}' \
+            -F owner="$owner_name" -F repo="$repo_name" -F pr="$INPUT_PR" > "$THREADS_JSON" || {
+              echo "::error::GraphQL threads no disponible"
+              exit 1
+            }
+          (( $(wc -c < "$THREADS_JSON") <= MAX_EVIDENCE_BYTES )) || {
+            echo "::error::JSON de threads excesivo"
+            exit 1
+          }
+          jq -e '(.errors // []) | length == 0' "$THREADS_JSON" >/dev/null || {
+            echo "::error::GraphQL con errores"
+            exit 1
+          }
+          jq -e '
+            .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false
+            and (.data.repository.pullRequest.reviewThreads.nodes | type == "array")
+            and (.data.repository.pullRequest.reviewThreads.nodes | length <= 100)
+          ' "$THREADS_JSON" >/dev/null || {
+            echo "::error::reviewThreads paginados o inválidos"
+            exit 1
+          }
+          jq -e '
+            [.data.repository.pullRequest.reviewThreads.nodes[].comments.pageInfo.hasNextPage]
+            | all(. == false)
+          ' "$THREADS_JSON" >/dev/null || {
+            echo "::error::Comentarios de review thread paginados"
+            exit 1
+          }
+          jq -e '
+            all(.data.repository.pullRequest.reviewThreads.nodes[];
+                (.isResolved | type) == "boolean"
+                and (.comments.nodes | type) == "array"
+                and (.comments.nodes | length <= 100)
+                and all(.comments.nodes[]; (.author.login | type) == "string"))
+          ' "$THREADS_JSON" >/dev/null || {
+            echo "::error::Review threads con estructura inválida"
+            exit 1
+          }
+          jq -c '.data.repository.pullRequest.reviewThreads.nodes[]' "$THREADS_JSON" > "$THREADS_FILE"
+          (( $(wc -c < "$THREADS_FILE") <= MAX_EVIDENCE_BYTES )) || {
+            echo "::error::Threads exceden límite"
+            exit 1
+          }
+          # POLICY_COMMENT_EVIDENCE_END
+
           {
             echo "RELEVANT=true"
             echo "PR_HEAD_SHA=$CURRENT_HEAD"
@@ -128,6 +270,8 @@ jobs:
             echo "PR_BASE_REPO=$BASE_REPO"
             echo "REVIEWS_FILE=$REVIEWS_FILE"
             echo "COMMENTS_FILE=$COMMENTS_FILE"
+            echo "CHECKS_FILE=$CHECKS_FILE"
+            echo "THREADS_FILE=$THREADS_FILE"
           } >> "$GITHUB_ENV"
 
       - name: Descargar únicamente Factory versionado
@@ -135,7 +279,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: pl0n3r/factory
-          ref: v1
+          # El tag v1 conserva un predicado primario anterior a #1064/#1072/#1069.
+          # Fijar una revisión inmutable, auditada, sin mover ni publicar v1.
+          ref: b0713650194e9a0c464d625bc6136eecad776377
           path: .factory
           persist-credentials: false
 
@@ -149,7 +295,7 @@ jobs:
           CHECK_NAME: Factory policy / Validar decisiones y límite de revisión
         run: |
           set -euo pipefail
-          args=(--required-review-bot "$CALLER_REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --comments-file "$COMMENTS_FILE")
+          args=(--required-review-bot "$CALLER_REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --comments-file "$COMMENTS_FILE" --checks-file "$CHECKS_FILE" --threads-file "$THREADS_FILE")
           [[ -z "${BASE_POLICY_FILE:-}" ]] || args+=(--base-policy-file "$BASE_POLICY_FILE")
 
           set +e

@@ -12,6 +12,10 @@ https://github.com/pl0n3r/factory/blob/v1/agentes/NUCLEO.md
 - Idioma de etiquetas: español.
 - Añade aquí solo reglas técnicas o de producto propias de este proyecto; no copies el núcleo.
 
+### Mensaje de continuación (guía opcional)
+
+Para completar una unidad verificable de trabajo por turno, consulta el [Prompt de continuación](docs/PROMPT-CONTINUACION.md). Es una **guía opcional** para redactar instrucciones en AutoFactory, no una nueva regla de ejecución. **No habilita envíos automáticos**, fusiones sin **reserva V3**, **CI exact-SHA**, protección de rama y las puertas **D-069**, ni gasto, datos reales, releases o salida a live. Las reglas de `PLAN-AGENTES.md` y el núcleo v1 prevalecen siempre.
+
 ## Principios de construcción de la fábrica
 
 > Guía declarativa derivada de Factory #1082. Prevalecen el núcleo v1, `PLAN-AGENTES.md`, las reglas locales más estrictas y las puertas de autoridad vigentes. Esta plantilla no otorga permisos de ejecución ni certifica su propagación a consumidores.
