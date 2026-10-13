@@ -7,6 +7,11 @@ from pathlib import Path
 import re
 import unittest
 
+# El runner de aceptación carga este módulo con import path acotado; los helpers
+# deben resolverse al importarlo, no dentro del test ejecutado aisladamente.
+from tests.test_dieta_fase1c import EXPECTED_ACTIVE
+from tests.test_factory_diet_inventory import workflow_events
+
 ROOT = Path(__file__).resolve().parents[1]
 WF = ROOT / ".github/workflows/costos.yml"
 DIET = ROOT / "docs/dieta-factory.md"
@@ -103,9 +108,6 @@ class DietaFase1FTests(unittest.TestCase):
         self.assertEqual(ledger.count("| F1F |"), 1)
 
     def test_inventory_preserves_exact_workflow_set(self):
-        from tests.test_dieta_fase1c import EXPECTED_ACTIVE
-        from tests.test_factory_diet_inventory import workflow_events
-
         paths = {p.name for p in (ROOT / ".github/workflows").glob("*.yml")}
         self.assertEqual(len(paths), 31)
         self.assertEqual(paths, set(EXPECTED_ACTIVE))
