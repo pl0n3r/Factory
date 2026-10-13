@@ -255,8 +255,8 @@ class BootstrapStrictAdoptionTests(unittest.TestCase):
         for name, mutated in (
             ("missing_issue_comment", strict.replace("  issue_comment:\n", "", 1)),
             ("preflight_or_true", strict.replace(
-                "github.event.sender.login == github.event.comment.user.login\n    runs-on:",
-                "github.event.sender.login == github.event.comment.user.login || true\n    runs-on:", 1)),
+                "contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)\n    runs-on:",
+                "contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association) || true\n    runs-on:", 1)),
             ("comment_profile_wrong", strict.replace(
                 "      profile: es", "      profile: en", 1).replace(
                 "      operation: label", "      operation: label\n      profile: es", 1)),
