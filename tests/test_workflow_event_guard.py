@@ -28,7 +28,25 @@ class WorkflowEventGuardTests(unittest.TestCase):
         for name in ("ci.yml", "preview.yml", "aceptacion.yml"):
             text = self.text(name)
             self.assertIn("permissions: {}", text)
-            self.assertIn("needs: event_guard", text)
+            if name == "aceptacion.yml":
+                # F3D une el guard y los criterios en un único job.
+                # Sin if de job: evento no PR debe fallar, no quedar skipped.
+                self.assertNotIn("needs: event_guard", text)
+                self.assertNotIn("  event_guard:", text)
+                acceptance = text.split("  acceptance:\n", 1)[1]
+                self.assertIn("name: Criterios de aceptación", acceptance)
+                self.assertIn('[[ "$EVENT_NAME" == "pull_request" ]]', acceptance)
+                self.assertNotIn("if: github.event_name == 'pull_request'", acceptance)
+                self.assertLess(
+                    acceptance.index("- name: Rechazar eventos privilegiados"),
+                    acceptance.index("- name: Validar contexto PR"),
+                )
+                self.assertLess(
+                    acceptance.index("- name: Rechazar eventos privilegiados"),
+                    acceptance.index("actions/checkout@"),
+                )
+            else:
+                self.assertIn("needs: event_guard", text)
             cache_lines = [
                 line.strip()
                 for line in text.splitlines()
