@@ -81,8 +81,20 @@ def plan_media_backup(project: str, assets: list[dict], verified: list[dict] | N
     # A restore cannot distinguish different assets pointing to one metadata blob.
     if len(metadata_keys) != len(assets):
         raise MediaManifestError("Conflicting metadata keys.")
-    if metadata_keys.intersection(keys):
+    # Externally verified immutable keys reserve the same object namespace,
+    # even when the verified object is absent from this batch of originals.
+    if metadata_keys.intersection(set(keys) | set(proven)):
         raise MediaManifestError("Conflicting original and metadata keys.")
+    # Previews can be regenerated, so they must never overwrite originals,
+    # metadata or an externally verified immutable object.
+    preview_owners = {}
+    for asset in assets:
+        for preview in asset["preview_keys"]:
+            if preview in preview_owners and preview_owners[preview] != asset["asset_id"]:
+                raise MediaManifestError("Conflicting preview keys.")
+            preview_owners[preview] = asset["asset_id"]
+    if set(preview_owners).intersection(set(keys) | metadata_keys | set(proven)):
+        raise MediaManifestError("Conflicting preview keys.")
     return {"version": 1, "project": project,
             "entries": sorted(entries, key=lambda item: item["asset_id"]),
             "pending_uploads": sorted(upload, key=lambda item: item["object_key"]),

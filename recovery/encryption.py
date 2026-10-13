@@ -73,6 +73,10 @@ def open_backup(project: str, artifact: dict, keys: object, backend: object) -> 
         raise EncryptionContractError("Invalid sealed artifact.")
     try:
         sealed = base64.b64decode(payload, validate=True)
+        # Restore accepts exactly the token-size bounds enforced by seal_backup;
+        # reject malformed simulated artifacts before key lookup or backend I/O.
+        if not 8 <= len(sealed) <= 12_000_000:
+            raise ValueError("Invalid simulated seal size")
         plain = backend.open(sealed, keys.resolve(artifact["key_ref"]), project.encode("ascii"))
         if not isinstance(plain, bytes) or len(plain) > 8_000_000:
             raise ValueError("Invalid opened bytes")

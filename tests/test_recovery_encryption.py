@@ -1,4 +1,5 @@
 """Tests use an in-memory opaque fake. This is NOT real encryption."""
+import base64
 import json
 import unittest
 from collections.abc import Mapping
@@ -102,6 +103,46 @@ class RecoveryEncryptionTests(unittest.TestCase):
             with self.assertRaises(EncryptionContractError) as caught:
                 call()
             self.assertNotIn("sensitive-backend-sentinel", str(caught.exception))
+
+    def test_fake_restore_rejects_short_token_before_key_or_backend(self):
+        """Only a token which seal_backup could have emitted may reach the fake."""
+        class RecordingKeys:
+            def __init__(self):
+                self.calls = []
+
+            def resolve(self, ref):
+                self.calls.append(ref)
+                return b"test-key"
+
+        class RecordingFake:
+            simulation_only = True
+
+            def __init__(self):
+                self.opens = []
+
+            def seal(self, data, key, aad):
+                return b"12345678"
+
+            def open(self, token, key, aad):
+                self.opens.append(token)
+                return b"restored"
+
+        keys = RecordingKeys()
+        fake = RecordingFake()
+        artifact = seal_backup("grindflow", "epoch1", b"content", keys, fake)
+        keys.calls.clear()
+        for invalid in ("", base64.b64encode(b"x").decode("ascii")):
+            with self.subTest(payload=invalid):
+                with self.assertRaises(EncryptionContractError) as caught:
+                    open_backup("grindflow",
+                                {**artifact, "payload_b64": invalid}, keys, fake)
+                self.assertEqual(str(caught.exception), "Decrypt simulation failed.")
+                self.assertEqual(keys.calls, [])
+                self.assertEqual(fake.opens, [])
+        self.assertEqual(open_backup("grindflow", artifact, keys, fake),
+                         b"restored")
+        self.assertEqual(keys.calls, ["epoch1"])
+        self.assertEqual(fake.opens, [b"12345678"])
 
     def test_restored_fake_plaintext_obeys_seal_size_limit(self):
         """A fake cannot return larger plaintext than seal_backup permits."""

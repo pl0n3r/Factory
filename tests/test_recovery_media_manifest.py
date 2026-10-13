@@ -105,6 +105,55 @@ class RecoveryMediaManifestTests(unittest.TestCase):
         self.assertEqual(len(plan["pending_uploads"]), 1)
         self.assertEqual(len(plan["restore_plan"]), 2)
 
+    def test_preview_keys_never_alias_other_asset_or_remote_object(self):
+        """Regenerable previews must not target immutable originals or metadata."""
+        first = asset("asset_A")
+        second = asset("asset_B", digest=SHA2)
+        for taken_key in (second["object_key"], second["metadata_key"]):
+            with self.subTest(taken_key=taken_key):
+                malicious = {**first, "preview_keys": [taken_key]}
+                with self.assertRaises(MediaManifestError) as caught:
+                    plan_media_backup("grindflow", [malicious, second])
+                self.assertEqual(str(caught.exception), "Conflicting preview keys.")
+
+        # A verified object outside the current batch is also reserved.
+        evidence = [{"project": "grindflow", "object_key": "remote/old-blob.bin",
+                     "sha256": SHA1, "evidence_ref": "verified_old_blob",
+                     "immutable": True}]
+        with self.assertRaises(MediaManifestError):
+            plan_media_backup(
+                "grindflow", [{**first, "preview_keys": ["remote/old-blob.bin"]}],
+                evidence,
+            )
+
+        # Two assets cannot both claim one preview for regeneration.
+        with self.assertRaises(MediaManifestError):
+            plan_media_backup(
+                "grindflow", [first, {**second, "preview_keys": first["preview_keys"]}],
+            )
+        # Repeated preview names within one asset are safely deduplicated.
+        allowed = plan_media_backup(
+            "grindflow", [{**first, "preview_keys": ["previews/a.jpg", "previews/a.jpg"]}],
+        )
+        self.assertEqual(allowed["restore_plan"][0]["regenerate_previews"],
+                         ["previews/a.jpg"])
+
+    def test_verified_remote_object_key_cannot_be_reused_for_metadata(self):
+        item = asset("asset_A")
+        evidence = [{"project": "grindflow", "object_key": item["metadata_key"],
+                     "sha256": SHA2, "evidence_ref": "verified_occupied_metadata",
+                     "immutable": True}]
+        with self.assertRaises(MediaManifestError) as caught:
+            plan_media_backup("grindflow", [item], evidence)
+        self.assertEqual(str(caught.exception),
+                         "Conflicting original and metadata keys.")
+        # Verified original is fine if metadata occupies a separate key.
+        evidence[0]["object_key"] = item["object_key"]
+        evidence[0]["sha256"] = item["sha256"]
+        allowed = plan_media_backup("grindflow", [item], evidence)
+        self.assertEqual(allowed["pending_uploads"], [])
+        self.assertEqual(allowed["verified_copy_count"], 1)
+
     def test_metadata_key_must_not_alias_any_original_blob(self):
         """A restore plan cannot assign one key to incompatible blob roles."""
         first = asset("asset_A")
