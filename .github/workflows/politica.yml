@@ -202,110 +202,160 @@ jobs:
             exit 1
           }
 
-          # POLICY_CHECK_SNAPSHOT_BEGIN
-          # Dos lecturas completas consecutivas e idénticas acreditan estabilidad.
-          # GitHub no ofrece snapshots transaccionales de /check-runs.
-          checks_url_base="repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100"
-          previous_snapshot="${checks_file}.previous"
-          current_snapshot="${checks_file}.canonical"
-          previous_complete=false
-          stable_snapshot=false
-          : > "$previous_snapshot"
+          # POLICY_GATE_READINESS_BEGIN
+          # Usa el evaluador canónico: solo pending/missing es reintentable.
+          gate_readiness() {
+            PYTHONPATH=.factory/scripts python3 - "$checks_file" "$PR_HEAD_SHA" <<'PY'
+          import sys
+          import politica_kit as kit
 
-          for attempt in 1 2 3; do
-            : > "$checks_file"
-            expected_total=""
-            observed_count=0
-            drift=false
-            for page in 1 2 3 4 5; do
-              if ! gh api \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "${checks_url_base}&page=$page" > "$checks_json"; then
-                echo "::error::No se pudieron leer check-runs autenticados del HEAD exacto"
-                exit 1
-              fi
-              (( $(wc -c < "$checks_json") <= MAX_EVIDENCE_BYTES )) || {
-                echo "::error::Página autenticada de check-runs excede el tamaño permitido"
-                exit 1
-              }
-              jq -e '
-                type == "object"
-                and (.total_count | type == "number")
-                and (.total_count >= 0)
-                and (.total_count == (.total_count | floor))
-                and (.check_runs | type == "array")
-                and (.check_runs | length <= 100)
-              ' "$checks_json" >/dev/null || {
-                echo "::error::Página autenticada de check-runs inválida"
-                exit 1
-              }
-
-              current_total="$(jq -r '.total_count' "$checks_json")"
-              (( current_total <= MAX_PUBLIC_CHECKS )) || {
-                echo "::error::Check-runs autenticados exceden el límite evaluable de $MAX_PUBLIC_CHECKS"
-                exit 1
-              }
-              if [[ -z "$expected_total" ]]; then
-                expected_total="$current_total"
-              elif [[ "$current_total" != "$expected_total" ]]; then
-                echo "::warning::total_count cambió entre páginas de check-runs (intento $attempt/3)"
-                drift=true
-                break
-              fi
-
-              jq -c '.check_runs[]' "$checks_json" >> "$checks_file"
-              observed_count="$(wc -l < "$checks_file")"
-              (( observed_count <= expected_total )) || {
-                echo "::error::Se observaron más check-runs que total_count"
-                exit 1
-              }
-              if (( observed_count == expected_total )); then
-                break
-              fi
-            done
-            if [[ "$drift" == true ]]; then
-              previous_complete=false
-              : > "$previous_snapshot"
-              continue
-            fi
-
-            [[ -n "$expected_total" ]] || {
-              echo "::error::No se pudo fijar total_count de check-runs"
-              exit 1
-            }
-            (( observed_count == expected_total )) || {
-              echo "::error::Evidencia incompleta de check-runs autenticados"
-              exit 1
-            }
-            (( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES )) || {
-              echo "::error::Checks exceden el tamaño permitido"
-              exit 1
-            }
-            jq -s -e '
-              all(.[]; ((.id | type) == "number" and .id > 0))
-              and (([.[].id] | length) == ([.[].id] | unique | length))
-            ' "$checks_file" >/dev/null || {
-              echo "::error::IDs de check-runs autenticados inválidos o duplicados"
-              exit 1
-            }
-
-            # Estabilizar también IDs, estados y metadatos, no solo total_count.
-            jq -s -c 'sort_by(.id)' "$checks_file" > "$current_snapshot"
-            if [[ "$previous_complete" == true ]] && \
-               cmp -s "$previous_snapshot" "$current_snapshot"; then
-              stable_snapshot=true
-              break
-            fi
-            cp "$current_snapshot" "$previous_snapshot"
-            previous_complete=true
-          done
-
-          [[ "$stable_snapshot" == true ]] || {
-            echo "::error::Check-runs sin dos snapshots completos y estables"
-            exit 1
+          try:
+              with open(sys.argv[1], encoding="utf-8") as source:
+                  kit.validate_other_gates_green(
+                      source.read().splitlines(), head_sha=sys.argv[2]
+                  )
+          except kit.PolicyError as exc:
+              reason = str(exc)
+              if reason.startswith((
+                  "Check pendiente:",
+                  "Faltan gates obligatorios verdes:",
+                  "No hay evidencia de checks exact-HEAD.",
+              )):
+                  sys.exit(75)
+              print(f"::error::{reason}", file=sys.stderr)
+              sys.exit(1)
+          except (OSError, UnicodeError):
+              print("::error::No se pudieron leer checks autenticados", file=sys.stderr)
+              sys.exit(1)
+          PY
           }
-          # POLICY_CHECK_SNAPSHOT_END
+          # POLICY_GATE_READINESS_END
+
+          # POLICY_GATE_WAIT_BEGIN
+          # Límite fijo: seis fotografías estables, cinco pausas de ocho segundos.
+          # El timeout del job y los topes de páginas/bytes permanecen vigentes.
+          for gate_attempt in 1 2 3 4 5 6; do
+            # POLICY_CHECK_SNAPSHOT_BEGIN
+            # Dos lecturas completas consecutivas e idénticas acreditan estabilidad.
+            # GitHub no ofrece snapshots transaccionales de /check-runs.
+            checks_url_base="repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100"
+            previous_snapshot="${checks_file}.previous"
+            current_snapshot="${checks_file}.canonical"
+            previous_complete=false
+            stable_snapshot=false
+            : > "$previous_snapshot"
+  
+            for attempt in 1 2 3; do
+              : > "$checks_file"
+              expected_total=""
+              observed_count=0
+              drift=false
+              for page in 1 2 3 4 5; do
+                if ! gh api \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "${checks_url_base}&page=$page" > "$checks_json"; then
+                  echo "::error::No se pudieron leer check-runs autenticados del HEAD exacto"
+                  exit 1
+                fi
+                (( $(wc -c < "$checks_json") <= MAX_EVIDENCE_BYTES )) || {
+                  echo "::error::Página autenticada de check-runs excede el tamaño permitido"
+                  exit 1
+                }
+                jq -e '
+                  type == "object"
+                  and (.total_count | type == "number")
+                  and (.total_count >= 0)
+                  and (.total_count == (.total_count | floor))
+                  and (.check_runs | type == "array")
+                  and (.check_runs | length <= 100)
+                ' "$checks_json" >/dev/null || {
+                  echo "::error::Página autenticada de check-runs inválida"
+                  exit 1
+                }
+  
+                current_total="$(jq -r '.total_count' "$checks_json")"
+                (( current_total <= MAX_PUBLIC_CHECKS )) || {
+                  echo "::error::Check-runs autenticados exceden el límite evaluable de $MAX_PUBLIC_CHECKS"
+                  exit 1
+                }
+                if [[ -z "$expected_total" ]]; then
+                  expected_total="$current_total"
+                elif [[ "$current_total" != "$expected_total" ]]; then
+                  echo "::warning::total_count cambió entre páginas de check-runs (intento $attempt/3)"
+                  drift=true
+                  break
+                fi
+  
+                jq -c '.check_runs[]' "$checks_json" >> "$checks_file"
+                observed_count="$(wc -l < "$checks_file")"
+                (( observed_count <= expected_total )) || {
+                  echo "::error::Se observaron más check-runs que total_count"
+                  exit 1
+                }
+                if (( observed_count == expected_total )); then
+                  break
+                fi
+              done
+              if [[ "$drift" == true ]]; then
+                previous_complete=false
+                : > "$previous_snapshot"
+                continue
+              fi
+  
+              [[ -n "$expected_total" ]] || {
+                echo "::error::No se pudo fijar total_count de check-runs"
+                exit 1
+              }
+              (( observed_count == expected_total )) || {
+                echo "::error::Evidencia incompleta de check-runs autenticados"
+                exit 1
+              }
+              (( $(wc -c < "$checks_file") <= MAX_EVIDENCE_BYTES )) || {
+                echo "::error::Checks exceden el tamaño permitido"
+                exit 1
+              }
+              jq -s -e '
+                all(.[]; ((.id | type) == "number" and .id > 0))
+                and (([.[].id] | length) == ([.[].id] | unique | length))
+              ' "$checks_file" >/dev/null || {
+                echo "::error::IDs de check-runs autenticados inválidos o duplicados"
+                exit 1
+              }
+  
+              # Estabilizar también IDs, estados y metadatos, no solo total_count.
+              jq -s -c 'sort_by(.id)' "$checks_file" > "$current_snapshot"
+              if [[ "$previous_complete" == true ]] && \
+                 cmp -s "$previous_snapshot" "$current_snapshot"; then
+                stable_snapshot=true
+                break
+              fi
+              cp "$current_snapshot" "$previous_snapshot"
+              previous_complete=true
+            done
+  
+            [[ "$stable_snapshot" == true ]] || {
+              echo "::error::Check-runs sin dos snapshots completos y estables"
+              exit 1
+            }
+            # POLICY_CHECK_SNAPSHOT_END
+            if gate_readiness; then
+              break
+            else
+              gate_exit=$?
+              (( gate_exit == 75 )) || exit 1
+            fi
+            if (( gate_attempt == 6 )); then
+              echo "::error::Gates requeridos sin evidencia terminal verde tras espera acotada"
+              exit 1
+            fi
+            recheck_pr_identity || {
+              echo "::error::Identidad HEAD/BASE cambió mientras se esperaban checks"
+              exit 1
+            }
+            sleep 8
+          done
+          # POLICY_GATE_WAIT_END
 
           owner="${REPOSITORY%%/*}"
           repo_name="${REPOSITORY#*/}"
