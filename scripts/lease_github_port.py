@@ -53,15 +53,18 @@ _STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
 def _recent_report_ok(report: Any, issue: int, repo: Any, now: Any) -> bool:
     """Defensa adicional del límite inspector/collector; nunca ausencia."""
     if (type(report) is not dict or report.get("evidence_complete") is not True
-            or report.get("status") not in _RECENT_STATES
-            or type(repo) is not str or report.get("repo") != repo
+            or type(report.get("status")) is not str
+            or report["status"] not in _RECENT_STATES
+            or type(repo) is not str or type(report.get("repo")) is not str
+            or report["repo"] != repo
             or type(report.get("issue_number")) is not int
             or report["issue_number"] != issue
             or type(report.get("repository_id")) is not int
             or report["repository_id"] <= 0
             or type(report.get("owner")) is not str
             or not report["owner"]
-            or report.get("branch") != f"trabajo/issue-{issue}"
+            or type(report.get("branch")) is not str
+            or report["branch"] != f"trabajo/issue-{issue}"
             or type(report.get("lease_id")) is not str
             or SESSION_RE.fullmatch(report["lease_id"]) is None
             or type(report.get("branch_sha")) is not str
