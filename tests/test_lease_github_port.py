@@ -179,6 +179,13 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertTrue(_note_ok(proof, target))
         self.assertEqual(api.switch_reads, 2)
         self.assertEqual(api.comment_page_reads, 2)
+        # Dos GET de #767 cuentan en el presupuesto, aunque no se
+        # incluyan en la lista de endpoints de la prueba original.
+        exact_floor = NoteAPI()
+        exact_floor.quota = 32
+        self.assertTrue(LeaseGithubPort(exact_floor).recovery_note(
+            1191, target).authenticated)
+        self.assertEqual(exact_floor.switch_reads, 2)
         # Los cambios periféricos no alteran el contrato fijado.
         peripheral = NoteAPI()
         peripheral.issue_body = peripheral.issue_body.replace(
@@ -227,6 +234,7 @@ class LeaseGithubPortTests(unittest.TestCase):
                 updated_at="2026-10-11T10:29:00Z"),
             lambda x: setattr(x, "sentinel", [{"id": 3}]),
             lambda x: setattr(x, "quota", 19),
+            lambda x: setattr(x, "quota", 31),  # 10 GET + 2 de #767 = 19 %
             lambda x: setattr(x, "branch_sha", "f" * 40),
             lambda x: setattr(x, "reject",
                 "/repos/pl0n3r/Factory/issues/1191/comments?per_page=100&page=1"),
