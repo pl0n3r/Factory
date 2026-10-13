@@ -27,6 +27,7 @@ BOOTSTRAP_PR_LABELS = (
     "rol: seguridad",
     "rol: qa",
 )
+HISTORICAL_PR_INVALID = "PR histórico inválido."
 GRINDFLOW_REPO = "pl0n3r/GrindFlow"
 VERSION_PATH = "config/version.php"
 PACKAGE_PATH = "package.json"
@@ -460,6 +461,17 @@ class GitHubGateway:
         value=self._request("GET",f"/repos/{name}/pulls?state=open&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
         if not isinstance(value,list) or len(value)>1: raise BootstrapError("Estado de PR ambiguo.")
         return value[0] if value else None
+    def _closed_pr_detail(self,name: str,number: int)->dict[str,Any]:
+        """Verify REST details before treating a historical PR as merged or unmerged."""
+        detail=self._request("GET",f"/repos/{name}/pulls/{number}")
+        if not isinstance(detail,dict) or type(detail.get("number")) is not int or detail["number"]!=number:
+            raise BootstrapError(HISTORICAL_PR_INVALID)
+        if detail.get("state")!="closed" or "merged_at" not in detail:
+            raise BootstrapError(HISTORICAL_PR_INVALID)
+        merged_at=detail["merged_at"]
+        if merged_at is not None and (not isinstance(merged_at,str) or not merged_at.strip()):
+            raise BootstrapError(HISTORICAL_PR_INVALID)
+        return detail
     def _closed_pr_page(self,name: str,value: Any,seen: set[int])->list[dict[str,Any]]:
         """Authenticate one bounded REST page, including every PR's details."""
         if not isinstance(value,list) or len(value)>10:
@@ -468,17 +480,9 @@ class GitHubGateway:
         for item in value:
             number=item.get("number") if isinstance(item,dict) else None
             if type(number) is not int or number<1 or number in seen:
-                raise BootstrapError("PR histórico inválido.")
+                raise BootstrapError(HISTORICAL_PR_INVALID)
             seen.add(number)
-            detail=self._request("GET",f"/repos/{name}/pulls/{number}")
-            if not isinstance(detail,dict) or type(detail.get("number")) is not int or detail["number"]!=number:
-                raise BootstrapError("PR histórico inválido.")
-            if detail.get("state")!="closed" or "merged_at" not in detail:
-                raise BootstrapError("PR histórico inválido.")
-            merged_at=detail["merged_at"]
-            if merged_at is not None and (not isinstance(merged_at,str) or not merged_at.strip()):
-                raise BootstrapError("PR histórico inválido.")
-            details.append(detail)
+            details.append(self._closed_pr_detail(name,number))
         return details
     def closed_pr(self,name: str,branch: str)->dict[str,Any]|None:
         # An exact multiple of per_page is not evidence of a complete list.
