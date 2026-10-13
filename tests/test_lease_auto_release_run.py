@@ -4,7 +4,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from scripts.lease_auto_release_run import (
-    decision_from_snapshot, inventory_from_paginated_issues, run_cycle,
+    decision_from_snapshot, inventory_after_switch_recheck,
+    inventory_from_paginated_issues, run_cycle,
 )
 from test_lease_release_executor import FakePort, snapshot
 
@@ -15,6 +16,46 @@ class NoAccessPort:
 
 
 class LeaseAutoReleaseRunTests(unittest.TestCase):
+    def test_switch_recheck_rejects_pause_and_untrusted_state_during_inventory(self):
+        from scripts.unattended_kill_switch import (
+            CANONICAL_SOURCE_URL, CANONICAL_REPOSITORY_URL,
+        )
+        running = {
+            "number": 767, "state": "closed",
+            "url": CANONICAL_SOURCE_URL,
+            "repository_url": CANONICAL_REPOSITORY_URL,
+            "user": {"login": "pl0n3r"},
+            "body": '<!-- factory-unattended-kill-switch '
+                    '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->',
+        }
+        pages = [[{
+            "number": 1175, "state": "open",
+            "labels": [{"name": "estado: en revisión"}],
+            "body": "texto que jamás sale en logs",
+        }]]
+        observed = inventory_after_switch_recheck(running, running, pages)
+        self.assertIsNotNone(observed)
+        self.assertEqual(observed.in_review, 1)
+        self.assertFalse(observed.release_authorized)
+
+        for altered in (
+            {**running, "state": "open"},
+            {key: value for key, value in running.items() if key != "state"},
+            {**running, "number": True},
+            {**running, "user": {"login": "otro"}},
+            {**running, "repository_url": "https://invalid.example"},
+            {**running, "body": running["body"].replace("RUNNING", "PAUSED")},
+            {**running, "body": running["body"] + running["body"]},
+            {**running, "body": "invalid"},
+            None,
+        ):
+            with self.subTest(altered=str(altered)[:48]):
+                self.assertIsNone(inventory_after_switch_recheck(running, altered, pages))
+                self.assertIsNone(inventory_after_switch_recheck(altered, running, pages))
+        self.assertIsNone(inventory_after_switch_recheck(running, running, [
+            [{"number": 1, "state": "closed", "labels": []}],
+        ]))
+
     def test_paginated_real_issue_inventory_is_only_an_observation(self):
         def issue(n, state="estado: en revisión", *, is_pr=False):
             row = {
@@ -71,6 +112,8 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertIn("Inventario observado de recuperación", workflow)
         self.assertIn("gh api --paginate --slurp", workflow)
         self.assertIn("evaluate_unattended_kill_switch", workflow)
+        self.assertIn("inventory_after_switch_recheck", workflow)
+        self.assertIn("lease-switch-after.json", workflow)
         self.assertIn("inventory_from_paginated_issues", workflow)
         self.assertIn("liberaciones=0", workflow)
         self.assertNotIn("issues: write", workflow)
