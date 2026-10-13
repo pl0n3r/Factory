@@ -85,7 +85,7 @@ def _stable(value: object) -> object:
         if not math.isfinite(value):
             raise NoWorkInventoryError("inventory_nonfinite_number")
         return value
-    if isinstance(value, list):
+    if type(value) is list:
         normalized = [_stable(item) for item in value]
         return sorted(
             normalized,
@@ -96,7 +96,7 @@ def _stable(value: object) -> object:
                 separators=(",", ":"),
             ),
         )
-    if isinstance(value, dict):
+    if type(value) is dict:
         # JSON object keys are always strings. Coercion makes distinct Python
         # keys (1/"1", True/"True") alias and silently discards evidence.
         if any(type(key) is not str for key in value):
@@ -126,14 +126,14 @@ def _material_entry(value: object, *, noun: str) -> object:
     Cualquier campo de dominio desconocido se conserva en la huella; nunca se
     borra `updated_at` si no se clasifica expresamente como observación.
     """
-    if not isinstance(value, dict):
+    if type(value) is not dict:
         return value
     for key in OBSERVATION_FIELDS:
         if key in value and not _observation_timestamp(value[key]):
             raise NoWorkInventoryError(f"observation_timestamp_invalid:{noun}:{key}")
     if "observation_metadata" in value:
         metadata = value["observation_metadata"]
-        if not isinstance(metadata, dict) or any(
+        if type(metadata) is not dict or any(
             type(key) is not str
             or key not in OBSERVATION_METADATA_KEYS
             or not _observation_timestamp(timestamp)
@@ -147,7 +147,7 @@ def _material_entry(value: object, *, noun: str) -> object:
 
 
 def _repo_state(name: str, value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
+    if type(value) is not dict:
         raise NoWorkInventoryError(f"repository_state_invalid:{name}")
     missing = [field for field in REPO_FIELDS if field not in value]
     if missing:
@@ -156,7 +156,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
         )
 
     for field in REPO_FIELDS:
-        if not isinstance(value[field], list):
+        if type(value[field]) is not list:
             raise NoWorkInventoryError(f"repository_field_invalid:{name}:{field}")
 
     for field in ("available", "recovery"):
@@ -175,7 +175,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
     active_reservation_ids = set()
     observed_lease_pairs = set()
     for reservation in value["reservations"]:
-        if not isinstance(reservation, dict):
+        if type(reservation) is not dict:
             raise NoWorkInventoryError(f"reservation_invalid:{name}:shape")
         if type(reservation.get("active")) is not bool:
             raise NoWorkInventoryError(f"reservation_invalid:{name}:active")
@@ -218,7 +218,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
     blocked_issue_ids = set()
     blockers = []
     for blocker in value["blockers"]:
-        if isinstance(blocker, dict):
+        if type(blocker) is dict:
             blocker_id = blocker.get("issue")
         else:
             blocker_id = blocker
@@ -235,7 +235,7 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
     open_prs = []
     open_pr_numbers = set()
     for pr in value["pull_requests"]:
-        if not isinstance(pr, dict):
+        if type(pr) is not dict:
             raise NoWorkInventoryError(f"pull_request_invalid:{name}")
         state = pr.get("state")
         if type(state) is not str or state not in ("open", "closed"):
@@ -275,18 +275,18 @@ def _repo_state(name: str, value: object) -> dict[str, object]:
 
 def canonical_inventory(snapshot: object) -> dict[str, object]:
     """Reduce el snapshot a las únicas señales autorizadas por Factory#904."""
-    if not isinstance(snapshot, dict):
+    if type(snapshot) is not dict:
         raise NoWorkInventoryError("inventory_invalid")
 
     kill_switch = snapshot.get("kill_switch")
     repositories = snapshot.get("repositories")
-    if not isinstance(kill_switch, dict) or "state" not in kill_switch:
+    if type(kill_switch) is not dict or "state" not in kill_switch:
         raise NoWorkInventoryError("kill_switch_missing")
     if type(kill_switch["state"]) is not str or kill_switch["state"] not in (
         "RUNNING", "PAUSED"
     ):
         raise NoWorkInventoryError("kill_switch_state_invalid")
-    if not isinstance(repositories, dict):
+    if type(repositories) is not dict:
         raise NoWorkInventoryError("repositories_missing")
     if set(repositories) != set(REPOSITORIES):
         raise NoWorkInventoryError("repositories_incomplete")

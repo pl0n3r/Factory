@@ -413,6 +413,87 @@ class NoWorkDedupTests(unittest.TestCase):
         ):
             decide_no_work(baseline, invalid_previous, 110)
 
+    def test_non_native_json_containers_are_fail_closed(self):
+        # The collector provides native JSON containers. Subclasses can run
+        # attacker-controlled methods (items/iter/get) during normalization.
+        class HostileDict(dict):
+            def get(self, *args, **kwargs):
+                raise RuntimeError("private-caller-data")
+
+            def __iter__(self):
+                raise RuntimeError("private-caller-data")
+
+            def items(self):
+                raise RuntimeError("private-caller-data")
+
+            def __getitem__(self, key):
+                raise RuntimeError("private-caller-data")
+
+        class HostileList(list):
+            def __iter__(self):
+                raise RuntimeError("private-caller-data")
+
+            def __len__(self):
+                raise RuntimeError("private-caller-data")
+
+        examples = []
+        examples.append(("root", HostileDict(inventory()), "inventory_invalid"))
+        top_repos = inventory()
+        top_repos["repositories"] = HostileDict(top_repos["repositories"])
+        examples.append(("repositories", top_repos, "repositories_missing"))
+        kill_switch = inventory()
+        kill_switch["kill_switch"] = HostileDict(kill_switch["kill_switch"])
+        examples.append(("kill_switch", kill_switch, "kill_switch_missing"))
+        repo = inventory()
+        repo["repositories"]["Factory"] = HostileDict(repo["repositories"]["Factory"])
+        examples.append(("repo", repo, "repository_state_invalid"))
+        field = inventory()
+        field["repositories"]["Factory"]["available"] = HostileList([11])
+        examples.append(("list", field, "repository_field_invalid"))
+        reservation = inventory()
+        reservation["repositories"]["ControlBot"]["reservations"][0] = (
+            HostileDict(reservation["repositories"]["ControlBot"]["reservations"][0])
+        )
+        examples.append(("reservation", reservation, "reservation_invalid"))
+        blocker = inventory()
+        blocker["repositories"]["Factory"]["blockers"][0] = HostileDict(
+            blocker["repositories"]["Factory"]["blockers"][0]
+        )
+        examples.append(("blocker", blocker, "blocker_invalid"))
+        pr = inventory()
+        pr["repositories"]["Condor"]["pull_requests"][0] = HostileDict(
+            pr["repositories"]["Condor"]["pull_requests"][0]
+        )
+        examples.append(("pull_request", pr, "pull_request_invalid"))
+        nested_list = inventory()
+        nested_list["repositories"]["Factory"]["blockers"][0]["details"] = (
+            HostileList(["x"])
+        )
+        examples.append(("nested_list", nested_list, "inventory_value_invalid"))
+        nested_dict = inventory()
+        nested_dict["repositories"]["Factory"]["blockers"][0]["details"] = (
+            HostileDict({"x": 1})
+        )
+        examples.append(("nested_dict", nested_dict, "inventory_value_invalid"))
+        metadata = inventory()
+        metadata["repositories"]["ControlBot"]["reservations"][0][
+            "observation_metadata"
+        ] = HostileDict({"observed_at": 100})
+        examples.append(("metadata", metadata, "observation_metadata_invalid"))
+
+        for name, sample, reason in examples:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(NoWorkInventoryError, reason) as raised:
+                    inventory_fingerprint(sample)
+                self.assertNotIn("private-caller-data", str(raised.exception))
+                with self.assertRaises(NoWorkInventoryError):
+                    decide_no_work(sample, None, 100)
+
+        # Identical native JSON values remain valid and deterministic.
+        baseline = inventory()
+        self.assertEqual(inventory_fingerprint(baseline),
+                         inventory_fingerprint(inventory()))
+
     def test_nonfinite_and_undecodable_inventory_evidence_fails_closed(self):
         from math import inf, nan
 
