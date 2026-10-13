@@ -17,11 +17,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  event_guard:
-    name: Guardar contexto del caller
+  acceptance:
+    name: Criterios de aceptación
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions: {}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: read
+      checks: read
     steps:
       - name: Rechazar eventos privilegiados
         env:
@@ -30,17 +33,6 @@ jobs:
           set -euo pipefail
           [[ "$EVENT_NAME" == "pull_request" ]] || { echo "::error::Aceptación solo acepta pull_request; recibido: $EVENT_NAME"; exit 1; }
 
-  acceptance:
-    name: Criterios de aceptación
-    needs: event_guard
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      issues: read
-      checks: read
-    steps:
       - name: Validar contexto PR
         env:
           EVENT_PR: ${{ github.event.pull_request.number }}
