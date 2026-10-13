@@ -71,7 +71,10 @@ def _recent_report_ok(report: Any, issue: int, repo: Any, now: Any) -> bool:
             or type(report.get("rate_remaining")) is not int
             or report["rate_limit"] <= 0 or report["rate_remaining"] < 0
             or report["rate_remaining"] > report["rate_limit"]
-            or report["rate_remaining"] * 5 < report["rate_limit"]
+            # El GET final al switch #767 aún consume una petición.
+            # Una cuota exactamente del 20 % antes de ese GET no es
+            # suficiente para acreditar el presupuesto del ciclo entero.
+            or (report["rate_remaining"] - 1) * 5 < report["rate_limit"]
             or type(report.get("pagination")) is not dict
             or type(report.get("api_requests")) is not int
             or not 1 <= report["api_requests"] <= 32
