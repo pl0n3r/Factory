@@ -229,6 +229,7 @@ class LeaseGithubPort:
                     or type(initial.get("comments")) is not int
                     or not 1 <= initial["comments"] <= 500
                     or type(initial.get("updated_at")) is not str
+                    or type(initial.get("body")) is not str
                     or type(initial.get("labels")) is not list
                     or type(initial.get("assignees")) is not list
                     or len(initial["assignees"]) != 1
@@ -343,6 +344,9 @@ class LeaseGithubPort:
                     or final.get("number") != issue
                     or final.get("comments") != total
                     or final.get("updated_at") != initial["updated_at"]
+                    # El contrato puede editarse dentro del mismo segundo.
+                    # No confiar solo en updated_at para su integridad.
+                    or final.get("body") != initial["body"]
                     # La fecha API puede tener resolución de segundos:
                     # un cambio simultáneo de etiqueta/asignado nunca
                     # hereda el proof autenticado del snapshot anterior.
