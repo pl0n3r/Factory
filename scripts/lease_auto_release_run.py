@@ -23,6 +23,63 @@ class CycleReport:
     results: tuple[tuple[int, Result], ...]
 
 
+@dataclass(frozen=True)
+class RecoveryInventory:
+    """Censo agregado no autoritativo; NO prueba inactividad ni permite liberar."""
+    open_issues: int
+    recovery: int
+    reserved: int
+    in_review: int
+    release_authorized: bool = False
+
+
+def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
+    """Solo arrays de páginas GitHub completos en estructura y sin datos privados.
+
+    La paginación la efectúa gh api --paginate --slurp; este contador nunca
+    certifica liveness, exclusividad ni ausencia de actualizaciones concurrentes.
+    """
+    if type(pages) is not list or not 1 <= len(pages) <= 100:
+        return None
+    seen: set[int] = set()
+    recovery = reserved = in_review = 0
+    for idx, page in enumerate(pages):
+        if (type(page) is not list or len(page) > 100
+                or (idx < len(pages) - 1 and len(page) != 100)):
+            return None
+        for issue in page:
+            if (type(issue) is not dict or type(issue.get("number")) is not int
+                    or issue["number"] <= 0 or issue["number"] in seen
+                    or issue.get("state") != "open"
+                    or type(issue.get("labels")) is not list):
+                return None
+            seen.add(issue["number"])
+            # La API /issues devuelve PRs además de issues.
+            if "pull_request" in issue:
+                if type(issue["pull_request"]) is not dict:
+                    return None
+                continue
+            labels = issue["labels"]
+            if any(type(label) is not dict
+                   or type(label.get("name")) is not str for label in labels):
+                return None
+            names = [label["name"] for label in labels]
+            if len(names) != len(set(names)):
+                return None
+            statuses = [name for name in names if name.startswith("estado: ")]
+            if len(statuses) > 1:
+                return None
+            if "estado: requiere recuperación" in names:
+                recovery += 1
+            if "estado: reservado" in names:
+                reserved += 1
+            if "estado: en revisión" in names:
+                in_review += 1
+    return RecoveryInventory(len(seen), recovery, reserved, in_review)
+
+
+
+
 def decision_from_snapshot(snapshot: Any) -> Decision:
     """Adaptador tipado, sin otorgar autoridad distinta a la del Port."""
     if type(snapshot) is not Snapshot:
