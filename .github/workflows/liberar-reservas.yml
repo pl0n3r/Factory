@@ -20,8 +20,11 @@ permissions:
   issues: read
 
 concurrency:
-  group: factory-lease-audit-${{ github.repository_id }}
+  # Solo schedule/dispatch comparten exclusión con Coordinación;
+  # cada PR usa un grupo separado para no bloquear comandos /tomar.
+  group: ${{ github.event_name == 'pull_request' && format('factory-lease-audit-pr-{0}', github.event.pull_request.number) || format('factory-coordination-{0}', github.repository_id) }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   validar-decisor:
