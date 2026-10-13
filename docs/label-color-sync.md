@@ -23,18 +23,13 @@ La clasificación a `planificado` debe ser conservadora. Nunca se usa para escon
 
 ControlBot adopta el nuevo estado en una hoja separada (`ControlBot#752`) para que el Orquestador lo muestre aparte de los bloqueos reales. Esa adopción permanece bloqueada hasta completar el orden kit → publicación autorizada → sincronización de labels.
 
-## Operación
+## Operación offline tras F2A
 
-En `Factory#874`, únicamente el owner del repositorio puede crear uno de estos comentarios exactos:
+**El trigger remoto está desactivado.** F2A eliminó `.github/workflows/sync-label-colors.yml`; publicar comentarios `/sync-label-colors dry-run` o `/sync-label-colors apply` en Factory #874 **ya no ejecuta** la sincronización. Estos comandos de comentario se conservan aquí solo como referencia histórica, no como instrucciones operativas.
 
-- `/sync-label-colors dry-run`
-- `/sync-label-colors apply`
+El motor `scripts/sync_label_colors.py` permanece disponible para pruebas offline y para generar un plan de lectura `python3 scripts/sync_label_colors.py --dry-run` en un entorno autorizado. Las pruebas de paridad y reconciliación siguen cubriendo el contrato de actualizar únicamente colores de labels existentes.
 
-El primer comando ejecuta `python3 scripts/sync_label_colors.py --dry-run` sin credencial cross-repo y reporta únicamente deriva real como `repo + label + color_actual -> color_canónico`.
-
-El segundo comando requiere `FACTORY_PROVISION_TOKEN`, reutiliza esa credencial solo en el paso de apply y ejecuta `python3 scripts/sync_label_colors.py --apply`. El script hace `PATCH` únicamente del campo `color` de cada label existente y después vuelve a medir. La ejecución falla si la verificación post-apply no termina en `0 drifts`.
-
-No se introduce ningún secreto nuevo. El token no se imprime ni se incluye en excepciones o salida del plan.
+**No ejecutar `--apply` ni usar `FACTORY_PROVISION_TOKEN` sin una autorización explícita independiente.** El motor conserva controles de fail-closed, pero la baja del workflow no aplica cambios a etiquetas reales. No hay disparador nuevo, publicación ni escritura remota por comentarios.
 
 ## Reversión
 

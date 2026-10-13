@@ -30,6 +30,75 @@ def manifest():
 
 
 class RecoveryContractTests(unittest.TestCase):
+    def test_offsite_object_storage_requires_exact_string(self):
+        class SpoofStr(str):
+            def __ne__(self, other):
+                return False
+
+        for invalid in (SpoofStr("WRONG"), SpoofStr("REQUIRED"), "WRONG",
+                        None, True, 1, [], {}):
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["offsite"]["object_storage"] = invalid
+                with self.subTest(value=repr(invalid), fn=validator.__name__):
+                    with self.assertRaisesRegex(
+                        RecoveryContractError,
+                        "offsite incompatible con contrato 3-2-1-1-0",
+                    ) as caught:
+                        validator(case)
+                    self.assertIsNone(caught.exception.__cause__)
+                    self.assertIsNone(caught.exception.__context__)
+
+    def test_offsite_object_storage_hostile_comparisons_fail_closed(self):
+        class EqualAlias(str):
+            def __eq__(self, other):
+                return True
+
+            def __ne__(self, other):
+                return False
+
+        class ExplodingComparison(str):
+            def __ne__(self, other):
+                raise AssertionError("sensitive-sentinel")
+
+            def __eq__(self, other):
+                raise AssertionError("sensitive-sentinel")
+
+        for invalid in (EqualAlias("NOT_REQUIRED"), ExplodingComparison("WRONG")):
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["offsite"]["object_storage"] = invalid
+                with self.subTest(value=type(invalid).__name__, fn=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertEqual(
+                        str(caught.exception),
+                        "offsite incompatible con contrato 3-2-1-1-0.",
+                    )
+                    self.assertNotIn("sensitive-sentinel", str(caught.exception))
+                    self.assertIsNone(caught.exception.__cause__)
+                    self.assertIsNone(caught.exception.__context__)
+
+    def test_offsite_object_storage_canonical_input_unchanged(self):
+        valid = manifest()
+        before = json.dumps(
+            valid, ensure_ascii=False, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+            with self.subTest(fn=validator.__name__):
+                result = validator(copy.deepcopy(valid))
+                if validator is validate_recovery_manifest:
+                    self.assertEqual(result, valid)
+                    self.assertIs(type(result["offsite"]["object_storage"]), str)
+                else:
+                    self.assertEqual(result, before)
+        reordered = copy.deepcopy(valid)
+        reordered["offsite"] = {
+            "cold_copy": "google_drive", "object_storage": "REQUIRED",
+        }
+        self.assertEqual(canonical_recovery_manifest(reordered), before)
+
     def test_manifest_v1_schema_and_validator_are_closed_and_deterministic(self):
         first = manifest()
         second = copy.deepcopy(first)
@@ -149,6 +218,84 @@ class RecoveryContractTests(unittest.TestCase):
             with self.subTest(field=key, invalid="noncanonical"):
                 with self.assertRaises(RecoveryContractError):
                     validate_recovery_manifest(value)
+
+    def test_encryption_required_is_strict_json_boolean(self):
+        # AC-01: Python 1 == True y 1.0 == True, pero JSON Schema no los iguala.
+        pristine = manifest()
+        for validate in (validate_recovery_manifest, canonical_recovery_manifest):
+            with self.subTest(validator=validate.__name__, value=True):
+                result = validate(copy.deepcopy(pristine))
+                normalized = json.loads(result) if isinstance(result, str) else result
+                self.assertIs(type(normalized["encryption"]["required"]), bool)
+                self.assertIs(normalized["encryption"]["required"], True)
+            for alias in (1, 1.0):
+                case = copy.deepcopy(pristine)
+                case["encryption"]["required"] = alias
+                with self.subTest(validator=validate.__name__, alias=repr(alias)):
+                    with self.assertRaisesRegex(
+                        RecoveryContractError,
+                        "encryption debe ser obligatorio con key material externo",
+                    ) as caught:
+                        validate(case)
+                    self.assertIsNone(caught.exception.__cause__)
+
+    def test_encryption_aliases_fail_closed_on_both_entrypoints(self):
+        # AC-02: ningún alias o forma JSON mal tipada debe convertirse en True.
+        invalid = (1, 1.0, 0, 0.0, False, "true", "True", None, [], {}, [True])
+        for alias in invalid:
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["encryption"]["required"] = copy.deepcopy(alias)
+                with self.subTest(value=repr(alias), validator=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertEqual(
+                        str(caught.exception),
+                        "encryption debe ser obligatorio con key material externo.",
+                    )
+                    self.assertIsNone(caught.exception.__cause__)
+                    self.assertIsNone(caught.exception.__context__)
+
+        for wrong in ("true", 1, None, [], {}):
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                case = manifest()
+                case["encryption"]["key_material"] = copy.deepcopy(wrong)
+                with self.subTest(key_material=repr(wrong), fn=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertEqual(
+                        str(caught.exception),
+                        "encryption debe ser obligatorio con key material externo.",
+                    )
+
+        for malformed in (None, [], {}, {"required": True},
+                          {"required": True, "key_material": "EXTERNAL_ONLY", "extra": 1}):
+            case = manifest()
+            case["encryption"] = copy.deepcopy(malformed)
+            for validator in (validate_recovery_manifest, canonical_recovery_manifest):
+                with self.subTest(shape=repr(malformed), fn=validator.__name__):
+                    with self.assertRaises(RecoveryContractError) as caught:
+                        validator(case)
+                    self.assertNotIn("token=", str(caught.exception))
+
+    def test_encryption_canonical_true_preserves_existing_manifest(self):
+        # AC-03: validez y byte-string canónico no cambian con el hardening.
+        valid = manifest()
+        baseline = json.dumps(
+            valid, ensure_ascii=False, sort_keys=True, allow_nan=False,
+            separators=(",", ":"),
+        )
+        self.assertEqual(canonical_recovery_manifest(valid), baseline)
+        self.assertEqual(validate_recovery_manifest(valid), valid)
+        reordered = copy.deepcopy(valid)
+        reordered["encryption"] = {
+            "key_material": "EXTERNAL_ONLY", "required": True,
+        }
+        self.assertEqual(canonical_recovery_manifest(reordered), baseline)
+        self.assertIs(
+            type(validate_recovery_manifest(reordered)["encryption"]["required"]),
+            bool,
+        )
 
     def test_valid_manifest_remains_canonical_after_strict_type_checks(self):
         value = manifest()
