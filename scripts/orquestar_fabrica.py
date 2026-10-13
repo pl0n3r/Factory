@@ -64,11 +64,26 @@ REPORT_PREFIX = "<!-- factory-plan-report:"
 
 
 def _all_issues(api: GitHub) -> list[dict[str, Any]]:
-    # No interpretar un prefijo paginado como inventario global exhaustivo.
-    # Un truncamiento silencioso permitiría duplicar hojas del mismo épico.
+    """Contrasta dos recorridos inversos antes de autorizar mutaciones."""
+    inventories: list[dict[int, dict[str, Any]]] = []
+    for direction in ("asc", "desc"):
+        pages = _verified_pages(
+            api,
+            f"/repos/{api.repo}/issues?state=all&sort=created&direction={direction}",
+        )
+        indexed: dict[int, dict[str, Any]] = {}
+        numbers: set[int] = set()
+        for issue in pages:
+            number = issue.get("number")
+            if type(number) is not int or number <= 0 or number in numbers:
+                raise PlanError("Colección de autoridad ambigua o duplicada.")
+            numbers.add(number)
+            indexed[issue["id"]] = issue
+        inventories.append(indexed)
+    if inventories[0] != inventories[1]:
+        raise PlanError("Colección de autoridad incompleta o inestable.")
     return [
-        issue
-        for issue in _verified_pages(api, f"/repos/{api.repo}/issues?state=all")
+        issue for issue in inventories[0].values()
         if not issue.get("pull_request")
     ]
 
@@ -256,6 +271,54 @@ def _existing_tasks(
     return result
 
 
+def _verify_reported_issues(
+    api: GitHub, epic: int, existing: dict[str, dict[str, Any]]
+) -> None:
+    """Un reporte anterior es evidencia para vetar, no permiso para crear."""
+    marker = f"{REPORT_PREFIX}{epic} -->"
+    # Nunca confiar en el prefijo silencioso de GitHub.paginate().
+    comments = _verified_pages(api, f"/repos/{api.repo}/issues/{epic}/comments")
+    reports = [
+        comment["body"]
+        for comment in comments
+        if isinstance(comment, dict)
+        and isinstance(comment.get("body"), str)
+        and marker in comment["body"].splitlines()
+        and isinstance(comment.get("user"), dict)
+        and comment["user"].get("login") == "github-actions[bot]"
+    ]
+    if len(reports) > 1:
+        raise PlanError("Reportes de autoridad duplicados para el épico.")
+    if not reports:
+        if existing:
+            raise PlanError(
+                "Falta reporte previo para hojas existentes; "
+                "inventario no verificable."
+            )
+        return
+    body = reports[0]
+    if body.splitlines().count(marker) != 1:
+        raise PlanError("Reporte de autoridad ambiguo.")
+    rows = re.findall(
+        r"^\|\s*\d+\s*\|\s*#([1-9]\d*)\s+·\s+([A-Z][A-Z0-9_]*)\s*\|",
+        body,
+        flags=re.MULTILINE,
+    )
+    if not rows or len(rows) != len(
+        re.findall(r"^\|\s*\d+\s*\|", body, flags=re.MULTILINE)
+    ):
+        raise PlanError("Reporte anterior ilegible; inventario no verificable.")
+    seen: set[str] = set()
+    for number_text, key in rows:
+        if key in seen or key not in existing:
+            raise PlanError("Inventario incompleto respecto del reporte anterior.")
+        seen.add(key)
+        if existing[key].get("number") != int(number_text):
+            raise PlanError("Identidad de hoja contradice el reporte anterior.")
+    if seen != set(existing):
+        raise PlanError("Reporte anterior incompleto para hojas existentes.")
+
+
 def _inherited_labels(epic: dict[str, Any]) -> list[str]:
     labels = label_names(epic)
     types = sorted(label for label in labels if label.startswith("tipo: "))
@@ -420,6 +483,45 @@ def _sync_role_labels(
     api.add_labels(issue_number, role_labels)
 
 
+def _verify_snapshot_unchanged(api: GitHub, snapshot: dict[str, Any]) -> None:
+    number = snapshot.get("number")
+    if type(number) is not int or number <= 0:
+        raise PlanError("Hoja materializada sin identidad válida.")
+    actual = api.issue(number)
+    if (
+        actual.get("state") != snapshot.get("state")
+        or actual.get("body") != snapshot.get("body")
+        or label_names(actual) != label_names(snapshot)
+        or ("updated_at" in snapshot and actual.get("updated_at") != snapshot["updated_at"])
+    ):
+        raise PlanError(f"Issue #{number}: cambió durante la sincronización.")
+    # AVAILABLE tampoco acredita ausencia de una V3. No mutar hojas con
+    # comentarios incompletos, notas ambiguas ni reservas del bot activas.
+    states = label_names(actual)
+    if STATUS_AVAILABLE in states or "estado: bloqueado" in states:
+        count = actual.get("comments")
+        if type(count) is not int or count < 0:
+            raise PlanError(f"Issue #{number}: reserva no verificable.")
+        if count:
+            comments = _verified_pages(
+                api, f"/repos/{api.repo}/issues/{number}/comments"
+            )
+            if len(comments) != count:
+                raise PlanError(f"Issue #{number}: reserva no verificable.")
+            for comment in comments:
+                user = comment.get("user")
+                body = comment.get("body")
+                if isinstance(body, str) and "<!-- condor-reserva" in body:
+                    if (not isinstance(user, dict)
+                            or user.get("login") != "github-actions[bot]"
+                            or user.get("type") != "Bot"
+                            or reservation_from_text(body) is None):
+                        raise PlanError(f"Issue #{number}: reserva ambigua.")
+            reservation = latest_reservation(comments)
+            if reservation is not None and reservation.get("active"):
+                raise PlanError(f"Issue #{number}: reserva V3 activa.")
+
+
 def _upsert_issue(
     api: GitHub,
     *,
@@ -433,6 +535,17 @@ def _upsert_issue(
 ) -> dict[str, Any]:
     title = f"[EPIC #{epic}/{task.key}] {task.title}"
     body = _task_body(epic, task, order, roles, dependency_issues)
+    if existing is not None:
+        _verify_snapshot_unchanged(api, existing)
+    if existing is not None and _active(existing):
+        previous_body = str(existing.get("body") or "")
+        if parse_task_marker(previous_body) != parse_task_marker(body):
+            raise PlanError(
+                f"Issue #{existing.get('number')} está activo; su plan no puede mutar."
+            )
+        _preserved_enrichment(previous_body)
+        # Reutilizar no equivale a reasignar la reserva vigente.
+        return existing
     role_labels = _ensure_role_labels(api, roles)
     if existing is None:
         payload = {
@@ -448,12 +561,6 @@ def _upsert_issue(
         return created
 
     existing_body = str(existing.get("body") or "")
-    old_marker = parse_task_marker(existing_body)
-    new_marker = parse_task_marker(body)
-    if _active(existing) and old_marker != new_marker:
-        raise PlanError(
-            f"Issue #{existing.get('number')} está activo; su plan no puede mutar."
-        )
     enrichment = _preserved_enrichment(existing_body)
     body = body + enrichment
     number = existing.get("number")
@@ -478,7 +585,10 @@ def _upsert_issue(
 
 def _upsert_report(api: GitHub, epic: int, body: str) -> None:
     marker = f"{REPORT_PREFIX}{epic} -->"
-    for comment in api.issue_comments(epic):
+    # La segunda lectura tampoco puede aceptar prefijos truncados silenciosamente.
+    comments = _verified_pages(api, f"/repos/{api.repo}/issues/{epic}/comments")
+    matches: list[int] = []
+    for comment in comments:
         user = comment.get("user")
         if (
             isinstance(comment.get("body"), str)
@@ -487,14 +597,19 @@ def _upsert_report(api: GitHub, epic: int, body: str) -> None:
             and user.get("login") == "github-actions[bot]"
         ):
             comment_id = comment.get("id")
-            if isinstance(comment_id, int):
-                api.request(
-                    "PATCH",
-                    f"/repos/{api.repo}/issues/comments/{comment_id}",
-                    {"body": body},
-                )
-                return
-    api.comment(epic, body)
+            if type(comment_id) is not int or comment_id <= 0:
+                raise PlanError("Reporte anterior sin identidad válida.")
+            matches.append(comment_id)
+    if len(matches) > 1:
+        raise PlanError("Reportes de autoridad duplicados para el épico.")
+    if matches:
+        api.request(
+            "PATCH",
+            f"/repos/{api.repo}/issues/comments/{matches[0]}",
+            {"body": body},
+        )
+    else:
+        api.comment(epic, body)
 
 
 def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
@@ -507,6 +622,7 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     all_issues = _all_issues(api)
     historical_warnings: list[str] = []
     existing = _existing_tasks(all_issues, epic_number, historical_warnings, api=api)
+    _verify_reported_issues(api, epic_number, existing)
     planned_keys = {task.key for task in tasks}
     orphaned = sorted(set(existing) - planned_keys)
     if orphaned:
@@ -518,6 +634,29 @@ def sync_plan(api: GitHub, epic_number: int) -> dict[str, Any]:
     # Así un body ambiguo en un nodo posterior no deja un sync parcial.
     for issue in existing.values():
         _preserved_enrichment(str(issue.get("body") or ""))
+        _verify_snapshot_unchanged(api, issue)
+
+    # Vetar TODAS las modificaciones a reservas antes de la primera escritura.
+    for order, task in enumerate(ordered, 1):
+        current = existing.get(task.key)
+        if current is None or not _active(current):
+            continue
+        dependency_issues = []
+        for key in task.depends_on:
+            predecessor = existing.get(key)
+            number = predecessor.get("number") if predecessor else None
+            if type(number) is not int or number <= 0:
+                raise PlanError("Tarea activa depende de hoja aún no materializada.")
+            dependency_issues.append(number)
+        roles = _roles_for(task, epic)
+        proposed = parse_task_marker(
+            _task_body(epic_number, task, order, roles, dependency_issues)
+        )
+        saved = parse_task_marker(str(current.get("body") or ""))
+        if proposed != saved:
+            raise PlanError(
+                f"Issue #{current.get('number')} está activo; su plan no puede mutar."
+            )
 
     issue_numbers: dict[str, int] = {}
     task_roles: dict[str, list[str]] = {}

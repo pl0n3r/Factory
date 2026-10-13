@@ -376,6 +376,8 @@ class ParallelCoordinationTests(unittest.TestCase):
                 {"name": "estado: en revisión"}, {"name": "status: blocked"},
             ]}, False, False),
             ("missing_owner", {"assignees": []}, False, False),
+            ("missing_body", {"body": None}, False, False),
+            ("empty_body", {"body": ""}, False, False),
             ("wrong_owner", {"assignees": [{"login": "otro"}]}, False, False),
             ("race_after_diff", {}, True, False),
             ("fork", {}, False, False),
@@ -403,6 +405,7 @@ class ParallelCoordinationTests(unittest.TestCase):
                         reads[0] += 1
                         value = {
                             "number": 1081, "state": "open",
+                            "body": "Contrato de aceptación sintético v1",
                             "updated_at": "2026-10-10T12:00:00Z",
                             "labels": [{"name": "estado: en revisión"}],
                             "assignees": [{"login": "pl0n3r"}],

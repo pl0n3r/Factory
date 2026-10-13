@@ -258,19 +258,29 @@ class GitHub:
         )
 
     def paginate(self, path: str) -> list[dict[str, Any]]:
-        """Recorre una colección paginada de GitHub y devuelve todos sus elementos."""
-        page = 1
+        """Lee un inventario íntegro o falla cerrado; no retorna prefijos.
+
+        Una respuesta no-lista, una fila inválida o más de 3100 elementos
+        nunca pueden esconder otro PR o una reserva en las páginas siguientes.
+        Los fallos de cuota/HTTP siguen propagándose sin aproximar inventarios.
+        """
         items: list[dict[str, Any]] = []
-        while True:
-            separator = "&" if "?" in path else "?"
-            payload = self.request("GET", f"{path}{separator}per_page=100&page={page}")
-            if not isinstance(payload, list):
-                break
-            items.extend(item for item in payload if isinstance(item, dict))
+        separator = "&" if "?" in path else "?"
+        for page in range(1, 32):
+            payload = self.request(
+                "GET", f"{path}{separator}per_page=100&page={page}"
+            )
+            if (not isinstance(payload, list) or len(payload) > 100
+                or any(not isinstance(item, dict) for item in payload)):
+                raise CoordinationError(
+                    f"Inventario paginado incompleto o inválido: página {page}."
+                )
+            items.extend(payload)
             if len(payload) < 100:
-                break
-            page += 1
-        return items
+                return items
+        raise CoordinationError(
+            "Inventario paginado incompleto: excede 3100 filas."
+        )
 
     def issue(self, number: int) -> dict[str, Any]:
         """Obtiene un Issue por número."""
@@ -405,6 +415,78 @@ class GitHub:
                 raise
             if self.branch_sha(branch) is not None:
                 raise
+
+    def acquire_issue_lock(self, issue_number: int, head_sha: str) -> str | None:
+        """Cada adquisición apunta a un commit de nonce irrepetible.
+
+        El SHA de trabajo no es una identidad de lock. Crear el commit
+        huérfano no altera main; la única concesión es CREATE ref atómico.
+        """
+        if (type(issue_number) is not int or issue_number <= 0
+            or not isinstance(head_sha, str)
+            or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None):
+            raise CoordinationError("Identidad de lock V3 inválida.")
+        # Fast-path de solo lectura: una ref ocupada no debe generar
+        # commits nonce huérfanos. El POST git/refs sigue siendo el CAS
+        # que resuelve la carrera si otro agente adquiere tras este GET.
+        if self.branch_sha(recovery_lock_branch(issue_number)) is not None:
+            return None
+        base = self.request("GET", f"/repos/{self.repo}/git/commits/{head_sha}")
+        tree = base.get("tree") if isinstance(base, dict) else None
+        tree_sha = tree.get("sha") if isinstance(tree, dict) else None
+        if (not isinstance(tree_sha, str)
+            or re.fullmatch(r"[0-9a-f]{40}", tree_sha) is None):
+            raise CoordinationError("Árbol de lock V3 inválido.")
+        # El lock requiere DOS escrituras. Una pausa global entre ambas
+        # no permite crear la ref, aunque la lectura inicial fuese RUNNING.
+        # Este preflight también cubre consumidores que llaman al cliente
+        # directamente, no solamente la guarda del barrido programado.
+        require_global_running(self)
+        created = self.request(
+            "POST", f"/repos/{self.repo}/git/commits", {
+                "message": f"lock coordinacion Issue #{issue_number} {uuid.uuid4()}",
+                "tree": tree_sha, "parents": [head_sha],
+            })
+        token = created.get("sha") if isinstance(created, dict) else None
+        if (not isinstance(token, str)
+            or re.fullmatch(r"[0-9a-f]{40}", token) is None
+            or token == head_sha):
+            raise CoordinationError("Generación de lock V3 inválida.")
+        require_global_running(self)
+        if not self.create_branch(recovery_lock_branch(issue_number), token):
+            return None
+        return token
+
+    def release_issue_lock(self, issue_number: int, token: str) -> None:
+        """CAS GraphQL updateRefs: un sucesor no puede borrarse por un GET stale."""
+        if (type(issue_number) is not int or issue_number <= 0
+            or not isinstance(token, str)
+            or re.fullmatch(r"[0-9a-f]{40}", token) is None):
+            raise CoordinationError("Generación de lock V3 inválida.")
+        repo_data = self.request("GET", f"/repos/{self.repo}")
+        repo_id = repo_data.get("node_id") if isinstance(repo_data, dict) else None
+        if not isinstance(repo_id, str) or not repo_id:
+            raise CoordinationError("No se obtuvo autoridad de repo para CAS V3.")
+        # No liberar un lock V3 si el dueño pausó la fábrica mientras
+        # se resolvía repositoryId. El CAS solo evita takeover, no PAUSED.
+        require_global_running(self)
+        response = self.request("POST", "/graphql", {
+            "query": ("mutation($input:UpdateRefsInput!){"
+                      "updateRefs(input:$input){clientMutationId}}"),
+            "variables": {"input": {
+                "repositoryId": repo_id,
+                "refUpdates": [{
+                    "name": f"refs/heads/{recovery_lock_branch(issue_number)}",
+                    "beforeOid": token,
+                    "afterOid": "0" * 40,
+                    "force": True,
+                }],
+            }},
+        })
+        if (not isinstance(response, dict) or response.get("errors")
+            or not isinstance(response.get("data"), dict)
+            or not isinstance(response["data"].get("updateRefs"), dict)):
+            raise CoordinationError("Lock V3: CAS V3 denegado: no liberar lock ajeno.")
 
     def issue_comments(self, issue_number: int) -> list[dict[str, Any]]:
         """Obtiene todos los comentarios de un Issue."""
@@ -1505,12 +1587,37 @@ def require_sweep_running(api: GitHub) -> None:
         )
 
 
+def require_global_running(api: GitHub) -> None:
+    """Verifica #767 de Factory desde el propio kit o sus consumidores.
+
+    Nunca confundir el Issue #767 de un consumidor con el canónico de Factory.
+    Si no hay lectura pública autenticable de la fuente, fallar cerrado.
+    """
+    repo = str(getattr(api, "repo", "")).lower()
+    if repo not in PUBLIC_WORKFLOW_RUN_REPOS:
+        raise CoordinationError("Kill switch #767: repositorio no autorizado.")
+    if repo == "pl0n3r/factory":
+        require_sweep_running(api)
+        return
+    try:
+        issue = api.public_request("/repos/pl0n3r/Factory/issues/767")
+    except Exception as exc:
+        raise CoordinationError("Kill switch #767: fuente global ilegible.") from exc
+    decision = evaluate_unattended_kill_switch(issue)
+    if (not isinstance(issue, dict) or issue.get("state") != "closed"
+        or decision.global_pause):
+        raise CoordinationError(
+            f"Kill switch #767 no RUNNING ({decision.reason})."
+        )
+
+
 class _SweepGuardedGitHub:
     """Proxy del barrido: verifica cada escritura y solo limpia sus locks."""
 
     def __init__(self, api: GitHub) -> None:
         self._api = api
         self._own_locks: set[str] = set()
+        self._own_issue_locks: set[tuple[int, str]] = set()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._api, name)
@@ -1532,6 +1639,24 @@ class _SweepGuardedGitHub:
         self._api.delete_branch(branch)
         # Solo al confirmar el borrado se pierde la autoridad sobre el lock.
         self._own_locks.remove(branch)
+
+    def acquire_issue_lock(self, issue_number: int, sha: str) -> str | None:
+        self._check()
+        # Crear el commit nonce y la ref son DOS POST: comprobar #767 en ambos.
+        if isinstance(self._api, GitHub):
+            token = GitHub.acquire_issue_lock(self, issue_number, sha)
+        else:
+            token = self._api.acquire_issue_lock(issue_number, sha)
+        if token is not None:
+            self._own_issue_locks.add((issue_number, token))
+        return token
+
+    def release_issue_lock(self, issue_number: int, token: str) -> None:
+        if (issue_number, token) not in self._own_issue_locks:
+            raise CoordinationError("El barrido no libera locks de otros.")
+        self._api.release_issue_lock(issue_number, token)
+        self._own_issue_locks.remove((issue_number, token))
+        self._own_locks.discard(recovery_lock_branch(issue_number))
 
     def comment(self, number: int, body: str) -> None:
         self._check()
@@ -1747,22 +1872,26 @@ def mark_stale_reservation(
         return False
 
     number, branch, branch_sha, initial_reservation_id = candidate
-    lock_branch = recovery_lock_branch(number)
-    if not api.create_branch(lock_branch, branch_sha):
+    require_global_running(api)
+    # Una ref simple al HEAD no prueba propiedad y permite DELETE de terceros.
+    # Usar la misma concesión nonce + CAS beforeOid que /renovar-contrato.
+    lock_token = api.acquire_issue_lock(number, branch_sha)
+    if lock_token is None:
         return False
 
     try:
         if not recovery_candidate_still_valid(
-            api,
-            number,
-            branch,
-            initial_reservation_id,
+            api, number, branch, initial_reservation_id,
         ):
             return False
+        if (api.branch_sha(recovery_lock_branch(number)) != lock_token
+            or api.branch_sha(branch) != branch_sha):
+            raise CoordinationError("Lock V3 de barrido perdido antes de escribir.")
+        require_global_running(api)
         api.set_status(number, STATUS_RECOVERY)
         return True
     finally:
-        api.delete_branch(lock_branch)
+        api.release_issue_lock(number, lock_token)
 
 
 def mark_stale_reservations(api: GitHub) -> int:
@@ -1952,6 +2081,10 @@ def ensure_recovery_branch(api: GitHub, branch: str) -> bool:
     if not main_sha:
         raise CoordinationError("No fue posible resolver el SHA actual de main.")
 
+    # El GET main pudo cruzar una transición RUNNING→PAUSED. Ninguna
+    # creación de rama de recuperación está autorizada sin un segundo
+    # preflight canónico justo antes del POST de git/refs.
+    require_global_running(api)
     if api.create_branch(branch, main_sha):
         return True
     return api.branch_sha(branch) is not None
@@ -2092,6 +2225,7 @@ def recover_existing_work_if_stale(
         and not work_is_stale(api, issue_number, branch)
     ):
         return None
+    require_global_running(api)
     if not ensure_recovery_branch(api, branch):
         return None
 
@@ -2099,11 +2233,16 @@ def recover_existing_work_if_stale(
     if branch_sha is None:
         return None
 
+    # Compatibilidad con el contrato de recuperación 1.0.16: mismo nombre
+    # de lock por Issue, sin volver al delete inseguro del mecanismo previo.
     lock_branch = recovery_lock_branch(issue_number)
-    if not api.create_branch(lock_branch, branch_sha):
+    lock_token = api.acquire_issue_lock(issue_number, branch_sha)
+    if lock_token is None:
         return None
 
     try:
+        if api.branch_sha(lock_branch) != lock_token:
+            raise CoordinationError("Lock de recuperación sustituido.")
         issue = api.issue(issue_number)
         labels = label_names(issue)
         if (
@@ -2120,15 +2259,17 @@ def recover_existing_work_if_stale(
             and not work_is_stale(api, issue_number, branch)
         ):
             return None
+        if api.branch_sha(branch) != branch_sha:
+            raise CoordinationError("HEAD cambió antes de recuperar con lock V3.")
         return recover_stale_work(
-            api,
+            _RecoveryGuardedGitHub(api, issue_number, branch_sha, lock_token),
             issue_number,
             actor,
             branch,
             latest if latest is not None else current,
         )
     finally:
-        api.delete_branch(lock_branch)
+        api.release_issue_lock(issue_number, lock_token)
 
 
 def recovery_issue_numbers(api: GitHub) -> list[int]:
@@ -2694,6 +2835,111 @@ def _reconcile_renewal_pull(
     return winner
 
 
+class _RecoveryGuardedGitHub:
+    """Protege cada escritura de recuperación ante una concesión CAS ajena.
+
+    No convierte las llamadas GitHub multi-API en una transacción. Solo
+    comprueba la propiedad del token y del HEAD antes de cada operación.
+    """
+
+    def __init__(self, api: GitHub, issue_number: int,
+                 sha: str, token: str) -> None:
+        self._api = api
+        self._lock = recovery_lock_branch(issue_number)
+        self._branch = branch_for_issue(issue_number)
+        self._sha = sha
+        self._token = token
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._api, name)
+
+    def _check(self) -> None:
+        require_global_running(self._api)
+        if (self._api.branch_sha(self._lock) != self._token
+            or self._api.branch_sha(self._branch) != self._sha):
+            raise CoordinationError(
+                "Lock V3 de recuperación perdido: escritura denegada."
+            )
+
+    def comment(self, *args: Any) -> Any:
+        self._check()
+        return self._api.comment(*args)
+
+    def request(self, method: str, path: str, payload=None, allow=()):
+        """Inspecciona cada subescritura REST de un cambio de labels."""
+        if method.upper() not in ("GET", "HEAD"):
+            self._check()
+        return self._api.request(method, path, payload, allow)
+
+    def set_status(self, issue_number: int, status: str | None) -> None:
+        self._check()
+        if not isinstance(self._api, GitHub):
+            self._api.set_status(issue_number, status)
+            return
+        # GitHub.set_status no es atómico: cada etiqueta viaja por REST.
+        # Invocar los métodos UNBOUND sobre el proxy para revalidar el lock
+        # y #767 antes de cada POST/DELETE; jamás delegar al cliente desnudo.
+        for label, (color, description) in STATUS_LABELS.items():
+            GitHub.ensure_label(self, label, color, description)
+        if status:
+            GitHub.add_labels(self, issue_number, [status])
+        for label in STATUS_LABELS:
+            if label != status:
+                GitHub.remove_label(self, issue_number, label)
+
+    def try_assign(self, *args: Any) -> Any:
+        self._check()
+        return self._api.try_assign(*args)
+
+    def try_unassign(self, *args: Any) -> Any:
+        self._check()
+        return self._api.try_unassign(*args)
+
+    def update_pull_body(self, *args: Any) -> Any:
+        self._check()
+        return self._api.update_pull_body(*args)
+
+
+class _RenewalGuardedGitHub:
+    """Revalida propiedad del lock/HEAD antes de cada escritura de renovación.
+
+    El ref efímero sigue sin ofrecer compare-and-delete REST ni token único;
+    NO demuestra CAS suficiente para habilitar el writer de SUCCESS.
+    """
+
+    def __init__(self, api: GitHub, issue_number: int,
+                 sha: str, lock_token: str) -> None:
+        self._api = api
+        self._branch = branch_for_issue(issue_number)
+        self._lock = recovery_lock_branch(issue_number)
+        self._sha = sha
+        self._lock_token = lock_token
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._api, name)
+
+    def _check(self) -> None:
+        # La pausa global también rige durante renovaciones ya iniciadas.
+        require_global_running(self._api)
+        if (self._api.branch_sha(self._lock) != self._lock_token
+            or self._api.branch_sha(self._branch) != self._sha):
+            raise CoordinationError(
+                "Lock V3 o HEAD cambiaron antes de escribir la renovación."
+            )
+
+    def create_failed_check(self, *args: Any) -> None:
+        self._check()
+        self._api.create_failed_check(*args)
+
+    def update_pull_body(self, *args: Any) -> None:
+        self._check()
+        self._api.update_pull_body(*args)
+
+    def comment(self, *args: Any) -> None:
+        self._check()
+        self._api.comment(*args)
+
+
 def renew_pinned_acceptance(
     api: GitHub,
     issue_number: int,
@@ -2701,7 +2947,44 @@ def renew_pinned_acceptance(
     association: str,
     reservation_id: str,
 ) -> str | None:
-    """Renueva v2 con evidencia canónica y reconciliación idempotente."""
+    """Serializa la renovación con el mismo lock distribuido de recuperación.
+
+    Ningún check failure ni cambio de lease se emite si ya existe un lock.
+    La ref de lock se crea atómicamente; se libera solo si aún es nuestra.
+    """
+    if not authorized(association):
+        raise CoordinationError("Actor no autorizado para renovar aceptación.")
+    if type(issue_number) is not int or issue_number <= 0:
+        raise CoordinationError("Issue inválido para lock V3.")
+    work_branch = branch_for_issue(issue_number)
+    initial_sha = api.branch_sha(work_branch)
+    if not isinstance(initial_sha, str) or not initial_sha:
+        raise CoordinationError("Rama canónica ausente para lock V3.")
+    # No crear/eliminar refs del lock si #767 está PAUSED/ilegible/inválido.
+    require_global_running(api)
+    lock_token = api.acquire_issue_lock(issue_number, initial_sha)
+    if lock_token is None:
+        raise CoordinationError("Lock V3 ocupado: renovación denegada.")
+    try:
+        if (api.branch_sha(recovery_lock_branch(issue_number)) != lock_token
+            or api.branch_sha(work_branch) != initial_sha):
+            raise CoordinationError("Lock V3 o HEAD cambiaron durante adquisición.")
+        require_global_running(api)
+        return _renew_pinned_acceptance_under_lock(
+            _RenewalGuardedGitHub(api, issue_number, initial_sha, lock_token),
+            issue_number, actor, association, reservation_id)
+    finally:
+        api.release_issue_lock(issue_number, lock_token)
+
+
+def _renew_pinned_acceptance_under_lock(
+    api: GitHub,
+    issue_number: int,
+    actor: str,
+    association: str,
+    reservation_id: str,
+) -> str | None:
+    """Protocolo V3 bajo exclusión mutua de Issue; no invocar desde CLI."""
     if not authorized(association):
         raise CoordinationError("Actor no autorizado para renovar aceptación.")
     issue = api.issue(issue_number)
@@ -2800,6 +3083,7 @@ def renew_pinned_acceptance(
     # cambio de sesión. No depende de completar dos POST separados.
     summary = (
         f"Issue #{issue_number}: contrato renovado explícitamente; "
+        f"reserva V3 {expected_id}; aceptación SHA-256 {new_pin}; "
         "la evidencia previa del HEAD no es válida. Ejecuta CI nuevo."
     )
     api.create_failed_check(
@@ -3585,13 +3869,57 @@ def collision_validation_errors(
         proofs = {}
         current_files = api.pull_files(pr_number)
 
+    # /pulls incluye HEAD/BASE de toda la lista, aunque no changed_files.
+    # Una relectura conjunta sustituye N GET /pulls/{n} finales. Los diffs
+    # siguen validando su changed_files con GET /pulls/{n} internamente.
+    def identity_snapshot(rows: list[dict[str, Any]]) -> dict[int, tuple[str, ...]] | None:
+        snapshot: dict[int, tuple[str, ...]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                return None
+            number = row.get("number")
+            head, base = row.get("head"), row.get("base")
+            if (type(number) is not int or number <= 0
+                or not isinstance(head, dict) or not isinstance(base, dict)
+                or row.get("state") != "open"
+                or not isinstance(head.get("sha"), str)
+                or SHA_RE.fullmatch(head["sha"]) is None
+                or not isinstance(base.get("sha"), str)
+                or SHA_RE.fullmatch(base["sha"]) is None
+                or not isinstance(head.get("ref"), str)
+                or not isinstance(base.get("ref"), str)):
+                return None
+            if number in snapshot:
+                raise CoordinationError("Inventario de PRs duplicado durante colisiones.")
+            snapshot[number] = (
+                head["sha"].lower(), base["sha"].lower(),
+                head["ref"], base["ref"],
+            )
+        return snapshot
+
+    initial_pulls = api.open_pulls()
+    initial_identity = identity_snapshot(initial_pulls) if callable(exact_reader) else None
     others: dict[int, set[str]] = {}
-    for other in api.open_pulls():
+    # Un ID REST no confiable o repetido NO equivale a un PR inexistente.
+    seen_numbers: set[int] = set()
+    for other in initial_pulls:
+        if not isinstance(other, dict):
+            raise CoordinationError("Inventario de PRs malformado para colisiones.")
         other_number = other.get("number")
-        if not isinstance(other_number, int) or other_number == pr_number:
-            continue
+        if (type(other_number) is not int or other_number <= 0
+            or other_number in seen_numbers):
+            raise CoordinationError("Inventario de PRs con ID inválido o duplicado.")
+        seen_numbers.add(other_number)
         other_base = other.get("base")
-        if isinstance(other_base, dict) and other_base.get("ref") != "main":
+        if (not isinstance(other_base, dict)
+            or not isinstance(other_base.get("ref"), str)
+            or not other_base["ref"]):
+            raise CoordinationError("Inventario de PRs sin base confiable.")
+        if "state" in other and other["state"] != "open":
+            raise CoordinationError("Inventario de PRs con estado no abierto.")
+        if other_number == pr_number:
+            continue
+        if other_base["ref"] != "main":
             continue
         if callable(exact_reader):
             proof = exact_reader(other_number)
@@ -3600,24 +3928,38 @@ def collision_validation_errors(
         else:
             others[other_number] = api.pull_files(other_number)
 
-    # Una lectura de varios PR no es atómica. Prohibir el resultado si
-    # cualquier HEAD/BASE cambió desde su evidencia antes de retornar.
-    for number, proof in proofs.items():
-        current = api.pull(number)
-        head = current.get("head")
-        base = current.get("base")
-        if (
-            current.get("state") != "open"
-            or not isinstance(head, dict)
-            or not isinstance(base, dict)
-            or not isinstance(head.get("sha"), str)
-            or not isinstance(base.get("sha"), str)
-            or head["sha"].lower() != proof["head_sha"]
-            or base["sha"].lower() != proof["base_sha"]
-        ):
+    # Ningún inventario es transaccional. Si la lista inicial acredita
+    # SHAs, comparar una nueva fotografía COMPLETA: además de drift de SHA,
+    # impide pasar por alto un PR nuevo que entre durante la lectura.
+    if (initial_identity is not None
+        and all(number in initial_identity
+                and initial_identity[number][:2] ==
+                    (proof["head_sha"], proof["base_sha"])
+                for number, proof in proofs.items())):
+        final_identity = identity_snapshot(api.open_pulls())
+        if final_identity is None or final_identity != initial_identity:
             raise CoordinationError(
-                f"PR #{number}: SHA cambió entre las lecturas de colisión."
+                "Inventario de PRs cambió durante validación de colisiones."
             )
+    else:
+        # Compatibilidad con dobles legacy que no ofrecen HEAD/BASE en la
+        # colección. Conservar la relectura estricta por PR, fail-closed.
+        for number, proof in proofs.items():
+            current = api.pull(number)
+            head = current.get("head")
+            base = current.get("base")
+            if (
+                current.get("state") != "open"
+                or not isinstance(head, dict)
+                or not isinstance(base, dict)
+                or not isinstance(head.get("sha"), str)
+                or not isinstance(base.get("sha"), str)
+                or head["sha"].lower() != proof["head_sha"]
+                or base["sha"].lower() != proof["base_sha"]
+            ):
+                raise CoordinationError(
+                    f"PR #{number}: SHA cambió entre las lecturas de colisión."
+                )
 
     errors: list[str] = []
     for other_pr, files in file_overlaps(current_files, others).items():

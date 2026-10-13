@@ -151,7 +151,7 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         workflow = (
             ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
         ).read_text(encoding="utf-8")
-        watchdog = workflow.split("  watchdog:", 1)[1].split("  daily-summary:", 1)[0]
+        watchdog = workflow.split("  watchdog:", 1)[1]
         self.assertIn("push:", workflow)
         self.assertIn("branches:", workflow)
         self.assertIn("- main", workflow)
@@ -175,10 +175,11 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         workflow = (
             ROOT / ".github" / "workflows" / "unattended-watchdog.yml"
         ).read_text(encoding="utf-8")
-        daily = workflow.split("  daily-summary:", 1)[1]
-        self.assertIn("github.event_name == 'schedule'", daily)
-        self.assertIn("github.event.schedule == '0 13 * * *'", daily)
-        self.assertNotIn("github.event_name == 'push'", daily)
+        self.assertNotIn("  daily-summary:", workflow)
+        self.assertNotIn("cron: '0 13 * * *'", workflow)
+        self.assertNotIn("python3 -m scripts.unattended_daily_summary", workflow)
+        self.assertIn("github.event_name == 'push'", workflow)
+        self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
 
     def test_workflow_preserves_concurrency_permissions_and_fail_closed_contract(self):
         workflow = (
