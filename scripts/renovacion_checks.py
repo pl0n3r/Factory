@@ -857,7 +857,7 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
 
 
 def _trusted_renewal_lineage(comments: list[dict], current: dict) -> dict:
-    """Verifica una cadena V3 bot renovación -> recuperación, solo lectura.
+    """Verifica sucesión V3 renovación -> recuperación/transferencia, read-only.
 
     La prueba de procedencia NO autoriza por sí sola restaurar Validar.
     La invalidación, HEAD, locks, reviews y bootstrap siguen gates separados.
@@ -913,7 +913,7 @@ def _trusted_renewal_lineage(comments: list[dict], current: dict) -> dict:
     previous = started
     for marker, stamp in chain[start + 1:]:
         successor_id = marker.get("reservation_id")
-        if (marker.get("reason") != "recuperacion-inactividad"
+        if (marker.get("reason") not in ("recuperacion-inactividad", "transferir")
             or marker.get("active") is not True
             or not isinstance(successor_id, str)
             or _UUID.fullmatch(successor_id) is None
@@ -927,7 +927,10 @@ def _trusted_renewal_lineage(comments: list[dict], current: dict) -> dict:
         "current_uuid": current["reservation_id"],
         "acceptance_sha256": original["acceptance_sha256"],
         "renewed_at": started.isoformat(),
-        "recovery_count": len(chain) - start - 1,
+        "recovery_count": sum(1 for marker, _ in chain[start + 1:]
+                              if marker["reason"] == "recuperacion-inactividad"),
+        "transfer_count": sum(1 for marker, _ in chain[start + 1:]
+                              if marker["reason"] == "transferir"),
     }
 
 

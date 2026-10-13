@@ -682,6 +682,39 @@ Ninguno.
         self.assertEqual(proof["current_uuid"], recovered_id)
         self.assertEqual(proof["acceptance_sha256"], PIN)
         self.assertEqual(proof["recovery_count"], 1)
+        self.assertEqual(proof["transfer_count"], 0)
+        transferred_id = "33333333-4444-4555-8666-777777777777"
+        final_id = "44444444-5555-4666-8777-888888888888"
+        transferred = mark(transferred_id, "transferir", FINISH)
+        final = mark(final_id, "recuperacion-inactividad",
+                     "2026-10-11T18:14:00Z")
+        current_final = reservation_from_text(final["body"])
+        mixed = _trusted_renewal_lineage(
+            [first, second, transferred, final], current_final)
+        self.assertEqual(mixed["renewal_uuid"], UUID)
+        self.assertEqual(mixed["current_uuid"], final_id)
+        self.assertEqual(mixed["recovery_count"], 2)
+        self.assertEqual(mixed["transfer_count"], 1)
+        direct_transfer = mark(transferred_id, "transferir", FRESH)
+        direct = _trusted_renewal_lineage(
+            [first, direct_transfer],
+            reservation_from_text(direct_transfer["body"]))
+        self.assertEqual(direct["recovery_count"], 0)
+        self.assertEqual(direct["transfer_count"], 1)
+        for bad_transfer in (
+            mark(transferred_id, "transferir", FINISH, owner="intruder"),
+            mark(transferred_id, "transferir", FINISH, pin="d" * 64),
+            mark(transferred_id, "transferir", FINISH,
+                 paths=["scripts/foreign.py"]),
+            mark(transferred_id, "transferir", FRESH),
+            mark(recovered_id, "transferir", FINISH),
+            mark(transferred_id, "transferir", FINISH, actor_type="User"),
+        ):
+            with self.subTest(transfer=bad_transfer["body"]):
+                with self.assertRaises(EvidenceUnavailable):
+                    _trusted_renewal_lineage(
+                        [first, second, bad_transfer],
+                        reservation_from_text(bad_transfer["body"]))
 
         negatives = [
             mark(recovered_id, "recuperacion-inactividad", FRESH, owner="intruder"),
@@ -690,7 +723,6 @@ Ninguno.
                  paths=["scripts/foreign.py"]),
             mark(recovered_id, "recuperacion-inactividad", FRESH, active=False),
             mark(UUID, "recuperacion-inactividad", FRESH),
-            mark(recovered_id, "transferir", FRESH),
             mark(recovered_id, "recuperacion-inactividad", TIME),
             mark(recovered_id, "recuperacion-inactividad", FRESH,
                  actor_type="User"),
