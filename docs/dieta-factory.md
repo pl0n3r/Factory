@@ -22,7 +22,7 @@ El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningú
 | `.github/workflows/codeql-evidence.yml` | pull_request, push | 60 | scripts/codeql_sarif_summary.py | tests/test_codeql_evidence_workflow.py, tests/test_codeql_sarif_summary.py | **quedarse** | 0 |
 | `.github/workflows/coordinacion-trabajo.yml` | schedule, workflow_dispatch, pull_request, issues, issue_comment | 342 | scripts/coordinar_trabajo.py | tests/test_coordinar_trabajo.py, tests/test_coordinar_trabajo_unblock_validation.py | **simplificar** | 4 |
 | `.github/workflows/coordinacion.yml` | workflow_call | 236 | scripts/coordinar_trabajo.py | tests/test_coordinacion_reusable_contract.py | **quedarse** | 0 |
-| `.github/workflows/costos.yml` | pull_request, workflow_dispatch, schedule | 167 | metricas/costos.py | metricas/test_costos.py | **quedarse** | 0 |
+| `.github/workflows/costos.yml` | pull_request | 167 | metricas/costos.py | metricas/test_costos.py | **quedarse** | 0 |
 | `.github/workflows/deploy.yml` | workflow_call | 86 | scripts/deploy_kit.py | tests/test_runtime_workflow_contract.py | **quedarse** | 0 |
 | `.github/workflows/etiquetas-pr.yml` | workflow_call | 107 | scripts/labels_kit.py | tests/test_etiquetas_workflow_contract.py | **eliminar** | 2 |
 | `.github/workflows/etiquetas.yml` | workflow_call | 230 | scripts/labels_kit.py, scripts/pr_label_governance.py | tests/test_etiquetas_workflow_contract.py, tests/test_labels_kit.py | **eliminar** | 2 |
@@ -157,3 +157,15 @@ Reversión: squash-revert solo del PR F1D, sin tocar F1A/F1B/F1C ni modificar pu
 | F1E | `.github/workflows/captura-leccion.yml` | `df7cdd904b9370600a897f174d28322e5a99d84e` | 32 → 31 | squash-revert PR F1E |
 
 **Preflight:** árboles Git completos de los siete repos, sin callers literales en otros workflows; esa lectura no garantiza ausencia de automatizaciones externas. El check requerido de Factory es `Validar`, no Captura. Sin cambios de permisos, secretos, datos, etiquetas reales, release, despliegue ni go-live. **Reversión:** squash-revert solo del PR F1E restaura el disparador, tabla y QA originales sin afectar F1A/F1B/F1C/F1D/F2A.
+
+## Ledger F1F: tendencia CI pasa a consulta offline (sin eliminar presupuesto)
+
+**Baseline pos-F1E:** 31 workflows en `main@7f5fa485d3341f3d8963db90b1b1dc9efeefe4f2`. F1F **mantiene 31 workflows** (31 → 31): elimina únicamente los disparadores `schedule` y `workflow_dispatch` y el job accesorio `tendencia-ci` dentro de `.github/workflows/costos.yml`, sin borrar el workflow ni alterar los jobs de `pull_request` `validar-candidato` y `presupuesto-pr`. No hay nueva recolección mensual automática/manual de tendencia.
+
+| Tramo | Workflow | Blob previo | Transición | Reversión |
+| --- | --- | --- | --- | --- |
+| F1F | `.github/workflows/costos.yml` | `e88c1e5986c56264ce97b5341b8af4fa9a41e0e0` | 31 → 31 | squash-revert PR F1F |
+
+**Contrato conservado:** `Presupuesto del PR` observa la base confiable y mantiene `presupuesto-pr-*` con retención de 30 días; `Validar candidato de costos` conserva sus tests. `metricas/costos.py trend` y `metricas/test_costos.py` siguen disponibles offline, sin jobs que los publiquen automáticamente. La referencia al recuento 167 líneas en el inventario superior es histórica, no el largo actual.
+
+**Preflight:** Factory #767 RUNNING, PRs abiertos sin colisiones de los seis claims V3 renovados, reserva V3 exclusiva en #1323. La poda no modifica dinero, presupuestos, límites, releases, Sonar, CodeQL, CodeRabbit, seguridad o go-live. **Reversión:** squash-revert solo del PR F1F recupera trigger/job y docs previos sin revertir F1A/B/C/D/E ni F2A.

@@ -1,0 +1,220 @@
+"""Tests use an in-memory opaque fake. This is NOT real encryption."""
+import base64
+import json
+import unittest
+from collections.abc import Mapping
+from hashlib import sha256
+from recovery.encryption import EncryptionContractError, open_backup, seal_backup
+
+
+class FakeKeys:
+    def __init__(self):
+        self.material = {"epoch1": b"fake-secret-epoch-1"}
+        self.active = "epoch1"
+
+    def resolve(self, ref):
+        return self.material[ref]
+
+    def rotate(self):
+        self.material["epoch2"] = b"fake-secret-epoch-2"
+        self.active = "epoch2"
+
+
+class OpaqueInMemoryFake:
+    simulation_only = True
+
+    def __init__(self):
+        self.items = {}
+
+    def seal(self, data, key, aad):
+        # A deterministic opaque reference for unit tests, NOT ciphertext.
+        opaque = sha256(key + aad + data).digest()
+        self.items[opaque] = (data, key, aad)
+        return opaque
+
+    def open(self, token, key, aad):
+        data, saved_key, saved_aad = self.items[token]
+        if saved_key != key or saved_aad != aad:
+            raise ValueError("fake authentication failed")
+        return data
+
+
+class RecoveryEncryptionTests(unittest.TestCase):
+    def test_rotated_key_registry_restores_historical_artifact(self):
+        keys = FakeKeys(); fake = OpaqueInMemoryFake()
+        original = seal_backup("grindflow", keys.active, b"old backup", keys, fake)
+        keys.rotate()
+        current = seal_backup("grindflow", keys.active, b"new backup", keys, fake)
+        self.assertEqual(open_backup("grindflow", original, keys, fake), b"old backup")
+        self.assertEqual(open_backup("grindflow", current, keys, fake), b"new backup")
+        self.assertTrue(original["simulation_only"])
+        self.assertFalse(current["external_transfer_allowed"])
+        with self.assertRaises(EncryptionContractError):
+            open_backup("condor", original, keys, fake)
+        del keys.material["epoch1"]
+        with self.assertRaises(EncryptionContractError):
+            open_backup("grindflow", original, keys, fake)
+
+    def test_secret_material_never_enters_artifact_or_error(self):
+        keys = FakeKeys(); fake = OpaqueInMemoryFake()
+        plaintext = b"top private payload"
+        artifact = seal_backup("grindflow", "epoch1", plaintext, keys, fake)
+        serialized = json.dumps(artifact)
+        self.assertNotIn(plaintext.decode(), serialized)
+        self.assertNotIn(keys.material["epoch1"].decode(), serialized)
+        fake.items.clear()
+        with self.assertRaises(EncryptionContractError) as error:
+            open_backup("grindflow", artifact, keys, fake)
+        self.assertNotIn(plaintext.decode(), str(error.exception))
+        self.assertNotIn(keys.material["epoch1"].decode(), str(error.exception))
+        with self.assertRaises(EncryptionContractError):
+            seal_backup("grindflow", "epoch1", plaintext, keys, object())
+        self.assertFalse(artifact["external_transfer_allowed"])
+
+        # JSON booleans/floats must never masquerade as schema version 1.
+        for bad_version in (True, False, 1.0, "1", None):
+            with self.subTest(bad_version=bad_version):
+                with self.assertRaises(EncryptionContractError) as caught:
+                    open_backup("grindflow", {**artifact, "version": bad_version}, keys, fake)
+                self.assertEqual(str(caught.exception), "Invalid sealed artifact.")
+        self.assertEqual(artifact["version"], 1)
+
+        class MaliciousArtifact(Mapping):
+            def __len__(self):
+                return 6
+            def __iter__(self):
+                raise RuntimeError("sensitive-artifact-sentinel")
+            def __getitem__(self, key):
+                raise RuntimeError("sensitive-artifact-sentinel")
+
+        with self.assertRaises(EncryptionContractError) as caught:
+            open_backup("grindflow", MaliciousArtifact(), keys, fake)
+        self.assertNotIn("sensitive-artifact-sentinel", str(caught.exception))
+
+        class MaliciousBackend:
+            @property
+            def simulation_only(self):
+                raise RuntimeError("sensitive-backend-sentinel")
+
+        for call in (
+            lambda: seal_backup("grindflow", "epoch1", plaintext, keys, MaliciousBackend()),
+            lambda: open_backup("grindflow", artifact, keys, MaliciousBackend()),
+        ):
+            with self.assertRaises(EncryptionContractError) as caught:
+                call()
+            self.assertNotIn("sensitive-backend-sentinel", str(caught.exception))
+
+    def test_fake_errors_do_not_retain_provider_exception_context(self):
+        """Synthetic backend failures must not remain attached to public errors."""
+        sentinel = "DUMMY_SECRET_NOT_REAL"
+
+        class FailingKeys:
+            def resolve(self, ref):
+                raise RuntimeError(sentinel)
+
+        class FailingBackend:
+            simulation_only = True
+
+            def seal(self, data, key, aad):
+                raise RuntimeError(sentinel)
+
+            def open(self, token, key, aad):
+                raise RuntimeError(sentinel)
+
+        class GetterFailureBackend:
+            @property
+            def simulation_only(self):
+                raise RuntimeError(sentinel)
+
+        keys = FakeKeys()
+        working = OpaqueInMemoryFake()
+        artifact = seal_backup("grindflow", "epoch1", b"fake-only-data", keys, working)
+
+        cases = (
+            ("getter_seal", lambda: seal_backup(
+                "grindflow", "epoch1", b"fake-only-data", keys, GetterFailureBackend())),
+            ("getter_open", lambda: open_backup(
+                "grindflow", artifact, keys, GetterFailureBackend())),
+            ("key_resolve_seal", lambda: seal_backup(
+                "grindflow", "epoch1", b"fake-only-data", FailingKeys(), working)),
+            ("backend_seal", lambda: seal_backup(
+                "grindflow", "epoch1", b"fake-only-data", keys, FailingBackend())),
+            ("key_resolve_open", lambda: open_backup(
+                "grindflow", artifact, FailingKeys(), working)),
+            ("backend_open", lambda: open_backup(
+                "grindflow", artifact, keys, FailingBackend())),
+        )
+        for label, operation in cases:
+            with self.subTest(case=label):
+                with self.assertRaises(EncryptionContractError) as captured:
+                    operation()
+                error = captured.exception
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+                self.assertNotIn(sentinel, str(error))
+
+    def test_fake_restore_rejects_short_token_before_key_or_backend(self):
+        """Only a token which seal_backup could have emitted may reach the fake."""
+        class RecordingKeys:
+            def __init__(self):
+                self.calls = []
+
+            def resolve(self, ref):
+                self.calls.append(ref)
+                return b"test-key"
+
+        class RecordingFake:
+            simulation_only = True
+
+            def __init__(self):
+                self.opens = []
+
+            def seal(self, data, key, aad):
+                return b"12345678"
+
+            def open(self, token, key, aad):
+                self.opens.append(token)
+                return b"restored"
+
+        keys = RecordingKeys()
+        fake = RecordingFake()
+        artifact = seal_backup("grindflow", "epoch1", b"content", keys, fake)
+        keys.calls.clear()
+        for invalid in ("", base64.b64encode(b"x").decode("ascii")):
+            with self.subTest(payload=invalid):
+                with self.assertRaises(EncryptionContractError) as caught:
+                    open_backup("grindflow",
+                                {**artifact, "payload_b64": invalid}, keys, fake)
+                self.assertEqual(str(caught.exception), "Decrypt simulation failed.")
+                self.assertEqual(keys.calls, [])
+                self.assertEqual(fake.opens, [])
+        self.assertEqual(open_backup("grindflow", artifact, keys, fake),
+                         b"restored")
+        self.assertEqual(keys.calls, ["epoch1"])
+        self.assertEqual(fake.opens, [b"12345678"])
+
+    def test_restored_fake_plaintext_obeys_seal_size_limit(self):
+        """A fake cannot return larger plaintext than seal_backup permits."""
+        keys = FakeKeys()
+
+        class ExpandingFake(OpaqueInMemoryFake):
+            def __init__(self, output):
+                super().__init__()
+                self.output = output
+
+            def open(self, token, key, aad):
+                return self.output
+
+        for length in (8_000_000, 8_000_001):
+            with self.subTest(restored_bytes=length):
+                fake = ExpandingFake(b"x" * length)
+                artifact = seal_backup("grindflow", "epoch1", b"tiny", keys, fake)
+                if length == 8_000_000:
+                    self.assertEqual(
+                        len(open_backup("grindflow", artifact, keys, fake)), length
+                    )
+                else:
+                    with self.assertRaises(EncryptionContractError) as caught:
+                        open_backup("grindflow", artifact, keys, fake)
+                    self.assertEqual(str(caught.exception), "Decrypt simulation failed.")
+                    self.assertIsNone(caught.exception.__cause__)

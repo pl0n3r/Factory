@@ -14,7 +14,6 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 
 EXPECTED = {
     "scripts/coordinar_trabajo.py",
-    "metricas/costos.py",
 }
 
 SAFE_ARGS = {
@@ -84,6 +83,10 @@ class ScheduledEntrypointTests(unittest.TestCase):
         self.assertNotIn("producto/feedback.py", discovered)
         # F1B retira el cron mensual, no la importación offline.
         self.assertNotIn("metricas/evaluar_agentes.py", discovered)
+        # F1F retira tendencia CI programada pero conserva el CLI offline de costos.
+        self.assertNotIn("metricas/costos.py", discovered)
+        self.assertIn("metricas/costos.py", SAFE_ARGS)
+        self.assertTrue((ROOT / "metricas/costos.py").is_file())
         # F1D retira Cabina programada sin su motor offline.
         self.assertNotIn("scripts/cabina.py", discovered)
         self.assertTrue((ROOT / "scripts/cabina.py").is_file())

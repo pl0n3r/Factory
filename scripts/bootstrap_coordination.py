@@ -27,6 +27,7 @@ BOOTSTRAP_PR_LABELS = (
     "rol: seguridad",
     "rol: qa",
 )
+HISTORICAL_PR_INVALID = "PR histórico inválido."
 GRINDFLOW_REPO = "pl0n3r/GrindFlow"
 VERSION_PATH = "config/version.php"
 PACKAGE_PATH = "package.json"
@@ -84,22 +85,33 @@ def marker(req: dict[str, Any]) -> str:
     value = {"version":1, "identity":identity(req), "target_issue":req["target_issue"], "expected_main_sha":req["expected_main_sha"], "governance_ref":req["governance_ref"]}
     return "<!-- factory-coordination-bootstrap " + json.dumps(value, sort_keys=True, separators=(",", ":")) + " -->"
 
+def _unique_marker_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Fail closed on ambiguous duplicate JSON keys in bootstrap identity."""
+    values: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in values:
+            raise ValueError("Claves JSON duplicadas.")
+        values[key] = item
+    return values
+
 def parse_marker(body: Any) -> dict[str, Any] | None:
     if not isinstance(body, str):
+        return None
+    if len(re.findall(r"<!--\s*factory-coordination-bootstrap\b", body)) != 1:
         return None
     matches = re.findall(r"<!-- factory-coordination-bootstrap (\{[^\n]*\}) -->", body)
     if len(matches) != 1:
         return None
     try:
-        value = json.loads(matches[0])
-    except json.JSONDecodeError:
+        value = json.loads(matches[0], object_pairs_hook=_unique_marker_pairs)
+    except ValueError:
         return None
     required = {"version", "identity", "target_issue", "expected_main_sha", "governance_ref"}
     if not isinstance(value, dict) or set(value) != required:
         return None
-    if value.get("version") != 1 or value.get("governance_ref") != GOVERNANCE_REF:
+    if type(value.get("version")) is not int or value["version"] != 1 or value.get("governance_ref") != GOVERNANCE_REF:
         return None
-    if not isinstance(value.get("target_issue"), int) or value["target_issue"] < 1:
+    if type(value.get("target_issue")) is not int or value["target_issue"] < 1:
         return None
     if not isinstance(value.get("identity"), str) or KEY_RE.fullmatch(value["identity"]) is None:
         return None
@@ -184,12 +196,27 @@ def caller_content(template: str) -> str:
     if "profile: es" not in value: raise BootstrapError("No fue posible fijar profile es.")
     return value
 
+TRUSTED_PREFLIGHT_ROUTER = "import json\nimport os\n\n# GITHUB_EVENT_PATH contiene el payload del evento en el runner.\n# Evita pasar el cuerpo por env o imprimirlo en el log del paso.\nwith open(os.environ[\"GITHUB_EVENT_PATH\"], encoding=\"utf-8\") as source:\n    event = json.load(source)\nbody = event.get(\"comment\", {}).get(\"body\", \"\")\nparts = body.strip().split(maxsplit=1) if isinstance(body, str) else []\nsupported = {\n    \"/tomar\", \"/liberar-forzado\", \"/adoptar-contrato-huerfana\",\n    \"/liberar\", \"/transferir\", \"/migrar-contrato\",\n    \"/renovar-contrato\",\n}\nroute = bool(parts and parts[0] in supported)\nwith open(os.environ[\"GITHUB_OUTPUT\"], \"a\", encoding=\"utf-8\") as output:\n    output.write(f\"route={str(route).lower()}\\n\")"
+
 def adoption_test(caller_path: str = CALLER_PATH, acceptance_path: str | None = None) -> str:
     if caller_path not in SUPPORTED_CALLER_PATHS:
         raise BootstrapError("Ruta de caller no soportada.")
     if acceptance_path not in (None, ACCEPTANCE_PATH):
         raise BootstrapError("Ruta de aceptación no soportada.")
-    value = '''import unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n\n    def test_caller_keeps_hardened_consumer_coordination_contract(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]", text)\n        self.assertIn("group: coordinacion-${{ github.repository }}", text)\n        self.assertIn("cancel-in-progress: false", text)\n        self.assertIn("queue: max", text)\n        comment = text.split("  comentario:", 1)[1].split("  etiqueta:", 1)[0]\n        self.assertIn("github.event.comment.body == '/tomar'", comment)\n        self.assertIn("contains(github.event.comment.body, '/tomar')", comment)\n        self.assertIn("startsWith(github.event.comment.body, '/renovar-contrato ')", comment)\n        routes = {\n            "comentario": "operation: comment",\n            "etiqueta": "operation: label",\n            "pr": "operation: pr",\n            "validar-pr": "operation: validate",\n            "issue": "operation: issue",\n            "sweep": "operation: sweep",\n        }\n        names = list(routes)\n        for index, name in enumerate(names):\n            tail = text.split(f"  {name}:", 1)[1]\n            block = tail.split(f"  {names[index + 1]}:", 1)[0] if index + 1 < len(names) else tail\n            self.assertIn(routes[name], block)\n'''
+    value = '''import ast\nimport json\nimport os\nimport subprocess\nimport sys\nimport tempfile\nimport textwrap\nimport unittest\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n\nclass FactoryCoordinationAdoptionTests(unittest.TestCase):\n    def test_caller_uses_factory_v1_spanish_profile_only(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("pl0n3r/factory/.github/workflows/coordinacion.yml@v1", text)\n        self.assertIn("profile: es", text)\n        self.assertNotIn("@main", text)\n        self.assertNotIn("coordinar_trabajo.py", text)\n        self.assertIn("startsWith(github.event.pull_request.head.ref, 'factory/bootstrap-coordination-')", text)\n        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", text)\n        self.assertIn("github.event.pull_request.author_association == 'OWNER'", text)\n        self.assertIn("require_reservation: true", text)\n\n    def test_caller_keeps_hardened_consumer_coordination_contract(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        self.assertIn("types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft, closed]", text)\n        self.assertIn("group: coordinacion-${{ github.repository }}", text)\n        self.assertIn("cancel-in-progress: false", text)\n        self.assertIn("queue: max", text)\n        triggers = text.split("on:\\n", 1)[1].split("\\nconcurrency:", 1)[0]\n        self.assertIn("  issue_comment:\\n", triggers)\n        comment = text.split("  comentario:", 1)[1].split("  etiqueta:", 1)[0]\n        self.assertIn("github.event_name == 'issue_comment'", comment)\n        self.assertIn("github.event.issue.pull_request == null", comment)\n        self.assertIn("github.event.sender.login == github.event.comment.user.login", comment)\n        active_lines = [line.strip() for line in comment.splitlines() if line.strip() and not line.lstrip().startswith("#")]\n        self.assertEqual(["uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"],\n                         [line for line in active_lines if line.startswith("uses:")])\n        self.assertEqual(["profile: es"],\n                         [line for line in active_lines if line.startswith("profile:")])\n        permissions = comment.split("    permissions:\\n", 1)[1].split("\\n    uses:", 1)[0]\n        permission_lines = [line.strip() for line in permissions.splitlines()\n                            if line.strip() and not line.lstrip().startswith("#")]\n        self.assertEqual(["contents: write", "issues: write",\n                          "pull-requests: write", "checks: write"], permission_lines)\n        if "  preflight_comentario:\\n" in text:\n            preflight = text.split("  preflight_comentario:\\n", 1)[1].split("  comentario:\\n", 1)[0]\n            self.assertIn("github.event_name == 'issue_comment'", preflight)\n            self.assertIn("github.event.issue.pull_request == null", preflight)\n            self.assertIn("github.event.sender.login == github.event.comment.user.login", preflight)\n            guard = preflight.split("    if: >-\\n", 1)[1].split("\\n    runs-on:", 1)[0]\n            self.assertNotIn("||", guard)\n            self.assertNotIn("always(", guard)\n            role_guard = """contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)"""\n            comment_guard = comment.split("    if: >-\\n", 1)[1].split("\\n    permissions:", 1)[0]\n            self.assertNotIn("||", comment_guard)\n            self.assertNotIn("always(", comment_guard)\n            expected_core = (\n                "github.event_name == 'issue_comment'",\n                "github.event.issue.pull_request == null",\n                "github.event.sender.login == github.event.comment.user.login",\n                "github.event.comment.user.type == 'User'",\n                role_guard,\n            )\n            for guarded, expected in (\n                (guard, expected_core),\n                (comment_guard, (*expected_core,\n                 "needs.preflight_comentario.outputs.route == 'true'")),\n            ):\n                # Only YAML block-scalar lines belong to the actual guard.\n                expression = " ".join(line.strip() for line in guarded.splitlines()\n                                      if line.startswith("      "))\n                self.assertEqual(list(expected),\n                                 [term.strip() for term in expression.split("&&")])\n            runner_lines = [line.strip() for line in preflight.splitlines()\n                            if line.startswith("    runs-on:")]\n            self.assertEqual(["runs-on: ubuntu-latest"], runner_lines)\n            self.assertIn("    timeout-minutes: 2", preflight.splitlines())\n            self.assertIn("permissions:", preflight)\n            permission_lines = preflight.split("    permissions:", 1)[1].split("    outputs:", 1)[0].splitlines()\n            self.assertEqual(["      contents: read"], [line for line in permission_lines if line.strip()])\n            for command in ("/tomar", "/liberar-forzado", "/adoptar-contrato-huerfana",\n                            "/liberar", "/transferir", "/migrar-contrato",\n                            "/renovar-contrato"):\n                self.assertIn('"' + command + '"', preflight)\n            self.assertIn("needs: preflight_comentario", comment)\n            self.assertIn("needs.preflight_comentario.outputs.route == 'true'", comment)\n            outputs = preflight.split("    outputs:\\n", 1)[1].split("\\n    steps:", 1)[0]\n            output_lines = [line.strip() for line in outputs.splitlines()\n                            if line.strip() and not line.lstrip().startswith("#")]\n            self.assertEqual(["route: ${{ steps.route.outputs.route }}"], output_lines)\n            step_keys = [line.strip() for line in preflight.splitlines()
+                         if line.startswith(("    steps:", "      - ",
+                                             "        shell:", "        run:"))]
+            self.assertEqual(["steps:", "- id: route", "shell: bash", "run: |"], step_keys)
+            # The audited router must be the ONLY shell command in this job.
+            shell_lines = [line.strip() for line in
+                           preflight.split("        run: |\\n", 1)[1].splitlines()
+                           if line.strip()]
+            self.assertEqual("python3 - <<'PY'", shell_lines[0])
+            self.assertEqual("PY", shell_lines[-1])
+            self.assertEqual(1, shell_lines.count("PY"),
+                             "A second heredoc terminator could hide extra shell commands")
+            self.assertIn('os.environ["GITHUB_EVENT_PATH"]', preflight)\n            self.assertNotIn("COMMENT_BODY", preflight)\n            self.assertNotIn("github.event.comment.body", preflight)\n            self.assertNotIn("contains(github.event.comment.body", comment)\n        else:\n            legacy_guard = comment.split("    if: >-\\n", 1)[1].split("\\n    permissions:", 1)[0]\n            expected_legacy = [\n                "github.event_name == 'issue_comment' &&",\n                "github.event.issue.pull_request == null &&",\n                "github.event.sender.login == github.event.comment.user.login &&",\n                "(github.event.comment.body == '/tomar' ||",\n                "startsWith(github.event.comment.body, '/renovar-contrato '))",\n            ]\n            self.assertEqual(expected_legacy,\n                             [line.strip() for line in legacy_guard.splitlines()\n                              if line.startswith("      ")])\n        routes = {\n            "comentario": "operation: comment",\n            "etiqueta": "operation: label",\n            "pr": "operation: pr",\n            "validar-pr": "operation: validate",\n            "issue": "operation: issue",\n            "sweep": "operation: sweep",\n        }\n        names = list(routes)\n        for index, name in enumerate(names):\n            tail = text.split(f"  {name}:", 1)[1]\n            block = tail.split(f"  {names[index + 1]}:", 1)[0] if index + 1 < len(names) else tail\n            operation_lines = [\n                line.strip() for line in block.splitlines()\n                if line.strip().startswith("operation:")\n            ]\n            self.assertEqual([routes[name]], operation_lines)\n            if name == "validar-pr":\n                reservation_lines = [\n                    line.strip() for line in block.splitlines()\n                    if line.startswith("      require_reservation:")\n                ]\n                self.assertEqual(["require_reservation: true"], reservation_lines)\n            reusable_lines = [\n                line.strip() for line in block.splitlines()\n                if line.startswith("    uses:")\n            ]\n            self.assertEqual(\n                ["uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"],\n                reusable_lines,\n            )\n\n    def test_preflight_only_routes_actual_first_token(self):\n        text = (ROOT / "__FACTORY_CALLER_PATH__").read_text(encoding="utf-8")\n        if "  preflight_comentario:\\n" not in text:\n            return  # El caller legacy queda cubierto por el test anterior.\n        preflight = text.split("  preflight_comentario:\\n", 1)[1].split("  comentario:\\n", 1)[0]\n        embedded = preflight.split("python3 - <<'PY'\\n", 1)[1].split("\\n          PY", 1)[0]\n        script = textwrap.dedent(embedded)\n        # Consumer workflows are untrusted: do not execute unreviewed Python.\n        # Only the reviewed router AST may run; compare in this Python runtime.\n        # Serialized AST hashes differ across Python versions.\n        self.assertEqual(\n            ast.dump(ast.parse(script), include_attributes=False),\n            ast.dump(ast.parse(__TRUSTED_ROUTER__), include_attributes=False),\n        )\n        with tempfile.TemporaryDirectory() as tmp:\n            event_path = Path(tmp) / "event.json"\n            output_path = Path(tmp) / "route"\n            for body, expected in (\n                ("Nota: no ejecuté /tomar ni /renovar-contrato", "route=false\\n"),\n                ("Información sobre /liberar-forzado", "route=false\\n"),\n                ("No solicité /adoptar-contrato-huerfana", "route=false\\n"),\n                ("Este texto menciona /liberar sin ejecutarlo", "route=false\\n"),\n                ("Información: /transferir todavía no solicitado", "route=false\\n"),\n                ("No ejecutar /migrar-contrato a partir de esta nota", "route=false\\n"),\n                ("/decidir A", "route=false\\n"),\n                ("/tomarlo", "route=false\\n"),\n                ("/reiniciar", "route=false\\n"),\n                ("/renovar-contrato-ejemplo", "route=false\\n"),\n                ("/TOMAR", "route=false\\n"),\n                ("/Liberar item", "route=false\\n"),\n                ("/RENOVAR-CONTRATO 123", "route=false\\n"),\n                (" /tomar\\t", "route=true\\n"),\n                (" /liberar-forzado ", "route=true\\n"),\n                (" /adoptar-contrato-huerfana ", "route=true\\n"),\n                (" /liberar x ", "route=true\\n"),\n                (" /transferir invalid-args ", "route=true\\n"),\n                (" /migrar-contrato invalid-args ", "route=true\\n"),\n                (" /renovar-contrato 12345678-abcd-1234-abcd-123456789abc ", "route=true\\n"),\n            ):\n                with self.subTest(body=body):\n                    event_path.write_text(json.dumps({"comment": {"body": body}}), encoding="utf-8")\n                    env = {**os.environ, "GITHUB_EVENT_PATH": str(event_path),\n                           "GITHUB_OUTPUT": str(output_path)}\n                    env.pop("COMMENT_BODY", None)\n                    result = subprocess.run(\n                        [sys.executable, "-c", script], env=env, capture_output=True,\n                        text=True, timeout=5, check=False,\n                    )\n                    self.assertEqual(result.returncode, 0, result.stderr)\n                    self.assertEqual(result.stdout, "")\n                    self.assertEqual(result.stderr, "")\n                    self.assertEqual(output_path.read_text(encoding="utf-8"), expected)\n                    output_path.unlink()\n'''
+    value = value.replace("__TRUSTED_ROUTER__", repr(TRUSTED_PREFLIGHT_ROUTER))
     value = value.replace("__FACTORY_CALLER_PATH__", caller_path)
     if acceptance_path is not None:
         value += '''\n    def test_bootstrap_acceptance_is_owner_same_repo_only(self):\n        text = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")\n        self.assertIn("bootstrap-acceptance:", text)\n        self.assertEqual(text.count("factory/bootstrap-coordination-"), 2)\n        self.assertEqual(text.count("github.event.pull_request.head.repo.full_name == github.repository"), 2)\n        self.assertEqual(text.count("github.event.pull_request.author_association == 'OWNER'"), 2)\n        self.assertIn("uses: pl0n3r/factory/.github/workflows/aceptacion.yml@v1", text)\n        self.assertIn("issue_number: 0", text)\n        self.assertIn("- run: 'true'", text)\n'''
@@ -457,25 +484,51 @@ class GitHubGateway:
         value=self._request("GET",f"/repos/{name}/pulls?state=open&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
         if not isinstance(value,list) or len(value)>1: raise BootstrapError("Estado de PR ambiguo.")
         return value[0] if value else None
-    def closed_pr(self,name: str,branch: str)->dict[str,Any]|None:
-        value=self._request("GET",f"/repos/{name}/pulls?state=closed&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10")
-        if not isinstance(value,list): raise BootstrapError("Estado histórico de PR ambiguo.")
-        candidates=[]
+    def _closed_pr_detail(self,name: str,number: int)->dict[str,Any]:
+        """Verify REST details before treating a historical PR as merged or unmerged."""
+        detail=self._request("GET",f"/repos/{name}/pulls/{number}")
+        if not isinstance(detail,dict) or type(detail.get("number")) is not int or detail["number"]!=number:
+            raise BootstrapError(HISTORICAL_PR_INVALID)
+        if detail.get("state")!="closed" or "merged_at" not in detail:
+            raise BootstrapError(HISTORICAL_PR_INVALID)
+        merged_at=detail["merged_at"]
+        if merged_at is not None and (not isinstance(merged_at,str) or not merged_at.strip()):
+            raise BootstrapError(HISTORICAL_PR_INVALID)
+        return detail
+    def _closed_pr_page(self,name: str,value: Any,seen: set[int])->list[dict[str,Any]]:
+        """Authenticate one bounded REST page, including every PR's details."""
+        if not isinstance(value,list) or len(value)>10:
+            raise BootstrapError("Estado histórico de PR ambiguo.")
+        details=[]
         for item in value:
             number=item.get("number") if isinstance(item,dict) else None
-            if not isinstance(number,int):
-                raise BootstrapError("PR histórico inválido.")
-            detail=self._request("GET",f"/repos/{name}/pulls/{number}")
-            if not isinstance(detail,dict):
-                raise BootstrapError("PR histórico inválido.")
-            if detail.get("merged_at") is None:
-                candidates.append(detail)
-        if len(candidates)>1: raise BootstrapError("Estado histórico de PR ambiguo.")
-        return candidates[0] if candidates else None
+            if type(number) is not int or number<1 or number in seen:
+                raise BootstrapError(HISTORICAL_PR_INVALID)
+            seen.add(number)
+            details.append(self._closed_pr_detail(name,number))
+        return details
+    def closed_pr(self,name: str,branch: str)->dict[str,Any]|None:
+        # An exact multiple of per_page is not evidence of a complete list.
+        # Bound history enumeration, and fail closed if the limit is reached.
+        query=f"/repos/{name}/pulls?state=closed&head={OWNER}:{quote(branch,safe='')}&base=main&per_page=10"
+        candidates=[]
+        seen=set()
+        for page in range(1,6):
+            path=f"{query}&page={page}"
+            value=self._request("GET",path)
+            for detail in self._closed_pr_page(name,value,seen):
+                if detail.get("merged_at") is None:
+                    candidates.append(detail)
+                if len(candidates)>1:
+                    raise BootstrapError("Estado histórico de PR ambiguo.")
+            if len(value)<10:
+                return candidates[0] if candidates else None
+        raise BootstrapError("Inventario histórico de PR truncado.")
+
     def pr_matches(self,name: str,branch: str,pr: Any,req: dict[str,Any])->bool:
         return bool(
             isinstance(pr,dict)
-            and isinstance(pr.get("number"),int)
+            and type(pr.get("number")) is int and pr["number"]>0
             and pr.get("state","open")=="open"
             and isinstance(pr.get("base"),dict)
             and pr["base"].get("ref")=="main"
@@ -483,7 +536,7 @@ class GitHubGateway:
             and pr["head"].get("ref")==branch
             and isinstance(pr["head"].get("repo"),dict)
             and pr["head"]["repo"].get("full_name")==name
-            and marker(req) in str(pr.get("body") or "")
+            and parse_marker(pr.get("body")) == parse_marker(marker(req))
         )
     def main_descends_from(self,name: str,ancestor: str,current: str)->bool:
         if ancestor == current:
@@ -500,7 +553,7 @@ class GitHubGateway:
     def legacy_marker(self,name: str,branch: str,pr: Any,req: dict[str,Any])->dict[str,Any]|None:
         if not (
             isinstance(pr,dict)
-            and isinstance(pr.get("number"),int)
+            and type(pr.get("number")) is int and pr["number"]>0
             and pr.get("state","open") in ("open","closed")
             and not (pr.get("state")=="closed" and pr.get("merged_at") is not None)
             and isinstance(pr.get("base"),dict)
@@ -579,7 +632,7 @@ class GitHubGateway:
     )->bool:
         pr=self.open_pr(name,branch) or self.closed_pr(name,branch)
         historical=self.legacy_marker(name,branch,pr,req)
-        if historical is None or pr.get("number")!=number:
+        if type(number) is not int or number<1 or historical is None or pr.get("number")!=number:
             return False
         if legacy_body is not None and str(pr.get("body") or "")!=legacy_body:
             return False
@@ -615,7 +668,7 @@ class GitHubGateway:
         number=None
         try:
             pr=self._request("POST",f"/repos/{name}/pulls",{"title":title,"head":branch,"base":"main","body":body})
-            if not isinstance(pr,dict) or not isinstance(pr.get("base"),dict) or pr["base"].get("ref")!="main" or not isinstance(pr.get("head"),dict) or pr["head"].get("ref")!=branch or not isinstance(pr.get("number"),int):
+            if not isinstance(pr,dict) or not isinstance(pr.get("base"),dict) or pr["base"].get("ref")!="main" or not isinstance(pr.get("head"),dict) or pr["head"].get("ref")!=branch or type(pr.get("number")) is not int or pr["number"]<1:
                 raise BootstrapError("PR bootstrap inválido.")
             number=pr["number"]
             self.classify_bootstrap_pr(name,number)
@@ -654,9 +707,16 @@ class GitHubGateway:
         commit=self._request("GET",f"/repos/{name}/git/commits/{sha}"); tree=(commit or {}).get("tree",{}).get("sha") if isinstance(commit,dict) else None
         if not isinstance(tree,str): raise BootstrapError("Árbol base inválido.")
         recursive=self._request("GET",f"/repos/{name}/git/trees/{tree}?recursive=1")
-        for item in (recursive or {}).get("tree",[]) if isinstance(recursive,dict) else []:
-            path=item.get("path","")
-            if item.get("mode")=="120000" and any(p==path or p.startswith(path+"/") for p in paths): raise BootstrapError("Patch no admite symlinks.")
+        if not isinstance(recursive,dict) or not isinstance(recursive.get("tree"),list):
+            raise BootstrapError("Árbol recursivo inválido.")
+        for item in recursive["tree"]:
+            if not isinstance(item,dict) or not isinstance(item.get("path"),str) or not isinstance(item.get("mode"),str):
+                raise BootstrapError("Entrada de árbol recursivo inválida.")
+            path=item["path"]
+            if item["mode"]=="120000" and any(p==path or p.startswith(path+"/") for p in paths):
+                raise BootstrapError("Patch no admite symlinks.")
+        if recursive.get("truncated") is not False:
+            raise BootstrapError("Inventario de árbol recursivo incompleto.")
         return tree
     def materialize(self,req: dict[str,Any],patch: dict[str,str])->tuple[str,int]:
         name,branch,expected=req["target_repository"],branch_name(req),req["expected_main_sha"]
