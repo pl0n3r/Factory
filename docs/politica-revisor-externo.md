@@ -122,3 +122,8 @@ El bridge acepta únicamente:
 `main`, nombres de branches, tags arbitrarios, SHAs cortos, mayúsculas o refs malformados fallan cerrado **antes** del checkout interno de `pl0n3r/factory`.
 
 El input solo selecciona el `ref` del checkout interno en `.factory`; no cambia permisos, eventos, semántica de Policy, reviewer requerido ni autoridad de publicación. El caller sigue usando el mismo `github.token` read-only. Usar un SHA exacto no publica ni mueve `Factory@v1`; únicamente permite validar un repair inmutable mientras la decisión de promoción del canal estable permanece separada.
+
+
+### Bloqueo seguro de fallback SHA-less (Factory #1072)
+
+Dos respuestas `Review rate limited` sin SHA ni prueba del disparador del dueño **no** acreditan un HEAD, aunque exista un check Policy fallido entre ambas. El retry SHA-less exige timeline REST completa, único comando OWNER, ausencia de comandos competidores, respuesta bot inmutable y fallo Policy exact-HEAD previo. Una revisión `COMMENTED` que solo indica rate-limit no es revisión sustantiva; cualquier `CHANGES_REQUESTED` vigente del bot requerido veta el éxito.

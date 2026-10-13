@@ -157,7 +157,9 @@ def resolve_required_review_bot(base_required: str, caller_required: str) -> str
     return caller_required
 
 
-def _parse_ndjson(lines: list[str], *, noun: str) -> list[dict[str, Any]]:
+def _parse_ndjson(
+    lines: list[str], *, noun: str, reject_duplicate_ids: bool = False
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     seen_ids: set[int] = set()
     for line in lines:
@@ -174,6 +176,8 @@ def _parse_ndjson(lines: list[str], *, noun: str) -> list[dict[str, Any]]:
         item_id = item.get("id")
         if isinstance(item_id, int) and not isinstance(item_id, bool):
             if item_id in seen_ids:
+                if reject_duplicate_ids:
+                    raise PolicyError(f"{noun} con ID duplicado.")
                 continue
             seen_ids.add(item_id)
         items.append(item)
@@ -189,7 +193,9 @@ def parse_comments(lines: list[str]) -> list[dict[str, Any]]:
 
 
 def parse_checks(lines: list[str]) -> list[dict[str, Any]]:
-    return _parse_ndjson(lines, noun="Check")
+    # Nunca descartar silenciosamente un check con ID duplicado: otro
+    # nombre, estado o emisor con ese ID invalida la evidencia íntegra.
+    return _parse_ndjson(lines, noun="Check", reject_duplicate_ids=True)
 
 
 def parse_threads(lines: list[str]) -> list[dict[str, Any]]:
@@ -201,7 +207,8 @@ def review_counts_as_round(review: dict[str, Any]) -> bool:
     if state in {"APPROVED", "CHANGES_REQUESTED"}:
         return True
     body = review.get("body")
-    return state == "COMMENTED" and isinstance(body, str) and bool(body.strip())
+    return (state == "COMMENTED" and isinstance(body, str)
+            and bool(body.strip()) and not _is_rate_limit_body(body))
 
 
 def count_review_rounds(lines: list[str]) -> int:
@@ -238,12 +245,23 @@ def _comment_has_exact_head_coverage(
         return False
     if _is_rate_limit_body(body):
         return False
+    # Un segundo marcador incompleto y claves JSON duplicadas invalidan
+    # cualquier atestación: json.loads normal permitiría last-key-wins.
+    if len(re.findall(r"<!--\s*final_review_risk_coverage\b", body, re.I)) != 1:
+        return False
     matches = list(COMMENT_COVERAGE_RE.finditer(body))
     if len(matches) != 1:
         return False
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        found: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in found:
+                raise ValueError("duplicate coverage key")
+            found[key] = value
+        return found
     try:
-        marker = json.loads(matches[0].group(1))
-    except json.JSONDecodeError:
+        marker = json.loads(matches[0].group(1), object_pairs_hook=unique_pairs)
+    except (json.JSONDecodeError, ValueError):
         return False
     if not isinstance(marker, dict) or set(marker) != {
         "sourceCommitId",
@@ -274,14 +292,22 @@ def _required_bot_review_satisfied(
         raise PolicyError("Reviewer-bot requerido inválido.")
     if not SHA_RE.fullmatch(head_sha):
         raise PolicyError("HEAD requerido inválido.")
-    for review in parse_reviews(lines):
+    reviews = parse_reviews(lines)
+    # Negar ANTES del primer positivo: el orden de GitHub no anula vetos.
+    for review in reviews:
+        user = review.get("user")
+        if (isinstance(user, dict) and user.get("type") == "Bot"
+                and user.get("login") == required_review_bot
+                and review.get("commit_id") == head_sha
+                and review.get("state") == "CHANGES_REQUESTED"):
+            raise PolicyError("CHANGES_REQUESTED vigente del reviewer requerido.")
+    for review in reviews:
         user = review.get("user")
         if (
             isinstance(user, dict)
             and user.get("type") == "Bot"
             and user.get("login") == required_review_bot
             and review.get("commit_id") == head_sha
-            and review.get("state") != "CHANGES_REQUESTED"
             and review_counts_as_round(review)
         ):
             return True
@@ -356,12 +382,23 @@ def load_phase(path: Path | None) -> str:
     return parse_phase_payload(payload)
 
 
+# Identidades app verificadas contra la API REST canónica de checks GitHub.
+# Un nombre de check no es por sí solo una prueba de autoridad.
+TRUSTED_CHECK_APPS = {
+    "github-actions": 15368,
+    "sonarqubecloud": 12526,
+    "github-advanced-security": 57789,
+}
+
+
 def _latest_checks_by_name(
     lines: list[str],
     *,
     head_sha: str,
 ) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
+    issuer_by_name: dict[str, tuple[str, int]] = {}
+    name_by_id: dict[int, str] = {}
     for check in parse_checks(lines):
         name = check.get("name")
         check_head = check.get("head_sha")
@@ -372,6 +409,24 @@ def _latest_checks_by_name(
             raise PolicyError("Check observado sobre HEAD distinto.")
         if type(check_id) is not int or check_id <= 0:
             raise PolicyError("Check sin id válido.")
+        app = check.get("app")
+        if not isinstance(app, dict):
+            raise PolicyError("Check sin emisor autenticado.")
+        slug = app.get("slug")
+        app_id = app.get("id")
+        if (
+            not isinstance(slug, str)
+            or type(app_id) is not int
+            or TRUSTED_CHECK_APPS.get(slug) != app_id
+        ):
+            raise PolicyError(f"Check con emisor desconocido: {name}.")
+        issuer = (slug, app_id)
+        if name in issuer_by_name and issuer_by_name[name] != issuer:
+            raise PolicyError(f"Check homónimo con emisores contradictorios: {name}.")
+        issuer_by_name[name] = issuer
+        if check_id in name_by_id and name_by_id[check_id] != name:
+            raise PolicyError("Un check id aparece con nombres distintos.")
+        name_by_id[check_id] = name
         current = latest.get(name)
         if current is None or check_id > current["id"]:
             latest[name] = check
@@ -387,7 +442,33 @@ def validate_other_gates_green(
     if not latest:
         raise PolicyError("No hay evidencia de checks exact-HEAD.")
 
-    successful_names: list[str] = []
+    # Las seis categorías son requisitos distintos y requieren seis check IDs
+    # diferentes; un nombre compuesto jamás puede cubrirlos todos.
+    # No inferir autoridad de substrings arbitrarios en nombres de jobs.
+    # GitHub Actions permite nombrar checks; la identidad de la App también
+    # debe corresponder al scanner externo o al workflow interno esperado.
+    categories = {
+        "ci": lambda name: name in {
+            "validate", "ci factory v1 / validar", "factory-ci / validar",
+            "factory ci reusable / validar", "ci factory / validar",
+        },
+        "sonar": lambda name: name == "sonarcloud code analysis",
+        "codeql": lambda name: name == "codeql",
+        "tests": lambda name: name in {
+            "tests", "tests de scripts", "fast",
+            "pruebas de contrato e integración", "criterios de aceptación",
+            "acceptance / criterios de aceptación",
+        },
+        "coordinacion": lambda name: (
+            name == "validar coordinación"
+            or name.endswith(" / validar coordinación")
+        ),
+        "privacidad": lambda name: name in {
+            "privacidad / privacidad como código",
+            "privacy / privacidad como código",
+        },
+    }
+    candidates: dict[str, list[int]] = {category: [] for category in categories}
     for name, check in latest.items():
         if name in {POLICY_CHECK_NAME, ACCEPTANCE_CHECK_NAME, "Validar"}:
             continue
@@ -397,38 +478,44 @@ def validate_other_gates_green(
             raise PolicyError(f"Check pendiente: {name}.")
         if conclusion not in ALLOWED_GATE_CONCLUSIONS:
             raise PolicyError(f"Check no verde: {name}={conclusion}.")
-        if conclusion == "success":
-            successful_names.append(name.lower())
+        if conclusion != "success":
+            continue
+        name_lower = name.lower()
+        issuer = check["app"]["slug"]
+        for category, predicate in categories.items():
+            if not predicate(name_lower):
+                continue
+            # SonarCloud y CodeQL tienen apps canónicas distintas de Actions;
+            # las alternativas de CI-based solo pertenecen a github-actions.
+            expected = {
+                "sonar": "sonarqubecloud",
+                "codeql": "github-advanced-security",
+            }.get(category, "github-actions")
+            if issuer != expected:
+                raise PolicyError(f"Emisor no autorizado para {category}: {name}.")
+            candidates[category].append(check["id"])
 
-    categories = {
-        "ci": lambda name: (
-            name == "validate"
-            or "factory ci reusable / validar" in name
-            or name.startswith("ci ")
-            or " ci / validate" in name
-        ),
-        "sonar": lambda name: "sonar" in name,
-        "codeql": lambda name: "codeql" in name or name.startswith("analyze ("),
-        "tests": lambda name: (
-            name == "tests"
-            or "test" in name
-            or "acceptance" in name
-            or "criterios de aceptación" in name
-        ),
-        "coordinacion": lambda name: (
-            "coordinación" in name or "coordinacion" in name
-        ),
-        "privacidad": lambda name: "privacidad" in name or "privacy" in name,
-    }
-    missing = [
-        category
-        for category, predicate in categories.items()
-        if not any(predicate(name) for name in successful_names)
-    ]
+    missing = [cat for cat, ids in candidates.items() if not ids]
     if missing:
-        raise PolicyError(
-            "Faltan gates obligatorios verdes: " + ", ".join(missing) + "."
-        )
+        raise PolicyError("Faltan gates obligatorios verdes: " + ", ".join(missing) + ".")
+    # Emparejamiento bipartito acotado entre categorías e IDs de checks.
+    # El algoritmo no permite acreditar dos categorías con la misma evidencia.
+    assigned: dict[int, str] = {}
+
+    def assign(category: str, seen: set[int]) -> bool:
+        for check_id in candidates[category]:
+            if check_id in seen:
+                continue
+            seen.add(check_id)
+            previous = assigned.get(check_id)
+            if previous is None or assign(previous, seen):
+                assigned[check_id] = category
+                return True
+        return False
+
+    for category in categories:
+        if not assign(category, set()):
+            raise PolicyError("Las categorías obligatorias no tienen IDs distintos.")
 
 
 def _has_open_blocking_finding(
@@ -465,7 +552,7 @@ def _has_open_blocking_finding(
 
 
 def _is_rate_limit_body(body: str) -> bool:
-    return any(text in body for text in RATE_LIMIT_TEXTS)
+    return any(text.casefold() in body.casefold() for text in RATE_LIMIT_TEXTS)
 
 
 def _rate_limit_comment_identity(
@@ -567,12 +654,15 @@ def _exact_head_rate_limit_evidence(
             observed_at = _parse_iso_timestamp(
                 updated_raw, noun="Timestamp actualizado de comentario rate-limit"
             )
-        elif updated_raw is None:
-            observed_at = created_at
         else:
-            observed_at = _parse_iso_timestamp(
-                updated_raw, noun="Timestamp actualizado de comentario rate-limit"
-            )
+            # En reruns, editar una respuesta antigua no acredita un evento nuevo.
+            observed_at = created_at
+            if updated_raw is not None:
+                updated_at = _parse_iso_timestamp(
+                    updated_raw, noun="Timestamp actualizado de comentario rate-limit"
+                )
+                if updated_at < created_at:
+                    raise PolicyError("Comentario rate-limit con timestamps incoherentes.")
         if observed_at < created_at:
             raise PolicyError("Comentario rate-limit actualizado tiene timestamps incoherentes.")
         if observed_at <= not_before:
@@ -620,6 +710,7 @@ def _sha_less_timeline_retry(
     required_review_bot: str,
     head_sha: str,
     head_committed_at: str,
+    failed_policy_checks: list[str],
 ) -> tuple[int, str]:
     """Acredita un retry con timeline REST autenticada, nunca solo con texto del PR."""
     if not SHA_RE.fullmatch(head_sha):
@@ -696,6 +787,7 @@ def _sha_less_timeline_retry(
 
     previous_rate_limits: list[tuple[int, dict[str, Any]]] = []
     owner_requests: list[tuple[int, dict[str, Any]]] = []
+    all_requests: list[tuple[int, dict[str, Any]]] = []
     for index, event in witnessed:
         if index <= last_commit_index:
             continue
@@ -712,16 +804,24 @@ def _sha_less_timeline_retry(
             previous_rate_limits.append((index, event))
         if (
             user["type"] == "User"
-            and event.get("author_association") == "OWNER"
             and isinstance(body, str)
             and body.strip().lower() == f"@{_normalized_bot_login(required_review_bot)} review"
         ):
-            owner_requests.append((index, event))
+            all_requests.append((index, event))
+            if event.get("author_association") == "OWNER":
+                owner_requests.append((index, event))
 
-    if len(owner_requests) != 1:
+    if len(all_requests) != 1 or len(owner_requests) != 1:
         raise PolicyError("Timeline requiere exactamente un reintento OWNER del HEAD.")
     owner_index, owner_event = owner_requests[0]
     owner_at = owner_event["created_at"]
+    # La existencia de un fallo Policy exact-HEAD no demuestra por si sola
+    # causalidad: tiene que ser estrictamente anterior al trigger OWNER.
+    # Un check creado después del retry no puede justificar retroactivamente
+    # que el bot recibiera ese comando por un fallo anterior.
+    if not any(head_committed_at < failed_at < owner_at
+               for failed_at in failed_policy_checks):
+        raise PolicyError("Falta fallo Policy previo al trigger OWNER exact-HEAD.")
     owner_observed = comment_by_id[owner_event["id"]]
     owner_updated = owner_observed.get("updated_at")
     if owner_updated is not None and owner_updated != owner_observed.get("created_at"):
@@ -739,6 +839,12 @@ def _sha_less_timeline_retry(
     if len(replies) != 1:
         raise PolicyError("Se exige una única respuesta rate-limit tras el reintento.")
     bot_index, bot_event = replies[0]
+    bot_observed = comment_by_id[bot_event["id"]]
+    # La API ofrece updated_at: sin inmutabilidad acreditada, la respuesta
+    # podría haberse editado después del comando y no prueba causalidad.
+    if (bot_observed.get("updated_at") != bot_observed.get("created_at")
+            or bot_observed.get("updated_at") is None):
+        raise PolicyError("Respuesta rate-limit editada o sin timestamp fiable.")
     seconds = (
         datetime.fromisoformat(bot_event["created_at"].replace("Z", "+00:00"))
         - datetime.fromisoformat(owner_at.replace("Z", "+00:00"))
@@ -792,7 +898,20 @@ def validate_rate_limit_fallback(
 
     validate_other_gates_green(check_lines, head_sha=head_sha)
 
+    failed_policy_checks: list[str] = []
+    for check in parse_checks(check_lines):
+        if (check.get("name") == POLICY_CHECK_NAME
+                and check.get("head_sha") == head_sha
+                and check.get("status") == "completed"
+                and check.get("conclusion") == "failure"):
+            failed_policy_checks.append(_parse_iso_timestamp(
+                check.get("completed_at"), noun="Timestamp de Policy failure"))
+
     if run_attempt > 1:
+        # Ni el SHA del comentario ni una timeline permiten retry sin que
+        # el check Policy previo pruebe un fallo terminal en el mismo HEAD.
+        if not any(at >= committed_at for at in failed_policy_checks):
+            raise PolicyError("Rerun sin fallo Policy previo exact-HEAD verificable.")
         owner_retries = _owner_review_retry_comments(
             comment_lines,
             required_review_bot=required_review_bot,
@@ -800,6 +919,10 @@ def validate_rate_limit_fallback(
         )
         for retry_at, _retry_id in owner_retries:
             if retry_at <= committed_at:
+                continue
+            # Un fallo Policy posterior no demuestra causalidad para este retry.
+            if not any(committed_at < failed_at < retry_at
+                       for failed_at in failed_policy_checks):
                 continue
             rate_limit_events = _exact_head_rate_limit_events(
                 comment_lines,
@@ -809,47 +932,26 @@ def validate_rate_limit_fallback(
             )
             if rate_limit_events:
                 return rate_limit_events[0][1], rate_limit_events[0][0]
-        if timeline_lines:
+        if timeline_lines and failed_policy_checks:
             return _sha_less_timeline_retry(
                 timeline_lines=timeline_lines,
                 comment_lines=comment_lines,
                 required_review_bot=required_review_bot,
                 head_sha=head_sha,
                 head_committed_at=committed_at,
+                failed_policy_checks=failed_policy_checks,
             )
         raise PolicyError(
             "Rerun sin reintento OWNER y rate-limit exact-HEAD posteriores verificables."
         )
-
-    failed_policy_checks: list[str] = []
-    for check in parse_checks(check_lines):
-        if (
-            check.get("name") == POLICY_CHECK_NAME
-            and check.get("head_sha") == head_sha
-            and check.get("status") == "completed"
-            and check.get("conclusion") == "failure"
-        ):
-            failed_policy_checks.append(
-                _parse_iso_timestamp(
-                    check.get("completed_at"),
-                    noun="Timestamp de policy failure",
-                )
-            )
 
     rate_limits = _rate_limit_comments(
         comment_lines,
         required_review_bot=required_review_bot,
         not_before=committed_at,
     )
-    if len(rate_limits) >= 2:
-        for first_at, _first_id in rate_limits:
-            for failed_at in sorted(failed_policy_checks):
-                if failed_at < first_at:
-                    continue
-                for retry_at, retry_id in rate_limits:
-                    if retry_at > failed_at:
-                        return retry_id, retry_at
-
+    # Dos avisos SHA-less no vinculan la respuesta a HEAD ni al OWNER.
+    # Mantener la evidencia exact-HEAD del bloque siguiente.
     for failed_at in sorted(failed_policy_checks):
         owner_retries = _owner_review_retry_comments(
             comment_lines,
@@ -899,6 +1001,12 @@ def validate_required_bot_review_or_fallback(
         head_sha,
         comment_lines=comment_lines,
     ):
+        # Review primaria no elude los hilos ni el CI sobre el SHA exacto.
+        if _has_open_blocking_finding(
+            thread_lines, required_review_bot=required_review_bot
+        ):
+            raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
+        validate_other_gates_green(check_lines, head_sha=head_sha)
         return {"review_fallback": False}
 
     phase = load_phase(phase_file)
@@ -925,6 +1033,16 @@ def validate_required_bot_review_or_fallback(
 def validate_rounds(rounds: int, limit: int) -> None:
     if rounds > limit:
         raise PolicyError(f"Rondas automáticas={rounds} supera límite {limit}.")
+
+
+def validate_rounds_for_phase(rounds: int, limit: int, phase_file: Path | None) -> None:
+    """Rondas informativas solo si datos.yml base acredita construccion.
+
+    Fase ausente conserva el veto historico. Fase invalida falla cerrado.
+    El caller obtiene datos.yml desde BASE autenticada, no del HEAD del PR.
+    """
+    if load_phase(phase_file) != "construccion":
+        validate_rounds(rounds, limit)
 
 
 def _read_bounded_lines(path: Path, *, max_bytes: int, noun: str) -> list[str]:
@@ -1006,7 +1124,11 @@ def main() -> int:
             else None
         )
         rounds = count_review_rounds(lines)
-        validate_rounds(rounds, policy["review_round_limit"])
+        validate_rounds_for_phase(
+            rounds,
+            policy["review_round_limit"],
+            Path(options.phase_file) if options.phase_file else None,
+        )
         review_result = validate_required_bot_review_or_fallback(
             lines,
             effective_required,
