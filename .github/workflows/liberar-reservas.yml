@@ -42,6 +42,9 @@ jobs:
           persist-credentials: false
 
       - name: Preflight autenticado de cuota API (no publica datos privados)
+        # Un PR verifica el código offline, no ejecuta auditorías vivas:
+        # reservar las consultas autenticadas para schedule/dispatch en main.
+        if: github.event_name != 'pull_request'
         id: budget
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,7 +83,7 @@ jobs:
           echo "allow=true" >> "$GITHUB_OUTPUT"
 
       - name: Tests deterministas del decisor (read-only)
-        if: steps.budget.outputs.allow == 'true'
+        # Deben ejecutarse en PR aun con GitHub App en 403/rate-limit.
         shell: bash
         run: |
           set -euo pipefail
@@ -89,7 +92,7 @@ jobs:
           echo "No se concede autoridad a acciones mark_recovery/release."
 
       - name: Confirmar runner OFF sin transporte ni mutaciones
-        if: steps.budget.outputs.allow == 'true'
+        # La puerta OFF se comprueba siempre y no requiere llamadas REST.
         shell: bash
         env:
           FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'
