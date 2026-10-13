@@ -180,9 +180,11 @@ def evaluate(evidence: object) -> Decision:
                 return Decision(False, "coderabbit_creator_not_authenticated")
             created = _time(item.get("created_at"))
             description = str(item.get("description") or "").lower()
+            # Un status SUCCESS del bot puede significar "rate limited" o
+            # "skipped": exigir prueba positiva de revisión completada.
+            # Descripciones desconocidas son UNKNOWN, no cero hallazgos.
             if (created is None or not stamp < created <= now
-                or "skipped" in description or "manual review required" in description
-                or not description.strip()):
+                or not description.startswith("review completed")):
                 return Decision(False, "coderabbit_review_not_verified")
     if not coderabbit:
         return Decision(False, "missing_coderabbit")

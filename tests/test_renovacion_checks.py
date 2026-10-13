@@ -653,6 +653,26 @@ Ninguno.
             with self.subTest(change=str(change)):
                 self.assertFalse(evaluate(sample).ready)
 
+    def test_coderabbit_success_without_completed_review_is_unknown(self):
+        # D-069: CodeRabbit SUCCESS no prueba análisis al ser skipped/limitado.
+        for description in (
+            "Review rate limited",
+            "Review skipped: manual review required for this OSS repository",
+            "Review skipped: draft pull request",
+            "Review pending",
+            "Quota exceeded",
+            "Analysis unavailable",
+            "",
+        ):
+            with self.subTest(description=description):
+                sample = fresh_evidence()
+                sample["statuses"][0]["description"] = description
+                self.assertEqual(evaluate(sample).reason,
+                                 "coderabbit_review_not_verified")
+        verified = fresh_evidence()
+        verified["statuses"][0]["description"] = "Review completed"
+        self.assertTrue(evaluate(verified).ready)
+
     def test_recovered_renewal_lineage_is_exact_and_fail_closed(self):
         from scripts.coordinar_trabajo import reservation_marker, reservation_from_text
         from scripts.renovacion_checks import (
