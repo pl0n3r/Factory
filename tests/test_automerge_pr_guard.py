@@ -259,6 +259,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
                         "> - " + header, "- > " + header,
                         "`9-13`: " + header,
                         "`9-13`: **🔒 Security &amp; Privacy** | **🟠 Major**",
+                        "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
+                        "scripts/automerge_pr_guard.py:31-33: **🔒 Security & Privacy** | **🟠 Major**",
                         "9-13: " + header):
             with self.subTest(finding=finding, source="review"):
                 q = evidence()
