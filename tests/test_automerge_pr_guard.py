@@ -1518,6 +1518,8 @@ class PullRequestReviewEventTests(unittest.TestCase):
             ("repository", {"full_name": "attacker/fork", "default_branch": "main"}),
             ("repository", {"full_name": "pl0n3r/Factory", "default_branch": "unsafe"}),
             ("review", None),
+            ("review", {"state": "unknown", "user": {"login": "tester"}}),
+            ("review", {"state": "commented"}),
         ]
         for field, value in mutations:
             event = pull_request_review_event_example()
