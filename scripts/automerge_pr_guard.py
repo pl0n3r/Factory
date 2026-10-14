@@ -29,7 +29,7 @@ EXECUTED_HEADER = re.compile(r"<!--\s*factory\s*-\s*release\s*-\s*executed\b", r
 # finding to its own Markdown line; keep explicit security-Major blocking.
 SEVERE = re.compile(
     r"""^[ \t]*(?:[-*+>][ \t]+|\#{1,6}[ \t]+){0,2}(?:
-        [^\n|]{0,80}?Security[ \t]*&(?:amp;)?[ \t]*Privacy\*{0,2}
+        (?:[^\n|]{1,80}?[ \t]+)?(?:🔒[ \t]*)?Security[ \t]*&(?:amp;)?[ \t]*Privacy\*{0,2}
         [ \t]*\|[ \t]*\*{0,2}(?:🟠[ \t]*)?Major\b
       | \*{0,2}[^\n|]{1,80}\*{0,2}[ \t]*\|[ \t]*\*{0,2}(?:🔴[ \t]*)?(?:Critical|High)\b
       | \*{0,2}(?:Security[ \t]+)?(?:HIGH|CRITICAL|P0|P1|SEVERE|BLOCKER)

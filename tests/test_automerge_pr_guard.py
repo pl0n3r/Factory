@@ -261,6 +261,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
                         "`9-13`: **🔒 Security &amp; Privacy** | **🟠 Major**",
                         "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
                         "scripts/automerge_pr_guard.py:31-33: **🔒 Security & Privacy** | **🟠 Major**",
+                        "`9-13`: **🔒 Security & Privacy** | **🟠 Major**",
+                        "9-13: **🔒 Security & Privacy** | **🟠 Major**",
+                        "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
                         "9-13: " + header):
             with self.subTest(finding=finding, source="review"):
                 q = evidence()
@@ -1364,9 +1367,10 @@ class AutoMergePrGuardTests(unittest.TestCase):
         guarded_run = '          env -u MERGE_TOKEN ' + final_run
         self.assertEqual(workflow.splitlines().count(guarded_run), 2,
                          "El merge debe reevaluar #767, V3, CI, CodeRabbit y freeze después de Coordinación")
-        self.assertLess(workflow.index(final_run), workflow.index(coordinator))
-        self.assertLess(workflow.index(coordinator), workflow.rindex(final_run))
-        self.assertLess(workflow.rindex(final_run), workflow.index(merge))
+        self.assertEqual(workflow.count(coordinator), 1)
+        self.assertLess(workflow.index(guarded_run), workflow.index(coordinator))
+        self.assertLess(workflow.index(coordinator), workflow.rindex(guarded_run))
+        self.assertLess(workflow.rindex(guarded_run), workflow.index(merge))
 
     def test_coordinator_claim_collisions_are_blocked_before_merge(self):
         """El guard local no sustituye Coordinación global de otros PRs."""
