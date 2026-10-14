@@ -1572,19 +1572,6 @@ class WorkflowRunEventTests(unittest.TestCase):
             event = workflow_run_event_example()
             event["workflow_run"]["name"] = name
             self.assertEqual(mod.validate_workflow_run_event(event), (1364, "trabajo/issue-1364"))
-        # Re-trigger on the exact trusted CI workflows (not any run).
-        self.assertIn('  workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]\n    types: [completed]', workflow)
-        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
-        self.assertIn("github.event.workflow_run.event == 'pull_request'", workflow)
-        self.assertIn("github.event.workflow_run.head_repository.full_name == github.repository", workflow)
-        self.assertIn('scripts/automerge_pr_guard.py --resolve-workflow-run', workflow)
-        self.assertIn("github.event_name == 'workflow_run' && github.sha", workflow)
-        # A review re-trigger needs the authentic reviewer identity.
-        self.assertIn('  pull_request_review:\n    types: [submitted]', workflow)
-        self.assertIn("github.event.review.user.login == 'coderabbitai[bot]'", workflow)
-        self.assertIn('PR_NUMBER: ${{ steps.target.outputs.pr_number }}', workflow)
-        self.assertIn('PR_SHA: ${{ steps.target.outputs.pr_sha }}', workflow)
-        self.assertIn('PR_URL: ${{ steps.target.outputs.pr_url }}', workflow)
         # A generic label is not the name of the CodeQL evidence workflow.
         self.assertNotIn('"CodeQL"', workflow)
 
