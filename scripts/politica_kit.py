@@ -39,6 +39,8 @@ MAX_PHASE_BYTES = 512 * 1024
 MAX_EVIDENCE_ITEM_BYTES = 100_000
 RATE_LIMIT_TEXTS = ("Review rate limited", "Review limit reached")
 POLICY_CHECK_NAME = "Factory policy / Validar decisiones y límite de revisión"
+# Real check-run identity emitted by the reusable GitHub Actions job.
+POLICY_WORKFLOW_CHECK_NAME = "politica / Validar decisiones y límite de revisión"
 ACCEPTANCE_CHECK_NAME = "acceptance / Criterios de aceptación"
 ALLOWED_GATE_CONCLUSIONS = {"success", "neutral", "skipped"}
 
@@ -470,7 +472,14 @@ def validate_other_gates_green(
     }
     candidates: dict[str, list[int]] = {category: [] for category in categories}
     for name, check in latest.items():
-        if name in {POLICY_CHECK_NAME, ACCEPTANCE_CHECK_NAME, "Validar"}:
+        # The policy cannot depend on its own previous/parallel check-runs.
+        # Ignore only the two exact names when issued by GitHub Actions.
+        # This is *not* evidence that policy or reviewer approval passed.
+        if name in {POLICY_CHECK_NAME, POLICY_WORKFLOW_CHECK_NAME}:
+            if check["app"]["slug"] != "github-actions":
+                raise PolicyError(f"Emisor no autorizado para política: {name}.")
+            continue
+        if name in {ACCEPTANCE_CHECK_NAME, "Validar"}:
             continue
         status = check.get("status")
         conclusion = check.get("conclusion")
