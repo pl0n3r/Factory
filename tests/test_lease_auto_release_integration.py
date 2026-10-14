@@ -204,6 +204,9 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             {"complete": False},
             {"changes_requested": True},
             {"kill_switch_running": False},
+            {"phase": "live"},
+            {"ci_running": True},
+            {"now": NOW + timedelta(minutes=1)},
             {"rate_remaining": 19},
         ):
             with self.subTest(change=change):
