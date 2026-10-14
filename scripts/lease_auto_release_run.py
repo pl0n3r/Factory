@@ -34,7 +34,11 @@ class RecoveryInventory:
     recovery: int
     reserved: int
     in_review: int
-    release_authorized: bool = False
+    @property
+    def release_authorized(self) -> bool:
+        # Read-only por construcción: no puede inyectarse True en __init__
+        # ni con dataclasses.replace().
+        return False
 
 
 @dataclass(frozen=True)
@@ -43,7 +47,11 @@ class RecentActivityObservation:
     issue: int
     state: str
     libera_en_min: int | None
-    release_authorized: bool = False
+    @property
+    def release_authorized(self) -> bool:
+        # Read-only por construcción: no puede inyectarse True en __init__
+        # ni con dataclasses.replace().
+        return False
 
 
 @dataclass(frozen=True)
@@ -51,7 +59,11 @@ class RecentActivityReport:
     """Lectura positiva individual; no certifica inactividad ni CAS."""
     state: str
     observations: tuple[RecentActivityObservation, ...]
-    release_authorized: bool = False
+    @property
+    def release_authorized(self) -> bool:
+        # Read-only por construcción: no puede inyectarse True en __init__
+        # ni con dataclasses.replace().
+        return False
 
 
 def observe_recent_activity(issues: Any, port: Any, *, now: Any) -> RecentActivityReport:
