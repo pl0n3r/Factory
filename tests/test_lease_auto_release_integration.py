@@ -481,6 +481,91 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                          SESSION_A)
 
 
+    def test_authenticated_review_veto_complete(self):
+        """Nadie convierte reviews incompletas o aprobaciones ajenas en permiso."""
+        from scripts.lease_auto_release_integration import _verified_review_veto
+
+        def ready():
+            api = API()
+            api.pulls[0]["state"] = "open"
+            api.pulls[0]["base"] = {"ref": "main"}
+            return api
+
+        lease = replace(
+            snapshot(recovery=False), repository_id=123, issue=21,
+            branch="trabajo/issue-21", branch_sha="a" * 40,
+            status="estado: en revisión",
+        )
+        for state, verdict in (
+            ("COMMENTED", False), ("APPROVED", False),
+            ("DISMISSED", False), ("PENDING", False),
+            ("CHANGES_REQUESTED", True),
+        ):
+            with self.subTest(review=state):
+                api = ready()
+                api.reviews[0]["state"] = state
+                self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100),
+                              verdict)
+                self.assertTrue(all(p.startswith("/repos/")
+                                    for p in api.calls))
+
+        api = ready()
+        api.reviews[0]["state"] = "CHANGES_REQUESTED"
+        api.reviews.append({
+            "id": 7, "user": {"login": "other-reviewer"},
+            "state": "APPROVED", "submitted_at": "2026-10-11T09:35:00Z",
+        })
+        self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), True)
+        api.reviews.append({
+            "id": 8, "user": {"login": "other"},
+            "state": "DISMISSED", "submitted_at": "2026-10-11T09:38:00Z",
+        })
+        self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), False)
+
+        for scenario in (
+            "state", "author", "stamp", "future", "duplicate", "base",
+            "repo", "sha", "quota", "error", "number", "no_pr", "race",
+        ):
+            with self.subTest(unknown=scenario):
+                api = ready()
+                quota = 60
+                if scenario == "state":
+                    api.reviews[0]["state"] = "UNLISTED"
+                elif scenario == "author":
+                    api.reviews[0]["user"] = {}
+                elif scenario == "stamp":
+                    del api.reviews[0]["submitted_at"]
+                elif scenario == "future":
+                    api.reviews[0]["submitted_at"] = "2026-10-11T10:01:00Z"
+                elif scenario == "duplicate":
+                    api.reviews.append(dict(api.reviews[0]))
+                elif scenario == "base":
+                    del api.pulls[0]["base"]
+                elif scenario == "repo":
+                    api.pulls[0]["head"]["repo"]["id"] = 456
+                elif scenario == "sha":
+                    api.pulls[0]["head"]["sha"] = "b" * 40
+                elif scenario == "quota":
+                    quota = 20
+                elif scenario == "error":
+                    api.block = "/pulls/35/reviews?"
+                elif scenario == "number":
+                    api.pulls[0]["number"] = "invalid"
+                elif scenario == "no_pr":
+                    api.pulls = []
+                elif scenario == "race":
+                    request = api.request
+                    calls = [0]
+                    def change_on_recheck(method, path):
+                        if "/pulls/35/reviews?" in path and "page=1" in path:
+                            calls[0] += 1
+                            if calls[0] == 2:
+                                api.reviews[0]["state"] = "CHANGES_REQUESTED"
+                        return request(method, path)
+                    api.request = change_on_recheck
+                self.assertIs(_verified_review_veto(api, lease, NOW, quota, 100),
+                              None)
+
     def test_collector_and_port_preview_agree_without_release_authority(self):
         from dataclasses import FrozenInstanceError
         from scripts.lease_auto_release_integration import (
@@ -489,7 +574,13 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         from test_lease_activity_collector import marker
         import json
 
-        api = API()
+        def review_ready_api():
+            candidate = API()
+            candidate.pulls[0]["state"] = "open"
+            candidate.pulls[0]["base"] = {"ref": "main"}
+            return candidate
+
+        api = review_ready_api()
         api.checks[0]["status"] = "completed"
         lease = json.loads(marker().split("<!-- condor-reserva ", 1)[1]
                            .split(" -->", 1)[0])
@@ -501,7 +592,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     "branch": "trabajo/issue-21"},
             status="estado: reservado", now=NOW,
             last_activity_at=NOW - timedelta(minutes=20),
-            rate_remaining=20, ci_running=False,
+            rate_remaining=40, ci_running=False,
         )
 
         class ReadOnlyPort:
@@ -539,11 +630,11 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         ):
             with self.subTest(change=change):
                 other = ReadOnlyPort(replace(item, **change))
-                outcome = preview_integrated_activity(API(), other, 21,
+                outcome = preview_integrated_activity(review_ready_api(), other, 21,
                                                        now=NOW)
                 self.assertEqual(outcome.state, "UNKNOWN")
                 self.assertFalse(outcome.release_authorized)
-        broken = API()
+        broken = review_ready_api()
         broken.push_event = "pull_request"
         no_push = ReadOnlyPort(item)
         observed = preview_integrated_activity(broken, no_push, 21, now=NOW)
