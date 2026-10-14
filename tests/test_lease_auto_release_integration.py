@@ -5,7 +5,17 @@ from datetime import timedelta
 
 from scripts.lease_activity_collector import collect_activity
 from scripts.lease_auto_release_run import run_cycle
-from test_lease_activity_collector import API, NOW
+from test_lease_activity_collector import API, NOW, marker
+import json
+
+
+def canonical_review_pr_body():
+    payload = json.loads(marker().split("<!-- condor-reserva ", 1)[1]
+                         .split(" -->", 1)[0])
+    return (f'Closes #21\n<!-- condor-reserva-id: '
+            f'{payload["reservation_id"]} -->')
+
+
 from test_lease_release_executor import FakePort, START, snapshot
 
 
@@ -548,6 +558,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             api = API()
             api.pulls[0]["state"] = "open"
             api.pulls[0]["base"] = {"ref": "main"}
+            api.pulls[0]["body"] = canonical_review_pr_body()
             return api
 
         lease = replace(
@@ -594,6 +605,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             "state", "author", "stamp", "future", "duplicate", "base",
             "repo", "missing_id", "missing_origin", "fork_id_collision",
             "sha", "quota", "error", "number", "no_pr", "race",
+            "missing_contract", "wrong_issue", "wrong_session",
+            "duplicate_session", "duplicate_closes",
         ):
             with self.subTest(unknown=scenario):
                 api = ready()
@@ -620,6 +633,21 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     api.pulls[0]["head"]["repo"]["full_name"] = "other/fork"
                 elif scenario == "sha":
                     api.pulls[0]["head"]["sha"] = "b" * 40
+                elif scenario == "missing_contract":
+                    api.pulls[0].pop("body")
+                elif scenario == "wrong_issue":
+                    api.pulls[0]["body"] = canonical_review_pr_body().replace(
+                        "Closes #21", "Closes #22")
+                elif scenario == "wrong_session":
+                    api.pulls[0]["body"] = canonical_review_pr_body().replace(
+                        "e33f1859-0304-4fa8-8ce3-776de22c9707",
+                        "a84bdf99-a23a-4bc1-8c99-df4f3673573a")
+                elif scenario == "duplicate_session":
+                    body = canonical_review_pr_body()
+                    api.pulls[0]["body"] = body + "\n" + body.split("\n")[1]
+                elif scenario == "duplicate_closes":
+                    api.pulls[0]["body"] = (
+                        canonical_review_pr_body() + "\nCloses #22")
                 elif scenario == "quota":
                     quota = 20
                 elif scenario == "error":
@@ -653,6 +681,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             candidate = API()
             candidate.pulls[0]["state"] = "open"
             candidate.pulls[0]["base"] = {"ref": "main"}
+            candidate.pulls[0]["body"] = canonical_review_pr_body()
             return candidate
 
         api = review_ready_api()
@@ -758,6 +787,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         api = API()
         api.pulls[0]["state"] = "open"
         api.pulls[0]["base"] = {"ref": "main"}
+        api.pulls[0]["body"] = canonical_review_pr_body()
         api.checks[0]["status"] = "completed"
         lease = json.loads(marker().split("<!-- condor-reserva ", 1)[1]
                            .split(" -->", 1)[0])
