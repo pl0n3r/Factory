@@ -213,6 +213,75 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                          session)
 
 
+    def test_explicit_orphan_adoption_cannot_rotate_concurrent_v3(self):
+        """La adopción no publica UUID propio sobre una lease ajena surgida."""
+        from scripts.aceptacion_kit import contract_fingerprint
+        from scripts.coordinar_trabajo import (
+            CoordinationError, active_reservation, adopt_orphaned_contract,
+            recovery_lock_branch, reservation_marker,
+        )
+        from scripts.orquestador_kit import (
+            PlannedTask, build_task_marker, parse_task_marker,
+        )
+        from test_coordinar_trabajo import (
+            BOT, FakeGitHub, SESSION_A, VALID_ACCEPTANCE_BODY,
+        )
+
+        def prepare():
+            api = FakeGitHub()
+            task = PlannedTask(
+                key="LEASE_ORPHAN_RACE", title="Race de adopción",
+                owner="pl0n3r", paths=("scripts/orphan_path.py",),
+                depends_on=(),
+            )
+            body = VALID_ACCEPTANCE_BODY + "\n### Rutas reclamadas\n" + (
+                "- scripts/orphan_path.py\n" + build_task_marker(
+                    epic=12, task=task, order=1,
+                    roles=["ingenieria-software"], dependency_issues=[],
+                )
+            )
+            api.issue_data["body"] = body
+            api.branches["trabajo/issue-12"] = "a" * 40
+            return api, body
+
+        api, body = prepare()
+        native_sha = api.branch_sha
+        installed = False
+        def race_before_lock(ref):
+            nonlocal installed
+            if ref == "trabajo/issue-12" and not installed:
+                installed = True
+                api.comments.append({
+                    "user": {"login": BOT, "type": "Bot"},
+                    "body": reservation_marker(
+                        "otro-agente", SESSION_A, ref, True, "tomar",
+                        contract_fingerprint(body), parse_task_marker(body)),
+                    "created_at": START.isoformat(),
+                    "updated_at": START.isoformat(),
+                })
+            return native_sha(ref)
+        api.branch_sha = race_before_lock
+        with self.assertRaisesRegex(
+            CoordinationError, "reserva activa|cambió"
+        ):
+            adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+        self.assertEqual(len(api.comments), 1)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                         SESSION_A)
+        self.assertEqual(api.branches["trabajo/issue-12"], "a" * 40)
+        self.assertNotIn(recovery_lock_branch(12), api.branches)
+        self.assertEqual(api.pulls, {})
+
+        # Un lock legítimamente ocupado devuelve no-adopción sin publicar.
+        api, _ = prepare()
+        api.branches[recovery_lock_branch(12)] = "lock-de-otro"
+        self.assertIsNone(adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER"))
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.branches["trabajo/issue-12"], "a" * 40)
+        self.assertEqual(api.branches[recovery_lock_branch(12)],
+                         "lock-de-otro")
+
+
     def test_v3_auto_recovery_grace_rejects_takeover(self):
         """Nota de recuperación automática impide una rotación por /tomar."""
         import json
