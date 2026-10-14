@@ -153,6 +153,66 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             self.assertEqual(orphan.writes, [])
 
 
+    def test_real_coordinator_orphan_adoption_is_explicit(self):
+        """Integración de comandos, no solo snapshots del ejecutor."""
+        from scripts.coordinar_trabajo import (
+            CoordinationError, active_reservation, adopt_orphaned_contract,
+            reservation_from_pr_body, reserve_work,
+        )
+        from scripts.orquestador_kit import PlannedTask, build_task_marker
+        from test_coordinar_trabajo import FakeGitHub, VALID_ACCEPTANCE_BODY
+
+        api = FakeGitHub()
+        task = PlannedTask(
+            key="LEASE_ORPHAN", title="Adopción V3",
+            owner="pl0n3r", paths=("scripts/orphan_simulation.py",),
+            depends_on=(),
+        )
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY + "\n### Rutas reclamadas\n"
+            "- scripts/orphan_simulation.py\n" + build_task_marker(
+                epic=12, task=task, order=1, roles=["ingenieria-software"],
+                dependency_issues=[],
+            )
+        )
+        branch = "trabajo/issue-12"
+        api.branches[branch] = "abc123"
+        api.pulls[15] = {
+            "number": 15, "state": "open", "draft": True,
+            "body": "Closes #12", "head": {
+                "ref": branch, "repo": {"full_name": api.repo},
+            }, "base": {"ref": "main"},
+        }
+        # /tomar no reclama silenciosamente una rama huérfana.
+        with self.assertRaisesRegex(
+            CoordinationError, "adoptar-contrato-huerfana"
+        ):
+            reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertIsNone(active_reservation(api, 12))
+        self.assertEqual(api.pulls[15]["state"], "open")
+        self.assertEqual(api.branches[branch], "abc123")
+
+        # La adopción explícita genera nueva sesión V3 sobre la misma rama
+        # y reescribe únicamente la metadata de reserva del PR.
+        session = adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+        self.assertIsNotNone(session)
+        current = active_reservation(api, 12)
+        self.assertIsNotNone(current)
+        self.assertEqual(current["reservation_id"], session)
+        self.assertEqual(current["version"], 3)
+        self.assertEqual(api.branches[branch], "abc123")
+        self.assertEqual(api.pulls[15]["state"], "open")
+        self.assertEqual(reservation_from_pr_body(api.pulls[15]["body"]),
+                         session)
+        self.assertEqual(api.pulls[15]["body"].count("Closes #12"), 1)
+
+        # Una segunda adopción no puede robar una sesión activa.
+        with self.assertRaisesRegex(CoordinationError, "reserva activa"):
+            adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+        self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                         session)
+
+
     def test_collector_and_port_preview_agree_without_release_authority(self):
         from dataclasses import FrozenInstanceError
         from scripts.lease_auto_release_integration import (
