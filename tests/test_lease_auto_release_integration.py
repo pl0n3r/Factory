@@ -610,6 +610,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             "sha", "quota", "error", "number", "no_pr", "race",
             "missing_contract", "wrong_issue", "wrong_session",
             "duplicate_session", "duplicate_closes",
+            "review_bool_id", "review_float_id", "review_zero_id",
         ):
             with self.subTest(unknown=scenario):
                 api = ready()
@@ -624,6 +625,12 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     api.reviews[0]["submitted_at"] = "2026-10-11T10:01:00Z"
                 elif scenario == "duplicate":
                     api.reviews.append(dict(api.reviews[0]))
+                elif scenario == "review_bool_id":
+                    api.reviews[0]["id"] = True
+                elif scenario == "review_float_id":
+                    api.reviews[0]["id"] = 4.5
+                elif scenario == "review_zero_id":
+                    api.reviews[0]["id"] = 0
                 elif scenario == "base":
                     del api.pulls[0]["base"]
                 elif scenario == "repo":
