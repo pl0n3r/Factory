@@ -1720,9 +1720,7 @@ def open_pull_records_for_branch(
         # o contradictoria NO permite reescribir ni cerrar ninguna rama.
         if (
             not isinstance(full_name, str)
-            or len(full_name.split("/")) != 2
-            or any(not piece or piece in {".", ".."} or piece.strip() != piece
-                   for piece in full_name.split("/"))
+            or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name) is None
             or (isinstance(source, dict) and "name" in source
                 and source["name"] != full_name.split("/")[1])
             or (isinstance(source, dict) and "owner" in source
