@@ -14,6 +14,9 @@ on:
       - 'scripts/lease_github_port.py'
       - 'tests/test_lease_auto_release_run.py'
       - 'tests/test_lease_github_port.py'
+      - 'scripts/lease_auto_release_integration.py'
+      - 'tests/test_lease_auto_release_integration.py'
+      - 'tests/test_lease_auto_release_workflow.py'
 
 permissions:
   contents: read
@@ -92,6 +95,14 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_lease_auto_release.py' -v
           echo "AUDITORÍA SOLAMENTE: 0 reservas liberadas, 0 etiquetas modificadas."
           echo "No se concede autoridad a acciones mark_recovery/release."
+
+      - name: Contrato de integración V3 (fakes sin API mutante)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_lease_auto_release_integration.py' -v
+          python3 -m unittest discover -s tests -p 'test_lease_auto_release_workflow.py' -v
+          echo "Integración verificada sólo con fakes; auto-release real permanece OFF."
 
       - name: Confirmar runner OFF sin transporte ni mutaciones
         # La puerta OFF se comprueba siempre y no requiere llamadas REST.
