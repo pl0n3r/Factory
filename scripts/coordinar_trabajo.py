@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -169,14 +169,42 @@ class CoordinationError(RuntimeError):
 
 @dataclass
 class GitHubError(RuntimeError):
-    """Representa un error HTTP devuelto por GitHub."""
+    """Representa fallos tipados sin publicar datos de la petición."""
 
     status: int
     message: str
+    method: str | None = None
+    endpoint_class: str | None = None
+    failure_class: str | None = None
+    stage: str | None = None
 
     def __str__(self) -> str:
-        """Devuelve una representación legible del error de GitHub."""
-        return f"GitHub API {self.status}: {self.message}"
+        """Publica únicamente categorías controladas por el cliente."""
+        basic = f"GitHub API {self.status}: {self.message}"
+        if self.method is None:
+            return basic
+        return (f"{basic}; method={self.method}; endpoint={self.endpoint_class}; "
+                f"failure={self.failure_class}; stage={self.stage or 'other'}")
+
+
+def _endpoint_class(path: str) -> str:
+    """Clasifica la ruta, sin mostrar repositorios, identificadores o consultas."""
+    clean = path.split("?", 1)[0].split("#", 1)[0]
+    root = re.match(r"^/repos/[^/]+/[^/]+(/.*)?$", clean)
+    if root is None:
+        return "other"
+    rest = root.group(1) or ""
+    if re.fullmatch(r"/issues/\d+/comments", rest):
+        return "issue-comments"
+    if re.fullmatch(r"/issues/\d+", rest):
+        return "issue"
+    if rest == "/issues":
+        return "open-issues"
+    if re.fullmatch(r"/pulls/\d+/files", rest):
+        return "pr-files"
+    if rest == "/git/refs" or rest.startswith(("/git/ref/", "/git/refs/")):
+        return "git-ref"
+    return "other"
 
 
 class GitHub:
@@ -212,6 +240,14 @@ class GitHub:
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=headers, method=method)
+        safe_method = (
+            method.upper() if isinstance(method, str)
+            and method.upper() in {"GET", "POST", "PATCH", "PUT", "DELETE", "HEAD"}
+            else "OTHER"
+        )
+        endpoint = _endpoint_class(path)
+        raw_stage = getattr(self, "_transport_stage", "other")
+        stage = raw_stage if raw_stage in {"tomar", "tomar-issue", "other"} else "other"
         try:
             with urlopen(request, timeout=30) as response:
                 raw = response.read()
@@ -219,8 +255,14 @@ class GitHub:
         except HTTPError as exc:
             if exc.code in allow:
                 return None
-            # No publicar cuerpo, URL ni mensajes libres del proveedor.
-            raise GitHubError(exc.code, "transport_failure") from None
+            raise GitHubError(exc.code, "transport_failure", safe_method,
+                              endpoint, "http", stage) from None
+        except (URLError, TimeoutError, OSError):
+            raise GitHubError(0, "transport_failure", safe_method,
+                              endpoint, "network-timeout", stage) from None
+        except (json.JSONDecodeError, UnicodeError):
+            raise GitHubError(0, "transport_failure", safe_method,
+                              endpoint, "invalid-json", stage) from None
 
     def request(
         self,
@@ -4150,7 +4192,11 @@ def process_comment(
     """Ejecuta un comando de comentario ya filtrado por GitHub Actions."""
     command, reservation_id = parse_comment_command(body)
     if command == "tomar":
-        reserve_work(api, issue_number, actor, association)
+        try:
+            reserve_work(api, issue_number, actor, association)
+        except GitHubError as exc:
+            exc.stage = "tomar"
+            raise
     elif command == "liberar":
         release_work(
             api,
