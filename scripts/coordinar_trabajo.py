@@ -1704,17 +1704,46 @@ def active_reservation(api: GitHub, issue_number: int) -> dict[str, Any] | None:
         return None
     return reservation
 
+def local_pull_source_matches(
+    api: GitHub,
+    pull: dict[str, Any],
+    branch: str,
+) -> bool:
+    """Aísla PR local por head.ref y head.repo; UNKNOWN falla cerrado."""
+    head = pull.get("head")
+    if not isinstance(head, dict) or head.get("ref") != branch:
+        return False
+    source = head.get("repo")
+    full_name = source.get("full_name") if isinstance(source, dict) else None
+    # Un PR de fork puede compartir head.ref; la identidad ausente
+    # o contradictoria NO permite reescribir ni cerrar ninguna rama.
+    if (
+        not isinstance(full_name, str)
+        or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name) is None
+        or (isinstance(source, dict) and "name" in source
+            and source["name"] != full_name.split("/")[1])
+        or (isinstance(source, dict) and "owner" in source
+            and (
+                not isinstance(source["owner"], dict)
+                or source["owner"].get("login") != full_name.split("/")[0]
+            ))
+    ):
+        raise CoordinationError(
+            f"PR #{pull.get('number')} con head.repo inválido para {branch}; "
+            "no se puede acreditar la procedencia de la rama."
+        )
+    return full_name == api.repo
+
+
 def open_pull_records_for_branch(
     api: GitHub,
     branch: str,
 ) -> list[dict[str, Any]]:
     """Devuelve los PR abiertos que continúan exactamente la rama reservada."""
-    result: list[dict[str, Any]] = []
-    for pull in api.open_pulls():
-        head = pull.get("head")
-        if isinstance(head, dict) and head.get("ref") == branch:
-            result.append(pull)
-    return result
+    return [
+        pull for pull in api.open_pulls()
+        if local_pull_source_matches(api, pull, branch)
+    ]
 
 
 def open_pulls_for_branch(api: GitHub, branch: str) -> list[int]:
@@ -3493,6 +3522,10 @@ def update_pr_state(api: GitHub, pr_number: int, action: str) -> None:
     branch = str(head.get("ref") or "") if isinstance(head, dict) else ""
     issue_number = issue_from_branch(branch)
     if issue_number is None:
+        return
+    # Validar también eventos de PR ya cerrado (no salen de open_pulls).
+    # Solo un PR realmente local puede mutar estado o liberar la rama.
+    if not local_pull_source_matches(api, pull, branch):
         return
 
     current = active_reservation(api, issue_number)
