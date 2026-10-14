@@ -846,6 +846,50 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(result.release_authorized)
 
 
+    def test_observer_uses_canonical_actions_concurrency_group(self):
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import (
+            IntegrationPreview, _GhReadOnlyAPI, observe_issue_cli,
+        )
+
+        healthy = IntegrationPreview(
+            1185, "read_only", "wait", "not_old_enough",
+        )
+        with patch.dict("os.environ", {"GITHUB_REPOSITORY": "pl0n3r/Factory"}):
+            with patch.object(
+                _GhReadOnlyAPI, "request",
+                return_value={"id": 987654, "full_name": "pl0n3r/Factory"},
+            ) as request:
+                with patch(
+                    "scripts.lease_github_port.LeaseGithubPort"
+                ) as port_type:
+                    with patch(
+                        "scripts.lease_auto_release_integration.preview_integrated_activity",
+                        return_value=healthy,
+                    ) as preview:
+                        result = observe_issue_cli(1185)
+        self.assertIs(result, healthy)
+        request.assert_called_once_with("GET", "/repos/pl0n3r/Factory")
+        kwargs = port_type.call_args.kwargs
+        self.assertTrue(kwargs["armed"])
+        self.assertEqual(kwargs["concurrency_group"],
+                         "factory-coordination-987654")
+        self.assertEqual(kwargs["clock"]().tzinfo, timezone.utc)
+        preview.assert_called_once()
+        self.assertIs(preview.call_args.args[1], port_type.return_value)
+
+        with patch.dict("os.environ", {"GITHUB_REPOSITORY": "pl0n3r/Factory"}):
+            with patch.object(
+                _GhReadOnlyAPI, "request",
+                return_value={"id": 987654, "full_name": "different/repo"},
+            ):
+                with patch("scripts.lease_github_port.LeaseGithubPort") as port_type:
+                    rejected = observe_issue_cli(1185)
+        self.assertEqual(rejected.state, "UNKNOWN")
+        self.assertEqual(rejected.reason, "repository_identity_unknown")
+        self.assertFalse(rejected.release_authorized)
+        port_type.assert_not_called()
+
     def test_gh_cli_observer_transport_is_get_only(self):
         from types import SimpleNamespace
         from unittest.mock import patch
