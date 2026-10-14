@@ -201,21 +201,49 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Descubrir todos los Issues abiertos en estados gestionados, no
-          # hardcodear la hoja de implementación (que se cerrará al fusionar).
-          gh api --paginate '/repos/pl0n3r/Factory/issues?state=open&per_page=100' |
-            jq -s '[.[][]? | select(.pull_request == null)
-              | select(any(.labels[]?.name; . == "estado: reservado"
-                or . == "estado: en revisión"
-                or . == "estado: requiere recuperación"))
-              | .number] | unique | sort' > "$RUNNER_TEMP/lease-active-issues.json"
-          count="$(jq 'length' "$RUNNER_TEMP/lease-active-issues.json")"
-          # Cota conservadora de cuota por ciclo; ante exceso, no truncar
-          # silenciosamente ni confundir un prefijo con inventario completo.
-          if (( count > 10 )); then
-            echo "::error::Inventario gestionado excede el límite del observador; ningún release autorizado."
-            exit 1
-          fi
+          # El censo para decidir qué Issues observar también debe fallar
+          # cerrado ante páginas/IDs duplicados, inventario truncado o pausa.
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-observer-switch-before.json"
+          gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues?state=open&per_page=100" \
+            > "$RUNNER_TEMP/lease-observer-issues.json"
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-observer-switch-after.json"
+          python3 - "$RUNNER_TEMP/lease-observer-switch-before.json" \
+              "$RUNNER_TEMP/lease-observer-switch-after.json" \
+              "$RUNNER_TEMP/lease-observer-issues.json" \
+              "$RUNNER_TEMP/lease-active-issues.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.lease_auto_release_run import inventory_after_switch_recheck
+
+          before, after, source, destination = map(Path, sys.argv[1:])
+          pages = json.loads(source.read_text(encoding="utf-8"))
+          inventory = inventory_after_switch_recheck(
+              json.loads(before.read_text(encoding="utf-8")),
+              json.loads(after.read_text(encoding="utf-8")), pages,
+          )
+          if inventory is None or inventory.release_authorized:
+              raise SystemExit("::error::Inventario V3 o kill switch UNKNOWN; no observar Issues.")
+          managed = []
+          for page in pages:
+              for issue in page:
+                  if "pull_request" in issue:
+                      continue
+                  names = {label["name"] for label in issue["labels"]}
+                  if names & {"estado: reservado", "estado: en revisión",
+                              "estado: requiere recuperación"}:
+                      managed.append(issue["number"])
+          # El censo validó páginas, IDs, labels y procedencia; no deduplicar
+          # silenciosamente ni presentar una muestra como inventario completo.
+          if len(managed) > 10:
+              raise SystemExit("::error::Demasiados Issues V3; no observar parcialmente.")
+          destination.write_text(
+              json.dumps(sorted(managed), separators=(",", ":")), encoding="utf-8",
+          )
+          PY
           while IFS= read -r issue_number; do
             [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
               echo "::error::Inventario de Issues inválido; fail-closed."
