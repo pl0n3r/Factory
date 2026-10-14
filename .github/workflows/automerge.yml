@@ -46,8 +46,6 @@ jobs:
             echo 'AUTOMERGE_DENIED: pr_not_immediately_mergeable' >&2
             exit 1
           fi
-          # El --auto requerido por AC-04 opera sobre un PR ya mergeable.
-          gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"
           # Un cleanup no es atómico. Nunca reportar éxito si el merge
           # no es comprobable, incluso si falla la consulta o la revocación.
           reject_unverified_merge() {
@@ -57,6 +55,11 @@ jobs:
             echo "AUTOMERGE_DENIED: $1" >&2
             exit 1
           }
+          # Una solicitud de --auto puede dejar cola antes de responder con
+          # error. Intentar revocación incluso cuando gh pr merge falla.
+          if ! gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"; then
+            reject_unverified_merge 'merge_request_failed'
+          fi
           if ! MERGED_AT="$(gh pr view "$PR_URL" --json mergedAt --jq '.mergedAt')"; then
             reject_unverified_merge 'merge_observation_failed'
           fi
