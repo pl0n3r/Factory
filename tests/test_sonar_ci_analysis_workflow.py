@@ -61,9 +61,9 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         automerge = (
             ROOT / ".github" / "workflows" / "automerge.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("pull_request_review:\\n    types: [submitted]", automerge)
+        self.assertIn("pull_request_review:\n    types: [submitted]", automerge)
         self.assertIn(
-            'workflow_run:\\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+            'workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
             automerge,
         )
         self.assertIn("--resolve-pull-request-review", automerge)
