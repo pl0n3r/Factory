@@ -42,35 +42,147 @@ jobs:
           persist-credentials: false
       - name: Resolver PR y HEAD actual del evento autenticado
         id: target
-        env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
-          EVENT_PR_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_OUTPUT: ${{ github.output }}
         run: |
           set -euo pipefail
-          case "$GITHUB_EVENT_NAME" in
-            pull_request)
-              [[ "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EVENT_PR_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-                echo 'AUTOMERGE_DENIED: pull_request_identity_invalid' >&2
-                exit 1
-              }
-              echo "pr_number=$EVENT_PR_NUMBER" >> "$GITHUB_OUTPUT"
-              echo "pr_sha=$EVENT_PR_SHA" >> "$GITHUB_OUTPUT"
-              echo "pr_url=https://github.com/$GITHUB_REPOSITORY/pull/$EVENT_PR_NUMBER" >> "$GITHUB_OUTPUT"
-              ;;
-            pull_request_review)
-              env -u MERGE_TOKEN python3 scripts/automerge_pr_guard.py --resolve-pull-request-review >> "$GITHUB_OUTPUT"
-              ;;
-            workflow_run)
-              env -u MERGE_TOKEN python3 scripts/automerge_pr_guard.py --resolve-workflow-run >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo 'AUTOMERGE_DENIED: unsupported_event' >&2
-              exit 1
-              ;;
-          esac
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+          event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+          token = os.environ.get("GH_TOKEN", "")
+          event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+          output_path = os.environ.get("GITHUB_OUTPUT", "")
+          expected_repo = "pl0n3r/Factory"
+          hex_sha = re.compile(r"[0-9a-f]{40}\\Z")
+          canonical_branch = re.compile(r"trabajo/issue-([1-9][0-9]*)\\Z")
+          trusted_runs = {"CI factory", "Sonar CI-based", "Evidencia CodeQL"}
+
+          def deny(reason):
+              print("AUTOMERGE_DENIED: " + reason, file=sys.stderr)
+              raise SystemExit(1)
+
+          if (repo != expected_repo or not token or not event_path or not output_path):
+              deny("event_resolver_environment_invalid")
+          try:
+              with open(event_path, encoding="utf-8") as stream:
+                  event = json.load(stream)
+          except (OSError, ValueError):
+              deny("event_resolver_payload_invalid")
+          if not isinstance(event, dict) or not isinstance(event.get("repository"), dict):
+              deny("event_repository_missing")
+          if (event["repository"].get("full_name") != repo
+                  or event["repository"].get("default_branch") != "main"):
+              deny("event_repository_untrusted")
+
+          pr_number = None
+          expected_ref = None
+          expected_sha = None
+          if event_name == "pull_request":
+              if event.get("action") not in {"opened", "reopened", "ready_for_review", "synchronize"}:
+                  deny("pull_request_action_invalid")
+              source = event.get("pull_request")
+              if not isinstance(source, dict) or source.get("state") != "open" or source.get("draft") is not False:
+                  deny("pull_request_state_invalid")
+              head, base = source.get("head"), source.get("base")
+              if not isinstance(head, dict) or not isinstance(base, dict):
+                  deny("pull_request_refs_missing")
+              source_repo = head.get("repo")
+              if (not isinstance(source_repo, dict) or source_repo.get("full_name") != repo
+                      or source_repo.get("fork") is not False or base.get("ref") != "main"):
+                  deny("pull_request_source_untrusted")
+              pr_number, expected_ref, expected_sha = source.get("number"), head.get("ref"), head.get("sha")
+              if not isinstance(pr_number, int) or isinstance(pr_number, bool) or pr_number <= 0:
+                  deny("pull_request_number_invalid")
+              if not isinstance(expected_sha, str) or not hex_sha.fullmatch(expected_sha):
+                  deny("pull_request_sha_invalid")
+          elif event_name == "pull_request_review":
+              if event.get("action") != "submitted":
+                  deny("pull_request_review_action_invalid")
+              review, source = event.get("review"), event.get("pull_request")
+              if (not isinstance(review, dict) or review.get("state") not in {"approved", "changes_requested", "commented"}
+                      or not isinstance(review.get("user"), dict)
+                      or not isinstance(review["user"].get("login"), str) or not review["user"]["login"]
+                      or not isinstance(source, dict)):
+                  deny("pull_request_review_invalid")
+              head, base = source.get("head"), source.get("base")
+              if not isinstance(head, dict) or not isinstance(base, dict):
+                  deny("pull_request_review_refs_missing")
+              source_repo = head.get("repo")
+              if (source.get("state") != "open" or source.get("draft") is not False
+                      or not isinstance(source.get("number"), int) or isinstance(source.get("number"), bool)
+                      or source.get("number") <= 0 or not isinstance(source_repo, dict)
+                      or source_repo.get("full_name") != repo or source_repo.get("fork") is not False
+                      or base.get("ref") != "main"):
+                  deny("pull_request_review_source_untrusted")
+              pr_number, expected_ref = source["number"], head.get("ref")
+          elif event_name == "workflow_run":
+              run = event.get("workflow_run")
+              if (event.get("action") != "completed" or not isinstance(run, dict)
+                      or run.get("name") not in trusted_runs or run.get("event") != "pull_request"
+                      or run.get("status") != "completed" or run.get("conclusion") != "success"
+                      or not isinstance(run.get("repository"), dict)
+                      or run["repository"].get("full_name") != repo
+                      or not isinstance(run.get("head_repository"), dict)
+                      or run["head_repository"].get("full_name") != repo
+                      or not isinstance(run.get("head_sha"), str) or not hex_sha.fullmatch(run["head_sha"])):
+                  deny("workflow_run_untrusted_or_incomplete")
+              pulls = run.get("pull_requests")
+              if not isinstance(pulls, list) or len(pulls) != 1 or not isinstance(pulls[0], dict):
+                  deny("workflow_run_pr_mapping_ambiguous")
+              pr_number = pulls[0].get("number")
+              expected_ref = run.get("head_branch")
+              if not isinstance(pr_number, int) or isinstance(pr_number, bool) or pr_number <= 0:
+                  deny("workflow_run_pr_number_invalid")
+          else:
+              deny("event_name_unsupported")
+
+          if not isinstance(expected_ref, str) or not canonical_branch.fullmatch(expected_ref):
+              deny("event_branch_noncanonical")
+          api_url = "https://api.github.com/repos/" + repo + "/pulls/" + str(pr_number)
+          request = Request(api_url, headers={
+              "Accept": "application/vnd.github+json",
+              "Authorization": "Bearer " + token,
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "factory-automerge-event-resolver",
+          })
+          try:
+              with urlopen(request, timeout=10) as response:
+                  current = json.load(response)
+          except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+              deny("authenticated_pr_lookup_failed")
+          if not isinstance(current, dict):
+              deny("authenticated_pr_invalid")
+          head, base = current.get("head"), current.get("base")
+          if not isinstance(head, dict) or not isinstance(base, dict):
+              deny("authenticated_pr_refs_missing")
+          source_repo = head.get("repo")
+          if (current.get("number") != pr_number or current.get("state") != "open"
+                  or current.get("draft") is not False or head.get("ref") != expected_ref
+                  or base.get("ref") != "main" or not isinstance(source_repo, dict)
+                  or source_repo.get("full_name") != repo or source_repo.get("fork") is not False
+                  or not isinstance(head.get("sha"), str) or not hex_sha.fullmatch(head["sha"])):
+              deny("authenticated_pr_identity_changed")
+          if event_name == "pull_request" and head["sha"] != expected_sha:
+              deny("pull_request_head_changed_since_event")
+          lines = (
+              "pr_number=" + str(pr_number),
+              "pr_sha=" + head["sha"],
+              "pr_url=https://github.com/" + repo + "/pull/" + str(pr_number),
+          )
+          with open(output_path, "a", encoding="utf-8") as stream:
+              stream.write("\\n".join(lines) + "\\n")
+          print("Resolved internal PR #" + str(pr_number) + " at authenticated HEAD " + head["sha"])
+          PY
       - name: Validar evidencia y habilitar exclusivamente squash exact-HEAD
         env:
           GH_TOKEN: ${{ github.token }}
