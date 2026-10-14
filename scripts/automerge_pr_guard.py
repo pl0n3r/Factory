@@ -71,12 +71,22 @@ ACTION_NOT_COMPLETED = re.compile(
     r"Action[ \t]+not[ \t]+completed[ \t]*(?:</strong>[ \t]*)?</summary>[ \t]*$",
     re.I | re.M,
 )
+# A plain-text CodeRabbit failure may arrive without the HTML <summary>.
+# Anchor the notice at the beginning of a line to avoid treating discussion
+# of "Action not completed" as a failed review event.
+ACTION_NOT_COMPLETED_TEXT = re.compile(
+    r"^[ \t]*(?:[-*+>][ \t]+|\#{1,6}[ \t]+){0,2}[*_]{0,2}"
+    r"(?:⚠️[ \t]*)?Action[ \t]+not[ \t]+completed[*_]{0,2}"
+    r"(?:[ \t]*[:.!]|[ \t]*$)",
+    re.I | re.M,
+)
 
 
 def review_incomplete_notice(body):
     """Recognize explicit incomplete-review notices, not policy prose."""
     return bool(SKIPPED.search(body) or UNFINISHED_REVIEW.search(body)
-                or ACTION_NOT_COMPLETED.search(body))
+                or ACTION_NOT_COMPLETED.search(body)
+                or ACTION_NOT_COMPLETED_TEXT.search(body))
 
 
 RESERVATION_HEADER = re.compile(r"<!--\s*condor-reserva\b", re.I)

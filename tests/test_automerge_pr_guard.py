@@ -232,6 +232,45 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["issue_comments"] = [{"user": {"login": "other"}, "body": bot_reply}]
         mod.verify(q, SHA, NOW)
 
+    def test_coderabbit_plain_action_not_completed_denied(self):
+        """An anchored text error without HTML still means no completed review."""
+        notices = (
+            "Action not completed: Review rate limited.",
+            "⚠️ Action not completed: Pull request base or head changed.",
+            "- **Action not completed**: Review rate limited.",
+            "> ⚠️ Action not completed: Review rate limited.",
+        )
+        for notice in notices:
+            with self.subTest(notice=notice):
+                self.assertTrue(mod.review_incomplete_notice(notice))
+                q = evidence()
+                q["commit_status"]["statuses"][0]["description"] = notice
+                q["status_history"][0]["description"] = notice
+                self.deny(q)
+                q = evidence()
+                q["reviews"][0]["body"] = notice
+                self.deny(q)
+                q = evidence()
+                q["issue_comments"] = [{
+                    "user": {"login": "coderabbitai[bot]"},
+                    "body": notice,
+                    "created_at": "2026-10-14T03:59:30Z",
+                    "updated_at": "2026-10-14T03:59:30Z",
+                }]
+                self.deny(q)
+                q["reviews"][0]["submitted_at"] = "2026-10-14T04:00:30Z"
+                mod.verify(q, SHA, NOW + timedelta(minutes=2))
+
+        for prose in (
+            "The policy discusses Action not completed: Review rate limited.",
+            "The guide says that an Action not completed message is possible.",
+        ):
+            with self.subTest(prose=prose):
+                self.assertFalse(mod.review_incomplete_notice(prose))
+                q = evidence()
+                q["reviews"][0]["body"] = prose
+                mod.verify(q, SHA, NOW)
+
     def test_markdown_wrapped_coderabbit_skips_fail_closed(self):
         # A skip/limit notice after the review must block even when
         # CodeRabbit formats the notice as a list, heading or nested quote.
