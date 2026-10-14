@@ -60,7 +60,7 @@ SKIPPED = re.compile(
 UNFINISHED_REVIEW = re.compile(
     r"^[ \t]*(?:[-*+>][ \t]+|\#{1,6}[ \t]+){0,2}[*_]{0,2}"
     r"(?:review|analysis|scan)[ \t]+(?:is[ \t]+)?"
-    r"(?:pending|queued|waiting|in[ \t-]+progress|awaiting|cancell?ed|not[ \t-]+complete)\b",
+    r"(?:pending|queued|waiting|in[ \t-]+progress|awaiting|cancell?ed|not[ \t-]+complete)(?:\b|(?=[*_]))[*_]{0,2}",
     re.I | re.M,
 )
 RESERVATION_HEADER = re.compile(r"<!--\s*condor-reserva\b", re.I)
