@@ -42,7 +42,7 @@ SEVERE = re.compile(
 # "rate limited" or an advisory says "files skipped due to trivial changes".
 # Actual skipped/incomplete review notices begin on their own Markdown line.
 SKIPPED = re.compile(
-    r"""^[ \t]*(?:>[ \t]*)?\*{0,2}(?:
+    r"""^[ \t]*(?:[-*+>][ \t]+|\#{1,6}[ \t]+){0,2}\*{0,2}(?:
         Review(?:[ \t]+\w+){0,3}[ \t]+skipp?ed
       | skipp?ed(?:[ \t]+\w+){0,3}[ \t]+review
       | skip[ \t]+review

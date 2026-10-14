@@ -179,6 +179,51 @@ class AutoMergePrGuardTests(unittest.TestCase):
                                         "created_at": "2026-10-14T04:00:00Z", "updated_at": "2026-10-14T04:00:00Z"}]
                 self.deny(q)
 
+    def test_markdown_wrapped_coderabbit_skips_fail_closed(self):
+        # A skip/limit notice after the review must block even when
+        # CodeRabbit formats the notice as a list, heading or nested quote.
+        mod.verify(evidence(), SHA, NOW)
+        notices = (
+            "- Review skipped: manual review required",
+            "* Review rate limited",
+            "+ Review rate-limited",
+            "### Review skipped",
+            "> - **Review skipped**",
+            "## Manual review required",
+        )
+        for notice in notices:
+            with self.subTest(notice=notice, channel="review"):
+                q = evidence()
+                q["reviews"][0]["body"] = notice
+                self.deny(q)
+            with self.subTest(notice=notice, channel="conversation"):
+                q = evidence()
+                q["issue_comments"] = [
+                    {"user": {"login": "coderabbitai[bot]"},
+                     "body": notice,
+                     "created_at": "2026-10-14T03:58:00Z",
+                     "updated_at": "2026-10-14T03:59:30Z"}
+                ]
+                self.deny(q)
+            with self.subTest(notice=notice, channel="status"):
+                q = evidence()
+                q["commit_status"]["statuses"][0]["description"] = notice
+                q["status_history"][0]["description"] = notice
+                self.deny(q)
+        # Mere statements about files skipped from review or rate-limit
+        # policies are not evidence that this HEAD was skipped.
+        for prose in (
+            "- Files skipped from review due to trivial changes.",
+            "### Review complete; no high or critical findings.",
+            "The guide discusses rate limited plans and skipped reviews.",
+        ):
+            with self.subTest(prose=prose):
+                q = evidence()
+                q["issue_comments"] = [
+                    {"user": {"login": "coderabbitai[bot]"}, "body": prose}
+                ]
+                mod.verify(q, SHA, NOW)
+
     def test_coderabbit_security_major_category_is_blocking(self):
         # A real CodeRabbit Security & Privacy / Major finding must not be
         # downgraded to a nonsecurity "Major" quality advisory.
