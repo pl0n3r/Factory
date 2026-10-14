@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Frontera REST de solo lectura para futuras liberaciones V3.
+"""Adaptador GitHub del Port de liberaciones V3.
 
-NO implementa CAS ni serialización compartida: hasta contar con una prueba
-completa de *ausencia* de actividad, ningún Snapshot de este Port puede
-autorizar a lease_release_executor a escribir. El resultado RECENT_ACTIVITY
-solo acredita una observación positiva acotada, nunca inactividad.
+Por defecto es GET-only: `inspect`/`recovery_*` sólo observan y
+RECENT_ACTIVITY acredita una observación positiva acotada, nunca inactividad.
+Las escrituras (`read` completo, `lock`, `append`, `status`) exigen
+`armed=True` explícito y una API autenticada; el lock es el grupo de
+concurrency de Coordinación y cada escritura es CAS sobre UUID/SHA/marker/pin.
+Ningún merge ni dispatch lo arma: lo decide el runner con su feature flag.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from math import ceil
+import base64
+import hashlib
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from scripts.lease_release_executor import (
-    SESSION_RE, SHA, RecoveryLabelProof, RecoveryNoteProof, Snapshot,
+    ACTIVE, AVAILABLE, RECOVERY, SESSION_RE, SHA, RecoveryLabelProof, RecoveryNoteProof, Snapshot,
     _trusted, _note_ok, _recovery_label_ok, _utc,
 )
 from scripts.aceptacion_kit import contract_fingerprint
 from scripts.coordinar_trabajo import reservation_from_text
+from scripts.politica_kit import parse_phase_payload
 from scripts.orquestador_kit import parse_task_marker, task_marker_fingerprint
 
 from scripts.lease_activity_collector import collect_activity
@@ -190,8 +196,31 @@ class LeaseGithubPort:
     sin exponer cuerpos, URLs con credenciales ni detalles privados.
     """
 
-    def __init__(self, api: Any) -> None:
+    def __init__(self, api: Any, *, armed: bool = False,
+                 concurrency_group: str | None = None,
+                 clock: Callable[[], datetime] | None = None) -> None:
         self._api = api
+        # Escritura SOLO con armed=True explícito; el valor por defecto
+        # conserva el Port GET-only y ningún merge/dispatch lo activa.
+        self._armed = armed is True
+        self._group = concurrency_group
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def _need_armed(self) -> None:
+        if (not self._armed or getattr(self._api, "authenticated", False) is not True):
+            raise PortNotArmed("mutation_disabled")
+
+    def _pages(self, path: str) -> list[Any]:
+        """Lista completa paginada con página centinela vacía; si no, error."""
+        rows: list[Any] = []
+        for page in range(1, 11):
+            batch = self._api.request("GET", f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+            if type(batch) is not list or len(batch) > 100:
+                raise ValueError("invalid_page")
+            rows.extend(batch)
+            if len(batch) < 100:
+                return rows
+        raise ValueError("pagination_over_limit")
 
     def _running(self) -> bool:
         obj = self._api.request("GET", GLOBAL_SWITCH)
@@ -235,16 +264,156 @@ class LeaseGithubPort:
         except Exception:
             return invalid
 
-    def read(self, issue: int) -> Any:
-        # Una muestra de actividad RECIENTE nunca permite certificar
-        # AUSENCIA de push/comentario del titular durante >30 min.
-        raise PortNotArmed("complete_inactivity_proof_unavailable")
+    def read(self, issue: int) -> Snapshot:
+        """Snapshot completo y autenticado; cualquier duda lanza PortNotArmed."""
+        try:
+            self._need_armed()
+            if type(issue) is not int or issue <= 0 or not self._running():
+                raise ValueError("untrusted_scope")
+            now = self._clock()
+            repo_name = getattr(self._api, "repo", None)
+            latest = self._latest_bot_marker(repo_name, issue)
+            api = self._api
+            if latest is not None and latest[1].get("active") is False:
+                # Marker de liberación ya publicado (estado parcial): el
+                # recolector sólo entiende reservas activas, así que se
+                # evalúa la actividad SIN ese comentario del bot.
+                api = _WithoutComment(self._api, issue, latest[0])
+            report = collect_activity(api, issue, now=now)
+            if (type(report) is not dict or report.get("evidence_complete") is not True
+                    or report.get("status") not in ACTIVE
+                    or report.get("issue_number") != issue):
+                raise ValueError("incomplete_activity")
+            repo = report["repo"]
+            issue_obj = self._api.request("GET", f"/repos/{repo}/issues/{issue}")
+            if (type(issue_obj) is not dict or issue_obj.get("state") != "open"
+                    or "pull_request" in issue_obj):
+                raise ValueError("issue_not_open")
+            lease_id, branch = report["lease_id"], report["branch"]
+            marker = latest[1] if latest is not None else None
+            if (marker is None or marker.get("reservation_id") != lease_id
+                    or marker.get("branch") != branch
+                    or marker.get("owner") != report["owner"]):
+                raise ValueError("marker_mismatch")
+            pin = _pinned_task_fingerprint(issue_obj.get("body"))
+            if pin != marker.get("task_marker_sha256"):
+                raise ValueError("task_pin_mismatch")
+            last = datetime.fromisoformat(report["last_activity_at"].replace("Z", "+00:00"))
+            status = report["status"]
+            since = None
+            if status == RECOVERY:
+                since = self._recovery_since(repo, issue)
+            owner_recovered = since is not None and last > since
+            fingerprint = hashlib.sha256(json.dumps({
+                "issue": issue, "lease": lease_id, "sha": report["branch_sha"],
+                "status": status, "marker": marker, "pin": pin,
+                "activity": report["last_activity_at"],
+            }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            snapshot = Snapshot(
+                issue=issue, repository_id=report["repository_id"],
+                reservation_id=lease_id, owner=report["owner"], branch=branch,
+                branch_sha=report["branch_sha"], status=status,
+                phase=self._phase(repo), now=now, last_activity_at=last,
+                recovery_since=since, marker=marker, fingerprint=fingerprint,
+                complete=True, authenticated=True, issue_open=True,
+                kill_switch_running=self._running(),
+                ci_running=report["ci_running"] is True,
+                changes_requested=self._changes_requested(repo, branch),
+                owner_recovered=owner_recovered,
+                rate_remaining=report["rate_remaining"],
+                rate_limit=report["rate_limit"],
+            )
+            if not _trusted(snapshot, allow_partial=True):
+                raise ValueError("untrusted_snapshot")
+            return snapshot
+        except PortNotArmed:
+            raise
+        except Exception:
+            raise PortNotArmed("complete_inactivity_proof_unavailable") from None
+
+    def _latest_bot_marker(self, repo: Any, issue: int) -> tuple[int, dict[str, Any]] | None:
+        """(id del comentario, marker) del último marker V3 de github-actions[bot]."""
+        found = None
+        for comment in self._pages(f"/repos/{repo}/issues/{issue}/comments"):
+            user = comment.get("user") if type(comment) is dict else None
+            if (type(user) is dict and user.get("login") == "github-actions[bot]"
+                    and user.get("type") == "Bot"):
+                marker = _bot_marker(comment.get("body"), allow_inactive=True)
+                if marker is not None and type(comment.get("id")) is int:
+                    found = (comment["id"], marker)  # el último autenticado manda
+        return found
+
+    def _phase(self, repo: str) -> str:
+        meta = self._api.request("GET", f"/repos/{repo}/contents/datos.yml")
+        if (type(meta) is not dict or meta.get("encoding") != "base64"
+                or type(meta.get("content")) is not str):
+            raise ValueError("phase_unavailable")
+        return parse_phase_payload(base64.b64decode(meta["content"]).decode("utf-8"))
+
+    def _recovery_since(self, repo: str, issue: int) -> datetime:
+        events = self._pages(f"/repos/{repo}/issues/{issue}/events")
+        stamps = [e["created_at"] for e in events
+                  if type(e) is dict and e.get("event") == "labeled"
+                  and (e.get("label") or {}).get("name") == RECOVERY
+                  and (e.get("actor") or {}).get("login") == "github-actions[bot]"]
+        if not stamps or _STAMP.fullmatch(stamps[-1]) is None:
+            raise ValueError("recovery_event_missing")
+        return datetime.fromisoformat(stamps[-1].replace("Z", "+00:00"))
+
+    def _changes_requested(self, repo: str, branch: str) -> bool:
+        pulls = self._pages(f"/repos/{repo}/pulls?state=open&head={repo.split('/')[0]}:{branch}")
+        blocked = False
+        for pull in pulls:
+            latest: dict[str, str] = {}
+            for review in self._pages(f"/repos/{repo}/pulls/{pull['number']}/reviews"):
+                latest[(review.get("user") or {}).get("login", "")] = review.get("state", "")
+            blocked = blocked or "CHANGES_REQUESTED" in latest.values()
+        return blocked
 
     def lock(self, group: str) -> Any:
-        raise PortNotArmed("shared_v3_cas_lock_not_implemented")
+        """Lock compartido con Coordinación = su grupo de concurrency de Actions.
+
+        No crea un lock propio: exige que ESTE proceso corra bajo el mismo
+        grupo `factory-coordination-<repo_id>` (declarado por el workflow).
+        La verificación es inmediata, no al entrar al `with`.
+        """
+        self._need_armed()
+        repo = getattr(self._api, "repo", None)
+        meta = self._api.request("GET", f"/repos/{repo}")
+        expected = f"factory-coordination-{meta.get('id') if type(meta) is dict else None}"
+        if group != expected or self._group != expected:
+            raise PortNotArmed("shared_v3_cas_lock_not_implemented")
+        return nullcontext()
+
+    def _cas(self, issue: int, expected: Any, *, same_fingerprint: bool) -> Snapshot:
+        """Relee y exige mismo SHA/UUID/pin (identidad) antes de escribir."""
+        current = self.read(issue)
+        if (type(expected) is not Snapshot or current.issue != expected.issue
+                or (current.repository_id, current.owner, current.reservation_id,
+                    current.branch, current.branch_sha)
+                != (expected.repository_id, expected.owner, expected.reservation_id,
+                    expected.branch, expected.branch_sha)
+                or current.status != expected.status
+                or current.marker != expected.marker
+                or (same_fingerprint and current.fingerprint != expected.fingerprint)):
+            raise PortNotArmed("cas_conflict")
+        return current
 
     def append(self, issue: int, body: str, expected: Any) -> None:
-        raise PortNotArmed("mutation_disabled")
+        self._need_armed()
+        current = self._cas(issue, expected, same_fingerprint=True)
+        if type(body) is not str or not 1 <= len(body) <= 4000:
+            raise PortNotArmed("invalid_body")
+        if body.startswith("<!-- condor-reserva "):
+            want = dict(current.marker)
+            want.update(active=False, reason="auto-inactivity-release")
+            if _bot_marker(body, allow_inactive=True) != want:
+                raise PortNotArmed("marker_not_canonical")
+        elif not body.startswith("<!-- factory-lease-recovery "):
+            raise PortNotArmed("body_not_allowed")
+        repo = getattr(self._api, "repo")
+        self._api.request("POST", f"/repos/{repo}/issues/{issue}/comments",
+                          {"body": body})
 
     def recovery_note(self, issue: int, expected: Any, *,
                       _budget: list[int] | None = None) -> RecoveryNoteProof:
@@ -626,4 +795,62 @@ class LeaseGithubPort:
             raise PortNotArmed("authenticated_timeline_proof_unavailable") from None
 
     def status(self, issue: int, state: str, expected: Any) -> None:
-        raise PortNotArmed("mutation_disabled")
+        self._need_armed()
+        if state not in (RECOVERY, AVAILABLE):
+            raise PortNotArmed("state_not_allowed")
+        current = self._cas(issue, expected, same_fingerprint=True)
+        if state == AVAILABLE and (current.marker.get("active") is not False
+                                   or current.status != RECOVERY):
+            raise PortNotArmed("release_requires_inactive_marker")
+        repo = getattr(self._api, "repo")
+        issue_obj = self._api.request("GET", f"/repos/{repo}/issues/{issue}")
+        names = [l["name"] for l in issue_obj["labels"]]
+        labels = [n for n in names if n not in ACTIVE] + [state]
+        self._api.request("PATCH", f"/repos/{repo}/issues/{issue}", {"labels": labels})
+
+
+class _WithoutComment:
+    """Vista GET de la API que omite un comentario (y su cuenta) del Issue."""
+
+    def __init__(self, api: Any, issue: int, comment_id: int) -> None:
+        self._api, self._issue, self._id = api, issue, comment_id
+        self.repo = getattr(api, "repo", None)
+        self.authenticated = getattr(api, "authenticated", False)
+
+    def request(self, method: str, path: str, *rest: Any) -> Any:
+        if method != "GET" or rest:
+            raise PortNotArmed("mutation_disabled")
+        result = self._api.request("GET", path)
+        base = f"/repos/{self.repo}/issues/{self._issue}"
+        if path.startswith(f"{base}/comments") and type(result) is list:
+            return [c for c in result if not (type(c) is dict and c.get("id") == self._id)]
+        if path == base and type(result) is dict and type(result.get("comments")) is int:
+            return {**result, "comments": result["comments"] - 1}
+        return result
+
+
+def _bot_marker(body: Any, *, allow_inactive: bool = False) -> dict[str, Any] | None:
+    """Marker V3 de un comentario; None si ausente o ambiguo (claves duplicadas)."""
+    if type(body) is not str:
+        return None
+    matches = re.findall(r"<!-- condor-reserva (\{[^\r\n]*\}) -->", body)
+    if len(matches) != 1:
+        return None
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in out:
+                raise ValueError("duplicate_key")
+            out[key] = value
+        return out
+
+    try:
+        parsed = json.loads(matches[0], object_pairs_hook=unique)
+    except ValueError:
+        return None
+    if type(parsed) is not dict or parsed.get("version") != 3:
+        return None
+    if parsed.get("active") is False and not allow_inactive:
+        return None
+    return parsed

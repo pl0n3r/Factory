@@ -920,6 +920,154 @@ class LeaseGithubPortTests(unittest.TestCase):
                     result = LeaseGithubPort(FakeAPI()).inspect(21, now=NOW)
                 self.assertEqual(result.state, UNKNOWN)
 
+    def test_authenticated_cas_and_canonical_bot_marker(self):
+        import base64
+        import copy
+        from dataclasses import replace
+        from scripts.lease_release_executor import (
+            AVAILABLE, RECOVERY, _release_marker, _trusted,
+        )
+        from scripts.orquestador_kit import task_marker_fingerprint
+
+        task = {
+            "version": 1, "epic": 1175, "task_key": "LEASE_CAS",
+            "order": 1, "owner": "pl0n3r",
+            "roles": ["ingenieria-software"],
+            "depends_on": [], "paths": ["scripts/x.py"],
+        }
+        body = "### Contexto\nsintético\n<!-- factory-plan-task " + json.dumps(task) + " -->"
+        marker = json.loads(self._marker_json(task_marker_fingerprint(task)))
+
+        class WriteAPI(FakeAPI):
+            authenticated = True
+
+            def __init__(self):
+                super().__init__()
+                self.issue["body"] = body
+                self.checks[0]["status"] = "completed"
+                self.issue["labels"] = [{"name": "estado: reservado"},
+                                        {"name": "prioridad: alta"}]
+                self.comments[0]["body"] = "<!-- condor-reserva " + json.dumps(marker) + " -->"
+                self.writes = []
+
+            def request(self, method, path, payload=None):
+                if method in ("POST", "PATCH"):
+                    self.writes.append((method, path, copy.deepcopy(payload)))
+                    if method == "POST":
+                        self.comments.append({
+                            "id": 100 + len(self.writes),
+                            "user": {"login": "github-actions[bot]", "type": "Bot"},
+                            "body": payload["body"],
+                            "created_at": "2026-10-11T09:56:00Z"})
+                    else:
+                        self.issue["labels"] = [{"name": n} for n in payload["labels"]]
+                    return {}
+                assert method == "GET", "solo GET/POST/PATCH acotados"
+                if path == "/repos/pl0n3r/Factory/contents/datos.yml":
+                    return {"encoding": "base64", "content": base64.b64encode(
+                        b'{"phase":"construccion"}').decode()}
+                result = super().request("GET", path)
+                if path == "/repos/pl0n3r/Factory/issues/21":
+                    result["comments"] = len(self.comments)
+                return result
+
+        group = "factory-coordination-123"
+        # Sin armar (valor por defecto) nada escribe ni pasa por el lock.
+        quiet = WriteAPI()
+        for call in (lambda: LeaseGithubPort(quiet).lock(group),
+                     lambda: LeaseGithubPort(quiet).append(21, "x", None),
+                     lambda: LeaseGithubPort(quiet).status(21, RECOVERY, None)):
+            with self.assertRaises(PortNotArmed):
+                call()
+        self.assertEqual(quiet.writes, [])
+
+        api = WriteAPI()
+        port = LeaseGithubPort(api, armed=True, concurrency_group=group,
+                               clock=lambda: NOW)
+        # Lock compartido: sólo el grupo de Coordinación de ESTE repositorio.
+        with port.lock(group):
+            pass
+        for other in ("factory-coordination-999", "otro-grupo"):
+            with self.assertRaises(PortNotArmed):
+                port.lock(other)
+        with self.assertRaises(PortNotArmed):
+            LeaseGithubPort(api, armed=True, concurrency_group="otro",
+                            clock=lambda: NOW).lock(group)
+
+        snap = port.read(21)
+        self.assertTrue(_trusted(snap, allow_partial=True))
+        self.assertEqual((snap.reservation_id, snap.branch_sha, snap.status),
+                         (marker["reservation_id"], SHA, "estado: reservado"))
+
+        # CAS: UUID, SHA, marker/pin o estado distintos no escriben.
+        bad_marker = {**snap.marker, "task_marker_sha256": "e" * 64}
+        stale = (
+            replace(snap, reservation_id="11111111-1111-4111-8111-111111111111"),
+            replace(snap, branch_sha="c" * 40),
+            replace(snap, marker=bad_marker),
+            replace(snap, status=RECOVERY),
+            replace(snap, fingerprint="f" * 64),
+        )
+        for expected in stale:
+            with self.subTest(expected=expected.fingerprint[:4]):
+                with self.assertRaises(PortNotArmed):
+                    port.append(21, _release_marker(snap), expected)
+                with self.assertRaises(PortNotArmed):
+                    port.status(21, RECOVERY, expected)
+        self.assertEqual(api.writes, [])
+
+        # Sólo el marker canónico active:false o la nota de recuperación.
+        forged = _release_marker(replace(snap, marker={**snap.marker,
+                                                         "reservation_id": "x"}))
+        for text in ("texto libre", forged,
+                     _release_marker(snap).replace("auto-inactivity-release", "tomar")):
+            with self.assertRaises(PortNotArmed):
+                port.append(21, text, snap)
+        self.assertEqual(api.writes, [])
+
+        # No se libera sin marker inactivo ni desde un estado no RECOVERY.
+        with self.assertRaises(PortNotArmed):
+            port.status(21, AVAILABLE, snap)
+        with self.assertRaises(PortNotArmed):
+            port.status(21, "estado: completado", snap)
+        self.assertEqual(api.writes, [])
+
+        # Escritura permitida: comentario canónico, luego lectura autenticada.
+        port.append(21, _release_marker(snap), snap)
+        self.assertEqual([w[:2] for w in api.writes],
+                         [("POST", "/repos/pl0n3r/Factory/issues/21/comments")])
+        after = port.read(21)
+        self.assertIs(after.marker["active"], False)
+        self.assertEqual(after.marker["reason"], "auto-inactivity-release")
+        self.assertTrue(_trusted(after, allow_partial=True))
+        # Un marker falsificado por un humano no sustituye al del bot.
+        api.comments.append({
+            "id": 900, "user": {"login": "intruso", "type": "User"},
+            "body": "<!-- condor-reserva " + json.dumps(snap.marker) + " -->",
+            "created_at": "2026-10-11T09:57:00Z"})
+        self.assertEqual(port.read(21).marker, after.marker)
+
+        # Cambio de estado: sólo etiquetas estado:, resto preservado.
+        fresh = WriteAPI()
+        p2 = LeaseGithubPort(fresh, armed=True, concurrency_group=group,
+                             clock=lambda: NOW)
+        current = p2.read(21)
+        p2.status(21, RECOVERY, current)
+        self.assertEqual(fresh.writes[-1][0:2],
+                         ("PATCH", "/repos/pl0n3r/Factory/issues/21"))
+        self.assertEqual(fresh.writes[-1][2],
+                         {"labels": ["prioridad: alta", RECOVERY]})
+
+    @staticmethod
+    def _marker_json(pin):
+        return json.dumps({
+            "version": 3, "active": True, "owner": "pl0n3r",
+            "branch": "trabajo/issue-21", "reason": "tomar",
+            "reservation_id": "e33f1859-0304-4fa8-8ce3-776de22c9707",
+            "acceptance_sha256": "c" * 64, "task_marker_sha256": pin,
+            "task_paths": ["scripts/example.py"], "task_depends_on": [],
+        })
+
     def test_mutating_port_surface_denied_even_with_fake_evidence(self):
         api = FakeAPI()
         port = LeaseGithubPort(api)
