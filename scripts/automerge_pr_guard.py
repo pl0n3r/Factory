@@ -28,7 +28,7 @@ EXECUTED_HEADER = re.compile(r"<!--\s*factory\s*-\s*release\s*-\s*executed\b", r
 # "high", "critical", or "rate limited" classifications work. Anchor each
 # finding to its own Markdown line; keep explicit security-Major blocking.
 SEVERE = re.compile(
-    r"""^[ \t]*(?:
+    r"""^[ \t]*(?:[-*+>][ \t]+|\#{1,6}[ \t]+)?(?:
         \*{0,2}(?:🔒[ \t]*)?Security[ \t]*&[ \t]*Privacy\*{0,2}
         [ \t]*\|[ \t]*\*{0,2}(?:🟠[ \t]*)?Major\b
       | \*{0,2}[^\n|]{1,80}\*{0,2}[ \t]*\|[ \t]*\*{0,2}(?:🔴[ \t]*)?(?:Critical|High)\b

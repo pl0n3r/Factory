@@ -205,6 +205,39 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["reviews"][0]["body"] = "**🩺 Maintainability** | **🟠 Major**"
         mod.verify(q, SHA, NOW)
 
+    def test_coderabbit_security_major_markdown_labels_fail_closed(self):
+        # Real findings may be wrapped in Markdown lists, blockquotes or
+        # headings. Prose containing the same words is not a finding.
+        header = "**🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**"
+        for finding in ("- " + header, "* " + header, "+ " + header,
+                        "> " + header, "### " + header):
+            with self.subTest(finding=finding, source="review"):
+                q = evidence()
+                q["reviews"][0]["body"] = finding
+                self.deny(q)
+            with self.subTest(finding=finding, source="inline"):
+                q = evidence()
+                q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                  "commit_id": SHA, "body": finding}]
+                self.deny(q)
+            with self.subTest(finding=finding, source="issue_comment"):
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                        "body": finding}]
+                self.deny(q)
+            with self.subTest(finding=finding, source="status_history"):
+                q = evidence()
+                q["status_history"][0]["description"] = finding
+                q["commit_status"]["statuses"][0]["description"] = finding
+                self.deny(q)
+        for advisory in ("- **🩺 Maintainability** | **🟠 Major**",
+                         "### **🎯 Functional Correctness** | **🟠 Major**",
+                         "CodeRabbit describes Security & Privacy Major findings in its policy."):
+            with self.subTest(advisory=advisory):
+                q = evidence()
+                q["reviews"][0]["body"] = advisory
+                mod.verify(q, SHA, NOW)
+
     def test_coderabbit_prose_does_not_forge_severe_or_skipped_signal(self):
         # CodeRabbit explanations quote severity/rate-limit terms: those
         # mentions are not themselves an authenticated finding or skipped review.
