@@ -282,6 +282,54 @@ jobs:
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
           # RELEASE_GATE_CANDIDATES_END
+          # RELEASE_ACTIVE_GATE_FILTER_START
+          # Todo window-intent se valida AUN si venció: un marker ambiguo falla
+          # cerrado. Solo ventanas no vencidas pueden bloquear pr-check. Las
+          # legacy sin ventana NUNCA congelan; no decidir desde filas parciales.
+          python3 - /tmp/release-issues.json "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PY' > /tmp/release-issues-active.json
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from scripts.release_window import (
+              WINDOW_INTENT_RE, ReleaseWindowError, _gate_from_body,
+              _window_from_body,
+          )
+
+          rows = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          now = datetime.strptime(sys.argv[2], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+          if not isinstance(rows, list):
+              raise SystemExit("ERROR: Inventario de gates inválido")
+          # Una ventana activa obliga a cargar TODOS los gates de esa
+          # versión: uno posterior, aunque caducado o legacy, puede
+          # reemplazar al canónico anterior según freeze_gate().
+          parsed = []
+          versions_with_live_window = set()
+          for issue in rows:
+              if not isinstance(issue, dict) or not isinstance(issue.get("body"), str):
+                  raise SystemExit("ERROR: Issue de gate inválido")
+              body = issue["body"]
+              try:
+                  gate = _gate_from_body(body)
+                  if gate is None:
+                      raise ReleaseWindowError("gate sin factory-release")
+                  parsed.append((issue, gate[1]))
+                  if WINDOW_INTENT_RE.search(body):
+                      window = _window_from_body(body, gate[2])
+                      if window is None:
+                          raise ReleaseWindowError("release-window sin ventana completa")
+                      if now <= window["expires_at"]:
+                          versions_with_live_window.add(gate[1])
+              except ReleaseWindowError as exc:
+                  raise SystemExit("ERROR: Ventana de gate inválida") from exc
+          selected = [
+              issue for issue, version in parsed
+              if version in versions_with_live_window
+          ]
+          print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
+          PY
+          mv /tmp/release-issues-active.json /tmp/release-issues.json
+          # RELEASE_ACTIVE_GATE_FILTER_END
           # Materializar antes del bucle: Bash no propaga fallos de jq dentro de <(...).
           # -s exige una única raíz JSON array; [] es un inventario válido.
           jq -s -c 'if length == 1 and (.[0] | type) == "array" then .[0][] else error("invalid_release_inventory") end' /tmp/release-issues.json > /tmp/release-issues.jsonl
