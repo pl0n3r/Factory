@@ -1,31 +1,16 @@
 name: Auto-merge cuando esté listo
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
-  pull_request_review:
-    types: [submitted, dismissed]
-  # The workflow_run signal is not an authorization. Never check out PR code.
-  workflow_run:
-    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]
-    types: [completed]
 permissions:
   contents: read
 jobs:
   automerge:
-    if: >-
-      github.actor != 'dependabot[bot]' &&
-      (
-        (github.event_name != 'workflow_run' &&
-         github.event.pull_request.draft == false &&
-         github.event.pull_request.head.repo.full_name == github.repository &&
-         github.event.pull_request.head.repo.fork == false &&
-         github.event.pull_request.base.ref == 'main') ||
-        (github.event_name == 'workflow_run' &&
-         github.event.action == 'completed' &&
-         github.event.workflow_run.event == 'pull_request' &&
-         github.event.workflow_run.conclusion == 'success' &&
-         github.event.workflow_run.head_repository.full_name == github.repository)
-      )
+    if: github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -35,37 +20,38 @@ jobs:
       statuses: read
       issues: read
     steps:
-      - name: Checkout base confiable sin credenciales persistentes
+      - name: Checkout de la base confiable sin credenciales persistentes
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          # On workflow_run the trusted script must come from Factory main.
-          ref: ${{ github.event_name == 'workflow_run' && 'main' || github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - name: Resolver únicamente un PR de un CI confiable completado
-        id: ci_event
-        if: github.event_name == 'workflow_run'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_EVENT_PATH: ${{ github.event_path }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          # Nothing from the event is interpolated into the shell command.
-          python3 scripts/automerge_pr_guard.py --resolve-workflow-run >> "$GITHUB_OUTPUT"
-      - name: Verificar evidencia exact-SHA y habilitar exclusivamente squash protegido
+      - name: Validar evidencia y habilitar exclusivamente squash exact-HEAD
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event_name == 'workflow_run' && steps.ci_event.outputs.pr_number || github.event.pull_request.number }}
-          PR_SHA: ${{ github.event_name == 'workflow_run' && steps.ci_event.outputs.pr_sha || github.event.pull_request.head.sha }}
-          PR_URL: ${{ github.event_name == 'workflow_run' && steps.ci_event.outputs.pr_url || github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
           python3 scripts/automerge_pr_guard.py
-          # Reutilizar Coordinación del checkout BASE para validar colisiones
-          # con otros PRs abiertos (y la reserva V3) sin aceptar código HEAD.
+          # Colisiones V3: comprobación independiente de Coordinación.
           python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation
-          # Coordinación puede tardar y releer otros PR: cerrar la ventana
-          # de evidencia obsoleta reevaluando gates justo antes de fusionar.
+          # Revalidación de #767, freeze y evidencia exact-SHA tras Coordinación.
           python3 scripts/automerge_pr_guard.py
-          gh pr merge --squash --match-head-commit "$PR_SHA" "$PR_URL"
+          # --auto solo debe utilizarse cuando GitHub ya declara CLEAN.
+          # Los PRs con checks sin terminar/merge diferido NO se encolan aquí.
+          MERGE_STATE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.mergeable_state')"
+          if [[ "$MERGE_STATE" != clean ]]; then
+            echo 'AUTOMERGE_DENIED: pr_not_immediately_mergeable' >&2
+            exit 1
+          fi
+          # El --auto requerido por AC-04 opera sobre un PR ya mergeable.
+          gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"
+          # Si GitHub difirió el merge pese a CLEAN, revocar auto-merge.
+          # No confundir una autorización aplazada con aprobación de gates futuros.
+          if [[ "$(gh pr view "$PR_URL" --json mergedAt --jq '.mergedAt')" == null ]]; then
+            gh pr merge --disable-auto "$PR_URL"
+            echo 'AUTOMERGE_DENIED: deferred_merge_reverted' >&2
+            exit 1
+          fi

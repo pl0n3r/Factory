@@ -1112,13 +1112,15 @@ class AutoMergePrGuardTests(unittest.TestCase):
     def test_clean_construction_only_allows_sha_locked_auto_merge(self):
         mod.verify(evidence(), SHA, NOW)
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("pull_request_target:", workflow)
+        self.assertIn("on:\n  pull_request:\n", workflow)
+        self.assertNotIn("pull_request_target:", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("pull_request.base.sha", workflow)
         self.assertIn("python3 scripts/automerge_pr_guard.py", workflow)
-        # Nunca dejar una fusión diferida que pueda ocurrir con #767 PAUSED después.
-        self.assertIn('gh pr merge --squash --match-head-commit "$PR_SHA" "$PR_URL"', workflow)
-        self.assertNotIn('gh pr merge --auto', workflow)
+        self.assertIn('MERGE_STATE="$(gh api', workflow)
+        self.assertIn('[[ "$MERGE_STATE" != clean ]]', workflow)
+        self.assertIn('gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"', workflow)
+        self.assertIn('gh pr merge --disable-auto "$PR_URL"', workflow)
         self.assertNotIn("AUTOMERGE_TOKEN", workflow)
         self.assertNotIn("--admin", workflow)
         self.assertIn("permissions:", workflow)
@@ -1129,7 +1131,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         final_run = 'python3 scripts/automerge_pr_guard.py'
         coordinator = 'python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation'
-        merge = 'gh pr merge --squash --match-head-commit "$PR_SHA" "$PR_URL"'
+        merge = 'gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"'
         # At least one guard must run after collision verification, not only before.
         self.assertEqual(workflow.splitlines().count('          ' + final_run), 2,
                          "El merge debe reevaluar #767, V3, CI, CodeRabbit y freeze después de Coordinación")
@@ -1142,7 +1144,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
         preflight = 'python3 scripts/automerge_pr_guard.py'
         coordinator = 'python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation'
-        merge = 'gh pr merge --squash --match-head-commit "$PR_SHA" "$PR_URL"'
+        merge = 'gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"'
         self.assertEqual(workflow.count(coordinator), 1,
                          'El auto-merge requiere Coordinación para detectar colisiones entre PRs')
         self.assertTrue(workflow.index(preflight) < workflow.index(coordinator) < workflow.index(merge),
@@ -1237,7 +1239,6 @@ class WorkflowRunEventTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         self.assertEqual(mod.TRUSTED_WORKFLOW_RUNS, expected)
         for name in expected:
-            self.assertIn('"' + name + '"', workflow)
             event = workflow_run_event_example()
             event["workflow_run"]["name"] = name
             self.assertEqual(mod.validate_workflow_run_event(event), (1364, "trabajo/issue-1364"))
@@ -1246,13 +1247,13 @@ class WorkflowRunEventTests(unittest.TestCase):
 
     def test_workflow_never_executes_untrusted_head(self):
         workflow=(ROOT/'.github/workflows/automerge.yml').read_text()
-        self.assertIn('workflow_run:',workflow)
-        self.assertIn('"Sonar CI-based"',workflow)
-        self.assertIn("github.event_name == 'workflow_run' && 'main'",workflow)
+        self.assertIn('on:\n  pull_request:\n',workflow)
+        self.assertNotIn('pull_request_target:', workflow)
         self.assertIn('persist-credentials: false',workflow)
         self.assertNotIn('actions/checkout@v',workflow)
-        self.assertNotIn('gh pr merge --auto',workflow)
-        self.assertIn('gh pr merge --squash --match-head-commit "$PR_SHA"',workflow)
+        self.assertIn('gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"',workflow)
+        self.assertIn('MERGE_STATE=',workflow)
+        self.assertIn('gh pr merge --disable-auto',workflow)
 
 
 if __name__ == "__main__":
