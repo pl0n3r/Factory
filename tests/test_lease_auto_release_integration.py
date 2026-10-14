@@ -610,6 +610,22 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         })
         self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), False)
 
+        # IDs REST ordenan creación, no necesariamente submitted_at.
+        # Una aprobación enviada ANTES del veto no debe levantarlo.
+        api = ready()
+        api.reviews[0]["state"] = "CHANGES_REQUESTED"
+        api.reviews.append({
+            "id": 6, "user": {"login": "other"},
+            "state": "APPROVED", "submitted_at": "2026-10-11T09:24:00Z",
+        })
+        self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), True)
+        api.reviews[-1]["submitted_at"] = "2026-10-11T09:26:00Z"
+        self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), False)
+        # Dos conclusiones opuestas con la misma hora no forman un
+        # orden certificable; tratar como UNKNOWN.
+        api.reviews[-1]["submitted_at"] = "2026-10-11T09:25:00Z"
+        self.assertIsNone(_verified_review_veto(api, lease, NOW, 60, 100))
+
         for scenario in (
             "state", "author", "stamp", "future", "duplicate", "base",
             "repo", "missing_id", "missing_origin", "fork_id_collision",
