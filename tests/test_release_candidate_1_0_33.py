@@ -19,7 +19,7 @@ class ReleaseCandidate1033Tests(unittest.TestCase):
         )
         self.assertEqual(set(payload), {"version"})
         version = tuple(int(part) for part in payload["version"].split("."))
-        self.assertGreaterEqual(version, (1, 0, 32))
+        self.assertGreaterEqual(version, (1, 0, 33))
 
         # Contratos que esta release debe llevar a los consumidores.
         expected_paths = (
