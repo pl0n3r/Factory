@@ -704,6 +704,36 @@ class ForkPullIsolationTests(unittest.TestCase):
         self.assertEqual(api.pulls[16]["state"], "open")
         self.assertNotIn("trabajo/issue-12", api.branches)
 
+    def test_contract_edit_invalidates_only_local_pr_and_unknown_fails_closed(self) -> None:
+        for foreign_source in (
+            {"full_name": "intruso/fork"},
+            None,
+        ):
+            with self.subTest(source=foreign_source):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.pulls[15] = self._pull(api, 15, {"full_name": api.repo})
+                api.pulls[16] = self._pull(api, 16, foreign_source)
+                foreign_body = api.pulls[16]["body"]
+                api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
+                    "El gate base pasa.", "El gate base cambió."
+                )
+                previous_statuses = list(api.status_history)
+                if foreign_source is None:
+                    with self.assertRaisesRegex(
+                        CoordinationError, "head.repo inválido"
+                    ):
+                        update_issue_state(api, 12, "edited")
+                    self.assertEqual(api.check_runs, [])
+                    self.assertEqual(api.status_history, previous_statuses)
+                else:
+                    update_issue_state(api, 12, "edited")
+                    self.assertEqual(len(api.check_runs), 1)
+                    self.assertEqual(api.check_runs[0]["head_sha"], "abc123")
+                    self.assertEqual(api.check_runs[0]["name"], "Validar")
+                self.assertEqual(api.pulls[16]["body"], foreign_body)
+                self.assertEqual(api.pulls[16]["state"], "open")
+
     def test_missing_or_malformed_head_repo_fails_closed(self) -> None:
         invalid_sources = (
             None,
