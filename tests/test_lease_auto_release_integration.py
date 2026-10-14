@@ -846,5 +846,46 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(result.release_authorized)
 
 
+    def test_gh_cli_observer_transport_is_get_only(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import (
+            _GhReadOnlyAPI, observe_issue_cli,
+        )
+
+        api = _GhReadOnlyAPI()
+        with patch("subprocess.run",
+                   return_value=SimpleNamespace(stdout='{"ok":true}')) as run:
+            self.assertEqual(api.request("GET", "/rate_limit"), {"ok": True})
+            args = run.call_args.args[0]
+            self.assertEqual(args[:2], ["gh", "api"])
+            self.assertIn("/rate_limit", args)
+            kwargs = run.call_args.kwargs
+            self.assertTrue(kwargs["check"])
+            self.assertTrue(kwargs["capture_output"])
+            self.assertEqual(kwargs["timeout"], 20)
+
+        for method, path in (
+            ("POST", "/repos/pl0n3r/Factory/issues/1185/comments"),
+            ("PATCH", "/repos/pl0n3r/Factory/issues/1185"),
+            ("DELETE", "/repos/pl0n3r/Factory/issues/1185/labels/1"),
+            ("GET", "https://github.com/repos/pl0n3r/Factory/issues/767"),
+            ("GET", "/repos/pl0n3r/Factory/../secrets"),
+            ("GET", "/repos/pl0n3r/Factory/issues/767;echo"),
+            ("GET", "/repos/other/repo/issues/1"),
+        ):
+            with self.subTest(method=method, path=path):
+                with patch("subprocess.run") as run:
+                    with self.assertRaises(PermissionError):
+                        api.request(method, path)
+                    run.assert_not_called()
+
+        with patch.dict("os.environ", {"GITHUB_REPOSITORY": "attacker/fork"}):
+            result = observe_issue_cli(1185)
+        self.assertEqual(result.state, "UNKNOWN")
+        self.assertFalse(result.release_authorized)
+
+
+
 if __name__ == "__main__":
     unittest.main()
