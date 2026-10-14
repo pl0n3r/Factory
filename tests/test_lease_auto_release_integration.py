@@ -847,6 +847,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
 
     def test_observer_uses_canonical_actions_concurrency_group(self):
+        from datetime import timezone
         from unittest.mock import patch
         from scripts.lease_auto_release_integration import (
             IntegrationPreview, _GhReadOnlyAPI, observe_issue_cli,
