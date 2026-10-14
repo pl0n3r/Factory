@@ -20,6 +20,10 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
     def test_no_untrusted_privileged_trigger_or_global_write(self):
         source = self.source
         self.assertIn("on:\n  pull_request:\n", source)
+        self.assertIn("pull_request_review:\n    types: [submitted]", source)
+        self.assertIn('workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]', source)
+        self.assertIn("--resolve-pull-request-review", source)
+        self.assertIn("--resolve-workflow-run", source)
         self.assertNotIn("pull_request_target", source)
         self.assertIn("permissions:\n  contents: read\njobs:", source)
         self.assertNotIn("permissions:\n  contents: write", source)
@@ -54,6 +58,9 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             "github.actor != 'dependabot[bot]'",
             "GH_TOKEN:",
             "gh pr merge --auto --squash",
+            "steps.target.outputs.pr_number",
+            "steps.target.outputs.pr_sha",
+            "steps.target.outputs.pr_url",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, job)
