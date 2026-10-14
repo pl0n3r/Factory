@@ -1260,7 +1260,11 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertIn('[[ "$MERGE_STATE" != clean ]]', workflow)
         self.assertIn('gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"', workflow)
         self.assertIn('gh pr merge --disable-auto "$PR_URL"', workflow)
-        self.assertNotIn("AUTOMERGE_TOKEN", workflow)
+        self.assertIn("MERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}", workflow)
+        self.assertIn('dedicated_merge_token_missing_or_reused', workflow)
+        self.assertIn('GH_TOKEN="$MERGE_TOKEN" gh pr merge --auto', workflow)
+        self.assertIn('GH_TOKEN="$MERGE_TOKEN" gh pr merge --disable-auto', workflow)
+        self.assertNotIn("secrets.GITHUB_TOKEN", workflow)
         self.assertNotIn("--admin", workflow)
         self.assertIn("permissions:", workflow)
 
@@ -1540,6 +1544,8 @@ esac
             ("merge_request_fails_after_queue", "null", "no", "clean", "disabled", False),
             ("merge_request_fails_after_queue_and_revoke_fails", "null", "yes", "clean", "pending", False),
             ("blocked_before_command", "null", "no", "blocked", "untouched", False),
+            ("missing_merge_credential", "null", "no", "clean", "untouched", False),
+            ("reused_read_credential", "null", "no", "clean", "untouched", False),
             ("repo_deferred_auto_enabled", "null", "no", "clean", "untouched", False, "true"),
             ("repo_auto_property_missing", "null", "no", "clean", "untouched", False, "null"),
             ("repo_api_error", "null", "no", "clean", "untouched", False, "false", "safe", "yes"),
@@ -1562,7 +1568,8 @@ esac
                                PATH=tmp + os.pathsep + os.environ["PATH"],
                                PR_URL="https://github.com/pl0n3r/Factory/pull/1375",
                                PR_SHA=SHA, GITHUB_REPOSITORY="pl0n3r/Factory",
-                               PR_NUMBER="1375", STUB_FLAG=str(marker),
+                               PR_NUMBER="1375", GH_TOKEN="read-only-github-token",
+                               MERGE_TOKEN="distinct-automation-token", STUB_FLAG=str(marker),
                                STUB_VIEW=view, STUB_DISABLE_ERROR=disable_err,
                                STUB_MERGEABLE=mergeable,
                                STUB_SERVER_AUTO=server_auto,
@@ -1570,6 +1577,10 @@ esac
                                STUB_REPO_ERROR=repo_error,
                                STUB_QUEUE_ERROR=queue_error,
                                STUB_AUTO_ERROR=("queued" if name.startswith("merge_request_fails_after_queue") else "no"))
+                    if name == "missing_merge_credential":
+                        env["MERGE_TOKEN"] = ""
+                    if name == "reused_read_credential":
+                        env["MERGE_TOKEN"] = env["GH_TOKEN"]
                     result = subprocess.run(["bash", "-c", script], capture_output=True,
                                             text=True, env=env, timeout=5, check=False)
                     self.assertEqual(result.returncode == 0, success,
