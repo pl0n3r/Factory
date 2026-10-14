@@ -72,6 +72,8 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         snapshot = port.read(issue)
         if (not _trusted(snapshot) or snapshot.marker.get("active") is not True
                 or snapshot.issue != issue
+                or snapshot.now.astimezone(timezone.utc) != now.astimezone(timezone.utc)
+                or report.get("repo") != getattr(api, "repo", None)
                 or snapshot.repository_id != report.get("repository_id")
                 or snapshot.owner != report.get("owner")
                 or snapshot.reservation_id != report.get("lease_id")
