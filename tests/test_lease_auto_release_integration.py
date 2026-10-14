@@ -339,7 +339,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 elif scenario == "malformed_header":
                     note["body"] = note["body"].replace(
                         "<!-- factory-lease-recovery ",
-                        "<!-- factory-lease-recovery {BROKEN} ")
+                        "<!-- factory-lease-recovery INVALID ")
                 elif scenario == "missing_required_key":
                     note["body"] = note["body"].replace(
                         '"owner": "agente-original", ', "")
