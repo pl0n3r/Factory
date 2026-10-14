@@ -231,7 +231,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
         branch = "trabajo/issue-12"
         owner = "agente-original"
-        def create_fixture():
+        def create_fixture(*, recovery_label=True):
             api = FakeGitHub()
             api.repo = "pl0n3r/Factory"
             task = PlannedTask(
@@ -247,7 +247,10 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             api.issue_data["body"] = body
             api.branches[branch] = "a" * 40
             api.commit_times["a" * 40] = START
-            api.set_status(12, STATUS_RECOVERY)
+            if recovery_label:
+                api.set_status(12, STATUS_RECOVERY)
+            else:
+                api.set_status(12, "estado: reservado")
             pin = contract_fingerprint(body)
             marker = parse_task_marker(body)
             task_pin = __import__(
@@ -292,6 +295,21 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                                  STATUS_RECOVERY)
                 self.assertEqual(active_reservation(api, 12)["reservation_id"],
                                  SESSION_A)
+
+        # En el fallo parcial nota->etiqueta, RECOVERY aún no aparece.
+        # No permitir que /tomar oculte el marker bot en esa ventana.
+        for actor in ("otro-agente", owner):
+            with self.subTest(no_label_actor=actor):
+                api = create_fixture(recovery_label=False)
+                with self.assertRaisesRegex(
+                    CoordinationError, "solo el titular con /recuperar"
+                ):
+                    reserve_work(api, 12, actor, "OWNER")
+                self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                                 SESSION_A)
+                self.assertEqual(api.issue_data["labels"][-1]["name"],
+                                 "estado: reservado")
+                self.assertEqual(api.branches[branch], "a" * 40)
 
         # /recuperar UUID desde otra identidad también se rechaza.
         api = create_fixture()
