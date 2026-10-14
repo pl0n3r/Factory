@@ -1748,6 +1748,21 @@ class MainCliContractTests(unittest.TestCase):
             self.assertEqual(stdout.getvalue(),
                              "pr_number=1375\npr_sha=" + SHA +
                              "\npr_url=https://github.com/pl0n3r/Factory/pull/1375\n")
+        with NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json") as f:
+            json.dump(pull_request_review_event_example(), f)
+            f.flush()
+            stdout = StringIO()
+            with patch.dict(os.environ, dict(env, GITHUB_EVENT_PATH=f.name), clear=True), \
+                 patch.object(sys, "argv", ["guard", "--resolve-pull-request-review"]), \
+                 patch.object(mod, "resolve_pull_request_review", return_value=(1375, SHA)) as resolver, \
+                 redirect_stdout(stdout):
+                self.assertEqual(mod.main(), 0)
+            resolver.assert_called_once()
+            self.assertEqual(resolver.call_args.args[0], "test-token")
+            self.assertEqual(resolver.call_args.args[1]["action"], "submitted")
+            self.assertEqual(stdout.getvalue(),
+                             "pr_number=1375\npr_sha=" + SHA +
+                             "\npr_url=https://github.com/pl0n3r/Factory/pull/1375\n")
 
 
 class AutoMergeShellOutcomeTests(unittest.TestCase):
