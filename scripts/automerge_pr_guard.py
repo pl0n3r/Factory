@@ -31,8 +31,9 @@ SEVERE = re.compile(
     r"""^[ \t]*(?:
         \*{0,2}(?:🔒[ \t]*)?Security[ \t]*&[ \t]*Privacy\*{0,2}
         [ \t]*\|[ \t]*\*{0,2}(?:🟠[ \t]*)?Major\b
+      | \*{0,2}[^\n|]{1,80}\*{0,2}[ \t]*\|[ \t]*\*{0,2}(?:🔴[ \t]*)?(?:Critical|High)\b
       | \*{0,2}(?:Security[ \t]+)?(?:HIGH|CRITICAL|P0|P1|SEVERE|BLOCKER)
-        [ \t]+(?:security|severity|vulnerabilit(?:y|ies)|flaw|issue|finding|risk|bug)\b
+        [ \t]+(?:security|severity|vulnerabilit(?:y|ies)|flaw|issue|finding|risk|bug|command[ \t]+injection)\b
       | (?:Severity|Priority)[ \t]*:[ \t]*(?:HIGH|CRITICAL|P0|P1)\b
     )""",
     re.I | re.M | re.X,

@@ -238,8 +238,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
         mod.verify(q, SHA, NOW)
         # Explicit structured findings / genuine skip notices still deny.
         for finding in ("HIGH security vulnerability identified",
-                        "Security HIGH vulnerability",
+                        "Security HIGH vulnerability", "CRITICAL command injection",
                         "critical flaw", "Severity: HIGH", "Priority: P0",
+                        "**🎯 Functional Correctness** | **🔴 Critical**",
                         "**🔒 Security & Privacy** | **🟠 Major**"):
             q = evidence()
             q["reviews"][0]["body"] = finding
