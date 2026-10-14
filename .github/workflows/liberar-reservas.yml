@@ -15,6 +15,13 @@ on:
       - 'tests/test_lease_auto_release_run.py'
       - 'tests/test_lease_github_port.py'
       - 'scripts/coordinar_trabajo.py'
+      # Imports transitivos que pueden cambiar el contrato del observador.
+      - 'scripts/lease_activity_collector.py'
+      - 'tests/test_lease_activity_collector.py'
+      - 'scripts/lease_release_executor.py'
+      - 'tests/test_lease_release_executor.py'
+      - 'scripts/unattended_kill_switch.py'
+      - 'tests/test_unattended_kill_switch.py'
       - 'scripts/lease_auto_release_integration.py'
       - 'tests/test_lease_auto_release_integration.py'
       - 'tests/test_lease_auto_release_workflow.py'
