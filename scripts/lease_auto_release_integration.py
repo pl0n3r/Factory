@@ -248,10 +248,12 @@ def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
                     )
                     if stamp > now.astimezone(timezone.utc):
                         raise ValueError("future_review")
-                    # COMMENTED no acredita que se haya levantado una
-                    # solicitud previa de cambios: sólo APPROVED o
-                    # DISMISSED del mismo revisor la resuelve.
-                    if state == "COMMENTED":
+                    # Un COMMENTED o DISMISSED posterior corresponde
+                    # a OTRA revisión y no levanta un CHANGES_REQUESTED
+                    # anterior que la API siga reportando vigente. Sólo
+                    # APPROVED del mismo revisor o el cambio de estado de
+                    # la revisión original a DISMISSED despeja el veto.
+                    if state in ("COMMENTED", "DISMISSED"):
                         latest.setdefault(author["login"], state)
                     else:
                         latest[author["login"]] = state
