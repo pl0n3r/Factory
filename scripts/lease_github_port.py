@@ -424,7 +424,7 @@ class LeaseGithubPort:
         """
         try:
             repo = getattr(self._api, "repo", None)
-            if (type(expected) is not Snapshot or type(issue) is not int
+            if (not isinstance(expected, Snapshot) or (isinstance(issue, bool) or not isinstance(issue, int))
                     or issue != expected.issue or not _trusted(expected, allow_partial=True)
                     or type(repo) is not str
                     or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None):
@@ -739,7 +739,7 @@ class LeaseGithubPort:
     def recovery_label(self, issue: int, expected: Any) -> RecoveryLabelProof:
         """Evidencia GET-only; jamás confundir una etiqueta con autorización."""
         try:
-            if (type(issue) is not int or type(expected) is not Snapshot
+            if ((isinstance(issue, bool) or not isinstance(issue, int)) or not isinstance(expected, Snapshot)
                     or issue != expected.issue
                     or expected.status != "estado: requiere recuperación"):
                 raise ValueError("invalid_recovery")
