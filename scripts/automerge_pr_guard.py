@@ -29,9 +29,9 @@ EXECUTED_HEADER = re.compile(r"<!--\s*factory\s*-\s*release\s*-\s*executed\b", r
 # finding to its own Markdown line; keep explicit security-Major blocking.
 SEVERE = re.compile(
     r"""^[ \t]*(?:[-*+>][ \t]+|\#{1,6}[ \t]+){0,2}(?:
-        (?:[^\n|]{1,80}?[ \t]+)?(?:🔒[ \t]*)?Security[ \t]*&(?:amp;)?[ \t]*Privacy[*_]{0,2}
-        [ \t]*\|[ \t]*[*_]{0,2}(?:🟠[ \t]*)?Major\b
-      | [*_]{0,2}[^\n|]{1,80}[*_]{0,2}[ \t]*\|[ \t]*[*_]{0,2}(?:🔴[ \t]*)?(?:Critical|High)\b
+        (?:[^\n|]{1,80}?[ \t]+)?[*_]{0,2}(?:🔒[ \t]*)?Security[ \t]*&(?:amp;)?[ \t]*Privacy[*_]{0,2}
+        [ \t]*\|[ \t]*[*_]{0,2}(?:🟠[ \t]*)?Major(?:\b|(?=[*_]))
+      | [*_]{0,2}[^\n|]{1,80}[*_]{0,2}[ \t]*\|[ \t]*[*_]{0,2}(?:🔴[ \t]*)?(?:Critical|High)(?:\b|(?=[*_]))
       | [*_]{0,2}(?:Security[ \t]+)?(?:HIGH|CRITICAL|P0|P1|SEVERE|BLOCKER)
         [ \t]+(?:security|severity|vulnerabilit(?:y|ies)|flaw|issue|finding|risk|bug|command[ \t]+injection)\b
       | (?:Severity|Priority)[ \t]*:[ \t]*(?:HIGH|CRITICAL|P0|P1)\b
