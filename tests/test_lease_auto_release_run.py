@@ -16,6 +16,29 @@ class NoAccessPort:
 
 
 class LeaseAutoReleaseRunTests(unittest.TestCase):
+    def test_read_only_report_types_cannot_be_constructed_with_release_authority(self):
+        from dataclasses import FrozenInstanceError
+        from scripts.lease_auto_release_run import (
+            RecentActivityObservation, RecentActivityReport, RecoveryInventory,
+        )
+
+        observed = RecentActivityObservation(21, "RECENT_ACTIVITY", 35)
+        report = RecentActivityReport("read_only", (observed,))
+        inventory = RecoveryInventory(2, 1, 0, 1)
+        for item in (observed, report, inventory):
+            with self.subTest(kind=type(item).__name__):
+                self.assertIs(item.release_authorized, False)
+                with self.assertRaises(TypeError):
+                    replace(item, release_authorized=True)
+                with self.assertRaises(FrozenInstanceError):
+                    setattr(item, "release_authorized", True)
+        with self.assertRaises(TypeError):
+            RecentActivityObservation(21, "RECENT_ACTIVITY", 35, True)
+        with self.assertRaises(TypeError):
+            RecentActivityReport("read_only", (observed,), True)
+        with self.assertRaises(TypeError):
+            RecoveryInventory(2, 1, 0, 1, True)
+
     def test_authenticated_recent_activity_inventory_is_bounded_and_never_writes(self):
         from datetime import timedelta
         from scripts.lease_github_port import LeaseGithubPort, RECENT, UNKNOWN
