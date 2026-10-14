@@ -1359,7 +1359,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
         coordinator = 'python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation'
         merge = 'gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"'
         # At least one guard must run after collision verification, not only before.
-        self.assertEqual(workflow.splitlines().count('          ' + final_run), 2,
+        guarded_run = '          env -u MERGE_TOKEN ' + final_run
+        self.assertEqual(workflow.splitlines().count(guarded_run), 2,
                          "El merge debe reevaluar #767, V3, CI, CodeRabbit y freeze después de Coordinación")
         self.assertLess(workflow.index(final_run), workflow.index(coordinator))
         self.assertLess(workflow.index(coordinator), workflow.rindex(final_run))
