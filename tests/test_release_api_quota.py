@@ -132,7 +132,7 @@ def _active_gate_numbers(rows: list[dict], at: datetime) -> list[int]:
     end = workflow.index("# RELEASE_ACTIVE_GATE_FILTER_END", start)
     block = workflow[start:end]
     begin = block.index("<<'PY'") + len("<<'PY'")
-    script = block[begin:block.rindex("\n          PY")]
+    script = block[block.index("\n", begin) + 1:block.rindex("\n          PY")]
     script = textwrap.dedent(script)
     stamp = at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with tempfile.TemporaryDirectory() as tmp:
@@ -335,7 +335,7 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertEqual(_active_gate_numbers(rows, now), [44])
         self.assertEqual(_active_gate_numbers(rows[:43], now), [])
         self.assertIn(
-            "/tmp/release-issues-active.json > /tmp/release-issues.jsonl",
+            "mv /tmp/release-issues-active.json /tmp/release-issues.json",
             _workflow(),
         )
         issue = {

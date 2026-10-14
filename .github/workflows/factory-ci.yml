@@ -320,10 +320,11 @@ jobs:
                   selected.append(issue)
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
+          mv /tmp/release-issues-active.json /tmp/release-issues.json
           # RELEASE_ACTIVE_GATE_FILTER_END
           # Materializar antes del bucle: Bash no propaga fallos de jq dentro de <(...).
           # -s exige una única raíz JSON array; [] es un inventario válido.
-          jq -s -c 'if length == 1 and (.[0] | type) == "array" then .[0][] else error("invalid_release_inventory") end' /tmp/release-issues-active.json > /tmp/release-issues.jsonl
+          jq -s -c 'if length == 1 and (.[0] | type) == "array" then .[0][] else error("invalid_release_inventory") end' /tmp/release-issues.json > /tmp/release-issues.jsonl
           printf '[]\n' > /tmp/release-gates.json
           while IFS= read -r issue; do
             number="$(jq -r '.number' <<<"$issue")"
