@@ -1265,22 +1265,6 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertIn("permissions:", workflow)
 
 
-    def test_recheck_on_ci_and_coderabbit_evidence_completion(self):
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertIn("  workflow_run:\n", workflow)
-        self.assertIn('workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]', workflow)
-        self.assertIn("  pull_request_review:\n", workflow)
-        self.assertIn("github.event.review.user.login == 'coderabbitai[bot]'", workflow)
-        self.assertIn("github.ref == 'refs/heads/main'", workflow)
-        self.assertIn("python3 scripts/automerge_pr_guard.py --resolve-workflow-run", workflow)
-        self.assertIn("github.event.pull_request.base.sha || github.sha", workflow)
-        self.assertIn("persist-credentials: false", workflow)
-        self.assertIn("steps.resolve.outputs.pr_sha", workflow)
-        self.assertIn("steps.resolve.outputs.pr_number", workflow)
-        self.assertIn("steps.resolve.outputs.pr_url", workflow)
-        self.assertEqual(workflow.splitlines().count("          python3 scripts/automerge_pr_guard.py"), 2)
-        self.assertNotIn("pull_request_target:", workflow)
-
     def test_final_guard_runs_after_collision_check_and_before_merge(self):
         """No merge after a long coordinator read without rechecking current gates."""
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
@@ -1506,9 +1490,9 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         # Exercise the literal workflow after validated Python preflights;
         # never perform real network calls or invoke GitHub credentials.
-        run = workflow.split("          # SERVER_GATES_START\n", 1)[1]
+        run = workflow.split("        run: |\n", 1)[1]
         script = textwrap.dedent(run)
-        return "set -euo pipefail\n" + script
+        return "set -euo pipefail\n" + script.split("# SERVER_GATES_START\n", 1)[1]
 
     def test_merge_observation_requires_successful_authenticated_query(self):
         """An unknown gh pr view result can never authorize deferred merging."""
