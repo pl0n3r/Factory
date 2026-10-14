@@ -336,7 +336,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
             q["reviews"][0]["body"] = finding
             with self.subTest(finding=finding):
                 self.deny(q)
-        for notice in ("Review rate limited", "rate-limited",
+        for notice in ("Review rate limited", "rate-limited", "_Review pending_",
                        "Review skipped: manual review required",
                        "Draft PR not reviewed",
                        "Review not performed"):
