@@ -92,9 +92,16 @@ jobs:
           format: ${{ inputs.version_format }}
           key: ${{ inputs.version_key }}
       - name: Asegurar tag anotado
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SOURCE: ${{ inputs.version_source }}
+          FORMAT: ${{ inputs.version_format }}
+          KEY: ${{ inputs.version_key }}
           TARGET_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -120,11 +127,25 @@ jobs:
             fi
           }
           # RELEASE_EXACT_MAIN_TAG_GUARD_END
+          skip_unchanged_version() {
+            # Tag ya publicado y versión SIN cambio en este push: no hay nada que
+            # etiquetar. Cualquier duda mantiene el error (fail-closed).
+            local before_version
+            [[ "$EVENT_NAME" == "push" && "$BOOTSTRAP" == "false" ]] || return 1
+            [[ "$BEFORE" =~ ^[0-9a-f]{40}$ && ! "$BEFORE" =~ ^0{40}$ ]] || return 1
+            git cat-file -e "$BEFORE^{commit}" 2>/dev/null || return 1
+            git merge-base --is-ancestor "$existing_sha" "$TARGET_SHA" || return 1
+            git worktree add --detach "$RUNNER_TEMP/release-before" "$BEFORE" >/dev/null 2>&1 || return 1
+            before_version="$(cd "$RUNNER_TEMP/release-before" && PYTHONPATH="$GITHUB_WORKSPACE/.factory" python3 -c 'import sys,pathlib; from scripts.read_version import read_version; print(read_version(sys.argv[1], sys.argv[2], sys.argv[3], root=pathlib.Path.cwd()))' "$SOURCE" "$FORMAT" "$KEY")" || return 1
+            [[ "$before_version" == "$VERSION" ]] || return 1
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG ya existe en un commit anterior y la versión no cambió en este push; no se crea tag ni release." >> "$GITHUB_STEP_SUMMARY"
+          }
           verify_remote_main
           if git show-ref --verify --quiet "refs/tags/$TAG"; then
             [[ "$(git cat-file -t "refs/tags/$TAG")" == "tag" ]] || { echo "::error::$TAG no es anotado"; exit 1; }
             existing_sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
-            [[ "$existing_sha" == "$TARGET_SHA" ]] || { echo "::error::$TAG ya apunta a otro commit"; exit 1; }
+            [[ "$existing_sha" == "$TARGET_SHA" ]] || { skip_unchanged_version && exit 0; echo "::error::$TAG ya apunta a otro commit"; exit 1; }
             exit 0
           fi
           object="$(gh api --method POST "repos/$REPOSITORY/git/tags" -f tag="$TAG" -f message="Release $TAG — $TARGET_SHA" -f object="$TARGET_SHA" -f type=commit --jq '.sha')"
@@ -148,6 +169,7 @@ jobs:
           race_sha="$(gh api "repos/$REPOSITORY/git/tags/$ref_object" --jq '.object.sha')"
           [[ "$race_sha" == "$TARGET_SHA" ]] || { echo "::error::Carrera creó $TAG para otro SHA"; exit 1; }
       - id: release
+        if: steps.tag.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
