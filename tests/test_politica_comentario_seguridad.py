@@ -154,7 +154,7 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         git_blob = b"blob " + str(len(pinned_source)).encode("ascii") + b"\0" + pinned_source
         self.assertEqual(
             hashlib.sha1(git_blob).hexdigest(),
-            "0e39726bb61ccb500e0a2365e49e1030beb48724",
+            "25dd069c190a3ec03eafd258291338e59fc02388",
         )
         self.assertIn("--threads-file \"$THREADS_FILE\"", WORKFLOW)
         self.assertIn("check-runs?per_page=100", WORKFLOW)
