@@ -66,8 +66,10 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
             'workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
             automerge,
         )
-        self.assertIn("--resolve-pull-request-review", automerge)
-        self.assertIn("--resolve-workflow-run", automerge)
+        self.assertIn("api.github.com/repos/", automerge)
+        self.assertIn("authenticated_pr_identity_changed", automerge)
+        self.assertNotIn("--resolve-pull-request-review", automerge)
+        self.assertNotIn("--resolve-workflow-run", automerge)
         self.assertIn("steps.target.outputs.pr_sha", automerge)
         self.assertIn('gh pr merge --auto --squash "$PR_URL"', automerge)
 
