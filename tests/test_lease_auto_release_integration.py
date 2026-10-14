@@ -222,7 +222,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         from test_coordinar_trabajo import FakeGitHub, VALID_ACCEPTANCE_BODY
 
         for drift in ("closed", "fork", "new_branch",
-                      "new_sha", "changed_body", "foreign_lease"):
+                      "new_sha", "missing_sha", "changed_body",
+                      "foreign_lease"):
             with self.subTest(drift=drift):
                 api = FakeGitHub()
                 branch = "trabajo/issue-12"
@@ -251,6 +252,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                             api.pulls[number]["head"]["ref"] = "other-branch"
                         elif drift == "new_sha":
                             api.pulls[number]["head"]["sha"] = "b" * 40
+                        elif drift == "missing_sha":
+                            api.pulls[number]["head"].pop("sha")
                         elif drift == "changed_body":
                             api.pulls[number]["body"] = "Closes #999"
                         else:
