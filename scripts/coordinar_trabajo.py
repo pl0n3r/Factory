@@ -1712,7 +1712,30 @@ def open_pull_records_for_branch(
     result: list[dict[str, Any]] = []
     for pull in api.open_pulls():
         head = pull.get("head")
-        if isinstance(head, dict) and head.get("ref") == branch:
+        if not isinstance(head, dict) or head.get("ref") != branch:
+            continue
+        source = head.get("repo")
+        full_name = source.get("full_name") if isinstance(source, dict) else None
+        # Un PR de fork puede compartir head.ref; la identidad ausente
+        # o contradictoria NO permite reescribir ni cerrar ninguna rama.
+        if (
+            not isinstance(full_name, str)
+            or len(full_name.split("/")) != 2
+            or any(not piece or piece in {".", ".."} or piece.strip() != piece
+                   for piece in full_name.split("/"))
+            or (isinstance(source, dict) and "name" in source
+                and source["name"] != full_name.split("/")[1])
+            or (isinstance(source, dict) and "owner" in source
+                and (
+                    not isinstance(source["owner"], dict)
+                    or source["owner"].get("login") != full_name.split("/")[0]
+                ))
+        ):
+            raise CoordinationError(
+                f"PR #{pull.get('number')} con head.repo inválido para {branch}; "
+                "no se puede acreditar la procedencia de la rama."
+            )
+        if full_name == api.repo:
             result.append(pull)
     return result
 
