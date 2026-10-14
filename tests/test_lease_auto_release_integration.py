@@ -224,5 +224,98 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
 
 
+    def test_preview_boundary_inputs_are_fail_closed(self):
+        """No elevar un dato reciente ni un decisor externo a permiso V3."""
+        from datetime import tzinfo
+        from unittest.mock import patch
+        import json
+
+        from scripts.lease_auto_release import Decision
+        from scripts.lease_auto_release_integration import (
+            preview_integrated_activity,
+        )
+        from test_lease_activity_collector import marker
+
+        class NoTransport:
+            def __getattr__(self, operation):
+                raise AssertionError("unexpected transport " + operation)
+
+        for invalid in (None, True, 0, -1, "21"):
+            with self.subTest(issue=invalid):
+                result = preview_integrated_activity(
+                    API(), NoTransport(), invalid, now=NOW)
+                self.assertEqual(result.reason, "invalid_issue")
+                self.assertFalse(result.release_authorized)
+
+        class MissingOffset(tzinfo):
+            def utcoffset(self, dt):
+                return None
+            def dst(self, dt):
+                return None
+
+        for invalid in (None, NOW.replace(tzinfo=None),
+                        NOW.replace(tzinfo=MissingOffset())):
+            with self.subTest(now=invalid):
+                result = preview_integrated_activity(
+                    API(), NoTransport(), 21, now=invalid)
+                self.assertEqual(result.reason, "invalid_clock")
+                self.assertFalse(result.release_authorized)
+
+        api = API()
+        api.checks[0]["status"] = "completed"
+        lease = json.loads(marker().split("<!-- condor-reserva ", 1)[1]
+                           .split(" -->", 1)[0])
+        base = snapshot(recovery=False)
+        item = replace(
+            base, issue=21, branch="trabajo/issue-21",
+            reservation_id=lease["reservation_id"],
+            marker={**base.marker, "reservation_id": lease["reservation_id"],
+                    "branch": "trabajo/issue-21"},
+            status="estado: reservado", now=NOW,
+            last_activity_at=NOW - timedelta(minutes=20),
+            rate_remaining=20, ci_running=False,
+        )
+
+        class ReadPort:
+            def read(self, issue):
+                if issue != 21:
+                    raise AssertionError("unexpected issue")
+                return item
+            def __getattr__(self, operation):
+                raise AssertionError("unexpected write " + operation)
+
+        for forged, reason in (
+            (Decision("release", "fake_authority"), "inactivity_not_proven"),
+            (object(), "invalid_decision"),
+        ):
+            with self.subTest(decision=reason):
+                with patch("scripts.lease_auto_release_integration."
+                           "decision_from_snapshot", return_value=forged):
+                    result = preview_integrated_activity(
+                        api, ReadPort(), 21, now=NOW)
+                    self.assertEqual(result.reason, reason)
+                    self.assertFalse(result.release_authorized)
+
+        class FailedPort:
+            def read(self, issue):
+                raise RuntimeError("private-token-would-leak")
+
+        observed = preview_integrated_activity(api, FailedPort(), 21, now=NOW)
+        self.assertEqual(observed.reason, "unverifiable_integration")
+        self.assertNotIn("private-token", str(observed))
+        self.assertFalse(observed.release_authorized)
+
+        complete = collect_activity(api, 21, now=NOW)
+        future = {**complete,
+                  "last_activity_at": (NOW + timedelta(minutes=1))
+                  .strftime("%Y-%m-%dT%H:%M:%SZ")}
+        with patch("scripts.lease_auto_release_integration.collect_activity",
+                   return_value=future):
+            result = preview_integrated_activity(api, NoTransport(),
+                                                 21, now=NOW)
+        self.assertEqual(result.reason, "future_activity")
+        self.assertFalse(result.release_authorized)
+
+
 if __name__ == "__main__":
     unittest.main()
