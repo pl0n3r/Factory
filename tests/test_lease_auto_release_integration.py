@@ -281,6 +281,37 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(api.branches[recovery_lock_branch(12)],
                          "lock-de-otro")
 
+        # Un Issue bloqueado o con estado terminal no se convierte en
+        # reservado mediante adopción huérfana, aunque exista la rama.
+        for status in ("estado: bloqueado", "estado: completado",
+                       "estado: cancelado"):
+            with self.subTest(disallowed_status=status):
+                api, _ = prepare()
+                api.set_status(12, status)
+                with self.assertRaisesRegex(
+                    CoordinationError, "estado incompatible"
+                ):
+                    adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.branches["trabajo/issue-12"], "a" * 40)
+
+        # Transición AVAILABLE -> BLOCKED después del GET y del lock:
+        # el nuevo marker no debe publicarse ni debe perderse el lock ajeno.
+        api, _ = prepare()
+        acquire = api.acquire_issue_lock
+        def blocked_after_acquire(issue_number, sha):
+            token = acquire(issue_number, sha)
+            api.set_status(12, "estado: bloqueado")
+            return token
+        api.acquire_issue_lock = blocked_after_acquire
+        with self.assertRaisesRegex(CoordinationError, "cambió"):
+            adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+        self.assertEqual(api.comments, [])
+        self.assertEqual(api.issue_data["labels"][-1]["name"],
+                         "estado: bloqueado")
+        self.assertEqual(api.branches["trabajo/issue-12"], "a" * 40)
+        self.assertNotIn(recovery_lock_branch(12), api.branches)
+
 
     def test_v3_auto_recovery_grace_rejects_takeover(self):
         """Nota de recuperación automática impide una rotación por /tomar."""
