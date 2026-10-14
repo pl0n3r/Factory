@@ -146,5 +146,17 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
+    def test_observer_jq_failure_propagates(self):
+        """No ocultar error de jq dentro de sustitución de proceso Bash."""
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn('done < <(jq -r', workflow)
+        self.assertIn('jq -e \'type == "array" and length <= 10', workflow)
+        self.assertIn('all(.[]; type == "number" and . > 0 and floor == .)', workflow)
+        self.assertIn('> "$RUNNER_TEMP/lease-active-issue-numbers.txt"', workflow)
+        self.assertIn('done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"', workflow)
+        self.assertIn('set -euo pipefail', workflow)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
