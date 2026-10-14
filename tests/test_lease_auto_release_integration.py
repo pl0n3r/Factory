@@ -304,7 +304,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             api.set_status(12, "estado: bloqueado")
             return token
         api.acquire_issue_lock = blocked_after_acquire
-        with self.assertRaisesRegex(CoordinationError, "cambió"):
+        with self.assertRaisesRegex(CoordinationError, "estado incompatible"):
             adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
         self.assertEqual(api.comments, [])
         self.assertEqual(api.issue_data["labels"][-1]["name"],
