@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -257,7 +257,7 @@ class GitHub:
                 return None
             raise GitHubError(exc.code, "transport_failure", safe_method,
                               endpoint, "http", stage) from None
-        except (URLError, TimeoutError, OSError):
+        except OSError:
             raise GitHubError(0, "transport_failure", safe_method,
                               endpoint, "network-timeout", stage) from None
         except (json.JSONDecodeError, UnicodeError):
