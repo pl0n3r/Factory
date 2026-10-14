@@ -649,7 +649,7 @@ class ForkPullIsolationTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": (
-                f"Closes #12\\nReserva: {SESSION_A}\\n"
+                f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
             "head": {
@@ -710,6 +710,7 @@ class ForkPullIsolationTests(unittest.TestCase):
             {},
             {"full_name": None},
             {"full_name": "identidad-sin-repo"},
+            {"full_name": "nombre con espacio/repo"},
             {"full_name": "intruso/fork", "name": "otro"},
             {"full_name": "intruso/fork", "owner": {"login": "otra"}},
         )
