@@ -1508,7 +1508,7 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         # never perform real network calls or invoke GitHub credentials.
         run = workflow.split("          # SERVER_GATES_START\n", 1)[1]
         script = textwrap.dedent(run)
-        return "set -euo pipefail\n" + script.split("# SERVER_GATES_START\n", 1)[1]
+        return "set -euo pipefail\n" + script
 
     def test_merge_observation_requires_successful_authenticated_query(self):
         """An unknown gh pr view result can never authorize deferred merging."""
