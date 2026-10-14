@@ -2273,16 +2273,99 @@ def recovery_lock_branch(issue_number: int) -> str:
     return f"coordinacion/lock-issue-{issue_number}"
 
 
+def _auto_recovery_note_protects(
+    api: GitHub, issue_number: int, current: dict[str, Any] | None,
+) -> bool:
+    """Una nota V3 auténtica reserva la recuperación al UUID vigente.
+
+    No confundir estado RECOVERY de barridos legacy con una nota emitida
+    por el auto-release. El label no demuestra por sí solo procedencia.
+    Una nota real del bot para este UUID veta /tomar mientras la lease siga
+    activa: el plazo de gracia nunca concede una nueva sesión.
+    """
+    if (type(current) is not dict or current.get("version") != 3
+            or current.get("active") is not True):
+        return False
+    session = current.get("reservation_id")
+    branch = current.get("branch")
+    owner = current.get("owner")
+    for comment in api.issue_comments(issue_number):
+        if type(comment) is not dict:
+            raise CoordinationError("Historial de recuperación V3 incompleto.")
+        author = comment.get("user")
+        body = comment.get("body")
+        if (type(author) is not dict
+                or author.get("login") != "github-actions[bot]"
+                or type(body) is not str
+                or not body.startswith("<!-- factory-lease-recovery ")):
+            continue
+        match = re.match(
+            r"\A<!-- factory-lease-recovery (\{[^\r\n]*\}) -->",
+            body,
+        )
+        if match is None:
+            raise CoordinationError("Nota de recuperación automática malformada.")
+        try:
+            data = json.loads(
+                match.group(1),
+                object_pairs_hook=lambda pairs: _unique_recovery_pairs(pairs),
+            )
+        except (ValueError, TypeError) as exc:
+            raise CoordinationError("Nota de recuperación automática inválida.") from exc
+        if type(data) is not dict or data.get("version") != 1:
+            raise CoordinationError("Nota de recuperación automática sin versión.")
+        if data.get("reservation_id") != session:
+            continue
+        if (data.get("owner") != owner or data.get("branch") != branch
+                or data.get("branch_sha") != api.branch_sha(branch)
+                or data.get("acceptance_sha256") != current.get("acceptance_sha256")
+                or data.get("task_marker_sha256") != current.get("task_marker_sha256")):
+            raise CoordinationError(
+                "Nota de recuperación V3 no coincide con la lease o rama."
+            )
+        return True
+    return False
+
+
+def _unique_recovery_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_recovery_key")
+        result[key] = value
+    return result
+
+
+def _require_auto_recovery_ownership(
+    api: GitHub, issue_number: int, current: dict[str, Any] | None,
+    actor: str, expected_session: str | None,
+) -> None:
+    if not _auto_recovery_note_protects(api, issue_number, current):
+        return
+    if (expected_session is None or type(current) is not dict
+            or actor != current.get("owner")
+            or expected_session != current.get("reservation_id")):
+        raise CoordinationError(
+            "Recuperación automática V3 protegida: no usar /tomar durante "
+            "la gracia; solo el titular con /recuperar <UUID> puede reanudar."
+        )
+
+
 def recover_existing_work_if_stale(
     api: GitHub,
     issue_number: int,
     actor: str,
     branch: str,
     current: dict[str, Any] | None,
+    *, expected_session: str | None = None,
 ) -> str | None:
     """Recupera trabajo stale o marcado explícitamente para recuperación."""
     issue = api.issue(issue_number)
     recovery_required = STATUS_RECOVERY in label_names(issue)
+    if recovery_required:
+        _require_auto_recovery_ownership(
+            api, issue_number, current, actor, expected_session,
+        )
     if (
         current is not None
         and not recovery_required
@@ -2317,6 +2400,10 @@ def recover_existing_work_if_stale(
 
         latest = active_reservation(api, issue_number)
         recovery_required = STATUS_RECOVERY in labels
+        if recovery_required:
+            _require_auto_recovery_ownership(
+                api, issue_number, latest, actor, expected_session,
+            )
         if (
             latest is not None
             and not recovery_required
@@ -4181,7 +4268,10 @@ def recover_work(api: GitHub, issue_number: int, actor: str, association: str, r
     branch = str(current["branch"])
     if not work_is_stale(api, issue_number, branch):
         return None
-    return recover_existing_work_if_stale(api, issue_number, actor, branch, current)
+    return recover_existing_work_if_stale(
+        api, issue_number, actor, branch, current,
+        expected_session=reservation_id.lower(),
+    )
 def process_comment(
     api: GitHub,
     issue_number: int,
