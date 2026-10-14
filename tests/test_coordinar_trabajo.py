@@ -639,6 +639,112 @@ class WorkflowCoordinacionTests(unittest.TestCase):
 
 
 
+class ForkPullIsolationTests(unittest.TestCase):
+    """Nunca tratar un fork homónimo como la rama reservada local."""
+
+    @staticmethod
+    def _pull(api: FakeGitHub, number: int, repository: object) -> dict:
+        return {
+            "number": number,
+            "state": "open",
+            "draft": False,
+            "body": (
+                f"Closes #12\\nReserva: {SESSION_A}\\n"
+                f"<!-- condor-reserva-id: {SESSION_A} -->"
+            ),
+            "head": {
+                "ref": "trabajo/issue-12",
+                "sha": "abc123",
+                "repo": repository,
+            },
+            "base": {"ref": "main"},
+        }
+
+    def test_fork_same_ref_never_rewritten_on_recovery_or_transfer(self) -> None:
+        for operation in ("recuperar", "transferir"):
+            with self.subTest(operation=operation):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.pulls[15] = self._pull(
+                    api, 15, {"full_name": api.repo}
+                )
+                api.pulls[16] = self._pull(
+                    api, 16, {"full_name": "intruso/fork"}
+                )
+                foreign_body = api.pulls[16]["body"]
+                if operation == "recuperar":
+                    current = active_reservation(api, 12)
+                    self.assertIsNotNone(current)
+                    new_id = coordinator.recover_stale_work(
+                        api, 12, "pl0n3r", "trabajo/issue-12", current
+                    )
+                else:
+                    new_id = transfer_work(
+                        api, 12, "pl0n3r", "OWNER", SESSION_A
+                    )
+                self.assertIsNotNone(new_id)
+                self.assertNotEqual(new_id, SESSION_A)
+                self.assertEqual(
+                    reservation_from_pr_body(api.pulls[15]["body"]), new_id
+                )
+                self.assertEqual(api.pulls[16]["body"], foreign_body)
+                self.assertEqual(api.pulls[16]["state"], "open")
+
+    def test_force_release_only_closes_local_pull_not_fork(self) -> None:
+        api = FakeGitHub()
+        add_active_reservation(api)
+        api.pulls[15] = self._pull(api, 15, {"full_name": api.repo})
+        api.pulls[16] = self._pull(
+            api, 16, {"full_name": "intruso/fork"}
+        )
+
+        release_work(api, 12, "pl0n3r", "OWNER", None, True)
+
+        self.assertEqual(api.pulls[15]["state"], "closed")
+        self.assertEqual(api.pulls[16]["state"], "open")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+
+    def test_missing_or_malformed_head_repo_fails_closed(self) -> None:
+        invalid_sources = (
+            None,
+            {},
+            {"full_name": None},
+            {"full_name": "identidad-sin-repo"},
+            {"full_name": "intruso/fork", "name": "otro"},
+            {"full_name": "intruso/fork", "owner": {"login": "otra"}},
+        )
+        for invalid in invalid_sources:
+            with self.subTest(source=invalid):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.pulls[15] = self._pull(
+                    api, 15, {"full_name": api.repo}
+                )
+                api.pulls[16] = self._pull(api, 16, invalid)
+                original_bodies = {
+                    n: pull["body"] for n, pull in api.pulls.items()
+                }
+                previous_comments = list(api.comments)
+                previous_statuses = list(api.status_history)
+                with self.assertRaisesRegex(
+                    CoordinationError, "head.repo inválido"
+                ):
+                    transfer_work(api, 12, "pl0n3r", "OWNER", SESSION_A)
+                with self.assertRaisesRegex(
+                    CoordinationError, "head.repo inválido"
+                ):
+                    release_work(api, 12, "pl0n3r", "OWNER", None, True)
+                self.assertEqual(
+                    {n: pull["body"] for n, pull in api.pulls.items()},
+                    original_bodies,
+                )
+                self.assertEqual(api.pulls[15]["state"], "open")
+                self.assertEqual(api.pulls[16]["state"], "open")
+                self.assertEqual(api.comments, previous_comments)
+                self.assertEqual(api.status_history, previous_statuses)
+                self.assertIn("trabajo/issue-12", api.branches)
+
+
 class ReleaseOpenPullFeedbackTests(unittest.TestCase):
     """Cubre feedback y semántica de liberación cuando existe un PR abierto."""
 
@@ -652,7 +758,7 @@ class ReleaseOpenPullFeedbackTests(unittest.TestCase):
                 f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12", "sha": "abc123"},
+            "head": {"ref": "trabajo/issue-12", "sha": "abc123", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -1306,7 +1412,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": "Closes #12",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -1410,7 +1516,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\n\nReserva: {SESSION_A}\n\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -1441,7 +1547,7 @@ class CoordinacionTests(unittest.TestCase):
             "number": 15,
             "state": "open",
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
         }
 
         activity = work_activity_timestamp(api, 12, "trabajo/issue-12")
@@ -2890,7 +2996,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\n\nReserva: {session}\n"
                 f"<!-- condor-reserva-id: {session} -->"
             ),
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
@@ -2917,7 +3023,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\n\nReserva: {session}\n"
                 f"<!-- condor-reserva-id: {session} -->"
             ),
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.issue_data["body"] = (
@@ -2989,7 +3095,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\n\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -3026,7 +3132,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": "Closes #12",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -3066,7 +3172,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12", "sha": "head-legacy"},
+            "head": {"ref": "trabajo/issue-12", "sha": "head-legacy", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -3088,7 +3194,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12", "sha": "head-drift"},
+            "head": {"ref": "trabajo/issue-12", "sha": "head-drift", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
@@ -3121,7 +3227,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12", "sha": "head-context"},
+            "head": {"ref": "trabajo/issue-12", "sha": "head-context", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.issue_data["body"] = (
@@ -3145,7 +3251,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12", "sha": "head-stable"},
+            "head": {"ref": "trabajo/issue-12", "sha": "head-stable", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -3247,7 +3353,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"Closes #12\nReserva: {SESSION_A}\n<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         new_id = transfer_work(api, 12, "pl0n3r", "OWNER", SESSION_A)
@@ -3275,7 +3381,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": original,
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.pull_update_failures_remaining = 1
@@ -3298,7 +3404,7 @@ class CoordinacionTests(unittest.TestCase):
                 f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12", "sha": "head-renew"},
+            "head": {"ref": "trabajo/issue-12", "sha": "head-renew", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.issue_data["body"] = VALID_ACCEPTANCE_BODY.replace(
@@ -3911,7 +4017,7 @@ class CoordinacionTests(unittest.TestCase):
             "number": 15,
             "state": "open",
             "draft": False,
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
             "merged": False,
         }
@@ -3926,7 +4032,7 @@ class CoordinacionTests(unittest.TestCase):
             "number": 15,
             "state": "closed",
             "draft": False,
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
             "merged": False,
         }
@@ -3977,7 +4083,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": "Closes #12",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "otra-rama"},
         }
         with self.assertRaises(CoordinationError):
@@ -3994,7 +4100,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"Closes #12\n<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.pull_files_map[15] = {"src/a.php"}
@@ -4014,7 +4120,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"Closes #12\n<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.pull_files_map[15] = {"src/a.php"}
@@ -4035,7 +4141,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         with self.assertRaisesRegex(CoordinationError, r"Closes #12"):
@@ -4055,7 +4161,7 @@ class CoordinacionTests(unittest.TestCase):
                 '{"version":1,"issue":12,"mode":"post_merge_validation"} -->\n'
                 f"<!-- condor-reserva-id: {SESSION_A} -->"
             ),
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.pull_files_map[15] = {"src/a.php"}
@@ -4076,7 +4182,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"{marker}\n<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         with self.assertRaisesRegex(CoordinationError, "solo se permite.*incidente"):
@@ -4163,7 +4269,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"Closes #12\n<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.pulls[20] = {
@@ -4171,7 +4277,7 @@ class CoordinacionTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": "Closes #20",
-            "head": {"ref": "trabajo/issue-20"},
+            "head": {"ref": "trabajo/issue-20", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
         api.pull_files_map[15] = {"src/a.php"}
@@ -4411,12 +4517,12 @@ class CoordinacionTests(unittest.TestCase):
             self.assertFalse(coordinator.valid_reservation_payload(payload))
             api.pulls[15] = {
                 "number": 15, "state": "open",
-                "head": {"ref": coordinator.branch_for_issue(12)},
+                "head": {"ref": coordinator.branch_for_issue(12), "repo": {"full_name": api.repo}},
                 "base": {"ref": "main"},
             }
             api.pulls[20] = {
                 "number": 20, "state": "open",
-                "head": {"ref": coordinator.branch_for_issue(20)},
+                "head": {"ref": coordinator.branch_for_issue(20), "repo": {"full_name": api.repo}},
                 "base": {"ref": "main"},
             }
             api.pull_files_map[15] = {"same.txt"}
@@ -5098,7 +5204,7 @@ class CoordinationTests(unittest.TestCase):
             "state": "open",
             "draft": False,
             "body": f"Closes #12\nReserva: `{SESSION_A}`",
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -5119,7 +5225,7 @@ class CoordinationTests(unittest.TestCase):
                 f"Closes #12\nReserva: {SESSION_A}\n"
                 f"<!-- condor-reserva-id: {SESSION_B} -->"
             ),
-            "head": {"ref": "trabajo/issue-12"},
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
             "base": {"ref": "main"},
         }
 
@@ -5194,7 +5300,7 @@ class V3ClaimScopePRTests(unittest.TestCase):
             "number": 15,
             "state": "open",
             "body": f"Closes #12\\n<!-- condor-reserva-id: {SESSION_A} -->",
-            "head": {"ref": "trabajo/issue-12", "sha": sha},
+            "head": {"ref": "trabajo/issue-12", "sha": sha, "repo": {"full_name": api.repo}},
             "base": {"ref": "main", "sha": "b" * 40},
         }
         body = reservation_marker(
@@ -5344,7 +5450,7 @@ class ExactHeadPullFileEvidenceTests(unittest.TestCase):
         first = {
             "number": 42, "state": "open",
             "base": {"ref": "main", "sha": "b" * 40},
-            "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40},
+            "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40, "repo": {"full_name": api.repo}},
             "changed_files": sum(len(page) for page in pages if isinstance(page, list)),
         }
         if metadata:
@@ -5461,13 +5567,13 @@ class ExactHeadPullFileEvidenceTests(unittest.TestCase):
         stale = {
             "number": 42, "state": "open",
             "base": {"ref": "main", "sha": "b" * 40},
-            "head": {"ref": "trabajo/issue-1081", "sha": "c" * 40},
+            "head": {"ref": "trabajo/issue-1081", "sha": "c" * 40, "repo": {"full_name": api.repo}},
             "changed_files": 1,
         }
         with self.assertRaisesRegex(CoordinationError, "HEAD/BASE"):
             self._read([row], after=stale)
         moved_base = {
-            **stale, "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40},
+            **stale, "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40, "repo": {"full_name": api.repo}},
             "base": {"ref": "dev", "sha": "b" * 40},
         }
         with self.assertRaisesRegex(CoordinationError, "HEAD/BASE"):
@@ -5507,7 +5613,7 @@ class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
                 head = "d" * 40
             return {
                 "state": "open",
-                "head": {"sha": head, "ref": f"trabajo/issue-{number}"},
+                "head": {"sha": head, "ref": f"trabajo/issue-{number}", "repo": {"full_name": api.repo}},
                 "base": {"ref": "main", "sha": "b" * 40},
             }
 
@@ -5534,7 +5640,7 @@ class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
         }
         inventory = [{
             "number": n, "state": "open",
-            "head": {"sha": proof["head_sha"], "ref": f"trabajo/issue-{n}"},
+            "head": {"sha": proof["head_sha"], "ref": f"trabajo/issue-{n}", "repo": {"full_name": api.repo}},
             "base": {"sha": proof["base_sha"], "ref": "main"},
         } for n, proof in sources.items()]
         def proof(n):
@@ -5554,7 +5660,7 @@ class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
         api = GitHub("pl0n3r/Factory", "fake-test-token")
         initial = [{
             "number": 42, "state": "open",
-            "head": {"sha": "a" * 40, "ref": "trabajo/issue-42"},
+            "head": {"sha": "a" * 40, "ref": "trabajo/issue-42", "repo": {"full_name": api.repo}},
             "base": {"sha": "b" * 40, "ref": "main"},
         }]
         proof = {"head_sha": "a" * 40, "base_sha": "b" * 40,
@@ -5562,7 +5668,7 @@ class ExactHeadPullCollisionIntegrationTests(unittest.TestCase):
         variants = (
             initial + [{
                 "number": 43, "state": "open",
-                "head": {"sha": "c" * 40, "ref": "trabajo/issue-43"},
+                "head": {"sha": "c" * 40, "ref": "trabajo/issue-43", "repo": {"full_name": api.repo}},
                 "base": {"sha": "b" * 40, "ref": "main"},
             }],
             [{**initial[0], "head": {
