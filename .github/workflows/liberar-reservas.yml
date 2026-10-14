@@ -10,12 +10,19 @@ on:
       - 'scripts/lease_auto_release.py'
       - 'tests/test_lease_auto_release.py'
       - 'docs/liberacion-automatica-de-reservas.md'
+      - 'scripts/lease_auto_release_run.py'
+      - 'scripts/lease_github_port.py'
+      - 'tests/test_lease_auto_release_run.py'
+      - 'tests/test_lease_github_port.py'
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
-  group: factory-lease-audit-${{ github.repository_id }}
+  # Solo schedule/dispatch comparten exclusión con Coordinación;
+  # cada PR usa un grupo separado para no bloquear comandos /tomar.
+  group: ${{ github.event_name == 'pull_request' && format('factory-lease-audit-pr-{0}', github.event.pull_request.number) || format('factory-coordination-{0}', github.repository_id) }}
   cancel-in-progress: false
 
 jobs:
@@ -29,6 +36,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      issues: read
     steps:
       - name: Checkout sin credenciales persistidas
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -36,6 +44,9 @@ jobs:
           persist-credentials: false
 
       - name: Preflight autenticado de cuota API (no publica datos privados)
+        # Un PR verifica el código offline, no ejecuta auditorías vivas:
+        # reservar las consultas autenticadas para schedule/dispatch en main.
+        if: github.event_name != 'pull_request'
         id: budget
         env:
           GH_TOKEN: ${{ github.token }}
@@ -74,10 +85,96 @@ jobs:
           echo "allow=true" >> "$GITHUB_OUTPUT"
 
       - name: Tests deterministas del decisor (read-only)
-        if: steps.budget.outputs.allow == 'true'
+        # Deben ejecutarse en PR aun con GitHub App en 403/rate-limit.
         shell: bash
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_lease_auto_release.py' -v
           echo "AUDITORÍA SOLAMENTE: 0 reservas liberadas, 0 etiquetas modificadas."
           echo "No se concede autoridad a acciones mark_recovery/release."
+
+      - name: Confirmar runner OFF sin transporte ni mutaciones
+        # La puerta OFF se comprueba siempre y no requiere llamadas REST.
+        shell: bash
+        env:
+          FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from scripts.lease_auto_release_run import run_cycle
+
+          class NoAccessPort:
+              def __getattr__(self, name):
+                  raise AssertionError("disabled runner must not access Port")
+
+          cycle = run_cycle([1175], NoAccessPort())
+          assert cycle.state == "feature_disabled"
+          assert len(cycle.results) == 1
+          assert cycle.results[0][1].wrote is False
+          print("AUDITORÍA OFFLINE: flag OFF, 0 escrituras, 0 reservas liberadas.")
+          PY
+
+      - name: Inventario observado de recuperación (GET paginado, solo lectura)
+        if: steps.budget.outputs.allow == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-switch.json"
+          verdict="$(python3 - "$RUNNER_TEMP/lease-switch.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if (type(payload) is not dict or payload.get("state") != "closed"
+                  or type(payload.get("number")) is not int):
+              print("UNKNOWN")
+          else:
+              print(evaluate_unattended_kill_switch(payload).state)
+          PY
+          )"
+          case "$verdict" in
+            RUNNING) ;;
+            PAUSED)
+              echo "Auditoría pausada por #767; 0 mutaciones y sin censo."
+              exit 0
+              ;;
+            *)
+              echo "::error::Fuente #767 no autenticada; censo UNKNOWN."
+              exit 1
+              ;;
+          esac
+
+          # /issues también incluye PRs: filtrarlos después de validar páginas.
+          # El transporte y el archivo bruto permanecen en el runner; nunca
+          # imprimir títulos, cuerpos, actores, notas ni token.
+          gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues?state=open&per_page=100" \
+            > "$RUNNER_TEMP/lease-open-issues.json"
+          # El primer RUNNING no es persistente: revalidar la fuente absoluta
+          # después de paginar y ANTES de publicar siquiera el censo agregado.
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-switch-after.json"
+          python3 - "$RUNNER_TEMP/lease-switch.json" \
+              "$RUNNER_TEMP/lease-switch-after.json" \
+              "$RUNNER_TEMP/lease-open-issues.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.lease_auto_release_run import inventory_after_switch_recheck
+          before = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          after = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          pages = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+          result = inventory_after_switch_recheck(before, after, pages)
+          if result is None or result.release_authorized:
+              print("::error::Inventario de recuperación UNKNOWN, sin autoridad.")
+              raise SystemExit(1)
+          print("OBSERVACIÓN read-only: issues_abiertos={0}, recuperación={1}, "
+                "reservados={2}, en_revisión={3}; liberaciones=0"
+                .format(result.open_issues, result.recovery,
+                        result.reserved, result.in_review))
+          print("Sin prueba de inactividad, CAS ni autoridad de liberación.")
+          PY
