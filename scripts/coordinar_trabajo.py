@@ -3437,6 +3437,13 @@ def adopt_orphaned_contract(
         pull.get("number"): pull.get("body") for pull in open_pulls
         if type(pull) is dict
     }
+    initial_pull_shas = {
+        pull.get("number"): (
+            pull.get("head", {}).get("sha")
+            if type(pull.get("head")) is dict else None
+        )
+        for pull in open_pulls if type(pull) is dict
+    }
 
     # Publicar sin lock permitiría tapar una lease V3 creada tras el GET.
     require_global_running(api)
@@ -3511,6 +3518,7 @@ def adopt_orphaned_contract(
                     or type(current_base) is not dict
                     or current_base.get("ref") != "main"
                     or not local_pull_source_matches(api, current_pull, branch)
+                    or current_head.get("sha") != initial_pull_shas.get(number)
                     or current_head.get("sha") not in (None, branch_sha)
                     or current_pull.get("body") != initial_pull_bodies.get(number)):
                 raise CoordinationError(
