@@ -2677,6 +2677,39 @@ class CoordinacionTests(unittest.TestCase):
                     ("GET", "https://api.github.com" + source),
                 ] * 2)
 
+    def test_consumer_sweep_denied_token_never_reaches_mutations(self) -> None:
+        """403/401 de credencial real simulada detiene el barrido antes de escribir."""
+        from io import BytesIO
+        from urllib.error import HTTPError
+
+        endpoint = "https://api.github.com/repos/pl0n3r/Factory/issues/767"
+        for repo in ("pl0n3r/Condor", "pl0n3r/ControlBot",
+                     "pl0n3r/FactoryRunner"):
+            for status in (401, 403, 404, 429):
+                with self.subTest(repo=repo, status=status):
+                    api = GitHub(repo, "fixture-consumer-token")
+                    requests = []
+
+                    def denied(request, timeout):
+                        requests.append((request.get_method(),
+                                         request.full_url,
+                                         request.get_header("Authorization")))
+                        raise HTTPError(
+                            request.full_url, status, "denegado", {},
+                            BytesIO(b'{"message":"denegado"}'),
+                        )
+
+                    with patch.object(coordinator, "urlopen", side_effect=denied):
+                        with self.assertRaisesRegex(
+                            CoordinationError, "(?i)barrido pausado"
+                        ):
+                            run_scheduled_sweep(api)
+
+                    self.assertEqual(requests, [
+                        ("GET", endpoint, "Bearer fixture-consumer-token")
+                    ])
+                    self.assertEqual(api.repo, repo)
+
     def test_recovery_label_mutations_recheck_pause_and_lease_each_rest_write(self) -> None:
         """Nunca emitir DELETE posterior a PAUSED o reemplazo de nonce."""
         for lose in ("PAUSED", "stolen"):
