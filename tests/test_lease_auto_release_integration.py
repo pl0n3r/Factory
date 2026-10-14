@@ -153,5 +153,73 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             self.assertEqual(orphan.writes, [])
 
 
+    def test_collector_and_port_preview_agree_without_release_authority(self):
+        from dataclasses import FrozenInstanceError
+        from scripts.lease_auto_release_integration import (
+            IntegrationPreview, preview_integrated_activity,
+        )
+        from test_lease_activity_collector import marker
+        import json
+
+        api = API()
+        api.checks[0]["status"] = "completed"
+        lease = json.loads(marker().split("<!-- condor-reserva ", 1)[1]
+                           .split(" -->", 1)[0])
+        base = snapshot(recovery=False)
+        item = replace(
+            base, issue=21, branch="trabajo/issue-21",
+            reservation_id=lease["reservation_id"],
+            marker={**base.marker, "reservation_id": lease["reservation_id"],
+                    "branch": "trabajo/issue-21"},
+            status="estado: reservado", now=NOW,
+            last_activity_at=NOW - timedelta(minutes=20),
+            rate_remaining=20, ci_running=False,
+        )
+
+        class ReadOnlyPort:
+            def __init__(self, item):
+                self.item = item
+                self.reads = 0
+            def read(self, issue):
+                assert issue == 21
+                self.reads += 1
+                return self.item
+            def __getattr__(self, operation):
+                raise AssertionError("preview cannot write: " + operation)
+
+        port = ReadOnlyPort(item)
+        observed = preview_integrated_activity(api, port, 21, now=NOW)
+        self.assertEqual((observed.state, observed.action),
+                         ("read_only", "wait"))
+        self.assertIs(observed.release_authorized, False)
+        self.assertEqual(port.reads, 1)
+        with self.assertRaises(TypeError):
+            replace(observed, release_authorized=True)
+        with self.assertRaises(FrozenInstanceError):
+            observed.state = "authorized"
+
+        for change in (
+            {"branch_sha": "b" * 40},
+            {"owner": "different"},
+            {"complete": False},
+            {"changes_requested": True},
+            {"kill_switch_running": False},
+            {"rate_remaining": 19},
+        ):
+            with self.subTest(change=change):
+                other = ReadOnlyPort(replace(item, **change))
+                outcome = preview_integrated_activity(API(), other, 21,
+                                                       now=NOW)
+                self.assertEqual(outcome.state, "UNKNOWN")
+                self.assertFalse(outcome.release_authorized)
+        broken = API()
+        broken.push_event = "pull_request"
+        no_push = ReadOnlyPort(item)
+        observed = preview_integrated_activity(broken, no_push, 21, now=NOW)
+        self.assertEqual(observed.state, "UNKNOWN")
+        self.assertEqual(no_push.reads, 0)
+
+
+
 if __name__ == "__main__":
     unittest.main()
