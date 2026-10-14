@@ -690,6 +690,59 @@ class ForkPullIsolationTests(unittest.TestCase):
                 self.assertEqual(api.pulls[16]["body"], foreign_body)
                 self.assertEqual(api.pulls[16]["state"], "open")
 
+    def test_pr_event_closed_and_review_ignore_foreign_fork(self) -> None:
+        """Un PR externo con head.ref homónimo jamás cierra la reserva."""
+        for action in ("closed", "ready_for_review", "converted_to_draft"):
+            with self.subTest(action=action):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.pulls[16] = self._pull(
+                    api, 16, {"full_name": "intruso/fork"}
+                )
+                if action == "closed":
+                    api.pulls[16]["state"] = "closed"
+                before_comments = list(api.comments)
+                before_status = list(api.status_history)
+                update_pr_state(api, 16, action)
+                self.assertEqual(api.comments, before_comments)
+                self.assertEqual(api.status_history, before_status)
+                self.assertIn("trabajo/issue-12", api.branches)
+                self.assertIsNotNone(active_reservation(api, 12))
+                self.assertEqual(
+                    api.pulls[16]["state"],
+                    "closed" if action == "closed" else "open",
+                )
+
+    def test_pr_event_unknown_or_contradictory_source_fails_closed(self) -> None:
+        """Metadatos ilegibles no liberan lease ni alteran revisión."""
+        invalid_sources = (
+            None,
+            {},
+            {"full_name": None},
+            {"full_name": "identidad-sin-repo"},
+            {"full_name": "intruso/fork", "name": "ajeno"},
+            {"full_name": "intruso/fork", "owner": {"login": "otro"}},
+            {"full_name": "pl0n3r/Condor", "name": "ajeno"},
+        )
+        for action in ("closed", "ready_for_review", "converted_to_draft"):
+            for origin in invalid_sources:
+                with self.subTest(action=action, origin=origin):
+                    api = FakeGitHub()
+                    add_active_reservation(api)
+                    api.pulls[16] = self._pull(api, 16, origin)
+                    if action == "closed":
+                        api.pulls[16]["state"] = "closed"
+                    prior_comments = list(api.comments)
+                    prior_status = list(api.status_history)
+                    with self.assertRaisesRegex(
+                        CoordinationError, "head.repo inválido"
+                    ):
+                        update_pr_state(api, 16, action)
+                    self.assertEqual(api.comments, prior_comments)
+                    self.assertEqual(api.status_history, prior_status)
+                    self.assertIn("trabajo/issue-12", api.branches)
+                    self.assertIsNotNone(active_reservation(api, 12))
+
     def test_force_release_only_closes_local_pull_not_fork(self) -> None:
         api = FakeGitHub()
         add_active_reservation(api)
