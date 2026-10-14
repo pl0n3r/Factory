@@ -734,6 +734,31 @@ class ForkPullIsolationTests(unittest.TestCase):
                 self.assertEqual(api.pulls[16]["body"], foreign_body)
                 self.assertEqual(api.pulls[16]["state"], "open")
 
+    def test_issue_closed_never_closes_fork_or_unknown_origin(self) -> None:
+        for foreign_source in ({"full_name": "intruso/fork"}, None):
+            with self.subTest(source=foreign_source):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.pulls[15] = self._pull(api, 15, {"full_name": api.repo})
+                api.pulls[16] = self._pull(api, 16, foreign_source)
+                api.issue_data["state"] = "closed"
+                before_comments = list(api.comments)
+                if foreign_source is None:
+                    with self.assertRaisesRegex(
+                        CoordinationError, "head.repo inválido"
+                    ):
+                        update_issue_state(api, 12, "closed")
+                    self.assertEqual(api.pulls[15]["state"], "open")
+                    self.assertIn("trabajo/issue-12", api.branches)
+                    self.assertEqual(api.comments, before_comments)
+                    self.assertIsNotNone(active_reservation(api, 12))
+                else:
+                    update_issue_state(api, 12, "closed")
+                    self.assertEqual(api.pulls[15]["state"], "closed")
+                    self.assertNotIn("trabajo/issue-12", api.branches)
+                    self.assertIsNone(active_reservation(api, 12))
+                self.assertEqual(api.pulls[16]["state"], "open")
+
     def test_missing_or_malformed_head_repo_fails_closed(self) -> None:
         invalid_sources = (
             None,
