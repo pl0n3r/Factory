@@ -681,6 +681,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 self.assertFalse(result.release_authorized)
 
         api = API()
+        api.pulls[0]["state"] = "open"
+        api.pulls[0]["base"] = {"ref": "main"}
         api.checks[0]["status"] = "completed"
         lease = json.loads(marker().split("<!-- condor-reserva ", 1)[1]
                            .split(" -->", 1)[0])
@@ -692,7 +694,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     "branch": "trabajo/issue-21"},
             status="estado: reservado", now=NOW,
             last_activity_at=NOW - timedelta(minutes=20),
-            rate_remaining=20, ci_running=False,
+            rate_remaining=40, ci_running=False,
         )
 
         class ReadPort:
