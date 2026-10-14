@@ -40,11 +40,15 @@ class PortNotArmed(RuntimeError):
 class Inspection:
     state: str
     issue: int
-    release_authorized: bool = False
     lease_id: str | None = None
     branch_sha: str | None = None
     last_activity_at: str | None = None
     libera_en_min: int | None = None  # Cota inferior; nunca autoridad.
+
+    @property
+    def release_authorized(self) -> bool:
+        """El inspector no emite permisos de release, ni con kwargs forzados."""
+        return False
 
 
 _RECENT_STATES = frozenset({
@@ -222,7 +226,7 @@ class LeaseGithubPort:
             if not self._running():
                 return invalid
             return Inspection(
-                RECENT, issue, release_authorized=False,
+                RECENT, issue,
                 lease_id=report["lease_id"],
                 branch_sha=report["branch_sha"],
                 last_activity_at=report["last_activity_at"],
