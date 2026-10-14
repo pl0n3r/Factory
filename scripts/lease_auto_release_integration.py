@@ -228,6 +228,9 @@ def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
                             "PENDING", "COMMENTED", "APPROVED",
                             "DISMISSED", "CHANGES_REQUESTED",
                         )
+                        # bool y float son comparables con enteros en Python:
+                        # solo un ID REST int estricto autentica la secuencia.
+                        or type(review.get("id")) is not int
                         or review["id"] <= highest_id):
                     raise ValueError("unknown_review_state")
                 highest_id = review["id"]
