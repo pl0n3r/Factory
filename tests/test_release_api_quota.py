@@ -124,6 +124,29 @@ def _fake_gh_error(*, phase: str, message: str, partial_stdout: str = "",
         return result, calls
 
 
+
+def _active_gate_numbers(rows: list[dict], at: datetime) -> list[int]:
+    """Ejecuta el filtro TTL REAL del workflow sobre un fixture offline."""
+    workflow = _workflow()
+    start = workflow.index("# RELEASE_ACTIVE_GATE_FILTER_START")
+    end = workflow.index("# RELEASE_ACTIVE_GATE_FILTER_END", start)
+    block = workflow[start:end]
+    begin = block.index("<<'PY'") + len("<<'PY'")
+    script = block[begin:block.rindex("\n          PY")]
+    script = textwrap.dedent(script)
+    stamp = at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "candidates.json"
+        path.write_text(json.dumps(rows), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(path), stamp],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        if result.returncode:
+            raise AssertionError("Filtro fail-closed: " + result.stderr)
+        return [row["number"] for row in json.loads(result.stdout)]
+
+
 class ReleaseApiQuotaTests(unittest.TestCase):
     def test_primary_rate_limit_fails_closed_with_typed_evidence(self):
         result, calls = _fake_gh_error(
@@ -244,6 +267,89 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertIn("release-issues-projected.json", workflow)
         self.assertLess(workflow.index("release-issues-projected.json"),
                         workflow.index(CANDIDATES_START))
+
+    def test_large_gate_inventory_transport_failure_fails_closed(self):
+        """44 consultas secuenciales: fallo tardío no produce GREEN."""
+        helper = _block(HELPER_START, HELPER_END)
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "gh"
+            count = Path(tmp) / "count.txt"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "n=0\n"
+                "if test -f \"$FAKE_GH_COUNT\"; then n=$(cat \"$FAKE_GH_COUNT\"); fi\n"
+                "n=$((n + 1))\n"
+                "echo \"$n\" > \"$FAKE_GH_COUNT\"\n"
+                "if test \"$n\" -eq 44; then\n"
+                "  echo 'service unavailable' >&2\n"
+                "  exit 1\n"
+                "fi\n"
+                "echo '[]'\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            shell = (
+                "set -euo pipefail\n"
+                + helper + "\n"
+                + "search_calls=4\ncomments_calls_min=0\nmetadata_calls=0\n"
+                + "for n in $(seq 1 44); do\n"
+                + "  comments_calls_min=$((comments_calls_min + 1))\n"
+                + "  release_gh_api comments --paginate test-url | cat > /dev/null\n"
+                + "done\n"
+                + "echo INVALID_GREEN\n"
+            )
+            env = dict(os.environ, FAKE_GH_COUNT=str(count))
+            env["PATH"] = tmp + os.pathsep + env.get("PATH", "")
+            result = subprocess.run(
+                ["bash", "-c", shell], cwd=ROOT, env=env,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(int(count.read_text().strip()), 44)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "release_api_transport_failure phase=comments", result.stderr
+            )
+            self.assertIn(
+                "search=4 comments=44 metadata=0 failed_phase=comments",
+                result.stderr,
+            )
+            self.assertNotIn("INVALID_GREEN", result.stdout)
+            self.assertNotIn("service unavailable", result.stderr)
+
+    def test_large_gate_budget_preserves_active_and_executed_release_authority(self):
+        """TTL acota fan-out, pero nunca oculta una ventana viva o inválida."""
+        from datetime import timedelta
+
+        now = datetime(2026, 10, 14, 2, 0, tzinfo=timezone.utc)
+        rows = []
+        for n in range(1, 44):
+            old = now - timedelta(days=n + 1)
+            body = rw._render_gate(
+                f"1.0.{n}", "a" * 40, old, source_issue=900
+            )["body"]
+            rows.append({"number": n, "body": body})
+        active = rw._render_gate(
+            "1.0.44", "b" * 40, now, source_issue=901
+        )["body"]
+        rows.append({"number": 44, "body": active})
+        self.assertEqual(_active_gate_numbers(rows, now), [44])
+        self.assertEqual(_active_gate_numbers(rows[:43], now), [])
+        self.assertIn(
+            "/tmp/release-issues-active.json > /tmp/release-issues.jsonl",
+            _workflow(),
+        )
+        issue = {
+            "number": 44, "state": "open", "title": "Factory 1.0.44",
+            "body": active, "updated_at": "2026-10-14T02:00:00Z",
+        }
+        record = rw.gate_records([{"issue": issue, "comments": []}])
+        self.assertEqual(rw.freeze_gate(record, now)["number"], 44)
+        record[0]["executed"] = {"sha": "b" * 40, "run_id": 100}
+        self.assertIsNone(rw.freeze_gate(record, now))
+        # Toda ventana malformada, incluso obsoleta, sigue fallando cerrado.
+        rows[0]["body"] = "<!-- factory-release-window invalid -->"
+        with self.assertRaisesRegex(AssertionError, "Filtro fail-closed"):
+            _active_gate_numbers(rows, now)
 
     def test_report_excludes_comment_bodies_and_tokens(self):
         workflow = _workflow()
