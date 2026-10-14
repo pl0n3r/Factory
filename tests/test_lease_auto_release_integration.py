@@ -213,6 +213,65 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                          session)
 
 
+    def test_adoption_pr_drift_never_edits_foreign_pull(self):
+        """Adopción no debe reescribir el PR si cambió tras obtener el lock."""
+        from scripts.coordinar_trabajo import (
+            CoordinationError, adopt_orphaned_contract,
+            recovery_lock_branch,
+        )
+        from test_coordinar_trabajo import FakeGitHub, VALID_ACCEPTANCE_BODY
+
+        for drift in ("closed", "fork", "new_branch",
+                      "new_sha", "changed_body", "foreign_lease"):
+            with self.subTest(drift=drift):
+                api = FakeGitHub()
+                branch = "trabajo/issue-12"
+                api.issue_data["body"] = VALID_ACCEPTANCE_BODY
+                api.branches[branch] = "abc123"
+                api.pulls[15] = {
+                    "number": 15, "state": "open",
+                    "head": {"ref": branch, "sha": "abc123",
+                             "repo": {"full_name": api.repo}},
+                    "base": {"ref": "main"}, "body": "Closes #12",
+                }
+                original_pull = api.pull
+                seen = [0]
+
+                def competing_pr_change(number):
+                    seen[0] += 1
+                    if seen[0] == 1:
+                        if drift == "closed":
+                            api.pulls[number]["state"] = "closed"
+                        elif drift == "fork":
+                            api.pulls[number]["head"]["repo"]["full_name"] = (
+                                "adversary/fork"
+                            )
+                        elif drift == "new_branch":
+                            api.pulls[number]["head"]["ref"] = "other-branch"
+                        elif drift == "new_sha":
+                            api.pulls[number]["head"]["sha"] = "b" * 40
+                        elif drift == "changed_body":
+                            api.pulls[number]["body"] = "Closes #999"
+                        else:
+                            api.pulls[number]["body"] = (
+                                "Closes #12\n<!-- condor-reserva-id: "
+                                "a84bdf99-a23a-4bc1-8c99-df4f3673573a -->"
+                            )
+                    return original_pull(number)
+
+                api.pull = competing_pr_change
+                with self.assertRaises(CoordinationError):
+                    adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+                self.assertEqual(seen, [1])
+                self.assertNotIn(
+                    "<!-- condor-reserva-id: ",
+                    api.pulls[15]["body"] if drift != "foreign_lease"
+                    else api.pulls[15]["body"].replace(
+                        "a84bdf99-a23a-4bc1-8c99-df4f3673573a", ""),
+                )
+                self.assertNotIn(recovery_lock_branch(12), api.branches)
+                self.assertEqual(api.branches[branch], "abc123")
+
     def test_explicit_orphan_adoption_cannot_rotate_concurrent_v3(self):
         """La adopción no publica UUID propio sobre una lease ajena surgida."""
         from scripts.aceptacion_kit import contract_fingerprint
