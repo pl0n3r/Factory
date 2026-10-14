@@ -2289,18 +2289,29 @@ def _auto_recovery_note_protects(
     session = current.get("reservation_id")
     branch = current.get("branch")
     owner = current.get("owner")
+    note_keys = {
+        "version", "reservation_id", "owner", "branch", "branch_sha",
+        "last_activity_at", "acceptance_sha256", "task_marker_sha256",
+    }
+    matching = 0
     for comment in api.issue_comments(issue_number):
-        if type(comment) is not dict:
+        if type(comment) is not dict or type(comment.get("body")) is not str:
             raise CoordinationError("Historial de recuperación V3 incompleto.")
-        author = comment.get("user")
-        body = comment.get("body")
-        if (type(author) is not dict
-                or author.get("login") != "github-actions[bot]"
-                or type(body) is not str
-                or not body.startswith("<!-- factory-lease-recovery ")):
+        body = comment["body"]
+        heads = re.findall(
+            r"<!--\s*factory-lease-recovery\b", body, flags=re.IGNORECASE,
+        )
+        if not heads:
             continue
-        match = re.match(
-            r"\A<!-- factory-lease-recovery (\{[^\r\n]*\}) -->",
+        author = comment.get("user")
+        if (len(heads) != 1 or type(author) is not dict
+                or author.get("login") != "github-actions[bot]"
+                or author.get("type") != "Bot"):
+            raise CoordinationError(
+                "Nota de recuperación automática sin procedencia de bot."
+            )
+        match = re.search(
+            r"<!-- factory-lease-recovery (\{[^\r\n]*\}) -->",
             body,
         )
         if match is None:
@@ -2308,12 +2319,17 @@ def _auto_recovery_note_protects(
         try:
             data = json.loads(
                 match.group(1),
-                object_pairs_hook=lambda pairs: _unique_recovery_pairs(pairs),
+                object_pairs_hook=_unique_recovery_pairs,
             )
         except (ValueError, TypeError) as exc:
-            raise CoordinationError("Nota de recuperación automática inválida.") from exc
-        if type(data) is not dict or data.get("version") != 1:
-            raise CoordinationError("Nota de recuperación automática sin versión.")
+            raise CoordinationError(
+                "Nota de recuperación automática inválida."
+            ) from exc
+        if (type(data) is not dict or set(data) != note_keys
+                or type(data.get("version")) is not int or data["version"] != 1):
+            raise CoordinationError(
+                "Nota de recuperación automática sin contrato válido."
+            )
         if data.get("reservation_id") != session:
             continue
         if (data.get("owner") != owner or data.get("branch") != branch
@@ -2323,8 +2339,12 @@ def _auto_recovery_note_protects(
             raise CoordinationError(
                 "Nota de recuperación V3 no coincide con la lease o rama."
             )
-        return True
-    return False
+        matching += 1
+        if matching > 1:
+            raise CoordinationError(
+                "Notas V3 duplicadas para la misma reserva."
+            )
+    return matching == 1
 
 
 def _unique_recovery_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
