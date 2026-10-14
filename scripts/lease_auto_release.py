@@ -54,8 +54,11 @@ def _utc(value: datetime | None) -> datetime | None:
     if not isinstance(value, datetime) or value.tzinfo is None:
         return None
     try:
+        # A tzinfo with no UTC offset must not become the runner's local time.
+        if value.utcoffset() is None:
+            return None
         return value.astimezone(timezone.utc)
-    except (OverflowError, ValueError):
+    except (OverflowError, ValueError, TypeError, RuntimeError):
         return None
 
 

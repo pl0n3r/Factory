@@ -10,10 +10,44 @@ reservas en producción.
 
 **No se autoriza activar un cron mutante** hasta integrar un colector auténtico
 de evidencia y un ejecutor serializado, y demostrar los casos de carrera.
-El workflow \`.github/workflows/liberar-reservas.yml\` está presente
-como auditoría de solo lectura cada 10 minutos: ejecuta contratos locales tras
-preflight de cuota >=20%; **no consulta actividad real ni modifica reservas**.
-La integración autenticada/ejecutora queda pendiente de otra etapa.
+El workflow \`.github/workflows/liberar-reservas.yml\` es una auditoría de
+solo lectura cada 10 minutos: en `pull_request` ejecuta contratos **offline**
+sin consumir cuota REST; en `schedule/workflow_dispatch` de `main` requiere
+cuota >=20 %, consulta por GET un **censo agregado** de Issues abiertos y
+vuelve a comprobar #767 antes de publicar conteos. Ese censo **no acredita
+inactividad individual**, no libera reservas ni modifica sus marcadores.
+La integración autenticada del mutador sigue pendiente.
+
+## Inspector REST agregado en la rama de #1175 (NO operativo)
+
+El PR #1248 incorpora `scripts/lease_github_port.py` como **frontera
+únicamente de lectura**, y `tests/test_lease_github_port.py` con fakes.
+El inspector consume `collect_activity()` y vuelve a consultar el
+interruptor **global** `/repos/pl0n3r/Factory/issues/767` antes y después.
+Valida el objeto mediante el parser canónico (incluido el rechazo de claves
+JSON repetidas), sin sustituir la fuente por un Issue local del consumidor.
+Una observación positiva emite solo `RECENT_ACTIVITY`; la ausencia,
+ambigüedad, cuota baja, 403, 429, paginación parcial o carrera emite `UNKNOWN`.
+Ninguno de esos resultados autoriza liberación.
+
+**Implementado en modo GET-only:** `recovery_note()` verifica procedencia
+de `github-actions[bot]`, nota de recuperación, UUID/SHA/pins y comentarios
+paginados con doble lectura. `recovery_label()` comprueba el evento `labeled`
+atribuido al mismo bot, correlacionado con la nota, y repite el timeline.
+Los dos métodos fallan cerrados ante páginas incompletas, cambios concurrentes,
+403/429 o datos ambiguos. El Port compara también el conjunto de etiquetas,
+asignados y comentarios entre lecturas, aun si `updated_at` no varía.
+
+**Aún falta** una prueba autenticada y completa de **ausencia de actividad**
+del titular durante la ventana, junto con el verdadero lock del Port y las
+operaciones CAS de escritura. Por ello `read/lock/append/status` continúan
+rechazados mediante `PortNotArmed`, incluso si un caller activa
+`mutations_authorized`. El cron no importa ese Port, mantiene
+`contents: read`, `issues: read` y **cero escrituras**. Compartir el grupo
+`factory-coordination-${{ github.repository_id }}` para cron/dispatch es
+una exclusión a nivel workflow, no un CAS del Issue; los PR tienen un grupo
+independiente. Ninguna prueba parcial satisface AC-03 o autoriza activar
+`FACTORY_LEASE_AUTO_RELEASE_ENABLED`.
 
 ## Semántica temporal explícita
 
@@ -32,6 +66,24 @@ El decisor implementa conservadoramente el **alcance más restrictivo**:
 
 La propiedad \`libera_en_min\` es un tiempo mínimo restante según evidencia,
 **no una promesa de cron ni una fecha de expiración con autoridad propia**.
+
+El inspector de solo lectura expone este límite únicamente tras una
+observación positiva autenticada de actividad reciente (actividad + 40 min).
+Para un estado `UNKNOWN` devuelve `None`. El campo NO predice el momento del
+cron, no sustituye el tiempo de la etiqueta de recuperación ni habilita
+escrituras: sigue pendiente la fuente completa de ausencia de actividad y el
+CAS real de AC-03. El cron actual no publica este dato por Issue.
+
+El runner de preparación ofrece `observe_recent_activity([issue], port, now=...)`
+para obtener una proyección mínima del inspector auténtico: Issue, estado
+`RECENT_ACTIVITY`/ `UNKNOWN` y `libera_en_min` si es verificable. Limita a
+**un Issue por invocación** (GETs acotados), rechaza entradas inválidas,
+mantiene UUID/titular/cuerpos fuera del resultado y fija
+`release_authorized=False`. Ante errores de red, pausa, carrera o cuota,
+la respuesta es `UNKNOWN`, plazo ausente y cero escrituras. Es una API
+inyectable y offline: **aún no está conectada al cron**, no recopila evidencia
+negativa de inactividad, no constituye aceptación AC-03 ni ejecuta la
+transición mutante.
 
 ## Evidencia que un colector futuro deberá probar
 
@@ -69,15 +121,98 @@ La re-adopción usa el contrato existente
 la reserva previa. No inferir que \`/tomar\` puede adoptar una rama huérfana
 sin esa etapa.
 
+## Bloqueo de AC-03: CAS real entre GitHub Issues y Coordinación
+
+**Estado:** diseño de integración pendiente, no funcionalidad operativa. Esta
+sección no modifica el marker de aceptación, la reserva V3, el coordinador ni
+el permiso de escritura del cron.
+
+### Garantías disponibles (y cuáles no)
+
+- En `.github/workflows/coordinacion-trabajo.yml` los comandos /tomar,
+  /liberar y la recuperación usan el grupo
+  `factory-coordination-${{ github.repository_id }}`, con
+  `cancel-in-progress: false`. La auditoría programada comparte ese grupo;
+  sus ejecuciones de PR utilizan otro. Es exclusión entre *esas ejecuciones*,
+  no un lock arbitrario adquirible desde Python ni un CAS de Issues. Mantener
+  una cola no destructiva y verificar la procedencia del workflow antes de
+  escribir es imprescindible.
+- Las lecturas condicionales `If-None-Match` de GitHub REST son para GET.
+  GitHub documenta que las peticiones condicionales sobre POST/PATCH/PUT/DELETE
+  no están soportadas salvo indicación expresa del endpoint. Por ello un
+  GET + comparación local + PATCH del Issue **no es CAS atómico**, aun con
+  dos lecturas y `updated_at` estable.
+- GitHub GraphQL **`updateRefs`** sí ofrece un `RefUpdate.beforeOid`
+  que condiciona atómicamente el cambio de una referencia Git al OID previo.
+  Es una primitiva candidata para un journal/fence duradero de transiciones,
+  **no** un CAS de etiquetas/comentarios. No asumir que toda mutación de Issues
+  respeta ese fence. No usar el HEAD de la rama de trabajo como candado ni
+  hacer force-push para adquirirlo.
+
+Referencias oficiales: [REST y solicitudes condicionales](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api),
+[GraphQL Git: updateRefs/beforeOid](https://docs.github.com/en/graphql/reference/git) y
+[Actions concurrency](https://docs.github.com/en/actions/concepts/workflows-and-actions/concurrency).
+
+### Contrato necesario antes de implementar Port.lock/append/status
+
+1. **Escritor común**: Coordinación y liberador deben acordar el mismo
+   journal/fence y la misma exclusión. Adaptar al escritor canónico
+   `scripts/coordinar_trabajo.py` para respetar ese protocolo **requiere un
+   claim/contrato propio**, pues no está dentro de los ocho paths reservados
+   por #1175. Ninguna versión parcial de este PR puede suplantarlo.
+2. **Adquisición demostrable**: recibir el contexto autenticado de ejecución
+   de Actions desde la entrada canónica `main`, comprobar grupo y repo ID,
+   y ejecutar una transición de `beforeOid` a `afterOid` *reales* sin
+   `force`. Un error de precondición, respuesta incompleta, 403/429 o
+   timeout devuelve UNKNOWN; nunca se asume posesión del lock por un
+   objeto `with` local ni por una variable de entorno sin autenticar.
+3. **Lectura con atribución**: demostrar ausencia de actividad del *agente
+   titular*, no meramente del login `pl0n3r` compartido por otras sesiones.
+   Los timestamps editables del autor de un commit y los resultados
+   `commits?since=` no demuestran ausencia de pushes; una ventana parcial,
+   sesión no atribuible o paginación incompleta producen UNKNOWN.
+4. **Precondición bajo exclusión**: #767 CLOSED/RUNNING en su URL absoluta,
+   `construccion`, presupuesto efectivo >=20 %, último marker bot y
+   `reservation_id`, HEAD de rama, contrato de aceptación/claim pin,
+   Issue/etiquetas, comentarios completos, nota y evento de recuperación,
+   reviews/CI/push del titular revalidados. Si cualquiera cambia, no mutar.
+5. **Commit y reconciliación**: tras acreditar el fence y el estado exacto,
+   registrar un ID idempotente de operación en el journal; publicar a través
+   de un escritor autorizado el marker V3 de bot `active:false` (mismo UUID
+   y pins), transicionar la etiqueta a `estado: disponible`, releer y
+   comprobar terminalidad. Una caída entre comentario y etiqueta mantiene
+   `partial/UNKNOWN`: reanudar solo con el mismo ID y nuevo fence validado,
+   sin segundo marker y sin perder la rama huérfana.
+6. **Pruebas contractuales**: dos ejecutores concurrentes con el mismo
+   `beforeOid` (solo uno vence), cambio externo de UUID/HEAD/claim bajo
+   carrera, recuperación del titular entre lecturas, lock sin procedencia,
+   escritor de Coordinación que ignora fence, fallo después del comentario,
+   reintento idempotente, 403/429, eventos históricos ambiguos y kill switch
+   PAUSED. AC-03 debe ejercer la ruta REAL y verificar la ausencia de doble
+   escritura, no simplemente crear el método con el nombre exigido.
+
+**Criterio de salida:** hasta que ambos escritores participen del protocolo
+atómico, exista una fuente verificable de inactividad del titular y un dry-run
+autenticado muestre los negativos, `LeaseGithubPort.read/lock/append/status`
+siguen `PortNotArmed`. Feature flag OFF, cero POST/PATCH/DELETE del cron,
+PR DRAFT, y ninguna aceptación/merge/go-live por inferencia. Esta restricción
+es de seguridad de la funcionalidad, no un fallo que deba ignorar `Validar`.
+
 ## Criterios y puertas para activar
 
 - AC-01: decisor y negativos 29/30/39/40/49/50 min, quota 19/20%,
   datos ausentes, PAUSED, fase live, CHANGES_REQUESTED, CI activo.
 - AC-02: compatibilidad del test existente de coordinación, que evita
   robar reservas sin evidencia temporal válida.
-- Bloqueos de implementación pendiente: colector GitHub y ejecución
-  serializada con pruebas de carrera, workflow programado cada 10 min,
-  permisos mínimos y revisión independiente de seguridad.
+- Preparación ya comprobada: cron de 10 minutos, modo PR offline,
+  censo GET-only con doble comprobación de #767, serialización de workflows
+  y pruebas de decisiones/carreras con fakes. Ninguna parte escribe en GitHub.
+- Bloqueos pendientes: prueba autoritativa de ausencia de push/comentarios/
+  actividad y CI del titular durante 30+10 min; `Port.read` íntegro,
+  `Port.lock` compartido real, escrituras CAS idempotentes con prueba de
+  aceptación AC-03, 403/429 y relectura de notas/etiquetas bajo lock;
+  observación de dry-run real, todas las gates exact-HEAD verdes y revisión
+  de seguridad antes de habilitar cualquier mutación.
 - No habilitar release, auto-merge, movimiento de \`v1\`, deploy ni live
   mediante este trabajo.
 

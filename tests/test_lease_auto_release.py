@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 from scripts.lease_auto_release import (
@@ -104,6 +104,31 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                                            recovery_minute=30), **changed)).action,
                     "release",
                 )
+
+    def test_timezone_without_verifiable_offset_cannot_release(self):
+        class UndefinedOffset(tzinfo):
+            def utcoffset(self, dt):
+                return None
+
+            def dst(self, dt):
+                return None
+
+        class ExplosiveOffset(UndefinedOffset):
+            def utcoffset(self, dt):
+                raise RuntimeError("offset not verifiable")
+
+        baseline = fixture(50, status=RECOVERY, recovery_minute=30)
+        self.assertEqual(decide(baseline).action, "release")
+        for clock in ("now", "last_activity_at", "recovery_since"):
+            for timezone_impl in (UndefinedOffset(), ExplosiveOffset()):
+                with self.subTest(clock=clock, tz=type(timezone_impl).__name__):
+                    ambiguous = START.replace(tzinfo=timezone_impl)
+                    result = decide(replace(baseline, **{clock: ambiguous}))
+                    self.assertEqual(result.action, "unknown")
+                    self.assertEqual(result.reason, (
+                        "unverifiable_recovery_clock"
+                        if clock == "recovery_since" else
+                        "unverifiable_activity_clock"))
 
     def test_original_owner_return_or_competing_evidence_preserves_lease(self):
         case = fixture(50, status=RECOVERY, recovery_minute=30)
