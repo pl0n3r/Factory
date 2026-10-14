@@ -127,10 +127,17 @@ def inventory_from_paginated_issues(pages: Any) -> RecoveryInventory | None:
             open_count += 1
             labels = issue["labels"]
             if any(type(label) is not dict
-                   or type(label.get("name")) is not str for label in labels):
+                   or type(label.get("name")) is not str
+                   or not label["name"] or label["name"] != label["name"].strip()
+                   for label in labels):
                 return None
             names = [label["name"] for label in labels]
-            if len(names) != len(set(names)):
+            # GitHub trata etiquetas como nombres sin distinción de caja.
+            # Dos alias o "ESTADO: ..." no certifican el mismo censo.
+            if len(names) != len({name.casefold() for name in names}):
+                return None
+            if any(name.casefold().startswith("estado:")
+                   and not name.startswith("estado: ") for name in names):
                 return None
             statuses = [name for name in names if name.startswith("estado: ")]
             if len(statuses) > 1:
