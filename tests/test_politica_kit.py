@@ -303,6 +303,14 @@ class T(unittest.TestCase):
         # Six distinct authenticated categories stay mandatory. Neither a
         # previous failed nor the current pending policy may require itself.
         policy.validate_other_gates_green(checks, head_sha=HEAD)
+        # A real reusable Policy failure is equally the previous failed
+        # attempt required for the narrowly scoped rerun fallback.
+        comments, events = sha_less_fixture()
+        prior = green_gate_checks() + [check(
+            check_id=925, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+            conclusion="failure", completed_at="2026-10-04T05:01:00Z",
+        )]
+        self.assertEqual(sha_less_validate(comments, events, checks=prior)[0], 202)
         without_codeql = [
             item for item in checks
             if json.loads(item)["name"] != "CodeQL"
@@ -346,6 +354,17 @@ class T(unittest.TestCase):
         rows = good + [prior_policy, pending]
         with self.assertRaisesRegex(PolicyError, "Check pendiente"):
             policy.validate_other_gates_green(rows, head_sha=HEAD)
+
+        # Only the exact authenticated reusable name may prove an earlier
+        # policy failure. Homonyms cannot manufacture retry provenance.
+        comments, events = sha_less_fixture()
+        impostor_failure = green_gate_checks() + [check(
+            check_id=935,
+            name="politica / Validar decisiones y límite de revisión / extra",
+            conclusion="failure", completed_at="2026-10-04T05:01:00Z",
+        )]
+        with self.assertRaises(PolicyError):
+            sha_less_validate(comments, events, checks=impostor_failure)
 
     def test_gates_require_distinct_authenticated_check_ids(self):
         """AC-02: una cadena con seis substrings no acredita seis gates."""

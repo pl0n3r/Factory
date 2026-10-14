@@ -909,7 +909,10 @@ def validate_rate_limit_fallback(
 
     failed_policy_checks: list[str] = []
     for check in parse_checks(check_lines):
-        if (check.get("name") == POLICY_CHECK_NAME
+        # The reusable Actions job publishes a different exact check name.
+        # Earlier failures of either trusted Policy job can establish the
+        # narrow precondition for a retry; independent gates remain required.
+        if (check.get("name") in {POLICY_CHECK_NAME, POLICY_WORKFLOW_CHECK_NAME}
                 and check.get("head_sha") == head_sha
                 and check.get("status") == "completed"
                 and check.get("conclusion") == "failure"):
