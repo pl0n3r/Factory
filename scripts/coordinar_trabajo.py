@@ -3398,9 +3398,28 @@ def adopt_orphaned_contract(
         raise CoordinationError(
             f"Issue #{issue_number} ya tiene una reserva activa; no es huérfano."
         )
+    def canonical_adoption_state(record: dict[str, Any]) -> str:
+        """Una rama huérfana no reactiva trabajo bloqueado ni cerrado."""
+        labels = record.get("labels")
+        if type(labels) is not list or any(
+            type(label) is not dict or type(label.get("name")) is not str
+            for label in labels
+        ):
+            raise CoordinationError("Issue con estado incompatible para adopción.")
+        visible = [
+            label["name"] for label in labels
+            if label["name"].casefold().startswith(("estado:", "status:"))
+        ]
+        allowed = {STATUS_AVAILABLE, STATUS_RESERVED, STATUS_REVIEW,
+                   STATUS_RECOVERY}
+        if len(visible) != 1 or visible[0] not in allowed:
+            raise CoordinationError("Issue con estado incompatible para adopción.")
+        return visible[0]
+
     issue = api.issue(issue_number)
     if issue.get("state") != "open":
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
+    initial_state = canonical_adoption_state(issue)
     branch = branch_for_issue(issue_number)
     branch_sha = api.branch_sha(branch)
     if branch_sha is None:
@@ -3422,6 +3441,7 @@ def adopt_orphaned_contract(
             raise CoordinationError("Lock V3 de adopción reemplazado.")
         refreshed = api.issue(issue_number)
         if (refreshed.get("state") != "open"
+                or canonical_adoption_state(refreshed) != initial_state
                 or str(refreshed.get("body") or "") != body_at_start
                 or api.branch_sha(branch) != branch_sha
                 or open_pull_records_for_branch(api, branch) != open_pulls):
