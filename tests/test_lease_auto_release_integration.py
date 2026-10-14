@@ -561,9 +561,12 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             api.pulls[0]["body"] = canonical_review_pr_body()
             return api
 
+        pinned = json.loads(marker().split("<!-- condor-reserva ", 1)[1]
+                            .split(" -->", 1)[0])
         lease = replace(
             snapshot(recovery=False), repository_id=123, issue=21,
             branch="trabajo/issue-21", branch_sha="a" * 40,
+            reservation_id=pinned["reservation_id"],
             status="estado: en revisión",
         )
         for state, verdict in (
