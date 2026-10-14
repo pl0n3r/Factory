@@ -252,10 +252,17 @@ jobs:
               json.dumps(sorted(managed), separators=(",", ":")), encoding="utf-8",
           )
           PY
+          # Fallo de jq en sustitución de proceso no propaga su exit code
+          # al while: materializar primero y validar con pasos sincrónicos.
+          jq -e 'type == "array" and length <= 10 and
+                 all(.[]; type == "number" and . > 0 and floor == .)' \
+            "$RUNNER_TEMP/lease-active-issues.json" > /dev/null
+          jq -r '.[]' "$RUNNER_TEMP/lease-active-issues.json" \
+            > "$RUNNER_TEMP/lease-active-issue-numbers.txt"
           while IFS= read -r issue_number; do
             [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
               echo "::error::Inventario de Issues inválido; fail-closed."
               exit 1
             }
             python3 -m scripts.lease_auto_release_integration "$issue_number"
-          done < <(jq -r '.[]' "$RUNNER_TEMP/lease-active-issues.json")
+          done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"
