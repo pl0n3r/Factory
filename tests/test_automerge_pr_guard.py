@@ -1519,6 +1519,7 @@ class PullRequestReviewEventTests(unittest.TestCase):
             ("repository", {"full_name": "pl0n3r/Factory", "default_branch": "unsafe"}),
             ("review", None),
             ("review", {"state": "unknown", "user": {"login": "tester"}}),
+            ("review", {"state": ["commented"], "user": {"login": "tester"}}),
             ("review", {"state": "commented"}),
         ]
         for field, value in mutations:
