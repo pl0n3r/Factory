@@ -168,6 +168,18 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
                                       {"name": "estado: reservado"}]}]],
             [[{**issue(1), "labels": [{"name": "estado: reservado"},
                                       {"name": "estado: reservado"}]}]],
+            # Nombres case-insensitive: no aceptar doble alias de GitHub.
+            [[{**issue(1), "labels": [
+                {"name": "estado: reservado"}, {"name": "ESTADO: RESERVADO"}]}]],
+            [[{**issue(1), "labels": [
+                {"name": "estado: en revisión"}, {"name": "Tipo: PRODUCTO"},
+                {"name": "tipo: producto"}]}]],
+            # Estado de etiqueta en otra caja no puede desaparecer del censo.
+            [[issue(1, "ESTADO: reservado")]],
+            [[issue(1, "estado:reservado")]],
+            [[issue(1, "estado: reservado ")]],
+            [[{**issue(1), "labels": [
+                {"name": "estado: reservado"}, {"name": None}]}]],
             [[{**issue(1), "pull_request": "untrusted"}]],
         ]
         for value in invalid:
