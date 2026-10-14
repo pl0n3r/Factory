@@ -39,6 +39,55 @@ def _unknown(issue: int, reason: str) -> IntegrationPreview:
     return IntegrationPreview(issue, "UNKNOWN", "unknown", reason)
 
 
+class _GhReadOnlyAPI:
+    """Puente GH CLI autenticado con allowlist estricta de GET; nunca muta."""
+    repo = "pl0n3r/Factory"
+    authenticated = True
+
+    def request(self, method: str, path: str) -> Any:
+        import json
+        import re
+        import subprocess
+
+        if (method != "GET" or type(path) is not str
+                or not (path == "/rate_limit"
+                        or path.startswith("/repos/pl0n3r/Factory/"))
+                or "://" in path or "#" in path or ".." in path
+                or any(ord(ch) < 32 for ch in path)
+                or re.search(r"[\s;&|$<>]", path)):
+            raise PermissionError("read_only_transport")
+        try:
+            result = subprocess.run(
+                ["gh", "api", "-H", "Accept: application/vnd.github+json", path],
+                check=True, capture_output=True, text=True, timeout=20,
+            )
+            return json.loads(result.stdout)
+        except Exception:
+            # No propagar stderr, URL ni fragmentos de payload a logs.
+            raise RuntimeError("authenticated_get_failed") from None
+
+
+def observe_issue_cli(issue: int) -> IntegrationPreview:
+    """Ejecuta solo lecturas reales. UNKNOWN es un resultado válido y seguro."""
+    import os
+    from datetime import datetime, timezone
+    from scripts.lease_github_port import LeaseGithubPort
+
+    if os.environ.get("GITHUB_REPOSITORY") != _GhReadOnlyAPI.repo:
+        return _unknown(issue if type(issue) is int and issue > 0 else 0,
+                        "repository_not_authorized")
+    api = _GhReadOnlyAPI()
+    now = datetime.now(timezone.utc)
+    # armed=True permite construir Snapshot, pero el transporte rechaza
+    # cualquier verbo distinto de GET. Nunca se entrega este Port al executor.
+    port = LeaseGithubPort(
+        api, armed=True,
+        concurrency_group="factory-coordination-123",
+        clock=lambda: now,
+    )
+    return preview_integrated_activity(api, port, issue, now=now)
+
+
 
 def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
                           remaining: int, limit: int) -> bool | None:
@@ -271,3 +320,29 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
     except Exception:
         # Sin nombres de usuario, payloads, headers ni tokens en errores.
         return _unknown(issue, "unverifiable_integration")
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+
+    try:
+        if len(sys.argv) != 2 or not sys.argv[1].isdecimal():
+            raise ValueError("invalid_issue_argument")
+        issue_number = int(sys.argv[1])
+        result = observe_issue_cli(issue_number)
+        print(json.dumps({
+            "issue": result.issue,
+            "state": result.state,
+            "action": result.action,
+            "reason": result.reason,
+            "release_authorized": False,
+            "mutations": 0,
+        }, sort_keys=True))
+    except Exception:
+        # El cron emite únicamente un estado sanitizado y continúa fail-closed.
+        print(json.dumps({
+            "state": "UNKNOWN", "action": "unknown",
+            "reason": "observer_failed", "release_authorized": False,
+            "mutations": 0,
+        }, sort_keys=True))
