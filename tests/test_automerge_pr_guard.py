@@ -1367,6 +1367,7 @@ set -euo pipefail
 case "$*" in
   "api "*) echo "${STUB_MERGEABLE:-clean}" ;;
   "pr merge --auto "*)
+    if [[ "${STUB_AUTO_ERROR:-no}" == queued ]]; then echo pending > "$STUB_FLAG"; exit 49; fi
     if [[ "${STUB_AUTO_ERROR:-no}" == yes ]]; then exit 49; fi
     if [[ "${STUB_VIEW:-null}" == merged ]]; then echo merged > "$STUB_FLAG";
     else echo pending > "$STUB_FLAG"; fi ;;
@@ -1391,6 +1392,8 @@ esac
             ("deferred_revoke_fails", "null", "yes", "clean", "pending", False),
             ("malformed_response", "malformed", "no", "clean", "disabled", False),
             ("actually_merged", "merged", "no", "clean", "merged", True),
+            ("merge_request_fails_after_queue", "null", "no", "clean", "disabled", False),
+            ("merge_request_fails_after_queue_and_revoke_fails", "null", "yes", "clean", "pending", False),
             ("blocked_before_command", "null", "no", "blocked", "untouched", False),
         )
         script = self.merge_section()
@@ -1408,7 +1411,8 @@ esac
                                PR_SHA=SHA, GITHUB_REPOSITORY="pl0n3r/Factory",
                                PR_NUMBER="1375", STUB_FLAG=str(marker),
                                STUB_VIEW=view, STUB_DISABLE_ERROR=disable_err,
-                               STUB_MERGEABLE=mergeable)
+                               STUB_MERGEABLE=mergeable,
+                               STUB_AUTO_ERROR=("queued" if name.startswith("merge_request_fails_after_queue") else "no"))
                     result = subprocess.run(["bash", "-c", script], capture_output=True,
                                             text=True, env=env, timeout=5, check=False)
                     self.assertEqual(result.returncode == 0, success,
