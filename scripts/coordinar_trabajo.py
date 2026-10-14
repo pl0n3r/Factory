@@ -3389,7 +3389,7 @@ def adopt_orphaned_contract(
     actor: str,
     association: str,
 ) -> str | None:
-    """Adopta explícitamente una rama huérfana y fija su contrato actual."""
+    """Adopta solo bajo lock CAS de Issue; jamás suplanta una V3 concurrente."""
     if not authorized(association):
         raise CoordinationError(
             f"@{actor} no tiene una asociación autorizada para adoptar trabajo."
@@ -3398,71 +3398,86 @@ def adopt_orphaned_contract(
         raise CoordinationError(
             f"Issue #{issue_number} ya tiene una reserva activa; no es huérfano."
         )
-
     issue = api.issue(issue_number)
     if issue.get("state") != "open":
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
     branch = branch_for_issue(issue_number)
-    if api.branch_sha(branch) is None:
+    branch_sha = api.branch_sha(branch)
+    if branch_sha is None:
         raise CoordinationError(
             f"No existe la rama huérfana {branch}; usa /tomar para trabajo nuevo."
         )
-
-    fingerprint = contract_fingerprint(str(issue.get("body") or ""))
-    reservation_id = new_reservation_id()
+    body_at_start = str(issue.get("body") or "")
+    fingerprint = contract_fingerprint(body_at_start)
+    task_marker = parse_task_marker(body_at_start)
     open_pulls = open_pull_records_for_branch(api, branch)
-    publish_reservation(
-        api,
-        issue_number,
-        actor,
-        reservation_id,
-        branch,
-        True,
-        "adoptar-contrato-huerfana",
-        (
-            f"Rama huérfana adoptada explícitamente con contrato fijado; "
-            f"se conserva {branch} y "
-            + (
-                ", ".join(
-                    f"PR #{pull['number']}"
-                    for pull in open_pulls
-                    if isinstance(pull.get("number"), int)
-                )
-                or "sin PR abierto"
-            )
-            + "."
-        ),
-        fingerprint,
-        parse_task_marker(str(issue.get("body") or "")),
-    )
-    winner = active_reservation(api, issue_number)
-    if (
-        not winner
-        or winner["reservation_id"] != reservation_id
-        or winner.get("acceptance_sha256") != fingerprint
-    ):
+
+    # Publicar sin lock permitiría tapar una lease V3 creada tras el GET.
+    require_global_running(api)
+    token = api.acquire_issue_lock(issue_number, branch_sha)
+    if token is None:
         return None
+    try:
+        if api.branch_sha(recovery_lock_branch(issue_number)) != token:
+            raise CoordinationError("Lock V3 de adopción reemplazado.")
+        refreshed = api.issue(issue_number)
+        if (refreshed.get("state") != "open"
+                or str(refreshed.get("body") or "") != body_at_start
+                or api.branch_sha(branch) != branch_sha
+                or open_pull_records_for_branch(api, branch) != open_pulls):
+            raise CoordinationError(
+                "Issue, rama o PR cambió durante adopción huérfana."
+            )
+        if active_reservation(api, issue_number) is not None:
+            raise CoordinationError(
+                f"Issue #{issue_number} ya tiene una reserva activa; no es huérfano."
+            )
 
-    api.set_status(
-        issue_number,
-        STATUS_REVIEW if open_pulls else STATUS_RESERVED,
-    )
-    api.try_assign(issue_number, actor)
-    for pull in open_pulls:
-        number = pull.get("number")
-        if not isinstance(number, int):
-            continue
-        body = str(api.pull(number).get("body") or "")
-        api.update_pull_body(
-            number,
-            rewrite_pull_reservation(body, reservation_id),
+        guarded = _RecoveryGuardedGitHub(api, issue_number, branch_sha, token)
+        reservation_id = new_reservation_id()
+        publish_reservation(
+            guarded, issue_number, actor, reservation_id, branch,
+            True, "adoptar-contrato-huerfana",
+            (
+                f"Rama huérfana adoptada explícitamente con contrato fijado; "
+                f"se conserva {branch} y "
+                + (
+                    ", ".join(
+                        f"PR #{pull['number']}"
+                        for pull in open_pulls
+                        if isinstance(pull.get("number"), int)
+                    )
+                    or "sin PR abierto"
+                )
+                + "."
+            ),
+            fingerprint, task_marker,
         )
+        winner = active_reservation(api, issue_number)
+        if (not winner or winner["reservation_id"] != reservation_id
+                or winner.get("acceptance_sha256") != fingerprint):
+            return None
 
-    print(
-        f"Rama huérfana adoptada: Issue #{issue_number} "
-        f"-> {branch} (@{actor}, {reservation_id})"
-    )
-    return reservation_id
+        guarded.set_status(
+            issue_number, STATUS_REVIEW if open_pulls else STATUS_RESERVED,
+        )
+        guarded.try_assign(issue_number, actor)
+        for pull in open_pulls:
+            number = pull.get("number")
+            if not isinstance(number, int):
+                continue
+            body = str(api.pull(number).get("body") or "")
+            guarded.update_pull_body(
+                number, rewrite_pull_reservation(body, reservation_id),
+            )
+        print(
+            f"Rama huérfana adoptada: Issue #{issue_number} "
+            f"-> {branch} (@{actor}, {reservation_id})"
+        )
+        return reservation_id
+    finally:
+        # Solo su token CAS propio; jamás borrar el lock del siguiente actor.
+        api.release_issue_lock(issue_number, token)
 
 
 def release_permission(
