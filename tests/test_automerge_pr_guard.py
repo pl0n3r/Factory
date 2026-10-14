@@ -1256,5 +1256,91 @@ class WorkflowRunEventTests(unittest.TestCase):
         self.assertIn('gh pr merge --disable-auto',workflow)
 
 
+class MainCliContractTests(unittest.TestCase):
+    """Exercise the real entrypoint contract; mock I/O, not its gate semantics."""
+
+    def test_main_double_checks_exact_head_and_denies_mutation(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        from io import StringIO
+        from unittest.mock import call
+        import os
+        import sys
+
+        env = {"GH_TOKEN": "test-token", "GITHUB_REPOSITORY": "pl0n3r/Factory",
+               "PR_NUMBER": "1375", "PR_SHA": SHA}
+        stdout = StringIO()
+        with patch.dict(os.environ, env, clear=True), patch.object(sys, "argv", ["guard"]), \
+             patch.object(mod, "snapshot", return_value=evidence()) as snapshot, \
+             patch.object(mod, "verify") as verify, redirect_stdout(stdout):
+            self.assertEqual(mod.main(), 0)
+        self.assertEqual(stdout.getvalue(), "AUTOMERGE_PREFLIGHT_OK " + SHA + "\n")
+        self.assertEqual(snapshot.call_args_list, [call("test-token", 1375, SHA)] * 2)
+        self.assertEqual(verify.call_count, 2)
+        self.assertEqual([arguments.args[1] for arguments in verify.call_args_list], [SHA, SHA])
+
+        # A failed second reading must block: first PASS must never be reused.
+        stderr = StringIO()
+        with patch.dict(os.environ, env, clear=True), patch.object(sys, "argv", ["guard"]), \
+             patch.object(mod, "snapshot", return_value=evidence()) as snapshot, \
+             patch.object(mod, "verify", side_effect=[None, mod.Denied("head_changed")]) as verify, \
+             redirect_stderr(stderr):
+            self.assertEqual(mod.main(), 1)
+        self.assertIn("AUTOMERGE_DENIED: head_changed", stderr.getvalue())
+        self.assertEqual(snapshot.call_count, 2)
+        self.assertEqual(verify.call_count, 2)
+
+    def test_main_never_treats_invalid_environment_as_authorization(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        import os
+        import sys
+
+        valid = {"GH_TOKEN": "test-token", "GITHUB_REPOSITORY": "pl0n3r/Factory",
+                 "PR_NUMBER": "1375", "PR_SHA": SHA}
+        for key, invalid in (("GH_TOKEN", ""), ("GITHUB_REPOSITORY", "other/repo"),
+                             ("PR_NUMBER", "nan"), ("PR_NUMBER", "0"),
+                             ("PR_SHA", "f" * 39)):
+            env = dict(valid, **{key: invalid})
+            stderr = StringIO()
+            with self.subTest(key=key, invalid=invalid), patch.dict(os.environ, env, clear=True), \
+                 patch.object(sys, "argv", ["guard"]), patch.object(mod, "snapshot") as snapshot, \
+                 redirect_stderr(stderr):
+                self.assertEqual(mod.main(), 1)
+                snapshot.assert_not_called()
+                self.assertIn("AUTOMERGE_DENIED:", stderr.getvalue())
+        with patch.dict(os.environ, valid, clear=True), patch.object(sys, "argv", ["guard", "--unsafe"]), \
+             patch.object(mod, "snapshot") as snapshot, redirect_stderr(StringIO()):
+            self.assertEqual(mod.main(), 1)
+            snapshot.assert_not_called()
+
+    def test_resolver_command_rejects_missing_input_and_uses_authenticated_identity(self):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+        from tempfile import NamedTemporaryFile
+        import os
+        import sys
+
+        env = {"GH_TOKEN": "test-token", "GITHUB_REPOSITORY": "pl0n3r/Factory"}
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(sys, "argv", ["guard", "--resolve-workflow-run"]), \
+             redirect_stderr(StringIO()):
+            self.assertEqual(mod.main(), 1)  # No event input is not authorization.
+        with NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json") as f:
+            json.dump(workflow_run_event_example(), f)
+            f.flush()
+            stdout = StringIO()
+            with patch.dict(os.environ, dict(env, GH_EVENT_PATH=f.name), clear=True), \
+                 patch.object(sys, "argv", ["guard", "--resolve-workflow-run"]), \
+                 patch.object(mod, "resolve_workflow_run", return_value=(1375, SHA)) as resolver, \
+                 redirect_stdout(stdout):
+                self.assertEqual(mod.main(), 0)
+            resolver.assert_called_once()
+            self.assertEqual(resolver.call_args.args[0], "test-token")
+            self.assertEqual(resolver.call_args.args[1]["workflow_run"]["name"], "Sonar CI-based")
+            self.assertEqual(stdout.getvalue(),
+                             "pr_number=1375\npr_sha=" + SHA +
+                             "\npr_url=https://github.com/pl0n3r/Factory/pull/1375\n")
+
+
 if __name__ == "__main__":
     unittest.main()
