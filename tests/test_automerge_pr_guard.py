@@ -261,6 +261,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
                         "`9-13`: **🔒 Security &amp; Privacy** | **🟠 Major**",
                         "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
                         "scripts/automerge_pr_guard.py:31-33: **🔒 Security & Privacy** | **🟠 Major**",
+                        "_🔒 Security &amp; Privacy_ | _🟠 Major_",
+                        "_⚠️ Potential issue_ | _🔴 Critical_",
                         "`9-13`: **🔒 Security & Privacy** | **🟠 Major**",
                         "9-13: **🔒 Security & Privacy** | **🟠 Major**",
                         "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
