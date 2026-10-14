@@ -14,6 +14,7 @@ on:
       - 'scripts/lease_github_port.py'
       - 'tests/test_lease_auto_release_run.py'
       - 'tests/test_lease_github_port.py'
+      - 'scripts/coordinar_trabajo.py'
       - 'scripts/lease_auto_release_integration.py'
       - 'tests/test_lease_auto_release_integration.py'
       - 'tests/test_lease_auto_release_workflow.py'
