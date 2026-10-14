@@ -112,6 +112,26 @@ def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
                     if origin_id == snapshot.repository_id:
                         raise ValueError("mismatched_repo")
                     continue
+                # Asociar review al PR que cierra ESTE Issue y declara
+                # exactamente la sesión V3 vigente. Compartir head.ref y
+                # SHA no basta para atribuir reviews a la lease.
+                body = pull.get("body")
+                if type(body) is not str:
+                    raise ValueError("pr_contract_missing")
+                target = re.findall(
+                    r"(?im)^\s*(?:Closes|Fixes|Resolves)\s+#(\d+)\b",
+                    body,
+                )
+                reservations = re.findall(
+                    r"<!--\s*condor-reserva-id:\s*"
+                    r"([0-9a-fA-F-]{36})\s*-->",
+                    body,
+                )
+                if (len(target) != 1 or type(snapshot.issue) is not int
+                        or int(target[0]) != snapshot.issue
+                        or len(reservations) != 1
+                        or reservations[0].lower() != snapshot.reservation_id):
+                    raise ValueError("pr_contract_mismatch")
                 base = pull.get("base")
                 if (origin_id != snapshot.repository_id
                         or head.get("sha") != snapshot.branch_sha
