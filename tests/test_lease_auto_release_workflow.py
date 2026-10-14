@@ -23,6 +23,12 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read\n  issues: read", text)
         self.assertNotIn("issues: write", text)
         self.assertNotIn("contents: write", text)
+        self.assertIn("pull-requests: read", text)
+        self.assertNotIn("pull-requests: write", text)
+        self.assertIn("Observador integrado autenticado V3", text)
+        self.assertIn("python3 -m scripts.lease_auto_release_integration 1185", text)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", text)
+
         self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", text)
         self.assertIn("GH_TOKEN: ${{ github.token }}", text)
         self.assertIn("/repos/pl0n3r/Factory/issues/767", text)
