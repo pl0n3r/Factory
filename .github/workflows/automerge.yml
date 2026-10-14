@@ -35,11 +35,11 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
-          python3 scripts/automerge_pr_guard.py
+          env -u MERGE_TOKEN python3 scripts/automerge_pr_guard.py
           # Colisiones V3: comprobación independiente de Coordinación.
-          python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation
+          env -u MERGE_TOKEN python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation
           # Revalidación de #767, freeze y evidencia exact-SHA tras Coordinación.
-          python3 scripts/automerge_pr_guard.py
+          env -u MERGE_TOKEN python3 scripts/automerge_pr_guard.py
           # --auto solo debe utilizarse cuando GitHub ya declara CLEAN.
           # Los PRs con checks sin terminar/merge diferido NO se encolan aquí.
           # SERVER_GATES_START

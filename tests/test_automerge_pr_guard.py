@@ -256,7 +256,10 @@ class AutoMergePrGuardTests(unittest.TestCase):
         header = "**🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**"
         for finding in ("- " + header, "* " + header, "+ " + header,
                         "> " + header, "### " + header,
-                        "> - " + header, "- > " + header):
+                        "> - " + header, "- > " + header,
+                        "`9-13`: " + header,
+                        "`9-13`: **🔒 Security &amp; Privacy** | **🟠 Major**",
+                        "9-13: " + header):
             with self.subTest(finding=finding, source="review"):
                 q = evidence()
                 q["reviews"][0]["body"] = finding
