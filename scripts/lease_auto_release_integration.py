@@ -221,7 +221,9 @@ def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
             reviews = pages(
                 f"/repos/{repo}/pulls/{pull['number']}/reviews"
             )
-            latest: dict[str, str] = {}
+            # GitHub diferencia ID de creación y fecha de envío. Un
+            # APPROVED con ID mayor pero enviado antes NO levanta el veto.
+            latest: dict[str, tuple[datetime, str]] = {}
             highest_id = 0
             for review in reviews:
                 author = review.get("user")
@@ -248,16 +250,21 @@ def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
                     )
                     if stamp > now.astimezone(timezone.utc):
                         raise ValueError("future_review")
-                    # Un COMMENTED o DISMISSED posterior corresponde
-                    # a OTRA revisión y no levanta un CHANGES_REQUESTED
-                    # anterior que la API siga reportando vigente. Sólo
-                    # APPROVED del mismo revisor o el cambio de estado de
-                    # la revisión original a DISMISSED despeja el veto.
-                    if state in ("COMMENTED", "DISMISSED"):
-                        latest.setdefault(author["login"], state)
-                    else:
-                        latest[author["login"]] = state
-            return "CHANGES_REQUESTED" in latest.values(), reviews
+                    # COMMENTED y DISMISSED son neutros para OTRAS
+                    # reviews: GitHub actualiza la revisión original si
+                    # realmente se descartó. Usar submitted_at, nunca ID,
+                    # para decidir el orden entre veto y aprobación.
+                    if state in ("CHANGES_REQUESTED", "APPROVED"):
+                        previous = latest.get(author["login"])
+                        if (previous is not None and stamp == previous[0]
+                                and state != previous[1]):
+                            raise ValueError("ambiguous_review_submission")
+                        if previous is None or stamp > previous[0]:
+                            latest[author["login"]] = (stamp, state)
+            return any(
+                state == "CHANGES_REQUESTED"
+                for _, state in latest.values()
+            ), reviews
 
         before = current_pull()
         veto, reviews = current_reviews(before)
