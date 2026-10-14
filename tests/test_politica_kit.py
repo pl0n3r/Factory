@@ -289,6 +289,62 @@ class T(unittest.TestCase):
                 [x for x in base if json.loads(x)["name"] != "CodeQL"]
                 + [json.dumps(missing)], head_sha=HEAD)
 
+
+    def test_other_gates_exclude_real_policy_retries_without_self_dependency(self):
+        """AC-01: solo la política real de Actions se excluye de 'otros gates'."""
+        checks = green_gate_checks() + [
+            check(check_id=920, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+                  conclusion="failure"),
+            check(check_id=921, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+                  status="in_progress", conclusion=None),
+            check(check_id=922, name=policy.POLICY_CHECK_NAME,
+                  conclusion="failure"),
+        ]
+        # Six distinct authenticated categories stay mandatory. Neither a
+        # previous failed nor the current pending policy may require itself.
+        policy.validate_other_gates_green(checks, head_sha=HEAD)
+        with self.assertRaisesRegex(PolicyError, "Faltan gates obligatorios verdes"):
+            policy.validate_other_gates_green(
+                [item for item in checks
+                 if json.loads(item)["name"] != "CodeQL"],
+                head_sha=HEAD,
+            )
+
+    def test_other_gates_self_exclusion_does_not_mask_unauthorized_or_failed_checks(self):
+        """AC-02: identity is exact; not a substring, wildcard or user label."""
+        good = green_gate_checks()
+        for name in (policy.POLICY_WORKFLOW_CHECK_NAME, policy.POLICY_CHECK_NAME):
+            # A third-party app must never gain exemption using a policy name.
+            rogue = check(check_id=930, name=name, conclusion="failure",
+                          app_slug="sonarqubecloud", app_id=12526)
+            with self.subTest(name=name), self.assertRaisesRegex(
+                PolicyError, "Emisor no autorizado"
+            ):
+                policy.validate_other_gates_green(good + [rogue], head_sha=HEAD)
+
+        for impostor in (
+            "another / " + policy.POLICY_WORKFLOW_CHECK_NAME,
+            "politica / Validar decisiones y límite de revisión / extra",
+            "Factory policy / Validar decisiones y límite de revisión-evil",
+        ):
+            with self.subTest(name=impostor), self.assertRaisesRegex(
+                PolicyError, "Check no verde"
+            ):
+                policy.validate_other_gates_green(
+                    good + [check(check_id=931, name=impostor,
+                                  conclusion="failure")],
+                    head_sha=HEAD,
+                )
+
+        pending = check(check_id=932, name="security / external gate",
+                        status="in_progress", conclusion=None)
+        with self.assertRaisesRegex(PolicyError, "Check pendiente"):
+            policy.validate_other_gates_green(
+                good + [check(check_id=933, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+                              conclusion="failure"), pending],
+                head_sha=HEAD,
+            )
+
     def test_gates_require_distinct_authenticated_check_ids(self):
         """AC-02: una cadena con seis substrings no acredita seis gates."""
         compound = check(check_id=87, name="ci sonar codeql tests coordinación privacy")
