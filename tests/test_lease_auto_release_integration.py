@@ -933,6 +933,58 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 self.assertFalse(rejected.release_authorized)
                 self.assertNotIn("private-token", str(rejected))
 
+    def test_cli_unknown_causes_nonzero_exit(self):
+        """Ejecutar el entrypoint real con fakes, sin Github ni escrituras."""
+        import contextlib
+        import io
+        from pathlib import Path
+        from unittest.mock import patch
+        import sys
+        from scripts.lease_auto_release_integration import IntegrationPreview
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / (
+            "lease_auto_release_integration.py"
+        )
+        source = path.read_text(encoding="utf-8")
+        entrypoint = "if __name__ == '__main__':" + source.split(
+            'if __name__ == "__main__":', 1
+        )[1]
+        for state, action, code in (
+            ("read_only", "wait", 0),
+            ("UNKNOWN", "unknown", 1),
+            ("read_only", "unknown", 1),
+        ):
+            with self.subTest(state=state, action=action):
+                result = IntegrationPreview(21, state, action, "synthetic")
+                scope = {"__name__": "__main__",
+                         "observe_issue_cli": lambda _: result}
+                output = io.StringIO()
+                with patch.object(sys, "argv", ["observer", "21"]):
+                    with contextlib.redirect_stdout(output):
+                        try:
+                            exec(compile(entrypoint, str(path), "exec"), scope)
+                            observed_exit = 0
+                        except SystemExit as exc:
+                            observed_exit = exc.code
+                self.assertEqual(observed_exit, code)
+                payload = json.loads(output.getvalue())
+                self.assertEqual(payload["state"], state)
+                self.assertEqual(payload["release_authorized"], False)
+                self.assertEqual(payload["mutations"], 0)
+
+        def failing(_):
+            raise RuntimeError("private-token-must-not-leak")
+
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["observer", "21"]):
+            with contextlib.redirect_stdout(output):
+                with self.assertRaises(SystemExit) as exit_status:
+                    exec(compile(entrypoint, str(path), "exec"),
+                         {"__name__": "__main__", "observe_issue_cli": failing})
+        self.assertEqual(exit_status.exception.code, 1)
+        self.assertEqual(json.loads(output.getvalue())["state"], "UNKNOWN")
+        self.assertNotIn("private-token", output.getvalue())
+
     def test_gh_cli_observer_transport_is_get_only(self):
         from types import SimpleNamespace
         from unittest.mock import patch
