@@ -416,7 +416,12 @@ def _latest_checks_by_name(
             raise PolicyError("Check sin emisor autenticado.")
         slug = app.get("slug")
         app_id = app.get("id")
-        if (
+        # Dependabot config validation is an auxiliary check, never a required gate.
+        # Trust only its exact GitHub App identity and exact check name.
+        if name == ".github/dependabot.yml":
+            if slug != "dependabot" or type(app_id) is not int or app_id != 29110:
+                raise PolicyError(f"Check con emisor desconocido: {name}.")
+        elif (
             not isinstance(slug, str)
             or type(app_id) is not int
             or TRUSTED_CHECK_APPS.get(slug) != app_id

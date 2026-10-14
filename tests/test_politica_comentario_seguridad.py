@@ -142,6 +142,18 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         source = source.replace(status_arg, "", 1).replace(
             status_read, "", 1
         ).replace(status_forward, "", 1)
+        # Normalize exactly the audited Dependabot auxiliary-emitter exception.
+        # Altering its name, app ID or fail-closed behavior invalidates the pin.
+        auxiliary_guard = (
+            '        # Dependabot config validation is an auxiliary check, never a required gate.\n'
+            '        # Trust only its exact GitHub App identity and exact check name.\n'
+            '        if name == ".github/dependabot.yml":\n'
+            '            if slug != "dependabot" or type(app_id) is not int or app_id != 29110:\n'
+            '                raise PolicyError(f"Check con emisor desconocido: {name}.")\n'
+            '        elif (\n'
+        )
+        self.assertEqual(source.count(auxiliary_guard), 1)
+        source = source.replace(auxiliary_guard, "        if (\n", 1)
         pinned_source = source.replace(
             "\n" + risk_block + "\n", "", 1
         ).replace(

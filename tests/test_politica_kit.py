@@ -366,6 +366,49 @@ class T(unittest.TestCase):
         with self.assertRaises(PolicyError):
             sha_less_validate(comments, events, checks=impostor_failure)
 
+        # A successful Dependabot configuration check is not an unknown emitter.
+        # It is additional evidence and cannot prove any of the six core gates.
+        auxiliary = check(
+            check_id=936, name=".github/dependabot.yml",
+            app_slug="dependabot", app_id=29110,
+        )
+        policy.validate_other_gates_green(good + [auxiliary], head_sha=HEAD)
+        without_codeql = [
+            row for row in good if json.loads(row)["name"] != "CodeQL"
+        ]
+        with self.assertRaisesRegex(PolicyError, "Faltan gates obligatorios verdes"):
+            policy.validate_other_gates_green(without_codeql + [auxiliary], head_sha=HEAD)
+
+        # Spoofed app, wrong ID, or any other Dependabot check name fails closed.
+        for name, slug, app_id in (
+            (".github/dependabot.yml", "github-actions", 15368),
+            (".github/dependabot.yml", "dependabot", 29111),
+            (".github/dependabot.yml", "dependabot", 29110.0),
+            (".github/dependabot.yml/extra", "dependabot", 29110),
+            ("CodeQL", "dependabot", 29110),
+        ):
+            impostor = check(
+                check_id=937, name=name, app_slug=slug, app_id=app_id,
+            )
+            with self.subTest(name=name, slug=slug, app_id=app_id):
+                with self.assertRaisesRegex(PolicyError, "Check con emisor desconocido"):
+                    policy.validate_other_gates_green(good + [impostor], head_sha=HEAD)
+
+        for status, conclusion, message in (
+            ("in_progress", None, "Check pendiente"),
+            ("completed", "failure", "Check no verde"),
+        ):
+            auxiliary_not_green = check(
+                check_id=938, name=".github/dependabot.yml",
+                app_slug="dependabot", app_id=29110,
+                status=status, conclusion=conclusion,
+            )
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(PolicyError, message):
+                    policy.validate_other_gates_green(
+                        good + [auxiliary_not_green], head_sha=HEAD,
+                    )
+
     def test_gates_require_distinct_authenticated_check_ids(self):
         """AC-02: una cadena con seis substrings no acredita seis gates."""
         compound = check(check_id=87, name="ci sonar codeql tests coordinación privacy")
