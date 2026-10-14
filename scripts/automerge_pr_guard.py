@@ -207,6 +207,12 @@ def verify_pr(snapshot, expected):
     issue_links = CLOSING_ISSUE.findall(pr_body) if type(pr_body) is str else []
     if (match is None or issue_links != [match.group(1)]):
         raise Denied("branch_issue_link_noncanonical")
+    # A pending GitHub auto-merge is mutable future authority. A clean
+    # preflight cannot validate or revoke an already queued merge.
+    if "auto_merge" not in pr:
+        raise Denied("pr_auto_merge_state_unknown")
+    if pr["auto_merge"] is not None:
+        raise Denied("preexisting_deferred_auto_merge")
     if (pr.get("state") != "open" or pr.get("draft") is not False
             or pr.get("mergeable") is not True
             or type(head) is not dict or type(base) is not dict

@@ -43,7 +43,7 @@ def evidence():
     return {"switch": {"number": 767, "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
                        "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
                        "state": "closed", "user": {"login": "pl0n3r"}, "body": MARKER},
-            "pr": {"state": "open", "draft": False, "mergeable": True, "changed_files": 3,
+            "pr": {"state": "open", "draft": False, "mergeable": True, "auto_merge": None, "changed_files": 3,
                    "head": {"sha": SHA, "ref": "trabajo/issue-1364", "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
                    "base": {"ref": "main", "sha": BASE},
                    "body": "Closes #1364\n<!-- condor-reserva-id: 5467dbb7-9e6b-4f5a-bffe-eb90f2beabd8 -->"}, "main_sha": BASE,
@@ -78,6 +78,19 @@ class AutoMergePrGuardTests(unittest.TestCase):
     def deny(self, data):
         with self.assertRaises(mod.Denied):
             mod.verify(data, SHA, NOW)
+
+    def test_preexisting_deferred_auto_merge_never_authorizes_guard(self):
+        """Queued server-side merges must not inherit this preflight authority."""
+        mod.verify(evidence(), SHA, NOW)
+        for queued in ({"enabled_by": {"login": "pl0n3r"}, "merge_method": "SQUASH"},
+                       {}, True, "pending"):
+            with self.subTest(queued=queued):
+                q = evidence()
+                q["pr"]["auto_merge"] = queued
+                self.deny(q)
+        q = evidence()
+        q["pr"].pop("auto_merge")
+        self.deny(q)
 
     def test_coderabbit_unfinished_review_never_authorizes_merge(self):
         # A nominally successful CodeRabbit status/review that explicitly
