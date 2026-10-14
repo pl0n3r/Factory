@@ -2362,16 +2362,17 @@ def recover_existing_work_if_stale(
     """Recupera trabajo stale o marcado explícitamente para recuperación."""
     issue = api.issue(issue_number)
     recovery_required = STATUS_RECOVERY in label_names(issue)
-    if recovery_required:
-        _require_auto_recovery_ownership(
-            api, issue_number, current, actor, expected_session,
-        )
     if (
         current is not None
         and not recovery_required
         and not work_is_stale(api, issue_number, branch)
     ):
         return None
+    # La nota llega antes que la etiqueta. El takeover está prohibido
+    # también durante un append parcialmente confirmado.
+    _require_auto_recovery_ownership(
+        api, issue_number, current, actor, expected_session,
+    )
     require_global_running(api)
     if not ensure_recovery_branch(api, branch):
         return None
@@ -2400,16 +2401,16 @@ def recover_existing_work_if_stale(
 
         latest = active_reservation(api, issue_number)
         recovery_required = STATUS_RECOVERY in labels
-        if recovery_required:
-            _require_auto_recovery_ownership(
-                api, issue_number, latest, actor, expected_session,
-            )
         if (
             latest is not None
             and not recovery_required
             and not work_is_stale(api, issue_number, branch)
         ):
             return None
+        # Revalidar incluso sin RECOVERY visible: fallo parcial tras nota.
+        _require_auto_recovery_ownership(
+            api, issue_number, latest, actor, expected_session,
+        )
         if api.branch_sha(branch) != branch_sha:
             raise CoordinationError("HEAD cambió antes de recuperar con lock V3.")
         return recover_stale_work(
