@@ -1055,19 +1055,75 @@ def resolve_workflow_run(token, event):
     return number, head["sha"]
 
 
+
+def validate_pull_request_review_event(event):
+    """Accept review submissions only as a wake-up signal for a current internal PR."""
+    if type(event) is not dict or event.get("action") != "submitted":
+        raise Denied("pull_request_review_action_invalid")
+    repo = event.get("repository")
+    review = event.get("review")
+    pr = event.get("pull_request")
+    if (type(repo) is not dict or repo.get("full_name") != REPO
+            or repo.get("default_branch") != "main"
+            or type(review) is not dict or type(review.get("state")) is not str
+            or type(pr) is not dict):
+        raise Denied("pull_request_review_untrusted_or_incomplete")
+    number = pr.get("number")
+    head, base = pr.get("head"), pr.get("base")
+    if (type(number) is not int or isinstance(number, bool) or number <= 0
+            or pr.get("state") != "open" or pr.get("draft") is not False
+            or type(head) is not dict or type(base) is not dict
+            or type(head.get("ref")) is not str
+            or CANONICAL_BRANCH.fullmatch(head["ref"]) is None
+            or type(head.get("sha")) is not str
+            or HEX_SHA.fullmatch(head["sha"]) is None
+            or type(head.get("repo")) is not dict
+            or head["repo"].get("full_name") != REPO
+            or head["repo"].get("fork") is not False
+            or base.get("ref") != "main"
+            or (type(base.get("repo")) is dict
+                and base["repo"].get("full_name") != REPO)):
+        raise Denied("pull_request_review_pr_mapping_invalid")
+    return number, head["ref"]
+
+
+def resolve_pull_request_review(token, event):
+    """Resolve current HEAD from authenticated REST; event SHAs never grant authority."""
+    number, ref = validate_pull_request_review_event(event)
+    pr = get(token, f"/repos/{REPO}/pulls/{number}")
+    if type(pr) is not dict:
+        raise Denied("pull_request_review_pr_unknown")
+    head, base = pr.get("head"), pr.get("base")
+    if (pr.get("number") != number or pr.get("state") != "open"
+            or pr.get("draft") is not False or type(head) is not dict
+            or type(base) is not dict or head.get("ref") != ref
+            or base.get("ref") != "main"
+            or type(head.get("repo")) is not dict
+            or head["repo"].get("full_name") != REPO
+            or head["repo"].get("fork") is not False
+            or type(head.get("sha")) is not str
+            or HEX_SHA.fullmatch(head["sha"]) is None):
+        raise Denied("pull_request_review_pr_identity_changed")
+    return number, head["sha"]
+
 def main():
     try:
         token = os.environ.get("GH_TOKEN")
-        if "--resolve-workflow-run" in sys.argv:
-            if (len(sys.argv) != 2 or not token
+        resolver_modes = {
+            "--resolve-workflow-run": resolve_workflow_run,
+            "--resolve-pull-request-review": resolve_pull_request_review,
+        }
+        if len(sys.argv) == 2 and sys.argv[1] in resolver_modes:
+            mode = sys.argv[1]
+            if (not token
                     or str(os.environ.get("GITHUB_REPOSITORY") or "") != REPO):
-                raise Denied("workflow_run_environment_invalid")
+                raise Denied("event_resolver_environment_invalid")
             event_path = os.environ.get("GITHUB_EVENT_PATH")
             if not event_path:
-                raise Denied("workflow_run_event_missing")
+                raise Denied("event_resolver_event_missing")
             with open(event_path, encoding="utf-8") as stream:
                 event = json.load(stream, object_pairs_hook=unique)
-            number, sha = resolve_workflow_run(token, event)
+            number, sha = resolver_modes[mode](token, event)
             print(f"pr_number={number}")
             print(f"pr_sha={sha}")
             print(f"pr_url=https://github.com/{REPO}/pull/{number}")
