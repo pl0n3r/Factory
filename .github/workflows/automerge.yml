@@ -48,10 +48,20 @@ jobs:
           fi
           # El --auto requerido por AC-04 opera sobre un PR ya mergeable.
           gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"
-          # Si GitHub difirió el merge pese a CLEAN, revocar auto-merge.
-          # No confundir una autorización aplazada con aprobación de gates futuros.
-          if [[ "$(gh pr view "$PR_URL" --json mergedAt --jq '.mergedAt')" == null ]]; then
-            gh pr merge --disable-auto "$PR_URL"
-            echo 'AUTOMERGE_DENIED: deferred_merge_reverted' >&2
+          # Un cleanup no es atómico. Nunca reportar éxito si el merge
+          # no es comprobable, incluso si falla la consulta o la revocación.
+          reject_unverified_merge() {
+            if ! gh pr merge --disable-auto "$PR_URL"; then
+              echo 'AUTOMERGE_DENIED: auto_merge_revocation_unconfirmed' >&2
+            fi
+            echo "AUTOMERGE_DENIED: $1" >&2
             exit 1
+          }
+          if ! MERGED_AT="$(gh pr view "$PR_URL" --json mergedAt --jq '.mergedAt')"; then
+            reject_unverified_merge 'merge_observation_failed'
+          fi
+          # Solo una fecha real de mergedAt acredita la fusión terminada.
+          # null, string vacío o salida extraña no autorizan un éxito.
+          if [[ ! "$MERGED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]]; then
+            reject_unverified_merge 'merge_not_terminally_confirmed'
           fi

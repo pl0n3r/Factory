@@ -1342,5 +1342,81 @@ class MainCliContractTests(unittest.TestCase):
                              "\npr_url=https://github.com/pl0n3r/Factory/pull/1375\n")
 
 
+class AutoMergeShellOutcomeTests(unittest.TestCase):
+    """Run the actual merge section with a deterministic local gh shim."""
+
+    @staticmethod
+    def merge_section():
+        import textwrap
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
+        # Exercise the literal workflow after validated Python preflights;
+        # never perform real network calls or invoke GitHub credentials.
+        run = workflow.split("        run: |\n", 1)[1]
+        script = textwrap.dedent(run)
+        return "set -euo pipefail\nMERGE_STATE=" + script.split("MERGE_STATE=", 1)[1]
+
+    def test_merge_observation_requires_successful_authenticated_query(self):
+        """An unknown gh pr view result can never authorize deferred merging."""
+        import os
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        stub = r'''#!/bin/bash
+set -euo pipefail
+case "$*" in
+  "api "*) echo "${STUB_MERGEABLE:-clean}" ;;
+  "pr merge --auto "*)
+    if [[ "${STUB_AUTO_ERROR:-no}" == yes ]]; then exit 49; fi
+    if [[ "${STUB_VIEW:-null}" == merged ]]; then echo merged > "$STUB_FLAG";
+    else echo pending > "$STUB_FLAG"; fi ;;
+  "pr view "*)
+    case "${STUB_VIEW:-null}" in
+      error) exit 51 ;;
+      null) echo null ;;
+      merged) echo '2026-10-14T08:22:00Z' ;;
+      malformed) echo 'unexpected-output' ;;
+      *) exit 88 ;;
+    esac ;;
+  "pr merge --disable-auto "*)
+    if [[ "${STUB_DISABLE_ERROR:-no}" == yes ]]; then exit 52; fi
+    echo disabled > "$STUB_FLAG" ;;
+  *) echo "unexpected gh: $*" >&2; exit 77 ;;
+esac
+'''
+        scenarios = (
+            ("observation_throws", "error", "no", "clean", "disabled", False),
+            ("observation_throws_revoke_fails", "error", "yes", "clean", "pending", False),
+            ("deferred", "null", "no", "clean", "disabled", False),
+            ("deferred_revoke_fails", "null", "yes", "clean", "pending", False),
+            ("malformed_response", "malformed", "no", "clean", "disabled", False),
+            ("actually_merged", "merged", "no", "clean", "merged", True),
+            ("blocked_before_command", "null", "no", "blocked", "untouched", False),
+        )
+        script = self.merge_section()
+        with tempfile.TemporaryDirectory() as tmp:
+            mockgh = Path(tmp) / "gh"
+            mockgh.write_text(stub, encoding="utf8")
+            mockgh.chmod(0o755)
+            marker = Path(tmp) / "pending"
+            for name, view, disable_err, mergeable, state, success in scenarios:
+                with self.subTest(name=name):
+                    marker.write_text("untouched", encoding="utf8")
+                    env = dict(os.environ,
+                               PATH=tmp + os.pathsep + os.environ["PATH"],
+                               PR_URL="https://github.com/pl0n3r/Factory/pull/1375",
+                               PR_SHA=SHA, GITHUB_REPOSITORY="pl0n3r/Factory",
+                               PR_NUMBER="1375", STUB_FLAG=str(marker),
+                               STUB_VIEW=view, STUB_DISABLE_ERROR=disable_err,
+                               STUB_MERGEABLE=mergeable)
+                    result = subprocess.run(["bash", "-c", script], capture_output=True,
+                                            text=True, env=env, timeout=5, check=False)
+                    self.assertEqual(result.returncode == 0, success,
+                                     f"{name}: exit={result.returncode}, stderr={result.stderr}")
+                    self.assertEqual(marker.read_text().strip(), state,
+                                     f"{name}: unsafe queued merge persisted")
+
+
+
 if __name__ == "__main__":
     unittest.main()
