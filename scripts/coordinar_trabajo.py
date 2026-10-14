@@ -217,14 +217,10 @@ class GitHub:
                 raw = response.read()
                 return None if not raw else json.loads(raw.decode("utf-8"))
         except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
             if exc.code in allow:
                 return None
-            try:
-                message = json.loads(raw).get("message", raw)
-            except json.JSONDecodeError:
-                message = raw
-            raise GitHubError(exc.code, str(message)) from exc
+            # No publicar cuerpo, URL ni mensajes libres del proveedor.
+            raise GitHubError(exc.code, "transport_failure") from None
 
     def request(
         self,
