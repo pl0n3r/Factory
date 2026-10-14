@@ -78,11 +78,21 @@ def observe_issue_cli(issue: int) -> IntegrationPreview:
                         "repository_not_authorized")
     api = _GhReadOnlyAPI()
     now = datetime.now(timezone.utc)
-    # armed=True permite construir Snapshot, pero el transporte rechaza
-    # cualquier verbo distinto de GET. Nunca se entrega este Port al executor.
+    try:
+        identity = api.request("GET", "/repos/pl0n3r/Factory")
+        repository_id = identity.get("id") if type(identity) is dict else None
+        if (type(repository_id) is not int or repository_id <= 0
+                or identity.get("full_name") != _GhReadOnlyAPI.repo):
+            return _unknown(issue if type(issue) is int and issue > 0 else 0,
+                            "repository_identity_unknown")
+    except Exception:
+        return _unknown(issue if type(issue) is int and issue > 0 else 0,
+                        "repository_identity_unknown")
+    # Igualar literalmente el grupo declarado por Actions y Coordinación.
+    # Nunca se usa para escritura: el transporte sigue bloqueando no-GET.
     port = LeaseGithubPort(
         api, armed=True,
-        concurrency_group="factory-coordination-123",
+        concurrency_group=f"factory-coordination-{repository_id}",
         clock=lambda: now,
     )
     return preview_integrated_activity(api, port, issue, now=now)
