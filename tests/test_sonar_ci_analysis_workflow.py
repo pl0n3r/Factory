@@ -61,10 +61,14 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         automerge = (
             ROOT / ".github" / "workflows" / "automerge.yml"
         ).read_text(encoding="utf-8")
+        self.assertIn("pull_request_review:\\n    types: [submitted]", automerge)
         self.assertIn(
-            "if: github.event.pull_request.draft == false &&", automerge
+            'workflow_run:\\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+            automerge,
         )
-        self.assertIn("ready_for_review", automerge)
+        self.assertIn("--resolve-pull-request-review", automerge)
+        self.assertIn("--resolve-workflow-run", automerge)
+        self.assertIn("steps.target.outputs.pr_sha", automerge)
         self.assertIn('gh pr merge --auto --squash "$PR_URL"', automerge)
 
     def test_coverage_report_is_wired_into_scanner(self):
