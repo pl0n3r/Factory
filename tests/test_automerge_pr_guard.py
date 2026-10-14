@@ -1468,7 +1468,7 @@ class MainCliContractTests(unittest.TestCase):
             json.dump(workflow_run_event_example(), f)
             f.flush()
             stdout = StringIO()
-            with patch.dict(os.environ, dict(env, GH_EVENT_PATH=f.name), clear=True), \
+            with patch.dict(os.environ, dict(env, GITHUB_EVENT_PATH=f.name), clear=True), \
                  patch.object(sys, "argv", ["guard", "--resolve-workflow-run"]), \
                  patch.object(mod, "resolve_workflow_run", return_value=(1375, SHA)) as resolver, \
                  redirect_stdout(stdout):

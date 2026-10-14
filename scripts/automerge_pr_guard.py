@@ -1036,7 +1036,7 @@ def main():
             if (len(sys.argv) != 2 or not token
                     or str(os.environ.get("GITHUB_REPOSITORY") or "") != REPO):
                 raise Denied("workflow_run_environment_invalid")
-            event_path = os.environ.get("GH_EVENT_PATH")
+            event_path = os.environ.get("GITHUB_EVENT_PATH")
             if not event_path:
                 raise Denied("workflow_run_event_missing")
             with open(event_path, encoding="utf-8") as stream:
