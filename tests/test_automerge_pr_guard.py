@@ -255,7 +255,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
         # headings. Prose containing the same words is not a finding.
         header = "**🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**"
         for finding in ("- " + header, "* " + header, "+ " + header,
-                        "> " + header, "### " + header):
+                        "> " + header, "### " + header,
+                        "> - " + header, "- > " + header):
             with self.subTest(finding=finding, source="review"):
                 q = evidence()
                 q["reviews"][0]["body"] = finding
@@ -276,6 +277,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q["commit_status"]["statuses"][0]["description"] = finding
                 self.deny(q)
         for advisory in ("- **🩺 Maintainability** | **🟠 Major**",
+                         "> - **🩺 Maintainability** | **🟠 Major**",
                          "### **🎯 Functional Correctness** | **🟠 Major**",
                          "CodeRabbit describes Security & Privacy Major findings in its policy."):
             with self.subTest(advisory=advisory):
