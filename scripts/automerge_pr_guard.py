@@ -24,23 +24,37 @@ EXECUTED_HEADER = re.compile(r"<!--\s*factory\s*-\s*release\s*-\s*executed\b", r
 # CodeRabbit's category-anchored Security & Privacy / Major finding denotes
 # a potentially high-severity security issue. Do not confuse it with
 # unqualified Major maintainability or functional-correctness observations.
+# Search for CodeRabbit finding labels, not casual discussion of how
+# "high", "critical", or "rate limited" classifications work. Anchor each
+# finding to its own Markdown line; keep explicit security-Major blocking.
 SEVERE = re.compile(
-    r"(?:\b(?:critical|high|p0|p1|severe|blocker)\b"
-    r"|^[ \t]*\*{0,2}(?:🔒[ \t]*)?Security[ \t]*&[ \t]*Privacy\*{0,2}"
-    r"[ \t]*\|[ \t]*\*{0,2}(?:🟠[ \t]*)?Major\b)",
-    re.I | re.M,
+    r"""^[ \t]*(?:
+        \*{0,2}(?:🔒[ \t]*)?Security[ \t]*&[ \t]*Privacy\*{0,2}
+        [ \t]*\|[ \t]*\*{0,2}(?:🟠[ \t]*)?Major\b
+      | \*{0,2}(?:Security[ \t]+)?(?:HIGH|CRITICAL|P0|P1|SEVERE|BLOCKER)
+        [ \t]+(?:security|severity|vulnerabilit(?:y|ies)|flaw|issue|finding|risk|bug)\b
+      | (?:Severity|Priority)[ \t]*:[ \t]*(?:HIGH|CRITICAL|P0|P1)\b
+    )""",
+    re.I | re.M | re.X,
 )
-# Match explicit evidence that CodeRabbit did not perform a substantive review.
-# Both word orders and common passive-voice forms must fail closed; the
-# presence of a green commit status is not proof the review happened.
+# A completed review must not be rejected because a policy snippet says
+# "rate limited" or an advisory says "files skipped due to trivial changes".
+# Actual skipped/incomplete review notices begin on their own Markdown line.
 SKIPPED = re.compile(
-    r"\b(?:review(?:\s+\w+){0,3}\s+skipp?ed"
-    r"|skipp?ed(?:\s+\w+){0,3}\s+review"
-    r"|skip\s+review|not\s+reviewed"
-    r"|review(?:\s+was)?\s+not\s+(?:performed|completed|available)"
-    r"|(?:could\s+not|cannot|unable\s+to)\s+review"
-    r"|manual\s+review\s+required|rate[\s._-]*limit(?:ed|ing)?"
-    r"|review\s+disabled)\b", re.I,
+    r"""^[ \t]*(?:>[ \t]*)?\*{0,2}(?:
+        Review(?:[ \t]+\w+){0,3}[ \t]+skipp?ed
+      | skipp?ed(?:[ \t]+\w+){0,3}[ \t]+review
+      | skip[ \t]+review
+      | (?:Draft[ \t]+PR[ \t]+)?not[ \t]+reviewed
+      | Review(?:[ \t]+was)?[ \t]+not[ \t]+(?:performed|completed|available)
+      | (?:CodeRabbit[ \t]+)?(?:could[ \t]+not|cannot|unable[ \t]+to)[ \t]+review
+      | manual[ \t]+review[ \t]+required
+      | review[ \t]+rate[\s._-]*limit(?:ed|ing)?
+      | rate[._-]limit(?:ed|ing)?
+      | rate[ \t]+limit[ \t]+(?:reached|exceeded)
+      | review[ \t]+disabled
+    )\b""",
+    re.I | re.M | re.X,
 )
 UNFINISHED_REVIEW = re.compile(
     r"\b(?:review|analysis|scan)\s+(?:is\s+)?"

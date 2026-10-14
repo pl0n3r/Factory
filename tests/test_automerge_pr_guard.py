@@ -205,6 +205,58 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["reviews"][0]["body"] = "**🩺 Maintainability** | **🟠 Major**"
         mod.verify(q, SHA, NOW)
 
+    def test_coderabbit_prose_does_not_forge_severe_or_skipped_signal(self):
+        # CodeRabbit explanations quote severity/rate-limit terms: those
+        # mentions are not themselves an authenticated finding or skipped review.
+        q = evidence()
+        q["reviews"][0]["body"] = (
+            "Reviewed entire patch; no critical findings. "
+            "Files skipped from review due to trivial changes."
+        )
+        mod.verify(q, SHA, NOW)
+        q = evidence()
+        q["reviews"][0]["body"] = (
+            "A policy discussion mentions high, critical, blocker and rate limited."
+        )
+        mod.verify(q, SHA, NOW)
+        q = evidence()
+        q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                          "commit_id": SHA,
+                          "body": "The guide discusses High and Critical severities."}]
+        mod.verify(q, SHA, NOW)
+        q = evidence()
+        q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                "body": "Read the guide for rate limited plans and High findings."}]
+        mod.verify(q, SHA, NOW)
+        q = evidence()
+        q["commit_status"]["statuses"][0]["description"] = (
+            "Review complete; no high or critical findings."
+        )
+        q["status_history"][0]["description"] = (
+            "Review complete; no high or critical findings."
+        )
+        mod.verify(q, SHA, NOW)
+        # Explicit structured findings / genuine skip notices still deny.
+        for finding in ("HIGH security vulnerability identified",
+                        "Security HIGH vulnerability",
+                        "critical flaw", "Severity: HIGH", "Priority: P0",
+                        "**🔒 Security & Privacy** | **🟠 Major**"):
+            q = evidence()
+            q["reviews"][0]["body"] = finding
+            with self.subTest(finding=finding):
+                self.deny(q)
+        for notice in ("Review rate limited", "rate-limited",
+                       "Review skipped: manual review required",
+                       "Draft PR not reviewed",
+                       "Review not performed"):
+            q = evidence()
+            q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                    "body": notice,
+                                    "created_at": "2026-10-14T04:00:00Z",
+                                    "updated_at": "2026-10-14T04:00:00Z"}]
+            with self.subTest(notice=notice):
+                self.deny(q)
+
     def test_coderabbit_rate_limited_variants_are_not_review_evidence(self):
         # The old regex matched rate-limit but missed rate-limited because
         # the trailing word boundary fell between "limit" and "ed".
