@@ -1439,7 +1439,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertIn("on:\n  pull_request:\n", workflow)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertIn("persist-credentials: false", workflow)
-        self.assertIn("pull_request.base.sha", workflow)
+        self.assertIn("ref: main", workflow)
         self.assertIn("python3 scripts/automerge_pr_guard.py", workflow)
         self.assertIn('MERGE_STATE="$(gh api', workflow)
         self.assertIn('[[ "$MERGE_STATE" != clean ]]', workflow)
