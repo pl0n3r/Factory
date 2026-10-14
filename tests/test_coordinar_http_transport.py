@@ -129,6 +129,116 @@ class CoordinarHttpTransportTests(unittest.TestCase):
         )
         self.assertTrue(winner["active"])
 
+        # AC-03: verificar el flujo real de reserva, no solo api.comment().
+        branch = "trabajo/issue-1361"
+        base_sha = "a" * 40
+        successor_sha = "b" * 40
+        session = "11111111-1111-4111-8111-111111111111"
+        successor = "22222222-2222-4222-8222-222222222222"
+        task = {
+            "version": 1, "epic": 1296,
+            "task_key": "COORDINATION_HTTP500_DIAGNOSTICS", "order": 1,
+            "owner": "pl0n3r",
+            "roles": ["ingenieria-software", "qa", "seguridad", "sre"],
+            "depends_on": [1243],
+            "paths": ["scripts/coordinar_trabajo.py",
+                      "tests/test_coordinar_http_transport.py"],
+        }
+
+        class PartialApi:
+            def __init__(self, scenario):
+                self.scenario = scenario
+                self.branches = {"main": base_sha}
+                self.status = coordinator.STATUS_AVAILABLE
+                self.comments = []
+                self.events = []
+
+            def branch_sha(self, name):
+                return self.branches.get(name)
+
+            def create_branch(self, name, head):
+                self.events.append("create")
+                if name in self.branches:
+                    return False
+                self.branches[name] = head
+                if self.scenario == "create_ack_lost":
+                    raise GitHubError(500, "transport_failure")
+                return True
+
+            def issue(self, number):
+                return {
+                    "number": number, "state": "open", "assignees": [],
+                    "labels": [{"name": self.status}],
+                }
+
+            def issue_comments(self, number):
+                return list(self.comments)
+
+            def set_status(self, number, status):
+                self.events.append("status")
+                self.status = status
+
+            def try_assign(self, number, actor):
+                self.events.append("assign")
+
+            def try_unassign(self, number, actor):
+                self.events.append("unassign")
+
+            def delete_branch(self, name):
+                self.events.append("delete")
+                del self.branches[name]
+
+            def comment(self, number, body):
+                self.events.append("comment")
+                if self.scenario == "comment_ack_lost":
+                    published = body
+                elif self.scenario == "other_agent_wins":
+                    published = reservation_marker(
+                        "other-owner", successor, branch, True, "tomar",
+                        "c" * 64, task_marker=task)
+                    self.branches[branch] = successor_sha
+                else:
+                    published = None
+                if published is not None:
+                    self.comments.append({
+                        "user": {"login": "github-actions[bot]"},
+                        "body": published,
+                    })
+                raise GitHubError(500, "transport_failure")
+
+        for scenario in (
+            "create_ack_lost", "comment_ack_lost", "other_agent_wins",
+            "comment_not_persisted",
+        ):
+            with self.subTest(scenario=scenario):
+                api = PartialApi(scenario)
+                with patch.object(coordinator, "new_reservation_id",
+                                  return_value=session):
+                    with self.assertRaises(GitHubError):
+                        coordinator.reserve_available_work(
+                            api, 1361, "pl0n3r", branch, "c" * 64,
+                            task_marker=task,
+                        )
+                self.assertEqual(api.events.count("create"), 1)
+                self.assertLessEqual(api.events.count("comment"), 1)
+                if scenario == "create_ack_lost":
+                    self.assertEqual(api.branches.get(branch), base_sha)
+                    self.assertNotIn("delete", api.events)
+                    self.assertEqual(api.status, coordinator.STATUS_AVAILABLE)
+                elif scenario == "comment_ack_lost":
+                    self.assertEqual(api.branches.get(branch), base_sha)
+                    self.assertNotIn("delete", api.events)
+                    self.assertEqual(api.status, coordinator.STATUS_RESERVED)
+                    self.assertEqual(len(api.comments), 1)
+                elif scenario == "other_agent_wins":
+                    self.assertEqual(api.branches.get(branch), successor_sha)
+                    self.assertNotIn("delete", api.events)
+                    self.assertEqual(api.status, coordinator.STATUS_RESERVED)
+                else:
+                    self.assertNotIn(branch, api.branches)
+                    self.assertEqual(api.status, coordinator.STATUS_AVAILABLE)
+                    self.assertEqual(api.events.count("delete"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
