@@ -518,7 +518,16 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), True)
         api.reviews.append({
             "id": 8, "user": {"login": "other"},
-            "state": "DISMISSED", "submitted_at": "2026-10-11T09:38:00Z",
+            "state": "COMMENTED", "submitted_at": "2026-10-11T09:38:00Z",
+        })
+        # Un comentario posterior NO levanta una solicitud de cambios.
+        self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), True)
+        api.reviews[-1]["state"] = "DISMISSED"
+        self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), False)
+        api.reviews[-1]["state"] = "COMMENTED"
+        api.reviews.append({
+            "id": 9, "user": {"login": "other"},
+            "state": "APPROVED", "submitted_at": "2026-10-11T09:39:00Z",
         })
         self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), False)
 
