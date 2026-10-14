@@ -90,12 +90,18 @@ def observe_issue_cli(issue: int) -> IntegrationPreview:
                         "repository_identity_unknown")
     # Igualar literalmente el grupo declarado por Actions y Coordinación.
     # Nunca se usa para escritura: el transporte sigue bloqueando no-GET.
-    port = LeaseGithubPort(
-        api, armed=True,
-        concurrency_group=f"factory-coordination-{repository_id}",
-        clock=lambda: now,
-    )
-    return preview_integrated_activity(api, port, issue, now=now)
+    try:
+        port = LeaseGithubPort(
+            api, armed=True,
+            concurrency_group=f"factory-coordination-{repository_id}",
+            clock=lambda: now,
+        )
+        return preview_integrated_activity(api, port, issue, now=now)
+    except Exception:
+        # El adaptador read-only devuelve UNKNOWN aun si Port o preview
+        # rompe su contrato. No exponer URL, payload ni secretos al caller.
+        return _unknown(issue if type(issue) is int and issue > 0 else 0,
+                        "observer_failed")
 
 
 
