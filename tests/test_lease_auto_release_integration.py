@@ -524,7 +524,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
         for scenario in (
             "state", "author", "stamp", "future", "duplicate", "base",
-            "repo", "sha", "quota", "error", "number", "no_pr", "race",
+            "repo", "missing_id", "missing_origin", "fork_id_collision",
+            "sha", "quota", "error", "number", "no_pr", "race",
         ):
             with self.subTest(unknown=scenario):
                 api = ready()
@@ -543,6 +544,12 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     del api.pulls[0]["base"]
                 elif scenario == "repo":
                     api.pulls[0]["head"]["repo"]["id"] = 456
+                elif scenario == "missing_id":
+                    api.pulls[0]["head"]["repo"].pop("id")
+                elif scenario == "missing_origin":
+                    api.pulls[0]["head"]["repo"].pop("full_name")
+                elif scenario == "fork_id_collision":
+                    api.pulls[0]["head"]["repo"]["full_name"] = "other/fork"
                 elif scenario == "sha":
                     api.pulls[0]["head"]["sha"] = "b" * 40
                 elif scenario == "quota":
