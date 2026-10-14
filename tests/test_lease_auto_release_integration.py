@@ -596,7 +596,13 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         # Un comentario posterior NO levanta una solicitud de cambios.
         self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), True)
         api.reviews[-1]["state"] = "DISMISSED"
+        # La revisión #8 descartada no descarta la solicitud #5.
+        self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), True)
+        # Si se descarta la revisión original CHANGES_REQUESTED, la
+        # API devuelve DISMISSED sobre ese mismo ID; ya no hay veto.
+        api.reviews[0]["state"] = "DISMISSED"
         self.assertIs(_verified_review_veto(api, lease, NOW, 60, 100), False)
+        api.reviews[0]["state"] = "CHANGES_REQUESTED"
         api.reviews[-1]["state"] = "COMMENTED"
         api.reviews.append({
             "id": 9, "user": {"login": "other"},
