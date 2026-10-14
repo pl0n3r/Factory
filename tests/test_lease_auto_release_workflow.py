@@ -172,8 +172,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         anchor = '          jq -e \'type == "array" and length <= 10'
         self.assertEqual(text.count(anchor), 1)
-        block = textwrap.dedent(text.split(anchor, 1)[0][-0:] if False
-                                else text[text.index(anchor):])
+        block = textwrap.dedent(text[text.index(anchor):])
         script = "set -euo pipefail\n" + block
 
         with tempfile.TemporaryDirectory() as folder:
