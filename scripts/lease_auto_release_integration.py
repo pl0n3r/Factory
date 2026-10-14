@@ -39,6 +39,134 @@ def _unknown(issue: int, reason: str) -> IntegrationPreview:
     return IntegrationPreview(issue, "UNKNOWN", "unknown", reason)
 
 
+
+def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
+                          remaining: int, limit: int) -> bool | None:
+    """Prueba REST read-only de reviews vigentes en PR local exact-SHA.
+
+    True: CHANGES_REQUESTED sigue vigente. False: inventario íntegro sin
+    bloqueo actual. None: identidad/páginas/estado/cuota/carrera desconocidos.
+    Ningún resultado de esta función prueba ausencia de pushes.
+    """
+    try:
+        repo = getattr(api, "repo", None)
+        if (type(repo) is not str
+                or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None
+                or type(remaining) is not int or type(limit) is not int
+                or limit <= 0 or remaining < 0 or remaining > limit):
+            return None
+        used = 0
+
+        def get(path: str) -> Any:
+            nonlocal used
+            used += 1
+            if used > 16 or (remaining - used) * 5 < limit:
+                raise ValueError("review_budget")
+            return api.request("GET", path)
+
+        def pages(path: str) -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            seen: set[int] = set()
+            for index in range(1, 5):
+                joiner = "&" if "?" in path else "?"
+                items = get(f"{path}{joiner}per_page=100&page={index}")
+                if type(items) is not list or len(items) > 100:
+                    raise ValueError("invalid_page")
+                for item in items:
+                    number = item.get("id") if type(item) is dict else None
+                    if type(number) is not int or number <= 0 or number in seen:
+                        raise ValueError("duplicate_or_invalid_id")
+                    seen.add(number)
+                    rows.append(item)
+                if len(items) < 100:
+                    sentinel = get(
+                        f"{path}{joiner}per_page=100&page={index + 1}"
+                    )
+                    if type(sentinel) is not list or sentinel:
+                        raise ValueError("truncated_page")
+                    return rows
+            raise ValueError("page_cap")
+
+        branch = snapshot.branch
+        pulls_path = f"/repos/{repo}/pulls?state=open"
+        def current_pull() -> dict[str, Any] | None:
+            matches: list[dict[str, Any]] = []
+            for pull in pages(pulls_path):
+                head = pull.get("head")
+                if type(head) is not dict or head.get("ref") != branch:
+                    continue
+                origin = head.get("repo")
+                if type(origin) is not dict:
+                    raise ValueError("unknown_head_origin")
+                if origin.get("full_name") != repo:
+                    if origin.get("id") == snapshot.repository_id:
+                        raise ValueError("mismatched_repo")
+                    continue
+                base = pull.get("base")
+                if (type(origin.get("id")) is not int
+                        or origin["id"] != snapshot.repository_id
+                        or head.get("sha") != snapshot.branch_sha
+                        or pull.get("state") != "open"
+                        or type(base) is not dict
+                        or base.get("ref") != "main"
+                        or type(pull.get("number")) is not int
+                        or pull["number"] <= 0):
+                    raise ValueError("untrusted_canonical_pr")
+                matches.append(pull)
+            if len(matches) > 1:
+                raise ValueError("ambiguous_canonical_pr")
+            if not matches:
+                if snapshot.status == "estado: en revisión":
+                    raise ValueError("missing_review_pr")
+                return None
+            return matches[0]
+
+        def current_reviews(pull: dict[str, Any] | None) -> tuple[bool, list[dict[str, Any]]]:
+            if pull is None:
+                return False, []
+            reviews = pages(
+                f"/repos/{repo}/pulls/{pull['number']}/reviews"
+            )
+            latest: dict[str, str] = {}
+            highest_id = 0
+            for review in reviews:
+                author = review.get("user")
+                state = review.get("state")
+                timestamp = review.get("submitted_at")
+                if (type(author) is not dict
+                        or type(author.get("login")) is not str
+                        or not author["login"]
+                        or state not in (
+                            "PENDING", "COMMENTED", "APPROVED",
+                            "DISMISSED", "CHANGES_REQUESTED",
+                        )
+                        or review["id"] <= highest_id):
+                    raise ValueError("unknown_review_state")
+                highest_id = review["id"]
+                if state != "PENDING":
+                    if type(timestamp) is not str or not UTC_STAMP.fullmatch(timestamp):
+                        raise ValueError("review_timestamp")
+                    stamp = datetime.fromisoformat(
+                        timestamp.replace("Z", "+00:00")
+                    )
+                    if stamp > now.astimezone(timezone.utc):
+                        raise ValueError("future_review")
+                    latest[author["login"]] = state
+            return "CHANGES_REQUESTED" in latest.values(), reviews
+
+        before = current_pull()
+        veto, reviews = current_reviews(before)
+        # Cerrar ventanas de cambios de review/PR sin confiar en un
+        # updated_at de resolución de segundos ni en una sola paginación.
+        after = current_pull()
+        after_veto, after_reviews = current_reviews(after)
+        if before != after or reviews != after_reviews or veto != after_veto:
+            return None
+        return veto
+    except Exception:
+        return None
+
+
 def preview_integrated_activity(api: Any, port: Any, issue: Any,
                                 *, now: Any) -> IntegrationPreview:
     """Cruza dos lecturas completas sin inferir inactividad ni escribir.
@@ -87,6 +215,15 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
                 or snapshot.rate_limit != report["rate_limit"]
                 or snapshot.rate_remaining > report["rate_remaining"]):
             return _unknown(issue, "inconsistent_authenticated_sources")
+        veto = _verified_review_veto(
+            api, snapshot, now, min(snapshot.rate_remaining,
+                                    report["rate_remaining"]),
+            report["rate_limit"],
+        )
+        if veto is None:
+            return _unknown(issue, "review_evidence_unknown")
+        if veto or snapshot.changes_requested:
+            return _unknown(issue, "changes_requested_veto")
         decision: Decision = decision_from_snapshot(snapshot)
         # Un preview no es autoridad: aunque ambos lectores devuelvan
         # datos positivos, nunca expone una acción que pueda liberar V3.
