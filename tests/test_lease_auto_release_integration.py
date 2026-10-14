@@ -236,6 +236,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 }
                 original_pull = api.pull
                 seen = [0]
+                rival_body = ["Closes #12"]
 
                 def competing_pr_change(number):
                     seen[0] += 1
@@ -257,18 +258,14 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                                 "Closes #12\n<!-- condor-reserva-id: "
                                 "a84bdf99-a23a-4bc1-8c99-df4f3673573a -->"
                             )
+                        rival_body[0] = api.pulls[number]["body"]
                     return original_pull(number)
 
                 api.pull = competing_pr_change
                 with self.assertRaises(CoordinationError):
                     adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
                 self.assertEqual(seen, [1])
-                self.assertNotIn(
-                    "<!-- condor-reserva-id: ",
-                    api.pulls[15]["body"] if drift != "foreign_lease"
-                    else api.pulls[15]["body"].replace(
-                        "a84bdf99-a23a-4bc1-8c99-df4f3673573a", ""),
-                )
+                self.assertEqual(api.pulls[15]["body"], rival_body[0])
                 self.assertNotIn(recovery_lock_branch(12), api.branches)
                 self.assertEqual(api.branches[branch], "abc123")
 
