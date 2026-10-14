@@ -576,11 +576,14 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             # No dejar bloqueado para siempre un skip del PR en DRAFT si
             # después existe review real del MISMO SHA, posterior a ese skip.
             # Sin tiempos confiables: UNKNOWN y falla cerrado.
-            created = row.get("created_at")
+            # CodeRabbit edits summaries in place; creation is not evidence
+            # that the latest skip predates the substantive exact-HEAD review.
+            # Missing or malformed updated_at must fail closed.
+            updated = row.get("updated_at")
             try:
                 skipped_at = datetime.fromisoformat(
-                    created.replace("Z", "+00:00")
-                ) if type(created) is str else None
+                    updated.replace("Z", "+00:00")
+                ) if type(updated) is str else None
             except ValueError:
                 skipped_at = None
             if (skipped_at is None or skipped_at.tzinfo is None

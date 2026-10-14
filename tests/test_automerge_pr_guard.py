@@ -113,15 +113,41 @@ class AutoMergePrGuardTests(unittest.TestCase):
             with self.subTest(source="issue_comment", phrase=phrase):
                 q = evidence()
                 q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
-                                        "body": phrase, "created_at": "2026-10-14T03:59:30Z"}]
+                                        "body": phrase, "created_at": "2026-10-14T03:59:30Z", "updated_at": "2026-10-14T03:59:30Z"}]
                 self.deny(q)
 
         # A later authentic review of the same SHA can supersede a historical
         # pending message, preserving the existing skip supersession behavior.
         q = evidence()
         q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
-                                "body": "Review pending", "created_at": "2026-10-14T03:58:00Z"}]
+                                "body": "Review pending", "created_at": "2026-10-14T03:58:00Z", "updated_at": "2026-10-14T03:58:00Z"}]
         mod.verify(q, SHA, NOW)
+
+    def test_edited_coderabbit_summary_timestamp_is_fail_closed(self):
+        # Even if created_at predates a clean review, CodeRabbit's later
+        # in-place edit can reintroduce skipped/incomplete evidence.
+        mod.verify(evidence(), SHA, NOW)
+        for marker in ("Review skipped: manual action required", "Review in progress"):
+            with self.subTest(marker=marker):
+                q = evidence()
+                item = {"user": {"login": "coderabbitai[bot]"},
+                        "body": marker,
+                        "created_at": "2026-10-14T03:57:00Z",
+                        "updated_at": "2026-10-14T03:59:30Z"}
+                q["issue_comments"] = [item]
+                self.deny(q)  # Review at 03:59 cannot override edit at 03:59:30.
+                item["updated_at"] = "2026-10-14T03:58:30Z"
+                mod.verify(q, SHA, NOW)
+                for invalid in (None, "", "not-a-time", "2026-10-14T03:58:30"):
+                    with self.subTest(marker=marker, updated_at=invalid):
+                        q2 = evidence()
+                        bad = deepcopy(item)
+                        if invalid is None:
+                            bad.pop("updated_at")
+                        else:
+                            bad["updated_at"] = invalid
+                        q2["issue_comments"] = [bad]
+                        self.deny(q2)
 
     def test_coderabbit_skipped_writing_variants_fail_closed(self):
         # Review success with an explicit non-review is still UNKNOWN, even
@@ -150,7 +176,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q = evidence()
                 q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
                                         "body": description,
-                                        "created_at": "2026-10-14T04:00:00Z"}]
+                                        "created_at": "2026-10-14T04:00:00Z", "updated_at": "2026-10-14T04:00:00Z"}]
                 self.deny(q)
 
     def test_coderabbit_status_skipped_cannot_be_green(self):
@@ -396,7 +422,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         # review vieja: únicamente una review posterior del mismo SHA lo supera.
         skipped = {"user": {"login": "coderabbitai[bot]"},
                    "body": "Review skipped: manual review required",
-                   "created_at": "2026-10-14T04:02:00Z"}
+                   "created_at": "2026-10-14T04:02:00Z", "updated_at": "2026-10-14T04:02:00Z"}
         q = evidence()
         q["reviews"][0]["submitted_at"] = "2026-10-14T04:01:59Z"
         q["issue_comments"] = [skipped]
@@ -426,7 +452,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q = evidence()
         q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
                                 "body": "Review skipped: manual review required",
-                                "created_at": "2026-10-14T03:59:30Z"}]
+                                "created_at": "2026-10-14T03:59:30Z", "updated_at": "2026-10-14T03:59:30Z"}]
         q["reviews"][0]["submitted_at"] = "2026-10-14T04:00:01Z"
         self.deny(q)
 
