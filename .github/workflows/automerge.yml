@@ -42,11 +42,10 @@ jobs:
           persist-credentials: false
       - name: Resolver PR y HEAD actual del evento autenticado
         id: target
+        env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_EVENT_PATH: ${{ github.event_path }}
-          GITHUB_OUTPUT: ${{ github.output }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -63,8 +62,8 @@ jobs:
           event_path = os.environ.get("GITHUB_EVENT_PATH", "")
           output_path = os.environ.get("GITHUB_OUTPUT", "")
           expected_repo = "pl0n3r/Factory"
-          hex_sha = re.compile(r"[0-9a-f]{40}\\Z")
-          canonical_branch = re.compile(r"trabajo/issue-([1-9][0-9]*)\\Z")
+          hex_sha = re.compile(r"[0-9a-f]{40}\Z")
+          canonical_branch = re.compile(r"trabajo/issue-([1-9][0-9]*)\Z")
           trusted_runs = {"CI factory", "Sonar CI-based", "Evidencia CodeQL"}
 
           def deny(reason):
@@ -180,7 +179,7 @@ jobs:
               "pr_url=https://github.com/" + repo + "/pull/" + str(pr_number),
           )
           with open(output_path, "a", encoding="utf-8") as stream:
-              stream.write("\\n".join(lines) + "\\n")
+              stream.write("\n".join(lines) + "\n")
           print("Resolved internal PR #" + str(pr_number) + " at authenticated HEAD " + head["sha"])
           PY
       - name: Validar evidencia y habilitar exclusivamente squash exact-HEAD
