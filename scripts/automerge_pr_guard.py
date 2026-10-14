@@ -1066,6 +1066,7 @@ def validate_pull_request_review_event(event):
     if (type(repo) is not dict or repo.get("full_name") != REPO
             or repo.get("default_branch") != "main"
             or type(review) is not dict
+            or type(review.get("state")) is not str
             or review.get("state") not in {"approved", "changes_requested", "commented"}
             or type(review.get("user")) is not dict
             or type(review["user"].get("login")) is not str
