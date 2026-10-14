@@ -898,6 +898,35 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(rejected.release_authorized)
         port_type.assert_not_called()
 
+        # La excepción de un adaptador externo no sale a logs o callers.
+        for broken in ("port", "preview"):
+            with self.subTest(broken=broken):
+                with patch.dict("os.environ",
+                                {"GITHUB_REPOSITORY": "pl0n3r/Factory"}):
+                    with patch.object(
+                        _GhReadOnlyAPI, "request",
+                        return_value={"id": 987654,
+                                      "full_name": "pl0n3r/Factory"},
+                    ):
+                        with patch("scripts.lease_github_port.LeaseGithubPort") as port_type:
+                            with patch(
+                                "scripts.lease_auto_release_integration."
+                                "preview_integrated_activity",
+                            ) as preview:
+                                if broken == "port":
+                                    port_type.side_effect = RuntimeError(
+                                        "private-token-must-not-leak"
+                                    )
+                                else:
+                                    preview.side_effect = RuntimeError(
+                                        "private-token-must-not-leak"
+                                    )
+                                rejected = observe_issue_cli(1185)
+                self.assertEqual(rejected.state, "UNKNOWN")
+                self.assertEqual(rejected.reason, "observer_failed")
+                self.assertFalse(rejected.release_authorized)
+                self.assertNotIn("private-token", str(rejected))
+
     def test_gh_cli_observer_transport_is_get_only(self):
         from types import SimpleNamespace
         from unittest.mock import patch
