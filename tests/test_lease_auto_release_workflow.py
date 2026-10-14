@@ -152,11 +152,59 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn('done < <(jq -r', workflow)
         self.assertIn('jq -e \'type == "array" and length <= 10', workflow)
         self.assertIn('all(.[]; type == "number" and . > 0 and floor == .)', workflow)
+        self.assertIn("length == (unique | length)", workflow)
         self.assertIn('> "$RUNNER_TEMP/lease-active-issue-numbers.txt"', workflow)
         self.assertIn('done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"', workflow)
         self.assertIn('set -euo pipefail', workflow)
         self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
 
+
+    def test_shell_inventory_read_is_fail_closed(self):
+        """El Bash real no debe ocultar un jq fallido ni ejecutar observaciones."""
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        import textwrap
+
+        if not shutil.which("jq") or not shutil.which("bash"):
+            self.skipTest("bash y jq necesarios para prueba de shell")
+        text = WORKFLOW.read_text(encoding="utf-8")
+        anchor = '          jq -e \'type == "array" and length <= 10'
+        self.assertEqual(text.count(anchor), 1)
+        block = textwrap.dedent(text.split(anchor, 1)[0][-0:] if False
+                                else text[text.index(anchor):])
+        script = "set -euo pipefail\n" + block
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "lease-active-issues.json"
+            numbers = Path(folder) / "lease-active-issue-numbers.txt"
+            env = {**os.environ, "RUNNER_TEMP": folder}
+            # El caso vacío es válido y no invoca el observador externo.
+            source.write_text("[]", encoding="utf-8")
+            result = subprocess.run(
+                ["bash", "-c", script], cwd=ROOT,
+                env=env, capture_output=True, text=True,
+                timeout=10, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(numbers.is_file())
+            self.assertEqual(numbers.read_text(encoding="utf-8"), "")
+
+            for malformed in (
+                "{broken", '{"not": "an-array"}',
+                "[1185, 1185]", '[0]', '["1185"]', "[1.5]",
+            ):
+                with self.subTest(malformed=malformed):
+                    numbers.unlink(missing_ok=True)
+                    source.write_text(malformed, encoding="utf-8")
+                    result = subprocess.run(
+                        ["bash", "-c", script], cwd=ROOT,
+                        env=env, capture_output=True, text=True,
+                        timeout=10, check=False,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(numbers.exists())
 
 if __name__ == "__main__":
     unittest.main()
