@@ -98,13 +98,22 @@ def _verified_review_veto(api: Any, snapshot: Snapshot, now: datetime,
                 origin = head.get("repo")
                 if type(origin) is not dict:
                     raise ValueError("unknown_head_origin")
-                if origin.get("full_name") != repo:
-                    if origin.get("id") == snapshot.repository_id:
+                origin_name, origin_id = (
+                    origin.get("full_name"), origin.get("id"),
+                )
+                if (type(origin_name) is not str
+                        or re.fullmatch(
+                            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+                            origin_name,
+                        ) is None
+                        or type(origin_id) is not int or origin_id <= 0):
+                    raise ValueError("unknown_head_origin")
+                if origin_name != repo:
+                    if origin_id == snapshot.repository_id:
                         raise ValueError("mismatched_repo")
                     continue
                 base = pull.get("base")
-                if (type(origin.get("id")) is not int
-                        or origin["id"] != snapshot.repository_id
+                if (origin_id != snapshot.repository_id
                         or head.get("sha") != snapshot.branch_sha
                         or pull.get("state") != "open"
                         or type(base) is not dict
