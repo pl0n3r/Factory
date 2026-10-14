@@ -1482,6 +1482,84 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertIn('set -euo pipefail', workflow)
 
 
+
+def pull_request_review_event_example():
+    return {
+        "action": "submitted",
+        "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"},
+        "review": {"state": "commented", "user": {"login": "coderabbitai[bot]"}},
+        "pull_request": {
+            "number": 1375, "state": "open", "draft": False,
+            "head": {"ref": "trabajo/issue-1364", "sha": "c" * 40,
+                     "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
+            "base": {"ref": "main", "repo": {"full_name": "pl0n3r/Factory"}},
+        },
+    }
+
+
+class PullRequestReviewEventTests(unittest.TestCase):
+    def test_review_submission_resolves_current_authenticated_head(self):
+        pr = {"number": 1375, "state": "open", "draft": False,
+              "head": {"ref": "trabajo/issue-1364", "sha": SHA,
+                       "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
+              "base": {"ref": "main"}}
+        event = pull_request_review_event_example()
+        with patch.object(mod, "get", return_value=pr) as get:
+            self.assertEqual(mod.resolve_pull_request_review("token", event), (1375, SHA))
+        get.assert_called_once_with("token", "/repos/pl0n3r/Factory/pulls/1375")
+        self.assertNotEqual(event["pull_request"]["head"]["sha"], SHA)
+
+    def test_review_event_and_pr_identity_fail_closed(self):
+        def deny(event):
+            with self.assertRaises(mod.Denied):
+                mod.validate_pull_request_review_event(event)
+        mutations = [
+            ("action", "dismissed"),
+            ("repository", {"full_name": "attacker/fork", "default_branch": "main"}),
+            ("repository", {"full_name": "pl0n3r/Factory", "default_branch": "unsafe"}),
+            ("review", None),
+        ]
+        for field, value in mutations:
+            event = pull_request_review_event_example()
+            event[field] = value
+            with self.subTest(field=field, value=value):
+                deny(event)
+        mutations = [
+            ("number", True), ("number", 0), ("state", "closed"), ("draft", True),
+            ("head", {"ref": "not-canonical", "sha": SHA,
+                      "repo": {"full_name": "pl0n3r/Factory", "fork": False}}),
+            ("head", {"ref": "trabajo/issue-1364", "sha": "bad",
+                      "repo": {"full_name": "pl0n3r/Factory", "fork": False}}),
+            ("head", {"ref": "trabajo/issue-1364", "sha": SHA,
+                      "repo": {"full_name": "attacker/fork", "fork": True}}),
+            ("base", {"ref": "release"}),
+        ]
+        for field, value in mutations:
+            event = pull_request_review_event_example()
+            event["pull_request"][field] = value
+            with self.subTest(pr_field=field, value=value):
+                deny(event)
+
+    def test_review_old_webhook_cannot_authorize_changed_pr(self):
+        event = pull_request_review_event_example()
+        pr = {"number": 1375, "state": "open", "draft": False,
+              "head": {"ref": "trabajo/issue-1364", "sha": SHA,
+                       "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
+              "base": {"ref": "main"}}
+        mutations = [
+            ("state", "closed"), ("draft", True),
+            ("head", dict(pr["head"], ref="trabajo/issue-999")),
+            ("base", {"ref": "other"}),
+            ("head", dict(pr["head"], sha="invalid")),
+        ]
+        for key, value in mutations:
+            changed = deepcopy(pr)
+            changed[key] = value
+            with self.subTest(key=key, value=value), patch.object(mod, "get", return_value=changed):
+                with self.assertRaises(mod.Denied):
+                    mod.resolve_pull_request_review("token", event)
+
+
 def workflow_run_event_example():
     return {
         'action': 'completed',
