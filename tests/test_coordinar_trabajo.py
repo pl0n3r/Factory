@@ -111,6 +111,26 @@ class FakeGitHub:
             "abc123": datetime.now(timezone.utc),
         }
 
+    def request(self, method: str, path: str, payload=None, allow=()):
+        """GET sintético autenticado de la fuente global exacta."""
+        if method != "GET" or path != "/repos/pl0n3r/Factory/issues/767":
+            raise AssertionError("REST sintético no canónico: " + path)
+        if self.repo.lower() == "pl0n3r/factory":
+            return self.issue(767)
+        # Simula la misma respuesta canónica por el canal autenticado; no
+        # delegar al fixture anónimo public_request, que debe poder fallar.
+        return {
+            "number": 767,
+            "url": coordinator.CANONICAL_SOURCE_URL,
+            "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+            "state": getattr(self, "kill_switch_issue_state", "closed"),
+            "user": {"login": "pl0n3r"},
+            "body": ("<!-- factory-unattended-kill-switch "
+                     '{"version":1,"state":"' +
+                     getattr(self, "kill_switch_marker", "RUNNING") +
+                     '","owner":"pl0n3r"} -->'),
+        }
+
     def issue(self, number: int) -> dict:
         """Devuelve el Issue falso o una dependencia configurada."""
         if number == 767 and self.repo.lower() == "pl0n3r/factory":
@@ -1806,8 +1826,10 @@ class CoordinacionTests(unittest.TestCase):
             n = observed["reads"]
             observed["reads"] += 1
             mode = states[min(n, len(states) - 1)]
-            if mode == "403":
-                raise GitHubError(403, "403 de instalación simulado")
+            if mode in ("403", "404", "429"):
+                raise GitHubError(int(mode), "error de instalación simulado")
+            if mode == "timeout":
+                raise OSError("timeout simulado")
             payload = {
                 "number": 767,
                 "url": coordinator.CANONICAL_SOURCE_URL,
@@ -1834,7 +1856,118 @@ class CoordinacionTests(unittest.TestCase):
             return payload
 
         api.issue = read_issue
+
+        def request(method, path, payload=None, allow=()):
+            if (method, path) != (
+                "GET", "/repos/pl0n3r/Factory/issues/767"
+            ):
+                raise AssertionError("Lectura REST no canónica")
+            return read_issue(767)
+
+        api.request = request
+
+        def reject_anonymous_request(*args, **kwargs):
+            raise AssertionError("El barrido no debe usar lecturas anónimas.")
+
+        api.public_request = reject_anonymous_request
         return api, observed
+
+    def test_scheduled_sweep_consumer_reads_exact_factory_767(self):
+        """Factory y consumidores leen #767 con GET autenticado canónico."""
+        for repo in (
+            "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        ):
+            with self.subTest(repo=repo):
+                api, observed = self._sweep_switch_api("RUNNING")
+                api.repo = repo
+                seen = []
+                original_request = api.request
+
+                def recording(method, path, payload=None, allow=()):
+                    seen.append((method, path))
+                    return original_request(method, path, payload, allow)
+
+                api.request = recording
+                result = run_scheduled_sweep(api)
+                self.assertEqual(result, {
+                    "stale_reservations": 0, "satisfied_blocks": 0
+                })
+                self.assertEqual(seen, [
+                    ("GET", "/repos/pl0n3r/Factory/issues/767")
+                ])
+                self.assertEqual(observed["reads"], 1)
+                self.assertEqual(api.repo, repo)
+
+    def test_scheduled_sweep_consumer_paused_unknown_has_zero_writes(self):
+        """PAUSED y fallos de lectura autenticada deniegan toda escritura."""
+        for repo in ("pl0n3r/Condor", "pl0n3r/FactoryRunner"):
+            for mode in ("PAUSED", "403", "404", "429", "timeout",
+                         "duplicate", "invalid", "wrong-owner", "unclosed"):
+                with self.subTest(repo=repo, mode=mode):
+                    api, _ = self._sweep_switch_api(mode)
+                    api.repo = repo
+                    add_active_reservation(api)
+                    api.commit_times["abc123"] = datetime(
+                        2020, 1, 1, tzinfo=timezone.utc)
+                    before = len(api.comments)
+                    with self.assertRaises(CoordinationError):
+                        run_scheduled_sweep(api)
+                    self.assertEqual(len(api.comments), before)
+                    self.assertEqual(api.status_history, [STATUS_RESERVED])
+                    self.assertNotIn("coordinacion/lock-issue-12",
+                                     api.branches)
+
+    def test_scheduled_sweep_never_reads_shadow_issue_767(self):
+        """Un #767 local RUNNING no autoriza si Factory#767 está PAUSED."""
+        api, observed = self._sweep_switch_api("PAUSED")
+        api.repo = "pl0n3r/Condor"
+        original_issue = api.issue
+        shadow_reads = []
+
+        def issue(number):
+            if number == 767:
+                shadow_reads.append(number)
+                return {
+                    "number": 767, "state": "closed",
+                    "url": coordinator.CANONICAL_SOURCE_URL,
+                    "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                    "user": {"login": "pl0n3r"},
+                    "body": ('<!-- factory-unattended-kill-switch '
+                             '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->'),
+                }
+            return original_issue(number)
+
+        api.issue = issue
+        with self.assertRaisesRegex(CoordinationError, "no RUNNING"):
+            run_scheduled_sweep(api)
+        self.assertEqual(shadow_reads, [])
+        self.assertEqual(observed["reads"], 1)
+        self.assertEqual(api.status_history, [])
+
+    def test_scheduled_sweep_factory_and_consumer_preserve_locks(self):
+        """Barridos sintéticos preservan locks ajenos y recuperan sin fuga."""
+        for repo in ("pl0n3r/Factory", "pl0n3r/Condor"):
+            with self.subTest(repo=repo):
+                api, observed = self._sweep_switch_api("RUNNING")
+                api.repo = repo
+                add_active_reservation(api)
+                old = "2020-01-01T00:00:00+00:00"
+                api.comments[-1]["created_at"] = old
+                api.comments[-1]["updated_at"] = old
+                api.commit_times["abc123"] = datetime(
+                    2020, 1, 1, tzinfo=timezone.utc)
+                foreign_lock = "coordinacion/lock-issue-99"
+                api.branches[foreign_lock] = "other-session"
+                result = run_scheduled_sweep(api)
+                self.assertEqual(result["stale_reservations"], 1)
+                self.assertEqual(api.status_history[-1], STATUS_RECOVERY)
+                self.assertNotIn("coordinacion/lock-issue-12",
+                                 api.branches)
+                self.assertEqual(api.branches[foreign_lock],
+                                 "other-session")
+                self.assertGreaterEqual(observed["reads"], 3)
 
     def test_scheduled_sweep_paused_invalid_switch_zero_writes(self):
         for mode in ("PAUSED", "403", "duplicate", "invalid",
@@ -1986,6 +2119,10 @@ class CoordinacionTests(unittest.TestCase):
             }
 
         def request(method, path, payload=None, allow=()):
+            if (method, path) == (
+                "GET", "/repos/pl0n3r/Factory/issues/767"
+            ):
+                return read_issue(767)
             if method == "GET" and "/labels/" in path:
                 return {"name": "already-exists"}
             writes.append((method, path))
@@ -2225,6 +2362,16 @@ class CoordinacionTests(unittest.TestCase):
         seen = []
         def request(method, path, payload=None, allow=()):
             seen.append((method, path))
+            if method == "GET" and path == "/repos/pl0n3r/Factory/issues/767":
+                return {
+                    "number": 767,
+                    "url": coordinator.CANONICAL_SOURCE_URL,
+                    "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                    "state": "closed",
+                    "user": {"login": "pl0n3r"},
+                    "body": ('<!-- factory-unattended-kill-switch '
+                             '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->'),
+                }
             if method == "GET" and "/git/ref/heads/coordinacion/lock-issue-" in path:
                 return None
             if path.endswith("/git/commits/" + "a" * 40):
@@ -2241,7 +2388,7 @@ class CoordinacionTests(unittest.TestCase):
                           side_effect=lambda unused: checks.append("running")):
             token = guard.acquire_issue_lock(12, "a" * 40)
         self.assertEqual(token, "c" * 40)
-        self.assertEqual([method for method, _ in seen], ["GET", "GET", "POST", "POST"])
+        self.assertEqual([method for method, _ in seen], ["GET", "GET", "GET", "POST", "GET", "POST"])
         self.assertGreaterEqual(len(checks), 3)
 
     def test_busy_v3_lock_avoids_unreachable_nonce_commit(self) -> None:
@@ -2259,6 +2406,63 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(observed, [
             ("GET", "/repos/pl0n3r/Factory/git/ref/heads/coordinacion/lock-issue-12")
         ])
+
+    def test_consumer_real_authenticated_switch_pauses_between_lock_posts(self) -> None:
+        """La guarda real lee Factory#767 autenticado y corta el segundo POST."""
+        api = GitHub("pl0n3r/Condor", "fake-token")
+        calls = []
+        switch_reads = 0
+        switch_state = "RUNNING"
+        nonce = "c" * 40
+
+        def rest(method, path, payload=None, allow=()):
+            nonlocal switch_reads, switch_state
+            calls.append((method, path))
+            if method == "GET" and path == "/repos/pl0n3r/Factory/issues/767":
+                switch_reads += 1
+                state = switch_state
+                return {
+                    "number": 767,
+                    "url": coordinator.CANONICAL_SOURCE_URL,
+                    "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+                    "state": "closed",
+                    "user": {"login": "pl0n3r"},
+                    "body": (
+                        '<!-- factory-unattended-kill-switch '
+                        + json.dumps({"version": 1, "state": state, "owner": "pl0n3r"})
+                        + " -->"
+                    ),
+                }
+            if method == "GET" and path.endswith(
+                "/git/ref/heads/coordinacion/lock-issue-12"
+            ):
+                return None
+            if method == "GET" and path.endswith("/git/commits/" + "a" * 40):
+                return {"tree": {"sha": "b" * 40}}
+            if method == "POST" and path.endswith("/git/commits"):
+                switch_state = "PAUSED"
+                return {"sha": nonce}
+            if method == "POST" and path.endswith("/git/refs"):
+                raise AssertionError("No crear la ref después de PAUSED")
+            raise AssertionError("REST inesperado: " + method + " " + path)
+
+        api.request = rest
+        api.public_request = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("La guarda no puede usar una lectura anónima")
+        )
+        with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+            api.acquire_issue_lock(12, "a" * 40)
+
+        self.assertEqual(switch_reads, 2)
+        self.assertEqual(
+            [method for method, _ in calls if method == "POST"], ["POST"]
+        )
+        self.assertTrue(any(
+            method == "POST" and path.endswith("/git/commits")
+            for method, path in calls
+        ))
+        self.assertFalse(any(path.endswith("/git/refs") for _, path in calls))
+        self.assertEqual(switch_state, "PAUSED")
 
     def test_atomic_lock_acquisition_rechecks_global_pause_per_write(self) -> None:
         """PAUSED antes del nonce = 0 POST; PAUSED entre nonce/ref = 1 POST."""
@@ -2322,7 +2526,7 @@ class CoordinacionTests(unittest.TestCase):
                 api.kill_switch_marker = "PAUSED"
             return result
         with patch.object(api, "branch_sha", side_effect=pause_during_main):
-            with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                 coordinator.ensure_recovery_branch(api, branch)
         self.assertNotIn(branch, api.branches)
         self.assertEqual(writes, [])
@@ -2341,10 +2545,10 @@ class CoordinacionTests(unittest.TestCase):
         for state in ("PAUSED", "INVALID"):
             api.kill_switch_marker = state
             with self.subTest(state=state):
-                with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+                previous = coordinator.active_reservation(api, 12)
+                with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                     coordinator.recover_existing_work_if_stale(
-                        api, 12, "pl0n3r", "trabajo/issue-12",
-                        coordinator.active_reservation(api, 12))
+                        api, 12, "pl0n3r", "trabajo/issue-12", previous)
                 self.assertNotIn(lock, api.branches)
                 self.assertEqual(api.comments, old_comments)
 
@@ -2363,30 +2567,148 @@ class CoordinacionTests(unittest.TestCase):
 
         with patch.object(coordinator, "recover_stale_work",
                           side_effect=pause_after_lock):
-            with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+            previous = coordinator.active_reservation(api, 12)
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                 coordinator.recover_existing_work_if_stale(
-                    api, 12, "pl0n3r", "trabajo/issue-12",
-                    coordinator.active_reservation(api, 12))
+                    api, 12, "pl0n3r", "trabajo/issue-12", previous)
         self.assertEqual(api.comments, old_comments)
         self.assertEqual(api.status_history, old_statuses)
         self.assertNotIn(lock, api.branches)
 
-    def test_consumer_global_kill_switch_cannot_use_local_issue_or_bad_marker(self) -> None:
-        api = FakeGitHub()
-        self.assertIsNone(coordinator.require_global_running(api))
-        for state, issue_state in (("PAUSED", "closed"),
-                                   ("RUNNING", "open"),
-                                   ("INVALID", "closed")):
-            api.kill_switch_marker = state
-            api.kill_switch_issue_state = issue_state
-            with self.subTest(state=state):
-                with self.assertRaisesRegex(CoordinationError, "Kill switch"):
+    def test_consumer_global_kill_switch_uses_authenticated_canonical_get(self) -> None:
+        """La guarda global reutiliza GET autenticado y nunca la API anónima."""
+        for repo in ("pl0n3r/Condor", "pl0n3r/FactoryRunner"):
+            api, observed = self._sweep_switch_api("RUNNING")
+            api.repo = repo
+            api.public_request = lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("no se permite consultar #767 sin autenticación")
+            )
+            seen = []
+            original_request = api.request
+
+            def recording(method, path, payload=None, allow=()):
+                seen.append((method, path))
+                return original_request(method, path, payload, allow)
+
+            api.request = recording
+            with self.subTest(repo=repo):
+                self.assertIsNone(coordinator.require_global_running(api))
+                self.assertEqual(seen, [
+                    ("GET", "/repos/pl0n3r/Factory/issues/767")
+                ])
+                self.assertEqual(observed["reads"], 1)
+                self.assertEqual(api.repo, repo)
+
+        for mode in ("PAUSED", "403", "404", "429", "timeout",
+                     "duplicate", "invalid", "wrong-owner", "unclosed"):
+            api, observed = self._sweep_switch_api(mode)
+            api.repo = "pl0n3r/Condor"
+            api.public_request = lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("no se permite consultar #767 sin autenticación")
+            )
+            with self.subTest(mode=mode):
+                with self.assertRaises(CoordinationError):
                     coordinator.require_global_running(api)
-        api.kill_switch_marker = "RUNNING"
-        api.kill_switch_issue_state = "closed"
-        api.public_request = lambda path: {"number": 767, "state": "closed"}
-        with self.assertRaisesRegex(CoordinationError, "Kill switch"):
-            coordinator.require_global_running(api)
+                self.assertEqual(observed["reads"], 1)
+
+        unauthorized, observed = self._sweep_switch_api("RUNNING")
+        unauthorized.repo = "attacker/repo"
+        with self.assertRaisesRegex(CoordinationError, "no autorizado"):
+            coordinator.require_global_running(unauthorized)
+        self.assertEqual(observed["reads"], 0)
+
+
+    def test_consumer_transport_attaches_bearer_to_canonical_factory_get(self) -> None:
+        """Ejercita Request/urlopen real sin token ni red reales del consumidor."""
+        from io import BytesIO
+        from urllib.error import HTTPError
+
+        source = "/repos/pl0n3r/Factory/issues/767"
+        payload = {
+            "number": 767,
+            "url": coordinator.CANONICAL_SOURCE_URL,
+            "repository_url": coordinator.CANONICAL_REPOSITORY_URL,
+            "state": "closed",
+            "user": {"login": "pl0n3r"},
+            "body": ('<!-- factory-unattended-kill-switch '
+                     '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->'),
+        }
+        encoded = json.dumps(payload).encode("utf-8")
+        for repo in (
+            "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+            "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+            "pl0n3r/FactoryRunner",
+        ):
+            with self.subTest(repo=repo):
+                api = GitHub(repo, "fixture-token")
+                observed = []
+
+                def urlopen_stub(request, timeout):
+                    observed.append((request.get_method(), request.full_url,
+                                     request.get_header("Authorization"), timeout))
+                    return BytesIO(encoded)
+
+                with patch.object(coordinator, "urlopen", side_effect=urlopen_stub):
+                    coordinator.require_sweep_running(api)
+                    coordinator.require_global_running(api)
+
+                self.assertEqual(observed, [(
+                    "GET", "https://api.github.com" + source,
+                    "Bearer fixture-token", 30,
+                )] * 2)
+                self.assertEqual(api.repo, repo)
+
+        for status in (403, 404, 429):
+            with self.subTest(http_status=status):
+                api = GitHub("pl0n3r/Condor", "fixture-token")
+                observed = []
+
+                def denied(request, timeout):
+                    observed.append((request.get_method(), request.full_url))
+                    raise HTTPError(request.full_url, status, "denegado", {},
+                                    BytesIO(b'{"message":"denegado"}'))
+
+                with patch.object(coordinator, "urlopen", side_effect=denied):
+                    with self.assertRaises(CoordinationError):
+                        coordinator.require_sweep_running(api)
+                    with self.assertRaises(CoordinationError):
+                        coordinator.require_global_running(api)
+                self.assertEqual(observed, [
+                    ("GET", "https://api.github.com" + source),
+                ] * 2)
+
+    def test_consumer_sweep_denied_token_never_reaches_mutations(self) -> None:
+        """403/401 de credencial real simulada detiene el barrido antes de escribir."""
+        from io import BytesIO
+        from urllib.error import HTTPError
+
+        endpoint = "https://api.github.com/repos/pl0n3r/Factory/issues/767"
+        for repo in ("pl0n3r/Condor", "pl0n3r/ControlBot",
+                     "pl0n3r/FactoryRunner"):
+            for status in (401, 403, 404, 429):
+                with self.subTest(repo=repo, status=status):
+                    api = GitHub(repo, "fixture-consumer-token")
+                    requests = []
+
+                    def denied(request, timeout):
+                        requests.append((request.get_method(),
+                                         request.full_url,
+                                         request.get_header("Authorization")))
+                        raise HTTPError(
+                            request.full_url, status, "denegado", {},
+                            BytesIO(b'{"message":"denegado"}'),
+                        )
+
+                    with patch.object(coordinator, "urlopen", side_effect=denied):
+                        with self.assertRaisesRegex(
+                            CoordinationError, "(?i)barrido pausado"
+                        ):
+                            run_scheduled_sweep(api)
+
+                    self.assertEqual(requests, [
+                        ("GET", endpoint, "Bearer fixture-consumer-token")
+                    ])
+                    self.assertEqual(api.repo, repo)
 
     def test_recovery_label_mutations_recheck_pause_and_lease_each_rest_write(self) -> None:
         """Nunca emitir DELETE posterior a PAUSED o reemplazo de nonce."""
@@ -3098,7 +3420,7 @@ class CoordinacionTests(unittest.TestCase):
             api.kill_switch_marker = state
             api.kill_switch_issue_state = issue_state
             with self.subTest(state=state, issue_state=issue_state):
-                with self.assertRaisesRegex(CoordinationError, "kill switch"):
+                with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
                     renew_pinned_acceptance(
                         api, 12, "pl0n3r", "OWNER", SESSION_A)
                 self.assertNotIn(lock, api.branches)
@@ -3114,7 +3436,7 @@ class CoordinacionTests(unittest.TestCase):
             api.kill_switch_marker = "PAUSED"
             return pr
         api.pull = pause_before_veto
-        with self.assertRaisesRegex(CoordinationError, "kill switch"):
+        with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
             renew_pinned_acceptance(
                 api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(api.check_runs, [])
@@ -3131,7 +3453,7 @@ class CoordinacionTests(unittest.TestCase):
             original_check(*args)
             api.kill_switch_marker = "PAUSED"
         api.create_failed_check = pause_after_veto
-        with self.assertRaisesRegex(CoordinationError, "kill switch"):
+        with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
             renew_pinned_acceptance(
                 api, 12, "pl0n3r", "OWNER", SESSION_A)
         self.assertEqual(len(api.check_runs), 1)

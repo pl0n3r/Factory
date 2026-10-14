@@ -1573,12 +1573,14 @@ def sweep_satisfied_blocks(api: GitHub) -> int:
 
 def require_sweep_running(api: GitHub) -> None:
     """Revalida el Issue global #767, siempre fail-closed."""
-    if str(getattr(api, "repo", "")).lower() != "pl0n3r/factory":
+    if str(getattr(api, "repo", "")).lower() not in PUBLIC_WORKFLOW_RUN_REPOS:
         raise CoordinationError("Barrido pausado: repositorio no canónico.")
     try:
-        issue = api.issue(CANONICAL_ISSUE_NUMBER)
-    except (CoordinationError, GitHubError, OSError) as exc:
-        raise CoordinationError("Barrido pausado: fuente #767 ilegible.") from exc
+        issue = api.request(
+            "GET", f"/repos/pl0n3r/Factory/issues/{CANONICAL_ISSUE_NUMBER}"
+        )
+    except Exception as exc:
+        raise CoordinationError("Barrido pausado: kill switch #767, fuente ilegible.") from exc
     decision = evaluate_unattended_kill_switch(issue)
     if (not isinstance(issue, dict) or issue.get("state") != "closed"
             or decision.global_pause):
@@ -1588,26 +1590,21 @@ def require_sweep_running(api: GitHub) -> None:
 
 
 def require_global_running(api: GitHub) -> None:
-    """Verifica #767 de Factory desde el propio kit o sus consumidores.
-
-    Nunca confundir el Issue #767 de un consumidor con el canónico de Factory.
-    Si no hay lectura pública autenticable de la fuente, fallar cerrado.
-    """
+    """Valida #767 canónico con GET autenticado y mantiene los errores del contrato."""
     repo = str(getattr(api, "repo", "")).lower()
     if repo not in PUBLIC_WORKFLOW_RUN_REPOS:
-        raise CoordinationError("Kill switch #767: repositorio no autorizado.")
-    if repo == "pl0n3r/factory":
-        require_sweep_running(api)
-        return
+        raise CoordinationError("Kill switch #767: repositorio no autorizado (no canónico).")
     try:
-        issue = api.public_request("/repos/pl0n3r/Factory/issues/767")
+        issue = api.request(
+            "GET", f"/repos/pl0n3r/Factory/issues/{CANONICAL_ISSUE_NUMBER}"
+        )
     except Exception as exc:
-        raise CoordinationError("Kill switch #767: fuente global ilegible.") from exc
+        raise CoordinationError("kill switch #767: fuente global ilegible.") from exc
     decision = evaluate_unattended_kill_switch(issue)
     if (not isinstance(issue, dict) or issue.get("state") != "closed"
-        or decision.global_pause):
+            or decision.global_pause):
         raise CoordinationError(
-            f"Kill switch #767 no RUNNING ({decision.reason})."
+            f"kill switch #767 no RUNNING ({decision.reason})."
         )
 
 
