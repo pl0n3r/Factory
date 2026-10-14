@@ -305,6 +305,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
         )
         mod.verify(q, SHA, NOW)
         q = evidence()
+        q["reviews"][0]["body"] = "The workflow blocks merges whenever a review is pending."
+        mod.verify(q, SHA, NOW)
+        q = evidence()
         q["reviews"][0]["body"] = (
             "A policy discussion mentions high, critical, blocker and rate limited."
         )
