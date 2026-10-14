@@ -201,4 +201,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m scripts.lease_auto_release_integration 1185
+          # Descubrir todos los Issues abiertos en estados gestionados, no
+          # hardcodear la hoja de implementación (que se cerrará al fusionar).
+          gh api --paginate '/repos/pl0n3r/Factory/issues?state=open&per_page=100' |
+            jq -s '[.[][]? | select(.pull_request == null)
+              | select(any(.labels[]?.name; . == "estado: reservado"
+                or . == "estado: en revisión"
+                or . == "estado: requiere recuperación"))
+              | .number] | unique | sort' > "$RUNNER_TEMP/lease-active-issues.json"
+          count="$(jq 'length' "$RUNNER_TEMP/lease-active-issues.json")"
+          # Cota conservadora de cuota por ciclo; ante exceso, no truncar
+          # silenciosamente ni confundir un prefijo con inventario completo.
+          if (( count > 10 )); then
+            echo "::error::Inventario gestionado excede el límite del observador; ningún release autorizado."
+            exit 1
+          fi
+          while IFS= read -r issue_number; do
+            [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::Inventario de Issues inválido; fail-closed."
+              exit 1
+            }
+            python3 -m scripts.lease_auto_release_integration "$issue_number"
+          done < <(jq -r '.[]' "$RUNNER_TEMP/lease-active-issues.json")
