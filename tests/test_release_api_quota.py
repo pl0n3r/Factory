@@ -351,6 +351,43 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "Filtro fail-closed"):
             _active_gate_numbers(rows, now)
 
+
+    def test_repeated_version_preserves_shadowing_canonical_gates(self):
+        """Una ventana más nueva vencida/legacy todavía determina el canónico."""
+        from datetime import timedelta
+
+        now = datetime(2026, 10, 14, 2, 0, tzinfo=timezone.utc)
+        active_body = rw._render_gate(
+            "1.0.33", "a" * 40, now, source_issue=800
+        )["body"]
+        expired_body = rw._render_gate(
+            "1.0.33", "a" * 40, now - timedelta(hours=3),
+            source_issue=800,
+        )["body"]
+        legacy_body = "\n".join(
+            line for line in expired_body.splitlines()
+            if "factory-release-window" not in line
+            and "factory-release-rearm" not in line
+        )
+        for newer in (expired_body, legacy_body):
+            with self.subTest(newer_window=("factory-release-window" in newer)):
+                rows = [
+                    {"number": 10, "body": active_body},
+                    {"number": 11, "body": newer},
+                ]
+                self.assertEqual(_active_gate_numbers(rows, now), [10, 11])
+                records = rw.gate_records([
+                    {"issue": {
+                        "number": item["number"],
+                        "body": item["body"],
+                        "title": "Gate canónico",
+                        "state": "open" if item["number"] == 10 else "closed",
+                        "updated_at": "2026-10-14T01:00:00Z",
+                    }, "comments": []}
+                    for item in rows
+                ])
+                self.assertIsNone(rw.freeze_gate(records, now))
+
     def test_report_excludes_comment_bodies_and_tokens(self):
         workflow = _workflow()
         helper = _block(HELPER_START, HELPER_END)

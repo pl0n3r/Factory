@@ -300,24 +300,32 @@ jobs:
           now = datetime.strptime(sys.argv[2], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
           if not isinstance(rows, list):
               raise SystemExit("ERROR: Inventario de gates inválido")
-          selected = []
+          # Una ventana activa obliga a cargar TODOS los gates de esa
+          # versión: uno posterior, aunque caducado o legacy, puede
+          # reemplazar al canónico anterior según freeze_gate().
+          parsed = []
+          versions_with_live_window = set()
           for issue in rows:
               if not isinstance(issue, dict) or not isinstance(issue.get("body"), str):
                   raise SystemExit("ERROR: Issue de gate inválido")
               body = issue["body"]
-              if not WINDOW_INTENT_RE.search(body):
-                  continue
               try:
                   gate = _gate_from_body(body)
                   if gate is None:
-                      raise ReleaseWindowError("release-window sin factory-release")
-                  window = _window_from_body(body, gate[2])
-                  if window is None:
-                      raise ReleaseWindowError("release-window sin ventana completa")
+                      raise ReleaseWindowError("gate sin factory-release")
+                  parsed.append((issue, gate[1]))
+                  if WINDOW_INTENT_RE.search(body):
+                      window = _window_from_body(body, gate[2])
+                      if window is None:
+                          raise ReleaseWindowError("release-window sin ventana completa")
+                      if now <= window["expires_at"]:
+                          versions_with_live_window.add(gate[1])
               except ReleaseWindowError as exc:
                   raise SystemExit("ERROR: Ventana de gate inválida") from exc
-              if now <= window["expires_at"]:
-                  selected.append(issue)
+          selected = [
+              issue for issue, version in parsed
+              if version in versions_with_live_window
+          ]
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
           mv /tmp/release-issues-active.json /tmp/release-issues.json
