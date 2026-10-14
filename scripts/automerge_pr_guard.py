@@ -21,7 +21,15 @@ WINDOW_HEADER = re.compile(r"<!--\s*factory\s*-\s*release\s*-\s*window\b", re.I)
 WINDOW_MARKER = re.compile(r"<!--\s*factory-release-window\s+(\{[^\n]*\})\s*-->", re.I)
 EXECUTED_MARKER = re.compile(r"<!--\s*factory-release-executed\s+(\{[^\n]*\})\s*-->", re.I)
 EXECUTED_HEADER = re.compile(r"<!--\s*factory\s*-\s*release\s*-\s*executed\b", re.I)
-SEVERE = re.compile(r"\b(?:critical|high|p0|p1|severe|blocker)\b", re.I)
+# CodeRabbit's category-anchored Security & Privacy / Major finding denotes
+# a potentially high-severity security issue. Do not confuse it with
+# unqualified Major maintainability or functional-correctness observations.
+SEVERE = re.compile(
+    r"(?:\b(?:critical|high|p0|p1|severe|blocker)\b"
+    r"|^[ \t]*\*{0,2}(?:🔒[ \t]*)?Security[ \t]*&[ \t]*Privacy\*{0,2}"
+    r"[ \t]*\|[ \t]*\*{0,2}(?:🟠[ \t]*)?Major\b)",
+    re.I | re.M,
+)
 # Match explicit evidence that CodeRabbit did not perform a substantive review.
 # Both word orders and common passive-voice forms must fail closed; the
 # presence of a green commit status is not proof the review happened.
@@ -31,7 +39,7 @@ SKIPPED = re.compile(
     r"|skip\s+review|not\s+reviewed"
     r"|review(?:\s+was)?\s+not\s+(?:performed|completed|available)"
     r"|(?:could\s+not|cannot|unable\s+to)\s+review"
-    r"|manual\s+review\s+required|rate[\s._-]*limit"
+    r"|manual\s+review\s+required|rate[\s._-]*limit(?:ed|ing)?"
     r"|review\s+disabled)\b", re.I,
 )
 UNFINISHED_REVIEW = re.compile(

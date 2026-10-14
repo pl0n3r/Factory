@@ -179,6 +179,53 @@ class AutoMergePrGuardTests(unittest.TestCase):
                                         "created_at": "2026-10-14T04:00:00Z", "updated_at": "2026-10-14T04:00:00Z"}]
                 self.deny(q)
 
+    def test_coderabbit_security_major_category_is_blocking(self):
+        # A real CodeRabbit Security & Privacy / Major finding must not be
+        # downgraded to a nonsecurity "Major" quality advisory.
+        finding = "**🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**"
+        mod.verify(evidence(), SHA, NOW)
+        q = evidence()
+        q["reviews"][0]["body"] = finding
+        self.deny(q)
+        q = evidence()
+        q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                          "commit_id": SHA, "body": finding}]
+        self.deny(q)
+        q = evidence()
+        q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                "body": finding}]
+        self.deny(q)
+        q = evidence()
+        q["status_history"][0]["description"] = finding
+        q["commit_status"]["statuses"][0]["description"] = finding
+        self.deny(q)
+        q = evidence()
+        q["reviews"][0]["body"] = "**🎯 Functional Correctness** | **🟠 Major**"
+        mod.verify(q, SHA, NOW)
+        q["reviews"][0]["body"] = "**🩺 Maintainability** | **🟠 Major**"
+        mod.verify(q, SHA, NOW)
+
+    def test_coderabbit_rate_limited_variants_are_not_review_evidence(self):
+        # The old regex matched rate-limit but missed rate-limited because
+        # the trailing word boundary fell between "limit" and "ed".
+        mod.verify(evidence(), SHA, NOW)
+        for variant in ("Review rate limited", "Review rate-limited",
+                        "Review rate limiting", "rate-limited"):
+            with self.subTest(variant=variant):
+                q = evidence()
+                q["commit_status"]["statuses"][0]["description"] = variant
+                q["status_history"][0]["description"] = variant
+                self.deny(q)
+                q = evidence()
+                q["reviews"][0]["body"] = variant
+                self.deny(q)
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                        "body": variant,
+                                        "created_at": "2026-10-14T03:59:30Z",
+                                        "updated_at": "2026-10-14T03:59:30Z"}]
+                self.deny(q)
+
     def test_coderabbit_status_skipped_cannot_be_green(self):
         # A green commit status carrying skipped/rate-limited evidence is not
         # a completed security review, even with an earlier clean review.
