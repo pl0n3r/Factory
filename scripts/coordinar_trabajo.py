@@ -3484,9 +3484,39 @@ def adopt_orphaned_contract(
         guarded.try_assign(issue_number, actor)
         for pull in open_pulls:
             number = pull.get("number")
-            if not isinstance(number, int):
-                continue
-            body = str(api.pull(number).get("body") or "")
+            if type(number) is not int or number <= 0:
+                raise CoordinationError(
+                    "PR huérfano sin identidad verificable antes de adopción."
+                )
+            current_pull = api.pull(number)
+            current_head = (
+                current_pull.get("head")
+                if type(current_pull) is dict else None
+            )
+            current_base = (
+                current_pull.get("base")
+                if type(current_pull) is dict else None
+            )
+            if (type(current_pull) is not dict
+                    or current_pull.get("number") != number
+                    or current_pull.get("state") != "open"
+                    or type(current_head) is not dict
+                    or type(current_base) is not dict
+                    or current_base.get("ref") != "main"
+                    or not local_pull_source_matches(api, current_pull, branch)
+                    or current_head.get("sha") not in (None, branch_sha)
+                    or current_pull.get("body") != pull.get("body")):
+                raise CoordinationError(
+                    "PR cambió de estado, procedencia, SHA o contrato "
+                    "durante adopción huérfana."
+                )
+            # Un escritor externo puede insertar un marker ajeno aun
+            # después del lock: no alterar su PR si la lease cambió.
+            if active_reservation(api, issue_number) != winner:
+                raise CoordinationError(
+                    "Reserva V3 cambió antes de actualizar PR huérfano."
+                )
+            body = str(current_pull.get("body") or "")
             guarded.update_pull_body(
                 number, rewrite_pull_reservation(body, reservation_id),
             )
