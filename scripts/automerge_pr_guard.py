@@ -63,6 +63,22 @@ UNFINISHED_REVIEW = re.compile(
     r"(?:pending|queued|waiting|in[ \t-]+progress|awaiting|cancell?ed|not[ \t-]+complete)(?:\b|(?=[*_]))[*_]{0,2}",
     re.I | re.M,
 )
+# CodeRabbit reports an aborted/rejected review action in an HTML summary,
+# not necessarily in a GitHub review or commit-status description. Treat the
+# exact structural notice as incomplete without matching ordinary prose.
+ACTION_NOT_COMPLETED = re.compile(
+    r"^[ \t]*<summary>[ \t]*(?:<strong>[ \t]*)?(?:⚠️[ \t]*)?"
+    r"Action[ \t]+not[ \t]+completed[ \t]*(?:</strong>[ \t]*)?</summary>[ \t]*$",
+    re.I | re.M,
+)
+
+
+def review_incomplete_notice(body):
+    """Recognize explicit incomplete-review notices, not policy prose."""
+    return bool(SKIPPED.search(body) or UNFINISHED_REVIEW.search(body)
+                or ACTION_NOT_COMPLETED.search(body))
+
+
 RESERVATION_HEADER = re.compile(r"<!--\s*condor-reserva\b", re.I)
 RESERVATION_MARKER = re.compile(r"<!--\s*condor-reserva\s+(\{[^\n]*\})\s*-->", re.I)
 TASK_HEADER = re.compile(r"<!--\s*factory-plan-task\b", re.I)
@@ -505,8 +521,8 @@ def verify_coderabbit_status(payload, expected, history):
     description = latest.get("description")
     if (latest.get("state") != "success"
             or type(description) is not str or not description.strip()
-            or SKIPPED.search(description) or SEVERE.search(description)
-            or UNFINISHED_REVIEW.search(description)):
+            or SEVERE.search(description)
+            or review_incomplete_notice(description)):
         raise Denied("coderabbit_commit_status_skipped_or_failed")
 
 
@@ -546,8 +562,8 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             continue
         body = row.get("body")
         if (row.get("state") in ("APPROVED", "COMMENTED") and type(body) is str
-                and body.strip() and not SKIPPED.search(body)
-                and not SEVERE.search(body) and not UNFINISHED_REVIEW.search(body)):
+                and body.strip() and not review_incomplete_notice(body)
+                and not SEVERE.search(body)):
             # An exact-HEAD review without a verifiable submission time is
             # incomplete evidence, not an authorization to merge. GitHub
             # supplies submitted_at on published reviews; drafts/PENDING do
@@ -565,8 +581,8 @@ def verify_review(reviews, comments, issue_comments, expected, now):
                 raise Denied("coderabbit_review_timestamp_in_future")
             clean = True
             substantive_times.append(reviewed.astimezone(timezone.utc))
-        elif type(body) is str and (SKIPPED.search(body) or SEVERE.search(body)
-                                        or UNFINISHED_REVIEW.search(body)):
+        elif type(body) is str and (review_incomplete_notice(body)
+                                        or SEVERE.search(body)):
             raise Denied("review_skipped_or_severe")
     if not clean:
         raise Denied("substantive_coderabbit_review_missing")
@@ -582,8 +598,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             # remediated by a newer clean review of the branch.
             if type(body) is not str or SEVERE.search(body):
                 raise Denied("review_finding_unknown_or_severe")
-            if commit_id == expected and (SKIPPED.search(body)
-                                          or UNFINISHED_REVIEW.search(body)):
+            if commit_id == expected and review_incomplete_notice(body):
                 raise Denied("review_finding_unknown_or_skipped")
     # CodeRabbit publica "Review skipped" en la conversación del Issue/PR,
     # NO en /pulls/{number}/comments (solo comentarios inline de revisión).
@@ -596,7 +611,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
         body = row.get("body")
         if type(body) is not str or SEVERE.search(body):
             raise Denied("coderabbit_issue_comment_unknown_or_severe")
-        if SKIPPED.search(body) or UNFINISHED_REVIEW.search(body):
+        if review_incomplete_notice(body):
             # No dejar bloqueado para siempre un skip del PR en DRAFT si
             # después existe review real del MISMO SHA, posterior a ese skip.
             # Sin tiempos confiables: UNKNOWN y falla cerrado.
