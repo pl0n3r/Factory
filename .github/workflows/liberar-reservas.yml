@@ -255,6 +255,7 @@ jobs:
           # Fallo de jq en sustitución de proceso no propaga su exit code
           # al while: materializar primero y validar con pasos sincrónicos.
           jq -e 'type == "array" and length <= 10 and
+                 length == (unique | length) and
                  all(.[]; type == "number" and . > 0 and floor == .)' \
             "$RUNNER_TEMP/lease-active-issues.json" > /dev/null
           jq -r '.[]' "$RUNNER_TEMP/lease-active-issues.json" \
