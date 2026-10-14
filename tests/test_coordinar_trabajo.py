@@ -5598,13 +5598,13 @@ class ExactHeadPullFileEvidenceTests(unittest.TestCase):
         stale = {
             "number": 42, "state": "open",
             "base": {"ref": "main", "sha": "b" * 40},
-            "head": {"ref": "trabajo/issue-1081", "sha": "c" * 40, "repo": {"full_name": api.repo}},
+            "head": {"ref": "trabajo/issue-1081", "sha": "c" * 40, "repo": {"full_name": "pl0n3r/Factory"}},
             "changed_files": 1,
         }
         with self.assertRaisesRegex(CoordinationError, "HEAD/BASE"):
             self._read([row], after=stale)
         moved_base = {
-            **stale, "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40, "repo": {"full_name": api.repo}},
+            **stale, "head": {"ref": "trabajo/issue-1081", "sha": "a" * 40, "repo": {"full_name": "pl0n3r/Factory"}},
             "base": {"ref": "dev", "sha": "b" * 40},
         }
         with self.assertRaisesRegex(CoordinationError, "HEAD/BASE"):
