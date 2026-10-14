@@ -25,6 +25,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("contents: write", text)
         self.assertIn("pull-requests: read", text)
         self.assertNotIn("pull-requests: write", text)
+        self.assertIn("      - 'scripts/coordinar_trabajo.py'", text)
         self.assertIn("Observador integrado autenticado V3", text)
         self.assertIn("gh api --paginate --slurp", text)
         self.assertIn("inventory_after_switch_recheck", text)
