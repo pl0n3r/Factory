@@ -360,10 +360,16 @@ if __name__ == "__main__":
             "release_authorized": False,
             "mutations": 0,
         }, sort_keys=True))
+        # UNKNOWN no debe producir un workflow verde: no hubo evidencia
+        # verificable. Sólo un preview read-only/wait es terminal válido.
+        if result.state != "read_only" or result.action != "wait":
+            raise SystemExit(1)
     except Exception:
-        # El cron emite únicamente un estado sanitizado y continúa fail-closed.
+        # No registrar excepciones ni datos privados; señalizar fallo real
+        # a Actions para impedir que UNKNOWN se confunda con observación OK.
         print(json.dumps({
             "state": "UNKNOWN", "action": "unknown",
             "reason": "observer_failed", "release_authorized": False,
             "mutations": 0,
         }, sort_keys=True))
+        raise SystemExit(1)
