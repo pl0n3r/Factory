@@ -61,6 +61,22 @@ class FakeAPI(ActivityAPI):
 
 
 class LeaseGithubPortTests(unittest.TestCase):
+    def test_read_only_inspection_never_allows_caller_to_set_authority(self):
+        from dataclasses import FrozenInstanceError, replace
+        from scripts.lease_github_port import Inspection
+
+        sample = Inspection(UNKNOWN, 21)
+        self.assertIs(sample.release_authorized, False)
+        with self.assertRaises(TypeError):
+            Inspection(UNKNOWN, 21, release_authorized=True)
+        with self.assertRaises(TypeError):
+            replace(sample, release_authorized=True)
+        with self.assertRaises(FrozenInstanceError):
+            setattr(sample, "release_authorized", True)
+        recent = LeaseGithubPort(FakeAPI()).inspect(21, now=NOW)
+        self.assertEqual(recent.state, RECENT)
+        self.assertIs(recent.release_authorized, False)
+
     def test_paginated_authenticated_recovery_note_is_read_only_and_fail_closed(self):
         from dataclasses import replace
         from scripts.aceptacion_kit import contract_fingerprint
