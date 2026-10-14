@@ -1439,7 +1439,7 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         # never perform real network calls or invoke GitHub credentials.
         run = workflow.split("        run: |\n", 1)[1]
         script = textwrap.dedent(run)
-        return "set -euo pipefail\nMERGE_STATE=" + script.split("MERGE_STATE=", 1)[1]
+        return "set -euo pipefail\n" + script.split("# SERVER_GATES_START\n", 1)[1]
 
     def test_merge_observation_requires_successful_authenticated_query(self):
         """An unknown gh pr view result can never authorize deferred merging."""
@@ -1451,6 +1451,12 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         stub = r'''#!/bin/bash
 set -euo pipefail
 case "$*" in
+  "api graphql "*)
+    if [[ "${STUB_QUEUE_ERROR:-no}" == yes ]]; then exit 53; fi
+    echo "${STUB_QUEUE_POLICY:-safe}" ;;
+  "api repos/pl0n3r/Factory --jq "*)
+    if [[ "${STUB_REPO_ERROR:-no}" == yes ]]; then exit 54; fi
+    echo "${STUB_SERVER_AUTO:-false}" ;;
   "api "*) echo "${STUB_MERGEABLE:-clean}" ;;
   "pr merge --auto "*)
     if [[ "${STUB_AUTO_ERROR:-no}" == queued ]]; then echo pending > "$STUB_FLAG"; exit 49; fi
@@ -1481,6 +1487,11 @@ esac
             ("merge_request_fails_after_queue", "null", "no", "clean", "disabled", False),
             ("merge_request_fails_after_queue_and_revoke_fails", "null", "yes", "clean", "pending", False),
             ("blocked_before_command", "null", "no", "blocked", "untouched", False),
+            ("repo_deferred_auto_enabled", "null", "no", "clean", "untouched", False, "true"),
+            ("repo_auto_property_missing", "null", "no", "clean", "untouched", False, "null"),
+            ("repo_api_error", "null", "no", "clean", "untouched", False, "false", "safe", "yes"),
+            ("merge_queue_enabled", "null", "no", "clean", "untouched", False, "false", "deny"),
+            ("merge_queue_graphql_error", "null", "no", "clean", "untouched", False, "false", "safe", "no", "yes"),
         )
         script = self.merge_section()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1488,7 +1499,10 @@ esac
             mockgh.write_text(stub, encoding="utf8")
             mockgh.chmod(0o755)
             marker = Path(tmp) / "pending"
-            for name, view, disable_err, mergeable, state, success in scenarios:
+            for row in scenarios:
+                name, view, disable_err, mergeable, state, success = row[:6]
+                gates = list(row[6:]) + ["false", "safe", "no", "no"]
+                server_auto, queue_policy, repo_error, queue_error = gates[:4]
                 with self.subTest(name=name):
                     marker.write_text("untouched", encoding="utf8")
                     env = dict(os.environ,
@@ -1498,6 +1512,10 @@ esac
                                PR_NUMBER="1375", STUB_FLAG=str(marker),
                                STUB_VIEW=view, STUB_DISABLE_ERROR=disable_err,
                                STUB_MERGEABLE=mergeable,
+                               STUB_SERVER_AUTO=server_auto,
+                               STUB_QUEUE_POLICY=queue_policy,
+                               STUB_REPO_ERROR=repo_error,
+                               STUB_QUEUE_ERROR=queue_error,
                                STUB_AUTO_ERROR=("queued" if name.startswith("merge_request_fails_after_queue") else "no"))
                     result = subprocess.run(["bash", "-c", script], capture_output=True,
                                             text=True, env=env, timeout=5, check=False)

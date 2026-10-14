@@ -41,6 +41,30 @@ jobs:
           python3 scripts/automerge_pr_guard.py
           # --auto solo debe utilizarse cuando GitHub ya declara CLEAN.
           # Los PRs con checks sin terminar/merge diferido NO se encolan aquí.
+          # SERVER_GATES_START
+          # --auto solo es elegible sin autorizacion diferida a nivel servidor
+          # y sin cola de merge. Cualquier error o evidencia ausente: DENY.
+          REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          if ! SERVER_AUTO="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.allow_auto_merge')"; then
+            echo 'AUTOMERGE_DENIED: server_auto_merge_unknown' >&2
+            exit 1
+          fi
+          if [[ "$SERVER_AUTO" != false ]]; then
+            echo 'AUTOMERGE_DENIED: server_allows_deferred_auto_merge' >&2
+            exit 1
+          fi
+          if ! QUEUE_POLICY="$(gh api graphql \
+            -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner,name:$repo) { pullRequest(number:$number) { isMergeQueueEnabled isInMergeQueue } } }' \
+            -f owner="$REPO_OWNER" -f repo="$REPO_NAME" -F number="$PR_NUMBER" \
+            --jq 'if (((.errors // []) | length) == 0) and (.data.repository.pullRequest.isMergeQueueEnabled == false) and (.data.repository.pullRequest.isInMergeQueue == false) then "safe" else "deny" end')"; then
+            echo 'AUTOMERGE_DENIED: merge_queue_evidence_unknown' >&2
+            exit 1
+          fi
+          if [[ "$QUEUE_POLICY" != safe ]]; then
+            echo 'AUTOMERGE_DENIED: merge_queue_enabled_or_unknown' >&2
+            exit 1
+          fi
           MERGE_STATE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.mergeable_state')"
           if [[ "$MERGE_STATE" != clean ]]; then
             echo 'AUTOMERGE_DENIED: pr_not_immediately_mergeable' >&2
