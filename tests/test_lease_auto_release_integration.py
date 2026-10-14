@@ -213,6 +213,116 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                          session)
 
 
+    def test_v3_auto_recovery_grace_rejects_takeover(self):
+        """Nota de recuperación automática impide una rotación por /tomar."""
+        import json
+        from datetime import datetime, timezone
+        from scripts.aceptacion_kit import contract_fingerprint
+        from scripts.coordinar_trabajo import (
+            CoordinationError, STATUS_RECOVERY, active_reservation,
+            recover_work, reservation_marker, reserve_work,
+        )
+        from scripts.orquestador_kit import (
+            PlannedTask, build_task_marker, parse_task_marker,
+        )
+        from test_coordinar_trabajo import (
+            BOT, FakeGitHub, SESSION_A, VALID_ACCEPTANCE_BODY,
+        )
+
+        branch = "trabajo/issue-12"
+        owner = "agente-original"
+        def create_fixture():
+            api = FakeGitHub()
+            api.repo = "pl0n3r/Factory"
+            task = PlannedTask(
+                key="LEASE_V3_GRACE", title="Gracia",
+                owner="pl0n3r", paths=("scripts/x.py",), depends_on=(),
+            )
+            body = VALID_ACCEPTANCE_BODY + "\n### Rutas reclamadas\n" + (
+                "- scripts/x.py\n" + build_task_marker(
+                    epic=12, task=task, order=1,
+                    roles=["ingenieria-software"], dependency_issues=[],
+                )
+            )
+            api.issue_data["body"] = body
+            api.branches[branch] = "a" * 40
+            api.commit_times["a" * 40] = START
+            api.set_status(12, STATUS_RECOVERY)
+            pin = contract_fingerprint(body)
+            marker = parse_task_marker(body)
+            task_pin = __import__(
+                "scripts.orquestador_kit", fromlist=["task_marker_fingerprint"]
+            ).task_marker_fingerprint(marker)
+            api.comments.append({
+                "user": {"login": BOT, "type": "Bot"},
+                "body": reservation_marker(
+                    owner, SESSION_A, branch, True, "tomar", pin, marker),
+                "created_at": START.isoformat(),
+                "updated_at": START.isoformat(),
+            })
+            payload = {
+                "version": 1, "owner": owner,
+                "reservation_id": SESSION_A, "branch": branch,
+                "branch_sha": "a" * 40,
+                "last_activity_at": START.isoformat(),
+                "acceptance_sha256": pin,
+                "task_marker_sha256": task_pin,
+            }
+            api.comments.append({
+                "user": {"login": BOT, "type": "Bot"},
+                "body": "<!-- factory-lease-recovery "
+                        + json.dumps(payload, sort_keys=True) + " -->",
+                "created_at": (START + timedelta(minutes=30)).isoformat(),
+                "updated_at": (START + timedelta(minutes=30)).isoformat(),
+            })
+            return api
+
+        # /tomar bloqueado aun con sesión activa stale y recovery label:
+        # sin UUID de la sesión NO equivale a /recuperar.
+        for actor in ("otro-agente", owner):
+            with self.subTest(actor=actor):
+                api = create_fixture()
+                with self.assertRaisesRegex(
+                    CoordinationError, "solo el titular con /recuperar"
+                ):
+                    reserve_work(api, 12, actor, "OWNER")
+                self.assertEqual(api.comments[-1]["user"]["login"], BOT)
+                self.assertEqual(api.branches[branch], "a" * 40)
+                self.assertEqual(api.issue_data["labels"][-1]["name"],
+                                 STATUS_RECOVERY)
+                self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                                 SESSION_A)
+
+        # /recuperar UUID desde otra identidad también se rechaza.
+        api = create_fixture()
+        with self.assertRaisesRegex(
+            CoordinationError, "solo el titular con /recuperar"
+        ):
+            recover_work(api, 12, "otro-agente", "OWNER", SESSION_A)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                         SESSION_A)
+
+        # El titular con el UUID explícito conserva rama, PR y contrato.
+        api = create_fixture()
+        session = recover_work(api, 12, owner, "OWNER", SESSION_A)
+        self.assertIsNotNone(session)
+        self.assertNotEqual(session, SESSION_A)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                         session)
+        self.assertEqual(api.branches[branch], "a" * 40)
+
+        # Una nota V3 con SHA discordante no permite recuperación.
+        api = create_fixture()
+        note = api.comments[-1]
+        note["body"] = note["body"].replace("a" * 40, "b" * 40)
+        with self.assertRaisesRegex(
+            CoordinationError, "no coincide con la lease o rama"
+        ):
+            recover_work(api, 12, owner, "OWNER", SESSION_A)
+        self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                         SESSION_A)
+
+
     def test_collector_and_port_preview_agree_without_release_authority(self):
         from dataclasses import FrozenInstanceError
         from scripts.lease_auto_release_integration import (
