@@ -3430,6 +3430,13 @@ def adopt_orphaned_contract(
     fingerprint = contract_fingerprint(body_at_start)
     task_marker = parse_task_marker(body_at_start)
     open_pulls = open_pull_records_for_branch(api, branch)
+    # No conservar referencias mutables del transporte como comparadores:
+    # algunas API de prueba retornan el mismo objeto; el PR ajeno puede
+    # cambiar en el intervalo previo a nuestra escritura.
+    initial_pull_bodies = {
+        pull.get("number"): pull.get("body") for pull in open_pulls
+        if type(pull) is dict
+    }
 
     # Publicar sin lock permitiría tapar una lease V3 creada tras el GET.
     require_global_running(api)
@@ -3505,7 +3512,7 @@ def adopt_orphaned_contract(
                     or current_base.get("ref") != "main"
                     or not local_pull_source_matches(api, current_pull, branch)
                     or current_head.get("sha") not in (None, branch_sha)
-                    or current_pull.get("body") != pull.get("body")):
+                    or current_pull.get("body") != initial_pull_bodies.get(number)):
                 raise CoordinationError(
                     "PR cambió de estado, procedencia, SHA o contrato "
                     "durante adopción huérfana."
