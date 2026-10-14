@@ -2,15 +2,33 @@ name: Auto-merge cuando esté listo
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]
+    types: [completed]
 permissions:
   contents: read
 jobs:
   automerge:
-    if: github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.repo.fork == false &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.actor != 'dependabot[bot]'
+    if: >-
+      (
+        (github.event_name == 'pull_request' ||
+         (github.event_name == 'pull_request_review' &&
+          github.event.review.user.login == 'coderabbitai[bot]')) &&
+        github.event.pull_request.draft == false &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.fork == false &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.actor != 'dependabot[bot]'
+      ) || (
+        github.event_name == 'workflow_run' &&
+        github.ref == 'refs/heads/main' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.repository.full_name == github.repository &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -23,15 +41,32 @@ jobs:
       - name: Checkout de la base confiable sin credenciales persistentes
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
+      - name: Resolver evento sobre PR autenticado
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            python3 scripts/automerge_pr_guard.py --resolve-workflow-run >> "$GITHUB_OUTPUT"
+          else
+            [[ "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$EVENT_PR_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            printf 'pr_number=%s\npr_sha=%s\npr_url=https://github.com/%s/pull/%s\n' \
+              "$EVENT_PR_NUMBER" "$EVENT_PR_SHA" "$GITHUB_REPOSITORY" "$EVENT_PR_NUMBER" >> "$GITHUB_OUTPUT"
+          fi
       - name: Validar evidencia y habilitar exclusivamente squash exact-HEAD
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          PR_SHA: ${{ steps.resolve.outputs.pr_sha }}
+          PR_URL: ${{ steps.resolve.outputs.pr_url }}
         run: |
           set -euo pipefail
           python3 scripts/automerge_pr_guard.py
