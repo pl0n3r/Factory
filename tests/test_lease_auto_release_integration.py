@@ -311,6 +311,46 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                                  "estado: reservado")
                 self.assertEqual(api.branches[branch], "a" * 40)
 
+        # Un marker de nota suplantado, duplicado o ambiguo tampoco
+        # habilita /tomar: la fuente de recuperación debe ser integral.
+        for scenario, reason in (
+            ("spoofed_bot", "sin procedencia de bot"),
+            ("missing_bot_type", "sin procedencia de bot"),
+            ("duplicate_note", "Notas V3 duplicadas"),
+            ("duplicate_header", "sin procedencia de bot"),
+            ("duplicate_json_key", "automática inválida"),
+            ("malformed_header", "automática malformada"),
+            ("missing_required_key", "sin contrato válido"),
+        ):
+            with self.subTest(proof_case=scenario):
+                api = create_fixture(recovery_label=False)
+                note = api.comments[-1]
+                if scenario == "spoofed_bot":
+                    note["user"] = {"login": "other", "type": "User"}
+                elif scenario == "missing_bot_type":
+                    note["user"] = {"login": BOT}
+                elif scenario == "duplicate_note":
+                    api.comments.append(dict(note))
+                elif scenario == "duplicate_header":
+                    note["body"] += "\n<!-- FACTORY-LEASE-RECOVERY {} -->"
+                elif scenario == "duplicate_json_key":
+                    note["body"] = note["body"].replace(
+                        '"version": 1', '"version": 1, "version": 1')
+                elif scenario == "malformed_header":
+                    note["body"] = note["body"].replace(
+                        "<!-- factory-lease-recovery ",
+                        "<!-- factory-lease-recovery {BROKEN} ")
+                elif scenario == "missing_required_key":
+                    note["body"] = note["body"].replace(
+                        '"owner": "agente-original", ', "")
+                with self.assertRaisesRegex(CoordinationError, reason):
+                    reserve_work(api, 12, "otro-agente", "OWNER")
+                self.assertEqual(active_reservation(api, 12)["reservation_id"],
+                                 SESSION_A)
+                self.assertEqual(api.branches[branch], "a" * 40)
+                self.assertEqual(api.issue_data["labels"][-1]["name"],
+                                 "estado: reservado")
+
         # /recuperar UUID desde otra identidad también se rechaza.
         api = create_fixture()
         with self.assertRaisesRegex(
