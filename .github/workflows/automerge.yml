@@ -199,21 +199,12 @@ jobs:
           env -u MERGE_TOKEN python3 scripts/automerge_pr_guard.py
           # --auto solo debe utilizarse cuando GitHub ya declara CLEAN.
           # Los PRs con checks sin terminar/merge diferido NO se encolan aquí.
-          # SERVER_GATES_START
-          # --auto solo es elegible sin autorizacion diferida a nivel servidor
-          # y sin cola de merge. Cualquier error o evidencia ausente: DENY.
+          # Requerir fusión inmediata: la capacidad de auto-merge del repo no autoriza este PR a esperar.
+          # El guard ya deniega pr.auto_merge preexistente; aquí nunca se crea una autorización diferida.
           REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          if ! SERVER_AUTO="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.allow_auto_merge')"; then
-            echo 'AUTOMERGE_DENIED: server_auto_merge_unknown' >&2
-            exit 1
-          fi
-          if [[ "$SERVER_AUTO" != false ]]; then
-            echo 'AUTOMERGE_DENIED: server_allows_deferred_auto_merge' >&2
-            exit 1
-          fi
           if ! QUEUE_POLICY="$(gh api graphql \
-            -f query="query(\$owner:String!, \$repo:String!, \$number:Int!) { repository(owner:\$owner,name:\$repo) { pullRequest(number:\$number) { isMergeQueueEnabled isInMergeQueue } } }" \
+            -f query="query(\\$owner:String!, \\$repo:String!, \\$number:Int!) { repository(owner:\\$owner,name:\\$repo) { pullRequest(number:\\$number) { isMergeQueueEnabled isInMergeQueue } } }" \
             -f owner="$REPO_OWNER" -f repo="$REPO_NAME" -F number="$PR_NUMBER" \
             --jq 'if (((.errors // []) | length) == 0) and (.data.repository.pullRequest.isMergeQueueEnabled == false) and (.data.repository.pullRequest.isInMergeQueue == false) then "safe" else "deny" end')"; then
             echo 'AUTOMERGE_DENIED: merge_queue_evidence_unknown' >&2
@@ -228,32 +219,35 @@ jobs:
             echo 'AUTOMERGE_DENIED: pr_not_immediately_mergeable' >&2
             exit 1
           fi
-          # github.token no despierta el CI por los pushes que genera.
-          # Sólo credenciales separadas permiten intentar la fusión.
           # No crear ni reutilizar credenciales automáticamente.
           if [[ -z "${MERGE_TOKEN:-}" || "$MERGE_TOKEN" == "$GH_TOKEN" ]]; then
             echo 'AUTOMERGE_DENIED: dedicated_merge_token_missing_or_reused' >&2
             exit 1
           fi
-          # Un cleanup no es atómico. Nunca reportar éxito si el merge
-          # no es comprobable, incluso si falla la consulta o la revocación.
-          reject_unverified_merge() {
-            if ! GH_TOKEN="$MERGE_TOKEN" gh pr merge --disable-auto "$PR_URL"; then
-              echo 'AUTOMERGE_DENIED: auto_merge_revocation_unconfirmed' >&2
-            fi
-            echo "AUTOMERGE_DENIED: $1" >&2
+          # PUT /merge con sha=PR_SHA es una única operación condicionada al HEAD actual.
+          # La API no crea auto-merge ni añade el PR a una cola si el SHA/gates ya cambiaron.
+          if ! MERGE_RESPONSE="$(GH_TOKEN="$MERGE_TOKEN" gh api --method PUT \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
+            -f sha="$PR_SHA" -f merge_method=squash)"; then
+            echo 'AUTOMERGE_DENIED: immediate_merge_api_failed' >&2
             exit 1
-          }
-          # Una solicitud de --auto puede dejar cola antes de responder con
-          # error. Intentar revocación incluso cuando gh pr merge falla.
-          if ! GH_TOKEN="$MERGE_TOKEN" gh pr merge --auto --squash "$PR_URL" --match-head-commit "$PR_SHA"; then
-            reject_unverified_merge 'merge_request_failed'
           fi
-          if ! MERGED_AT="$(gh pr view "$PR_URL" --json mergedAt --jq '.mergedAt')"; then
-            reject_unverified_merge 'merge_observation_failed'
+          if ! MERGE_SHA="$(printf '%s' "$MERGE_RESPONSE" | jq -er \
+            'select(type == "object" and .merged == true and (.sha | type == "string" and test("^[0-9a-f]{40}$"))) | .sha')"; then
+            echo 'AUTOMERGE_DENIED: immediate_merge_response_invalid' >&2
+            exit 1
           fi
-          # Solo una fecha real de mergedAt acredita la fusión terminada.
-          # null, string vacío o salida extraña no autorizan un éxito.
-          if [[ ! "$MERGED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]]; then
-            reject_unverified_merge 'merge_not_terminally_confirmed'
+          # Confirmar por lectura independiente que el PR quedó fusionado con el commit devuelto
+          # y que la identidad de HEAD del PR consultado sigue siendo el SHA validado.
+          if ! MERGE_OBSERVATION="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '[.merged, .merged_at, .merge_commit_sha, .head.sha] | @tsv')"; then
+            echo 'AUTOMERGE_DENIED: immediate_merge_observation_failed' >&2
+            exit 1
           fi
+          IFS=$'\t' read -r OBS_MERGED OBS_MERGED_AT OBS_MERGE_SHA OBS_HEAD_SHA <<< "$MERGE_OBSERVATION"
+          if [[ "$OBS_MERGED" != true || "$OBS_MERGE_SHA" != "$MERGE_SHA" || "$OBS_HEAD_SHA" != "$PR_SHA" ||
+                ! "$OBS_MERGED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]]; then
+            echo 'AUTOMERGE_DENIED: immediate_merge_not_terminally_confirmed' >&2
+            exit 1
+          fi
+          echo "AUTOMERGE_SUCCESS: immediate squash merge confirmed for HEAD $PR_SHA as $MERGE_SHA"
