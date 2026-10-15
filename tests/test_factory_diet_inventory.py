@@ -242,7 +242,7 @@ class FactoryDietInventoryTests(unittest.TestCase):
             POST_BASELINE_WORKFLOWS[automerge_path],
             workflow_events(ROOT / automerge_path),
         )
-        self.assertIn("    if: ${{ false }}", automerge)
+        self.assertIn("    if: ${{ false && (", automerge)
         self.assertNotIn("contents: write", automerge)
         self.assertNotIn("pull-requests: write", automerge)
         self.assertNotIn("AUTOMERGE_TOKEN", automerge)
