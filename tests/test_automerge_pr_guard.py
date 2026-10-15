@@ -1446,7 +1446,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         lines = workflow.splitlines()
         self.assertEqual(lines[1], "on:")
         self.assertIn("  pull_request:", lines)
-        self.assertIn("    if: ${{ false }}", lines)
+        self.assertIn("    if: ${{ false && (", lines)
         self.assertIn("      contents: read", lines)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
@@ -1459,14 +1459,14 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", workflow)
     def test_final_guard_runs_after_collision_check_and_before_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertIn("    if: ${{ false }}", workflow.splitlines())
+        self.assertIn("    if: ${{ false && (", workflow.splitlines())
         self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
         self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
     def test_coordinator_claim_collisions_are_blocked_before_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("    if: ${{ false }}", workflow.splitlines())
+        self.assertIn("    if: ${{ false && (", workflow.splitlines())
         self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
@@ -1671,7 +1671,7 @@ class WorkflowRunEventTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         self.assertEqual(mod.TRUSTED_WORKFLOW_RUNS, expected)
         self.assertIn("workflow_run:", workflow)
-        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertIn("    if: ${{ false && (", workflow)
         for name in expected:
             event = workflow_run_event_example()
             event["workflow_run"]["name"] = name
@@ -1682,7 +1682,7 @@ class WorkflowRunEventTests(unittest.TestCase):
         lines = workflow.splitlines()
         self.assertEqual(lines[1], "on:")
         self.assertIn("  pull_request:", lines)
-        self.assertIn("    if: ${{ false }}", lines)
+        self.assertIn("    if: ${{ false && (", lines)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("actions/checkout", workflow)
         self.assertNotIn("scripts/automerge_pr_guard.py", workflow)
@@ -1797,7 +1797,7 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
 
     def test_immediate_merge_authority_is_absent_in_phase_one(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertIn("    if: ${{ false && (", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
         self.assertNotIn("MERGE_TOKEN", workflow)
