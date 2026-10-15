@@ -1,5 +1,6 @@
 """Integración QA V3 offline: no escribe en GitHub ni arma el Port real."""
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 from datetime import timedelta
 
@@ -1245,7 +1246,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             def pull(self, number):
                 return {"head": {"ref": self.branch}}
             def branch_sha(self, branch):
-                if branch == "work-12":
+                if branch == "trabajo/issue-12":
                     self.work_reads += 1
                     return "a" * 40
                 if branch == "lock-12":
@@ -1263,13 +1264,13 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             update, issue_resolver=lambda api, _pr, *_a, **_k: 12,
             validate_pr_issue=True,
         )
-        for branch, should_pass in (("work-12", True), ("work-13", False)):
+        for branch, should_pass in (("trabajo/issue-12", True), ("trabajo/issue-13", False)):
             with self.subTest(branch=branch):
                 api = FakeGitHub(branch)
                 with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
                     coordinator, "require_global_running"
                 ), patch.object(
-                    coordinator, "branch_for_issue", return_value="work-12"
+                    coordinator, "branch_for_issue", return_value="trabajo/issue-12"
                 ), patch.object(
                     coordinator, "recovery_lock_branch", return_value="lock-12"
                 ):
