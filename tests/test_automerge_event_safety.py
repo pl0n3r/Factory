@@ -19,6 +19,22 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
 
     def test_no_untrusted_privileged_trigger_or_global_write(self):
         source = self.source
+        job_if = source.split("    if: >-", 1)[1].split("\n    runs-on:", 1)[0]
+        review_gate = job_if.split("(github.event_name == 'pull_request_review' &&", 1)[1].split(") ||", 1)[0]
+        workflow_gate = job_if.split("(github.event_name == 'workflow_run' &&", 1)[1].split(")", 1)[0]
+        for required in (
+            "github.event.pull_request.draft == false",
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            "github.event.pull_request.base.ref == 'main'",
+        ):
+            self.assertIn(required, review_gate)
+        for required in (
+            "github.event.action == 'completed'",
+            "github.event.workflow_run.conclusion == 'success'",
+            "github.event.workflow_run.event == 'pull_request'",
+            "github.event.workflow_run.head_repository.full_name == github.repository",
+        ):
+            self.assertIn(required, workflow_gate)
         self.assertIn("on:\n  pull_request:\n", source)
         self.assertIn("pull_request_review:\n    types: [submitted]", source)
         self.assertIn('workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]', source)
