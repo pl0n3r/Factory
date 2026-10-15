@@ -1281,5 +1281,70 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                             wrapped(api, 77, "opened")
                 self.assertEqual(api.released, [(12, "c" * 40)])
 
+    def test_sweep_state_transitions_take_shared_issue_lock(self):
+        token = "c" * 40
+
+        class FakeSweepAPI:
+            repo = "pl0n3r/Factory"
+
+            def __init__(self, replace_lock=False):
+                self.events = []
+                self.acquired = False
+                self.replace_lock = replace_lock
+
+            def branch_sha(self, branch):
+                if branch == "trabajo/issue-12":
+                    self.events.append("read-work")
+                    return "a" * 40
+                if branch == "main":
+                    self.events.append("read-main")
+                    return "b" * 40
+                if branch == "lock-12":
+                    self.events.append("read-lock")
+                    if not self.acquired:
+                        return None
+                    return ("z" * 40) if self.replace_lock else token
+                raise AssertionError(branch)
+
+            def acquire_issue_lock(self, issue_number, parent_sha):
+                self.events.append(("acquire", issue_number, parent_sha))
+                self.acquired = True
+                return token
+
+            def release_issue_lock(self, issue_number, lock_token):
+                self.events.append(("release", issue_number, lock_token))
+                self.acquired = False
+
+        def operation():
+            api.events.append("write-transition")
+            return True
+
+        for replace_lock, should_pass in ((False, True), (True, False)):
+            with self.subTest(replace_lock=replace_lock):
+                api = FakeSweepAPI(replace_lock=replace_lock)
+                with patch.object(coordinator, "require_sweep_running"), patch.object(
+                    coordinator, "branch_for_issue", return_value="trabajo/issue-12"
+                ), patch.object(
+                    coordinator, "recovery_lock_branch", return_value="lock-12"
+                ):
+                    if should_pass:
+                        self.assertTrue(coordinator._with_sweep_issue_lock(api, 12, operation))
+                        self.assertLess(
+                            api.events.index(("acquire", 12, "a" * 40)),
+                            api.events.index("write-transition"),
+                        )
+                        self.assertLess(
+                            api.events.index("write-transition"),
+                            api.events.index(("release", 12, token)),
+                        )
+                    else:
+                        with self.assertRaisesRegex(
+                            coordinator.CoordinationError, "Lock V3 del barrido sustituido"
+                        ):
+                            coordinator._with_sweep_issue_lock(api, 12, operation)
+                        self.assertNotIn("write-transition", api.events)
+                        self.assertIn(("release", 12, token), api.events)
+
+
 if __name__ == "__main__":
     unittest.main()
