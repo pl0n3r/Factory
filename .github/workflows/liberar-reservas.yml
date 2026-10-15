@@ -14,10 +14,22 @@ on:
       - 'scripts/lease_github_port.py'
       - 'tests/test_lease_auto_release_run.py'
       - 'tests/test_lease_github_port.py'
+      - 'scripts/coordinar_trabajo.py'
+      # Imports transitivos que pueden cambiar el contrato del observador.
+      - 'scripts/lease_activity_collector.py'
+      - 'tests/test_lease_activity_collector.py'
+      - 'scripts/lease_release_executor.py'
+      - 'tests/test_lease_release_executor.py'
+      - 'scripts/unattended_kill_switch.py'
+      - 'tests/test_unattended_kill_switch.py'
+      - 'scripts/lease_auto_release_integration.py'
+      - 'tests/test_lease_auto_release_integration.py'
+      - 'tests/test_lease_auto_release_workflow.py'
 
 permissions:
   contents: read
   issues: read
+  pull-requests: read
 
 concurrency:
   # Solo schedule/dispatch comparten exclusión con Coordinación;
@@ -37,6 +49,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     steps:
       - name: Checkout sin credenciales persistidas
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -92,6 +105,14 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_lease_auto_release.py' -v
           echo "AUDITORÍA SOLAMENTE: 0 reservas liberadas, 0 etiquetas modificadas."
           echo "No se concede autoridad a acciones mark_recovery/release."
+
+      - name: Contrato de integración V3 (fakes sin API mutante)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_lease_auto_release_integration.py' -v
+          python3 -m unittest discover -s tests -p 'test_lease_auto_release_workflow.py' -v
+          echo "Integración verificada sólo con fakes; auto-release real permanece OFF."
 
       - name: Confirmar runner OFF sin transporte ni mutaciones
         # La puerta OFF se comprueba siempre y no requiere llamadas REST.
@@ -178,3 +199,71 @@ jobs:
                         result.reserved, result.in_review))
           print("Sin prueba de inactividad, CAS ni autoridad de liberación.")
           PY
+
+      - name: Observador integrado autenticado V3 (GET-only; sin autoridad de release)
+        if: steps.budget.outputs.allow == 'true' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # El censo para decidir qué Issues observar también debe fallar
+          # cerrado ante páginas/IDs duplicados, inventario truncado o pausa.
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-observer-switch-before.json"
+          gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues?state=open&per_page=100" \
+            > "$RUNNER_TEMP/lease-observer-issues.json"
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-observer-switch-after.json"
+          python3 - "$RUNNER_TEMP/lease-observer-switch-before.json" \
+              "$RUNNER_TEMP/lease-observer-switch-after.json" \
+              "$RUNNER_TEMP/lease-observer-issues.json" \
+              "$RUNNER_TEMP/lease-active-issues.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.lease_auto_release_run import inventory_after_switch_recheck
+
+          before, after, source, destination = map(Path, sys.argv[1:])
+          pages = json.loads(source.read_text(encoding="utf-8"))
+          inventory = inventory_after_switch_recheck(
+              json.loads(before.read_text(encoding="utf-8")),
+              json.loads(after.read_text(encoding="utf-8")), pages,
+          )
+          if inventory is None or inventory.release_authorized:
+              raise SystemExit("::error::Inventario V3 o kill switch UNKNOWN; no observar Issues.")
+          managed = []
+          for page in pages:
+              for issue in page:
+                  if "pull_request" in issue:
+                      continue
+                  names = {label["name"] for label in issue["labels"]}
+                  if names & {"estado: reservado", "estado: en revisión",
+                              "estado: requiere recuperación"}:
+                      managed.append(issue["number"])
+          # El censo validó páginas, IDs, labels y procedencia; no deduplicar
+          # silenciosamente ni presentar una muestra como inventario completo.
+          if len(managed) > 10:
+              raise SystemExit("::error::Demasiados Issues V3; no observar parcialmente.")
+          destination.write_text(
+              json.dumps(sorted(managed), separators=(",", ":")), encoding="utf-8",
+          )
+          PY
+          # Fallo de jq en sustitución de proceso no propaga su exit code
+          # al while: materializar primero y validar con pasos sincrónicos.
+          jq -e 'type == "array" and length <= 10 and
+                 length == (unique | length) and
+                 all(.[]; type == "number" and . > 0 and floor == .)' \
+            "$RUNNER_TEMP/lease-active-issues.json" > /dev/null
+          jq -r '.[]' "$RUNNER_TEMP/lease-active-issues.json" \
+            > "$RUNNER_TEMP/lease-active-issue-numbers.txt"
+          while IFS= read -r issue_number; do
+            [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::Inventario de Issues inválido; fail-closed."
+              exit 1
+            }
+            python3 -m scripts.lease_auto_release_integration "$issue_number"
+          done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"
