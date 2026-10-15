@@ -4604,6 +4604,10 @@ def _serialize_issue_mutation(function: Callable[..., Any], *,
 
         issue_number = issue_resolver(api, *args, **kwargs)
         if issue_number is None:
+            if validate_pr_issue:
+                raise CoordinationError(
+                    "PR sin Issue de trabajo verificable; mutación denegada."
+                )
             return function(api, *args, **kwargs)
         if type(issue_number) is not int or issue_number <= 0:
             raise CoordinationError("Issue inválido para lock compartido V3.")
