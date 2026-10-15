@@ -94,7 +94,10 @@ class RenovacionChecksTests(unittest.TestCase):
                                "submitted_at": FINISH}],
                         [{"id": 501, "actor": "independent-reviewer",
                           "state": "APPROVED", "head_sha": "c" * 40,
-                          "submitted_at": FINISH}]):
+                          "submitted_at": FINISH}],
+                        [{"id": 501, "actor": "independent-reviewer",
+                          "state": "APPROVED", "head_sha": SHA,
+                          "submitted_at": None}]):
             with self.subTest(reviews=reviews):
                 evidence = fresh_evidence()
                 evidence["pr"]["draft"] = True
