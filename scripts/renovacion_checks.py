@@ -847,7 +847,7 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
             "state": "open", "status": status, "active": lease["active"],
             "version": 3, "branch": branch, "reservation_id": identity["uuid"],
             "acceptance_sha256": identity["pin"]},
-        "pr": {"state": "open", "draft": False, "repo": api.repo,
+        "pr": {"state": "open", "draft": pr["draft"], "repo": api.repo,
                "branch": branch, "head_sha": sha, "base_sha": base_sha},
         "before": identity, "after": dict(identity),
         "renewal": {"user": "github-actions[bot]", "reason": "renovar-contrato",
