@@ -12,8 +12,9 @@ permissions:
 jobs:
   automerge:
     # Fase 1: el guard y sus pruebas se integran sin conceder autoridad de merge.
-    # La activación se hará en una fase posterior con autorización específica.
-    if: ${{ false }}
+    # Los filtros de evento evitan despertar el guard ante eventos que serán rechazados.
+    # El literal false mantiene la fase inerte hasta autorización independiente.
+    if: ${{ false && ((github.event_name == 'pull_request_review' && github.event.action == 'submitted' && github.event.review.state == 'submitted' && github.event.pull_request.draft == false && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
