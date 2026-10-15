@@ -64,7 +64,7 @@ class _GhReadOnlyAPI:
                         or path == "/repos/pl0n3r/Factory"
                         or path.startswith("/repos/pl0n3r/Factory/"))
                 or "://" in path or "#" in path or ".." in path or "%" in path
-                or "\" in path
+                or "\\" in path
                 or any(ord(ch) < 32 for ch in path)
                 or re.search(r"[\s;|$<>]", path)):
             raise PermissionError("read_only_transport")
