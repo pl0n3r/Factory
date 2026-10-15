@@ -4691,12 +4691,9 @@ transfer_work = _serialize_issue_mutation(
 migrate_legacy_reservation = _serialize_issue_mutation(
     migrate_legacy_reservation, issue_resolver=_issue_from_first_argument,
 )
-sync_review_status = _serialize_issue_mutation(
-    sync_review_status, issue_resolver=_issue_from_first_argument,
-)
-close_pr_reservation = _serialize_issue_mutation(
-    close_pr_reservation, issue_resolver=_issue_from_first_argument,
-)
+# sync_review_status y close_pr_reservation son helpers internos de
+# update_pr_state. No envolverlos por separado: update_pr_state ya mantiene
+# el lock por Issue y volver a adquirirlo aquí causaría conflicto/reentrada.
 release_work = _serialize_issue_mutation(
     release_work, issue_resolver=_issue_from_first_argument,
 )
