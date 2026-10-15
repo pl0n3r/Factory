@@ -205,6 +205,7 @@ jobs:
           REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
           if ! QUEUE_POLICY="$(gh api graphql \
+            # shellcheck disable=SC2016 # GraphQL variables must stay literal for the API parser.
             -f query='query($owner:String!, $repo:String!, $number:Int!) { repository(owner:$owner,name:$repo) { pullRequest(number:$number) { isMergeQueueEnabled isInMergeQueue } } }' \
             -f owner="$REPO_OWNER" -f repo="$REPO_NAME" -F number="$PR_NUMBER" \
             --jq 'if (((.errors // []) | length) == 0) and (.data.repository.pullRequest.isMergeQueueEnabled == false) and (.data.repository.pullRequest.isInMergeQueue == false) then "safe" else "deny" end')"; then
