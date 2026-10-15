@@ -506,9 +506,9 @@ class GitHub:
         repo_id = repo_data.get("node_id") if isinstance(repo_data, dict) else None
         if not isinstance(repo_id, str) or not repo_id:
             raise CoordinationError("No se obtuvo autoridad de repo para CAS V3.")
-        # No liberar un lock V3 si el dueño pausó la fábrica mientras
-        # se resolvía repositoryId. El CAS solo evita takeover, no PAUSED.
-        require_global_running(self)
+        # La limpieza CAS del token propio no es una mutación de trabajo:
+        # debe poder completarse incluso si #767 pasa a PAUSED después de
+        # adquirir el lock. El beforeOid=token impide borrar un sucesor ajeno.
         response = self.request("POST", "/graphql", {
             "query": ("mutation($input:UpdateRefsInput!){"
                       "updateRefs(input:$input){clientMutationId}}"),
