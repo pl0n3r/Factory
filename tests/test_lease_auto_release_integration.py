@@ -747,9 +747,15 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual((observed.state, observed.action),
                          ("read_only", "wait"))
         self.assertIs(observed.release_authorized, False)
+        self.assertIs(observed.lock_verified, False)
+        self.assertIs(observed.cas_verified, False)
         self.assertEqual(port.reads, 1)
         with self.assertRaises(TypeError):
             replace(observed, release_authorized=True)
+        with self.assertRaises(TypeError):
+            replace(observed, lock_verified=True)
+        with self.assertRaises(TypeError):
+            replace(observed, cas_verified=True)
         with self.assertRaises(FrozenInstanceError):
             observed.state = "authorized"
 
@@ -986,6 +992,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 payload = json.loads(output.getvalue())
                 self.assertEqual(payload["state"], state)
                 self.assertEqual(payload["release_authorized"], False)
+                self.assertEqual(payload["lock_verified"], False)
+                self.assertEqual(payload["cas_verified"], False)
                 self.assertEqual(payload["mutations"], 0)
 
         def failing(_):
@@ -998,7 +1006,12 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     exec(compile(entrypoint, str(path), "exec"),
                          {"__name__": "__main__", "observe_issue_cli": failing})
         self.assertEqual(exit_status.exception.code, 1)
-        self.assertEqual(json.loads(output.getvalue())["state"], "UNKNOWN")
+        failed_payload = json.loads(output.getvalue())
+        self.assertEqual(failed_payload["state"], "UNKNOWN")
+        self.assertFalse(failed_payload["release_authorized"])
+        self.assertFalse(failed_payload["lock_verified"])
+        self.assertFalse(failed_payload["cas_verified"])
+        self.assertEqual(failed_payload["mutations"], 0)
         self.assertNotIn("private-token", output.getvalue())
 
     def test_gh_cli_observer_transport_is_get_only(self):
