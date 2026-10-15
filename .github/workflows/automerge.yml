@@ -199,6 +199,7 @@ jobs:
           env -u MERGE_TOKEN python3 scripts/automerge_pr_guard.py
           # --auto solo debe utilizarse cuando GitHub ya declara CLEAN.
           # Los PRs con checks sin terminar/merge diferido NO se encolan aquí.
+          # SERVER_GATES_START
           # Requerir fusión inmediata: la capacidad de auto-merge del repo no autoriza este PR a esperar.
           # El guard ya deniega pr.auto_merge preexistente; aquí nunca se crea una autorización diferida.
           REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
