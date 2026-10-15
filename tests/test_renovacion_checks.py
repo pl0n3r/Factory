@@ -70,6 +70,19 @@ class RenovacionChecksTests(unittest.TestCase):
         self.assertIsNotNone(decision.fingerprint)
         self.assertEqual(evidence, before)
 
+    def test_draft_snapshot_decision_does_not_mask_review_veto(self):
+        # A successful external status alone must not make Draft evidence ready.
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        evidence["statuses"][0]["description"] = "Review skipped"
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        evidence["reviews"] = []
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
     def test_draft_fork_fails_closed(self):
         evidence = fresh_evidence()
         evidence["pr"].update(draft=True, repo="outsider/Factory")
