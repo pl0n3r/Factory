@@ -135,7 +135,7 @@ def evaluate(evidence: object) -> Decision:
         return denied
     branch = f"trabajo/issue-{num}"
     if (pr.get("branch") != branch or pr.get("repo") != repo
-        or pr.get("state") != "open" or pr.get("draft") is not False
+        or pr.get("state") != "open" or type(pr.get("draft")) is not bool
         or issue.get("state") != "open"
         or issue.get("status") not in ("estado: reservado", "estado: en revisión")
         or issue.get("active") is not True
@@ -748,7 +748,7 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
     num = issue_from_branch(branch) if isinstance(branch, str) else None
     if (not isinstance(base_sha, str) or _SHA.fullmatch(base_sha) is None
         or not isinstance(sha, str) or _SHA.fullmatch(sha) is None or num is None
-        or pr.get("state") != "open" or pr.get("draft") is not False
+        or pr.get("state") != "open" or type(pr.get("draft")) is not bool
         or base.get("ref") != "main"
         or (head.get("repo") or {}).get("full_name", "").lower() != api.repo.lower()):
         raise EvidenceUnavailable("pr_not_eligible")
@@ -824,7 +824,7 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
         or (after_pr.get("head") or {}).get("ref") != branch
         or (after_pr.get("base") or {}).get("ref") != "main"
         or (after_pr.get("base") or {}).get("sha") != base_sha
-        or after_pr.get("state") != "open" or after_pr.get("draft") is not False
+        or after_pr.get("state") != "open" or after_pr.get("draft") is not pr.get("draft")
         or after_issue.get("state") != "open"
         or after_status != status
         or after_assignee != assignee
