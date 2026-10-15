@@ -24,7 +24,7 @@ PATHS = [".github/workflows/automerge.yml", "scripts/automerge_pr_guard.py",
 TASK = {"version": 1, "owner": "pl0n3r", "paths": PATHS,
         "depends_on": [1295, 1321], "epic": 1296, "task_key": "F_AUTOMERGE_GUARD", "order": 1,
         "roles": ["ingenieria-software", "qa", "seguridad"]}
-ACCEPTANCE_BODY = '### Contexto\nContexto.\n\n### Alcance\nAlcance.\n\n### Fuera de alcance\nFuera de alcance.\n\n### Criterios de aceptación\n- [ ] [AC-01] CI Validar green pero kill switch inválido/PAUSED, freeze activo o rama/HEAD no canónicos: no habilitar auto-merge. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_hard_gates_and_sha_mismatch_denied`.\n- [ ] [AC-02] CodeRabbit success `Review skipped` y sin evidencia íntegra de high/critical ⇒ UNKNOWN/denegación; findings graves activos ⇒ denegación. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_coderabbit_skipped_or_severe_unknown_denied`.\n- [ ] [AC-03] Preservar tests/producto Validar exact-HEAD y estado libre de conflictos; replay/HTTP error/páginas incompletas no habilitan merge. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_checks_and_review_evidence_fail_closed`.\n- [ ] [AC-04] Con datos íntegros exact-HEAD, sin hallazgos graves y gates duros claros en construcción habilitar exclusivamente `gh pr merge --auto --squash --match-head-commit SHA`, jamás --admin. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_clean_construction_only_allows_sha_locked_auto_merge`.\n\n### Contrato ejecutable\n<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_hard_gates_and_sha_mismatch_denied"},{"id":"AC-02","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_coderabbit_skipped_or_severe_unknown_denied"},{"id":"AC-03","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_checks_and_review_evidence_fail_closed"},{"id":"AC-04","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_clean_construction_only_allows_sha_locked_auto_merge"}]} -->\n'
+ACCEPTANCE_BODY = '### Contexto\nContexto.\n\n### Alcance\nAlcance.\n\n### Fuera de alcance\nFuera de alcance.\n\n### Criterios de aceptación\n- [ ] [AC-01] CI Validar green pero kill switch inválido/PAUSED, freeze activo o rama/HEAD no canónicos: no habilitar auto-merge. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_hard_gates_and_sha_mismatch_denied`.\n- [ ] [AC-02] CodeRabbit success `Review skipped` y sin evidencia íntegra de high/critical ⇒ UNKNOWN/denegación; findings graves activos ⇒ denegación. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_coderabbit_skipped_or_severe_unknown_denied`.\n- [ ] [AC-03] Preservar tests/producto Validar exact-HEAD y estado libre de conflictos; replay/HTTP error/páginas incompletas no habilitan merge. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_checks_and_review_evidence_fail_closed`.\n- [ ] [AC-04] Con datos íntegros exact-HEAD, sin hallazgos graves y gates duros claros en construcción, permitir exclusivamente fusión inmediata por la API PUT /merge con sha=PR_SHA y merge_method=squash; nunca --auto, --admin ni una cola diferida. Test exacto: `tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_clean_construction_only_allows_sha_locked_immediate_merge`.\n\n### Contrato ejecutable\n<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_hard_gates_and_sha_mismatch_denied"},{"id":"AC-02","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_coderabbit_skipped_or_severe_unknown_denied"},{"id":"AC-03","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_checks_and_review_evidence_fail_closed"},{"id":"AC-04","kind":"test","target":"tests/test_automerge_pr_guard.py::AutoMergePrGuardTests::test_clean_construction_only_allows_sha_locked_immediate_merge"}]} -->\n'
 LEASE = {"version": 3, "active": True, "owner": "pl0n3r",
          "branch": "trabajo/issue-1364", "task_paths": PATHS,
          "task_depends_on": [1295, 1321],
@@ -1436,7 +1436,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
     def test_clean_construction_only_allows_sha_locked_immediate_merge(self):
         mod.verify(evidence(), SHA, NOW)
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("on:\n  pull_request:\n", workflow)
+        self.assertIn("on:\\n  pull_request:\\n", workflow)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("ref: main", workflow)
@@ -1444,15 +1444,18 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertIn('MERGE_STATE="$(gh api', workflow)
         self.assertIn('[[ "$MERGE_STATE" != clean ]]', workflow)
         self.assertIn('gh api --method PUT', workflow)
-        self.assertIn('gh api --method PUT', workflow)
-        self.assertIn("MERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}", workflow)
+        self.assertIn('"repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge"', workflow)
+        self.assertIn('-f sha="$PR_SHA" -f merge_method=squash', workflow)
+        self.assertIn('.merged == true', workflow)
+        self.assertIn('merge_commit_sha', workflow)
+        self.assertIn('MERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}', workflow)
         self.assertIn('dedicated_merge_token_missing_or_reused', workflow)
         self.assertIn('GH_TOKEN="$MERGE_TOKEN" gh api --method PUT', workflow)
-        self.assertIn('GH_TOKEN="$MERGE_TOKEN" gh pr merge --disable-auto', workflow)
-        self.assertNotIn("secrets.GITHUB_TOKEN", workflow)
-        self.assertNotIn("--admin", workflow)
-        self.assertIn("permissions:", workflow)
-
+        self.assertNotIn('gh pr merge --auto', workflow)
+        self.assertNotIn('gh pr merge --disable-auto', workflow)
+        self.assertNotIn('secrets.GITHUB_TOKEN', workflow)
+        self.assertNotIn('--admin', workflow)
+        self.assertIn('permissions:', workflow)
 
     def test_final_guard_runs_after_collision_check_and_before_merge(self):
         """No merge after a long coordinator read without rechecking current gates."""
@@ -1664,7 +1667,7 @@ class WorkflowRunEventTests(unittest.TestCase):
         self.assertNotIn('actions/checkout@v',workflow)
         self.assertIn('gh api --method PUT',workflow)
         self.assertIn('MERGE_STATE=',workflow)
-        self.assertIn('gh pr merge --disable-auto',workflow)
+        self.assertNotIn('gh pr merge --disable-auto',workflow)
 
 
 class MainCliContractTests(unittest.TestCase):
@@ -1789,16 +1792,16 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
 set -euo pipefail
 case "$*" in
   "api graphql "*)
-    echo "\${STUB_QUEUE_POLICY:-safe}" ;;
+    echo "${STUB_QUEUE_POLICY:-safe}" ;;
   "api repos/pl0n3r/Factory/pulls/1375 --jq .mergeable_state")
-    echo "\${STUB_MERGEABLE:-clean}" ;;
+    echo "${STUB_MERGEABLE:-clean}" ;;
   "api --method PUT repos/pl0n3r/Factory/pulls/1375/merge "*)
     echo merge-called > "$STUB_FLAG"
-    if [[ "\${STUB_PUT_ERROR:-no}" == yes ]]; then exit 49; fi
-    printf '{"merged":%s,"sha":"%s"}\n' "\${STUB_API_MERGED:-true}" "\${STUB_MERGE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" ;;
+    if [[ "${STUB_PUT_ERROR:-no}" == yes ]]; then exit 49; fi
+    printf '{"merged":%s,"sha":"%s"}\n' "${STUB_API_MERGED:-true}" "${STUB_MERGE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" ;;
   "api repos/pl0n3r/Factory/pulls/1375 --jq "*)
-    if [[ "\${STUB_OBSERVE_ERROR:-no}" == yes ]]; then exit 51; fi
-    printf '%s\t%s\t%s\t%s\n' "\${STUB_OBS_MERGED:-true}" "\${STUB_OBS_TIME:-2026-10-15T00:22:00Z}" "\${STUB_OBS_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" "\${STUB_OBS_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
+    if [[ "${STUB_OBSERVE_ERROR:-no}" == yes ]]; then exit 51; fi
+    printf '%s\t%s\t%s\t%s\n' "${STUB_OBS_MERGED:-true}" "${STUB_OBS_TIME:-2026-10-15T00:22:00Z}" "${STUB_OBS_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" "${STUB_OBS_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
   *) echo "unexpected gh: $*" >&2; exit 77 ;;
 esac
 '''
