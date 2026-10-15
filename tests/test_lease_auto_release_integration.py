@@ -1267,6 +1267,40 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         running.assert_not_called()
         self.assertEqual(len(calls), 2)
 
+    def test_nested_issue_lock_context_does_not_reacquire_or_release(self):
+        class FakeGitHub:
+            def __init__(self):
+                self._factory_issue_lock_context = {"issue": 12, "token": "f" * 40}
+                self.acquisitions = 0
+                self.releases = 0
+            def acquire_issue_lock(self, *_args):
+                self.acquisitions += 1
+                raise AssertionError("nested operation must not acquire")
+            def release_issue_lock(self, *_args):
+                self.releases += 1
+                raise AssertionError("nested operation must not release")
+
+        api = FakeGitHub()
+        called = []
+        inner = coordinator._serialize_issue_mutation(
+            lambda _api, issue_number: called.append(("inner", issue_number)),
+            issue_resolver=coordinator._issue_from_first_argument,
+        )
+        outer = coordinator._serialize_issue_mutation(
+            lambda _api, issue_number: inner(_api, issue_number),
+            issue_resolver=coordinator._issue_from_first_argument,
+        )
+        with patch.object(coordinator, "GitHub", FakeGitHub):
+            outer(api, 12)
+            with self.assertRaisesRegex(
+                coordinator.CoordinationError, "anidados de Issues distintos"
+            ):
+                inner(api, 13)
+        self.assertEqual(called, [("inner", 12)])
+        self.assertEqual(api.acquisitions, 0)
+        self.assertEqual(api.releases, 0)
+        self.assertEqual(api._factory_issue_lock_context["token"], "f" * 40)
+
     def test_pr_lock_wrapper_rejects_unmapped_branch_before_mutation(self):
         class FakeGitHub:
             def __init__(self):
