@@ -1349,33 +1349,28 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
     def test_own_lock_cas_cleanup_is_allowed_after_global_pause(self):
         token = "d" * 40
+        api = coordinator.GitHub("pl0n3r/Factory", "fake-token")
+        calls = []
 
-        class PausedAPI:
-            repo = "pl0n3r/Factory"
+        def request(method, path, payload=None, allow=()):
+            calls.append((method, path, payload))
+            if method == "GET" and path == "/repos/pl0n3r/Factory":
+                return {"node_id": "R_123"}
+            if method == "POST" and path == "/graphql":
+                return {"data": {"updateRefs": {"clientMutationId": "ok"}}}
+            raise AssertionError((method, path))
 
-            def __init__(self):
-                self.calls = []
-
-            def request(self, method, path, payload=None):
-                self.calls.append((method, path, payload))
-                if method == "GET" and path == f"/repos/{self.repo}":
-                    # La lectura de identidad puede ocurrir antes o después
-                    # de que #767 pase a PAUSED; la limpieza no relee el switch.
-                    return {"node_id": "R_123"}
-                if method == "POST" and path == "/graphql":
-                    return {"data": {"updateRefs": {"clientMutationId": "ok"}}}
-                raise AssertionError((method, path))
-
-        api = PausedAPI()
-        # La liberación de su propio token es limpieza CAS, no una operación
-        # de trabajo. No debe volver a exigir RUNNING en el finally.
+        api.request = request
         with patch.object(
             coordinator, "require_global_running",
             side_effect=AssertionError("cleanup must work while PAUSED"),
         ):
-            coordinator.GitHub.release_owned_issue_lock_after_pause(api, 12, token)
+            api.release_owned_issue_lock_after_pause(12, token)
 
-        mutation = api.calls[-1][2]["variables"]["input"]["refUpdates"][0]
+        self.assertEqual([call[:2] for call in calls], [
+            ("GET", "/repos/pl0n3r/Factory"), ("POST", "/graphql"),
+        ])
+        mutation = calls[-1][2]["variables"]["input"]["refUpdates"][0]
         self.assertEqual(mutation["beforeOid"], token)
         self.assertEqual(mutation["afterOid"], "0" * 40)
         self.assertTrue(mutation["force"])
