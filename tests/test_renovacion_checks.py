@@ -61,6 +61,7 @@ def fresh_evidence():
 
 class RenovacionChecksTests(unittest.TestCase):
     def test_draft_pr_read_only_evidence_allowed(self):
+        """Draft yields a fingerprint but never authorizes readiness."""
         evidence = fresh_evidence()
         evidence["pr"]["draft"] = True
         before = copy.deepcopy(evidence)
@@ -71,6 +72,7 @@ class RenovacionChecksTests(unittest.TestCase):
         self.assertEqual(evidence, before)
 
     def test_draft_snapshot_decision_does_not_mask_review_veto(self):
+        """Draft handling must not mask missing or skipped review evidence."""
         # A successful external status alone must not make Draft evidence ready.
         evidence = fresh_evidence()
         evidence["pr"]["draft"] = True
@@ -84,24 +86,28 @@ class RenovacionChecksTests(unittest.TestCase):
         self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
 
     def test_draft_fork_fails_closed(self):
+        """A Draft pull request from a fork is rejected fail-closed."""
         evidence = fresh_evidence()
         evidence["pr"].update(draft=True, repo="outsider/Factory")
         self.assertFalse(evaluate(evidence).ready)
         self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
 
     def test_draft_wrong_base_fails_closed(self):
+        """Draft evidence based on a branch other than main is rejected."""
         evidence = fresh_evidence()
         evidence["pr"].update(draft=True, base_sha="c" * 40)
         self.assertFalse(evaluate(evidence).ready)
         self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
 
     def test_draft_head_change_between_snapshots_fails_closed(self):
+        """A changed HEAD invalidates the evidence snapshot."""
         evidence = fresh_evidence()
         evidence["pr"]["draft"] = True
         evidence["after"]["head_sha"] = "c" * 40
         self.assertEqual(evaluate(evidence).reason, "identity_changed_during_revalidation")
 
     def test_draft_review_missing_or_skipped_fails_closed(self):
+        """Missing, skipped, or non-exact-HEAD reviews must fail closed."""
         for reviews in ([], [{"id": 501, "actor": "independent-reviewer",
                                "state": "COMMENTED", "head_sha": SHA,
                                "submitted_at": FINISH}],
@@ -119,6 +125,7 @@ class RenovacionChecksTests(unittest.TestCase):
                 self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
 
     def test_draft_recovery_never_changes_pr_state(self):
+        """Repeated read-only evaluation preserves the Draft state."""
         evidence = fresh_evidence()
         evidence["pr"]["draft"] = True
         original = copy.deepcopy(evidence)
@@ -178,6 +185,7 @@ class RenovacionChecksTests(unittest.TestCase):
             _trusted_reviewer_permissions(api, [review])
 
     def test_snapshot_requires_single_live_assignee_matching_v3_owner(self):
+        """Require one owner-matching V3 assignee and stable read-only identity."""
         from unittest.mock import Mock, patch
         from scripts.renovacion_checks import (
             _verified_lease_assignee, collect_snapshot, EvidenceUnavailable)
