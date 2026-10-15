@@ -27,6 +27,9 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         self.assertIn("trusted_runs = {\"CI factory\", \"Sonar CI-based\", \"Evidencia CodeQL\"}", source)
         self.assertNotIn("--resolve-pull-request-review", source)
         self.assertNotIn("--resolve-workflow-run", source)
+        self.assertNotIn("gh pr merge --auto", source)
+        self.assertNotIn("gh pr merge --disable-auto", source)
+        self.assertIn('-f sha="$PR_SHA" -f merge_method=squash', source)
         self.assertNotIn("pull_request_target", source)
         self.assertIn("permissions:\n  contents: read\njobs:", source)
         self.assertNotIn("permissions:\n  contents: write", source)
@@ -60,7 +63,7 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             "github.event.pull_request.base.ref == 'main'",
             "github.actor != 'dependabot[bot]'",
             "GH_TOKEN:",
-            "gh pr merge --auto --squash",
+            "gh api --method PUT",
             "steps.target.outputs.pr_number",
             "steps.target.outputs.pr_sha",
             "steps.target.outputs.pr_url",
