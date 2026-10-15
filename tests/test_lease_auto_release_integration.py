@@ -1256,6 +1256,29 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         running.assert_not_called()
         self.assertEqual(len(calls), 2)
 
+    def test_pr_lock_wrapper_rejects_unmapped_branch_before_mutation(self):
+        class FakeGitHub:
+            def __init__(self):
+                self.acquisitions = 0
+            def pull(self, number):
+                return {"head": {"ref": "main"}}
+            def acquire_issue_lock(self, issue_number, head_sha):
+                self.acquisitions += 1
+                return "c" * 40
+
+        api = FakeGitHub()
+        wrapper = coordinator._serialize_issue_mutation(
+            lambda *_args, **_kwargs: self.fail("unmapped PR must not mutate"),
+            issue_resolver=coordinator._issue_from_pull_argument,
+            validate_pr_issue=True,
+        )
+        with patch.object(coordinator, "GitHub", FakeGitHub):
+            with self.assertRaisesRegex(
+                coordinator.CoordinationError, "PR sin Issue de trabajo verificable"
+            ):
+                wrapper(api, 27)
+        self.assertEqual(api.acquisitions, 0)
+
     def test_pr_lock_wrapper_revalidates_issue_binding_inside_lock(self):
         class FakeGitHub:
             def __init__(self, branch):
