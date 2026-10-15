@@ -14,7 +14,9 @@ DOC = ROOT / "docs" / "dieta-factory.md"
 WORKFLOWS = ROOT / ".github" / "workflows"
 # Adición posterior explícita: la tabla documental conserva el inventario histórico.
 POST_BASELINE_WORKFLOWS = {
-    ".github/workflows/automerge.yml": frozenset({"pull_request"}),
+    ".github/workflows/automerge.yml": frozenset({
+        "pull_request", "pull_request_review", "workflow_run"
+    }),
 }
 
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
