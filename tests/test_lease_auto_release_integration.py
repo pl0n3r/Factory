@@ -903,6 +903,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             ("GET", "/repos/other/Factory"),
             ("GET", "https://api.github.com/repos/pl0n3r/Factory"),
             ("GET", "/repos/pl0n3r/Factory/../../other"),
+            ("GET", "/repos/pl0n3r/Factory/%2e%2e/secrets"),
+            ("GET", "/repos/pl0n3r/Factory%2f..%2fother"),
         ):
             with self.subTest(method=method, path=path):
                 with patch("subprocess.run") as run:
