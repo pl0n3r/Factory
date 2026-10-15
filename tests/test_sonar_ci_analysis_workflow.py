@@ -64,7 +64,7 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         # Fase 1 solo prepara guard y pruebas; este workflow no puede fusionar.
         self.assertIn("permissions:\n  contents: read\njobs:", automerge)
         self.assertIn("  automerge:\n", automerge)
-        self.assertIn("    if: ${{ false }}", automerge)
+        self.assertIn("    if: ${{ false && (", automerge)
         self.assertNotIn("contents: write", automerge)
         self.assertNotIn("pull-requests: write", automerge)
         self.assertNotIn("AUTOMERGE_TOKEN", automerge)
