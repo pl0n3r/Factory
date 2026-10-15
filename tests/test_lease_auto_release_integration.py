@@ -1099,6 +1099,9 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         for name in (
             "reserve_available_work",
             "transfer_work",
+            "migrate_legacy_reservation",
+            "sync_review_status",
+            "close_pr_reservation",
             "release_work",
             "update_issue_state",
             "update_issue_label_state",
