@@ -4678,6 +4678,15 @@ reserve_available_work = _serialize_issue_mutation(
 transfer_work = _serialize_issue_mutation(
     transfer_work, issue_resolver=_issue_from_first_argument,
 )
+migrate_legacy_reservation = _serialize_issue_mutation(
+    migrate_legacy_reservation, issue_resolver=_issue_from_first_argument,
+)
+sync_review_status = _serialize_issue_mutation(
+    sync_review_status, issue_resolver=_issue_from_first_argument,
+)
+close_pr_reservation = _serialize_issue_mutation(
+    close_pr_reservation, issue_resolver=_issue_from_first_argument,
+)
 release_work = _serialize_issue_mutation(
     release_work, issue_resolver=_issue_from_first_argument,
 )
