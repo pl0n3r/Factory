@@ -1203,6 +1203,44 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     self.assertEqual(api.released_owned, [(12, "c" * 40)])
                 self.assertFalse(hasattr(api, "_factory_issue_lock_context"))
 
+    def test_competing_reserve_transfer_release_entrypoints_fail_closed(self):
+        # Los tres caminos públicos deben denegar la mutación cuando un
+        # escritor distinto mantiene el lock V3 del mismo Issue.
+        class FakeGitHub:
+            def __init__(self):
+                self.calls = []
+            def branch_sha(self, branch):
+                self.calls.append(("branch_sha", branch))
+                return "a" * 40 if branch == "trabajo/issue-12" else None
+            def acquire_issue_lock(self, issue_number, head_sha):
+                self.calls.append(("acquire", issue_number, head_sha))
+                return None
+            def release_owned_issue_lock_after_pause(self, *_args):
+                raise AssertionError("no token owned; cannot release")
+
+        api = FakeGitHub()
+        cases = (
+            (coordinator.reserve_available_work,
+             (12, "agente", "trabajo/issue-12", "digest")),
+            (coordinator.transfer_work,
+             (12, "agente", "OWNER", "00000000-0000-4000-8000-000000000001")),
+            (coordinator.release_work,
+             (12, "agente", "OWNER", None, False)),
+        )
+        with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
+            coordinator, "require_global_running"
+        ):
+            for function, args in cases:
+                with self.subTest(function=function.__name__):
+                    with self.assertRaisesRegex(
+                        coordinator.CoordinationError, "Lock V3 ocupado"
+                    ):
+                        function(api, *args)
+        self.assertEqual(
+            [call for call in api.calls if call[0] == "acquire"],
+            [("acquire", 12, "a" * 40)] * len(cases),
+        )
+
     def test_failed_mutation_rolls_back_owned_lock_context(self):
         token = "c" * 40
         class FakeGitHub:
