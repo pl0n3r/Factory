@@ -262,6 +262,10 @@ Ninguno.
             api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
             snapshot = collect_snapshot(api, 123)
             self.assertIs(snapshot["pr"]["draft"], True)
+            self.assertEqual(snapshot["before"], snapshot["after"])
+            self.assertEqual(snapshot["pr"]["head_sha"], SHA)
+            self.assertEqual(snapshot["pr"]["base_sha"], BASE_SHA)
+
             self.assertTrue(all(call.args[0] == "GET"
                                 for call in api.request.call_args_list))
             # Changing Draft status between reads invalidates the evidence.
