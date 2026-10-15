@@ -1731,122 +1731,26 @@ class MainCliContractTests(unittest.TestCase):
 
 
 class AutoMergeShellOutcomeTests(unittest.TestCase):
-    """Run the actual immediate-merge section with a deterministic local gh shim."""
+    """La fase 1 debe permanecer inerte: ninguna ruta de este job fusiona."""
 
-    @staticmethod
-    def merge_section():
-        import textwrap
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        section = workflow.split(
-            "      - name: Validar evidencia y habilitar exclusivamente squash exact-HEAD\n", 1
-        )[1]
-        run = section.split("        run: |\n", 1)[1]
-        script = textwrap.dedent(run)
-        return "set -euo pipefail\nREPO_OWNER=pl0n3r\nREPO_NAME=Factory\n" + script.split("# Requerir fusión inmediata:", 1)[1].split("\n", 1)[1]
+    def test_workflow_is_inert_until_explicit_phase_two_authorization(self):
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertIn("permissions:\n  contents: read\njobs:", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+        self.assertNotIn("MERGE_TOKEN", workflow)
+        self.assertNotIn("AUTOMERGE_TOKEN", workflow)
+        self.assertNotIn("gh pr merge", workflow)
+        self.assertNotIn("gh api --method PUT", workflow)
+        self.assertNotIn("merge_section", workflow)
 
-    def test_immediate_merge_is_sha_locked_and_never_creates_deferred_authority(self):
-                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-                self.assertIn("    if: ${{ false }}", workflow)
-                self.assertNotIn("gh pr merge", workflow)
-                self.assertNotIn("gh api --method PUT", workflow)
-                self.assertNotIn("--auto", workflow)
-                self.assertNotIn("MERGE_TOKEN", workflow)
-                self.assertNotIn("AUTOMERGE_TOKEN", workflow)
-Z}" "${STUB_OBS_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" "${STUB_OBS_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
-  *) echo "unexpected gh: $*" >&2; exit 77 ;;
-esac
-'''
-        scenarios = (
-            ("immediate_merge_confirmed", "safe", "clean", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, True, "merge-called"),
-            ("queue_enabled", "deny", "clean", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "untouched"),
-            ("queue_unknown", "unknown", "clean", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "untouched"),
-            ("not_immediately_mergeable", "safe", "blocked", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "untouched"),
-            ("missing_merge_credential", "safe", "clean", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", True, False, "untouched"),
-            ("reused_read_credential", "safe", "clean", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "untouched"),
-            ("api_fails_before_merge", "safe", "clean", "yes", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "merge-called"),
-            ("api_did_not_confirm_merge", "safe", "clean", "no", "false", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "merge-called"),
-            ("readback_not_merged", "safe", "clean", "no", "true", "false",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "merge-called"),
-            ("readback_sha_mismatch", "safe", "clean", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "cccccccccccccccccccccccccccccccccccccccc",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "merge-called"),
-            ("readback_head_changed", "safe", "clean", "no", "true", "true",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "dddddddddddddddddddddddddddddddddddddddd", False, False, "merge-called"),
-            ("readback_bad_timestamp", "safe", "clean", "no", "true", "true",
-             "unknown", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "merge-called"),
-            ("readback_fails", "safe", "clean", "no", "true", "error",
-             "2026-10-15T00:22:00Z", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", False, False, "merge-called"),
-        )
-        script = self.merge_section()
-        with tempfile.TemporaryDirectory() as tmp:
-            mockgh = Path(tmp) / "gh"
-            mockgh.write_text(stub, encoding="utf8")
-            mockgh.chmod(0o755)
-            marker = Path(tmp) / "marker"
-            for (name, queue, mergeable, put_error, api_merged, obs_merged,
-                 obs_time, obs_sha, obs_head, missing_token, success, expected_marker) in scenarios:
-                with self.subTest(name=name):
-                    marker.write_text("untouched", encoding="utf8")
-                    env = dict(
-                        os.environ,
-                        PATH=tmp + os.pathsep + os.environ["PATH"],
-                        PR_URL="https://github.com/pl0n3r/Factory/pull/1375",
-                        PR_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        GITHUB_REPOSITORY="pl0n3r/Factory",
-                        PR_NUMBER="1375",
-                        GH_TOKEN="read-only-github-token",
-                        MERGE_TOKEN="distinct-automation-token",
-                        STUB_FLAG=str(marker),
-                        STUB_QUEUE_POLICY=queue,
-                        STUB_MERGEABLE=mergeable,
-                        STUB_PUT_ERROR=put_error,
-                        STUB_API_MERGED=api_merged,
-                        STUB_OBS_MERGED=obs_merged,
-                        STUB_OBS_TIME=obs_time,
-                        STUB_OBS_SHA=obs_sha,
-                        STUB_OBS_HEAD=obs_head,
-                    )
-                    if missing_token:
-                        env["MERGE_TOKEN"] = ""
-                    if name == "reused_read_credential":
-                        env["MERGE_TOKEN"] = env["GH_TOKEN"]
-                    if obs_merged == "error":
-                        env["STUB_OBSERVE_ERROR"] = "yes"
-                        env["STUB_OBS_MERGED"] = "true"
-                    result = subprocess.run(
-                        ["bash", "-c", script], capture_output=True,
-                        text=True, env=env, timeout=5, check=False
-                    )
-                    self.assertEqual(
-                        result.returncode == 0, success,
-                        f"{name}: exit={result.returncode}, stderr={result.stderr}"
-                    )
-                    self.assertEqual(
-                        marker.read_text().strip(), expected_marker,
-                        f"{name}: immediate merge outcome mismatch"
-                    )
-                    self.assertNotIn("gh pr merge --auto", script)
-                    self.assertNotIn("gh pr merge --disable-auto", script)
+    def test_no_deferred_merge_authority_is_present(self):
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        self.assertNotIn("--auto", workflow)
+        self.assertNotIn("--disable-auto", workflow)
+        self.assertNotIn("isMergeQueueEnabled", workflow)
+        self.assertNotIn("pull_request_target:", workflow)
 
 
 if __name__ == "__main__":
