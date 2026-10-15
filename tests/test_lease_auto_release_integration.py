@@ -906,6 +906,9 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             ("GET", "/repos/pl0n3r/Factory/%2e%2e/secrets"),
             ("GET", "/repos/pl0n3r/Factory%2f..%2fother"),
             ("GET", "/repos/pl0n3r/Factory\\..\\secrets"),
+            ("GET", "/repos/pl0n3r/Factory/issues/1185\ncomments"),
+            ("GET", "/repos/pl0n3r/Factory/issues/1185\x00/comments"),
+            ("GET", "/repos/pl0n3r/Factory/issues/1185\t/comments"),
         ):
             with self.subTest(method=method, path=path):
                 with patch("subprocess.run") as run:
