@@ -1581,20 +1581,55 @@ def _apply_verified_reblock(
     api.set_status(number, STATUS_BLOCKED)
 
 
+def _with_sweep_issue_lock(
+    api: GitHub,
+    issue_number: int,
+    operation: Callable[[], Any],
+) -> Any:
+    """Serializa una transición automática de estado con /tomar y eventos."""
+    require_sweep_running(api)
+    work_branch = branch_for_issue(issue_number)
+    observed_work_sha = api.branch_sha(work_branch)
+    lock_parent = observed_work_sha or api.branch_sha("main")
+    if (not isinstance(lock_parent, str)
+            or re.fullmatch(r"[a-f0-9]{40}", lock_parent) is None):
+        raise CoordinationError("Barrido sin HEAD confiable para lock V3.")
+    token = api.acquire_issue_lock(issue_number, lock_parent)
+    if token is None:
+        return False
+    try:
+        require_sweep_running(api)
+        if api.branch_sha(recovery_lock_branch(issue_number)) != token:
+            raise CoordinationError("Lock V3 del barrido sustituido.")
+        if api.branch_sha(work_branch) != observed_work_sha:
+            return False
+        # El callback relee marker/estado/evidencia mientras el lock está
+        # vigente; el proxy revalida #767 antes de cada escritura.
+        return operation()
+    finally:
+        # El proxy solo permite limpiar el token que esta ejecución adquirió.
+        api.release_issue_lock(issue_number, token)
+
+
 def sweep_satisfied_blocks(api: GitHub) -> int:
-    """Reconcilia markers factory-unblock en ambos sentidos, siempre fail-closed."""
+    """Reconcilia markers factory-unblock en ambos sentidos bajo lock V3."""
     changed = 0
     for issue in api.open_issues():
         candidate = _initial_unblock_candidate(api, issue)
         if candidate is not None:
             number, _marker, fingerprint = candidate
-            evidence = _revalidated_unblock_evidence(api, number, fingerprint)
-            if evidence is not None and _apply_verified_unblock(
-                api,
-                number,
-                fingerprint,
-                evidence,
-            ):
+
+            def unblock() -> bool:
+                evidence = _revalidated_unblock_evidence(
+                    api, number, fingerprint,
+                )
+                if evidence is None:
+                    return False
+                return _apply_verified_unblock(
+                    api, number, fingerprint, evidence,
+                )
+
+            if _with_sweep_issue_lock(api, number, unblock):
                 changed += 1
             continue
 
@@ -1602,10 +1637,15 @@ def sweep_satisfied_blocks(api: GitHub) -> int:
         if reblock is None:
             continue
         number, fingerprint = reblock
-        if not _revalidated_reblock_needed(api, number, fingerprint):
-            continue
-        _apply_verified_reblock(api, number, fingerprint)
-        changed += 1
+
+        def reblock_if_needed() -> bool:
+            if not _revalidated_reblock_needed(api, number, fingerprint):
+                return False
+            _apply_verified_reblock(api, number, fingerprint)
+            return True
+
+        if _with_sweep_issue_lock(api, number, reblock_if_needed):
+            changed += 1
 
     print(f"Bloqueos satisfechos reconciliados: {changed}")
     return changed
