@@ -1418,5 +1418,39 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertTrue(mutation["force"])
 
 
+    def test_owned_lock_cas_cleanup_fails_closed_on_ambiguous_graphql_response(self):
+        token = "e" * 40
+        responses = (
+            {"errors": [{"message": "ref moved"}]},
+            {"data": {}},
+            {"data": {"updateRefs": None}},
+            None,
+        )
+        for response in responses:
+            with self.subTest(response=response):
+                api = coordinator.GitHub("pl0n3r/Factory", "fake-token")
+                calls = []
+
+                def request(method, path, payload=None, allow=()):
+                    calls.append((method, path, payload))
+                    if method == "GET" and path == "/repos/pl0n3r/Factory":
+                        return {"node_id": "R_123"}
+                    if method == "POST" and path == "/graphql":
+                        return response
+                    raise AssertionError((method, path))
+
+                api.request = request
+                with self.assertRaisesRegex(
+                    coordinator.CoordinationError, "CAS V3 denegado"
+                ):
+                    api.release_owned_issue_lock_after_pause(12, token)
+                self.assertEqual([call[:2] for call in calls], [
+                    ("GET", "/repos/pl0n3r/Factory"), ("POST", "/graphql"),
+                ])
+                mutation = calls[-1][2]["variables"]["input"]["refUpdates"][0]
+                self.assertEqual(mutation["beforeOid"], token)
+                self.assertEqual(mutation["afterOid"], "0" * 40)
+
+
 if __name__ == "__main__":
     unittest.main()
