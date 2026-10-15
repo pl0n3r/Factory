@@ -1203,6 +1203,48 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     self.assertEqual(api.released_owned, [(12, "c" * 40)])
                 self.assertFalse(hasattr(api, "_factory_issue_lock_context"))
 
+    def test_failed_mutation_rolls_back_owned_lock_context(self):
+        token = "c" * 40
+        class FakeGitHub:
+            def __init__(self):
+                self.lock = None
+                self.released = []
+            def branch_sha(self, branch):
+                if branch == "work-12":
+                    return "a" * 40
+                if branch == "lock-12":
+                    return self.lock
+                raise AssertionError(branch)
+            def acquire_issue_lock(self, issue_number, head_sha):
+                self.lock = token
+                return token
+            def release_owned_issue_lock_after_pause(self, issue_number, owned):
+                self.released.append((issue_number, owned))
+                if self.lock != owned:
+                    raise coordinator.CoordinationError("CAS V3 denegado")
+                self.lock = None
+
+        def fail_mutation(api, issue_number):
+            self.assertEqual(api._factory_issue_lock_context["token"], token)
+            raise RuntimeError("mutation failed")
+
+        wrapped = coordinator._serialize_issue_mutation(
+            fail_mutation, issue_resolver=coordinator._issue_from_first_argument,
+        )
+        api = FakeGitHub()
+        with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
+            coordinator, "require_global_running"
+        ), patch.object(
+            coordinator, "branch_for_issue", return_value="work-12"
+        ), patch.object(
+            coordinator, "recovery_lock_branch", return_value="lock-12"
+        ):
+            with self.assertRaisesRegex(RuntimeError, "mutation failed"):
+                wrapped(api, 12)
+        self.assertEqual(api.released, [(12, token)])
+        self.assertIsNone(api.lock)
+        self.assertFalse(hasattr(api, "_factory_issue_lock_context"))
+
     def test_issue_lock_wrapper_rejects_invalid_and_missing_heads_closed(self):
         class FakeGitHub:
             def __init__(self, work_sha, main_sha="d" * 40):
