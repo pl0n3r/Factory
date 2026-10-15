@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+from functools import wraps
 import re
 import sys
 import uuid
@@ -3741,7 +3742,10 @@ def close_pr_reservation(
     elif STATUS_BLOCKED not in label_names(issue):
         api.set_status(issue_number, STATUS_AVAILABLE)
 
-def update_pr_state(api: GitHub, pr_number: int, action: str) -> None:
+def update_pr_state(
+    api: GitHub, pr_number: int, action: str, *,
+    _expected_issue_number: int | None = None,
+) -> None:
     """Sincroniza labels y reserva con eventos de un PR del mismo repositorio."""
     pull = api.pull(pr_number)
     head = pull.get("head")
@@ -3749,6 +3753,9 @@ def update_pr_state(api: GitHub, pr_number: int, action: str) -> None:
     issue_number = issue_from_branch(branch)
     if issue_number is None:
         return
+    if (_expected_issue_number is not None
+            and issue_number != _expected_issue_number):
+        raise CoordinationError("PR cambió de Issue durante el lock compartido.")
     # Validar también eventos de PR ya cerrado (no salen de open_pulls).
     # Solo un PR realmente local puede mutar estado o liberar la rama.
     if not local_pull_source_matches(api, pull, branch):
@@ -4510,6 +4517,114 @@ def main() -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
     return 0
+
+
+
+# Entradas mutantes del coordinador que deben compartir el mismo lock V3.
+# Las funciones de recuperación, renovación, migración y adopción ya adquieren
+# su lock internamente; no envolverlas para evitar doble adquisición.
+def _serialize_issue_mutation(function: Callable[..., Any], *,
+                              issue_resolver: Callable[..., int | None],
+                              validate_pr_issue: bool = False) -> Callable[..., Any]:
+    """Serializa una transición de Issue con la ref CAS V3 por Issue.
+
+    El wrapper se aplica al adaptador GitHub de producción. Los dobles de
+    tests unitarios conservan su contrato aislado y no realizan llamadas remotas.
+    """
+    @wraps(function)
+    def wrapped(api: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(api, GitHub):
+            return function(api, *args, **kwargs)
+
+        issue_number = issue_resolver(api, *args, **kwargs)
+        if issue_number is None:
+            return function(api, *args, **kwargs)
+        if type(issue_number) is not int or issue_number <= 0:
+            raise CoordinationError("Issue inválido para lock compartido V3.")
+
+        held = getattr(api, "_factory_issue_lock_context", None)
+        if held is not None:
+            if held.get("issue") != issue_number:
+                raise CoordinationError("No se permiten locks V3 anidados de Issues distintos.")
+            if validate_pr_issue:
+                pull = api.pull(args[0])
+                head = pull.get("head")
+                branch = str(head.get("ref") or "") if isinstance(head, dict) else ""
+                if issue_from_branch(branch) != issue_number:
+                    raise CoordinationError("PR cambió de Issue durante el lock compartido.")
+                kwargs["_expected_issue_number"] = issue_number
+            return function(api, *args, **kwargs)
+
+        require_global_running(api)
+        work_branch = branch_for_issue(issue_number)
+        observed_work_sha = api.branch_sha(work_branch)
+        lock_parent = observed_work_sha or api.branch_sha("main")
+        if not isinstance(lock_parent, str) or re.fullmatch(r"[a-f0-9]{40}", lock_parent) is None:
+            raise CoordinationError("No hay HEAD confiable para adquirir lock V3.")
+        token = api.acquire_issue_lock(issue_number, lock_parent)
+        if token is None:
+            raise CoordinationError(f"Lock V3 ocupado para Issue #{issue_number}; mutación denegada.")
+        context = {"issue": issue_number, "token": token}
+        setattr(api, "_factory_issue_lock_context", context)
+        try:
+            require_global_running(api)
+            if api.branch_sha(recovery_lock_branch(issue_number)) != token:
+                raise CoordinationError("Lock V3 sustituido antes de la mutación.")
+            if api.branch_sha(work_branch) != observed_work_sha:
+                raise CoordinationError("Rama de trabajo cambió durante adquisición del lock V3.")
+            if validate_pr_issue:
+                pull = api.pull(args[0])
+                head = pull.get("head")
+                branch = str(head.get("ref") or "") if isinstance(head, dict) else ""
+                if issue_from_branch(branch) != issue_number:
+                    raise CoordinationError("PR cambió de Issue durante el lock compartido.")
+                kwargs["_expected_issue_number"] = issue_number
+            return function(api, *args, **kwargs)
+        finally:
+            try:
+                delattr(api, "_factory_issue_lock_context")
+            except AttributeError:
+                pass
+            # Solo libera nuestro propio token CAS; si fue sustituido, el
+            # adaptador debe rechazarlo y nunca borrar el lock de otro actor.
+            api.release_issue_lock(issue_number, token)
+
+    setattr(wrapped, "__factory_issue_lock_serialized__", True)
+    return wrapped
+
+
+def _issue_from_first_argument(api: Any, issue_number: int, *args: Any,
+                               **kwargs: Any) -> int:
+    return issue_number
+
+
+def _issue_from_pull_argument(api: Any, pr_number: int, *args: Any,
+                              **kwargs: Any) -> int | None:
+    pull = api.pull(pr_number)
+    head = pull.get("head")
+    branch = str(head.get("ref") or "") if isinstance(head, dict) else ""
+    return issue_from_branch(branch)
+
+
+reserve_available_work = _serialize_issue_mutation(
+    reserve_available_work, issue_resolver=_issue_from_first_argument,
+)
+transfer_work = _serialize_issue_mutation(
+    transfer_work, issue_resolver=_issue_from_first_argument,
+)
+release_work = _serialize_issue_mutation(
+    release_work, issue_resolver=_issue_from_first_argument,
+)
+update_issue_state = _serialize_issue_mutation(
+    update_issue_state, issue_resolver=_issue_from_first_argument,
+)
+update_issue_label_state = _serialize_issue_mutation(
+    update_issue_label_state, issue_resolver=_issue_from_first_argument,
+)
+update_pr_state = _serialize_issue_mutation(
+    update_pr_state, issue_resolver=_issue_from_pull_argument,
+    validate_pr_issue=True,
+)
 
 
 if __name__ == "__main__":
