@@ -1241,6 +1241,42 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             [("acquire", 12, "a" * 40)] * len(cases),
         )
 
+    def test_two_clients_race_to_acquire_only_one_issue_lock(self):
+        # Ambos clientes observan la ref ausente antes de intentar CREATE;
+        # la operación atómica de GitHub solo permite un ganador.
+        issue, head, tree = 12, "a" * 40, "b" * 40
+        ref = coordinator.recovery_lock_branch(issue)
+        shared = {"owner": None, "creates": 0, "commits": 0}
+        def make_api(token):
+            api = coordinator.GitHub("pl0n3r/Factory", "fake-token")
+            def branch_sha(branch):
+                self.assertEqual(branch, ref)
+                return None  # GET simultáneos antes de CREATE
+            def request(method, path, payload=None, allow=()):
+                if (method, path) == ("GET", f"/repos/pl0n3r/Factory/git/commits/{head}"):
+                    return {"tree": {"sha": tree}}
+                if (method, path) == ("POST", "/repos/pl0n3r/Factory/git/commits"):
+                    shared["commits"] += 1
+                    return {"sha": token}
+                raise AssertionError((method, path))
+            def create_branch(branch, sha):
+                self.assertEqual((branch, sha), (ref, token))
+                shared["creates"] += 1
+                if shared["owner"] is not None:
+                    return False
+                shared["owner"] = token
+                return True
+            api.branch_sha = branch_sha
+            api.request = request
+            api.create_branch = create_branch
+            return api
+
+        first, second = make_api("c" * 40), make_api("d" * 40)
+        with patch.object(coordinator, "require_global_running"):
+            self.assertEqual(first.acquire_issue_lock(issue, head), "c" * 40)
+            self.assertIsNone(second.acquire_issue_lock(issue, head))
+        self.assertEqual(shared, {"owner": "c" * 40, "creates": 2, "commits": 2})
+
     def test_competing_entrypoints_reject_replaced_lock_without_mutation(self):
         # Un escritor adquiere su token, pero otro actor reemplaza la ref
         # antes de la revalidación. No se debe ejecutar ninguna operación.
