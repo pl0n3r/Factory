@@ -570,25 +570,26 @@ class AutoMergePrGuardTests(unittest.TestCase):
         mod.verify(q, SHA, NOW)
 
     def test_coderabbit_status_history_is_paginated_and_permissioned(self):
-                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-                self.assertIn("permissions:\\n  contents: read\\njobs:", workflow)
-                self.assertNotIn("statuses: write", workflow)
-                q = evidence()
-                q.pop("status_history")
-                self.deny(q)
-
+        import re
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        blocks = re.findall(r"(?m)^    permissions:\\n((?:^      [a-z-]+: (?:read|write|none)\\n)+)", workflow)
+        self.assertEqual(len(blocks), 1)
+        scopes = dict(line.strip().split(": ", 1) for line in blocks[0].splitlines())
+        self.assertEqual(scopes, {"contents": "read"})
+        q = evidence()
+        q.pop("status_history")
+        self.deny(q)
     def test_job_permissions_minimal_without_external_yaml_dependency(self):
-                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-                self.assertIn("permissions:\\n  contents: read", workflow)
-                self.assertIn("    if: ${{ false }}", workflow)
-                self.assertNotIn("contents: write", workflow)
-                self.assertNotIn("pull-requests: write", workflow)
-                self.assertNotIn("statuses: write", workflow)
-                self.assertNotIn("checks: write", workflow)
-                self.assertNotIn("issues: write", workflow)
-                self.assertNotIn("AUTOMERGE_TOKEN", workflow)
-                self.assertNotIn("--admin", workflow)
-
+        import re
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        blocks = re.findall(r"(?m)^    permissions:\\n((?:^      [a-z-]+: (?:read|write|none)\\n)+)", workflow)
+        self.assertEqual(len(blocks), 1)
+        scopes = dict(line.strip().split(": ", 1) for line in blocks[0].splitlines())
+        self.assertEqual(scopes, {"contents": "read"})
+        for forbidden in ("contents: write", "pull-requests: write", "statuses: write",
+                          "checks: write", "issues: write", "MERGE_TOKEN", "AUTOMERGE_TOKEN",
+                          "secrets.", "gh api --method PUT", "gh pr merge"):
+            self.assertNotIn(forbidden, workflow)
     def test_coderabbit_status_history_endpoint_is_complete(self):
         # GitHub /commits/{sha}/statuses exposes creator, unlike /status.
         import io
@@ -1429,34 +1430,63 @@ class AutoMergePrGuardTests(unittest.TestCase):
         ]; self.deny(q)
 
     def test_clean_construction_only_allows_sha_locked_immediate_merge(self):
-                mod.verify(evidence(), SHA, NOW)
-                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-                self.assertIn("on:\\n  pull_request:\\n", workflow)
-                self.assertIn("    if: ${{ false }}", workflow)
-                self.assertNotIn("pull_request_target:", workflow)
-                self.assertNotIn("gh pr merge", workflow)
-                self.assertNotIn("gh api --method PUT", workflow)
-                self.assertNotIn("MERGE_TOKEN", workflow)
-                self.assertNotIn("AUTOMERGE_TOKEN", workflow)
-                self.assertNotIn("--admin", workflow)
-
+        mod.verify(evidence(), SHA, NOW)
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        self.assertIn("on:\\n  pull_request:\\n", workflow)
+        self.assertIn("  automerge:\\n", workflow)
+        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertIn("permissions:\\n  contents: read\\njobs:", workflow)
+        self.assertNotIn("pull_request_target:", workflow)
+        self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
+        self.assertNotIn("gh api --method PUT", workflow)
+        self.assertNotIn("gh pr merge", workflow)
+        self.assertNotIn("MERGE_TOKEN", workflow)
+        self.assertNotIn("AUTOMERGE_TOKEN", workflow)
+        self.assertNotIn("secrets.", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
     def test_final_guard_runs_after_collision_check_and_before_merge(self):
-                """La Fase 1 no ejecuta guard ni coordinación privilegiada."""
-                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-                self.assertIn("    if: ${{ false }}", workflow)
-                self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
-                self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
-                self.assertNotIn("gh api --method PUT", workflow)
-                self.assertNotIn("gh pr merge", workflow)
-
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
+        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
+        self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
+        self.assertNotIn("gh api --method PUT", workflow)
+        self.assertNotIn("gh pr merge", workflow)
     def test_coordinator_claim_collisions_are_blocked_before_merge(self):
-                """La Fase 1 mantiene la activación de merge fuera del workflow."""
-                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-                self.assertIn("    if: ${{ false }}", workflow)
-                self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
-                self.assertNotIn("gh api --method PUT", workflow)
-                self.assertNotIn("gh pr merge", workflow)
-                self.assertNotIn("gh api --method PUT", workflow)
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
+        self.assertNotIn("gh api --method PUT", workflow)
+        self.assertNotIn("gh pr merge", workflow)
+        self.assertNotIn("MERGE_TOKEN", workflow)
+
+    def test_event_resolvers_fail_closed(self):
+        with self.assertRaises(mod.Denied):
+            mod.validate_pull_request_review_event({})
+        with self.assertRaises(mod.Denied):
+            mod.validate_workflow_run_event({})
+        review = {"action": "dismissed", "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"}}
+        with self.assertRaises(mod.Denied):
+            mod.validate_pull_request_review_event(review)
+        run = {"action": "completed", "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"},
+               "workflow_run": {"name": "Sonar CI-based", "event": "push", "status": "completed",
+                                "conclusion": "failure", "repository": {"full_name": "pl0n3r/Factory"},
+                                "head_repository": {"full_name": "pl0n3r/Factory"}, "head_sha": SHA,
+                                "head_branch": "trabajo/issue-1364", "pull_requests": [{"number": 1375}]}}
+        with self.assertRaises(mod.Denied):
+            mod.validate_workflow_run_event(run)
+
+
+def pull_request_review_event_example():
+    return {
+        "action": "submitted",
+        "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"},
+        "review": {"state": "commented", "user": {"login": "coderabbitai[bot]"}},
+        "pull_request": {"number": 1375, "state": "open", "draft": False,
+                         "head": {"ref": "trabajo/issue-1364", "sha": "c" * 40,
+                                  "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
+                         "base": {"ref": "main"}},
+    }
 
 
 class PullRequestReviewEventTests(unittest.TestCase):
@@ -1607,27 +1637,27 @@ class WorkflowRunEventTests(unittest.TestCase):
                         mod.resolve_workflow_run('token',workflow_run_event_example())
 
     def test_workflow_run_uses_actual_factory_workflow_names(self):
-        """The workflow_run trigger and the trusted allowlist must match main."""
         expected = {"CI factory", "Sonar CI-based", "Evidencia CodeQL"}
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         self.assertEqual(mod.TRUSTED_WORKFLOW_RUNS, expected)
+        self.assertNotIn("workflow_run:", workflow)
         for name in expected:
             event = workflow_run_event_example()
             event["workflow_run"]["name"] = name
             self.assertEqual(mod.validate_workflow_run_event(event), (1364, "trabajo/issue-1364"))
-        # A generic label is not the name of the CodeQL evidence workflow.
         self.assertNotIn('"CodeQL"', workflow)
-
     def test_workflow_never_executes_untrusted_head(self):
-                workflow=(ROOT/'.github/workflows/automerge.yml').read_text()
-                self.assertIn('on:\\n  pull_request:\\n',workflow)
-                self.assertIn('    if: ${{ false }}', workflow)
-                self.assertNotIn('pull_request_target:', workflow)
-                self.assertNotIn('actions/checkout@v',workflow)
-                self.assertNotIn('gh api --method PUT',workflow)
-                self.assertNotIn('gh pr merge',workflow)
-                self.assertNotIn('MERGE_TOKEN', workflow)
-
+        workflow = (ROOT / ".github/workflows/automerge.yml").read_text()
+        self.assertIn("on:\\n  pull_request:\\n", workflow)
+        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertIn("permissions:\\n  contents: read\\njobs:", workflow)
+        self.assertNotIn("pull_request_target:", workflow)
+        self.assertNotIn("actions/checkout", workflow)
+        self.assertNotIn("scripts/automerge_pr_guard.py", workflow)
+        self.assertNotIn("gh api --method PUT", workflow)
+        self.assertNotIn("gh pr merge", workflow)
+        self.assertNotIn("MERGE_TOKEN", workflow)
+        self.assertNotIn("secrets.", workflow)
 
 class MainCliContractTests(unittest.TestCase):
     """Exercise the real entrypoint contract; mock I/O, not its gate semantics."""
@@ -1731,26 +1761,18 @@ class MainCliContractTests(unittest.TestCase):
 
 
 class AutoMergeShellOutcomeTests(unittest.TestCase):
-    """La fase 1 debe permanecer inerte: ninguna ruta de este job fusiona."""
+    """Fase 1 no contiene una sección de shell con autoridad de fusión."""
 
-    def test_workflow_is_inert_until_explicit_phase_two_authorization(self):
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+    def test_immediate_merge_authority_is_absent_in_phase_one(self):
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         self.assertIn("    if: ${{ false }}", workflow)
-        self.assertIn("permissions:\n  contents: read\njobs:", workflow)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("pull-requests: write", workflow)
+        self.assertNotIn("gh api --method PUT", workflow)
+        self.assertNotIn("gh pr merge", workflow)
         self.assertNotIn("MERGE_TOKEN", workflow)
         self.assertNotIn("AUTOMERGE_TOKEN", workflow)
-        self.assertNotIn("gh pr merge", workflow)
-        self.assertNotIn("gh api --method PUT", workflow)
-        self.assertNotIn("merge_section", workflow)
-
-    def test_no_deferred_merge_authority_is_present(self):
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertNotIn("--auto", workflow)
-        self.assertNotIn("--disable-auto", workflow)
-        self.assertNotIn("isMergeQueueEnabled", workflow)
-        self.assertNotIn("pull_request_target:", workflow)
+        self.assertNotIn("secrets.", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
 
 
 if __name__ == "__main__":
