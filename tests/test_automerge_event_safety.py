@@ -25,6 +25,7 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         for required in (
             "github.event.pull_request.draft == false",
             "github.event.pull_request.head.repo.full_name == github.repository",
+            "github.event.pull_request.head.repo.fork == false",
             "github.event.pull_request.base.ref == 'main'",
         ):
             self.assertIn(required, review_gate)
