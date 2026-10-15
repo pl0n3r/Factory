@@ -247,8 +247,8 @@ Ninguno.
             "created_at": FRESH,
         }]
         api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
-        with (patch("scripts.renovacion_checks._bounded_list", return_value=[]),
-              patch("scripts.renovacion_checks._trusted_reviewer_permissions",
+        api.request.return_value = []
+        with (patch("scripts.renovacion_checks._trusted_reviewer_permissions",
                     return_value={}),
               patch("scripts.renovacion_checks._snapshot_check_rows", return_value=[]),
               patch("scripts.renovacion_checks._verified_statuses", return_value=[]),
@@ -266,6 +266,7 @@ Ninguno.
             self.assertEqual(snapshot["pr"]["head_sha"], SHA)
             self.assertEqual(snapshot["pr"]["base_sha"], BASE_SHA)
 
+            self.assertGreaterEqual(api.request.call_count, 2)
             self.assertTrue(all(call.args[0] == "GET"
                                 for call in api.request.call_args_list))
             # Changing Draft status between reads invalidates the evidence.
