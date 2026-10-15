@@ -1780,7 +1780,10 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
     def merge_section():
         import textwrap
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        run = workflow.split("        run: |\n", 1)[1]
+        section = workflow.split(
+            "      - name: Validar evidencia y habilitar exclusivamente squash exact-HEAD\n", 1
+        )[1]
+        run = section.split("        run: |\n", 1)[1]
         script = textwrap.dedent(run)
         return "set -euo pipefail\n" + script.split("# SERVER_GATES_START\n", 1)[1]
 
