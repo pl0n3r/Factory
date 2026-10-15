@@ -1373,7 +1373,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             coordinator, "require_global_running",
             side_effect=AssertionError("cleanup must work while PAUSED"),
         ):
-            coordinator.GitHub.release_issue_lock(api, 12, token)
+            coordinator.GitHub.release_owned_issue_lock_after_pause(api, 12, token)
 
         mutation = api.calls[-1][2]["variables"]["input"]["refUpdates"][0]
         self.assertEqual(mutation["beforeOid"], token)
