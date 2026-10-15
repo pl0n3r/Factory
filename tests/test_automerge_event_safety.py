@@ -21,7 +21,7 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read\njobs:", source)
         self.assertIn("  automerge:\n", source)
         job = source.split("  automerge:\n", 1)[1]
-        self.assertIn("    if: ${{ false && (", job)
+        self.assertIn("    if: ${{ false }}", job)
         self.assertIn("      contents: read", job)
         self.assertNotIn("contents: write", source)
         self.assertNotIn("pull-requests: write", source)
