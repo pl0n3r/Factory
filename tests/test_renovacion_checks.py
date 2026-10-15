@@ -60,6 +60,81 @@ def fresh_evidence():
 
 
 class RenovacionChecksTests(unittest.TestCase):
+    def test_draft_pr_read_only_evidence_allowed(self):
+        """Draft yields a fingerprint but never authorizes readiness."""
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        before = copy.deepcopy(evidence)
+        decision = evaluate(evidence)
+        self.assertFalse(decision.ready)
+        self.assertEqual(decision.reason, "draft_read_only_evidence")
+        self.assertIsNotNone(decision.fingerprint)
+        self.assertEqual(evidence, before)
+
+    def test_draft_snapshot_decision_does_not_mask_review_veto(self):
+        """Draft handling must not mask missing or skipped review evidence."""
+        # A successful external status alone must not make Draft evidence ready.
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        evidence["statuses"][0]["description"] = "Review skipped"
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        evidence["reviews"] = []
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
+    def test_draft_fork_fails_closed(self):
+        """A Draft pull request from a fork is rejected fail-closed."""
+        evidence = fresh_evidence()
+        evidence["pr"].update(draft=True, repo="outsider/Factory")
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
+    def test_draft_wrong_base_fails_closed(self):
+        """Draft evidence based on a branch other than main is rejected."""
+        evidence = fresh_evidence()
+        evidence["pr"].update(draft=True, base_sha="c" * 40)
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
+    def test_draft_head_change_between_snapshots_fails_closed(self):
+        """A changed HEAD invalidates the evidence snapshot."""
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        evidence["after"]["head_sha"] = "c" * 40
+        self.assertEqual(evaluate(evidence).reason, "identity_changed_during_revalidation")
+
+    def test_draft_review_missing_or_skipped_fails_closed(self):
+        """Missing, skipped, or non-exact-HEAD reviews must fail closed."""
+        for reviews in ([], [{"id": 501, "actor": "independent-reviewer",
+                               "state": "COMMENTED", "head_sha": SHA,
+                               "submitted_at": FINISH}],
+                        [{"id": 501, "actor": "independent-reviewer",
+                          "state": "APPROVED", "head_sha": "c" * 40,
+                          "submitted_at": FINISH}],
+                        [{"id": 501, "actor": "independent-reviewer",
+                          "state": "APPROVED", "head_sha": SHA,
+                          "submitted_at": None}]):
+            with self.subTest(reviews=reviews):
+                evidence = fresh_evidence()
+                evidence["pr"]["draft"] = True
+                evidence["reviews"] = reviews
+                self.assertFalse(evaluate(evidence).ready)
+                self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
+    def test_draft_recovery_never_changes_pr_state(self):
+        """Repeated read-only evaluation preserves the Draft state."""
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        original = copy.deepcopy(evidence)
+        for _ in range(2):
+            decision = evaluate(evidence)
+            self.assertFalse(decision.ready)
+            self.assertEqual(decision.reason, "draft_read_only_evidence")
+        self.assertEqual(evidence, original)
+
     def test_approval_requires_authenticated_reviewer_write_permission(self):
         from unittest.mock import Mock
         from scripts.renovacion_checks import (
@@ -110,6 +185,7 @@ class RenovacionChecksTests(unittest.TestCase):
             _trusted_reviewer_permissions(api, [review])
 
     def test_snapshot_requires_single_live_assignee_matching_v3_owner(self):
+        """Require one owner-matching V3 assignee and stable read-only identity."""
         from unittest.mock import Mock, patch
         from scripts.renovacion_checks import (
             _verified_lease_assignee, collect_snapshot, EvidenceUnavailable)
@@ -179,14 +255,37 @@ Ninguno.
             "created_at": FRESH,
         }]
         api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
-        with (patch("scripts.renovacion_checks._bounded_list", return_value=[]),
-              patch("scripts.renovacion_checks._trusted_reviewer_permissions",
+        api.request.return_value = []
+        with (patch("scripts.renovacion_checks._trusted_reviewer_permissions",
                     return_value={}),
               patch("scripts.renovacion_checks._snapshot_check_rows", return_value=[]),
               patch("scripts.renovacion_checks._verified_statuses", return_value=[]),
               patch("scripts.renovacion_checks._review_threads",
                     return_value=[]) as thread_reader):
             self.assertEqual(collect_snapshot(api, 123)["issue"]["owner"], "pl0n3r")
+            # Draft is collected read-only and retains its real state.
+            draft_pr = copy.deepcopy(pr)
+            draft_pr["draft"] = True
+            api.pull.side_effect = [copy.deepcopy(draft_pr), copy.deepcopy(draft_pr)]
+            api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
+            snapshot = collect_snapshot(api, 123)
+            self.assertIs(snapshot["pr"]["draft"], True)
+            self.assertEqual(snapshot["before"], snapshot["after"])
+            self.assertEqual(snapshot["pr"]["head_sha"], SHA)
+            self.assertEqual(snapshot["pr"]["base_sha"], BASE_SHA)
+
+            self.assertGreaterEqual(api.request.call_count, 2)
+            self.assertTrue(all(call.args[0] == "GET"
+                                for call in api.request.call_args_list))
+            # Changing Draft status between reads invalidates the evidence.
+            api.pull.side_effect = [copy.deepcopy(draft_pr), copy.deepcopy(pr)]
+            api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
+            with self.assertRaisesRegex(
+                    EvidenceUnavailable, "identity_changed_during_snapshot"):
+                collect_snapshot(api, 123)
+            api.pull.side_effect = None
+            api.pull.return_value = pr
+
             api.issue.side_effect = [copy.deepcopy(issue),
                                      dict(copy.deepcopy(issue),
                                           assignees=[{"login": "intruso"}])]
