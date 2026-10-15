@@ -1785,7 +1785,7 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         )[1]
         run = section.split("        run: |\n", 1)[1]
         script = textwrap.dedent(run)
-        return "set -euo pipefail\\nREPO_OWNER=pl0n3r\\nREPO_NAME=Factory\\n" + script.split("# Requerir fusión inmediata:", 1)[1].split("\\n", 1)[1]
+        return "set -euo pipefail\nREPO_OWNER=pl0n3r\nREPO_NAME=Factory\n" + script.split("# Requerir fusión inmediata:", 1)[1].split("\n", 1)[1]
 
     def test_immediate_merge_is_sha_locked_and_never_creates_deferred_authority(self):
         import os
