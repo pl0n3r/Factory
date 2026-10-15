@@ -62,8 +62,8 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "automerge.yml"
         ).read_text(encoding="utf-8")
         # Fase 1 solo prepara guard y pruebas; este workflow no puede fusionar.
-        self.assertIn("permissions:\\n  contents: read\\njobs:", automerge)
-        self.assertIn("  automerge:\\n", automerge)
+        self.assertIn("permissions:\n  contents: read\njobs:", automerge)
+        self.assertIn("  automerge:\n", automerge)
         self.assertIn("    if: false", automerge)
         self.assertNotIn("contents: write", automerge)
         self.assertNotIn("pull-requests: write", automerge)
