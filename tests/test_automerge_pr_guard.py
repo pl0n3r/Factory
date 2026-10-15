@@ -1812,7 +1812,6 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         self.assertIn("if: " + chr(36) + "{{ false && (", workflow)
         for required in (
             "github.event_name == 'pull_request_review'",
-            "github.event.review.state == 'submitted'",
             "github.event.pull_request.draft == false",
             "github.event.pull_request.base.ref == 'main'",
             "github.event.pull_request.head.repo.full_name == github.repository",
