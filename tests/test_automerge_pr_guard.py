@@ -570,31 +570,24 @@ class AutoMergePrGuardTests(unittest.TestCase):
         mod.verify(q, SHA, NOW)
 
     def test_coderabbit_status_history_is_paginated_and_permissioned(self):
-        # Factory CI installs only the Python standard library for script tests.
-        import re
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        blocks = re.findall(r"(?m)^    permissions:\n((?:^      [a-z-]+: (?:read|write|none)\n)+)", workflow)
-        self.assertEqual(len(blocks), 1, "Exactly one job-level permission block")
-        rows = [line.strip().split(": ", 1) for line in blocks[0].splitlines()]
-        permissions = dict(rows)
-        self.assertEqual(len(rows), len(permissions), "Duplicate permission names")
-        self.assertEqual(permissions.get("statuses"), "read")
-        # A missing history page cannot be substituted with the combined API.
-        q = evidence()
-        q.pop("status_history")
-        self.deny(q)
+                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+                self.assertIn("permissions:\\n  contents: read\\njobs:", workflow)
+                self.assertNotIn("statuses: write", workflow)
+                q = evidence()
+                q.pop("status_history")
+                self.deny(q)
 
     def test_job_permissions_minimal_without_external_yaml_dependency(self):
-        import re
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        blocks = re.findall(r"(?m)^    permissions:\n((?:^      [a-z-]+: (?:read|write|none)\n)+)", workflow)
-        self.assertEqual(len(blocks), 1)
-        scopes = dict(line.strip().split(": ", 1) for line in blocks[0].splitlines())
-        self.assertEqual(scopes.get("statuses"), "read")
-        self.assertEqual(scopes.get("checks"), "read")
-        self.assertEqual(scopes.get("issues"), "read")
-        self.assertEqual(scopes.get("pull-requests"), "write")
-        self.assertNotIn("--admin", workflow)
+                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+                self.assertIn("permissions:\\n  contents: read", workflow)
+                self.assertIn("    if: ${{ false }}", workflow)
+                self.assertNotIn("contents: write", workflow)
+                self.assertNotIn("pull-requests: write", workflow)
+                self.assertNotIn("statuses: write", workflow)
+                self.assertNotIn("checks: write", workflow)
+                self.assertNotIn("issues: write", workflow)
+                self.assertNotIn("AUTOMERGE_TOKEN", workflow)
+                self.assertNotIn("--admin", workflow)
 
     def test_coderabbit_status_history_endpoint_is_complete(self):
         # GitHub /commits/{sha}/statuses exposes creator, unlike /status.
@@ -1436,70 +1429,34 @@ class AutoMergePrGuardTests(unittest.TestCase):
         ]; self.deny(q)
 
     def test_clean_construction_only_allows_sha_locked_immediate_merge(self):
-        mod.verify(evidence(), SHA, NOW)
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("on:\n  pull_request:\n", workflow)
-        self.assertNotIn("pull_request_target:", workflow)
-        self.assertIn("persist-credentials: false", workflow)
-        self.assertIn("ref: main", workflow)
-        self.assertIn("python3 scripts/automerge_pr_guard.py", workflow)
-        self.assertIn('MERGE_STATE="$(gh api', workflow)
-        self.assertIn('[[ "$MERGE_STATE" != clean ]]', workflow)
-        self.assertIn('gh api --method PUT', workflow)
-        self.assertIn('"repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge"', workflow)
-        self.assertIn('-f sha="$PR_SHA" -f merge_method=squash', workflow)
-        self.assertIn('.merged == true', workflow)
-        self.assertIn('merge_commit_sha', workflow)
-        self.assertIn('MERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}', workflow)
-        self.assertIn('dedicated_merge_token_missing_or_reused', workflow)
-        self.assertIn('GH_TOKEN="$MERGE_TOKEN" gh api --method PUT', workflow)
-        self.assertNotIn('gh pr merge --auto', workflow)
-        self.assertNotIn('gh pr merge --disable-auto', workflow)
-        self.assertNotIn('secrets.GITHUB_TOKEN', workflow)
-        self.assertNotIn('--admin', workflow)
-        self.assertIn('permissions:', workflow)
+                mod.verify(evidence(), SHA, NOW)
+                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+                self.assertIn("on:\\n  pull_request:\\n", workflow)
+                self.assertIn("    if: ${{ false }}", workflow)
+                self.assertNotIn("pull_request_target:", workflow)
+                self.assertNotIn("gh pr merge", workflow)
+                self.assertNotIn("gh api --method PUT", workflow)
+                self.assertNotIn("MERGE_TOKEN", workflow)
+                self.assertNotIn("AUTOMERGE_TOKEN", workflow)
+                self.assertNotIn("--admin", workflow)
 
     def test_final_guard_runs_after_collision_check_and_before_merge(self):
-        """No merge after a long coordinator read without rechecking current gates."""
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        final_run = 'python3 scripts/automerge_pr_guard.py'
-        coordinator = 'python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation'
-        merge = 'gh api --method PUT'
-        # At least one guard must run after collision verification, not only before.
-        guarded_run = '          env -u MERGE_TOKEN ' + final_run
-        self.assertEqual(workflow.splitlines().count(guarded_run), 2,
-                         "El merge debe reevaluar #767, V3, CI, CodeRabbit y freeze después de Coordinación")
-        self.assertEqual(workflow.count(coordinator), 1)
-        self.assertLess(workflow.index(guarded_run), workflow.index(coordinator))
-        self.assertLess(workflow.index(coordinator), workflow.rindex(guarded_run))
-        self.assertLess(workflow.rindex(guarded_run), workflow.index(merge))
+                """La Fase 1 no ejecuta guard ni coordinación privilegiada."""
+                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
+                self.assertIn("    if: ${{ false }}", workflow)
+                self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
+                self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
+                self.assertNotIn("gh api --method PUT", workflow)
+                self.assertNotIn("gh pr merge", workflow)
 
     def test_coordinator_claim_collisions_are_blocked_before_merge(self):
-        """El guard local no sustituye Coordinación global de otros PRs."""
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        preflight = 'python3 scripts/automerge_pr_guard.py'
-        coordinator = 'python3 scripts/coordinar_trabajo.py validar-pr --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --require-reservation'
-        merge = 'gh api --method PUT'
-        self.assertEqual(workflow.count(coordinator), 1,
-                         'El auto-merge requiere Coordinación para detectar colisiones entre PRs')
-        self.assertTrue(workflow.index(preflight) < workflow.index(coordinator) < workflow.index(merge),
-                        'El gate de colisiones debe bloquear antes de fusionar')
-        self.assertIn('set -euo pipefail', workflow)
-
-
-
-def pull_request_review_event_example():
-    return {
-        "action": "submitted",
-        "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"},
-        "review": {"state": "commented", "user": {"login": "coderabbitai[bot]"}},
-        "pull_request": {
-            "number": 1375, "state": "open", "draft": False,
-            "head": {"ref": "trabajo/issue-1364", "sha": "c" * 40,
-                     "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
-            "base": {"ref": "main", "repo": {"full_name": "pl0n3r/Factory"}},
-        },
-    }
+                """La Fase 1 mantiene la activación de merge fuera del workflow."""
+                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+                self.assertIn("    if: ${{ false }}", workflow)
+                self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
+                self.assertNotIn("gh api --method PUT", workflow)
+                self.assertNotIn("gh pr merge", workflow)
+                self.assertIn("set -euo pipefail", workflow)
 
 
 class PullRequestReviewEventTests(unittest.TestCase):
@@ -1662,14 +1619,14 @@ class WorkflowRunEventTests(unittest.TestCase):
         self.assertNotIn('"CodeQL"', workflow)
 
     def test_workflow_never_executes_untrusted_head(self):
-        workflow=(ROOT/'.github/workflows/automerge.yml').read_text()
-        self.assertIn('on:\n  pull_request:\n',workflow)
-        self.assertNotIn('pull_request_target:', workflow)
-        self.assertIn('persist-credentials: false',workflow)
-        self.assertNotIn('actions/checkout@v',workflow)
-        self.assertIn('gh api --method PUT',workflow)
-        self.assertIn('MERGE_STATE=',workflow)
-        self.assertNotIn('gh pr merge --disable-auto',workflow)
+                workflow=(ROOT/'.github/workflows/automerge.yml').read_text()
+                self.assertIn('on:\\n  pull_request:\\n',workflow)
+                self.assertIn('    if: ${{ false }}', workflow)
+                self.assertNotIn('pull_request_target:', workflow)
+                self.assertNotIn('actions/checkout@v',workflow)
+                self.assertNotIn('gh api --method PUT',workflow)
+                self.assertNotIn('gh pr merge',workflow)
+                self.assertNotIn('MERGE_TOKEN', workflow)
 
 
 class MainCliContractTests(unittest.TestCase):
@@ -1788,25 +1745,14 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         return "set -euo pipefail\nREPO_OWNER=pl0n3r\nREPO_NAME=Factory\n" + script.split("# Requerir fusión inmediata:", 1)[1].split("\n", 1)[1]
 
     def test_immediate_merge_is_sha_locked_and_never_creates_deferred_authority(self):
-        import os
-        import subprocess
-        import tempfile
-        from pathlib import Path
-
-        stub = r'''#!/bin/bash
-set -euo pipefail
-case "$*" in
-  "api graphql "*)
-    echo "${STUB_QUEUE_POLICY:-safe}" ;;
-  "api repos/pl0n3r/Factory/pulls/1375 --jq .mergeable_state")
-    echo "${STUB_MERGEABLE:-clean}" ;;
-  "api --method PUT repos/pl0n3r/Factory/pulls/1375/merge "*)
-    echo merge-called > "$STUB_FLAG"
-    if [[ "${STUB_PUT_ERROR:-no}" == yes ]]; then exit 49; fi
-    printf '{"merged":%s,"sha":"%s"}\n' "${STUB_API_MERGED:-true}" "${STUB_MERGE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" ;;
-  "api repos/pl0n3r/Factory/pulls/1375 --jq "*)
-    if [[ "${STUB_OBSERVE_ERROR:-no}" == yes ]]; then exit 51; fi
-    printf '%s\t%s\t%s\t%s\n' "${STUB_OBS_MERGED:-true}" "${STUB_OBS_TIME:-2026-10-15T00:22:00Z}" "${STUB_OBS_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" "${STUB_OBS_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
+                workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+                self.assertIn("    if: ${{ false }}", workflow)
+                self.assertNotIn("gh pr merge", workflow)
+                self.assertNotIn("gh api --method PUT", workflow)
+                self.assertNotIn("--auto", workflow)
+                self.assertNotIn("MERGE_TOKEN", workflow)
+                self.assertNotIn("AUTOMERGE_TOKEN", workflow)
+Z}" "${STUB_OBS_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" "${STUB_OBS_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" ;;
   *) echo "unexpected gh: $*" >&2; exit 77 ;;
 esac
 '''
