@@ -1459,20 +1459,39 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertNotIn("gh pr merge", workflow)
         self.assertNotIn("MERGE_TOKEN", workflow)
     def test_event_resolvers_fail_closed(self):
+        # Accept canonical event fixtures first; each negative case below
+        # changes exactly one field so that the intended gate is exercised.
+        review = pull_request_review_event_example()
+        self.assertEqual(
+            mod.validate_pull_request_review_event(review),
+            (1375, "trabajo/issue-1364"),
+        )
+        for field, value in (("action", "dismissed"),
+                             ("action", "synchronize")):
+            changed = deepcopy(review)
+            changed[field] = value
+            with self.subTest(source="pull_request_review", field=field, value=value):
+                with self.assertRaises(mod.Denied):
+                    mod.validate_pull_request_review_event(changed)
         with self.assertRaises(mod.Denied):
             mod.validate_pull_request_review_event({})
+
+        run = workflow_run_event_example()
+        self.assertEqual(
+            mod.validate_workflow_run_event(run),
+            (1364, "trabajo/issue-1364"),
+        )
+        for field, value in (("event", "push"),
+                             ("conclusion", "failure"),
+                             ("status", "in_progress"),
+                             ("name", "Untrusted workflow")):
+            changed = deepcopy(run)
+            changed["workflow_run"][field] = value
+            with self.subTest(source="workflow_run", field=field, value=value):
+                with self.assertRaises(mod.Denied):
+                    mod.validate_workflow_run_event(changed)
         with self.assertRaises(mod.Denied):
             mod.validate_workflow_run_event({})
-        review = {"action": "dismissed", "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"}}
-        with self.assertRaises(mod.Denied):
-            mod.validate_pull_request_review_event(review)
-        run = {"action": "completed", "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"},
-               "workflow_run": {"name": "Sonar CI-based", "event": "push", "status": "completed",
-                                "conclusion": "failure", "repository": {"full_name": "pl0n3r/Factory"},
-                                "head_repository": {"full_name": "pl0n3r/Factory"}, "head_sha": SHA,
-                                "head_branch": "trabajo/issue-1364", "pull_requests": [{"number": 1375}]}}
-        with self.assertRaises(mod.Denied):
-            mod.validate_workflow_run_event(run)
 
 
 def pull_request_review_event_example():
