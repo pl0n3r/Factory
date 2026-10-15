@@ -1671,7 +1671,7 @@ class WorkflowRunEventTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         self.assertEqual(mod.TRUSTED_WORKFLOW_RUNS, expected)
         self.assertIn("workflow_run:", workflow)
-        self.assertIn("    if: ${{ false && (", workflow)
+        self.assertIn("    if: ${{ false }}", workflow)
         for name in expected:
             event = workflow_run_event_example()
             event["workflow_run"]["name"] = name
@@ -1797,7 +1797,7 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
 
     def test_immediate_merge_authority_is_absent_in_phase_one(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertIn("    if: ${{ false && (", workflow)
+        self.assertIn("    if: ${{ false }}", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
         self.assertNotIn("MERGE_TOKEN", workflow)
