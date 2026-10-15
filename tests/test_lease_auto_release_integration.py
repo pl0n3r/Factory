@@ -1109,5 +1109,176 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     f"{name} debe usar el lock V3 compartido",
                 )
 
+
+    def test_issue_lock_wrapper_acquires_revalidates_and_releases_its_own_token(self):
+        class FakeGitHub:
+            def __init__(self, mode="ok"):
+                self.mode = mode
+                self.work_reads = 0
+                self.released = []
+                self.acquired = []
+
+            def branch_sha(self, branch):
+                if branch == "work-12":
+                    self.work_reads += 1
+                    if self.mode == "work-drift" and self.work_reads > 1:
+                        return "b" * 40
+                    return "a" * 40
+                if branch == "lock-12":
+                    return "z" * 40 if self.mode == "lock-replaced" else "c" * 40
+                raise AssertionError(f"unexpected branch {branch}")
+
+            def acquire_issue_lock(self, issue_number, head_sha):
+                self.acquired.append((issue_number, head_sha))
+                return None if self.mode == "busy" else "c" * 40
+
+            def release_issue_lock(self, issue_number, token):
+                self.released.append((issue_number, token))
+
+        def mutate(api, issue_number, **kwargs):
+            return ("mutated", issue_number, kwargs)
+
+        wrapped = coordinator._serialize_issue_mutation(
+            mutate, issue_resolver=coordinator._issue_from_first_argument,
+        )
+        for mode, expected_error in (
+            ("ok", None),
+            ("busy", coordinator.CoordinationError),
+            ("lock-replaced", coordinator.CoordinationError),
+            ("work-drift", coordinator.CoordinationError),
+        ):
+            with self.subTest(mode=mode):
+                api = FakeGitHub(mode)
+                with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
+                    coordinator, "require_global_running"
+                ) as running, patch.object(
+                    coordinator, "branch_for_issue", side_effect=lambda n: f"work-{n}"
+                ), patch.object(
+                    coordinator, "recovery_lock_branch", side_effect=lambda n: f"lock-{n}"
+                ):
+                    if expected_error is None:
+                        result = wrapped(api, 12)
+                        self.assertEqual(result, ("mutated", 12, {}))
+                    else:
+                        with self.assertRaises(expected_error):
+                            wrapped(api, 12)
+                self.assertEqual(api.acquired[0][0], 12)
+                self.assertEqual(api.acquired[0][1], "a" * 40)
+                if mode == "busy":
+                    self.assertEqual(api.released, [])
+                else:
+                    self.assertEqual(api.released, [(12, "c" * 40)])
+                if mode == "ok":
+                    self.assertEqual(running.call_count, 2)
+                self.assertFalse(hasattr(api, "_factory_issue_lock_context"))
+
+    def test_issue_lock_wrapper_rejects_invalid_and_missing_heads_closed(self):
+        class FakeGitHub:
+            def __init__(self, work_sha, main_sha="d" * 40):
+                self.work_sha = work_sha
+                self.main_sha = main_sha
+                self.acquisitions = 0
+            def branch_sha(self, branch):
+                return self.work_sha if branch == "work-9" else self.main_sha
+            def acquire_issue_lock(self, issue_number, head_sha):
+                self.acquisitions += 1
+                return "e" * 40
+            def release_issue_lock(self, issue_number, token):
+                raise AssertionError("must not release before successful acquisition")
+
+        wrapper = coordinator._serialize_issue_mutation(
+            lambda api, issue_number: issue_number,
+            issue_resolver=coordinator._issue_from_first_argument,
+        )
+        for work_sha, main_sha in (("bad", "d" * 40), (None, None)):
+            with self.subTest(work_sha=work_sha, main_sha=main_sha):
+                api = FakeGitHub(work_sha, main_sha)
+                with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
+                    coordinator, "require_global_running"
+                ), patch.object(
+                    coordinator, "branch_for_issue", return_value="work-9"
+                ):
+                    with self.assertRaises(coordinator.CoordinationError):
+                        wrapper(api, 9)
+                self.assertEqual(api.acquisitions, 0)
+
+        api = FakeGitHub("a" * 40)
+        wrapper_invalid = coordinator._serialize_issue_mutation(
+            lambda *_args, **_kwargs: self.fail("invalid Issue must not mutate"),
+            issue_resolver=lambda *_args, **_kwargs: 0,
+        )
+        with patch.object(coordinator, "GitHub", FakeGitHub):
+            with self.assertRaises(coordinator.CoordinationError):
+                wrapper_invalid(api)
+        self.assertEqual(api.acquisitions, 0)
+
+    def test_issue_lock_wrapper_handles_non_github_and_nested_context_without_relocking(self):
+        calls = []
+        wrapper = coordinator._serialize_issue_mutation(
+            lambda api, issue_number, **kwargs: calls.append((issue_number, kwargs)) or "ok",
+            issue_resolver=coordinator._issue_from_first_argument,
+        )
+        class NotGithub:
+            pass
+        self.assertEqual(wrapper(NotGithub(), 4), "ok")
+        self.assertEqual(calls, [(4, {})])
+
+        class FakeGitHub:
+            def __init__(self):
+                self._factory_issue_lock_context = {"issue": 4, "token": "f" * 40}
+        api = FakeGitHub()
+        with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
+            coordinator, "require_global_running"
+        ) as running:
+            self.assertEqual(wrapper(api, 4), "ok")
+            with self.assertRaises(coordinator.CoordinationError):
+                wrapper(api, 5)
+        running.assert_not_called()
+        self.assertEqual(len(calls), 2)
+
+    def test_pr_lock_wrapper_revalidates_issue_binding_inside_lock(self):
+        class FakeGitHub:
+            def __init__(self, branch):
+                self.branch = branch
+                self.work_reads = 0
+                self.released = []
+            def pull(self, number):
+                return {"head": {"ref": self.branch}}
+            def branch_sha(self, branch):
+                if branch == "work-12":
+                    self.work_reads += 1
+                    return "a" * 40
+                if branch == "lock-12":
+                    return "c" * 40
+                raise AssertionError(branch)
+            def acquire_issue_lock(self, issue_number, head_sha):
+                return "c" * 40
+            def release_issue_lock(self, issue_number, token):
+                self.released.append((issue_number, token))
+
+        def update(api, pr_number, action, *, _expected_issue_number=None):
+            return _expected_issue_number
+
+        wrapped = coordinator._serialize_issue_mutation(
+            update, issue_resolver=lambda api, _pr, *_a, **_k: 12,
+            validate_pr_issue=True,
+        )
+        for branch, should_pass in (("work-12", True), ("work-13", False)):
+            with self.subTest(branch=branch):
+                api = FakeGitHub(branch)
+                with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
+                    coordinator, "require_global_running"
+                ), patch.object(
+                    coordinator, "branch_for_issue", return_value="work-12"
+                ), patch.object(
+                    coordinator, "recovery_lock_branch", return_value="lock-12"
+                ):
+                    if should_pass:
+                        self.assertEqual(wrapped(api, 77, "opened"), 12)
+                    else:
+                        with self.assertRaises(coordinator.CoordinationError):
+                            wrapped(api, 77, "opened")
+                self.assertEqual(api.released, [(12, "c" * 40)])
+
 if __name__ == "__main__":
     unittest.main()
