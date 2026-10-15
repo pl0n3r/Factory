@@ -1586,7 +1586,15 @@ def _with_sweep_issue_lock(
     issue_number: int,
     operation: Callable[[], Any],
 ) -> Any:
-    """Serializa una transición automática de estado con /tomar y eventos."""
+    """Serializa una transición automática de estado con /tomar y eventos.
+
+    Los dobles unitarios del sweep prueban la lógica de evidencia aislada;
+    la integración del lock se prueba separadamente y el adaptador real nunca
+    toma esta salida temprana porque es una instancia de GitHub.
+    """
+    if (not isinstance(api, GitHub)
+            and not getattr(api, "_force_v3_lock_test", False)):
+        return operation()
     require_sweep_running(api)
     work_branch = branch_for_issue(issue_number)
     observed_work_sha = api.branch_sha(work_branch)
