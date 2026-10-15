@@ -60,6 +60,58 @@ def fresh_evidence():
 
 
 class RenovacionChecksTests(unittest.TestCase):
+    def test_draft_pr_read_only_evidence_allowed(self):
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        before = copy.deepcopy(evidence)
+        decision = evaluate(evidence)
+        self.assertFalse(decision.ready)
+        self.assertEqual(decision.reason, "draft_read_only_evidence")
+        self.assertIsNotNone(decision.fingerprint)
+        self.assertEqual(evidence, before)
+
+    def test_draft_fork_fails_closed(self):
+        evidence = fresh_evidence()
+        evidence["pr"].update(draft=True, repo="outsider/Factory")
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
+    def test_draft_wrong_base_fails_closed(self):
+        evidence = fresh_evidence()
+        evidence["pr"].update(draft=True, base_sha="c" * 40)
+        self.assertFalse(evaluate(evidence).ready)
+        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
+    def test_draft_head_change_between_snapshots_fails_closed(self):
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        evidence["after"]["head_sha"] = "c" * 40
+        self.assertEqual(evaluate(evidence).reason, "identity_changed_during_revalidation")
+
+    def test_draft_review_missing_or_skipped_fails_closed(self):
+        for reviews in ([], [{"id": 501, "actor": "independent-reviewer",
+                               "state": "COMMENTED", "head_sha": SHA,
+                               "submitted_at": FINISH}],
+                        [{"id": 501, "actor": "independent-reviewer",
+                          "state": "APPROVED", "head_sha": "c" * 40,
+                          "submitted_at": FINISH}]):
+            with self.subTest(reviews=reviews):
+                evidence = fresh_evidence()
+                evidence["pr"]["draft"] = True
+                evidence["reviews"] = reviews
+                self.assertFalse(evaluate(evidence).ready)
+                self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+
+    def test_draft_recovery_never_changes_pr_state(self):
+        evidence = fresh_evidence()
+        evidence["pr"]["draft"] = True
+        original = copy.deepcopy(evidence)
+        for _ in range(2):
+            decision = evaluate(evidence)
+            self.assertFalse(decision.ready)
+            self.assertEqual(decision.reason, "draft_read_only_evidence")
+        self.assertEqual(evidence, original)
+
     def test_approval_requires_authenticated_reviewer_write_permission(self):
         from unittest.mock import Mock
         from scripts.renovacion_checks import (
