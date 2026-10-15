@@ -1100,8 +1100,6 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             "reserve_available_work",
             "transfer_work",
             "migrate_legacy_reservation",
-            "sync_review_status",
-            "close_pr_reservation",
             "release_work",
             "update_issue_state",
             "update_issue_label_state",
@@ -1113,6 +1111,19 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     f"{name} debe usar el lock V3 compartido",
                 )
 
+
+    def test_pr_state_helpers_do_not_reacquire_the_issue_lock(self):
+        # Ambos helpers se invocan desde update_pr_state, ya bajo el lock.
+        # Deben permanecer sin wrapper para evitar una adquisición anidada.
+        self.assertTrue(
+            getattr(coordinator.update_pr_state, "__factory_issue_lock_serialized__", False)
+        )
+        self.assertFalse(
+            getattr(coordinator.sync_review_status, "__factory_issue_lock_serialized__", False)
+        )
+        self.assertFalse(
+            getattr(coordinator.close_pr_reservation, "__factory_issue_lock_serialized__", False)
+        )
 
     def test_issue_lock_wrapper_acquires_revalidates_and_releases_its_own_token(self):
         class FakeGitHub:
