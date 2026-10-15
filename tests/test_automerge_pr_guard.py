@@ -1446,7 +1446,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         lines = workflow.splitlines()
         self.assertEqual(lines[1], "on:")
         self.assertIn("  pull_request:", lines)
-        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false && (") for line in lines))
+        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false }}") for line in lines))
         self.assertIn("      contents: read", lines)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
@@ -1459,14 +1459,14 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", workflow)
     def test_final_guard_runs_after_collision_check_and_before_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false && (") for line in workflow.splitlines()))
+        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false }}") for line in workflow.splitlines()))
         self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
         self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
     def test_coordinator_claim_collisions_are_blocked_before_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false && (") for line in workflow.splitlines()))
+        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false }}") for line in workflow.splitlines()))
         self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
@@ -1682,7 +1682,7 @@ class WorkflowRunEventTests(unittest.TestCase):
         lines = workflow.splitlines()
         self.assertEqual(lines[1], "on:")
         self.assertIn("  pull_request:", lines)
-        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false && (") for line in lines))
+        self.assertTrue(any(line.startswith("    if: " + chr(36) + "{{ false }}") for line in lines))
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("actions/checkout", workflow)
         self.assertNotIn("scripts/automerge_pr_guard.py", workflow)
@@ -1809,7 +1809,7 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
 
     def test_event_triggers_are_filtered_while_phase_one_stays_inert(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("if: " + chr(36) + "{{ false && (", workflow)
+        self.assertIn("if: " + chr(36) + "{{ false }}", workflow)
         for required in (
             "github.event_name == 'pull_request_review'",
             "github.event.pull_request.draft == false",
