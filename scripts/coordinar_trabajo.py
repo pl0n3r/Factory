@@ -499,7 +499,7 @@ class GitHub:
     def release_issue_lock(self, issue_number: int, token: str) -> None:
         """Release a lock only while RUNNING; retains the public mutation gate."""
         require_global_running(self)
-        self._release_issue_lock_cas(issue_number, token)
+        self._release_issue_lock_cas(issue_number, token, recheck_running=True)
 
     def release_owned_issue_lock_after_pause(
         self, issue_number: int, token: str,
@@ -507,7 +507,9 @@ class GitHub:
         """CAS-clean only the exact token owned by this operation, even in PAUSED."""
         self._release_issue_lock_cas(issue_number, token)
 
-    def _release_issue_lock_cas(self, issue_number: int, token: str) -> None:
+    def _release_issue_lock_cas(
+        self, issue_number: int, token: str, *, recheck_running: bool = False,
+    ) -> None:
         """CAS GraphQL updateRefs: a stale owner cannot erase a successor."""
         if (type(issue_number) is not int or issue_number <= 0
             or not isinstance(token, str)
@@ -517,6 +519,10 @@ class GitHub:
         repo_id = repo_data.get("node_id") if isinstance(repo_data, dict) else None
         if not isinstance(repo_id, str) or not repo_id:
             raise CoordinationError("No se obtuvo autoridad de repo para CAS V3.")
+        # La liberación pública revalida el kill switch después de la lectura
+        # de identidad y justo antes de mutar; cleanup propio omite esta guarda.
+        if recheck_running:
+            require_global_running(self)
         response = self.request("POST", "/graphql", {
             "query": ("mutation($input:UpdateRefsInput!){"
                       "updateRefs(input:$input){clientMutationId}}"),
