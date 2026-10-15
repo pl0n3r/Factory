@@ -255,6 +255,24 @@ Ninguno.
               patch("scripts.renovacion_checks._review_threads",
                     return_value=[]) as thread_reader):
             self.assertEqual(collect_snapshot(api, 123)["issue"]["owner"], "pl0n3r")
+            # Draft is collected read-only and retains its real state.
+            draft_pr = copy.deepcopy(pr)
+            draft_pr["draft"] = True
+            api.pull.side_effect = [copy.deepcopy(draft_pr), copy.deepcopy(draft_pr)]
+            api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
+            snapshot = collect_snapshot(api, 123)
+            self.assertIs(snapshot["pr"]["draft"], True)
+            self.assertTrue(all(call.args[0] == "GET"
+                                for call in api.request.call_args_list))
+            # Changing Draft status between reads invalidates the evidence.
+            api.pull.side_effect = [copy.deepcopy(draft_pr), copy.deepcopy(pr)]
+            api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
+            with self.assertRaisesRegex(
+                    EvidenceUnavailable, "identity_changed_during_snapshot"):
+                collect_snapshot(api, 123)
+            api.pull.side_effect = None
+            api.pull.return_value = pr
+
             api.issue.side_effect = [copy.deepcopy(issue),
                                      dict(copy.deepcopy(issue),
                                           assignees=[{"login": "intruso"}])]
