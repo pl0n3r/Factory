@@ -18,9 +18,9 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
 
     def test_phase_one_workflow_is_inert(self):
         source = self.source
-        self.assertIn("permissions:\\n  contents: read\\njobs:", source)
-        self.assertIn("  automerge:\\n", source)
-        job = source.split("  automerge:\\n", 1)[1]
+        self.assertIn("permissions:\n  contents: read\njobs:", source)
+        self.assertIn("  automerge:\n", source)
+        job = source.split("  automerge:\n", 1)[1]
         self.assertIn("    if: false", job)
         self.assertIn("      contents: read", job)
         self.assertNotIn("contents: write", source)
@@ -31,9 +31,9 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         self.assertNotIn("gh api --method PUT", source)
         self.assertNotIn("/pulls/${number}/merge", source)
         self.assertNotIn("pull_request_target", source)
-        self.assertIn("pull_request_review:\\n    types: [submitted]", source)
+        self.assertIn("pull_request_review:\n    types: [submitted]", source)
         self.assertIn(
-            'workflow_run:\\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+            'workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
             source,
         )
         audit_workflow(source)
@@ -43,8 +43,8 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "permisos de escritura"):
             audit_workflow(
                 source.replace(
-                    "permissions:\\n  contents: read\\njobs:",
-                    "permissions:\\n  contents: write\\njobs:",
+                    "permissions:\n  contents: read\njobs:",
+                    "permissions:\n  contents: write\njobs:",
                     1,
                 )
             )
