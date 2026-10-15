@@ -3702,7 +3702,7 @@ class CoordinacionTests(unittest.TestCase):
         token = "a" * 40
         with patch.object(coordinator, "require_global_running") as switch:
             api.release_issue_lock(12, token)
-            self.assertEqual(switch.call_count, 1)
+            switch.assert_not_called()
         method, path, payload = calls[-1]
         self.assertEqual((method, path), ("POST", "/graphql"))
         self.assertIn("UpdateRefsInput", payload["query"])
@@ -3716,17 +3716,18 @@ class CoordinacionTests(unittest.TestCase):
                 return {"node_id": "R_test"}
             return {"errors": [{"message": "beforeOid mismatch"}]}
         api.request = race
-        with patch.object(coordinator, "require_global_running"):
+        with patch.object(coordinator, "require_global_running") as gate:
             with self.assertRaisesRegex(CoordinationError, "CAS V3 denegado"):
                 api.release_issue_lock(12, token)
+            gate.assert_not_called()
 
-    def test_atomic_lock_release_rechecks_global_pause_before_graphql(self):
-        """PAUSED tras GET repo_id impide POST incluso con CAS correcto."""
+    def test_owned_lock_cleanup_allowed_during_pause_with_exact_token_cas(self):
+        """PAUSED permite solo limpiar el lock propio mediante CAS exacto."""
         api = GitHub("pl0n3r/Factory", "fake-token")
         seen = []
 
         def request(method, path, payload=None, allow=()):
-            seen.append((method, path))
+            seen.append((method, path, payload))
             if (method, path) == ("GET", "/repos/pl0n3r/Factory"):
                 return {"node_id": "R_test"}
             if (method, path) == ("POST", "/graphql"):
@@ -3737,15 +3738,29 @@ class CoordinacionTests(unittest.TestCase):
         token = "a" * 40
         with patch.object(coordinator, "require_global_running",
                           side_effect=CoordinationError("Kill switch #767 PAUSED")) as gate:
-            with self.assertRaisesRegex(CoordinationError, "PAUSED"):
-                api.release_issue_lock(12, token)
-            self.assertEqual(gate.call_count, 1)
-        self.assertEqual(seen, [("GET", "/repos/pl0n3r/Factory")])
-
-        seen.clear()
-        with patch.object(coordinator, "require_global_running") as gate:
             api.release_issue_lock(12, token)
-            self.assertEqual(gate.call_count, 1)
+            gate.assert_not_called()
+        self.assertEqual([(method, path) for method, path, _ in seen], [
+            ("GET", "/repos/pl0n3r/Factory"), ("POST", "/graphql")
+        ])
+        payload = seen[-1][2]
+        item = payload["variables"]["input"]["refUpdates"][0]
+        self.assertEqual(item["beforeOid"], token)
+        self.assertEqual(item["afterOid"], "0" * 40)
+
+        # Una generación reemplazada nunca se elimina: el CAS devuelve error.
+        seen.clear()
+        def replaced(method, path, payload=None, allow=()):
+            seen.append((method, path))
+            if (method, path) == ("GET", "/repos/pl0n3r/Factory"):
+                return {"node_id": "R_test"}
+            return {"errors": [{"message": "beforeOid mismatch"}]}
+        api.request = replaced
+        with patch.object(coordinator, "require_global_running",
+                          side_effect=CoordinationError("PAUSED")) as gate:
+            with self.assertRaisesRegex(CoordinationError, "CAS V3 denegado"):
+                api.release_issue_lock(12, token)
+            gate.assert_not_called()
         self.assertEqual(seen, [("GET", "/repos/pl0n3r/Factory"),
                                 ("POST", "/graphql")])
 
