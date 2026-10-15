@@ -234,6 +234,22 @@ class FactoryDietInventoryTests(unittest.TestCase):
                 # El recuento procede de un snapshot histórico, no del HEAD vivo.
                 self.assertIn(row["phase"], {0, 1, 2, 3, 4})
 
+        # El workflow incorporado después del snapshot histórico está en Fase 1:
+        # conserva triggers inventariados, pero no autoridad de merge.
+        automerge_path = ".github/workflows/automerge.yml"
+        automerge = (ROOT / automerge_path).read_text(encoding="utf-8")
+        self.assertEqual(
+            POST_BASELINE_WORKFLOWS[automerge_path],
+            workflow_events(ROOT / automerge_path),
+        )
+        self.assertIn("    if: false", automerge)
+        self.assertNotIn("contents: write", automerge)
+        self.assertNotIn("pull-requests: write", automerge)
+        self.assertNotIn("AUTOMERGE_TOKEN", automerge)
+        self.assertNotIn("MERGE_TOKEN", automerge)
+        self.assertNotIn("gh pr merge", automerge)
+        self.assertNotIn("gh api --method PUT", automerge)
+
     def test_historical_line_counts_are_provenance_not_immutable_runtime(self) -> None:
         """Un workflow puede crecer después del snapshot sin invalidar la tabla."""
         self.assertIn("main@b0713650194e9a0c464d625bc6136eecad776377", self.content)
