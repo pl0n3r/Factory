@@ -497,7 +497,18 @@ class GitHub:
         return token
 
     def release_issue_lock(self, issue_number: int, token: str) -> None:
-        """CAS GraphQL updateRefs: un sucesor no puede borrarse por un GET stale."""
+        """Release a lock only while RUNNING; retains the public mutation gate."""
+        require_global_running(self)
+        self._release_issue_lock_cas(issue_number, token)
+
+    def release_owned_issue_lock_after_pause(
+        self, issue_number: int, token: str,
+    ) -> None:
+        """CAS-clean only the exact token owned by this operation, even in PAUSED."""
+        self._release_issue_lock_cas(issue_number, token)
+
+    def _release_issue_lock_cas(self, issue_number: int, token: str) -> None:
+        """CAS GraphQL updateRefs: a stale owner cannot erase a successor."""
         if (type(issue_number) is not int or issue_number <= 0
             or not isinstance(token, str)
             or re.fullmatch(r"[0-9a-f]{40}", token) is None):
@@ -506,9 +517,6 @@ class GitHub:
         repo_id = repo_data.get("node_id") if isinstance(repo_data, dict) else None
         if not isinstance(repo_id, str) or not repo_id:
             raise CoordinationError("No se obtuvo autoridad de repo para CAS V3.")
-        # La limpieza CAS del token propio no es una mutación de trabajo:
-        # debe poder completarse incluso si #767 pasa a PAUSED después de
-        # adquirir el lock. El beforeOid=token impide borrar un sucesor ajeno.
         response = self.request("POST", "/graphql", {
             "query": ("mutation($input:UpdateRefsInput!){"
                       "updateRefs(input:$input){clientMutationId}}"),
