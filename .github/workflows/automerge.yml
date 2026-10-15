@@ -19,4 +19,4 @@ jobs:
       contents: read
     steps:
       - name: Mantener auto-merge inerte durante Fase 1
-        run: echo "Fase 1: auto-merge inerte; sin secretos ni operaciones de merge."
+        run: 'echo Fase 1 auto-merge inerte, sin secretos ni operaciones de merge.'
