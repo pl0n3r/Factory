@@ -1623,8 +1623,13 @@ def _with_sweep_issue_lock(
         # vigente; el proxy revalida #767 antes de cada escritura.
         return operation()
     finally:
-        # El proxy solo permite limpiar el token que esta ejecución adquirió.
-        api.release_issue_lock(issue_number, token)
+        # Solo la limpieza del token propio puede ejecutarse en PAUSED.
+        # Los doubles mantienen la interfaz mínima de la prueba unitaria.
+        cleanup = getattr(api, "release_owned_issue_lock_after_pause", None)
+        if callable(cleanup):
+            cleanup(issue_number, token)
+        else:
+            api.release_issue_lock(issue_number, token)
 
 
 def sweep_satisfied_blocks(api: GitHub) -> int:
