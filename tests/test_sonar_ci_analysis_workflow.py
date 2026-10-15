@@ -71,7 +71,9 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         self.assertNotIn("--resolve-pull-request-review", automerge)
         self.assertNotIn("--resolve-workflow-run", automerge)
         self.assertIn("steps.target.outputs.pr_sha", automerge)
-        self.assertIn('gh pr merge --auto --squash "$PR_URL"', automerge)
+        self.assertIn("gh api --method PUT", automerge)
+        self.assertIn('-f sha="$PR_SHA" -f merge_method=squash', automerge)
+        self.assertNotIn("gh pr merge --auto", automerge)
 
     def test_coverage_report_is_wired_into_scanner(self):
         text = self.text
