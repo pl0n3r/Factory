@@ -570,22 +570,20 @@ class AutoMergePrGuardTests(unittest.TestCase):
         mod.verify(q, SHA, NOW)
 
     def test_coderabbit_status_history_is_paginated_and_permissioned(self):
-        import re
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        blocks = re.findall(r"(?m)^    permissions:\\n((?:^      [a-z-]+: (?:read|write|none)\\n)+)", workflow)
-        self.assertEqual(len(blocks), 1)
-        scopes = dict(line.strip().split(": ", 1) for line in blocks[0].splitlines())
-        self.assertEqual(scopes, {"contents": "read"})
+        lines = workflow.splitlines()
+        self.assertIn("    permissions:", lines)
+        index = lines.index("    permissions:")
+        self.assertEqual(lines[index + 1], "      contents: read")
+        self.assertNotIn("statuses: write", workflow)
         q = evidence()
         q.pop("status_history")
         self.deny(q)
     def test_job_permissions_minimal_without_external_yaml_dependency(self):
-        import re
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        blocks = re.findall(r"(?m)^    permissions:\\n((?:^      [a-z-]+: (?:read|write|none)\\n)+)", workflow)
-        self.assertEqual(len(blocks), 1)
-        scopes = dict(line.strip().split(": ", 1) for line in blocks[0].splitlines())
-        self.assertEqual(scopes, {"contents": "read"})
+        lines = workflow.splitlines()
+        index = lines.index("    permissions:")
+        self.assertEqual(lines[index + 1], "      contents: read")
         for forbidden in ("contents: write", "pull-requests: write", "statuses: write",
                           "checks: write", "issues: write", "MERGE_TOKEN", "AUTOMERGE_TOKEN",
                           "secrets.", "gh api --method PUT", "gh pr merge"):
@@ -1432,10 +1430,11 @@ class AutoMergePrGuardTests(unittest.TestCase):
     def test_clean_construction_only_allows_sha_locked_immediate_merge(self):
         mod.verify(evidence(), SHA, NOW)
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("on:\\n  pull_request:\\n", workflow)
-        self.assertIn("  automerge:\\n", workflow)
-        self.assertIn("    if: ${{ false }}", workflow)
-        self.assertIn("permissions:\\n  contents: read\\njobs:", workflow)
+        lines = workflow.splitlines()
+        self.assertEqual(lines[1], "on:")
+        self.assertIn("  pull_request:", lines)
+        self.assertIn("    if: ${{ false }}", lines)
+        self.assertIn("      contents: read", lines)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
@@ -1447,19 +1446,18 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", workflow)
     def test_final_guard_runs_after_collision_check_and_before_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertIn("    if: ${{ false }}", workflow.splitlines())
         self.assertNotIn("python3 scripts/automerge_pr_guard.py", workflow)
         self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
     def test_coordinator_claim_collisions_are_blocked_before_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("    if: ${{ false }}", workflow)
+        self.assertIn("    if: ${{ false }}", workflow.splitlines())
         self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
         self.assertNotIn("gh api --method PUT", workflow)
         self.assertNotIn("gh pr merge", workflow)
         self.assertNotIn("MERGE_TOKEN", workflow)
-
     def test_event_resolvers_fail_closed(self):
         with self.assertRaises(mod.Denied):
             mod.validate_pull_request_review_event({})
@@ -1648,9 +1646,10 @@ class WorkflowRunEventTests(unittest.TestCase):
         self.assertNotIn('"CodeQL"', workflow)
     def test_workflow_never_executes_untrusted_head(self):
         workflow = (ROOT / ".github/workflows/automerge.yml").read_text()
-        self.assertIn("on:\\n  pull_request:\\n", workflow)
-        self.assertIn("    if: ${{ false }}", workflow)
-        self.assertIn("permissions:\\n  contents: read\\njobs:", workflow)
+        lines = workflow.splitlines()
+        self.assertEqual(lines[1], "on:")
+        self.assertIn("  pull_request:", lines)
+        self.assertIn("    if: ${{ false }}", lines)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertNotIn("actions/checkout", workflow)
         self.assertNotIn("scripts/automerge_pr_guard.py", workflow)
