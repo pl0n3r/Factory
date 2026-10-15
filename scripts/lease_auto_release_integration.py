@@ -61,6 +61,7 @@ class _GhReadOnlyAPI:
 
         if (method != "GET" or type(path) is not str
                 or not (path == "/rate_limit"
+                        or path == "/repos/pl0n3r/Factory"
                         or path.startswith("/repos/pl0n3r/Factory/"))
                 or "://" in path or "#" in path or ".." in path
                 or any(ord(ch) < 32 for ch in path)
