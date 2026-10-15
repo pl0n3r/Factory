@@ -597,7 +597,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 cursor += 1
             self.assertEqual(entries, ["contents: read"], "Solo se permite contents: read")
         self.assertNotIn("write-all", workflow.lower())
-        self.assertNotRegex(workflow, r"(?m)^\\s*[^#\\n]+:\\s*write\\b")
+        self.assertNotRegex(workflow, r"(?m)^\s*[^#\n]+:\s*write\b")
         for forbidden in ("MERGE_TOKEN", "AUTOMERGE_TOKEN", "secrets.",
                           "gh api --method PUT", "gh pr merge"):
             self.assertNotIn(forbidden, workflow)
