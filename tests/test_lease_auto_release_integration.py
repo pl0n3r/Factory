@@ -1497,6 +1497,48 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(mutation["afterOid"], "0" * 40)
 
 
+    def test_two_writers_cas_release_cannot_erase_successor(self):
+        # Dos clientes independientes compiten por la misma ref. Un release
+        # tardío del primer dueño no puede borrar el lock del segundo.
+        owner_a = "a" * 40
+        owner_b = "b" * 40
+        refs = {"refs/heads/lock-12": owner_a}
+        updates = []
+
+        def make_api():
+            api = coordinator.GitHub("pl0n3r/Factory", "fake-token")
+            def request(method, path, payload=None, allow=()):
+                if (method, path) == ("GET", "/repos/pl0n3r/Factory"):
+                    return {"node_id": "R_123"}
+                if (method, path) == ("POST", "/graphql"):
+                    update = payload["variables"]["input"]["refUpdates"][0]
+                    updates.append(update.copy())
+                    name = update["name"]
+                    if refs.get(name) != update["beforeOid"]:
+                        return {"errors": [{"message": "CAS conflict"}]}
+                    if update["afterOid"] == "0" * 40:
+                        refs.pop(name, None)
+                    else:
+                        refs[name] = update["afterOid"]
+                    return {"data": {"updateRefs": {"clientMutationId": "ok"}}}
+                raise AssertionError((method, path))
+            api.request = request
+            return api
+
+        first = make_api()
+        second = make_api()
+        # El primer escritor termina; el segundo adquiere un token distinto.
+        first.release_owned_issue_lock_after_pause(12, owner_a)
+        self.assertNotIn("refs/heads/lock-12", refs)
+        refs["refs/heads/lock-12"] = owner_b
+        # Un retry atrasado del primero no debe borrar la ref sucesora.
+        with self.assertRaisesRegex(coordinator.CoordinationError, "CAS V3 denegado"):
+            first.release_owned_issue_lock_after_pause(12, owner_a)
+        self.assertEqual(refs["refs/heads/lock-12"], owner_b)
+        second.release_owned_issue_lock_after_pause(12, owner_b)
+        self.assertNotIn("refs/heads/lock-12", refs)
+        self.assertEqual([row["beforeOid"] for row in updates], [owner_a, owner_a, owner_b])
+
     def test_owned_lock_cas_cleanup_rejects_invalid_identity_before_network(self):
         invalid_cases = (
             (0, "a" * 40),
