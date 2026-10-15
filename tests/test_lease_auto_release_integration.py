@@ -1452,5 +1452,30 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(mutation["afterOid"], "0" * 40)
 
 
+    def test_owned_lock_cas_cleanup_rejects_invalid_identity_before_network(self):
+        invalid_cases = (
+            (0, "a" * 40),
+            (-1, "a" * 40),
+            (12, "not-an-oid"),
+            (12, "A" * 40),
+            (12, "a" * 39),
+        )
+        for issue_number, token in invalid_cases:
+            with self.subTest(issue_number=issue_number, token=token):
+                api = coordinator.GitHub("pl0n3r/Factory", "fake-token")
+                calls = []
+
+                def request(method, path, payload=None, allow=()):
+                    calls.append((method, path, payload))
+                    raise AssertionError("invalid identity must fail before network")
+
+                api.request = request
+                with self.assertRaisesRegex(
+                    coordinator.CoordinationError, "Generación de lock V3 inválida"
+                ):
+                    api.release_owned_issue_lock_after_pause(issue_number, token)
+                self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
