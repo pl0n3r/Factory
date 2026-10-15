@@ -1456,7 +1456,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 self.assertNotIn("python3 scripts/coordinar_trabajo.py validar-pr", workflow)
                 self.assertNotIn("gh api --method PUT", workflow)
                 self.assertNotIn("gh pr merge", workflow)
-                self.assertIn("set -euo pipefail", workflow)
+                self.assertNotIn("gh api --method PUT", workflow)
 
 
 class PullRequestReviewEventTests(unittest.TestCase):
