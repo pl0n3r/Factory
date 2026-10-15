@@ -582,11 +582,24 @@ class AutoMergePrGuardTests(unittest.TestCase):
     def test_job_permissions_minimal_without_external_yaml_dependency(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
         lines = workflow.splitlines()
-        index = lines.index("    permissions:")
-        self.assertEqual(lines[index + 1], "      contents: read")
-        for forbidden in ("contents: write", "pull-requests: write", "statuses: write",
-                          "checks: write", "issues: write", "MERGE_TOKEN", "AUTOMERGE_TOKEN",
-                          "secrets.", "gh api --method PUT", "gh pr merge"):
+        permission_indices = [i for i, line in enumerate(lines) if line.strip() == "permissions:"]
+        self.assertEqual(len(permission_indices), 2, "Fase 1 debe fijar permisos globales y del job")
+        for index in permission_indices:
+            parent_indent = len(lines[index]) - len(lines[index].lstrip())
+            entries = []
+            cursor = index + 1
+            while cursor < len(lines):
+                line = lines[cursor]
+                if line.strip() and len(line) - len(line.lstrip()) <= parent_indent:
+                    break
+                if line.strip() and not line.lstrip().startswith("#"):
+                    entries.append(line.strip())
+                cursor += 1
+            self.assertEqual(entries, ["contents: read"], "Solo se permite contents: read")
+        self.assertNotIn("write-all", workflow.lower())
+        self.assertNotRegex(workflow, r"(?m)^\\s*[^#\\n]+:\\s*write\\b")
+        for forbidden in ("MERGE_TOKEN", "AUTOMERGE_TOKEN", "secrets.",
+                          "gh api --method PUT", "gh pr merge"):
             self.assertNotIn(forbidden, workflow)
     def test_coderabbit_status_history_endpoint_is_complete(self):
         # GitHub /commits/{sha}/statuses exposes creator, unlike /status.
