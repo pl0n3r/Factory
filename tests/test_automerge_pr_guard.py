@@ -32,6 +32,8 @@ LEASE = {"version": 3, "active": True, "owner": "pl0n3r",
          "acceptance_sha256": "c15024d5d1f260b978767f685aede1525b28a518dec8d40a8645a5adcb51e40c", "task_marker_sha256": hashlib.sha256(json.dumps(TASK, ensure_ascii=False,
                                                       separators=(",", ":"), sort_keys=True).encode("utf8")).hexdigest(),
          "reason": "recuperacion-inactividad"}
+# Keep the synthetic lease pinned to the contract fixture used by these tests.
+LEASE["acceptance_sha256"] = mod.acceptance_fingerprint(ACCEPTANCE_BODY)
 
 
 def comment(payload, author="github-actions[bot]"):
