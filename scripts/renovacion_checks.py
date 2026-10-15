@@ -303,6 +303,8 @@ def evaluate(evidence: object) -> Decision:
                 "checks": sorted(row["id"] for row in by_name.values()),
                 "approvals": sorted(approval_ids.values())}
     key = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+    if pr["draft"]:
+        return Decision(False, "draft_read_only_evidence", key)
     return Decision(True, "fresh_evidence_candidate_only", key)
 
 
