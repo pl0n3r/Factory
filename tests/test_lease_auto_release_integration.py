@@ -1286,6 +1286,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
         class FakeSweepAPI:
             repo = "pl0n3r/Factory"
+            _force_v3_lock_test = True
 
             def __init__(self, replace_lock=False):
                 self.events = []
