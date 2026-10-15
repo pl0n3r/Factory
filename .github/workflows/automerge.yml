@@ -13,7 +13,7 @@ jobs:
   automerge:
     # Fase 1: el guard y sus pruebas se integran sin conceder autoridad de merge.
     # La activación se hará en una fase posterior con autorización específica.
-    if: false
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
