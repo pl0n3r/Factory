@@ -73,12 +73,15 @@ class RenovacionChecksTests(unittest.TestCase):
 
     def test_draft_snapshot_decision_does_not_mask_review_veto(self):
         """Draft handling must not mask missing or skipped review evidence."""
-        # A successful external status alone must not make Draft evidence ready.
-        evidence = fresh_evidence()
-        evidence["pr"]["draft"] = True
-        evidence["statuses"][0]["description"] = "Review skipped"
-        self.assertFalse(evaluate(evidence).ready)
-        self.assertNotEqual(evaluate(evidence).reason, "draft_read_only_evidence")
+        # Green status descriptions that mean skipped or rate-limited are UNKNOWN.
+        for description in ("Review skipped", "Review rate limited"):
+            with self.subTest(description=description):
+                evidence = fresh_evidence()
+                evidence["pr"]["draft"] = True
+                evidence["statuses"][0]["description"] = description
+                decision = evaluate(evidence)
+                self.assertFalse(decision.ready)
+                self.assertEqual(decision.reason, "coderabbit_review_not_verified")
         evidence = fresh_evidence()
         evidence["pr"]["draft"] = True
         evidence["reviews"] = []
