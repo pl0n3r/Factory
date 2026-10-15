@@ -1241,6 +1241,52 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             [("acquire", 12, "a" * 40)] * len(cases),
         )
 
+    def test_competing_entrypoints_reject_replaced_lock_without_mutation(self):
+        # Un escritor adquiere su token, pero otro actor reemplaza la ref
+        # antes de la revalidación. No se debe ejecutar ninguna operación.
+        owned, successor = "c" * 40, "d" * 40
+        class FakeGitHub:
+            def __init__(self):
+                self.released = []
+                self.lock_reads = 0
+                self.mutations = []
+            def branch_sha(self, branch):
+                if branch == "trabajo/issue-12":
+                    return "a" * 40
+                if branch == "lock-12":
+                    self.lock_reads += 1
+                    return successor
+                raise AssertionError(branch)
+            def acquire_issue_lock(self, issue_number, head_sha):
+                return owned
+            def release_owned_issue_lock_after_pause(self, issue_number, token):
+                self.released.append((issue_number, token))
+                # CAS: un token anterior jamás borra al sucesor.
+                if token != successor:
+                    raise coordinator.CoordinationError("CAS V3 denegado")
+                self.mutations.append("delete")
+
+        api = FakeGitHub()
+        cases = (
+            (coordinator.reserve_available_work,
+             (12, "agente", "trabajo/issue-12", "digest")),
+            (coordinator.transfer_work,
+             (12, "agente", "OWNER", "00000000-0000-4000-8000-000000000001")),
+            (coordinator.release_work,
+             (12, "agente", "OWNER", None, False)),
+        )
+        with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
+            coordinator, "require_global_running"
+        ), patch.object(
+            coordinator, "recovery_lock_branch", return_value="lock-12"
+        ):
+            for function, args in cases:
+                with self.subTest(function=function.__name__):
+                    with self.assertRaisesRegex(coordinator.CoordinationError, "CAS V3 denegado"):
+                        function(api, *args)
+        self.assertEqual(api.released, [(12, owned)] * len(cases))
+        self.assertEqual(api.mutations, [])
+
     def test_failed_mutation_rolls_back_owned_lock_context(self):
         token = "c" * 40
         class FakeGitHub:
