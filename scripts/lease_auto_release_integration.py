@@ -34,6 +34,16 @@ class IntegrationPreview:
     def release_authorized(self) -> bool:
         return False
 
+    @property
+    def lock_verified(self) -> bool:
+        """El preview no demuestra posesión de exclusión distribuida."""
+        return False
+
+    @property
+    def cas_verified(self) -> bool:
+        """El preview no demuestra CAS atómico sobre metadata de Issues."""
+        return False
+
 
 def _unknown(issue: int, reason: str) -> IntegrationPreview:
     return IntegrationPreview(issue, "UNKNOWN", "unknown", reason)
@@ -365,6 +375,8 @@ if __name__ == "__main__":
             "action": result.action,
             "reason": result.reason,
             "release_authorized": False,
+            "lock_verified": False,
+            "cas_verified": False,
             "mutations": 0,
         }, sort_keys=True))
         # UNKNOWN no debe producir un workflow verde: no hubo evidencia
@@ -377,6 +389,7 @@ if __name__ == "__main__":
         print(json.dumps({
             "state": "UNKNOWN", "action": "unknown",
             "reason": "observer_failed", "release_authorized": False,
+            "lock_verified": False, "cas_verified": False,
             "mutations": 0,
         }, sort_keys=True))
         raise SystemExit(1)
