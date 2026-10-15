@@ -1241,6 +1241,32 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             [("acquire", 12, "a" * 40)] * len(cases),
         )
 
+    def test_pause_between_nonce_commit_and_ref_create_fails_closed(self):
+        # PAUSED después del commit nonce pero antes de CREATE nunca concede lock.
+        api = coordinator.GitHub("pl0n3r/Factory", "fake-token")
+        head, tree, nonce = "a" * 40, "b" * 40, "c" * 40
+        writes = []
+        api.branch_sha = lambda branch: None
+        def request(method, path, payload=None, allow=()):
+            if method == "GET" and path.endswith("/git/commits/" + head):
+                return {"tree": {"sha": tree}}
+            if method == "POST" and path.endswith("/git/commits"):
+                writes.append("nonce")
+                return {"sha": nonce}
+            raise AssertionError((method, path))
+        api.request = request
+        api.create_branch = lambda *_: writes.append("ref") or True
+        checks = []
+        def running(_api):
+            checks.append("running")
+            if len(checks) == 2:
+                raise coordinator.CoordinationError("Factory PAUSED")
+        with patch.object(coordinator, "require_global_running", side_effect=running):
+            with self.assertRaisesRegex(coordinator.CoordinationError, "PAUSED"):
+                api.acquire_issue_lock(12, head)
+        self.assertEqual(writes, ["nonce"])
+        self.assertEqual(len(checks), 2)
+
     def test_two_clients_race_to_acquire_only_one_issue_lock(self):
         # Ambos clientes observan la ref ausente antes de intentar CREATE;
         # la operación atómica de GitHub solo permite un ganador.
