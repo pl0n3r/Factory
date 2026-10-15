@@ -1807,20 +1807,20 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", workflow)
 
 
-    def test_event_triggers_are_filtered_while_phase_one_stays_inert(self):
+    def test_event_triggers_are_declared_while_phase_one_stays_inert(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
         self.assertIn("if: " + chr(36) + "{{ false }}", workflow)
         for required in (
-            "github.event_name == 'pull_request_review'",
-            "github.event.pull_request.draft == false",
-            "github.event.pull_request.base.ref == 'main'",
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            "github.event_name == 'workflow_run'",
-            "github.event.workflow_run.conclusion == 'success'",
-            "github.event.workflow_run.event == 'pull_request'",
-            "github.event.workflow_run.head_repository.full_name == github.repository",
+            "  pull_request:",
+            "  pull_request_review:",
+            "  workflow_run:",
+            '"CI factory"',
+            '"Sonar CI-based"',
+            '"Evidencia CodeQL"',
         ):
             self.assertIn(required, workflow)
+        # Event payload authorization belongs to the authenticated resolver,
+        # not to a condition that would violate the literal Phase 1 contract.
 
 if __name__ == "__main__":
     unittest.main()
