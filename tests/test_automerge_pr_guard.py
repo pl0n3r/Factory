@@ -1638,7 +1638,8 @@ class WorkflowRunEventTests(unittest.TestCase):
         expected = {"CI factory", "Sonar CI-based", "Evidencia CodeQL"}
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         self.assertEqual(mod.TRUSTED_WORKFLOW_RUNS, expected)
-        self.assertNotIn("workflow_run:", workflow)
+        self.assertIn("workflow_run:", workflow)
+        self.assertIn("    if: ${{ false }}", workflow)
         for name in expected:
             event = workflow_run_event_example()
             event["workflow_run"]["name"] = name
