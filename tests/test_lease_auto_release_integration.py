@@ -1117,6 +1117,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 self.mode = mode
                 self.work_reads = 0
                 self.released = []
+                self.released_owned = []
                 self.acquired = []
 
             def branch_sha(self, branch):
@@ -1135,6 +1136,9 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
             def release_issue_lock(self, issue_number, token):
                 self.released.append((issue_number, token))
+
+            def release_owned_issue_lock_after_pause(self, issue_number, token):
+                self.released_owned.append((issue_number, token))
 
         def mutate(api, issue_number, **kwargs):
             return ("mutated", issue_number, kwargs)
@@ -1167,8 +1171,12 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 self.assertEqual(api.acquired[0][1], "a" * 40)
                 if mode == "busy":
                     self.assertEqual(api.released, [])
+                    self.assertEqual(api.released_owned, [])
                 else:
-                    self.assertEqual(api.released, [(12, "c" * 40)])
+                    # La mutación puede cruzar RUNNING -> PAUSED; el wrapper
+                    # debe limpiar solo su token con la ruta pause-safe.
+                    self.assertEqual(api.released, [])
+                    self.assertEqual(api.released_owned, [(12, "c" * 40)])
                 if mode == "ok":
                     self.assertEqual(running.call_count, 2)
                 self.assertFalse(hasattr(api, "_factory_issue_lock_context"))
