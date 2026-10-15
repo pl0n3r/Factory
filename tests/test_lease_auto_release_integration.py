@@ -881,6 +881,35 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(result.release_authorized)
 
 
+    def test_read_only_transport_allows_exact_repository_identity_and_denies_writes(self):
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+
+        api = _GhReadOnlyAPI()
+        response = type("Response", (), {
+            "__enter__": lambda self: self,
+            "__exit__": lambda self, *args: False,
+            "stdout": '{"id":123,"full_name":"pl0n3r/Factory"}',
+        })()
+        with patch("subprocess.run", return_value=response) as run:
+            value = api.request("GET", "/repos/pl0n3r/Factory")
+        self.assertEqual(value, {"id": 123, "full_name": "pl0n3r/Factory"})
+        run.assert_called_once()
+        self.assertIn("/repos/pl0n3r/Factory", run.call_args.args[0])
+
+        # La allowlist de identidad no habilita ningún método mutante ni rutas externas.
+        for method, path in (
+            ("POST", "/repos/pl0n3r/Factory/issues"),
+            ("GET", "/repos/other/Factory"),
+            ("GET", "https://api.github.com/repos/pl0n3r/Factory"),
+            ("GET", "/repos/pl0n3r/Factory/../../other"),
+        ):
+            with self.subTest(method=method, path=path):
+                with patch("subprocess.run") as run:
+                    with self.assertRaises(PermissionError):
+                        api.request(method, path)
+                    run.assert_not_called()
+
     def test_observer_uses_canonical_actions_concurrency_group(self):
         from datetime import timezone
         from unittest.mock import patch
