@@ -1151,11 +1151,16 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             ("busy", coordinator.CoordinationError),
             ("lock-replaced", coordinator.CoordinationError),
             ("work-drift", coordinator.CoordinationError),
+            ("paused-after-lock", coordinator.CoordinationError),
         ):
             with self.subTest(mode=mode):
                 api = FakeGitHub(mode)
                 with patch.object(coordinator, "GitHub", FakeGitHub), patch.object(
-                    coordinator, "require_global_running"
+                    coordinator, "require_global_running",
+                    side_effect=(
+                        [None, coordinator.CoordinationError("global pause")]
+                        if mode == "paused-after-lock" else None
+                    ),
                 ) as running, patch.object(
                     coordinator, "branch_for_issue", side_effect=lambda n: f"work-{n}"
                 ), patch.object(
@@ -1177,8 +1182,11 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     # debe limpiar solo su token con la ruta pause-safe.
                     self.assertEqual(api.released, [])
                     self.assertEqual(api.released_owned, [(12, "c" * 40)])
-                if mode == "ok":
+                if mode in ("ok", "paused-after-lock"):
                     self.assertEqual(running.call_count, 2)
+                if mode == "paused-after-lock":
+                    self.assertEqual(api.released, [])
+                    self.assertEqual(api.released_owned, [(12, "c" * 40)])
                 self.assertFalse(hasattr(api, "_factory_issue_lock_context"))
 
     def test_issue_lock_wrapper_rejects_invalid_and_missing_heads_closed(self):
