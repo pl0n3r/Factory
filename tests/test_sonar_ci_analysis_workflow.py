@@ -61,19 +61,17 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         automerge = (
             ROOT / ".github" / "workflows" / "automerge.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("pull_request_review:\n    types: [submitted]", automerge)
-        self.assertIn(
-            'workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
-            automerge,
-        )
-        self.assertIn("api.github.com/repos/", automerge)
-        self.assertIn("authenticated_pr_identity_changed", automerge)
-        self.assertNotIn("--resolve-pull-request-review", automerge)
-        self.assertNotIn("--resolve-workflow-run", automerge)
-        self.assertIn("steps.target.outputs.pr_sha", automerge)
-        self.assertIn("gh api --method PUT", automerge)
-        self.assertIn('-f sha="$PR_SHA" -f merge_method=squash', automerge)
-        self.assertNotIn("gh pr merge --auto", automerge)
+        # Fase 1 solo prepara guard y pruebas; este workflow no puede fusionar.
+        self.assertIn("permissions:\\n  contents: read\\njobs:", automerge)
+        self.assertIn("  automerge:\\n", automerge)
+        self.assertIn("    if: false", automerge)
+        self.assertNotIn("contents: write", automerge)
+        self.assertNotIn("pull-requests: write", automerge)
+        self.assertNotIn("AUTOMERGE_TOKEN", automerge)
+        self.assertNotIn("MERGE_TOKEN", automerge)
+        self.assertNotIn("gh pr merge", automerge)
+        self.assertNotIn("gh api --method PUT", automerge)
+
 
     def test_coverage_report_is_wired_into_scanner(self):
         text = self.text
