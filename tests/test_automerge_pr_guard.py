@@ -1807,9 +1807,6 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", workflow)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
     def test_event_triggers_are_filtered_while_phase_one_stays_inert(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
         self.assertIn("if: " + chr(36) + "{{ false && (", workflow)
@@ -1825,3 +1822,6 @@ if __name__ == "__main__":
             "github.event.workflow_run.head_repository.full_name == github.repository",
         ):
             self.assertIn(required, workflow)
+
+if __name__ == "__main__":
+    unittest.main()
