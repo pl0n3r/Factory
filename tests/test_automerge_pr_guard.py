@@ -1809,3 +1809,19 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_event_triggers_are_filtered_while_phase_one_stays_inert(self):
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        self.assertIn("if: " + chr(36) + "{{ false && (", workflow)
+        for required in (
+            "github.event_name == 'pull_request_review'",
+            "github.event.review.state == 'submitted'",
+            "github.event.pull_request.draft == false",
+            "github.event.pull_request.base.ref == 'main'",
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            "github.event_name == 'workflow_run'",
+            "github.event.workflow_run.conclusion == 'success'",
+            "github.event.workflow_run.event == 'pull_request'",
+            "github.event.workflow_run.head_repository.full_name == github.repository",
+        ):
+            self.assertIn(required, workflow)
