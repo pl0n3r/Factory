@@ -1436,7 +1436,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
     def test_clean_construction_only_allows_sha_locked_immediate_merge(self):
         mod.verify(evidence(), SHA, NOW)
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
-        self.assertIn("on:\\n  pull_request:\\n", workflow)
+        self.assertIn("on:\n  pull_request:\n", workflow)
         self.assertNotIn("pull_request_target:", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("ref: main", workflow)
