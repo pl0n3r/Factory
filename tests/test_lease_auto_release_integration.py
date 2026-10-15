@@ -7,6 +7,7 @@ from scripts.lease_activity_collector import collect_activity
 from scripts.lease_auto_release_run import run_cycle
 from test_lease_activity_collector import API, NOW, marker
 import json
+import scripts.coordinar_trabajo as coordinator
 
 
 def canonical_review_pr_body():
@@ -1089,6 +1090,24 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(result.release_authorized)
 
 
+
+    def test_public_mutation_entrypoints_share_issue_lock_v3(self):
+        # Todas las entradas del coordinador que pueden escribir la reserva
+        # deben pasar por el lock CAS por Issue; operaciones internas de
+        # recovery/renewal conservan sus propios guards.
+        for name in (
+            "reserve_available_work",
+            "transfer_work",
+            "release_work",
+            "update_issue_state",
+            "update_issue_label_state",
+            "update_pr_state",
+        ):
+            with self.subTest(entrypoint=name):
+                self.assertTrue(
+                    getattr(coordinator, name).__factory_issue_lock_serialized__,
+                    f"{name} debe usar el lock V3 compartido",
+                )
 
 if __name__ == "__main__":
     unittest.main()
