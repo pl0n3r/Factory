@@ -497,8 +497,7 @@ class GitHub:
         return token
 
     def release_issue_lock(self, issue_number: int, token: str) -> None:
-        """Release a lock only while RUNNING; retains the public mutation gate."""
-        require_global_running(self)
+        """Release a lock only while RUNNING; recheck after resolving repo identity."""
         self._release_issue_lock_cas(issue_number, token, recheck_running=True)
 
     def release_owned_issue_lock_after_pause(
