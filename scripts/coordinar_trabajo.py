@@ -4653,7 +4653,13 @@ def _serialize_issue_mutation(function: Callable[..., Any], *,
                 pass
             # Solo libera nuestro propio token CAS; si fue sustituido, el
             # adaptador debe rechazarlo y nunca borrar el lock de otro actor.
-            api.release_issue_lock(issue_number, token)
+            # El cleanup del token propio debe funcionar incluso si #767
+            # cambió a PAUSED durante la mutación; nunca liberar tokens ajenos.
+            cleanup = getattr(api, "release_owned_issue_lock_after_pause", None)
+            if callable(cleanup):
+                cleanup(issue_number, token)
+            else:
+                api.release_issue_lock(issue_number, token)
 
     setattr(wrapped, "__factory_issue_lock_serialized__", True)
     return wrapped
