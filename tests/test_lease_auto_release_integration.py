@@ -1502,7 +1502,8 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         # tardío del primer dueño no puede borrar el lock del segundo.
         owner_a = "a" * 40
         owner_b = "b" * 40
-        refs = {"refs/heads/lock-12": owner_a}
+        ref_name = f"refs/heads/{coordinator.recovery_lock_branch(12)}"
+        refs = {ref_name: owner_a}
         updates = []
 
         def make_api():
@@ -1529,14 +1530,14 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         second = make_api()
         # El primer escritor termina; el segundo adquiere un token distinto.
         first.release_owned_issue_lock_after_pause(12, owner_a)
-        self.assertNotIn("refs/heads/lock-12", refs)
-        refs["refs/heads/lock-12"] = owner_b
+        self.assertNotIn(ref_name, refs)
+        refs[ref_name] = owner_b
         # Un retry atrasado del primero no debe borrar la ref sucesora.
         with self.assertRaisesRegex(coordinator.CoordinationError, "CAS V3 denegado"):
             first.release_owned_issue_lock_after_pause(12, owner_a)
-        self.assertEqual(refs["refs/heads/lock-12"], owner_b)
+        self.assertEqual(refs[ref_name], owner_b)
         second.release_owned_issue_lock_after_pause(12, owner_b)
-        self.assertNotIn("refs/heads/lock-12", refs)
+        self.assertNotIn(ref_name, refs)
         self.assertEqual([row["beforeOid"] for row in updates], [owner_a, owner_a, owner_b])
 
     def test_owned_lock_cas_cleanup_rejects_invalid_identity_before_network(self):
