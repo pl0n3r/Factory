@@ -307,6 +307,49 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q["reviews"][0]["body"] = prose
                 mod.verify(q, SHA, NOW)
 
+    def test_decorated_coderabbit_incomplete_notices_fail_closed(self):
+        # CodeRabbit can prefix incomplete notices with warning emoji or
+        # GitHub task-list checkboxes; treat them as authoritative notices.
+        notices = (
+            "⚠️ Review skipped: manual review required",
+            "- ⚠️ Review rate limited",
+            "> ⚠️ Review skipped: draft PR",
+            "- [ ] Review skipped: manual review required",
+            "### 🚨 Review not completed",
+            "- [ ] Review pending",
+            "> - **⚠️ Review skipped**",
+        )
+        mod.verify(evidence(), SHA, NOW)
+        for notice in notices:
+            with self.subTest(notice=notice):
+                self.assertTrue(mod.review_incomplete_notice(notice))
+                q = evidence()
+                q["reviews"][0]["body"] = notice
+                self.deny(q)
+                q = evidence()
+                q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                  "commit_id": SHA, "body": notice}]
+                self.deny(q)
+                q = evidence()
+                q["commit_status"]["statuses"][0]["description"] = notice
+                q["status_history"][0]["description"] = notice
+                self.deny(q)
+                q = evidence()
+                q["issue_comments"] = [{
+                    "user": {"login": "coderabbitai[bot]"},
+                    "body": notice,
+                    "created_at": "2026-10-14T03:59:30Z",
+                    "updated_at": "2026-10-14T03:59:30Z",
+                }]
+                self.deny(q)
+        for prose in (
+            "No skipped reviews or incomplete analysis detected.",
+            "The manual explains ⚠️ Review skipped: manual review required.",
+            "- Files skipped from review due to trivial changes.",
+        ):
+            with self.subTest(prose=prose):
+                self.assertFalse(mod.review_incomplete_notice(prose))
+
     def test_markdown_wrapped_coderabbit_skips_fail_closed(self):
         # A skip/limit notice after the review must block even when
         # CodeRabbit formats the notice as a list, heading or nested quote.

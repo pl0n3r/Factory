@@ -109,8 +109,19 @@ ACTION_NOT_COMPLETED_TEXT = re.compile(
 )
 
 
+# Accept CodeRabbit warning/checklist decorations only at the start of a line.
+# Never remove inline words: explanatory prose is not an actual skip notice.
+REVIEW_NOTICE_DECORATION = re.compile(
+    r"^[ \\t]*(?:[-*+>][ \\t]+|\\#{1,6}[ \\t]+){0,2}"
+    r"(?:\\[[ xX]\\][ \\t]+(?:[*_]{0,2}(?:⚠️?|🚨)[ \\t]+)?"
+    r"|[*_]{0,2}(?:⚠️?|🚨)[ \\t]+)",
+    re.M,
+)
+
+
 def review_incomplete_notice(body):
     """Recognize explicit incomplete-review notices, not policy prose."""
+    body = REVIEW_NOTICE_DECORATION.sub("", body)
     return bool(SKIPPED.search(body) or UNFINISHED_REVIEW.search(body)
                 or ACTION_NOT_COMPLETED.search(body)
                 or ACTION_NOT_COMPLETED_TEXT.search(body))
