@@ -177,6 +177,29 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValidationError, "raíz canónica"):
                     audit_phase_one_workflow(mutant)
 
+    def test_event_parameters_cannot_expand_phase_one_triggers(self):
+        # Only the event names were previously checked, not their parameters.
+        canonical = (
+            "    types: [opened, reopened, ready_for_review, synchronize]"
+        )
+        self.assertIn(canonical, self.source)
+        mutants = (
+            self.source.replace(canonical, "    types: [closed]", 1),
+            self.source.replace(
+                canonical, canonical + "\n    types: [closed]", 1),
+            self.source.replace(
+                '    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+                '    workflows: ["untrusted-workflow"]', 1),
+            self.source.replace(
+                "  pull_request_review:\n    types: [submitted]",
+                "  pull_request_review:\n    types: [edited]", 1),
+        )
+        for mutant in mutants:
+            with self.subTest(mutant=mutant):
+                self.assertNotEqual(mutant, self.source)
+                with self.assertRaisesRegex(ValidationError, "eventos"):
+                    audit_phase_one_workflow(mutant)
+
     def test_false_condition_in_another_job_does_not_certify_automerge(self):
         # A decoy job with if:false must not mask an enabled automerge job.
         source = self.source.replace("    if: ${{ false }}\n", "", 1) + (
