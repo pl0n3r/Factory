@@ -390,6 +390,12 @@ class AutoMergePrGuardTests(unittest.TestCase):
                         "HIGH-risk vulnerability: secret disclosure",
                         "HIGH: auth bypass in a privileged job",
                         "Security - HIGH: token leak",
+                        "**Severity: HIGH**",
+                        "**Severity**: **HIGH**",
+                        "- **Severity**: **HIGH**",
+                        "> **Priority**: **CRITICAL**",
+                        "### **Severity**: **P1**",
+                        "**Severity**: CRITICAL",
                         "P1: unauthenticated command execution",
                         "`9-13`: **🔒 Security &amp; Privacy** | **🟠 Major**",
                         "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
@@ -422,6 +428,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
         for advisory in ("- **🩺 Maintainability** | **🟠 Major**",
                          "> - **🩺 Maintainability** | **🟠 Major**",
                          "### **🎯 Functional Correctness** | **🟠 Major**",
+                         "**Severity**: **LOW**",
+                         "CodeRabbit describes a Severity HIGH classification in the documentation.",
                          "CodeRabbit describes Security & Privacy Major findings in its policy."):
             with self.subTest(advisory=advisory):
                 q = evidence()
