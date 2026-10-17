@@ -427,6 +427,13 @@ def verify_reservation(snapshot):
         if type(item) is not dict or type(item.get("filename")) is not str:
             raise Denied("reservation_file_invalid")
         path, old = item["filename"], item.get("previous_filename")
+        # A PR-controlled .github workflow could forge a green "Validar"
+        # check with the same github-actions app slug as trusted CI. Until
+        # workflow identity and unchanged definitions are attested, such
+        # PRs need an independent trusted integration path, never auto-merge.
+        if any(type(value) is str and value.startswith(".github/")
+               for value in (path, old)):
+            raise Denied("ci_definition_changed_by_pr")
         if path in seen or path not in paths or (old is not None and old not in paths):
             raise Denied("reservation_paths_exceeded")
         seen.add(path)

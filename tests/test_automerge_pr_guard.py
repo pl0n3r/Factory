@@ -45,7 +45,7 @@ def evidence():
     return {"switch": {"number": 767, "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
                        "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
                        "state": "closed", "user": {"login": "pl0n3r"}, "body": MARKER},
-            "pr": {"number": 1364, "state": "open", "draft": False, "mergeable": True, "auto_merge": None, "changed_files": 3,
+            "pr": {"number": 1364, "state": "open", "draft": False, "mergeable": True, "auto_merge": None, "changed_files": 2,
                    "head": {"sha": SHA, "ref": "trabajo/issue-1364", "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
                    "base": {"ref": "main", "sha": BASE},
                    "body": "Closes #1364\n<!-- condor-reserva-id: a0f85ea8-d865-56f2-905c-6295b5279efa -->"}, "main_sha": BASE,
@@ -74,7 +74,7 @@ def evidence():
                       "state": "open", "user": {"login": "pl0n3r"},
                       "labels": [{"name": "estado: reservado"}],
                       "body": ACCEPTANCE_BODY + "<!-- factory-plan-task " + json.dumps(TASK) + " -->"},
-            "lease_comments": [comment(LEASE)], "files": [{"filename": x} for x in PATHS],
+            "lease_comments": [comment(LEASE)], "files": [{"filename": x} for x in PATHS if not x.startswith(".github/")],
             "dependencies": [{"number": n, "state": "closed", "state_reason": "completed",
                               "labels": [{"name": "estado: completado"}]} for n in [1295, 1321]]}
 
@@ -1256,6 +1256,25 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q = evidence(); q["dependencies"][0]["labels"] = [{"name": "estado: bloqueado"}]; self.deny(q)
         q = evidence(); q["lease_comments"].append(comment(dict(LEASE, active=True), "attacker")); self.deny(q)
         mod.verify(evidence(), SHA, NOW)
+
+    def test_workflow_changes_cannot_self_attest_github_actions_checks(self):
+        # The bot lease may claim a workflow, but that is not proof that
+        # GitHub Actions' success came from the canonical CI definition.
+        safe = evidence()
+        self.assertIn(".github/workflows/automerge.yml", TASK["paths"])
+        mod.verify(safe, SHA, NOW)
+        # A renamed file needs the same fail-closed scrutiny on its old path.
+        for entry in (
+            {"filename": ".github/workflows/automerge.yml"},
+            {"filename": "scripts/automerge_pr_guard.py",
+             "previous_filename": ".github/workflows/automerge.yml"},
+        ):
+            with self.subTest(changed=entry):
+                q = evidence()
+                q["files"][0] = entry
+                self.deny(q)
+        # The workflow claim is valid; it cannot authenticate a modified
+        # workflow's checks even when the issue and bot lease remain intact.
 
     def test_pr_reservation_metadata_must_match_bot_v3(self):
         # Coordinator requires the PR itself to be bound to the current lease.
