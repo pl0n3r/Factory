@@ -265,5 +265,7 @@ jobs:
               echo "::error::Inventario de Issues inválido; fail-closed."
               exit 1
             }
-            python3 -m scripts.lease_auto_release_integration "$issue_number"
+            if ! python3 -m scripts.lease_auto_release_integration "$issue_number"; then
+              echo "::notice::Issue #${issue_number}: observación UNKNOWN o fallida (fail-closed, 0 mutaciones)."
+            fi
           done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"
