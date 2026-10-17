@@ -465,6 +465,53 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q["reviews"][0]["body"] = advisory
                 mod.verify(q, SHA, NOW)
 
+    def test_explicit_severity_prefixed_exploits_veto_every_review_surface(self):
+        # An explicit critical exploit finding cannot be missed just because
+        # its category is not the generic word "security" or "vulnerability".
+        findings = (
+            "CRITICAL SQL injection in user-controlled parameter",
+            "HIGH SQL injection bypasses authorization",
+            "CRITICAL stored XSS in admin portal",
+            "HIGH privilege escalation enables write access",
+            "CRITICAL authentication bypass in login",
+            "HIGH SSRF reaches cloud instance credentials",
+        )
+        for finding in findings:
+            with self.subTest(source="review", finding=finding):
+                q = evidence()
+                q["reviews"].append({
+                    "user": {"login": "security-reviewer"},
+                    "state": "COMMENTED", "commit_id": SHA, "body": finding})
+                with self.assertRaisesRegex(mod.Denied, "review_high_or_critical"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(source="inline", finding=finding):
+                q = evidence()
+                q["comments"] = [{
+                    "user": {"login": "security-reviewer"},
+                    "commit_id": SHA, "body": finding}]
+                with self.assertRaisesRegex(mod.Denied, "review_finding_unknown_or_severe"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(source="conversation", finding=finding):
+                q = evidence()
+                q["issue_comments"] = [{
+                    "user": {"login": "security-reviewer"}, "body": finding}]
+                with self.assertRaisesRegex(mod.Denied, "issue_comment_severe"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(source="coderabbit_status", finding=finding):
+                q = evidence()
+                q["status_history"][0]["description"] = finding
+                q["commit_status"]["statuses"][0]["description"] = finding
+                with self.assertRaisesRegex(mod.Denied, "coderabbit_historical_severe_unresolved"):
+                    mod.verify(q, SHA, NOW)
+        for explanatory in (
+            "No high or critical findings in the reviewed code.",
+            "This policy documents detection of high SQL injection risks.",
+            "An example finding can read HIGH SQL injection in an external manual.",
+        ):
+            q = evidence()
+            q["reviews"][0]["body"] = explanatory
+            mod.verify(q, SHA, NOW)
+
     def test_coderabbit_prose_does_not_forge_severe_or_skipped_signal(self):
         # CodeRabbit explanations quote severity/rate-limit terms: those
         # mentions are not themselves an authenticated finding or skipped review.
