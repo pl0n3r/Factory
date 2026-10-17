@@ -67,6 +67,51 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertFalse(result.results[0][1].wrote)
 
 
+    def test_low_quota_deferred_green_and_24h_100_cycles_qa_gate(self):
+        """La cuota baja aplaza en verde; no concede Fase B sin QA por repo."""
+        import os
+        import subprocess
+        import tempfile
+        import textwrap
+
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        anchor = "          if (( remaining * 5 < limit )); then"
+        self.assertEqual(workflow.count(anchor), 1)
+        branch = workflow.split(anchor, 1)[1].split("\n          fi\n", 1)[0]
+        self.assertIn("deferred_low_quota", branch)
+        self.assertIn('echo "allow=false" >> "$GITHUB_OUTPUT"', branch)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', branch)
+        self.assertIn("exit 0", branch)
+        self.assertNotIn("exit 1", branch)
+        self.assertNotIn("::error::", branch)
+        script = ("set -euo pipefail\nremaining=19\nlimit=100\n"
+                  + "if (( remaining * 5 < limit )); then\n"
+                  + textwrap.dedent(branch) + "\nfi\n")
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "output"
+            summary = Path(folder) / "summary"
+            result = subprocess.run(
+                ["bash", "-c", script], cwd=ROOT,
+                env={**os.environ, "GITHUB_OUTPUT": str(output),
+                     "GITHUB_STEP_SUMMARY": str(summary)},
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8").strip(),
+                             "allow=false")
+            self.assertIn("deferred_low_quota",
+                          summary.read_text(encoding="utf-8"))
+            self.assertNotIn("::error::", result.stdout)
+        self.assertIn("if: steps.budget.outputs.allow == 'true'", workflow)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+        docs = (ROOT / "docs" / "liberacion-automatica-de-reservas.md"
+                ).read_text(encoding="utf-8")
+        for requirement in ("24 horas", "100 ciclos", "terminales",
+                            "por repositorio", "cero falsos positivos",
+                            "QA individual"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, docs)
+
     def test_inline_observer_inventory_executes_fail_closed(self):
         """Regresión real del Python embebido en el workflow, sin API ni mutaciones."""
         import json

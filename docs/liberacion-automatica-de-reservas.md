@@ -1,5 +1,27 @@
 # Liberación automática de reservas V3 — diseño controlado (#1175)
 
+### Fase A distribuida (#1382) — sólo observación
+
+La auditoría empieza en Factory y se adoptará separadamente en cada consumidor
+mediante Coordinación `@v1` y su propio `GITHUB_TOKEN`. **No existe censo
+central entre repositorios ni credencial compartida multi-repo.** El observador
+ejecuta GET autenticados contra el repositorio local, informa decisiones
+hipotéticas y vetos en el resumen de cada run/artefacto, y mantiene **0
+escrituras, 0 reservas liberadas**. `UNKNOWN`, 403 y fuente incompleta no
+acreditan inactividad ni crean autoridad para mutar.
+
+Con cuota REST inferior al 20 %, el ciclo publica `deferred_low_quota`,
+omite el censo y termina en verde; ese run **no cuenta** como observación válida.
+
+Antes de considerar la Fase B se exigen **24 horas** reales y **100 ciclos**
+**terminales y válidos por repositorio**, **cero falsos positivos** y **QA individual**
+documentada de cada decisión hipotética `release`. No cuentan los ticks de
+cron no ejecutados, los runs aplazados o las observaciones `UNKNOWN`.
+Cualquier falso positivo o resultado sin procedencia autenticada bloquea la
+activación. El flag `FACTORY_LEASE_AUTO_RELEASE_ENABLED` permanece en
+`false`; mover `@v1` y activar liberaciones requieren puertas independientes.
+
+
 ## Qué está implementado y qué NO
 
 Esta entrega introduce un **decisor puro, determinista y sin efectos** en
