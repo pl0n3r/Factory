@@ -687,6 +687,11 @@ class AutoMergePrGuardTests(unittest.TestCase):
         # findings only when coupled to an explicit exploit category.
         findings = (
             "🔴 HIGH security vulnerability in signing",
+            "**🔴 HIGH** security vulnerability in signing",
+            "**🔴 CRITICAL** SQL injection in account query",
+            "🔴 CRITICAL: authentication bypass in login",
+            "- [ ] **🔴 HIGH** security vulnerability in signing",
+            "### **🔴 HIGH** authentication bypass in admin",
             "### 🔴 HIGH SQL injection in account query",
             "- 🔴 HIGH SSRF in webhook",
             "🔴 CRITICAL command injection in deployment",
@@ -719,6 +724,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
         advisory = (
             "- **[P1]** is a notation used in this policy",
             "🔴 HIGH severity issues were not found",
+            "**🔴 HIGH** maintainability risk",
+            "🔴 CRITICAL: documentation review",
+            "Documentation: - [ ] **🔴 HIGH** security vulnerability in signing",
             "🔴 HIGH refactor complexity documentation",
             "### 🔴 HIGH maintainability risk",
             "**Maintainability** | **🔴 Critical**",
