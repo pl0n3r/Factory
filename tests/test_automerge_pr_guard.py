@@ -555,6 +555,53 @@ class AutoMergePrGuardTests(unittest.TestCase):
         )
         mod.verify(q, SHA, NOW)
 
+    def test_bracketed_p0_p1_findings_veto_review_surfaces(self):
+        # Code review findings often place priority in a bracketed label.
+        # Markdown headings and list prefixes must not make them invisible.
+        findings = (
+            "## [P1] Avoid unauthenticated SQL injection",
+            "- [P0] Harden authentication bypass",
+            "[P1] Privilege escalation lets users access secrets",
+            "### [P1] SSRF in webhook",
+        )
+        for finding in findings:
+            with self.subTest(source="review_comment", finding=finding):
+                q = evidence()
+                q["reviews"].append({
+                    "user": {"login": "security-reviewer"},
+                    "state": "COMMENTED", "commit_id": SHA, "body": finding})
+                with self.assertRaisesRegex(mod.Denied, "review_high_or_critical"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(source="review_approved", finding=finding):
+                q = evidence()
+                q["reviews"].append({
+                    "user": {"login": "security-reviewer"},
+                    "state": "APPROVED", "commit_id": SHA, "body": finding})
+                with self.assertRaisesRegex(mod.Denied, "review_high_or_critical"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(source="inline", finding=finding):
+                q = evidence()
+                q["comments"] = [{
+                    "user": {"login": "security-reviewer"},
+                    "commit_id": SHA, "body": finding}]
+                with self.assertRaisesRegex(mod.Denied, "review_finding_unknown_or_severe"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(source="conversation", finding=finding):
+                q = evidence()
+                q["issue_comments"] = [{
+                    "user": {"login": "security-reviewer"}, "body": finding}]
+                with self.assertRaisesRegex(mod.Denied, "issue_comment_severe"):
+                    mod.verify(q, SHA, NOW)
+        for nonfinding in (
+            "[P2] Refactor style",
+            "No high or critical findings",
+            "The guide uses [P1] as an example priority label.",
+        ):
+            with self.subTest(nonfinding=nonfinding):
+                q = evidence()
+                q["reviews"][0]["body"] = nonfinding
+                mod.verify(q, SHA, NOW)
+
     def test_coderabbit_prose_does_not_forge_severe_or_skipped_signal(self):
         # CodeRabbit explanations quote severity/rate-limit terms: those
         # mentions are not themselves an authenticated finding or skipped review.
