@@ -700,7 +700,13 @@ class AutoMergePrGuardTests(unittest.TestCase):
             q = evidence(); q["reviews"][0]["body"] = body; self.deny(q)
         q = evidence(); q["reviews"] = []; self.deny(q)
         q = evidence(); q["reviews"][0]["commit_id"] = BASE; self.deny(q)
-        q = evidence(); q["reviews"].append({"user": {"login": "other"}, "state": "CHANGES_REQUESTED"}); self.deny(q)
+        # D-069: un review de otro actor con CHANGES_REQUESTED sin hallazgo
+        # grave no crea un veto adicional si CodeRabbit/CI siguen completos.
+        q = evidence()
+        q["reviews"].append({"user": {"login": "other"},
+                             "state": "CHANGES_REQUESTED",
+                             "body": "Minor maintainability suggestion"})
+        mod.verify(q, SHA, NOW)
         # Reproducido: un APPROVED + DISMISSED no vuelve a estar aprobado.
         q = evidence(); q["reviews"].append({"user": {"login": "coderabbitai[bot]"},
                                               "state": "DISMISSED", "commit_id": SHA}); self.deny(q)
@@ -730,6 +736,30 @@ class AutoMergePrGuardTests(unittest.TestCase):
             q = evidence(); q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
                                                        "body": issue_comment}]
             self.deny(q)
+
+    def test_d069_minor_changes_requested_is_not_independent_merge_veto(self):
+        """D-069 evaluates real high/critical findings, not review labels."""
+        mod.verify(evidence(), SHA, NOW)
+        minor = evidence()
+        minor["reviews"][0]["state"] = "CHANGES_REQUESTED"
+        minor["reviews"][0]["body"] = (
+            "Maintainability MINOR: clarify test fixture naming."
+        )
+        mod.verify(minor, SHA, NOW)
+        for finding in (
+            "Security HIGH vulnerability",
+            "Security CRITICAL vulnerability",
+            "Review skipped: manual review required",
+        ):
+            with self.subTest(finding=finding):
+                q = evidence()
+                q["reviews"][0]["state"] = "CHANGES_REQUESTED"
+                q["reviews"][0]["body"] = finding
+                self.deny(q)
+        q = evidence()
+        q["reviews"][0]["state"] = "CHANGES_REQUESTED"
+        q["reviews"][0]["body"] = ""
+        self.deny(q)
 
     def test_future_dated_coderabbit_review_cannot_authorize_merge(self):
         # A review's submitted_at must not be after the verification instant.
