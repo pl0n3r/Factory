@@ -258,11 +258,19 @@ def run_cycle(
                   for issue in sorted(issues)),
         )
     state = "dry_run" if dry_run else "explicit_fake_or_authorized_port"
-    results = tuple(
-        (issue, execute(
-            issue, port, decision_from_snapshot,
-            feature_enabled=True, dry_run=dry_run,
+    # Cota conservadora: un execute() puede liberar una reserva y requiere
+    # comentario+etiqueta atómicos. Nunca intentar más de tres por ciclo
+    # mutante, incluso con fallos parciales o decisiones contradictorias.
+    max_attempts = len(issues) if dry_run else 3
+    results: list[tuple[int, Result]] = []
+    for position, issue in enumerate(sorted(issues)):
+        if position >= max_attempts:
+            results.append((issue, Result("wait", "cycle_write_cap")))
+            continue
+        results.append((
+            issue, execute(
+                issue, port, decision_from_snapshot,
+                feature_enabled=True, dry_run=dry_run,
+            ),
         ))
-        for issue in sorted(issues)
-    )
-    return CycleReport(state, results)
+    return CycleReport(state, tuple(results))

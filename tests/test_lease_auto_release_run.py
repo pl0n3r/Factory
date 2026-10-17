@@ -338,6 +338,62 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
                       feature_enabled="true").state, "invalid_flags",
         )
 
+    def test_authorized_activation_caps_three_releases_and_preserves_pr_branch(self):
+        """Un lote autorizado jamás ejecuta cuatro posibles liberaciones."""
+        from unittest.mock import patch
+        from scripts.lease_release_executor import Result
+
+        port = FakePort(snapshot())
+        original = (port.item.branch, port.item.branch_sha,
+                    port.item.reservation_id)
+        # Caso real aislado: el puerto conserva la rama canónica al liberar.
+        single = run_cycle(
+            [1191], port, feature_enabled=True,
+            dry_run=False, mutations_authorized=True,
+        )
+        self.assertEqual(single.results[0][1].reason, "released")
+        self.assertEqual((port.item.branch, port.item.branch_sha,
+                          port.item.reservation_id), original)
+        self.assertEqual([kind for kind, _ in port.writes],
+                         ["comment", "status"])
+        self.assertNotIn("delete_branch", [kind for kind, _ in port.writes])
+        self.assertNotIn("close_pr", [kind for kind, _ in port.writes])
+
+        with patch(
+            "scripts.lease_auto_release_run.execute",
+            return_value=Result("release", "released", True, "complete"),
+        ) as simulate:
+            cycle = run_cycle(
+                [5, 4, 3, 2, 1], object(),
+                feature_enabled=True, dry_run=False,
+                mutations_authorized=True,
+            )
+            self.assertEqual(simulate.call_count, 3)
+            self.assertEqual([issue for issue, _ in cycle.results],
+                             [1, 2, 3, 4, 5])
+            self.assertEqual(
+                [result.reason for _, result in cycle.results],
+                ["released", "released", "released",
+                 "cycle_write_cap", "cycle_write_cap"])
+            self.assertFalse(cycle.results[3][1].wrote)
+            self.assertFalse(cycle.results[4][1].wrote)
+        with patch(
+            "scripts.lease_auto_release_run.execute",
+            return_value=Result("release", "dry_run"),
+        ) as simulate:
+            cycle = run_cycle([1, 2, 3, 4], object(),
+                              feature_enabled=True, dry_run=True)
+            self.assertEqual(simulate.call_count, 4)
+            self.assertTrue(all(not result.wrote
+                                for _, result in cycle.results))
+        # En el workflow real Fase B no está activada.
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github" / "workflows" / "liberar-reservas.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+
     def test_verified_stale_grace_and_resume_serialized_with_kill_switch(self):
         self.assertEqual(
             decision_from_snapshot(snapshot(recovery=False)).action,
