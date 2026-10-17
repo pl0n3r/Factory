@@ -2235,6 +2235,10 @@ def reserve_available_work(
     main_sha = api.branch_sha("main")
     if not main_sha:
         raise CoordinationError("No fue posible resolver el SHA actual de main.")
+    # /tomar no puede crear refs si #767 está PAUSED o es UNKNOWN.
+    # El wrapper CAS de GitHub hace un primer preflight al entrar, pero la
+    # cola puede cruzar una transición RUNNING -> PAUSED antes de crear rama.
+    require_global_running(api)
     if not api.create_branch(branch, main_sha):
         return None
 
@@ -2286,12 +2290,21 @@ def reserve_available_work(
                 for row in original_assignees
             )
         )
+        # Cada escritura de negocio revalida la fuente global autenticada:
+        # un preflight anterior nunca autoriza la siguiente escritura.
+        require_global_running(api)
         api.set_status(issue_number, STATUS_RESERVED)
         status_written = True
+        require_global_running(api)
         api.try_assign(issue_number, actor)
         assigned = True
+        require_global_running(api)
         api.comment(issue_number, reservation_comment)
     except Exception:
+        # La pausa intermedia no autoriza nuevos cambios de labels/asignación
+        # ni un rollback de negocio. Conservamos el estado parcial para
+        # reconciliación posterior, sin borrar ramas que pudieron avanzar.
+        require_global_running(api)
         # GitHub no ofrece una transacción multi-API. Si otra sesión cambió
         # estado, rama o autoridad, conservarla en vez de restaurar a ciegas.
         try:
