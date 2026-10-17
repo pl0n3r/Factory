@@ -17,9 +17,17 @@ def audit_phase_one_workflow(source: str) -> None:
     lines = source.splitlines()
     if lines.count("  automerge:") != 1:
         raise ValidationError("automerge job must be unique")
+    # Scope the condition to this job, not to any later job in the YAML.
+    start = lines.index("  automerge:") + 1
+    job_lines = []
+    for raw in lines[start:]:
+        if raw.strip() and not raw.lstrip().startswith("#"):
+            indent = len(raw) - len(raw.lstrip(" "))
+            if indent <= 2:
+                break
+        job_lines.append(raw)
     # Comments and step-level conditions cannot certify a disabled job.
-    effective = [line.strip() for line in source.split("  automerge:\n", 1)[1].splitlines()
-                 if line.startswith("    if:")]
+    effective = [line.strip() for line in job_lines if line.startswith("    if:")]
     if effective != ["if: ${{ false }}"]:
         raise ValidationError("automerge fase 1 requiere una única condición if: false")
 
@@ -67,6 +75,18 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         self.assertNotEqual(
             [line.strip() for line in job.splitlines() if line.startswith("    if:")],
             ["if: ${{ false }}"],
+        )
+        with self.assertRaisesRegex(ValidationError, "condición"):
+            audit_phase_one_workflow(source)
+
+    def test_false_condition_in_another_job_does_not_certify_automerge(self):
+        # A decoy job with if:false must not mask an enabled automerge job.
+        source = self.source.replace("    if: ${{ false }}\n", "", 1) + (
+            "  dummy:\n"
+            "    if: ${{ false }}\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo dummy\n"
         )
         with self.assertRaisesRegex(ValidationError, "condición"):
             audit_phase_one_workflow(source)
