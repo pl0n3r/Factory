@@ -1,5 +1,6 @@
 """Regresiones del workflow inerte de auto-merge en Fase 1 (#1364)."""
 from pathlib import Path
+import re
 import unittest
 
 from seguridad.resiliencia import ValidationError, audit_workflow
@@ -15,8 +16,21 @@ def audit_phase_one_workflow(source: str) -> None:
     """Apply generic auditing plus the exact Fase 1 auto-merge job gate."""
     audit_workflow(source)
     lines = source.splitlines()
-    if lines.count("  automerge:") != 1:
-        raise ValidationError("automerge job must be unique")
+    # Fase 1 permits exactly one inert job. An additional active job could
+    # request id-token/issues/actions:write while the disabled automerge job
+    # still satisfies its own condition.
+    if lines.count("jobs:") != 1:
+        raise ValidationError("automerge fase 1 requiere un bloque jobs único")
+    jobs = lines[lines.index("jobs:") + 1:]
+    active_jobs = []
+    for line in jobs:
+        if line.strip() and not line.lstrip().startswith("#"):
+            if not line[0].isspace():
+                break
+            if re.match(r"^  \S", line):
+                active_jobs.append(line.rstrip())
+    if active_jobs != ["  automerge:"]:
+        raise ValidationError("automerge fase 1 requiere un único job inerte")
     # Scope the condition to this job, not to any later job in the YAML.
     start = lines.index("  automerge:") + 1
     job_lines = []
@@ -89,6 +103,21 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             "      - run: echo dummy\n"
         )
         with self.assertRaisesRegex(ValidationError, "condición"):
+            audit_phase_one_workflow(source)
+
+    def test_additional_active_job_with_write_permissions_is_denied(self):
+        # A sibling job with default true can acquire write privileges even
+        # when jobs.automerge stays disabled.
+        source = self.source + (
+            "  unattended_diagnostics:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    permissions:\n"
+            "      id-token: write\n"
+            "      issues: write\n"
+            "    steps:\n"
+            "      - run: echo active\n"
+        )
+        with self.assertRaisesRegex(ValidationError, "único job"):
             audit_phase_one_workflow(source)
 
     def test_attempt_to_restore_merge_authority_is_detected(self):
