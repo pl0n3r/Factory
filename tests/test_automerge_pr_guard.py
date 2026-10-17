@@ -1231,6 +1231,31 @@ class AutoMergePrGuardTests(unittest.TestCase):
         with patch.object(mod, "github_urlopen", side_effect=response_for(False)):
             self.assertEqual(mod.get_paginated_records("token", url), first)
 
+    def test_full_terminal_page_without_link_must_probe_hidden_findings(self):
+        # A missing Link header after 100 records must not hide page 2.
+        first = [{"id": i, "body": "no finding"} for i in range(1, 101)]
+        hidden = [{"id": 101, "body": "Severity: HIGH - security vulnerability"}]
+        endpoints = (
+            "/repos/pl0n3r/Factory/pulls/1375/reviews",
+            "/repos/pl0n3r/Factory/issues/1375/comments",
+        )
+        for endpoint in endpoints:
+            with self.subTest(endpoint=endpoint):
+                pages = []
+                def missing_link(_token, path, *, include_link=False):
+                    self.assertTrue(include_link)
+                    self.assertTrue(path.startswith(endpoint + "?per_page=100&page="))
+                    page = int(path.rsplit("page=", 1)[-1])
+                    pages.append(page)
+                    return (deepcopy(first), False) if page == 1 else (
+                        deepcopy(hidden), False
+                    )
+                with patch.object(mod, "get", side_effect=missing_link):
+                    with self.assertRaisesRegex(
+                            mod.Denied, "record_page_missing_next_link"):
+                        mod.get_paginated_records("token", endpoint)
+                self.assertEqual(pages, [1, 2])
+
     def test_paged_review_and_comment_histories_complete_and_stable(self):
         # PR review/inline/issue/lease histories can exceed 100. A single
         # first page either blocks progress or misses later security evidence.
@@ -1269,7 +1294,10 @@ class AutoMergePrGuardTests(unittest.TestCase):
             return (deepcopy(rows[:100]), False) if path.endswith("page=1") else ([], False)
         with patch.object(mod, "get", side_effect=full_first):
             self.assertEqual(mod.get_paginated_records("token", endpoints[1]), rows[:100])
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            [path.rsplit("page=", 1)[-1] for path in calls],
+            ["1", "2", "1", "2"],
+        )
 
         # Deny missing/overlapping IDs, malformed payloads and changing pages.
         for kind in ("duplicate", "malformed", "changed"):
