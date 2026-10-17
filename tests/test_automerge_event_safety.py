@@ -11,6 +11,18 @@ WORKFLOW = (
 )
 
 
+def audit_phase_one_workflow(source: str) -> None:
+    """Apply generic auditing plus the exact Fase 1 auto-merge job gate."""
+    audit_workflow(source)
+    lines = source.splitlines()
+    if lines.count("  automerge:") != 1:
+        raise ValidationError("automerge job must be unique")
+    # Comments and step-level conditions cannot certify a disabled job.
+    effective = [line.strip() for line in source.split("  automerge:\n", 1)[1].splitlines()
+                 if line.startswith("    if:")]
+    if effective != ["if: ${{ false }}"]:
+        raise ValidationError("automerge fase 1 requiere una única condición if: false")
+
 class AutoMergeEventSafetyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -39,7 +51,7 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             'workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
             source,
         )
-        audit_workflow(source)
+        audit_phase_one_workflow(source)
 
     def test_comment_only_false_does_not_hide_executable_true_condition(self):
         source = self.source.replace(
@@ -56,6 +68,8 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             [line.strip() for line in job.splitlines() if line.startswith("    if:")],
             ["if: ${{ false }}"],
         )
+        with self.assertRaisesRegex(ValidationError, "condición"):
+            audit_phase_one_workflow(source)
 
     def test_attempt_to_restore_merge_authority_is_detected(self):
         source = self.source
