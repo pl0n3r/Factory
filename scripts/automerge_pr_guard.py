@@ -550,7 +550,12 @@ def verify_review(reviews, comments, issue_comments, expected, now):
         if row.get("state") not in {"APPROVED", "COMMENTED", "DISMISSED", "CHANGES_REQUESTED"}:
             raise Denied("review_state_unknown")
         # D-069: CHANGES_REQUESTED alone is not a security veto during
-        # construction. Review the authenticated findings, not the label.
+        # construction. However missing or HIGH/CRITICAL findings from any
+        # reviewer remain UNKNOWN/severe and must fail closed.
+        if row.get("state") == "CHANGES_REQUESTED":
+            detail = row.get("body")
+            if type(detail) is not str or not detail.strip() or SEVERE.search(detail):
+                raise Denied("changes_requested_severity_unknown_or_high")
         if row.get("state") == "DISMISSED":
             # Una revisión anulada no es evidencia de seguridad válida,
             # incluso si el snapshot contiene otra revisión favorable.
