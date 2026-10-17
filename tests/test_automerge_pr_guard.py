@@ -402,6 +402,13 @@ class AutoMergePrGuardTests(unittest.TestCase):
                         "- **Severity**: **BLOCKER**",
                         "> **Priority**: **BLOCKER**",
                         "### **Severity**: **BLOCKER**",
+                        "**Severity:** **HIGH**",
+                        "- **Severity:** **HIGH**",
+                        "**Priority:** CRITICAL",
+                        "> **Priority:** CRITICAL",
+                        "### **Severity:** **P1**",
+                        "**Severity:** **BLOCKER**",
+                        "**Priority:** **BLOCKER**",
                         "P1: unauthenticated command execution",
                         "`9-13`: **🔒 Security &amp; Privacy** | **🟠 Major**",
                         "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
@@ -435,6 +442,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
                          "> - **🩺 Maintainability** | **🟠 Major**",
                          "### **🎯 Functional Correctness** | **🟠 Major**",
                          "**Severity**: **LOW**",
+                         "**Severity:** **LOW**",
                          "CodeRabbit describes a Severity HIGH classification in the documentation.",
                          "CodeRabbit describes Security & Privacy Major findings in its policy."):
             with self.subTest(advisory=advisory):
