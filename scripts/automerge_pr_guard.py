@@ -48,6 +48,11 @@ SEVERE = re.compile(
          |vulnerabilit(?:y|ies)
          |remote[ \t]+command[ \t]+execution
          |command[ \t]+injection
+         |sql[ \t]+injection
+         |(?:stored|reflected)[ \t]+xss
+         |xss
+         |ssrf
+         |privilege[ \t]+escalation
          |authentication[ \t]+bypass
          |auth[ \t]+bypass)\b
       | [*_]{0,2}(?:Severity|Priority)(?:[*_]{0,2}[ \t]*:|[ \t]*:[*_]{0,2})[ \t]*[*_]{0,2}(?:HIGH|CRITICAL|P0|P1|BLOCKER)(?:\b|(?=[*_]))
@@ -736,11 +741,13 @@ def verify_review(reviews, comments, issue_comments, expected, now):
     for row in issue_comments:
         if type(row) is not dict or type(row.get("user")) is not dict:
             raise Denied("issue_comment_invalid")
+        body = row.get("body")
+        if type(body) is not str or not body.strip():
+            raise Denied("issue_comment_body_unknown")
+        if SEVERE.search(body):
+            raise Denied("issue_comment_severe")
         if row["user"].get("login") != "coderabbitai[bot]":
             continue
-        body = row.get("body")
-        if type(body) is not str or SEVERE.search(body):
-            raise Denied("coderabbit_issue_comment_unknown_or_severe")
         if review_incomplete_notice(body):
             # No dejar bloqueado para siempre un skip del PR en DRAFT si
             # después existe review real del MISMO SHA, posterior a ese skip.
