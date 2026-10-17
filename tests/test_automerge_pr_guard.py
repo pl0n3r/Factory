@@ -769,6 +769,29 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["reviews"][0]["body"] = ""
         self.deny(q)
 
+    def test_third_party_high_critical_is_not_ignored_by_review_state(self):
+        """High-severity external findings veto merge regardless of review label."""
+        for state in ("COMMENTED", "APPROVED", "CHANGES_REQUESTED"):
+            with self.subTest(state=state, severity="minor"):
+                q = evidence()
+                q["reviews"].append({
+                    "user": {"login": "independent-reviewer"},
+                    "state": state, "commit_id": SHA,
+                    "body": "Minor maintainability suggestion",
+                })
+                mod.verify(q, SHA, NOW)
+            for finding in ("Security HIGH vulnerability",
+                            "Security CRITICAL vulnerability",
+                            "**Security & Privacy** | **Major**"):
+                with self.subTest(state=state, finding=finding):
+                    q = evidence()
+                    q["reviews"].append({
+                        "user": {"login": "independent-reviewer"},
+                        "state": state, "commit_id": SHA,
+                        "body": finding,
+                    })
+                    self.deny(q)
+
     def test_future_dated_coderabbit_review_cannot_authorize_merge(self):
         # A review's submitted_at must not be after the verification instant.
         # Otherwise a future timestamp can supersede a skip that is still
