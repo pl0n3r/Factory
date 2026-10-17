@@ -11,7 +11,7 @@ import uuid
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 REPO = "pl0n3r/Factory"
 HEX_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -842,6 +842,11 @@ def verify(snapshot, expected, now):
     verify_freeze(snapshot.get("windows"), now)
 
 
+def github_urlopen(req, timeout=12):
+    """Use a non-redirecting GitHub transport, preserving unit-test isolation."""
+    return build_opener(_NoGitHubRedirect).open(req, timeout=timeout)
+
+
 def get(token, path, *, include_link=False):
     req = Request("https://api.github.com" + path, headers={
         "Accept": "application/vnd.github+json",
@@ -850,7 +855,7 @@ def get(token, path, *, include_link=False):
         "Authorization": "Bearer " + token,
     })
     try:
-        with build_opener(_NoGitHubRedirect).open(req, timeout=12) as response:
+        with github_urlopen(req, timeout=12) as response:
             body = response.read(1048577)
             paged_checks = re.fullmatch(
                 r"/repos/pl0n3r/Factory/commits/[0-9a-f]{40}/check-runs"

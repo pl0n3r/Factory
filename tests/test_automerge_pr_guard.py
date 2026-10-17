@@ -631,9 +631,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
             page = int(req.full_url.rsplit("page=", 1)[1])
             link = '<https://api.github.com/next>; rel="next"' if page == 1 else ""
             return Response(rows[:100] if page == 1 else rows[100:], link)
-        with patch.object(mod, "urlopen", side_effect=fake_urlopen):
+        with patch.object(mod, "github_urlopen", side_effect=fake_urlopen):
             self.assertEqual(mod.get_paginated_records("token", endpoint), rows)
-        with patch.object(mod, "urlopen", return_value=Response(
+        with patch.object(mod, "github_urlopen", return_value=Response(
                 rows[:1], '<https://api.github.com/next>; rel="next"')):
             with self.assertRaises(mod.Denied):
                 mod.get_paginated_records("token", endpoint)
@@ -1020,7 +1020,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
             def read(self, _size):
                 return json.dumps([{"id": 1, "body": "Safe-looking review"}]).encode("utf-8")
 
-        with patch.object(mod, "urlopen", return_value=Response()):
+        with patch.object(mod, "github_urlopen", return_value=Response()):
             with self.assertRaises(mod.Denied):
                 mod.get_paginated_records(
                     "token", "/repos/pl0n3r/Factory/pulls/42/reviews"
@@ -1038,7 +1038,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 return False
             def read(self, _size):
                 return json.dumps(good).encode("utf8")
-        with patch.object(mod, "urlopen", return_value=Response()):
+        with patch.object(mod, "github_urlopen", return_value=Response()):
             with self.assertRaises(mod.Denied):
                 mod.get_check_runs("token", "/repos/pl0n3r/Factory", SHA)
 
@@ -1068,7 +1068,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
             def read(self, _size):
                 return json.dumps(payload).encode("utf8")
 
-        with patch.object(mod, "urlopen", return_value=Response()):
+        with patch.object(mod, "github_urlopen", return_value=Response()):
             with self.assertRaises(mod.Denied):
                 mod.get_check_runs("token", "/repos/pl0n3r/Factory", SHA)
 
@@ -1103,10 +1103,10 @@ class AutoMergePrGuardTests(unittest.TestCase):
                                 announces_more if page == 1 else False)
             return fetch
 
-        with patch.object(mod, "urlopen", side_effect=response_for(True)):
+        with patch.object(mod, "github_urlopen", side_effect=response_for(True)):
             with self.assertRaises(mod.Denied):
                 mod.get_paginated_records("token", url)
-        with patch.object(mod, "urlopen", side_effect=response_for(False)):
+        with patch.object(mod, "github_urlopen", side_effect=response_for(False)):
             self.assertEqual(mod.get_paginated_records("token", url), first)
 
     def test_paged_review_and_comment_histories_complete_and_stable(self):
