@@ -752,6 +752,20 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertIs(observed.lock_verified, False)
         self.assertIs(observed.cas_verified, False)
         self.assertEqual(port.reads, 1)
+        self.assertEqual(observed.activity_source, "workflow_push")
+        self.assertEqual(observed.activity_age_minutes, 20)
+        # El marker V3 editado por el bot debe conservar su procedencia.
+        newer = review_ready_api()
+        newer.checks[0]["status"] = "completed"
+        newer.comments[0]["updated_at"] = "2026-10-11T09:50:00Z"
+        new_item = replace(item, last_activity_at=NOW - timedelta(minutes=10))
+        new_port = ReadOnlyPort(new_item)
+        updated = preview_integrated_activity(newer, new_port, 21, now=NOW)
+        self.assertEqual((updated.state, updated.action), ("read_only", "wait"))
+        self.assertEqual(updated.activity_source, "reservation_marker")
+        self.assertEqual(updated.activity_age_minutes, 10)
+        self.assertEqual(new_port.reads, 1)
+        self.assertFalse(updated.release_authorized)
         with self.assertRaises(TypeError):
             replace(observed, release_authorized=True)
         with self.assertRaises(TypeError):
