@@ -521,6 +521,11 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "__CRITICAL__ stored XSS in admin portal",
             "### **HIGH** authentication bypass in login",
             "- **HIGH** SSRF exposes instance metadata",
+            "**HIGH**: SQL injection bypasses authentication",
+            "**CRITICAL:** stored XSS in the admin portal",
+            "__CRITICAL__: authentication bypass in the login flow",
+            "### **HIGH**: privilege escalation enables write access",
+            "- **HIGH:** SSRF exposes internal metadata",
         )
         for finding in findings:
             with self.subTest(surface="review", finding=finding):
