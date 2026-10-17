@@ -28,6 +28,17 @@ def audit_phase_one_workflow(source: str) -> None:
         "name: Auto-merge cuando esté listo", "on:", "permissions:", "jobs:"
     ]:
         raise ValidationError("automerge fase 1 requiere raíz canónica y on único")
+    # Quoted global permission scopes are valid YAML keys but can evade
+    # generic textual checks; Phase 1 grants exactly contents: read.
+    root_permissions = []
+    for raw in lines[lines.index("permissions:") + 1:]:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not raw[0].isspace():
+            break
+        root_permissions.append(raw.rstrip())
+    if root_permissions != ["  contents: read"]:
+        raise ValidationError("automerge fase 1 exige permisos globales read-only")
     # A second root "on:" replaces trusted events in YAML while inventory
     # readers that select the first "on:" continue to report safe triggers.
     if lines.count("on:") != 1:
@@ -224,6 +235,21 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
                 self.assertNotEqual(mutant, self.source)
                 with self.assertRaisesRegex(ValidationError, "eventos"):
                     audit_phase_one_workflow(mutant)
+
+    def test_quoted_global_write_scopes_are_denied(self):
+        # Quoted keys are valid YAML while the generic text auditor checks
+        # only unquoted global write permissions.
+        valid = "permissions:\n  contents: read\njobs:"
+        self.assertIn(valid, self.source)
+        for key in ('"id-token"', "'issues'"):
+            with self.subTest(key=key):
+                mutated = self.source.replace(
+                    valid, "permissions:\n  contents: read\n  "
+                    + key + ": write\njobs:", 1
+                )
+                self.assertNotEqual(mutated, self.source)
+                with self.assertRaisesRegex(ValidationError, "permisos globales"):
+                    audit_phase_one_workflow(mutated)
 
     def test_false_condition_in_another_job_does_not_certify_automerge(self):
         # A decoy job with if:false must not mask an enabled automerge job.
