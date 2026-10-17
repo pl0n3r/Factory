@@ -491,7 +491,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         notices = (
             "## Reviews paused",
             "> ## Reviews paused",
-            "> [!NOTE]\\n> ## Reviews paused",
+            "> [!NOTE]\n> ## Reviews paused",
             "Review paused",
             "Review has been paused",
             "Reviews suspended",
