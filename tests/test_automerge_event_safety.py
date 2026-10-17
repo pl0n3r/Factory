@@ -16,6 +16,23 @@ def audit_phase_one_workflow(source: str) -> None:
     """Apply generic auditing plus the exact Fase 1 auto-merge job gate."""
     audit_workflow(source)
     lines = source.splitlines()
+    # A second root "on:" replaces trusted events in YAML while inventory
+    # readers that select the first "on:" continue to report safe triggers.
+    if lines.count("on:") != 1:
+        raise ValidationError("automerge fase 1 requiere un bloque on único")
+    # Only the three explicitly inventoried events are allowed. A duplicate
+    # or added event changes the authority even if jobs.automerge is inert.
+    event_lines = []
+    for raw in lines[lines.index("on:") + 1:]:
+        if raw.strip() and not raw.lstrip().startswith("#"):
+            if not raw[0].isspace():
+                break
+            if re.match(r"^  \S", raw):
+                event_lines.append(raw.rstrip())
+    if event_lines != [
+        "  pull_request:", "  pull_request_review:", "  workflow_run:"
+    ]:
+        raise ValidationError("automerge fase 1 tiene eventos no autorizados")
     # Fase 1 permits exactly one inert job. An additional active job could
     # request id-token/issues/actions:write while the disabled automerge job
     # still satisfies its own condition.
@@ -109,6 +126,27 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValidationError, "condición"):
             audit_phase_one_workflow(source)
+
+    def test_extra_or_overriding_event_cannot_rearm_workflow(self):
+        # Earlier inventory scans only the first on: and collects a set.
+        # Both duplicate roots and extra/duplicate event keys must DENY.
+        additions = (
+            self.source + "on:\n  workflow_dispatch:\n",
+            self.source.replace(
+                "  workflow_run:\n",
+                "  workflow_dispatch:\n  workflow_run:\n", 1
+            ),
+            self.source.replace(
+                "  workflow_run:\n",
+                "  pull_request:\n  workflow_run:\n", 1
+            ),
+        )
+        audit_phase_one_workflow(self.source)
+        for source in additions:
+            with self.subTest(mutant=source):
+                self.assertNotEqual(source, self.source)
+                with self.assertRaisesRegex(ValidationError, "on único|eventos"):
+                    audit_phase_one_workflow(source)
 
     def test_false_condition_in_another_job_does_not_certify_automerge(self):
         # A decoy job with if:false must not mask an enabled automerge job.
