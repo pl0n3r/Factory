@@ -574,7 +574,8 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             # finding has been resolved. Fail closed absent authenticated
             # resolution evidence for that finding.
             body = row.get("body")
-            if type(body) is not str or SEVERE.search(body):
+            if (type(body) is not str or not body.strip()
+                    or SEVERE.search(body)):
                 raise Denied("prior_coderabbit_severe_review_unresolved")
             continue
         body = row.get("body")

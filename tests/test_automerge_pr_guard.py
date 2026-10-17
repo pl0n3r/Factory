@@ -805,6 +805,20 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 })
                 self.deny(q)
 
+    def test_incomplete_historical_coderabbit_review_fails_closed(self):
+        """A clean exact-HEAD review cannot conceal an empty older bot review."""
+        mod.verify(evidence(), SHA, NOW)
+        for body in (None, "", "   "):
+            with self.subTest(body=body):
+                q = evidence()
+                q["reviews"].append({
+                    "user": {"login": "coderabbitai[bot]"},
+                    "state": "COMMENTED", "commit_id": "c" * 40,
+                    "submitted_at": "2026-10-14T03:58:00Z",
+                    "body": body,
+                })
+                self.deny(q)
+
     def test_future_dated_coderabbit_review_cannot_authorize_merge(self):
         # A review's submitted_at must not be after the verification instant.
         # Otherwise a future timestamp can supersede a skip that is still
