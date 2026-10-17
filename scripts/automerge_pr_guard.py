@@ -850,7 +850,7 @@ def get(token, path, *, include_link=False):
         "Authorization": "Bearer " + token,
     })
     try:
-        with urlopen(req, timeout=12) as response:
+        with build_opener(_NoGitHubRedirect).open(req, timeout=12) as response:
             body = response.read(1048577)
             paged_checks = re.fullmatch(
                 r"/repos/pl0n3r/Factory/commits/[0-9a-f]{40}/check-runs"
@@ -1009,6 +1009,10 @@ class _NoSonarRedirect(HTTPRedirectHandler):
     """Do not forward a Sonar Bearer token to a redirect target."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class _NoGitHubRedirect(_NoSonarRedirect):
+    """Refuse GitHub API redirects instead of forwarding GH_TOKEN."""
 
 
 def sonar_api_get(token, route, params):

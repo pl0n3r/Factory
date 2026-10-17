@@ -1341,6 +1341,31 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertEqual(len(actual["windows"]), 1)
         mod.verify(actual, SHA, NOW)
 
+    def test_github_token_is_never_forwarded_on_redirect(self):
+        """urllib's default redirect behavior forwards Authorization off-origin."""
+        from urllib.request import HTTPRedirectHandler, Request
+        req = Request(
+            "https://api.github.com/repos/pl0n3r/Factory/issues/767",
+            headers={"Authorization": "Bearer test-token"})
+        target = "https://untrusted.example/collect"
+        default = HTTPRedirectHandler().redirect_request(
+            req, None, 302, "Found", {}, target)
+        self.assertEqual(default.get_header("Authorization"),
+                         "Bearer test-token")
+        self.assertIsNone(mod._NoGitHubRedirect().redirect_request(
+            req, None, 302, "Found", {}, target))
+        with patch.object(mod, "build_opener") as opener:
+            opener.return_value.open.side_effect = mod.HTTPError(
+                req.full_url, 302, "Found", {}, None)
+            with self.assertRaises(mod.Denied) as denied:
+                mod.get("test-token", "/repos/pl0n3r/Factory/issues/767")
+            self.assertEqual(str(denied.exception), "github_transport_unknown")
+            opener.assert_called_once_with(mod._NoGitHubRedirect)
+            requested = opener.return_value.open.call_args.args[0]
+            self.assertEqual(requested.get_header("Authorization"),
+                             "Bearer test-token")
+            self.assertEqual(requested.full_url, req.full_url)
+
     def test_sonar_token_is_never_forwarded_on_redirect(self):
         """A Sonar 3xx may not send the Bearer token to another origin."""
         from urllib.request import Request
