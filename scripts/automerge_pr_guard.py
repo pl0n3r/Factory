@@ -549,8 +549,8 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             raise Denied("review_invalid")
         if row.get("state") not in {"APPROVED", "COMMENTED", "DISMISSED", "CHANGES_REQUESTED"}:
             raise Denied("review_state_unknown")
-        if row.get("state") == "CHANGES_REQUESTED":
-            raise Denied("changes_requested")
+        # D-069: CHANGES_REQUESTED alone is not a security veto during
+        # construction. Review the authenticated findings, not the label.
         if row.get("state") == "DISMISSED":
             # Una revisión anulada no es evidencia de seguridad válida,
             # incluso si el snapshot contiene otra revisión favorable.
@@ -571,7 +571,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
                 raise Denied("prior_coderabbit_severe_review_unresolved")
             continue
         body = row.get("body")
-        if (row.get("state") in ("APPROVED", "COMMENTED") and type(body) is str
+        if (row.get("state") in ("APPROVED", "COMMENTED", "CHANGES_REQUESTED") and type(body) is str
                 and body.strip() and not review_incomplete_notice(body)
                 and not SEVERE.search(body)):
             # An exact-HEAD review without a verifiable submission time is
