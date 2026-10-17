@@ -146,6 +146,49 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
+
+    def test_unknown_observation_is_noticed_without_failing_the_audit(self):
+        """Un UNKNOWN individual deja continuar el censo, sin escrituras."""
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+        import textwrap
+
+        if not shutil.which("jq") or not shutil.which("bash"):
+            self.skipTest("bash y jq necesarios para el test del observador")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        anchor = '          jq -e \'type == "array" and length <= 10'
+        self.assertEqual(workflow.count(anchor), 1)
+        block = textwrap.dedent(workflow[workflow.index(anchor):])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "lease-active-issues.json").write_text(
+                "[1364,1372]", encoding="utf-8")
+            seen = root / "seen.txt"
+            shim = root / "python3"
+            shim.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
+                "if [ \"$3\" = 1364 ]; then exit 1; fi\n"
+                "exit 0\n", encoding="utf-8")
+            shim.chmod(0o755)
+            env = {**os.environ, "RUNNER_TEMP": folder,
+                   "SEEN_PATH": str(seen),
+                   "PATH": f"{folder}:{os.environ.get('PATH', '')}"}
+            result = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n" + block],
+                cwd=ROOT, env=env, capture_output=True, text=True,
+                timeout=15, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                seen.read_text(encoding="utf-8").splitlines(),
+                ["1364", "1372"])
+            self.assertIn("::notice::Issue #1364", result.stdout)
+            self.assertIn("observación UNKNOWN o fallida", result.stdout)
+            self.assertIn("fail-closed, 0 mutaciones", result.stdout)
+            self.assertNotIn("::error::", result.stdout)
+
     def test_observer_jq_failure_propagates(self):
         """No ocultar error de jq dentro de sustitución de proceso Bash."""
         workflow = WORKFLOW.read_text(encoding="utf-8")
