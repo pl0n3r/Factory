@@ -759,6 +759,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "None reported: Security & Privacy | Major findings",
             "No high or critical findings",
             "The manual explains BLOCKER: security vulnerability",
+            "La alternativa de categoría | High/Critical ahora deja como advisories",
+            "Documentación: Unknown Category | Critical/High no es un hallazgo activo",
             "**Maintainability** | **🔴 Critical**",
             "**🩺 Maintainability** | **🔴 Critical**",
             "- **Maintainability** | **🔴 High**",
@@ -787,6 +789,20 @@ class AutoMergePrGuardTests(unittest.TestCase):
                     q["status_history"][0]["description"] = body
                     q["commit_status"]["statuses"][0]["description"] = body
                     mod.verify(q, SHA, NOW)
+                if "High/Critical" in body or "Critical/High" in body:
+                    # A slash-delimited documentation list is not a
+                    # structured HIGH or CRITICAL finding.
+                    q = evidence()
+                    q["reviews"][0]["body"] = body
+                    mod.verify(q, SHA, NOW)
+                    q = evidence()
+                    q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                      "commit_id": SHA, "body": body}]
+                    mod.verify(q, SHA, NOW)
+                    q = evidence()
+                    q["status_history"][0]["description"] = body
+                    q["commit_status"]["statuses"][0]["description"] = body
+                    mod.verify(q, SHA, NOW)
         authentic = (
             "**🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**",
             "9-13: **🔒 Security & Privacy** | **🟠 Major**",
@@ -800,6 +816,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "**Reliability** | **🔴 Critical**",
             "**Security & Privacy** | **🔴 High**",
             "**Unknown Security Category** | **🔴 Critical**",
+            "Unknown Security Category | High",
+            "Security Analysis | Critical",
             "CRITICAL SQL injection in user-controlled parameter",
             "**HIGH** SQL injection in user-controlled parameter",
             "BLOCKER: security vulnerability",
