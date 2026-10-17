@@ -1069,6 +1069,17 @@ def get_sonar_evidence(number, expected):
             raise Denied("sonar_issue_page_incomplete")
         all_issues.extend(entries)
         if len(all_issues) == count:
+            # Re-check the analysis identity after the paginated issue read.
+            # Fail closed if a later Sonar scan changed the source during GETs.
+            after = sonar_api_get(token, "project_pull_requests/list",
+                                  {"project": "pl0n3r_factory"})
+            later = after.get("pullRequests")
+            if type(later) is not list or len(later) > 500:
+                raise Denied("sonar_pr_analysis_changed_during_pagination")
+            matches_after = [row for row in later
+                             if type(row) is dict and row.get("key") == str(number)]
+            if len(matches_after) != 1 or matches_after[0] != pr:
+                raise Denied("sonar_pr_analysis_changed_during_pagination")
             return {"project": "pl0n3r_factory",
                     "pull_request": str(number),
                     "sha": expected, "total": count, "issues": all_issues}

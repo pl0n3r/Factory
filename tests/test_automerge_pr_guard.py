@@ -1398,9 +1398,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
         page = {"paging": {"pageIndex": 1, "pageSize": 100, "total": 1},
                 "issues": [issue]}
         with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}), \
-                patch.object(mod, "sonar_api_get", side_effect=[valid_pr, page]) as getter:
+                patch.object(mod, "sonar_api_get", side_effect=[valid_pr, page, valid_pr]) as getter:
             self.assertEqual(mod.get_sonar_evidence(1364, SHA)["issues"], [issue])
-            self.assertEqual(getter.call_count, 2)
+            self.assertEqual(getter.call_count, 3)
         for invalid in (
             {"pullRequests": [{"key": "1364", "base": "main"}]},
             {"pullRequests": [{"key": "1364", "base": "main",
@@ -1418,6 +1418,29 @@ class AutoMergePrGuardTests(unittest.TestCase):
                     valid_pr, dict(page, paging=dict(page["paging"], total=2))]):
             with self.assertRaises(mod.Denied):
                 mod.get_sonar_evidence(1364, SHA)
+
+    def test_sonar_analysis_drift_during_issue_read_fails_closed(self):
+        """A clean findings page cannot be joined to a changed Sonar analysis."""
+        initial = {"pullRequests": [{"key": "1364", "base": "main",
+                                     "commit": {"sha": SHA},
+                                     "analysisDate": "2026-10-17T07:00:00+0000"}]}
+        page = {"paging": {"pageIndex": 1, "pageSize": 100, "total": 1},
+                "issues": [{"key": "Sonar:001", "project": "pl0n3r_factory",
+                            "type": "CODE_SMELL", "severity": "MINOR"}]}
+        changed_sha = deepcopy(initial)
+        changed_sha["pullRequests"][0]["commit"]["sha"] = BASE
+        changed_date = deepcopy(initial)
+        changed_date["pullRequests"][0]["analysisDate"] = "2026-10-17T07:01:00+0000"
+        for final in (changed_sha, changed_date, {"pullRequests": []},
+                      {"pullRequests": [initial["pullRequests"][0]] * 2}):
+            with self.subTest(final=final):
+                with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}):
+                    with patch.object(mod, "sonar_api_get", side_effect=[initial, page, final]):
+                        with self.assertRaises(mod.Denied):
+                            mod.get_sonar_evidence(1364, SHA)
+        with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}):
+            with patch.object(mod, "sonar_api_get", side_effect=[initial, page, initial]):
+                self.assertEqual(mod.get_sonar_evidence(1364, SHA)["total"], 1)
 
     def test_retried_checks_select_latest_id_fail_closed(self):
         # GitHub returns several attempts of a check with the same name and SHA.
