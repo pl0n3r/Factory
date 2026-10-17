@@ -1053,11 +1053,24 @@ def get_check_runs(token, root, expected):
                 seen.add(row["id"])
             rows.extend(page_rows)
             if len(rows) == total:
+                # A declared exact-full boundary (100, 200, ...) with no
+                # rel=next may hide a later failed check-run. Independently
+                # probe the next page before treating this inventory as final.
+                if total and total % 100 == 0:
+                    if page_number == 5:
+                        raise Denied("check_inventory_exceeds_bound")
+                    probe = get(token, path + f"&page={page_number + 1}")
+                    if (type(probe) is not dict
+                            or type(probe.get("total_count")) is not int
+                            or probe["total_count"] != total
+                            or type(probe.get("check_runs")) is not list
+                            or probe["check_runs"]):
+                        raise Denied("check_page_missing_next_link")
                 return {"total_count": total, "check_runs": rows}
         raise Denied("check_inventory_exceeds_bound")
 
     first = scan()
-    if first["total_count"] > 100 and first != scan():
+    if first["total_count"] >= 100 and first != scan():
         raise Denied("check_inventory_changed_between_reads")
     return first
 
