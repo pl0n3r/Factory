@@ -128,6 +128,37 @@ class AutoMergePrGuardTests(unittest.TestCase):
                                 "body": "Review pending", "created_at": "2026-10-14T03:58:00Z", "updated_at": "2026-10-14T03:58:00Z"}]
         mod.verify(q, SHA, NOW)
 
+    def test_coderabbit_paused_reviews_never_count_as_completed(self):
+        # Real CodeRabbit note: ## Reviews paused, not a completed review.
+        messages = (
+            "Review paused",
+            "## Reviews paused\n> CodeRabbit has automatically paused this review.",
+            "> ## Reviews paused\n> This branch is under active development.",
+        )
+        for notice in messages:
+            with self.subTest(notice=notice):
+                self.assertTrue(mod.review_incomplete_notice(notice))
+                q = evidence()
+                q["reviews"][0]["body"] = notice
+                self.deny(q)
+                q = evidence()
+                q["commit_status"]["statuses"][0]["description"] = notice
+                q["status_history"][0]["description"] = notice
+                self.deny(q)
+                q = evidence()
+                q["issue_comments"] = [{
+                    "user": {"login": "coderabbitai[bot]"},
+                    "body": notice,
+                    "created_at": "2026-10-14T03:58:00Z",
+                    "updated_at": "2026-10-14T04:00:00Z",
+                }]
+                self.deny(q)
+                # A newer substantive review of this SHA can supersede it.
+                q["issue_comments"][0]["updated_at"] = "2026-10-14T03:58:00Z"
+                mod.verify(q, SHA, NOW)
+        prose = "The runbook explains why reviews paused during development."
+        self.assertFalse(mod.review_incomplete_notice(prose))
+
     def test_edited_coderabbit_summary_timestamp_is_fail_closed(self):
         # Even if created_at predates a clean review, CodeRabbit's later
         # in-place edit can reintroduce skipped/incomplete evidence.

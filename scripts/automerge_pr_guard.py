@@ -66,8 +66,8 @@ SKIPPED = re.compile(
 )
 UNFINISHED_REVIEW = re.compile(
     r"^[ \t]*(?:[-*+>][ \t]+|\#{1,6}[ \t]+){0,2}[*_]{0,2}"
-    r"(?:review|analysis|scan)[ \t]+(?:is[ \t]+)?"
-    r"(?:pending|queued|waiting|in[ \t-]+progress|awaiting|cancell?ed|not[ \t-]+complete)(?:\b|(?=[*_]))[*_]{0,2}",
+    r"(?:reviews?|analysis|scan)[ \t]+(?:is[ \t]+)?"
+    r"(?:pending|queued|waiting|in[ \t-]+progress|awaiting|cancell?ed|not[ \t-]+complete|paused|suspended)(?:\b|(?=[*_]))[*_]{0,2}",
     re.I | re.M,
 )
 # CodeRabbit reports an aborted/rejected review action in an HTML summary,
