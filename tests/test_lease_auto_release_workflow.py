@@ -15,6 +15,30 @@ class DenyTransport:
 
 
 class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
+    def test_readme_reports_both_reservation_release_phases(self):
+        """El README muestra Fase A incompleta y Fase B sin autoridad."""
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        docs = (ROOT / "docs" / "liberacion-automatica-de-reservas.md"
+                ).read_text(encoding="utf-8")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertEqual(readme.count("### Liberación automática de reservas V3 (#1382)"), 1)
+        for expected in (
+            "Fase A — observación GET-only", "Implementación parcial",
+            "Fase B — liberación automática", "NO ACTIVADA",
+            "FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'",
+            "24 horas", "100 ciclos terminales y válidos por repositorio",
+            "cero falsos positivos", "QA individual", "deferred_low_quota",
+            "GITHUB_TOKEN", "No se usa un token multi-repositorio",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, readme)
+        self.assertIn("24 horas", docs)
+        self.assertIn("100 ciclos", docs)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+        self.assertNotIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'true'", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+
     def test_scheduled_executor_kill_switch_quota_and_shared_lock(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("cron: '*/10 * * * *'", text)
