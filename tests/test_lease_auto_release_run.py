@@ -104,6 +104,55 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         # caso puede leer solo GET y aun así carece de autoridad.
         self.assertEqual(blocked.switch_reads, 1)
 
+    def test_observation_reports_current_repository_without_writes(self):
+        """Fase A informa cada Issue local; lo no atribuible sigue UNKNOWN."""
+        from scripts.lease_auto_release_integration import (
+            IntegrationPreview, _GhReadOnlyAPI,
+        )
+        from scripts.lease_github_port import LeaseGithubPort
+
+        api = FakeAPI()
+        result = observe_recent_activity(
+            [21], LeaseGithubPort(api), now=NOW,
+        )
+        self.assertEqual(result.state, "read_only")
+        self.assertFalse(result.release_authorized)
+        self.assertTrue(all(
+            path == "/rate_limit" or path.startswith("/repos/pl0n3r/Factory/")
+            for path in api.calls
+        ))
+        self.assertFalse(any(
+            path.startswith("/repos/other") for path in api.calls))
+        self.assertEqual(_GhReadOnlyAPI.repo, "pl0n3r/Factory")
+        valid = IntegrationPreview(
+            21, "read_only", "wait", "not_old_enough", 17,
+            "v3_authenticated_collector",
+        )
+        note = valid.summary_line
+        self.assertIn("Issue #21", note)
+        self.assertIn("inactividad=17 min", note)
+        self.assertIn("fuente=v3_authenticated_collector", note)
+        self.assertIn("veto/razón=not_old_enough", note)
+        self.assertIn("autoridad=NO", note)
+        unknown = IntegrationPreview(
+            21, "UNKNOWN", "unknown", "collector_unknown",
+        )
+        self.assertIn("inactividad=UNKNOWN", unknown.summary_line)
+        self.assertIn("fuente=UNKNOWN", unknown.summary_line)
+        self.assertFalse(unknown.release_authorized)
+        malicious = IntegrationPreview(
+            21, "UNKNOWN", "unknown", "password_secret\nTOKEN=abc",
+        )
+        self.assertNotIn("password_secret", malicious.summary_line)
+        self.assertNotIn("TOKEN", malicious.summary_line)
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github/workflows" / "liberar-reservas.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("GITHUB_REPOSITORY: ${{ github.repository }}", workflow)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+
     def test_switch_recheck_rejects_pause_and_untrusted_state_during_inventory(self):
         from scripts.unattended_kill_switch import (
             CANONICAL_SOURCE_URL, CANONICAL_REPOSITORY_URL,
