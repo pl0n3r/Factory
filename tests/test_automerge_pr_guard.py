@@ -397,6 +397,11 @@ class AutoMergePrGuardTests(unittest.TestCase):
                         "### **Severity**: **P1**",
                         "**Severity**: CRITICAL",
                         "BLOCKER: security vulnerability",
+                        "BLOCKER: SQL injection in a user-controlled query",
+                        "**BLOCKER:** SQL injection in a user-controlled query",
+                        "BLOCKER: stored XSS in admin portal",
+                        "BLOCKER: SSRF exposes metadata service",
+                        "BLOCKER: privilege escalation in role check",
                         "BLOCKER: remote command execution",
                         "**BLOCKER:** security vulnerability",
                         "- **BLOCKER:** security vulnerability",
@@ -900,6 +905,22 @@ class AutoMergePrGuardTests(unittest.TestCase):
                         "body": finding,
                     })
                     self.deny(q)
+
+    def test_third_party_pr_conversation_security_findings_fail_closed(self):
+        # PR conversation comments are not GitHub review/inline comments.
+        for author in ("security-reviewer", "another-security-bot"):
+            for finding in ("Security HIGH vulnerability",
+                            "**Security & Privacy** | **Major**",
+                            "BLOCKER: SQL injection in user-controlled query"):
+                with self.subTest(author=author, finding=finding):
+                    q = evidence()
+                    q["issue_comments"] = [{"user": {"login": author},
+                                            "body": finding}]
+                    self.deny(q)
+            q = evidence()
+            q["issue_comments"] = [{"user": {"login": author},
+                                    "body": "Minor maintainability suggestion"}]
+            mod.verify(q, SHA, NOW)
 
     def test_incomplete_second_coderabbit_review_fails_closed(self):
         """A clean same-SHA review must not conceal another empty bot review."""
