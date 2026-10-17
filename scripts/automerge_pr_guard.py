@@ -14,6 +14,9 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 REPO = "pl0n3r/Factory"
+# SonarCloud lists project PRs in a single bounded response; 536 were observed.
+# The transport independently rejects responses larger than 1 MiB.
+MAX_SONAR_PR_INVENTORY = 1000
 HEX_SHA = re.compile(r"[0-9a-f]{40}\Z")
 SWITCH_HEADER = re.compile(r"<!--\s*factory-unattended-kill-switch\b", re.I)
 SWITCH_MARKER = re.compile(r"<!--\s*factory-unattended-kill-switch\s+(\{[^\n]*\})\s*-->", re.I)
@@ -1059,7 +1062,7 @@ def get_sonar_evidence(number, expected):
     data = sonar_api_get(token, "project_pull_requests/list",
                          {"project": "pl0n3r_factory"})
     prs = data.get("pullRequests")
-    if type(prs) is not list or len(prs) > 500:
+    if type(prs) is not list or len(prs) > MAX_SONAR_PR_INVENTORY:
         raise Denied("sonar_pr_inventory_unknown")
     matches = [x for x in prs if type(x) is dict and x.get("key") == str(number)]
     if len(matches) != 1:
@@ -1097,7 +1100,7 @@ def get_sonar_evidence(number, expected):
             after = sonar_api_get(token, "project_pull_requests/list",
                                   {"project": "pl0n3r_factory"})
             later = after.get("pullRequests")
-            if type(later) is not list or len(later) > 500:
+            if type(later) is not list or len(later) > MAX_SONAR_PR_INVENTORY:
                 raise Denied("sonar_pr_analysis_changed_during_pagination")
             matches_after = [row for row in later
                              if type(row) is dict and row.get("key") == str(number)]

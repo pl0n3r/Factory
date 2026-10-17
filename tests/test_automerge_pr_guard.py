@@ -1568,6 +1568,38 @@ class AutoMergePrGuardTests(unittest.TestCase):
             with self.assertRaises(mod.Denied):
                 mod.get_sonar_evidence(1364, SHA)
 
+    def test_sonar_reader_accepts_bounded_large_pr_inventory(self):
+        # SonarCloud can return more than 500 PRs for this project (536 observed).
+        # Do not disable the 1 MiB HTTP limit or the bounded inventory check.
+        record = {"key": "1364", "base": "main", "commit": {"sha": SHA}}
+        inventory = {"pullRequests": [record] + [
+            {"key": str(n)} for n in range(2000, 2535)
+        ]}
+        self.assertEqual(len(inventory["pullRequests"]), 536)
+        page = {"paging": {"pageIndex": 1, "pageSize": 100, "total": 1},
+                "issues": [{"key": "Sonar:001", "project": "pl0n3r_factory",
+                            "pullRequest": "1364", "type": "CODE_SMELL",
+                            "severity": "MINOR"}]}
+        with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}), \
+                patch.object(mod, "sonar_api_get",
+                             side_effect=[inventory, page, inventory]) as getter:
+            self.assertEqual(mod.get_sonar_evidence(1364, SHA)["total"], 1)
+            self.assertEqual(getter.call_count, 3)
+
+        excessive = {"pullRequests": [record] + [
+            {"key": str(n)} for n in range(2000, 3000)
+        ]}
+        with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}), \
+                patch.object(mod, "sonar_api_get", return_value=excessive):
+            with self.assertRaisesRegex(mod.Denied, "sonar_pr_inventory_unknown"):
+                mod.get_sonar_evidence(1364, SHA)
+        with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}), \
+                patch.object(mod, "sonar_api_get",
+                             side_effect=[inventory, page, excessive]):
+            with self.assertRaisesRegex(
+                    mod.Denied, "sonar_pr_analysis_changed_during_pagination"):
+                mod.get_sonar_evidence(1364, SHA)
+
     def test_sonar_analysis_drift_during_issue_read_fails_closed(self):
         """A clean findings page cannot be joined to a changed Sonar analysis."""
         initial = {"pullRequests": [{"key": "1364", "base": "main",
