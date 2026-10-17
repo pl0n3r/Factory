@@ -105,6 +105,12 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "único job|condición"):
             audit_phase_one_workflow(source)
 
+    def test_missing_condition_in_single_job_is_rejected(self):
+        # Extra-job rejection must not hide a missing condition on the only job.
+        source = self.source.replace("    if: ${{ false }}\n", "", 1)
+        with self.assertRaisesRegex(ValidationError, "condición"):
+            audit_phase_one_workflow(source)
+
     def test_additional_active_job_with_write_permissions_is_denied(self):
         # A sibling job with default true can acquire write privileges even
         # when jobs.automerge stays disabled.
