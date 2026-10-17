@@ -16,6 +16,18 @@ def audit_phase_one_workflow(source: str) -> None:
     """Apply generic auditing plus the exact Fase 1 auto-merge job gate."""
     audit_workflow(source)
     lines = source.splitlines()
+    # Phase 1 has a fixed root contract. Duplicate/quoted/space-before-colon
+    # YAML root keys can override jobs/on without matching literal "jobs:".
+    # Reject them rather than trusting the first block a text parser found.
+    root_entries = [
+        raw for raw in lines
+        if raw.strip() and not raw[0].isspace()
+        and not raw.lstrip().startswith("#")
+    ]
+    if root_entries != [
+        "name: Auto-merge cuando esté listo", "on:", "permissions:", "jobs:"
+    ]:
+        raise ValidationError("automerge fase 1 requiere raíz canónica y on único")
     # A second root "on:" replaces trusted events in YAML while inventory
     # readers that select the first "on:" continue to report safe triggers.
     if lines.count("on:") != 1:
@@ -147,6 +159,23 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
                 self.assertNotEqual(source, self.source)
                 with self.assertRaisesRegex(ValidationError, "on único|eventos"):
                     audit_phase_one_workflow(source)
+
+    def test_alternate_yaml_root_keys_cannot_override_jobs_or_events(self):
+        # YAML permits whitespace or quoting around root mapping keys.
+        # A second "jobs :" could run an active job while the first stays inert.
+        variants = (
+            "on :\n  workflow_dispatch:\n",
+            '"on":\n  workflow_dispatch:\n',
+            "jobs :\n  unattended:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: echo active\n",
+            '"jobs":\n  unattended:\n    runs-on: ubuntu-latest\n'
+            '    steps:\n      - run: echo active\n',
+        )
+        for added in variants:
+            with self.subTest(added=added):
+                mutant = self.source + added
+                with self.assertRaisesRegex(ValidationError, "raíz canónica"):
+                    audit_phase_one_workflow(mutant)
 
     def test_false_condition_in_another_job_does_not_certify_automerge(self):
         # A decoy job with if:false must not mask an enabled automerge job.
