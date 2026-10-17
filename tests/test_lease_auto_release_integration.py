@@ -949,8 +949,14 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         source_file = (Path(__file__).resolve().parents[1] /
                        "scripts" / "lease_auto_release_integration.py")
         source_code = source_file.read_text(encoding="utf-8")
-        entrypoint = 'if __name__ == "__main__":' + source_code.split(
-            'if __name__ == "__main__":', 1)[1]
+        prefix, tail = source_code.split('if __name__ == "__main__":', 1)
+        # Cobertura: preservar líneas reales del archivo original al ejecutar
+        # el bloque CLI aislado; sin esto Sonar atribuye hits a líneas 1..N.
+        entrypoint = ("\n" * prefix.count("\n") +
+                      'if __name__ == "__main__":' + tail)
+        self.assertEqual(entrypoint.count("\n", 0, entrypoint.index(
+            'if __name__ == "__main__":')) + 1,
+            prefix.count("\n") + 1)
         with tempfile.TemporaryDirectory() as folder:
             summary = Path(folder) / "summary.md"
             output = io.StringIO()
