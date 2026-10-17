@@ -44,6 +44,23 @@ def audit_phase_one_workflow(source: str) -> None:
     effective = [line.strip() for line in job_lines if line.startswith("    if:")]
     if effective != ["if: ${{ false }}"]:
         raise ValidationError("automerge fase 1 requiere una única condición if: false")
+    # AC-04: require exactly one direct job permission mapping; other scopes
+    # (including id-token: write) are forbidden even for an inert job.
+    headers = [i for i, raw in enumerate(job_lines)
+               if raw.startswith("    permissions")
+               and not raw.lstrip().startswith("#")]
+    if (len(headers) != 1
+            or job_lines[headers[0]].strip() != "permissions:"):
+        raise ValidationError("automerge fase 1 requiere permisos de solo lectura")
+    scopes = []
+    for raw in job_lines[headers[0] + 1:]:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if len(raw) - len(raw.lstrip(" ")) <= 4:
+            break
+        scopes.append(raw)
+    if scopes != ["      contents: read"]:
+        raise ValidationError("automerge fase 1 requiere permisos de solo lectura")
 
 class AutoMergeEventSafetyTests(unittest.TestCase):
     @classmethod
@@ -124,6 +141,16 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             "      - run: echo active\n"
         )
         with self.assertRaisesRegex(ValidationError, "único job"):
+            audit_phase_one_workflow(source)
+
+    def test_inert_job_rejects_extra_write_scope(self):
+        # Even a disabled job must not declare additional write permissions.
+        source = self.source.replace(
+            "      contents: read\n",
+            "      contents: read\n      id-token: write\n",
+            1,
+        )
+        with self.assertRaisesRegex(ValidationError, "permisos"):
             audit_phase_one_workflow(source)
 
     def test_attempt_to_restore_merge_authority_is_detected(self):
