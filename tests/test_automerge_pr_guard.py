@@ -682,6 +682,64 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q["reviews"][0]["body"] = nonfinding
                 mod.verify(q, SHA, NOW)
 
+    def test_red_severity_and_markdown_priority_surfaces_fail_closed(self):
+        # Red HIGH/CRITICAL prefixes and bold [P0]/[P1] are real security
+        # findings only when coupled to an explicit exploit category.
+        findings = (
+            "🔴 HIGH security vulnerability in signing",
+            "### 🔴 HIGH SQL injection in account query",
+            "- 🔴 HIGH SSRF in webhook",
+            "🔴 CRITICAL command injection in deployment",
+            "> 🔴 CRITICAL privilege escalation in admin",
+            "- **[P1]** privilege escalation in admin routes",
+            "**[P0]** authentication bypass in account recovery",
+            "### **[P1]** SQL injection in user input",
+            "> **[P1]** SSRF in webhook",
+            "- **[P1]** remote command execution in CI",
+        )
+        for body in findings:
+            with self.subTest(body=body):
+                self.assertTrue(mod.severe_finding(body))
+                q = evidence()
+                q["reviews"][0]["body"] = body
+                self.deny(q)
+                q = evidence()
+                q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                  "commit_id": SHA, "body": body}]
+                self.deny(q)
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "security-reviewer"},
+                                        "body": body}]
+                self.deny(q)
+                q = evidence()
+                q["status_history"][0]["description"] = body
+                q["commit_status"]["statuses"][0]["description"] = body
+                self.deny(q)
+
+        advisory = (
+            "- **[P1]** is a notation used in this policy",
+            "🔴 HIGH severity issues were not found",
+            "🔴 HIGH refactor complexity documentation",
+            "### 🔴 HIGH maintainability risk",
+            "**Maintainability** | **🔴 Critical**",
+            "**🩺 Code Smell** | **🔴 High**",
+            "No Security & Privacy | Major findings",
+            "Found no Security & Privacy | Major findings",
+            "Review complete: no Security & Privacy | Major findings",
+            "Examples include a 🔴 HIGH security vulnerability in signing",
+            "Documentation: - **[P1]** privilege escalation in admin routes",
+        )
+        for body in advisory:
+            with self.subTest(prose=body):
+                self.assertFalse(mod.severe_finding(body))
+                q = evidence()
+                q["reviews"][0]["body"] = body
+                mod.verify(q, SHA, NOW)
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "pl0n3r"},
+                                        "body": body}]
+                mod.verify(q, SHA, NOW)
+
     def test_historical_security_qa_prose_not_severe_without_a_finding(self):
         # Examples in old PR conversation are not active security findings.
         # Known maintenance-only severities are advisory in construction.

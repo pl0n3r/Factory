@@ -45,6 +45,16 @@ SEVERE = re.compile(
                 |privilege[ \t]+escalation|authentication[ \t]+bypass
                 |auth[ \t]+bypass)\b
       | \[(?:P0|P1)\][ \t]+\S
+      | 🔴[ \t]+[*_]{0,2}(?:HIGH|CRITICAL)[*_]{0,2}[ \t]+
+        (?:security[ \t]+vulnerabilit(?:y|ies)|security[ \t]+risk|
+           sql[ \t]+injection|ssrf|xss|privilege[ \t]+escalation|
+           remote[ \t]+command[ \t]+execution|command[ \t]+injection|
+           authentication[ \t]+bypass|auth[ \t]+bypass)\b
+      | [*_]{0,2}\[(?:P0|P1)\][*_]{0,2}[ \t]+
+        (?:privilege[ \t]+escalation|sql[ \t]+injection|ssrf|xss|
+           command[ \t]+injection|remote[ \t]+command[ \t]+execution|
+           authentication[ \t]+bypass|auth[ \t]+bypass|
+           security[ \t]+vulnerabilit(?:y|ies))\b
       | [*_]{0,2}(?:Security[ \t]*[-:][ \t]*)?
         (?:HIGH|CRITICAL|P0|P1)[*_]{0,2}
         (?:
