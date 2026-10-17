@@ -41,6 +41,7 @@ SEVERE = re.compile(
                 |sql[ \t]+injection|(?:stored|reflected)[ \t]+xss|xss|ssrf
                 |privilege[ \t]+escalation|authentication[ \t]+bypass
                 |auth[ \t]+bypass)\b
+      | \[(?:P0|P1)\][ \t]+\S
       | [*_]{0,2}(?:Security[ \t]*[-:][ \t]*)?
         (?:HIGH|CRITICAL|P0|P1)[*_]{0,2}
         (?:
