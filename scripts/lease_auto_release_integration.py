@@ -46,10 +46,11 @@ class IntegrationPreview:
                    and 0 <= self.activity_age_minutes <= 525600
                    else "UNKNOWN")
         source = (self.activity_source
-                  if self.activity_source == "v3_authenticated_collector"
+                  if self.activity_source in ("reservation_marker", "workflow_push")
                   else "UNKNOWN")
-        # Este source es la procedencia del colector, NO un evento acreditado
-        # (push/check/review). No contar estos casos como QA terminado.
+        # Sólo acredita el marker del bot o un workflow push exact-SHA;
+        # no inferir actividad del titular por login compartido ni por
+        # reviews/checks sin testigo temporal autenticado.
         return (f"- Issue #{issue}: `{action}`; inactividad={minutes} min; "
                 f"fuente={source}; veto/razón={reason}; autoridad=NO.\n")
 
@@ -338,7 +339,9 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
                 or report.get("status") not in ACTIVE
                 or type(report.get("ci_running")) is not bool
                 or type(report.get("last_activity_at")) is not str
-                or UTC_STAMP.fullmatch(report["last_activity_at"]) is None):
+                or UTC_STAMP.fullmatch(report["last_activity_at"]) is None
+                or report.get("activity_source") not in (
+                    "reservation_marker", "workflow_push")):
             return _unknown(issue, "collector_unknown")
         last = datetime.fromisoformat(
             report["last_activity_at"].replace("Z", "+00:00"))
@@ -384,7 +387,7 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         return IntegrationPreview(
             issue, "read_only", decision.action, decision.reason,
             age if decision.action == "wait" else None,
-            "v3_authenticated_collector" if decision.action == "wait" else None,
+            report["activity_source"] if decision.action == "wait" else None,
         )
     except Exception:
         # Sin nombres de usuario, payloads, headers ni tokens en errores.

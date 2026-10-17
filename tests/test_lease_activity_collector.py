@@ -136,6 +136,34 @@ class API:
 
 
 class LeaseActivityCollectorTests(unittest.TestCase):
+    def test_activity_source_is_attributed_to_marker_or_exact_sha_push(self):
+        """Sólo dos fuentes autenticadas, con empate temporal fail-closed."""
+        via_push = API()
+        reported = collect_activity(via_push, 21, now=NOW)
+        self.assertTrue(reported["evidence_complete"])
+        self.assertEqual(reported["activity_source"], "workflow_push")
+        self.assertEqual(reported["last_activity_at"], "2026-10-11T09:40:00Z")
+
+        via_marker = API()
+        via_marker.comments[0]["updated_at"] = "2026-10-11T09:55:00Z"
+        reported = collect_activity(via_marker, 21, now=NOW)
+        self.assertTrue(reported["evidence_complete"])
+        self.assertEqual(reported["activity_source"], "reservation_marker")
+        self.assertEqual(reported["last_activity_at"], "2026-10-11T09:55:00Z")
+
+        collision = API()
+        collision.comments[0]["updated_at"] = "2026-10-11T09:40:00Z"
+        self.assertEqual(
+            collect_activity(collision, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        unverified = API()
+        unverified.push_event = "pull_request"
+        self.assertEqual(
+            collect_activity(unverified, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
     def test_old_authored_commit_recent_push_is_unknown_without_provenance(self):
         # A commit authored before the lease can be pushed moments ago.
         api = API()

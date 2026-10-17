@@ -127,12 +127,12 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertEqual(_GhReadOnlyAPI.repo, "pl0n3r/Factory")
         valid = IntegrationPreview(
             21, "read_only", "wait", "not_old_enough", 17,
-            "v3_authenticated_collector",
+            "workflow_push",
         )
         note = valid.summary_line
         self.assertIn("Issue #21", note)
         self.assertIn("inactividad=17 min", note)
-        self.assertIn("fuente=v3_authenticated_collector", note)
+        self.assertIn("fuente=workflow_push", note)
         self.assertIn("veto/razón=not_old_enough", note)
         self.assertIn("autoridad=NO", note)
         unknown = IntegrationPreview(

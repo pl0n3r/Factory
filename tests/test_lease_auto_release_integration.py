@@ -895,11 +895,11 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
 
         valid = IntegrationPreview(
             21, "read_only", "wait", "not_old_enough",
-            17, "v3_authenticated_collector",
+            17, "workflow_push",
         )
         self.assertIn("Issue #21", valid.summary_line)
         self.assertIn("inactividad=17 min", valid.summary_line)
-        self.assertIn("fuente=v3_authenticated_collector", valid.summary_line)
+        self.assertIn("fuente=workflow_push", valid.summary_line)
         self.assertIn("autoridad=NO", valid.summary_line)
         self.assertFalse(valid.release_authorized)
         self.assertFalse(valid.lock_verified)
@@ -951,7 +951,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             self.assertEqual(payload["issue"], 21)
             self.assertEqual(payload["activity_age_minutes"], 17)
             self.assertEqual(payload["activity_source"],
-                             "v3_authenticated_collector")
+                             "workflow_push")
             self.assertFalse(payload["release_authorized"])
             self.assertEqual(payload["mutations"], 0)
             self.assertEqual(summary.read_text(encoding="utf-8"),

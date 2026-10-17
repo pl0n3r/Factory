@@ -197,6 +197,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
 
         sha = branch_sha()
         latest = since
+        activity_source = "reservation_marker"
         for c in comments:
             if c.get("user", {}).get("login") == owner:
                 when = _time(c.get("created_at"), now)
@@ -312,7 +313,12 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 continue
             pushed_at = _time(run.get("created_at"), now)
             if pushed_at >= since and now - pushed_at < grace:
-                latest = max(latest, pushed_at)
+                if pushed_at == latest and activity_source != "workflow_push":
+                    # Dos fuentes de segundo idéntico: imposible atribuir.
+                    raise IncompleteEvidence()
+                if pushed_at > latest:
+                    latest = pushed_at
+                    activity_source = "workflow_push"
                 recent = True
         if not recent:
             raise IncompleteEvidence()
@@ -344,6 +350,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             "owner": owner, "lease_id": lease["reservation_id"],
             "branch": branch, "branch_sha": sha, "pagination": pagination,
             "last_activity_at": latest.isoformat().replace("+00:00", "Z"),
+            "activity_source": activity_source,
             "ci_running": running, "rate_limit": limit,
             "rate_remaining": effective_remaining, "api_requests": used,
         }
