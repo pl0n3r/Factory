@@ -1357,12 +1357,26 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["sonar_evidence"]["total"] = 1
         q["checks"]["check_runs"][1]["output"]["annotations_count"] = 1
         mod.verify(q, SHA, NOW)  # Maintainability alone is not a security veto.
+        # In Multi-Quality Rule Mode the impact is authoritative, not the
+        # top-level legacy severity (which may disagree with the UI).
+        q_low = deepcopy(q)
+        q_low["sonar_evidence"]["issues"] = [
+            dict(mild, type="BUG", severity="BLOCKER",
+                 impacts=[{"softwareQuality": "RELIABILITY", "severity": "LOW"}])]
+        mod.verify(q_low, SHA, NOW)
+        q_no_legacy = deepcopy(q_low)
+        q_no_legacy["sonar_evidence"]["issues"][0].pop("severity")
+        mod.verify(q_no_legacy, SHA, NOW)
+        q_legacy_minor = deepcopy(q)
+        q_legacy_minor["sonar_evidence"]["issues"] = [
+            dict(mild, type="BUG", severity="MINOR", impacts=None)]
+        mod.verify(q_legacy_minor, SHA, NOW)
         for altered in (
-            dict(mild, type="BUG", severity="CRITICAL"),
-            dict(mild, type="VULNERABILITY", severity="MAJOR"),
+            dict(mild, type="BUG", severity="CRITICAL", impacts=None),
+            dict(mild, type="VULNERABILITY", severity="MAJOR", impacts=None),
             dict(mild, impacts=[{"softwareQuality": "SECURITY", "severity": "HIGH"}]),
             dict(mild, impacts=[{"softwareQuality": "RELIABILITY", "severity": "BLOCKER"}]),
-            dict(mild, severity=None),
+            dict(mild, severity=None, impacts=None),
             dict(mild, impacts=[{"softwareQuality": "SECURITY"}]),
         ):
             with self.subTest(issue=altered):

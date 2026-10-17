@@ -525,13 +525,19 @@ def verify_sonar_evidence(sonar, checks, expected, number):
                 if (impact["softwareQuality"] in ("SECURITY", "RELIABILITY")
                         and impact["severity"] in ("BLOCKER", "CRITICAL", "HIGH")):
                     raise Denied("sonar_high_critical_new_code")
+        if impacts is not None:
+            # Sonar Multi-Quality Rule Mode uses impacts as the authoritative
+            # classification. Its legacy top-level severity can disagree:
+            # e.g. reliability LOW with legacy BLOCKER. Never turn that into
+            # a false HIGH/CRITICAL finding.
+            continue
+        # Legacy classification applies only if no MQR impacts are supplied.
         severity = issue.get("severity")
         if (type(severity) is not str or severity not in
                 ("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO",
                  "HIGH", "MEDIUM", "LOW")):
             raise Denied("sonar_severity_unknown")
-        # Legacy classification: MAJOR is ambiguous for bugs/vulnerabilities,
-        # so fail closed rather than accepting an unproven low-risk finding.
+        # Legacy MAJOR is ambiguous for bugs/vulnerabilities: fail closed.
         if kind in ("BUG", "VULNERABILITY") and severity in (
                 "BLOCKER", "CRITICAL", "HIGH", "MAJOR"):
             raise Denied("sonar_high_critical_or_ambiguous_new_code")
