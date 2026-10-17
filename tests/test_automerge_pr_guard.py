@@ -350,6 +350,43 @@ class AutoMergePrGuardTests(unittest.TestCase):
             with self.subTest(prose=prose):
                 self.assertFalse(mod.review_incomplete_notice(prose))
 
+    def test_decorated_security_severity_vetoes_every_review_surface(self):
+        # A severe finding preceded by a checklist or warning emoji must not
+        # evade the exact-HEAD security veto in any evidence channel.
+        findings = (
+            "- [ ] HIGH: authentication bypass",
+            "⚠️ CRITICAL: SQL injection",
+            "> 🚨 P1: remote command execution",
+            "### ⚠️ **HIGH** privilege escalation",
+            "- [x] [P0] Harden authentication bypass",
+        )
+        mod.verify(evidence(), SHA, NOW)
+        for finding in findings:
+            with self.subTest(finding=finding):
+                self.assertTrue(mod.severe_finding(finding))
+                q = evidence()
+                q["reviews"][0]["body"] = finding
+                self.deny(q)
+                q = evidence()
+                q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                  "commit_id": SHA, "body": finding}]
+                self.deny(q)
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "other"},
+                                        "body": finding}]
+                self.deny(q)
+                q = evidence()
+                q["commit_status"]["statuses"][0]["description"] = finding
+                q["status_history"][0]["description"] = finding
+                self.deny(q)
+        for explanation in (
+            "The manual explains ⚠️ CRITICAL: SQL injection as an example.",
+            "No high or critical findings were found.",
+            "- [ ] Review code formatting in documentation",
+        ):
+            with self.subTest(explanation=explanation):
+                self.assertFalse(mod.severe_finding(explanation))
+
     def test_markdown_wrapped_coderabbit_skips_fail_closed(self):
         # A skip/limit notice after the review must block even when
         # CodeRabbit formats the notice as a list, heading or nested quote.

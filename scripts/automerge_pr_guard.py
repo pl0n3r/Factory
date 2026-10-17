@@ -127,6 +127,12 @@ def review_incomplete_notice(body):
                 or ACTION_NOT_COMPLETED_TEXT.search(body))
 
 
+def severe_finding(body):
+    """Detect severity headings even with task-list or warning prefixes."""
+    return bool(SEVERE.search(body) or
+                SEVERE.search(REVIEW_NOTICE_DECORATION.sub("", body)))
+
+
 RESERVATION_HEADER = re.compile(r"<!--\s*condor-reserva\b", re.I)
 RESERVATION_MARKER = re.compile(r"<!--\s*condor-reserva\s+(\{[^\n]*\})\s*-->", re.I)
 TASK_HEADER = re.compile(r"<!--\s*factory-plan-task\b", re.I)
@@ -639,7 +645,7 @@ def verify_coderabbit_status(payload, expected, history):
             description = row.get("description")
             if type(description) is not str or not description.strip():
                 raise Denied("coderabbit_historical_status_unknown")
-            if SEVERE.search(description):
+            if severe_finding(description):
                 raise Denied("coderabbit_historical_severe_unresolved")
             if history_latest is None or row["id"] > history_latest["id"]:
                 history_latest = row
@@ -650,7 +656,7 @@ def verify_coderabbit_status(payload, expected, history):
     description = latest.get("description")
     if (latest.get("state") != "success"
             or type(description) is not str or not description.strip()
-            or SEVERE.search(description)
+            or severe_finding(description)
             or review_incomplete_notice(description)):
         raise Denied("coderabbit_commit_status_skipped_or_failed")
 
@@ -675,7 +681,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
         if row.get("state") == "CHANGES_REQUESTED" and (
                 type(detail) is not str or not detail.strip()):
             raise Denied("changes_requested_severity_unknown")
-        if type(detail) is str and SEVERE.search(detail):
+        if type(detail) is str and severe_finding(detail):
             raise Denied("review_high_or_critical")
         if row.get("state") == "DISMISSED":
             # Una revisión anulada no es evidencia de seguridad válida,
@@ -694,7 +700,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             # resolution evidence for that finding.
             body = row.get("body")
             if (type(body) is not str or not body.strip()
-                    or SEVERE.search(body)):
+                    or severe_finding(body)):
                 raise Denied("prior_coderabbit_severe_review_unresolved")
             continue
         body = row.get("body")
@@ -704,7 +710,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             raise Denied("coderabbit_review_body_unknown")
         if (row.get("state") in ("APPROVED", "COMMENTED", "CHANGES_REQUESTED") and type(body) is str
                 and body.strip() and not review_incomplete_notice(body)
-                and not SEVERE.search(body)):
+                and not severe_finding(body)):
             # An exact-HEAD review without a verifiable submission time is
             # incomplete evidence, not an authorization to merge. GitHub
             # supplies submitted_at on published reviews; drafts/PENDING do
@@ -723,7 +729,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             clean = True
             substantive_times.append(reviewed.astimezone(timezone.utc))
         elif type(body) is str and (review_incomplete_notice(body)
-                                        or SEVERE.search(body)):
+                                        or severe_finding(body)):
             raise Denied("review_skipped_or_severe")
     if not clean:
         raise Denied("substantive_coderabbit_review_missing")
@@ -736,7 +742,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
         body = row.get("body")
         if type(body) is not str or not body.strip():
             raise Denied("review_inline_finding_unknown")
-        if SEVERE.search(body):
+        if severe_finding(body):
             raise Denied("review_finding_unknown_or_severe")
         if row["user"].get("login") == "coderabbitai[bot]":
             commit_id = row.get("commit_id")
@@ -745,7 +751,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             body = row.get("body")
             # An older inline HIGH/CRITICAL finding is not automatically
             # remediated by a newer clean review of the branch.
-            if type(body) is not str or SEVERE.search(body):
+            if type(body) is not str or severe_finding(body):
                 raise Denied("review_finding_unknown_or_severe")
             if commit_id == expected and review_incomplete_notice(body):
                 raise Denied("review_finding_unknown_or_skipped")
@@ -758,7 +764,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
         body = row.get("body")
         if type(body) is not str or not body.strip():
             raise Denied("issue_comment_body_unknown")
-        if SEVERE.search(body):
+        if severe_finding(body):
             raise Denied("issue_comment_severe")
         if row["user"].get("login") != "coderabbitai[bot]":
             continue
