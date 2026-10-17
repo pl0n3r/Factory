@@ -453,6 +453,44 @@ class AutoMergePrGuardTests(unittest.TestCase):
             with self.subTest(notice=notice):
                 self.deny(q)
 
+    def test_coderabbit_paused_review_notice_fail_closed(self):
+        # Actual CodeRabbit bot summary: '> ## Reviews paused' even when a
+        # historical exact-HEAD review appeared clean.
+        mod.verify(evidence(), SHA, NOW)
+        notices = (
+            "## Reviews paused",
+            "> ## Reviews paused",
+            "> [!NOTE]\\n> ## Reviews paused",
+            "Review paused",
+            "Review has been paused",
+            "Reviews suspended",
+        )
+        for notice in notices:
+            with self.subTest(notice=notice):
+                self.assertTrue(mod.review_incomplete_notice(notice))
+                q = evidence()
+                q["issue_comments"] = [{
+                    "user": {"login": "coderabbitai[bot]"},
+                    "body": notice,
+                    "created_at": "2026-10-14T03:58:00Z",
+                    "updated_at": "2026-10-14T04:00:00Z",
+                }]
+                self.deny(q)
+                # A later substantive review on the SAME HEAD supersedes an
+                # earlier pause; this must not permanently veto minor fixes.
+                q["reviews"][0]["submitted_at"] = "2026-10-14T04:00:30Z"
+                mod.verify(q, SHA, NOW + timedelta(minutes=2))
+        for prose in (
+            "Documentation describes how reviews paused can be resumed.",
+            "The guide says review paused may appear in a notification.",
+        ):
+            with self.subTest(prose=prose):
+                self.assertFalse(mod.review_incomplete_notice(prose))
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                        "body": prose}]
+                mod.verify(q, SHA, NOW)
+
     def test_coderabbit_rate_limited_variants_are_not_review_evidence(self):
         # The old regex matched rate-limit but missed rate-limited because
         # the trailing word boundary fell between "limit" and "ed".

@@ -60,6 +60,7 @@ SKIPPED = re.compile(
       | rate[._-]limit(?:ed|ing)?
       | rate[ \t]+limit[ \t]+(?:reached|exceeded)
       | review[ \t]+disabled
+      | reviews?(?:[ \t]+(?:has|have)[ \t]+been)?[ \t]+(?:paused|suspended)
     )\b""",
     re.I | re.M | re.X,
 )
