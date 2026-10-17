@@ -707,6 +707,14 @@ class AutoMergePrGuardTests(unittest.TestCase):
                              "state": "CHANGES_REQUESTED",
                              "body": "Minor maintainability suggestion"})
         mod.verify(q, SHA, NOW)
+        # Revisión ajena con texto ausente/desconocido o HIGH no se ignora.
+        for body in ("", "Security HIGH vulnerability",
+                     "Security CRITICAL vulnerability"):
+            with self.subTest(third_party_finding=body):
+                q = evidence()
+                q["reviews"].append({"user": {"login": "other"},
+                                     "state": "CHANGES_REQUESTED", "body": body})
+                self.deny(q)
         # Reproducido: un APPROVED + DISMISSED no vuelve a estar aprobado.
         q = evidence(); q["reviews"].append({"user": {"login": "coderabbitai[bot]"},
                                               "state": "DISMISSED", "commit_id": SHA}); self.deny(q)
