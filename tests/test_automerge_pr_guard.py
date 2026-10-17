@@ -512,6 +512,44 @@ class AutoMergePrGuardTests(unittest.TestCase):
             q["reviews"][0]["body"] = explanatory
             mod.verify(q, SHA, NOW)
 
+    def test_markdown_bold_high_critical_exploit_labels_are_severe(self):
+        # Asterisks/underscores after the severity are Markdown markup,
+        # not a license to hide HIGH/CRITICAL security findings.
+        findings = (
+            "**CRITICAL** SQL injection in user-controlled parameter",
+            "**HIGH** privilege escalation enables writes",
+            "__CRITICAL__ stored XSS in admin portal",
+            "### **HIGH** authentication bypass in login",
+            "- **HIGH** SSRF exposes instance metadata",
+        )
+        for finding in findings:
+            with self.subTest(surface="review", finding=finding):
+                q = evidence()
+                q["reviews"].append({
+                    "user": {"login": "security-reviewer"},
+                    "state": "COMMENTED", "commit_id": SHA, "body": finding})
+                with self.assertRaisesRegex(mod.Denied, "review_high_or_critical"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(surface="inline", finding=finding):
+                q = evidence()
+                q["comments"] = [{
+                    "user": {"login": "security-reviewer"},
+                    "commit_id": SHA, "body": finding}]
+                with self.assertRaisesRegex(mod.Denied, "review_finding_unknown_or_severe"):
+                    mod.verify(q, SHA, NOW)
+            with self.subTest(surface="conversation", finding=finding):
+                q = evidence()
+                q["issue_comments"] = [{
+                    "user": {"login": "security-reviewer"}, "body": finding}]
+                with self.assertRaisesRegex(mod.Denied, "issue_comment_severe"):
+                    mod.verify(q, SHA, NOW)
+        # Descriptive discussion or negative findings remain non-findings.
+        q = evidence()
+        q["reviews"][0]["body"] = (
+            "The docs describe **HIGH** SQL injection patterns; none found."
+        )
+        mod.verify(q, SHA, NOW)
+
     def test_coderabbit_prose_does_not_forge_severe_or_skipped_signal(self):
         # CodeRabbit explanations quote severity/rate-limit terms: those
         # mentions are not themselves an authenticated finding or skipped review.
