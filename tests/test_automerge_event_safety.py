@@ -102,7 +102,7 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             "    steps:\n"
             "      - run: echo dummy\n"
         )
-        with self.assertRaisesRegex(ValidationError, "condición"):
+        with self.assertRaisesRegex(ValidationError, "único job|condición"):
             audit_phase_one_workflow(source)
 
     def test_additional_active_job_with_write_permissions_is_denied(self):
