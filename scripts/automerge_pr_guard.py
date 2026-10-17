@@ -513,7 +513,7 @@ def verify_sonar_evidence(sonar, checks, expected, number):
         key = issue.get("key")
         if (type(key) is not str or not key or key in keys
                 or issue.get("project") != "pl0n3r_factory"
-                or issue.get("pullRequest") not in (None, str(number))):
+                or issue.get("pullRequest") != str(number)):
             raise Denied("sonar_issue_identity_unknown")
         keys.add(key)
         kind = issue.get("type")

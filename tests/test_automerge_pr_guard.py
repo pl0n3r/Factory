@@ -1484,6 +1484,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q = evidence(); q["sonar_evidence"] = missing
                 self.deny(q)
         mild = {"key": "Sonar:001", "project": "pl0n3r_factory",
+                "pullRequest": "1364",
                 "type": "CODE_SMELL", "severity": "MAJOR",
                 "impacts": [{"softwareQuality": "MAINTAINABILITY",
                              "severity": "HIGH"}]}
@@ -1492,6 +1493,19 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["sonar_evidence"]["total"] = 1
         q["checks"]["check_runs"][1]["output"]["annotations_count"] = 1
         mod.verify(q, SHA, NOW)  # Maintainability alone is not a security veto.
+        # A filtered API response does not authenticate the identity of
+        # each returned issue; missing or mismatched pullRequest must DENY.
+        for invalid_pr in (None, "1375", "", 1364):
+            with self.subTest(invalid_pr=invalid_pr):
+                forged = deepcopy(q)
+                forged["sonar_evidence"]["issues"][0]["pullRequest"] = invalid_pr
+                with self.assertRaisesRegex(mod.Denied, "sonar_issue_identity_unknown"):
+                    mod.verify(forged, SHA, NOW)
+        missing_pr = deepcopy(q)
+        missing_pr["sonar_evidence"]["issues"][0].pop("pullRequest")
+        with self.assertRaisesRegex(mod.Denied, "sonar_issue_identity_unknown"):
+            mod.verify(missing_pr, SHA, NOW)
+
         # In Multi-Quality Rule Mode the impact is authoritative, not the
         # top-level legacy severity (which may disagree with the UI).
         q_low = deepcopy(q)
