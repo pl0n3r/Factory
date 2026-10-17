@@ -36,7 +36,11 @@ SEVERE = re.compile(
         [ \t]*\|[ \t]*[*_]{0,2}(?:🟠[ \t]*)?Major(?:\b|(?=[*_]))
       | [*_]{0,2}[^\n|]{1,80}[*_]{0,2}[ \t]*\|[ \t]*[*_]{0,2}(?:🔴[ \t]*)?(?:Critical|High)(?:\b|(?=[*_]))
       | [*_]{0,2}(?:Security[ \t]+)?(?:HIGH|CRITICAL|P0|P1|SEVERE|BLOCKER)
-        [ \t]+(?:security|severity|vulnerabilit(?:y|ies)|flaw|issue|finding|risk|bug|command[ \t]+injection)\b
+        [ \t]+(?:security|severity|vulnerabilit(?:y|ies)|flaw|issue|finding|risk|bug
+                |command[ \t]+injection|remote[ \t]+command[ \t]+execution
+                |sql[ \t]+injection|(?:stored|reflected)[ \t]+xss|xss|ssrf
+                |privilege[ \t]+escalation|authentication[ \t]+bypass
+                |auth[ \t]+bypass)\b
       | [*_]{0,2}(?:Security[ \t]*[-:][ \t]*)?
         (?:HIGH|CRITICAL|P0|P1)
         (?:
