@@ -1569,16 +1569,20 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q_no_legacy = deepcopy(q_low)
         q_no_legacy["sonar_evidence"]["issues"][0].pop("severity")
         mod.verify(q_no_legacy, SHA, NOW)
-        # Contradictory legacy BUG/VULNERABILITY with HIGH maintenance only
-        # has no matching authenticated security/reliability impact.
+        # Legacy BUG/VULNERABILITY cannot be reclassified as maintainability
+        # only, even LOW: contradictory evidence is UNKNOWN, not clean.
         for reported_type in ("BUG", "VULNERABILITY"):
-            conflicting = deepcopy(q)
-            conflicting["sonar_evidence"]["issues"] = [
-                dict(mild, type=reported_type)]
-            with self.subTest(reported_type=reported_type):
-                with self.assertRaisesRegex(
-                        mod.Denied, "sonar_type_quality_conflict"):
-                    mod.verify(conflicting, SHA, NOW)
+            for impact_severity in ("HIGH", "MEDIUM", "LOW", "INFO"):
+                conflicting = deepcopy(q)
+                conflicting["sonar_evidence"]["issues"] = [
+                    dict(mild, type=reported_type,
+                         impacts=[{"softwareQuality": "MAINTAINABILITY",
+                                   "severity": impact_severity}])]
+                with self.subTest(reported_type=reported_type,
+                                  impact_severity=impact_severity):
+                    with self.assertRaisesRegex(
+                            mod.Denied, "sonar_type_quality_conflict"):
+                        mod.verify(conflicting, SHA, NOW)
         # A genuine MQR reliability LOW remains authoritative even with
         # legacy BLOCKER and a separate maintenance HIGH impact.
         mixed = deepcopy(q)
