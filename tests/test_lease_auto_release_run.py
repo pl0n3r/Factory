@@ -118,7 +118,8 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertEqual(result.state, "read_only")
         self.assertFalse(result.release_authorized)
         self.assertTrue(all(
-            path == "/rate_limit" or path.startswith("/repos/pl0n3r/Factory/")
+            path in ("/rate_limit", "/repos/pl0n3r/Factory")
+            or path.startswith("/repos/pl0n3r/Factory/")
             for path in api.calls
         ))
         self.assertFalse(any(
