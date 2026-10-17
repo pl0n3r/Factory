@@ -1331,6 +1331,44 @@ class AutoMergePrGuardTests(unittest.TestCase):
             with self.assertRaises(mod.Denied):
                 mod.get_check_runs("token", "/repos/pl0n3r/Factory", SHA)
 
+    def test_exact_full_check_page_probes_hidden_next_page(self):
+        # A reported total_count=100 without Link does not prove there is
+        # no 101st check, potentially a newer failed Validar attempt.
+        original = deepcopy(evidence()["checks"]["check_runs"])
+        rows = original + [
+            {"id": 3000 + i, "name": f"Other {i}", "head_sha": SHA,
+             "status": "completed", "conclusion": "success",
+             "app": {"slug": "github-actions"}}
+            for i in range(95)
+        ]
+        self.assertEqual(len(rows), 100)
+        hidden = {"id": 4001, "name": "Validar", "head_sha": SHA,
+                  "status": "completed", "conclusion": "failure",
+                  "app": {"slug": "github-actions"}}
+        calls = []
+        def incomplete(_token, path):
+            page = int(path.rsplit("page=", 1)[1])
+            calls.append(page)
+            return {"total_count": 100,
+                    "check_runs": deepcopy(rows if page == 1 else [hidden])}
+        with patch.object(mod, "get", side_effect=incomplete):
+            with self.assertRaisesRegex(
+                    mod.Denied, "check_page_missing_next_link"):
+                mod.get_check_runs("token", "/repos/pl0n3r/Factory", SHA)
+        self.assertEqual(calls, [1, 2])
+
+        calls.clear()
+        def terminal(_token, path):
+            page = int(path.rsplit("page=", 1)[1])
+            calls.append(page)
+            return {"total_count": 100,
+                    "check_runs": deepcopy(rows if page == 1 else [])}
+        with patch.object(mod, "get", side_effect=terminal):
+            result = mod.get_check_runs("token", "/repos/pl0n3r/Factory", SHA)
+        self.assertEqual(result["total_count"], 100)
+        self.assertEqual(len(result["check_runs"]), 100)
+        self.assertEqual(calls, [1, 2, 1, 2])
+
     def test_paginated_full_page_link_requires_nonempty_next_page(self):
         """A claimed rel=next is not satisfied by a suddenly empty page.
 
