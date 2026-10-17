@@ -144,14 +144,23 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             audit_phase_one_workflow(source)
 
     def test_inert_job_rejects_extra_write_scope(self):
-        # Even a disabled job must not declare additional write permissions.
-        source = self.source.replace(
-            "      contents: read\n",
-            "      contents: read\n      id-token: write\n",
-            1,
-        )
-        with self.assertRaisesRegex(ValidationError, "permisos"):
-            audit_phase_one_workflow(source)
+        # Disabled jobs cannot hold write, duplicate, implicit or flow permissions.
+        valid = "    permissions:\n      contents: read\n"
+        self.assertIn(valid, self.source)
+        audit_phase_one_workflow(self.source)
+        cases = {
+            "id_token_write": valid + "      id-token: write\n",
+            "issues_write": valid + "      issues: write\n",
+            "flow_write": "    permissions: {contents: read, id-token: write}\n",
+            "missing_mapping": "",
+            "duplicate_mapping": valid + valid,
+        }
+        for name, replacement in cases.items():
+            with self.subTest(name=name):
+                mutated = self.source.replace(valid, replacement, 1)
+                self.assertNotEqual(mutated, self.source)
+                with self.assertRaisesRegex(ValidationError, "permisos"):
+                    audit_phase_one_workflow(mutated)
 
     def test_attempt_to_restore_merge_authority_is_detected(self):
         source = self.source
