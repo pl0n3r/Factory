@@ -883,6 +883,99 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(result.release_authorized)
 
 
+    def test_summary_line_and_cli_report_never_grant_release_authority(self):
+        """Cubrir casos hostiles, cotas y reporte del entrypoint sin red."""
+        import contextlib
+        import io
+        import os
+        import sys
+        import tempfile
+        from pathlib import Path
+        from scripts.lease_auto_release_integration import IntegrationPreview
+
+        valid = IntegrationPreview(
+            21, "read_only", "wait", "not_old_enough",
+            17, "v3_authenticated_collector",
+        )
+        self.assertIn("Issue #21", valid.summary_line)
+        self.assertIn("inactividad=17 min", valid.summary_line)
+        self.assertIn("fuente=v3_authenticated_collector", valid.summary_line)
+        self.assertIn("autoridad=NO", valid.summary_line)
+        self.assertFalse(valid.release_authorized)
+        self.assertFalse(valid.lock_verified)
+        self.assertFalse(valid.cas_verified)
+
+        for age in (None, -1, 525601, True, 2.5, "10"):
+            with self.subTest(age=age):
+                value = replace(valid, activity_age_minutes=age)
+                self.assertIn("inactividad=UNKNOWN", value.summary_line)
+        self.assertIn("inactividad=525600 min",
+                      replace(valid, activity_age_minutes=525600).summary_line)
+        self.assertIn("inactividad=0 min",
+                      replace(valid, activity_age_minutes=0).summary_line)
+        for source in (None, "commit", "different/repo", "unknown\nsecret"):
+            with self.subTest(source=source):
+                value = replace(valid, activity_source=source)
+                self.assertIn("fuente=UNKNOWN", value.summary_line)
+                self.assertNotIn("secret", value.summary_line)
+        for action in ("write", None, "release\nsecret", True):
+            with self.subTest(action=action):
+                self.assertIn(chr(96) + "unknown" + chr(96),
+                              replace(valid, action=action).summary_line)
+        for reason in (None, True, "TOKEN=secret", "private\npayload", "a" * 97):
+            with self.subTest(reason=reason):
+                note = replace(valid, reason=reason).summary_line
+                self.assertIn("veto/razón=untrusted_reason", note)
+                self.assertNotIn("secret", note)
+                self.assertNotIn("payload", note)
+        for issue in (None, True, 0, -21):
+            with self.subTest(issue=issue):
+                self.assertIn("Issue #0", replace(valid, issue=issue).summary_line)
+
+        source_file = (Path(__file__).resolve().parents[1] /
+                       "scripts" / "lease_auto_release_integration.py")
+        source_code = source_file.read_text(encoding="utf-8")
+        entrypoint = 'if __name__ == "__main__":' + source_code.split(
+            'if __name__ == "__main__":', 1)[1]
+        with tempfile.TemporaryDirectory() as folder:
+            summary = Path(folder) / "summary.md"
+            output = io.StringIO()
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                with patch.object(sys, "argv", ["observer", "21"]):
+                    with contextlib.redirect_stdout(output):
+                        exec(compile(entrypoint, str(source_file), "exec"), {
+                            "__name__": "__main__",
+                            "observe_issue_cli": lambda issue: valid,
+                        })
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["issue"], 21)
+            self.assertEqual(payload["activity_age_minutes"], 17)
+            self.assertEqual(payload["activity_source"],
+                             "v3_authenticated_collector")
+            self.assertFalse(payload["release_authorized"])
+            self.assertEqual(payload["mutations"], 0)
+            self.assertEqual(summary.read_text(encoding="utf-8"),
+                             valid.summary_line)
+
+            unsafe = replace(valid, state="UNKNOWN", action="unknown",
+                             reason="collector_unknown")
+            output = io.StringIO()
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                with patch.object(sys, "argv", ["observer", "21"]):
+                    with contextlib.redirect_stdout(output):
+                        with self.assertRaises(SystemExit) as err:
+                            exec(compile(entrypoint, str(source_file), "exec"), {
+                                "__name__": "__main__",
+                                "observe_issue_cli": lambda issue: unsafe,
+                            })
+            self.assertEqual(err.exception.code, 1)
+            lines = output.getvalue().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertEqual(json.loads(lines[0])["state"], "UNKNOWN")
+            self.assertFalse(json.loads(lines[1])["release_authorized"])
+            self.assertEqual(summary.read_text(encoding="utf-8"),
+                             valid.summary_line + unsafe.summary_line)
+
     def test_read_only_transport_allows_exact_repository_identity_and_denies_writes(self):
         from unittest.mock import patch
         from scripts.lease_auto_release_integration import _GhReadOnlyAPI
