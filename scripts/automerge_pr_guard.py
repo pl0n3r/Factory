@@ -537,6 +537,16 @@ def verify_sonar_evidence(sonar, checks, expected, number):
                         and impact["severity"] in ("BLOCKER", "CRITICAL", "HIGH")):
                     raise Denied("sonar_high_critical_new_code")
         if impacts is not None:
+            # A high maintainability impact alone cannot safely reclassify a
+            # legacy BUG/VULNERABILITY as harmless. A missing matching
+            # reliability/security impact leaves this conflicting source
+            # UNKNOWN; retain MQR precedence when those impacts are present.
+            if (kind in ("BUG", "VULNERABILITY")
+                    and all(impact["softwareQuality"] == "MAINTAINABILITY"
+                            for impact in impacts)
+                    and any(impact["severity"] in ("BLOCKER", "CRITICAL", "HIGH")
+                            for impact in impacts)):
+                raise Denied("sonar_type_quality_conflict")
             # Sonar Multi-Quality Rule Mode uses impacts as the authoritative
             # classification. Its legacy top-level severity can disagree:
             # e.g. reliability LOW with legacy BLOCKER. Never turn that into
