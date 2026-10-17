@@ -984,6 +984,21 @@ def get_paginated_records(token, endpoint):
                 seen.add(key)
             rows.extend(page_rows)
             if not has_next:
+                if len(page_rows) == 100:
+                    # A full page is ambiguous if GitHub omits Link rel=next:
+                    # page 2 may contain a severe review/finding not yet read.
+                    # Independently check the next bounded page rather than
+                    # trusting a missing pagination header as completion.
+                    if page == 5:
+                        raise Denied("record_inventory_over_bound")
+                    probe_rows, probe_more = get(
+                        token, endpoint + f"?per_page=100&page={page + 1}",
+                        include_link=True,
+                    )
+                    if (type(probe_rows) is not list
+                            or type(probe_more) is not bool
+                            or probe_rows or probe_more):
+                        raise Denied("record_page_missing_next_link")
                 return rows
         raise Denied("record_inventory_over_bound")
 
