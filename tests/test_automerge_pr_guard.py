@@ -1341,6 +1341,28 @@ class AutoMergePrGuardTests(unittest.TestCase):
         self.assertEqual(len(actual["windows"]), 1)
         mod.verify(actual, SHA, NOW)
 
+    def test_sonar_token_is_never_forwarded_on_redirect(self):
+        """A Sonar 3xx may not send the Bearer token to another origin."""
+        from urllib.request import Request
+        request = Request(
+            "https://sonarcloud.io/api/issues/search",
+            headers={"Authorization": "Bearer test-token"})
+        # Unlike urllib's default redirect handler, this handler denies any
+        # redirect before a second request can be issued with Authorization.
+        self.assertIsNone(mod._NoSonarRedirect().redirect_request(
+            request, None, 302, "Found", {},
+            "https://untrusted.example/collect"))
+        with patch.object(mod, "build_opener") as opener:
+            opener.return_value.open.side_effect = mod.HTTPError(
+                request.full_url, 302, "Found", {}, None)
+            with self.assertRaises(mod.Denied) as error:
+                mod.sonar_api_get("test-token", "issues/search", {"ps": "100"})
+            self.assertEqual(str(error.exception), "sonar_transport_unknown")
+            opener.assert_called_once_with(mod._NoSonarRedirect)
+            supplied = opener.return_value.open.call_args.args[0]
+            self.assertEqual(supplied.get_header("Authorization"),
+                             "Bearer test-token")
+
     def test_sonar_d069_requires_authenticated_complete_classification(self):
         base = evidence()
         mod.verify(base, SHA, NOW)

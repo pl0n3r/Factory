@@ -11,7 +11,7 @@ import uuid
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
 REPO = "pl0n3r/Factory"
 HEX_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -1005,6 +1005,12 @@ def get_check_runs(token, root, expected):
 
 
 
+class _NoSonarRedirect(HTTPRedirectHandler):
+    """Do not forward a Sonar Bearer token to a redirect target."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def sonar_api_get(token, route, params):
     """Read-only authenticated SonarQube Cloud query; no user-controlled host."""
     if type(token) is not str or not token.strip():
@@ -1015,7 +1021,7 @@ def sonar_api_get(token, route, params):
                  "Accept": "application/json",
                  "User-Agent": "factory-sonar-security-gate/1"})
     try:
-        with urlopen(request, timeout=12) as response:
+        with build_opener(_NoSonarRedirect).open(request, timeout=12) as response:
             raw = response.read(1048577)
     except (HTTPError, URLError, OSError, TimeoutError) as exc:
         raise Denied("sonar_transport_unknown") from exc
