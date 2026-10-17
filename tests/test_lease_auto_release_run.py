@@ -8,6 +8,7 @@ from scripts.lease_auto_release_run import (
     inventory_from_paginated_issues, observe_recent_activity, run_cycle,
 )
 from test_lease_release_executor import FakePort, snapshot
+from test_lease_github_port import FakeAPI, NOW
 
 
 class NoAccessPort:
@@ -42,7 +43,6 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
     def test_authenticated_recent_activity_inventory_is_bounded_and_never_writes(self):
         from datetime import timedelta
         from scripts.lease_github_port import LeaseGithubPort, RECENT, UNKNOWN
-        from test_lease_github_port import FakeAPI, NOW
 
         api = FakeAPI()
         observed = observe_recent_activity(
