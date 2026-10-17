@@ -242,9 +242,12 @@ class FactoryDietInventoryTests(unittest.TestCase):
             POST_BASELINE_WORKFLOWS[automerge_path],
             workflow_events(ROOT / automerge_path),
         )
+        # Inspect only jobs.automerge: a disabled sibling job cannot make
+        # an enabled automerge job look inert.
+        jobs_lines = _yaml_mapping_block(automerge.splitlines(), "jobs", 0)
+        automerge_lines = _yaml_mapping_block(jobs_lines, "automerge", 2)
         self.assertEqual(
-            [line.strip() for line in automerge.split("  automerge:\n", 1)[1].splitlines()
-             if line.startswith("    if:")],
+            [line.strip() for line in automerge_lines if line.startswith("    if:")],
             ["if: ${{ false }}"],
         )
         self.assertNotIn("contents: write", automerge)
@@ -253,6 +256,22 @@ class FactoryDietInventoryTests(unittest.TestCase):
         self.assertNotIn("MERGE_TOKEN", automerge)
         self.assertNotIn("gh pr merge", automerge)
         self.assertNotIn("gh api --method PUT", automerge)
+
+    def test_phase_one_gate_ignores_false_in_sibling_job(self) -> None:
+        source = (ROOT / ".github/workflows/automerge.yml").read_text(encoding="utf-8")
+        mutant = source.replace("    if: ${{ false }}\n", "", 1) + (
+            "  disabled-decoy:\n"
+            "    if: ${{ false }}\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo decoy\n"
+        )
+        jobs = _yaml_mapping_block(mutant.splitlines(), "jobs", 0)
+        target = _yaml_mapping_block(jobs, "automerge", 2)
+        decoy = _yaml_mapping_block(jobs, "disabled-decoy", 2)
+        self.assertEqual([], [line.strip() for line in target if line.startswith("    if:")])
+        self.assertEqual(["if: ${{ false }}"],
+                         [line.strip() for line in decoy if line.startswith("    if:")])
 
     def test_historical_line_counts_are_provenance_not_immutable_runtime(self) -> None:
         """Un workflow puede crecer después del snapshot sin invalidar la tabla."""
