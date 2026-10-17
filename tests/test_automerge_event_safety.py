@@ -21,7 +21,10 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read\njobs:", source)
         self.assertIn("  automerge:\n", source)
         job = source.split("  automerge:\n", 1)[1]
-        self.assertIn("    if: ${{ false }}", job)
+        self.assertEqual(
+            [line.strip() for line in job.splitlines() if line.startswith("    if:")],
+            ["if: ${{ false }}"],
+        )
         self.assertIn("      contents: read", job)
         self.assertNotIn("contents: write", source)
         self.assertNotIn("pull-requests: write", source)
@@ -37,6 +40,22 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
             source,
         )
         audit_workflow(source)
+
+    def test_comment_only_false_does_not_hide_executable_true_condition(self):
+        source = self.source.replace(
+            "    if: ${{ false }}",
+            "    if: ${{ true }}\n    # if: ${{ false }}",
+            1,
+        )
+        job = source.split("  automerge:\n", 1)[1]
+        self.assertEqual(
+            [line.strip() for line in job.splitlines() if line.startswith("    if:")],
+            ["if: ${{ true }}"],
+        )
+        self.assertNotEqual(
+            [line.strip() for line in job.splitlines() if line.startswith("    if:")],
+            ["if: ${{ false }}"],
+        )
 
     def test_attempt_to_restore_merge_authority_is_detected(self):
         source = self.source
