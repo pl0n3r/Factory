@@ -209,7 +209,7 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                     self.assertEqual(result.reason, "invalid_evidence_types")
 
     def test_quota_preflight_runs_real_bash_without_false_green(self):
-        """Exercise the actual workflow preflight with a fake GH API response."""
+        """Exercise real Bash: valid low quota defers green, bad evidence fails."""
         import json
         import os
         import shutil
@@ -229,11 +229,11 @@ class LeaseAutoReleaseTests(unittest.TestCase):
         script = textwrap.dedent(
             section.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
         )
-        for remaining, limit, should_allow in (
-            (20, 100, True), (19, 100, False),
-            (19.5, 100, False), (20, 100.5, False),
-            (True, 100, False), (20, 0, False),
-            (1000000001, 1000000001, False),
+        for remaining, limit, should_allow, should_defer in (
+            (20, 100, True, False), (19, 100, False, True),
+            (19.5, 100, False, False), (20, 100.5, False, False),
+            (True, 100, False, False), (20, 0, False, False),
+            (1000000001, 1000000001, False, False),
         ):
             with self.subTest(remaining=remaining, limit=limit):
                 with tempfile.TemporaryDirectory() as folder:
@@ -244,6 +244,7 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                     )
                     helper.chmod(0o755)
                     output = Path(folder) / "output.txt"
+                    summary = Path(folder) / "summary.md"
                     env = dict(os.environ)
                     env.update({
                         "PATH": folder + os.pathsep + env.get("PATH", ""),
@@ -254,6 +255,7 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                         }),
                         "RUNNER_TEMP": folder,
                         "GITHUB_OUTPUT": str(output),
+                        "GITHUB_STEP_SUMMARY": str(summary),
                         "GH_TOKEN": "unused",
                         "EXPECTED_REPOSITORY": "pl0n3r/Factory",
                         "OBSERVED_REPOSITORY": "pl0n3r/Factory",
@@ -263,11 +265,16 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                         capture_output=True, text=True, timeout=12,
                     )
                     self.assertEqual(
-                        proc.returncode == 0, should_allow,
+                        proc.returncode == 0, should_allow or should_defer,
                         msg=proc.stderr,
                     )
                     logged = output.read_text(encoding="utf-8") if output.exists() else ""
                     self.assertEqual("allow=true" in logged, should_allow)
+                    self.assertEqual("allow=false" in logged, should_defer)
+                    report = summary.read_text(encoding="utf-8") if summary.exists() else ""
+                    self.assertEqual("deferred_low_quota" in report, should_defer)
+                    self.assertEqual("deferred_low_quota" in proc.stdout, should_defer)
+                    self.assertNotIn("::error::", proc.stdout) if should_defer else None
 
 
 if __name__ == "__main__":

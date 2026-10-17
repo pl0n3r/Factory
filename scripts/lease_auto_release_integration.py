@@ -29,6 +29,30 @@ class IntegrationPreview:
     state: str
     action: str
     reason: str
+    activity_age_minutes: int | None = None
+    activity_source: str | None = None
+
+    @property
+    def summary_line(self) -> str:
+        """Resumir sólo datos tipados; jamás imprimir comentarios o identidades."""
+        issue = self.issue if type(self.issue) is int and self.issue > 0 else 0
+        action = (self.action if self.action in
+                  ("wait", "mark_recovery", "release", "unknown") else "unknown")
+        reason = (self.reason if type(self.reason) is str
+                  and re.fullmatch(r"[a-z0-9_]{1,96}", self.reason)
+                  else "untrusted_reason")
+        minutes = (str(self.activity_age_minutes)
+                   if type(self.activity_age_minutes) is int
+                   and 0 <= self.activity_age_minutes <= 525600
+                   else "UNKNOWN")
+        source = (self.activity_source
+                  if self.activity_source in ("reservation_marker", "workflow_push")
+                  else "UNKNOWN")
+        # Sólo acredita el marker del bot o un workflow push exact-SHA;
+        # no inferir actividad del titular por login compartido ni por
+        # reviews/checks sin testigo temporal autenticado.
+        return (f"- Issue #{issue}: `{action}`; inactividad={minutes} min; "
+                f"fuente={source}; veto/razón={reason}; autoridad=NO.\n")
 
     @property
     def release_authorized(self) -> bool:
@@ -315,7 +339,9 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
                 or report.get("status") not in ACTIVE
                 or type(report.get("ci_running")) is not bool
                 or type(report.get("last_activity_at")) is not str
-                or UTC_STAMP.fullmatch(report["last_activity_at"]) is None):
+                or UTC_STAMP.fullmatch(report["last_activity_at"]) is None
+                or report.get("activity_source") not in (
+                    "reservation_marker", "workflow_push")):
             return _unknown(issue, "collector_unknown")
         last = datetime.fromisoformat(
             report["last_activity_at"].replace("Z", "+00:00"))
@@ -355,8 +381,14 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
             return _unknown(issue, "invalid_decision")
         if decision.action not in ("unknown", "wait"):
             return _unknown(issue, "inactivity_not_proven")
-        return IntegrationPreview(issue, "read_only", decision.action,
-                                  decision.reason)
+        age = int((now.astimezone(timezone.utc) - last).total_seconds() // 60)
+        if age < 0:
+            return _unknown(issue, "future_activity")
+        return IntegrationPreview(
+            issue, "read_only", decision.action, decision.reason,
+            age if decision.action == "wait" else None,
+            report["activity_source"] if decision.action == "wait" else None,
+        )
     except Exception:
         # Sin nombres de usuario, payloads, headers ni tokens en errores.
         return _unknown(issue, "unverifiable_integration")
@@ -376,11 +408,18 @@ if __name__ == "__main__":
             "state": result.state,
             "action": result.action,
             "reason": result.reason,
+            "activity_age_minutes": result.activity_age_minutes,
+            "activity_source": result.activity_source,
             "release_authorized": False,
             "lock_verified": False,
             "cas_verified": False,
             "mutations": 0,
         }, sort_keys=True))
+        import os
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as report:
+                report.write(result.summary_line)
         # UNKNOWN no debe producir un workflow verde: no hubo evidencia
         # verificable. Sólo un preview read-only/wait es terminal válido.
         if result.state != "read_only" or result.action != "wait":

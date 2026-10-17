@@ -8,6 +8,7 @@ from scripts.lease_auto_release_run import (
     inventory_from_paginated_issues, observe_recent_activity, run_cycle,
 )
 from test_lease_release_executor import FakePort, snapshot
+from test_lease_github_port import FakeAPI, NOW
 
 
 class NoAccessPort:
@@ -42,7 +43,6 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
     def test_authenticated_recent_activity_inventory_is_bounded_and_never_writes(self):
         from datetime import timedelta
         from scripts.lease_github_port import LeaseGithubPort, RECENT, UNKNOWN
-        from test_lease_github_port import FakeAPI, NOW
 
         api = FakeAPI()
         observed = observe_recent_activity(
@@ -103,6 +103,56 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         # Los inválidos sin fecha lejana no han tocado el Port; el último
         # caso puede leer solo GET y aun así carece de autoridad.
         self.assertEqual(blocked.switch_reads, 1)
+
+    def test_observation_reports_current_repository_without_writes(self):
+        """Fase A informa cada Issue local; lo no atribuible sigue UNKNOWN."""
+        from scripts.lease_auto_release_integration import (
+            IntegrationPreview, _GhReadOnlyAPI,
+        )
+        from scripts.lease_github_port import LeaseGithubPort
+
+        api = FakeAPI()
+        result = observe_recent_activity(
+            [21], LeaseGithubPort(api), now=NOW,
+        )
+        self.assertEqual(result.state, "read_only")
+        self.assertFalse(result.release_authorized)
+        self.assertTrue(all(
+            path in ("/rate_limit", "/repos/pl0n3r/Factory")
+            or path.startswith("/repos/pl0n3r/Factory/")
+            for path in api.calls
+        ))
+        self.assertFalse(any(
+            path.startswith("/repos/other") for path in api.calls))
+        self.assertEqual(_GhReadOnlyAPI.repo, "pl0n3r/Factory")
+        valid = IntegrationPreview(
+            21, "read_only", "wait", "not_old_enough", 17,
+            "workflow_push",
+        )
+        note = valid.summary_line
+        self.assertIn("Issue #21", note)
+        self.assertIn("inactividad=17 min", note)
+        self.assertIn("fuente=workflow_push", note)
+        self.assertIn("veto/razón=not_old_enough", note)
+        self.assertIn("autoridad=NO", note)
+        unknown = IntegrationPreview(
+            21, "UNKNOWN", "unknown", "collector_unknown",
+        )
+        self.assertIn("inactividad=UNKNOWN", unknown.summary_line)
+        self.assertIn("fuente=UNKNOWN", unknown.summary_line)
+        self.assertFalse(unknown.release_authorized)
+        malicious = IntegrationPreview(
+            21, "UNKNOWN", "unknown", "password_secret\nTOKEN=abc",
+        )
+        self.assertNotIn("password_secret", malicious.summary_line)
+        self.assertNotIn("TOKEN", malicious.summary_line)
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github/workflows" / "liberar-reservas.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("GITHUB_REPOSITORY: ${{ github.repository }}", workflow)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
 
     def test_switch_recheck_rejects_pause_and_untrusted_state_during_inventory(self):
         from scripts.unattended_kill_switch import (
@@ -337,6 +387,62 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
             run_cycle([1191], NoAccessPort(),
                       feature_enabled="true").state, "invalid_flags",
         )
+
+    def test_authorized_activation_caps_three_releases_and_preserves_pr_branch(self):
+        """Un lote autorizado jamás ejecuta cuatro posibles liberaciones."""
+        from unittest.mock import patch
+        from scripts.lease_release_executor import Result
+
+        port = FakePort(snapshot())
+        original = (port.item.branch, port.item.branch_sha,
+                    port.item.reservation_id)
+        # Caso real aislado: el puerto conserva la rama canónica al liberar.
+        single = run_cycle(
+            [1191], port, feature_enabled=True,
+            dry_run=False, mutations_authorized=True,
+        )
+        self.assertEqual(single.results[0][1].reason, "released")
+        self.assertEqual((port.item.branch, port.item.branch_sha,
+                          port.item.reservation_id), original)
+        self.assertEqual([kind for kind, _ in port.writes],
+                         ["comment", "status"])
+        self.assertNotIn("delete_branch", [kind for kind, _ in port.writes])
+        self.assertNotIn("close_pr", [kind for kind, _ in port.writes])
+
+        with patch(
+            "scripts.lease_auto_release_run.execute",
+            return_value=Result("release", "released", True, "complete"),
+        ) as simulate:
+            cycle = run_cycle(
+                [5, 4, 3, 2, 1], object(),
+                feature_enabled=True, dry_run=False,
+                mutations_authorized=True,
+            )
+            self.assertEqual(simulate.call_count, 3)
+            self.assertEqual([issue for issue, _ in cycle.results],
+                             [1, 2, 3, 4, 5])
+            self.assertEqual(
+                [result.reason for _, result in cycle.results],
+                ["released", "released", "released",
+                 "cycle_write_cap", "cycle_write_cap"])
+            self.assertFalse(cycle.results[3][1].wrote)
+            self.assertFalse(cycle.results[4][1].wrote)
+        with patch(
+            "scripts.lease_auto_release_run.execute",
+            return_value=Result("release", "dry_run"),
+        ) as simulate:
+            cycle = run_cycle([1, 2, 3, 4], object(),
+                              feature_enabled=True, dry_run=True)
+            self.assertEqual(simulate.call_count, 4)
+            self.assertTrue(all(not result.wrote
+                                for _, result in cycle.results))
+        # En el workflow real Fase B no está activada.
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github" / "workflows" / "liberar-reservas.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
 
     def test_verified_stale_grace_and_resume_serialized_with_kill_switch(self):
         self.assertEqual(
