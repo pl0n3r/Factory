@@ -98,6 +98,23 @@ def audit_phase_one_workflow(source: str) -> None:
         scopes.append(raw)
     if scopes != ["      contents: read"]:
         raise ValidationError("automerge fase 1 requiere permisos de solo lectura")
+    # AC-04: "if: false" is not permission to pre-stage executable code.
+    # Require the single inert diagnostic step; no extra shell, local action,
+    # environment or hidden secondary step may be introduced in Phase 1.
+    active_job_body = [
+        raw.rstrip() for raw in job_lines
+        if raw.strip() and not raw.lstrip().startswith("#")
+    ]
+    if active_job_body != [
+        "    if: ${{ false }}",
+        "    runs-on: ubuntu-latest",
+        "    permissions:",
+        "      contents: read",
+        "    steps:",
+        "      - name: Mantener auto-merge inerte durante Fase 1",
+        "        run: 'echo Fase 1 auto-merge inerte, sin secretos ni operaciones de merge.'",
+    ]:
+        raise ValidationError("automerge fase 1 solo permite paso inerte")
 
 class AutoMergeEventSafetyTests(unittest.TestCase):
     @classmethod
@@ -259,6 +276,31 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
                 self.assertNotEqual(mutated, self.source)
                 with self.assertRaisesRegex(ValidationError, "permisos"):
                     audit_phase_one_workflow(mutated)
+
+    def test_phase_one_denies_pre_staged_executable_steps(self):
+        # The disabled job must remain a single inert echo step; generic
+        # workflow auditing alone permits local actions and arbitrary shell.
+        inert = "        run: 'echo Fase 1 auto-merge inerte, sin secretos ni operaciones de merge.'"
+        self.assertIn(inert, self.source)
+        mutants = (
+            self.source.replace(inert, "        run: 'echo arbitrary'", 1),
+            self.source.replace(inert, inert + "\n      - run: echo second-step", 1),
+            self.source.replace(
+                inert, "        uses: ./scripts/local-step", 1
+            ),
+            self.source.replace(
+                inert, inert + "\n        env:\n          GH_TOKEN: fake", 1
+            ),
+            self.source.replace(
+                inert, inert + "\n        continue-on-error: true", 1
+            ),
+        )
+        audit_phase_one_workflow(self.source)
+        for source in mutants:
+            with self.subTest(source=source):
+                self.assertNotEqual(source, self.source)
+                with self.assertRaisesRegex(ValidationError, "paso inerte"):
+                    audit_phase_one_workflow(source)
 
     def test_attempt_to_restore_merge_authority_is_detected(self):
         source = self.source
