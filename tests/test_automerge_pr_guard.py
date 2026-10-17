@@ -45,7 +45,7 @@ def evidence():
     return {"switch": {"number": 767, "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
                        "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
                        "state": "closed", "user": {"login": "pl0n3r"}, "body": MARKER},
-            "pr": {"state": "open", "draft": False, "mergeable": True, "auto_merge": None, "changed_files": 3,
+            "pr": {"number": 1364, "state": "open", "draft": False, "mergeable": True, "auto_merge": None, "changed_files": 3,
                    "head": {"sha": SHA, "ref": "trabajo/issue-1364", "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
                    "base": {"ref": "main", "sha": BASE},
                    "body": "Closes #1364\n<!-- condor-reserva-id: a0f85ea8-d865-56f2-905c-6295b5279efa -->"}, "main_sha": BASE,
@@ -53,10 +53,13 @@ def evidence():
                         "base_commit": {"sha": BASE}, "merge_base_commit": {"sha": BASE}},
             "checks": {"total_count": len(mod.REQUIRED), "check_runs": [
                 {"id": 101 + i, "name": name, "head_sha": SHA, "status": "completed", "conclusion": "success",
+                 "output": {"annotations_count": 0} if name == "SonarCloud Code Analysis" else {},
                  "app": {"slug": ("sonarqubecloud" if name == "SonarCloud Code Analysis"
                                   else "github-advanced-security" if name == "CodeQL"
                                   else "github-actions")}}
                 for i, name in enumerate(mod.REQUIRED)]},
+            "sonar_evidence": {"project": "pl0n3r_factory", "pull_request": "1364",
+                               "sha": SHA, "total": 0, "issues": []},
             "commit_status": {"sha": SHA, "total_count": 1, "statuses": [
                 {"id": 201, "context": "CodeRabbit", "state": "success",
                  "description": "Review complete"}]},
@@ -1330,12 +1333,77 @@ class AutoMergePrGuardTests(unittest.TestCase):
                     item.setdefault("id", 50000 + i)
             return (value, False) if include_link else value
 
-        with patch.object(mod, "get", side_effect=fake_get):
+        with patch.object(mod, "get", side_effect=fake_get), \
+                patch.object(mod, "get_sonar_evidence", return_value=q["sonar_evidence"]):
             actual = mod.snapshot("dummy", 1364, SHA)
         self.assertEqual(actual["issue"]["number"], 1364)
         self.assertEqual(actual["windows"][0]["issue"]["number"], 921)
         self.assertEqual(len(actual["windows"]), 1)
         mod.verify(actual, SHA, NOW)
+
+    def test_sonar_d069_requires_authenticated_complete_classification(self):
+        base = evidence()
+        mod.verify(base, SHA, NOW)
+        for missing in (None, {}, {"project": "other"}):
+            with self.subTest(missing=missing):
+                q = evidence(); q["sonar_evidence"] = missing
+                self.deny(q)
+        mild = {"key": "Sonar:001", "project": "pl0n3r_factory",
+                "type": "CODE_SMELL", "severity": "MAJOR",
+                "impacts": [{"softwareQuality": "MAINTAINABILITY",
+                             "severity": "HIGH"}]}
+        q = evidence()
+        q["sonar_evidence"]["issues"] = [mild]
+        q["sonar_evidence"]["total"] = 1
+        q["checks"]["check_runs"][1]["output"]["annotations_count"] = 1
+        mod.verify(q, SHA, NOW)  # Maintainability alone is not a security veto.
+        for altered in (
+            dict(mild, type="BUG", severity="CRITICAL"),
+            dict(mild, type="VULNERABILITY", severity="MAJOR"),
+            dict(mild, impacts=[{"softwareQuality": "SECURITY", "severity": "HIGH"}]),
+            dict(mild, impacts=[{"softwareQuality": "RELIABILITY", "severity": "BLOCKER"}]),
+            dict(mild, severity=None),
+            dict(mild, impacts=[{"softwareQuality": "SECURITY"}]),
+        ):
+            with self.subTest(issue=altered):
+                q2 = deepcopy(q); q2["sonar_evidence"]["issues"] = [altered]
+                self.deny(q2)
+        for bad in ("total", "sha", "pull_request"):
+            q2 = deepcopy(q)
+            q2["sonar_evidence"][bad] = (2 if bad == "total" else "invalid")
+            self.deny(q2)
+        q2 = deepcopy(q)
+        q2["checks"]["check_runs"][1]["output"]["annotations_count"] = 0
+        self.deny(q2)
+
+    def test_sonar_reader_requires_revision_and_complete_pages(self):
+        valid_pr = {"pullRequests": [{"key": "1364", "base": "main",
+                                      "commit": {"sha": SHA}}]}
+        issue = {"key": "Sonar:001", "project": "pl0n3r_factory",
+                 "type": "CODE_SMELL", "severity": "MINOR"}
+        page = {"paging": {"pageIndex": 1, "pageSize": 100, "total": 1},
+                "issues": [issue]}
+        with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}), \
+                patch.object(mod, "sonar_api_get", side_effect=[valid_pr, page]) as getter:
+            self.assertEqual(mod.get_sonar_evidence(1364, SHA)["issues"], [issue])
+            self.assertEqual(getter.call_count, 2)
+        for invalid in (
+            {"pullRequests": [{"key": "1364", "base": "main"}]},
+            {"pullRequests": [{"key": "1364", "base": "main",
+                               "commit": {"sha": BASE}}]},
+            {"pullRequests": [{"key": "1364", "base": "main",
+                               "commit": {"sha": SHA}}] * 2},
+        ):
+            with self.subTest(invalid=invalid), \
+                    patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}), \
+                    patch.object(mod, "sonar_api_get", return_value=invalid):
+                with self.assertRaises(mod.Denied):
+                    mod.get_sonar_evidence(1364, SHA)
+        with patch.dict(mod.os.environ, {"SONAR_TOKEN": "test-token"}), \
+                patch.object(mod, "sonar_api_get", side_effect=[
+                    valid_pr, dict(page, paging=dict(page["paging"], total=2))]):
+            with self.assertRaises(mod.Denied):
+                mod.get_sonar_evidence(1364, SHA)
 
     def test_retried_checks_select_latest_id_fail_closed(self):
         # GitHub returns several attempts of a check with the same name and SHA.
@@ -1462,6 +1530,7 @@ class AutoMergePrGuardTests(unittest.TestCase):
         }
         with patch.object(mod, "get", side_effect=fake_get), \
                 patch.object(mod, "get_check_runs", return_value=q["checks"]), \
+                patch.object(mod, "get_sonar_evidence", return_value=q["sonar_evidence"]), \
                 patch.object(mod, "get_paginated_records", side_effect=lambda _t, path: deepcopy(collections[path])):
             got = mod.snapshot("token", 1364, SHA)
         self.assertEqual(len(queried), 2)

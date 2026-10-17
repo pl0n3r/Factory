@@ -10,7 +10,7 @@ import re
 import uuid
 import sys
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 REPO = "pl0n3r/Factory"
@@ -477,6 +477,66 @@ def verify_checks(checks, expected):
             raise Denied("required_check_unknown_or_failed")
 
 
+
+def verify_sonar_evidence(sonar, checks, expected, number):
+    """D-069: the green check is not evidence that 26 annotations are minor."""
+    if (type(number) is not int or not 1 <= number <= 1000000
+            or type(sonar) is not dict or sonar.get("project") != "pl0n3r_factory"
+            or sonar.get("pull_request") != str(number)
+            or sonar.get("sha") != expected
+            or type(sonar.get("total")) is not int
+            or not 0 <= sonar["total"] <= 500
+            or type(sonar.get("issues")) is not list
+            or len(sonar["issues"]) != sonar["total"]):
+        raise Denied("sonar_evidence_unknown_or_stale")
+    # Reuse the authenticated, exact-SHA SonarCloud check (never a user check).
+    rows = [row for row in checks["check_runs"]
+            if row["name"] == "SonarCloud Code Analysis"]
+    newest = max(rows, key=lambda row: row["id"])
+    output = newest.get("output")
+    if (type(output) is not dict
+            or type(output.get("annotations_count")) is not int
+            or output["annotations_count"] != sonar["total"]):
+        raise Denied("sonar_issue_count_unknown_or_mismatch")
+    keys = set()
+    for issue in sonar["issues"]:
+        if type(issue) is not dict:
+            raise Denied("sonar_issue_invalid")
+        key = issue.get("key")
+        if (type(key) is not str or not key or key in keys
+                or issue.get("project") != "pl0n3r_factory"
+                or issue.get("pullRequest") not in (None, str(number))):
+            raise Denied("sonar_issue_identity_unknown")
+        keys.add(key)
+        kind = issue.get("type")
+        if kind not in ("BUG", "VULNERABILITY", "CODE_SMELL"):
+            raise Denied("sonar_issue_type_unknown")
+        impacts = issue.get("impacts")
+        if impacts is not None:
+            if type(impacts) is not list or not impacts:
+                raise Denied("sonar_impacts_unknown")
+            for impact in impacts:
+                if (type(impact) is not dict
+                        or impact.get("softwareQuality") not in
+                        ("SECURITY", "RELIABILITY", "MAINTAINABILITY")
+                        or impact.get("severity") not in
+                        ("BLOCKER", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")):
+                    raise Denied("sonar_impact_unclassified")
+                if (impact["softwareQuality"] in ("SECURITY", "RELIABILITY")
+                        and impact["severity"] in ("BLOCKER", "CRITICAL", "HIGH")):
+                    raise Denied("sonar_high_critical_new_code")
+        severity = issue.get("severity")
+        if (type(severity) is not str or severity not in
+                ("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO",
+                 "HIGH", "MEDIUM", "LOW")):
+            raise Denied("sonar_severity_unknown")
+        # Legacy classification: MAJOR is ambiguous for bugs/vulnerabilities,
+        # so fail closed rather than accepting an unproven low-risk finding.
+        if kind in ("BUG", "VULNERABILITY") and severity in (
+                "BLOCKER", "CRITICAL", "HIGH", "MAJOR"):
+            raise Denied("sonar_high_critical_or_ambiguous_new_code")
+
+
 def verify_coderabbit_status(payload, expected, history):
     """A green commit status can still indicate that CodeRabbit skipped review.
 
@@ -765,6 +825,10 @@ def verify(snapshot, expected, now):
     verify_reservation(snapshot)
     verify_ancestry(snapshot.get("compare"), snapshot.get("main_sha"))
     verify_checks(snapshot.get("checks"), expected)
+    pr = snapshot.get("pr")
+    number = pr.get("number") if type(pr) is dict else None
+    verify_sonar_evidence(snapshot.get("sonar_evidence"), snapshot.get("checks"),
+                          expected, number)
     verify_coderabbit_status(snapshot.get("commit_status"), expected,
                              snapshot.get("status_history"))
     verify_review(snapshot.get("reviews"), snapshot.get("comments"),
@@ -934,12 +998,84 @@ def get_check_runs(token, root, expected):
     return first
 
 
+
+def sonar_api_get(token, route, params):
+    """Read-only authenticated SonarQube Cloud query; no user-controlled host."""
+    if type(token) is not str or not token.strip():
+        raise Denied("sonar_token_missing")
+    request = Request(
+        "https://sonarcloud.io/api/" + route + "?" + urlencode(params),
+        headers={"Authorization": "Bearer " + token,
+                 "Accept": "application/json",
+                 "User-Agent": "factory-sonar-security-gate/1"})
+    try:
+        with urlopen(request, timeout=12) as response:
+            raw = response.read(1048577)
+    except (HTTPError, URLError, OSError, TimeoutError) as exc:
+        raise Denied("sonar_transport_unknown") from exc
+    if len(raw) > 1048576:
+        raise Denied("sonar_payload_too_large")
+    try:
+        result = json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
+    except (UnicodeError, ValueError, TypeError) as exc:
+        raise Denied("sonar_payload_invalid") from exc
+    if type(result) is not dict:
+        raise Denied("sonar_payload_invalid")
+    return result
+
+
+def get_sonar_evidence(number, expected):
+    """Pin SonarCloud PR analysis SHA, enumerate every new unresolved issue."""
+    token = os.environ.get("SONAR_TOKEN")
+    data = sonar_api_get(token, "project_pull_requests/list",
+                         {"project": "pl0n3r_factory"})
+    prs = data.get("pullRequests")
+    if type(prs) is not list or len(prs) > 500:
+        raise Denied("sonar_pr_inventory_unknown")
+    matches = [x for x in prs if type(x) is dict and x.get("key") == str(number)]
+    if len(matches) != 1:
+        raise Denied("sonar_pr_identity_unknown")
+    pr = matches[0]
+    commit = pr.get("commit")
+    if (type(commit) is not dict or commit.get("sha") != expected
+            or pr.get("base") != "main"):
+        raise Denied("sonar_analysis_sha_unknown_or_stale")
+    all_issues = []
+    count = None
+    for page in range(1, 6):
+        response = sonar_api_get(token, "issues/search", {
+            "componentKeys": "pl0n3r_factory", "pullRequest": str(number),
+            "inNewCodePeriod": "true", "resolved": "false",
+            "ps": "100", "p": str(page)})
+        paging = response.get("paging")
+        entries = response.get("issues")
+        if (type(paging) is not dict or type(entries) is not list
+                or type(paging.get("total")) is not int
+                or paging.get("pageIndex") != page
+                or paging.get("pageSize") != 100):
+            raise Denied("sonar_issue_page_unknown")
+        if count is None:
+            count = paging["total"]
+        if count != paging["total"] or not 0 <= count <= 500:
+            raise Denied("sonar_issue_inventory_incomplete")
+        needed = min(100, count - len(all_issues))
+        if len(entries) != needed:
+            raise Denied("sonar_issue_page_incomplete")
+        all_issues.extend(entries)
+        if len(all_issues) == count:
+            return {"project": "pl0n3r_factory",
+                    "pull_request": str(number),
+                    "sha": expected, "total": count, "issues": all_issues}
+    raise Denied("sonar_issue_inventory_over_bound")
+
+
 def snapshot(token, number, expected):
     root = "/repos/" + REPO
     pr = get(token, root + f"/pulls/{number}")
     files = get_paginated_records(token, root + f"/pulls/{number}/files")
     switch = get(token, "/repos/pl0n3r/Factory/issues/767")
     checks = get_check_runs(token, root, expected)
+    sonar_evidence = get_sonar_evidence(number, expected)
     commit_status = get(token, root + f"/commits/{expected}/status")
     status_history = get_paginated_records(token, root + f"/commits/{expected}/statuses")
     reviews = get_paginated_records(token, root + f"/pulls/{number}/reviews")
@@ -1015,7 +1151,7 @@ def snapshot(token, number, expected):
         windows.append({"issue": window_issue, "comments": rows})
     return {"switch": switch, "pr": pr, "issue": issue, "lease_comments": lease_comments,
             "dependencies": dependencies, "files": files, "compare": compare, "checks": checks, "commit_status": commit_status,
-            "status_history": status_history,
+            "status_history": status_history, "sonar_evidence": sonar_evidence,
             "reviews": reviews,
             "comments": comments, "issue_comments": issue_comments, "windows": windows,
             "main_sha": main_sha}
