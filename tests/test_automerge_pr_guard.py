@@ -682,6 +682,60 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q["reviews"][0]["body"] = nonfinding
                 mod.verify(q, SHA, NOW)
 
+    def test_historical_security_qa_prose_not_severe_without_a_finding(self):
+        # Examples in old PR conversation are not active security findings.
+        # Retain CodeRabbit severity labels in actual Markdown findings.
+        prose = (
+            "1. `SEVERE` ignoraba un finding auténtico de CodeRabbit `**🔒 Security & Privacy** | **🟠 Major**`, permitiendo `ALLOW` (review, inline, histórico y conversación).",
+            "Defecto reproducible en el HEAD padre `c17c75a`: `SEVERE.search('> - **🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**')` era `False`.",
+            "1. **Security & Privacy | Major con prefijo de líneas:** el guard reconoce `9-13: **🔒 Security & Privacy** | **🟠 Major**`, incluyendo `&amp;`.",
+            "**Causa:** la alternativa final de etiquetas estructuradas acepta solo `(?:HIGH|CRITICAL|P0|P1)`, mientras las alternativas que reconocen `BLOCKER` exigen otro orden.",
+            "- El parser ahora incluye `BLOCKER` junto a `HIGH|CRITICAL|P0|P1` en la alternativa estructurada.",
+            "**Causa:** la alternativa etiquetada con separador `:` reconoce `HIGH|CRITICAL|P0|P1`, pero excluye `BLOCKER`.",
+            "No Security & Privacy | Major findings",
+            "Found no Security & Privacy | Major findings",
+            "Review complete: no Security & Privacy | Major findings",
+            "- No Security & Privacy | Major findings",
+            "> No Security & Privacy | Major findings",
+            "None reported: Security & Privacy | Major findings",
+            "No high or critical findings",
+            "The manual explains BLOCKER: security vulnerability",
+        )
+        mod.verify(evidence(), SHA, NOW)
+        for body in prose:
+            with self.subTest(prose=body):
+                self.assertIsNone(mod.SEVERE.search(body))
+                self.assertFalse(mod.severe_finding(body))
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "pl0n3r"},
+                                        "body": body}]
+                mod.verify(q, SHA, NOW)
+        authentic = (
+            "**🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**",
+            "9-13: **🔒 Security & Privacy** | **🟠 Major**",
+            "`9-13`: **🔒 Security &amp; Privacy** | **🟠 Major**",
+            "Line 9-13: **🔒 Security &amp; Privacy** | **🟠 Major**",
+            "scripts/automerge_pr_guard.py:31-33: **🔒 Security & Privacy** | **🟠 Major**",
+            "Found an issue: Security & Privacy | Major",
+            "_🔒 Security &amp; Privacy_ | _🟠 Major_",
+            "_⚠️ Potential issue_ | _🔴 Critical_",
+            "**🎯 Functional Correctness** | **🔴 Critical**",
+            "**Maintainability** | **🔴 Critical**",
+            "CRITICAL SQL injection in user-controlled parameter",
+            "**HIGH** SQL injection in user-controlled parameter",
+            "BLOCKER: security vulnerability",
+            "Severity: BLOCKER",
+            "## [P1] Avoid unauthenticated SQL injection",
+        )
+        for body in authentic:
+            with self.subTest(finding=body):
+                self.assertIsNotNone(mod.SEVERE.search(body))
+                self.assertTrue(mod.severe_finding(body))
+                q = evidence()
+                q["issue_comments"] = [{"user": {"login": "security-reviewer"},
+                                        "body": body}]
+                self.deny(q)
+
     def test_coderabbit_prose_does_not_forge_severe_or_skipped_signal(self):
         # CodeRabbit explanations quote severity/rate-limit terms: those
         # mentions are not themselves an authenticated finding or skipped review.
