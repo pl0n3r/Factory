@@ -34,15 +34,23 @@ def audit_phase_one_workflow(source: str) -> None:
         raise ValidationError("automerge fase 1 requiere un bloque on único")
     # Only the three explicitly inventoried events are allowed. A duplicate
     # or added event changes the authority even if jobs.automerge is inert.
-    event_lines = []
+    event_body = []
     for raw in lines[lines.index("on:") + 1:]:
-        if raw.strip() and not raw.lstrip().startswith("#"):
-            if not raw[0].isspace():
-                break
-            if re.match(r"^  \S", raw):
-                event_lines.append(raw.rstrip())
-    if event_lines != [
-        "  pull_request:", "  pull_request_review:", "  workflow_run:"
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not raw[0].isspace():
+            break
+        event_body.append(raw.rstrip())
+    # Exact parameters are part of the security contract, not just event
+    # names. Reject changed/duplicated trigger types and workflow sources.
+    if event_body != [
+        "  pull_request:",
+        "    types: [opened, reopened, ready_for_review, synchronize]",
+        "  pull_request_review:",
+        "    types: [submitted]",
+        "  workflow_run:",
+        '    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+        "    types: [completed]",
     ]:
         raise ValidationError("automerge fase 1 tiene eventos no autorizados")
     # Fase 1 permits exactly one inert job. An additional active job could
