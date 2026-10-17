@@ -606,6 +606,14 @@ def verify_review(reviews, comments, issue_comments, expected, now):
     for row in comments:
         if type(row) is not dict or type(row.get("user")) is not dict:
             raise Denied("review_comment_invalid")
+        # D-069: inline security findings from ANY authenticated reviewer
+        # must block, including older commits not proven remediated. A clean
+        # CodeRabbit summary cannot silence a third-party inline HIGH/CRITICAL.
+        body = row.get("body")
+        if type(body) is not str or not body.strip():
+            raise Denied("review_inline_finding_unknown")
+        if SEVERE.search(body):
+            raise Denied("review_finding_unknown_or_severe")
         if row["user"].get("login") == "coderabbitai[bot]":
             commit_id = row.get("commit_id")
             if type(commit_id) is not str or HEX_SHA.fullmatch(commit_id) is None:

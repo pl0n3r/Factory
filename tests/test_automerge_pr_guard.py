@@ -843,6 +843,33 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["comments"][0]["commit_id"] = BASE
         self.deny(q)
 
+    def test_third_party_inline_security_findings_fail_closed(self):
+        """Inline HIGH/CRITICAL findings are material regardless of reviewer."""
+        mod.verify(evidence(), SHA, NOW)
+        for reviewer in ("independent-reviewer", "coderabbitai[bot]"):
+            for commit in (SHA, BASE):
+                for finding in ("Security HIGH vulnerability",
+                                "Security CRITICAL vulnerability",
+                                "**Security & Privacy** | **Major**"):
+                    with self.subTest(reviewer=reviewer, commit=commit,
+                                      finding=finding):
+                        q = evidence()
+                        q["comments"] = [{"user": {"login": reviewer},
+                                          "commit_id": commit, "body": finding}]
+                        self.deny(q)
+        # An ordinary external nitpick does not create a D-069 veto.
+        q = evidence()
+        q["comments"] = [{"user": {"login": "independent-reviewer"},
+                          "commit_id": SHA, "body": "Minor maintainability note"}]
+        mod.verify(q, SHA, NOW)
+        # Missing or empty inline evidence is UNKNOWN, not zero findings.
+        for body in (None, ""):
+            with self.subTest(body=body):
+                q = evidence()
+                q["comments"] = [{"user": {"login": "independent-reviewer"},
+                                  "commit_id": SHA, "body": body}]
+                self.deny(q)
+
     def test_coderabbit_review_unknown_commit_identity_fails_closed(self):
         # A clean review on this HEAD cannot override severe or unknown
         # CodeRabbit review evidence with a missing/invalid commit ID.
