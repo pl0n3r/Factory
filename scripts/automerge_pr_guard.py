@@ -43,6 +43,13 @@ SEVERE = re.compile(
           [ \t]*:[ \t]*\S
           | -[ \t]*(?:risk|vulnerabilit(?:y|ies)|issue|flaw|bug)\b
         )
+      | [*_]{0,2}BLOCKER(?:[*_]{0,2}[ \t]*:|[ \t]*:[*_]{0,2})[ \t]*[*_]{0,2}
+        (?:security(?:[ \t]+(?:vulnerabilit(?:y|ies)|risk|flaw|issue|bug))?
+         |vulnerabilit(?:y|ies)
+         |remote[ \t]+command[ \t]+execution
+         |command[ \t]+injection
+         |authentication[ \t]+bypass
+         |auth[ \t]+bypass)\b
       | [*_]{0,2}(?:Severity|Priority)(?:[*_]{0,2}[ \t]*:|[ \t]*:[*_]{0,2})[ \t]*[*_]{0,2}(?:HIGH|CRITICAL|P0|P1|BLOCKER)(?:\b|(?=[*_]))
     )""",
     re.I | re.M | re.X,
