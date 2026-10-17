@@ -970,9 +970,9 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                             })
             self.assertEqual(err.exception.code, 1)
             lines = output.getvalue().splitlines()
-            self.assertEqual(len(lines), 2)
+            self.assertEqual(len(lines), 1)
             self.assertEqual(json.loads(lines[0])["state"], "UNKNOWN")
-            self.assertFalse(json.loads(lines[1])["release_authorized"])
+            self.assertFalse(json.loads(lines[0])["release_authorized"])
             self.assertEqual(summary.read_text(encoding="utf-8"),
                              valid.summary_line + unsafe.summary_line)
 
