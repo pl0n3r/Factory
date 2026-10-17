@@ -792,6 +792,19 @@ class AutoMergePrGuardTests(unittest.TestCase):
                     })
                     self.deny(q)
 
+    def test_incomplete_second_coderabbit_review_fails_closed(self):
+        """A clean same-SHA review must not conceal another empty bot review."""
+        for body in (None, "", "   "):
+            with self.subTest(body=body):
+                q = evidence()
+                q["reviews"].append({
+                    "user": {"login": "coderabbitai[bot]"},
+                    "state": "COMMENTED", "commit_id": SHA,
+                    "submitted_at": "2026-10-14T03:59:59Z",
+                    "body": body,
+                })
+                self.deny(q)
+
     def test_future_dated_coderabbit_review_cannot_authorize_merge(self):
         # A review's submitted_at must not be after the verification instant.
         # Otherwise a future timestamp can supersede a skip that is still

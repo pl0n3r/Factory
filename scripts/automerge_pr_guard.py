@@ -578,6 +578,10 @@ def verify_review(reviews, comments, issue_comments, expected, now):
                 raise Denied("prior_coderabbit_severe_review_unresolved")
             continue
         body = row.get("body")
+        # A blank exact-HEAD CodeRabbit review is UNKNOWN even when another
+        # review of this same SHA was previously substantive and clean.
+        if type(body) is not str or not body.strip():
+            raise Denied("coderabbit_review_body_unknown")
         if (row.get("state") in ("APPROVED", "COMMENTED", "CHANGES_REQUESTED") and type(body) is str
                 and body.strip() and not review_incomplete_notice(body)
                 and not SEVERE.search(body)):
