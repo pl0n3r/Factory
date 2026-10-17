@@ -684,7 +684,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
 
     def test_historical_security_qa_prose_not_severe_without_a_finding(self):
         # Examples in old PR conversation are not active security findings.
-        # Retain CodeRabbit severity labels in actual Markdown findings.
+        # Known maintenance-only severities are advisory in construction.
+        # Security, reliability and UNKNOWN categories remain fail-closed.
         prose = (
             "1. `SEVERE` ignoraba un finding auténtico de CodeRabbit `**🔒 Security & Privacy** | **🟠 Major**`, permitiendo `ALLOW` (review, inline, histórico y conversación).",
             "Defecto reproducible en el HEAD padre `c17c75a`: `SEVERE.search('> - **🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**')` era `False`.",
@@ -700,6 +701,12 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "None reported: Security & Privacy | Major findings",
             "No high or critical findings",
             "The manual explains BLOCKER: security vulnerability",
+            "**Maintainability** | **🔴 Critical**",
+            "**🩺 Maintainability** | **🔴 Critical**",
+            "- **Maintainability** | **🔴 High**",
+            "> **Maintainability** | **🔴 Critical**",
+            "**Code Smell** | **🔴 Critical**",
+            "**🩺 Code Smell** | **🔴 High**",
         )
         mod.verify(evidence(), SHA, NOW)
         for body in prose:
@@ -710,6 +717,18 @@ class AutoMergePrGuardTests(unittest.TestCase):
                 q["issue_comments"] = [{"user": {"login": "pl0n3r"},
                                         "body": body}]
                 mod.verify(q, SHA, NOW)
+                if "Maintainability" in body or "Code Smell" in body:
+                    q = evidence()
+                    q["reviews"][0]["body"] = body
+                    mod.verify(q, SHA, NOW)
+                    q = evidence()
+                    q["comments"] = [{"user": {"login": "coderabbitai[bot]"},
+                                      "commit_id": SHA, "body": body}]
+                    mod.verify(q, SHA, NOW)
+                    q = evidence()
+                    q["status_history"][0]["description"] = body
+                    q["commit_status"]["statuses"][0]["description"] = body
+                    mod.verify(q, SHA, NOW)
         authentic = (
             "**🔒 Security & Privacy** | **🟠 Major** | **🏗️ Heavy lift**",
             "9-13: **🔒 Security & Privacy** | **🟠 Major**",
@@ -720,7 +739,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "_🔒 Security &amp; Privacy_ | _🟠 Major_",
             "_⚠️ Potential issue_ | _🔴 Critical_",
             "**🎯 Functional Correctness** | **🔴 Critical**",
-            "**Maintainability** | **🔴 Critical**",
+            "**Reliability** | **🔴 Critical**",
+            "**Security & Privacy** | **🔴 High**",
+            "**Unknown Security Category** | **🔴 Critical**",
             "CRITICAL SQL injection in user-controlled parameter",
             "**HIGH** SQL injection in user-controlled parameter",
             "BLOCKER: security vulnerability",
