@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+from functools import wraps
 import re
 import sys
 import uuid
@@ -496,7 +497,19 @@ class GitHub:
         return token
 
     def release_issue_lock(self, issue_number: int, token: str) -> None:
-        """CAS GraphQL updateRefs: un sucesor no puede borrarse por un GET stale."""
+        """Release a lock only while RUNNING; recheck after resolving repo identity."""
+        self._release_issue_lock_cas(issue_number, token, recheck_running=True)
+
+    def release_owned_issue_lock_after_pause(
+        self, issue_number: int, token: str,
+    ) -> None:
+        """CAS-clean only the exact token owned by this operation, even in PAUSED."""
+        self._release_issue_lock_cas(issue_number, token)
+
+    def _release_issue_lock_cas(
+        self, issue_number: int, token: str, *, recheck_running: bool = False,
+    ) -> None:
+        """CAS GraphQL updateRefs: a stale owner cannot erase a successor."""
         if (type(issue_number) is not int or issue_number <= 0
             or not isinstance(token, str)
             or re.fullmatch(r"[0-9a-f]{40}", token) is None):
@@ -505,9 +518,10 @@ class GitHub:
         repo_id = repo_data.get("node_id") if isinstance(repo_data, dict) else None
         if not isinstance(repo_id, str) or not repo_id:
             raise CoordinationError("No se obtuvo autoridad de repo para CAS V3.")
-        # No liberar un lock V3 si el dueño pausó la fábrica mientras
-        # se resolvía repositoryId. El CAS solo evita takeover, no PAUSED.
-        require_global_running(self)
+        # La liberación pública revalida el kill switch después de la lectura
+        # de identidad y justo antes de mutar; cleanup propio omite esta guarda.
+        if recheck_running:
+            require_global_running(self)
         response = self.request("POST", "/graphql", {
             "query": ("mutation($input:UpdateRefsInput!){"
                       "updateRefs(input:$input){clientMutationId}}"),
@@ -1580,20 +1594,68 @@ def _apply_verified_reblock(
     api.set_status(number, STATUS_BLOCKED)
 
 
+def _with_sweep_issue_lock(
+    api: GitHub,
+    issue_number: int,
+    operation: Callable[[], Any],
+) -> Any:
+    """Serializa una transición automática de estado con /tomar y eventos.
+
+    Los dobles unitarios del sweep prueban la lógica de evidencia aislada;
+    la integración del lock se prueba separadamente y el adaptador real nunca
+    toma esta salida temprana porque es una instancia de GitHub.
+    """
+    if (not isinstance(api, GitHub)
+            and not getattr(api, "_force_v3_lock_test", False)):
+        return operation()
+    require_sweep_running(api)
+    work_branch = branch_for_issue(issue_number)
+    observed_work_sha = api.branch_sha(work_branch)
+    lock_parent = observed_work_sha or api.branch_sha("main")
+    if (not isinstance(lock_parent, str)
+            or re.fullmatch(r"[a-f0-9]{40}", lock_parent) is None):
+        raise CoordinationError("Barrido sin HEAD confiable para lock V3.")
+    token = api.acquire_issue_lock(issue_number, lock_parent)
+    if token is None:
+        return False
+    try:
+        require_sweep_running(api)
+        if api.branch_sha(recovery_lock_branch(issue_number)) != token:
+            raise CoordinationError("Lock V3 del barrido sustituido.")
+        if api.branch_sha(work_branch) != observed_work_sha:
+            return False
+        # El callback relee marker/estado/evidencia mientras el lock está
+        # vigente; el proxy revalida #767 antes de cada escritura.
+        return operation()
+    finally:
+        # Solo la limpieza del token propio puede ejecutarse en PAUSED.
+        # Los doubles mantienen la interfaz mínima de la prueba unitaria.
+        cleanup = getattr(api, "release_owned_issue_lock_after_pause", None)
+        if callable(cleanup):
+            cleanup(issue_number, token)
+        else:
+            api.release_issue_lock(issue_number, token)
+
+
 def sweep_satisfied_blocks(api: GitHub) -> int:
-    """Reconcilia markers factory-unblock en ambos sentidos, siempre fail-closed."""
+    """Reconcilia markers factory-unblock en ambos sentidos bajo lock V3."""
     changed = 0
     for issue in api.open_issues():
         candidate = _initial_unblock_candidate(api, issue)
         if candidate is not None:
             number, _marker, fingerprint = candidate
-            evidence = _revalidated_unblock_evidence(api, number, fingerprint)
-            if evidence is not None and _apply_verified_unblock(
-                api,
-                number,
-                fingerprint,
-                evidence,
-            ):
+
+            def unblock() -> bool:
+                evidence = _revalidated_unblock_evidence(
+                    api, number, fingerprint,
+                )
+                if evidence is None:
+                    return False
+                return _apply_verified_unblock(
+                    api, number, fingerprint, evidence,
+                )
+
+            if _with_sweep_issue_lock(api, number, unblock):
                 changed += 1
             continue
 
@@ -1601,10 +1663,15 @@ def sweep_satisfied_blocks(api: GitHub) -> int:
         if reblock is None:
             continue
         number, fingerprint = reblock
-        if not _revalidated_reblock_needed(api, number, fingerprint):
-            continue
-        _apply_verified_reblock(api, number, fingerprint)
-        changed += 1
+
+        def reblock_if_needed() -> bool:
+            if not _revalidated_reblock_needed(api, number, fingerprint):
+                return False
+            _apply_verified_reblock(api, number, fingerprint)
+            return True
+
+        if _with_sweep_issue_lock(api, number, reblock_if_needed):
+            changed += 1
 
     print(f"Bloqueos satisfechos reconciliados: {changed}")
     return changed
@@ -2273,12 +2340,111 @@ def recovery_lock_branch(issue_number: int) -> str:
     return f"coordinacion/lock-issue-{issue_number}"
 
 
+def _auto_recovery_note_protects(
+    api: GitHub, issue_number: int, current: dict[str, Any] | None,
+) -> bool:
+    """Una nota V3 auténtica reserva la recuperación al UUID vigente.
+
+    No confundir estado RECOVERY de barridos legacy con una nota emitida
+    por el auto-release. El label no demuestra por sí solo procedencia.
+    Una nota real del bot para este UUID veta /tomar mientras la lease siga
+    activa: el plazo de gracia nunca concede una nueva sesión.
+    """
+    if (type(current) is not dict or current.get("version") != 3
+            or current.get("active") is not True):
+        return False
+    session = current.get("reservation_id")
+    branch = current.get("branch")
+    owner = current.get("owner")
+    note_keys = {
+        "version", "reservation_id", "owner", "branch", "branch_sha",
+        "last_activity_at", "acceptance_sha256", "task_marker_sha256",
+    }
+    matching = 0
+    for comment in api.issue_comments(issue_number):
+        if type(comment) is not dict or type(comment.get("body")) is not str:
+            raise CoordinationError("Historial de recuperación V3 incompleto.")
+        body = comment["body"]
+        heads = re.findall(
+            r"<!--\s*factory-lease-recovery\b", body, flags=re.IGNORECASE,
+        )
+        if not heads:
+            continue
+        author = comment.get("user")
+        if (len(heads) != 1 or type(author) is not dict
+                or author.get("login") != "github-actions[bot]"
+                or author.get("type") != "Bot"):
+            raise CoordinationError(
+                "Nota de recuperación automática sin procedencia de bot."
+            )
+        match = re.search(
+            r"<!-- factory-lease-recovery (\{[^\r\n]*\}) -->",
+            body,
+        )
+        if match is None:
+            raise CoordinationError("Nota de recuperación automática malformada.")
+        try:
+            data = json.loads(
+                match.group(1),
+                object_pairs_hook=_unique_recovery_pairs,
+            )
+        except (ValueError, TypeError) as exc:
+            raise CoordinationError(
+                "Nota de recuperación automática inválida."
+            ) from exc
+        if (type(data) is not dict or set(data) != note_keys
+                or type(data.get("version")) is not int or data["version"] != 1):
+            raise CoordinationError(
+                "Nota de recuperación automática sin contrato válido."
+            )
+        if data.get("reservation_id") != session:
+            continue
+        if (data.get("owner") != owner or data.get("branch") != branch
+                or data.get("branch_sha") != api.branch_sha(branch)
+                or data.get("acceptance_sha256") != current.get("acceptance_sha256")
+                or data.get("task_marker_sha256") != current.get("task_marker_sha256")):
+            raise CoordinationError(
+                "Nota de recuperación V3 no coincide con la lease o rama."
+            )
+        matching += 1
+        if matching > 1:
+            raise CoordinationError(
+                "Notas V3 duplicadas para la misma reserva."
+            )
+    return matching == 1
+
+
+def _unique_recovery_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_recovery_key")
+        result[key] = value
+    return result
+
+
+def _require_auto_recovery_ownership(
+    api: GitHub, issue_number: int, current: dict[str, Any] | None,
+    actor: str, expected_session: str | None,
+) -> None:
+    if not _auto_recovery_note_protects(api, issue_number, current):
+        return
+    if (expected_session is None or type(current) is not dict
+            or actor != current.get("owner")
+            or expected_session != current.get("reservation_id")):
+        raise CoordinationError(
+            "Recuperación automática V3 protegida: no usar /tomar durante "
+            "la gracia; solo el titular con /recuperar <UUID> puede reanudar."
+        )
+
+
 def recover_existing_work_if_stale(
     api: GitHub,
     issue_number: int,
     actor: str,
     branch: str,
     current: dict[str, Any] | None,
+    *, expected_session: str | None = None,
 ) -> str | None:
     """Recupera trabajo stale o marcado explícitamente para recuperación."""
     issue = api.issue(issue_number)
@@ -2289,6 +2455,11 @@ def recover_existing_work_if_stale(
         and not work_is_stale(api, issue_number, branch)
     ):
         return None
+    # La nota llega antes que la etiqueta. El takeover está prohibido
+    # también durante un append parcialmente confirmado.
+    _require_auto_recovery_ownership(
+        api, issue_number, current, actor, expected_session,
+    )
     require_global_running(api)
     if not ensure_recovery_branch(api, branch):
         return None
@@ -2323,6 +2494,10 @@ def recover_existing_work_if_stale(
             and not work_is_stale(api, issue_number, branch)
         ):
             return None
+        # Revalidar incluso sin RECOVERY visible: fallo parcial tras nota.
+        _require_auto_recovery_ownership(
+            api, issue_number, latest, actor, expected_session,
+        )
         if api.branch_sha(branch) != branch_sha:
             raise CoordinationError("HEAD cambió antes de recuperar con lock V3.")
         return recover_stale_work(
@@ -3281,7 +3456,7 @@ def adopt_orphaned_contract(
     actor: str,
     association: str,
 ) -> str | None:
-    """Adopta explícitamente una rama huérfana y fija su contrato actual."""
+    """Adopta solo bajo lock CAS de Issue; jamás suplanta una V3 concurrente."""
     if not authorized(association):
         raise CoordinationError(
             f"@{actor} no tiene una asociación autorizada para adoptar trabajo."
@@ -3290,71 +3465,151 @@ def adopt_orphaned_contract(
         raise CoordinationError(
             f"Issue #{issue_number} ya tiene una reserva activa; no es huérfano."
         )
+    def canonical_adoption_state(record: dict[str, Any]) -> str:
+        """Una rama huérfana no reactiva trabajo bloqueado ni cerrado."""
+        labels = record.get("labels")
+        if type(labels) is not list or any(
+            type(label) is not dict or type(label.get("name")) is not str
+            for label in labels
+        ):
+            raise CoordinationError("Issue con estado incompatible para adopción.")
+        visible = [
+            label["name"] for label in labels
+            if label["name"].casefold().startswith(("estado:", "status:"))
+        ]
+        allowed = {STATUS_AVAILABLE, STATUS_RESERVED, STATUS_REVIEW,
+                   STATUS_RECOVERY}
+        if len(visible) != 1 or visible[0] not in allowed:
+            raise CoordinationError("Issue con estado incompatible para adopción.")
+        return visible[0]
 
     issue = api.issue(issue_number)
     if issue.get("state") != "open":
         raise CoordinationError(f"Issue #{issue_number} no está abierto.")
+    initial_state = canonical_adoption_state(issue)
     branch = branch_for_issue(issue_number)
-    if api.branch_sha(branch) is None:
+    branch_sha = api.branch_sha(branch)
+    if branch_sha is None:
         raise CoordinationError(
             f"No existe la rama huérfana {branch}; usa /tomar para trabajo nuevo."
         )
-
-    fingerprint = contract_fingerprint(str(issue.get("body") or ""))
-    reservation_id = new_reservation_id()
+    body_at_start = str(issue.get("body") or "")
+    fingerprint = contract_fingerprint(body_at_start)
+    task_marker = parse_task_marker(body_at_start)
     open_pulls = open_pull_records_for_branch(api, branch)
-    publish_reservation(
-        api,
-        issue_number,
-        actor,
-        reservation_id,
-        branch,
-        True,
-        "adoptar-contrato-huerfana",
-        (
-            f"Rama huérfana adoptada explícitamente con contrato fijado; "
-            f"se conserva {branch} y "
-            + (
-                ", ".join(
-                    f"PR #{pull['number']}"
-                    for pull in open_pulls
-                    if isinstance(pull.get("number"), int)
-                )
-                or "sin PR abierto"
-            )
-            + "."
-        ),
-        fingerprint,
-        parse_task_marker(str(issue.get("body") or "")),
-    )
-    winner = active_reservation(api, issue_number)
-    if (
-        not winner
-        or winner["reservation_id"] != reservation_id
-        or winner.get("acceptance_sha256") != fingerprint
-    ):
-        return None
-
-    api.set_status(
-        issue_number,
-        STATUS_REVIEW if open_pulls else STATUS_RESERVED,
-    )
-    api.try_assign(issue_number, actor)
-    for pull in open_pulls:
-        number = pull.get("number")
-        if not isinstance(number, int):
-            continue
-        body = str(api.pull(number).get("body") or "")
-        api.update_pull_body(
-            number,
-            rewrite_pull_reservation(body, reservation_id),
+    # No conservar referencias mutables del transporte como comparadores:
+    # algunas API de prueba retornan el mismo objeto; el PR ajeno puede
+    # cambiar en el intervalo previo a nuestra escritura.
+    initial_pull_bodies = {
+        pull.get("number"): pull.get("body") for pull in open_pulls
+        if type(pull) is dict
+    }
+    initial_pull_shas = {
+        pull.get("number"): (
+            pull.get("head", {}).get("sha")
+            if type(pull.get("head")) is dict else None
         )
+        for pull in open_pulls if type(pull) is dict
+    }
 
-    print(
-        f"Rama huérfana adoptada: Issue #{issue_number} "
-        f"-> {branch} (@{actor}, {reservation_id})"
-    )
-    return reservation_id
+    # Publicar sin lock permitiría tapar una lease V3 creada tras el GET.
+    require_global_running(api)
+    token = api.acquire_issue_lock(issue_number, branch_sha)
+    if token is None:
+        return None
+    try:
+        if api.branch_sha(recovery_lock_branch(issue_number)) != token:
+            raise CoordinationError("Lock V3 de adopción reemplazado.")
+        refreshed = api.issue(issue_number)
+        if (refreshed.get("state") != "open"
+                or canonical_adoption_state(refreshed) != initial_state
+                or str(refreshed.get("body") or "") != body_at_start
+                or api.branch_sha(branch) != branch_sha
+                or open_pull_records_for_branch(api, branch) != open_pulls):
+            raise CoordinationError(
+                "Issue, rama o PR cambió durante adopción huérfana."
+            )
+        if active_reservation(api, issue_number) is not None:
+            raise CoordinationError(
+                f"Issue #{issue_number} ya tiene una reserva activa; no es huérfano."
+            )
+
+        guarded = _RecoveryGuardedGitHub(api, issue_number, branch_sha, token)
+        reservation_id = new_reservation_id()
+        publish_reservation(
+            guarded, issue_number, actor, reservation_id, branch,
+            True, "adoptar-contrato-huerfana",
+            (
+                f"Rama huérfana adoptada explícitamente con contrato fijado; "
+                f"se conserva {branch} y "
+                + (
+                    ", ".join(
+                        f"PR #{pull['number']}"
+                        for pull in open_pulls
+                        if isinstance(pull.get("number"), int)
+                    )
+                    or "sin PR abierto"
+                )
+                + "."
+            ),
+            fingerprint, task_marker,
+        )
+        winner = active_reservation(api, issue_number)
+        if (not winner or winner["reservation_id"] != reservation_id
+                or winner.get("acceptance_sha256") != fingerprint):
+            return None
+
+        guarded.set_status(
+            issue_number, STATUS_REVIEW if open_pulls else STATUS_RESERVED,
+        )
+        guarded.try_assign(issue_number, actor)
+        for pull in open_pulls:
+            number = pull.get("number")
+            if type(number) is not int or number <= 0:
+                raise CoordinationError(
+                    "PR huérfano sin identidad verificable antes de adopción."
+                )
+            current_pull = api.pull(number)
+            current_head = (
+                current_pull.get("head")
+                if type(current_pull) is dict else None
+            )
+            current_base = (
+                current_pull.get("base")
+                if type(current_pull) is dict else None
+            )
+            if (type(current_pull) is not dict
+                    or current_pull.get("number") != number
+                    or current_pull.get("state") != "open"
+                    or type(current_head) is not dict
+                    or type(current_base) is not dict
+                    or current_base.get("ref") != "main"
+                    or not local_pull_source_matches(api, current_pull, branch)
+                    or current_head.get("sha") != initial_pull_shas.get(number)
+                    or current_head.get("sha") not in (None, branch_sha)
+                    or current_pull.get("body") != initial_pull_bodies.get(number)):
+                raise CoordinationError(
+                    "PR cambió de estado, procedencia, SHA o contrato "
+                    "durante adopción huérfana."
+                )
+            # Un escritor externo puede insertar un marker ajeno aun
+            # después del lock: no alterar su PR si la lease cambió.
+            if active_reservation(api, issue_number) != winner:
+                raise CoordinationError(
+                    "Reserva V3 cambió antes de actualizar PR huérfano."
+                )
+            body = str(current_pull.get("body") or "")
+            guarded.update_pull_body(
+                number, rewrite_pull_reservation(body, reservation_id),
+            )
+        print(
+            f"Rama huérfana adoptada: Issue #{issue_number} "
+            f"-> {branch} (@{actor}, {reservation_id})"
+        )
+        return reservation_id
+    finally:
+        # Solo su token CAS propio; jamás borrar el lock del siguiente actor.
+        api.release_issue_lock(issue_number, token)
 
 
 def release_permission(
@@ -3553,7 +3808,10 @@ def close_pr_reservation(
     elif STATUS_BLOCKED not in label_names(issue):
         api.set_status(issue_number, STATUS_AVAILABLE)
 
-def update_pr_state(api: GitHub, pr_number: int, action: str) -> None:
+def update_pr_state(
+    api: GitHub, pr_number: int, action: str, *,
+    _expected_issue_number: int | None = None,
+) -> None:
     """Sincroniza labels y reserva con eventos de un PR del mismo repositorio."""
     pull = api.pull(pr_number)
     head = pull.get("head")
@@ -3561,6 +3819,9 @@ def update_pr_state(api: GitHub, pr_number: int, action: str) -> None:
     issue_number = issue_from_branch(branch)
     if issue_number is None:
         return
+    if (_expected_issue_number is not None
+            and issue_number != _expected_issue_number):
+        raise CoordinationError("PR cambió de Issue durante el lock compartido.")
     # Validar también eventos de PR ya cerrado (no salen de open_pulls).
     # Solo un PR realmente local puede mutar estado o liberar la rama.
     if not local_pull_source_matches(api, pull, branch):
@@ -4181,7 +4442,10 @@ def recover_work(api: GitHub, issue_number: int, actor: str, association: str, r
     branch = str(current["branch"])
     if not work_is_stale(api, issue_number, branch):
         return None
-    return recover_existing_work_if_stale(api, issue_number, actor, branch, current)
+    return recover_existing_work_if_stale(
+        api, issue_number, actor, branch, current,
+        expected_session=reservation_id.lower(),
+    )
 def process_comment(
     api: GitHub,
     issue_number: int,
@@ -4319,6 +4583,130 @@ def main() -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
     return 0
+
+
+
+# Entradas mutantes del coordinador que deben compartir el mismo lock V3.
+# Las funciones de recuperación, renovación, migración y adopción ya adquieren
+# su lock internamente; no envolverlas para evitar doble adquisición.
+def _serialize_issue_mutation(function: Callable[..., Any], *,
+                              issue_resolver: Callable[..., int | None],
+                              validate_pr_issue: bool = False) -> Callable[..., Any]:
+    """Serializa una transición de Issue con la ref CAS V3 por Issue.
+
+    El wrapper se aplica al adaptador GitHub de producción. Los dobles de
+    tests unitarios conservan su contrato aislado y no realizan llamadas remotas.
+    """
+    @wraps(function)
+    def wrapped(api: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(api, GitHub):
+            return function(api, *args, **kwargs)
+
+        issue_number = issue_resolver(api, *args, **kwargs)
+        if issue_number is None:
+            if validate_pr_issue:
+                raise CoordinationError(
+                    "PR sin Issue de trabajo verificable; mutación denegada."
+                )
+            return function(api, *args, **kwargs)
+        if type(issue_number) is not int or issue_number <= 0:
+            raise CoordinationError("Issue inválido para lock compartido V3.")
+
+        held = getattr(api, "_factory_issue_lock_context", None)
+        if held is not None:
+            if held.get("issue") != issue_number:
+                raise CoordinationError("No se permiten locks V3 anidados de Issues distintos.")
+            if validate_pr_issue:
+                pull = api.pull(args[0])
+                head = pull.get("head")
+                branch = str(head.get("ref") or "") if isinstance(head, dict) else ""
+                if issue_from_branch(branch) != issue_number:
+                    raise CoordinationError("PR cambió de Issue durante el lock compartido.")
+                kwargs["_expected_issue_number"] = issue_number
+            return function(api, *args, **kwargs)
+
+        require_global_running(api)
+        work_branch = branch_for_issue(issue_number)
+        observed_work_sha = api.branch_sha(work_branch)
+        lock_parent = observed_work_sha or api.branch_sha("main")
+        if not isinstance(lock_parent, str) or re.fullmatch(r"[a-f0-9]{40}", lock_parent) is None:
+            raise CoordinationError("No hay HEAD confiable para adquirir lock V3.")
+        token = api.acquire_issue_lock(issue_number, lock_parent)
+        if token is None:
+            raise CoordinationError(f"Lock V3 ocupado para Issue #{issue_number}; mutación denegada.")
+        context = {"issue": issue_number, "token": token}
+        setattr(api, "_factory_issue_lock_context", context)
+        try:
+            require_global_running(api)
+            if api.branch_sha(recovery_lock_branch(issue_number)) != token:
+                raise CoordinationError("Lock V3 sustituido antes de la mutación.")
+            if api.branch_sha(work_branch) != observed_work_sha:
+                raise CoordinationError("Rama de trabajo cambió durante adquisición del lock V3.")
+            if validate_pr_issue:
+                pull = api.pull(args[0])
+                head = pull.get("head")
+                branch = str(head.get("ref") or "") if isinstance(head, dict) else ""
+                if issue_from_branch(branch) != issue_number:
+                    raise CoordinationError("PR cambió de Issue durante el lock compartido.")
+                kwargs["_expected_issue_number"] = issue_number
+            return function(api, *args, **kwargs)
+        finally:
+            try:
+                delattr(api, "_factory_issue_lock_context")
+            except AttributeError:
+                pass
+            # Solo libera nuestro propio token CAS; si fue sustituido, el
+            # adaptador debe rechazarlo y nunca borrar el lock de otro actor.
+            # El cleanup del token propio debe funcionar incluso si #767
+            # cambió a PAUSED durante la mutación; nunca liberar tokens ajenos.
+            cleanup = getattr(api, "release_owned_issue_lock_after_pause", None)
+            if callable(cleanup):
+                cleanup(issue_number, token)
+            else:
+                api.release_issue_lock(issue_number, token)
+
+    setattr(wrapped, "__factory_issue_lock_serialized__", True)
+    return wrapped
+
+
+def _issue_from_first_argument(api: Any, issue_number: int, *args: Any,
+                               **kwargs: Any) -> int:
+    return issue_number
+
+
+def _issue_from_pull_argument(api: Any, pr_number: int, *args: Any,
+                              **kwargs: Any) -> int | None:
+    pull = api.pull(pr_number)
+    head = pull.get("head")
+    branch = str(head.get("ref") or "") if isinstance(head, dict) else ""
+    return issue_from_branch(branch)
+
+
+reserve_available_work = _serialize_issue_mutation(
+    reserve_available_work, issue_resolver=_issue_from_first_argument,
+)
+transfer_work = _serialize_issue_mutation(
+    transfer_work, issue_resolver=_issue_from_first_argument,
+)
+migrate_legacy_reservation = _serialize_issue_mutation(
+    migrate_legacy_reservation, issue_resolver=_issue_from_first_argument,
+)
+# sync_review_status y close_pr_reservation son helpers internos de
+# update_pr_state. No envolverlos por separado: update_pr_state ya mantiene
+# el lock por Issue y volver a adquirirlo aquí causaría conflicto/reentrada.
+release_work = _serialize_issue_mutation(
+    release_work, issue_resolver=_issue_from_first_argument,
+)
+update_issue_state = _serialize_issue_mutation(
+    update_issue_state, issue_resolver=_issue_from_first_argument,
+)
+update_issue_label_state = _serialize_issue_mutation(
+    update_issue_label_state, issue_resolver=_issue_from_first_argument,
+)
+update_pr_state = _serialize_issue_mutation(
+    update_pr_state, issue_resolver=_issue_from_pull_argument,
+    validate_pr_issue=True,
+)
 
 
 if __name__ == "__main__":
