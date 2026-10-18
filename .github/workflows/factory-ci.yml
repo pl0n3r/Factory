@@ -424,7 +424,7 @@ jobs:
                       or (.body | contains("factory-invalid-gate"))
                     )
                   | if (.body | contains("factory-invalid-gate")) then
-                      if .body == "<!-- factory-invalid-gate -->"
+                      if (.body == "<!-- factory-invalid-gate -->" or (.body | startswith("<!-- factory-invalid-gate -->\n")))
                          and (.created_at | type) == "string"
                          and (.updated_at | type) == "string"
                       then {id, user: {login: .user.login}, body, created_at, updated_at}
@@ -460,7 +460,9 @@ jobs:
               if not isinstance(row, dict) or "id" not in row:
                   continue  # Legacy markers preserve the original wire shape.
               try:
-                  if (row.get("body") != "<!-- factory-invalid-gate -->"
+                  if (not isinstance(row.get("body"), str)
+                      or not (row["body"] == "<!-- factory-invalid-gate -->"
+                              or row["body"].startswith("<!-- factory-invalid-gate -->\n"))
                           or row.get("user", {}).get("login") != "github-actions[bot]"
                           or type(row.get("id")) is not int or row["id"] < 1
                           or issue.get("state") != "closed"
