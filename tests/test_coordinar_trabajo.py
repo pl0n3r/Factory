@@ -403,6 +403,40 @@ class LimpiezaRamaTests(unittest.TestCase):
 class WorkflowCoordinacionTests(unittest.TestCase):
     """Cubre el cableado declarativo entre GitHub Events y el coordinador."""
 
+    def test_comment_take_uses_canonical_kill_switch(self):
+        """El CLI/workflow real de /tomar depende del GET Factory#767."""
+        workflow = Path(".github/workflows/coordinacion-trabajo.yml").read_text(
+            encoding="utf-8")
+        self.assertIn("github.event.comment.body == '/tomar'", workflow)
+        self.assertIn("python3 scripts/coordinar_trabajo.py comentario", workflow)
+        for repo in ("pl0n3r/Factory", "pl0n3r/Condor"):
+            api = FakeGitHub()
+            api.repo = repo
+            original = api.request
+            reads = []
+
+            def canonical(method, path, payload=None, allow=()):
+                reads.append((method, path))
+                return original(method, path, payload, allow)
+
+            with patch.object(api, "request", side_effect=canonical), (
+                patch.object(api, "public_request",
+                             side_effect=AssertionError("lectura anónima"))
+            ), patch.object(coordinator, "GitHub", return_value=api), (
+                patch("sys.argv", [
+                    "coordinar_trabajo.py", "comentario", "--repo", repo,
+                    "--issue", "12", "--actor", "pl0n3r",
+                    "--association", "OWNER", "--body", "/tomar",
+                ])
+            ):
+                self.assertEqual(coordinator.main(), 0)
+            self.assertGreaterEqual(len(reads), 4)
+            self.assertTrue(all(
+                method == "GET" and
+                path == "/repos/pl0n3r/Factory/issues/767"
+                for method, path in reads))
+            self.assertIsNotNone(active_reservation(api, 12))
+
     @staticmethod
     def yaml_block(text: str, header: str, indent: int) -> str:
         """Aísla una clave YAML por nivel para evitar falsos positivos globales."""
@@ -948,6 +982,136 @@ class EstadoCoordinacionTests(unittest.TestCase):
 
 class CoordinacionTests(unittest.TestCase):
     """Cubre contratos de reserva, sesión, transición y colisiones."""
+
+    def test_new_reservation_paused_or_unknown_zero_writes(self):
+        """El primer preflight /tomar veta PAUSED/UNKNOWN antes de crear refs."""
+        for repo in ("pl0n3r/Factory", "pl0n3r/Condor",
+                     "pl0n3r/FactoryRunner"):
+            for mode in ("PAUSED", "403", "missing-source", "duplicate",
+                         "wrong-owner", "unclosed"):
+                with self.subTest(repo=repo, mode=mode):
+                    api = FakeGitHub()
+                    api.repo = repo
+                    real = api.request
+                    reads = []
+
+                    def canonical(method, path, payload=None, allow=()):
+                        reads.append((method, path))
+                        if mode in ("403", "missing-source"):
+                            raise CoordinationError("fuente global ilegible")
+                        row = real(method, path, payload, allow)
+                        if mode == "PAUSED":
+                            row["body"] = row["body"].replace(
+                                '"state":"RUNNING"', '"state":"PAUSED"')
+                        elif mode == "duplicate":
+                            row["body"] += "\n" + row["body"]
+                        elif mode == "wrong-owner":
+                            row["user"] = {"login": "intruso"}
+                        elif mode == "unclosed":
+                            row["state"] = "open"
+                        return row
+
+                    with patch.object(api, "request", side_effect=canonical):
+                        with self.assertRaises(CoordinationError):
+                            reserve_work(api, 12, "pl0n3r", "OWNER")
+                    self.assertTrue(reads)
+                    self.assertTrue(all(
+                        method == "GET" and
+                        path == "/repos/pl0n3r/Factory/issues/767"
+                        for method, path in reads))
+                    self.assertNotIn("trabajo/issue-12", api.branches)
+                    self.assertNotIn("coordinacion/lock-issue-12", api.branches)
+                    self.assertEqual(api.comments, [])
+                    self.assertEqual(api.status_history, [])
+                    self.assertEqual(api.assignees, set())
+
+    def test_new_reservation_running_preserves_v3_arbitration(self):
+        """RUNNING mantiene reserva legítima, bloqueo y exclusividad V3."""
+        api = FakeGitHub()
+        self.assertIsNotNone(reserve_work(api, 12, "pl0n3r", "OWNER"))
+        self.assertEqual(api.status_history, [STATUS_RESERVED])
+        self.assertEqual(api.assignees, {"pl0n3r"})
+        self.assertTrue(active_reservation(api, 12)["active"])
+
+        blocked = FakeGitHub()
+        blocked.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        self.assertIsNone(reserve_work(blocked, 12, "pl0n3r", "OWNER"))
+        self.assertEqual(blocked.status_history, [])
+        self.assertNotIn("trabajo/issue-12", blocked.branches)
+
+        collided = FakeGitHub()
+        collided.branches["trabajo/issue-12"] = "sha-ajeno"
+        with self.assertRaises(CoordinationError):
+            reserve_work(collided, 12, "pl0n3r", "OWNER")
+        self.assertEqual(collided.branches["trabajo/issue-12"], "sha-ajeno")
+        self.assertEqual(collided.comments, [])
+
+    def test_new_reservation_pause_during_write_denies_lease(self):
+        """El cambio RUNNING->PAUSED impide marker y nuevas escrituras."""
+        for stage in ("branch", "status"):
+            with self.subTest(stage=stage):
+                api = FakeGitHub()
+                if stage == "branch":
+                    create_original = api.create_branch
+
+                    def create_branch(name, sha):
+                        created = create_original(name, sha)
+                        if name == "trabajo/issue-12":
+                            api.kill_switch_marker = "PAUSED"
+                        return created
+                    api.create_branch = create_branch
+                else:
+                    set_original = api.set_status
+
+                    def set_status(number, status):
+                        set_original(number, status)
+                        if status == STATUS_RESERVED:
+                            api.kill_switch_marker = "PAUSED"
+                    api.set_status = set_status
+
+                with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+                    reserve_work(api, 12, "pl0n3r", "OWNER")
+                self.assertEqual(api.comments, [])
+                self.assertEqual(api.assignees, set())
+                # Sin cambiar labels en pausa ni borrar branches ajenas:
+                # Coordinación recupera después el estado parcial autorizado.
+                self.assertEqual(
+                    api.status_history,
+                    [] if stage == "branch" else [STATUS_RESERVED])
+
+
+    def test_take_status_rechecks_canonical_switch_between_rest_writes(self):
+        """PAUSED tras el POST de estado veta DELETE, asignación y marker."""
+        source = FakeGitHub()
+        source.repo = "pl0n3r/Factory"
+        api = GitHub("pl0n3r/Factory", "token-sintetico")
+        writes = []
+
+        def fake_request(method, path, payload=None, allow=()):
+            if method == "GET" and path == "/repos/pl0n3r/Factory/issues/767":
+                return source.request(method, path, payload, allow)
+            if method == "GET" and "/labels/" in path:
+                return {"name": "etiqueta-existente"}
+            if method == "POST" and path == "/repos/pl0n3r/Factory/issues/12/labels":
+                writes.append((method, path))
+                source.kill_switch_marker = "PAUSED"
+                return {}
+            if method != "GET":
+                writes.append((method, path))
+                raise AssertionError("Mutacion posterior a PAUSED")
+            raise AssertionError("GET no permitido: " + path)
+
+        with patch.object(api, "request", side_effect=fake_request):
+            guard = coordinator._TakeGuardedGitHub(api)
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+                guard.set_status(12, STATUS_RESERVED)
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+                guard.try_assign(12, "pl0n3r")
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+                guard.comment(12, "marker V3 no publicable")
+        self.assertEqual(writes, [
+            ("POST", "/repos/pl0n3r/Factory/issues/12/labels")
+        ])
 
     def test_v3_inventory_pagination_rejects_partial_pages(self):
         """No conceder V3 desde prefijos REST o filas no autenticables."""

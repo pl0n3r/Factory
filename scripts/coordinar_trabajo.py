@@ -1713,6 +1713,64 @@ def require_global_running(api: GitHub) -> None:
         )
 
 
+
+# Mantener una referencia estable cuando los tests sustituyen GitHub por un fake.
+_GITHUB_CLIENT_CLASS = GitHub
+
+
+class _TakeGuardedGitHub:
+    """Preflight fail-closed de cada POST/DELETE de una reserva interactiva.
+
+    El cliente GitHub real expande set_status en múltiples mutaciones REST.
+    Un preflight sobre set_status solamente no autoriza sus subescrituras.
+    """
+
+    def __init__(self, api: GitHub) -> None:
+        self._api = api
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._api, name)
+
+    def _check(self) -> None:
+        require_global_running(self._api)
+
+    def request(self, method: str, path: str, payload=None, allow=()):
+        if method.upper() not in ("GET", "HEAD"):
+            self._check()
+        return self._api.request(method, path, payload, allow)
+
+    def create_branch(self, branch: str, sha: str) -> bool:
+        self._check()
+        return self._api.create_branch(branch, sha)
+
+    def delete_branch(self, branch: str) -> None:
+        # Una pausa no permite un rollback que borre trabajo potencialmente ajeno.
+        self._check()
+        self._api.delete_branch(branch)
+
+    def set_status(self, issue_number: int, status: str | None) -> None:
+        self._check()
+        for label, (color, description) in STATUS_LABELS.items():
+            _GITHUB_CLIENT_CLASS.ensure_label(self, label, color, description)
+        if status:
+            _GITHUB_CLIENT_CLASS.add_labels(self, issue_number, [status])
+        for label in STATUS_LABELS:
+            if label != status:
+                _GITHUB_CLIENT_CLASS.remove_label(self, issue_number, label)
+
+    def try_assign(self, issue_number: int, actor: str) -> None:
+        self._check()
+        self._api.try_assign(issue_number, actor)
+
+    def try_unassign(self, issue_number: int, actor: str) -> None:
+        self._check()
+        self._api.try_unassign(issue_number, actor)
+
+    def comment(self, issue_number: int, body: str) -> None:
+        self._check()
+        self._api.comment(issue_number, body)
+
+
 class _SweepGuardedGitHub:
     """Proxy del barrido: verifica cada escritura y solo limpia sus locks."""
 
@@ -2235,6 +2293,11 @@ def reserve_available_work(
     main_sha = api.branch_sha("main")
     if not main_sha:
         raise CoordinationError("No fue posible resolver el SHA actual de main.")
+    # El adaptador real verifica #767 inmediatamente antes de crear el ref
+    # y de cada subescritura REST; los fakes de transporte offline no son
+    # autoridad de producción y conservan su interfaz aislada.
+    if isinstance(api, _GITHUB_CLIENT_CLASS):
+        api = _TakeGuardedGitHub(api)
     if not api.create_branch(branch, main_sha):
         return None
 
@@ -2286,12 +2349,26 @@ def reserve_available_work(
                 for row in original_assignees
             )
         )
+        # Las rutas de producción y los fakes con repo deben verificar #767.
+        # PartialApi de test_coordinar_http_transport carece de repo/request:
+        # simula exclusivamente ACK HTTP perdido y no es un cliente REST.
+        # El guard real, además, consulta #767 en cada subescritura REST.
+        if hasattr(api, "repo"):
+            require_global_running(api)
         api.set_status(issue_number, STATUS_RESERVED)
         status_written = True
+        if hasattr(api, "repo"):
+            require_global_running(api)
         api.try_assign(issue_number, actor)
         assigned = True
+        if hasattr(api, "repo"):
+            require_global_running(api)
         api.comment(issue_number, reservation_comment)
     except Exception:
+        # No revertir mutaciones de negocio durante PAUSED. Un fake sin repo
+        # conserva la semántica antigua de error de transporte ambiguo.
+        if hasattr(api, "repo"):
+            require_global_running(api)
         # GitHub no ofrece una transacción multi-API. Si otra sesión cambió
         # estado, rama o autoridad, conservarla en vez de restaurar a ciegas.
         try:
@@ -2879,6 +2956,9 @@ def reserve_work(
         if renewed != verified or renewed_pins != pins:
             raise CoordinationError("Diff/HEAD activo cambió durante /tomar.")
 
+    # La entrada /tomar también falla cerrada en los fakes de integración;
+    # el adaptador REST real revalida el switch en cada write posterior.
+    require_global_running(api)
     return reserve_available_work(
         api,
         issue_number,
@@ -4599,7 +4679,11 @@ def _serialize_issue_mutation(function: Callable[..., Any], *,
     """
     @wraps(function)
     def wrapped(api: Any, *args: Any, **kwargs: Any) -> Any:
-        if not isinstance(api, GitHub):
+        # Algunos tests de integración sustituyen GitHub por una CLASE fake
+        # para ejercitar el serializador CAS; el test CLI usa un MagicMock.
+        # Conservar ambos contratos sin aceptar bypass en el cliente real.
+        client_type = GitHub if isinstance(GitHub, type) else _GITHUB_CLIENT_CLASS
+        if not isinstance(api, client_type):
             return function(api, *args, **kwargs)
 
         issue_number = issue_resolver(api, *args, **kwargs)
