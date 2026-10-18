@@ -1400,6 +1400,21 @@ def _initial_unblock_candidate(
     return number, marker, unblock_fingerprint(marker)
 
 
+def _partial_unblock_provenance(
+    comments: list[dict[str, Any]], fingerprint: str,
+) -> str:
+    """Distingue un primer desbloqueo de evidencia histórica ambigua.
+
+    Un journal bot acredita la intención de desbloquear, no que la escritura
+    posterior a AVAILABLE terminara. Si el Issue está otra vez BLOCKED, el
+    mismo estado observable puede proceder de una pausa REST o de un bloqueo
+    manual posterior. Ni timestamps ni un reblock bot previo desambiguan una
+    acción humana idempotente. UNKNOWN exige intervención nueva y explícita
+    del OWNER por el canal autorizado de Coordinación; el sweep no la infiere.
+    """
+    return "UNKNOWN" if unblock_evidence_exists(comments, fingerprint) else "NEW"
+
+
 def _revalidated_unblock_evidence(
     api: GitHub,
     number: int,
@@ -1418,10 +1433,9 @@ def _revalidated_unblock_evidence(
     if marker is None or unblock_fingerprint(marker) != fingerprint:
         return None
     comments = api.issue_comments(number)
-    if (
-        unblock_evidence_exists(comments, fingerprint)
-        and not reblock_evidence_exists(comments, fingerprint)
-    ):
+    # Una evidencia antigua no acredita que set_status(AVAILABLE) terminó.
+    # Nunca anular un re-bloqueo humano por inferir una transición parcial.
+    if _partial_unblock_provenance(comments, fingerprint) == "UNKNOWN":
         return None
     satisfied, evidence = verify_unblock_condition(api, marker)
     return evidence if satisfied and evidence else None
@@ -1477,7 +1491,7 @@ def _apply_verified_unblock(
 ) -> bool:
     """Desbloquea solo una transición automática nueva y deja evidencia."""
     comments = api.issue_comments(number)
-    if _automatic_unblock_state(comments, fingerprint) == "unblocked":
+    if _partial_unblock_provenance(comments, fingerprint) != "NEW":
         return False
     api.comment(
         number,
