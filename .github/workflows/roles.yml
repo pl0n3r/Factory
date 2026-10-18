@@ -103,6 +103,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           NUMBER: ${{ inputs.number }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           printf '{}\n' > /tmp/roles-verified-offline.json
@@ -117,6 +118,7 @@ jobs:
             | jq -s '.' > /tmp/offline-reviews.json
           python3 - <<'PY'
           import json
+          import os
           import re
           from pathlib import Path
 
@@ -129,6 +131,9 @@ jobs:
           leases = read("/tmp/offline-leases.json")
           reviews = read("/tmp/offline-reviews.json")
           sha = pr.get("head", {}).get("sha")
+          event_sha = os.environ.get("EVENT_HEAD_SHA")
+          if re.fullmatch(r"[0-9a-f]{40}", event_sha or "") is None or sha != event_sha:
+              raise SystemExit("PR head differs from the triggering event head")
           match = re.search(
               r'<!-- factory-plan-task (\{[^\n]*\}) -->',
               issue.get("body") or "",
