@@ -135,6 +135,17 @@ class ReleaseInvalidGateInventoryTests(unittest.TestCase):
         self.assertEqual(filtered.returncode, 0, filtered.stderr)
         self.assertEqual(comments, [_bot()])
         self.assertEqual(self._validate(values[0], comments).returncode, 0)
+        producer_body = (
+            INVALID + "\n<!-- factory-invalid-gate-owner:bot -->\n"
+            + "⛔ Puerta humana inválida. Motivo de validación: missing recommendation"
+        )
+        # El productor seguridad/sincronizar_puerta.py::sync_invalid
+        # publica la línea marker seguida de owner opcional y motivo.
+        produced, preserved = self._filter([_bot(body=producer_body)])
+        self.assertEqual(produced.returncode, 0, produced.stderr)
+        self.assertEqual(preserved, [_bot(body=producer_body)])
+        self.assertEqual(self._validate(values[0], preserved).returncode, 0)
+
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("cmp -s /tmp/release-search-verified-1.json", workflow)
         self.assertLess(workflow.index("# RELEASE_INVALID_GATE_METADATA_BEGIN"),
@@ -152,6 +163,8 @@ class ReleaseInvalidGateInventoryTests(unittest.TestCase):
             ("missing user", [{k: v for k, v in _bot().items() if k != "user"}], False),
             ("missing body", [{k: v for k, v in _bot().items() if k != "body"}], False),
             ("missing created_at", [_bot(created_at=None)], False),
+            ("marker not anchored", [_bot(body="other\\n" + INVALID)], False),
+            ("same-line suffix", [_bot(body=INVALID + " corrupted")], False),
         ):
             with self.subTest(name=name):
                 result, rows = self._filter(records)
@@ -186,6 +199,37 @@ class ReleaseInvalidGateInventoryTests(unittest.TestCase):
         self.assertNotEqual(drift.returncode, 0, "No aceptar dos lecturas distintas")
         drift, _ = self._project(issue, _issue(body="edited after invalidation"))
         self.assertNotEqual(drift.returncode, 0, "El journal no liga un body cambiado")
+
+    def test_real_bot_journal_does_not_lift_live_freeze(self):
+        """Marcador de invalidación no sustituye una excepción crítica real."""
+        from datetime import datetime, timezone
+        from scripts import release_window as rw
+
+        opening = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
+        rendered = rw._render_gate("1.0.23", "a" * 40, opening, source_issue=900)
+        producer_body = (
+            INVALID + "\n<!-- factory-invalid-gate-owner:bot -->\n"
+            + "⛔ Puerta humana inválida. Motivo de validación: archived"
+        )
+        row = {
+            "issue": {
+                "number": 511, "state": "open", "title": "Puerta factory-release",
+                "body": rendered["body"], "updated_at": LATER,
+            },
+            "comments": [_bot(body=producer_body)],
+        }
+        outcome = rw.check_pull_request({
+            "now": "2026-10-15T11:10:00Z",
+            "gates": [row],
+            "pr": {"number": 1392, "body": ""},
+            "work_issue": {
+                "number": 1287, "state": "open",
+                "labels": [{"name": "prioridad: baja"}],
+            },
+        })
+        self.assertFalse(outcome["allowed"], outcome)
+        self.assertEqual(outcome["reason"], "factory_release_window_active")
+        self.assertEqual(outcome["gate_issue"], 511)
 
     def test_existing_bot_journal_filters_remain_compatible(self):
         source = [
