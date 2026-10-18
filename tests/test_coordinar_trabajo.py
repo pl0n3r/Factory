@@ -403,6 +403,40 @@ class LimpiezaRamaTests(unittest.TestCase):
 class WorkflowCoordinacionTests(unittest.TestCase):
     """Cubre el cableado declarativo entre GitHub Events y el coordinador."""
 
+    def test_comment_take_uses_canonical_kill_switch(self):
+        """El CLI/workflow real de /tomar depende del GET Factory#767."""
+        workflow = Path(".github/workflows/coordinacion-trabajo.yml").read_text(
+            encoding="utf-8")
+        self.assertIn("github.event.comment.body == '/tomar'", workflow)
+        self.assertIn("python3 scripts/coordinar_trabajo.py comentario", workflow)
+        for repo in ("pl0n3r/Factory", "pl0n3r/Condor"):
+            api = FakeGitHub()
+            api.repo = repo
+            original = api.request
+            reads = []
+
+            def canonical(method, path, payload=None, allow=()):
+                reads.append((method, path))
+                return original(method, path, payload, allow)
+
+            with patch.object(api, "request", side_effect=canonical), (
+                patch.object(api, "public_request",
+                             side_effect=AssertionError("lectura anónima"))
+            ), patch.object(coordinator, "GitHub", return_value=api), (
+                patch("sys.argv", [
+                    "coordinar_trabajo.py", "comentario", "--repo", repo,
+                    "--issue", "12", "--actor", "pl0n3r",
+                    "--association", "OWNER", "--body", "/tomar",
+                ])
+            ):
+                self.assertEqual(coordinator.main(), 0)
+            self.assertGreaterEqual(len(reads), 4)
+            self.assertTrue(all(
+                method == "GET" and
+                path == "/repos/pl0n3r/Factory/issues/767"
+                for method, path in reads))
+            self.assertIsNotNone(active_reservation(api, 12))
+
     @staticmethod
     def yaml_block(text: str, header: str, indent: int) -> str:
         """Aísla una clave YAML por nivel para evitar falsos positivos globales."""
@@ -1078,40 +1112,6 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(writes, [
             ("POST", "/repos/pl0n3r/Factory/issues/12/labels")
         ])
-
-    def test_comment_take_uses_canonical_kill_switch(self):
-        """El CLI/workflow real de /tomar depende del GET Factory#767."""
-        workflow = Path(".github/workflows/coordinacion-trabajo.yml").read_text(
-            encoding="utf-8")
-        self.assertIn("github.event.comment.body == '/tomar'", workflow)
-        self.assertIn("python3 scripts/coordinar_trabajo.py comentario", workflow)
-        for repo in ("pl0n3r/Factory", "pl0n3r/Condor"):
-            api = FakeGitHub()
-            api.repo = repo
-            original = api.request
-            reads = []
-
-            def canonical(method, path, payload=None, allow=()):
-                reads.append((method, path))
-                return original(method, path, payload, allow)
-
-            with patch.object(api, "request", side_effect=canonical), (
-                patch.object(api, "public_request",
-                             side_effect=AssertionError("lectura anónima"))
-            ), patch.object(coordinator, "GitHub", return_value=api), (
-                patch("sys.argv", [
-                    "coordinar_trabajo.py", "comentario", "--repo", repo,
-                    "--issue", "12", "--actor", "pl0n3r",
-                    "--association", "OWNER", "--body", "/tomar",
-                ])
-            ):
-                self.assertEqual(coordinator.main(), 0)
-            self.assertGreaterEqual(len(reads), 4)
-            self.assertTrue(all(
-                method == "GET" and
-                path == "/repos/pl0n3r/Factory/issues/767"
-                for method, path in reads))
-            self.assertIsNotNone(active_reservation(api, 12))
 
     def test_v3_inventory_pagination_rejects_partial_pages(self):
         """No conceder V3 desde prefijos REST o filas no autenticables."""
