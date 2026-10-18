@@ -134,6 +134,25 @@ class RolesKitTests(unittest.TestCase):
         with self.assertRaisesRegex(RoleError, "Checklist incompleto para sre"):
             validate_pr(self._offline_health_fixture()[0], self.catalog, ROLES_DIR, "es")
 
+    def test_offline_scope_workflow_paginates_and_binds_exact_event_head(self):
+        workflow = (ROOT / ".github" / "workflows" / "roles.yml").read_text(
+            encoding="utf-8"
+        )
+        step = workflow.split(
+            "      - name: Acreditar scope de DTO offline con GitHub autenticado", 1
+        )[1].split("      - name: Validar PR", 1)[0]
+        for issue in (798, 799):
+            with self.subTest(issue=issue):
+                self.assertIn(
+                    f'gh api --paginate "repos/$REPOSITORY/issues/{issue}/comments?per_page=100"',
+                    step,
+                )
+        self.assertIn("EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}", step)
+        self.assertIn('event_sha = os.environ.get("EVENT_HEAD_SHA")', step)
+        self.assertIn('sha != event_sha', step)
+        self.assertIn('raise SystemExit("PR head differs from the triggering event head")', step)
+        self.assertEqual(step.count("| jq -s '.' > /tmp/offline-"), 2)
+
     def test_catalog_has_all_required_complete_roles(self):
         self.assertTrue(REQUIRED_ROLES <= set(self.catalog))
         self.assertGreaterEqual(len(self.catalog), len(REQUIRED_ROLES))
