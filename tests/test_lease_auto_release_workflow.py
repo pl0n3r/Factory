@@ -244,10 +244,10 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             summary = root / "summary.md"
             shim = root / "python3"
             shim.write_text(
-                "#!/bin/sh\\n"
-                "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\\n"
-                "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\\n"
-                "exit 0\\n", encoding="utf-8")
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
+                "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\n"
+                "exit 0\n", encoding="utf-8")
             shim.chmod(0o755)
             for fail_first in (False, True):
                 with self.subTest(fail_first=fail_first):
@@ -259,7 +259,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                            "FAIL_FIRST": "1" if fail_first else "0",
                            "PATH": f"{folder}:{os.environ.get('PATH', '')}"}
                     result = subprocess.run(
-                        ["bash", "-c", "set -euo pipefail\\n" + block],
+                        ["bash", "-c", "set -euo pipefail\n" + block],
                         cwd=ROOT, env=env, capture_output=True, text=True,
                         timeout=15, check=False)
                     self.assertEqual(result.returncode == 0, not fail_first, result.stderr)
