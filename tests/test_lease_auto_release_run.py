@@ -444,6 +444,19 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertNotIn("issues: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
 
+    def test_cap_skips_vetoes_but_counts_partial_writes(self):
+        from unittest.mock import patch
+        from scripts.lease_release_executor import Result
+        outcomes = [Result("wait", "veto"), Result("release", "ok", True, "complete"),
+                    Result("wait", "veto"), Result("release", "partial", False, "partial"),
+                    Result("release", "ok", True, "complete")]
+        with patch("scripts.lease_auto_release_run.execute", side_effect=outcomes) as fake:
+            cycle = run_cycle([1, 2, 3, 4, 5, 6], object(),
+                              feature_enabled=True, dry_run=False, mutations_authorized=True)
+        self.assertEqual(fake.call_count, 5)
+        self.assertEqual([r.reason for _, r in cycle.results],
+                         ["veto", "ok", "veto", "partial", "ok", "cycle_write_cap"])
+
     def test_verified_stale_grace_and_resume_serialized_with_kill_switch(self):
         self.assertEqual(
             decision_from_snapshot(snapshot(recovery=False)).action,
