@@ -1094,6 +1094,31 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     api.request("GET", path)
                 run.assert_not_called()
 
+    def test_transport_encodes_port_head_and_accepts_events_page_ten(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+        from scripts.lease_github_port import LeaseGithubPort
+
+        api = _GhReadOnlyAPI()
+        with patch("subprocess.run", return_value=SimpleNamespace(stdout="[]")) as gh:
+            self.assertFalse(LeaseGithubPort(api)._changes_requested(
+                "pl0n3r/Factory", "trabajo/issue-21"))
+            paths = [call.args[0][-1] for call in gh.call_args_list]
+            self.assertEqual(len(paths), 2)
+            self.assertTrue(all("head=pl0n3r%3Atrabajo%2Fissue-21" in p for p in paths))
+            self.assertEqual(api.request(
+                "GET", "/repos/pl0n3r/Factory/issues/21/events?per_page=100&page=10"), [])
+        for path in (
+            "/repos/pl0n3r/Factory/pulls?state=open&head=other%3Atrabajo%2Fissue-21",
+            "/repos/pl0n3r/Factory/pulls?state=open&head=pl0n3r:trabajo/issue-21",
+            "/repos/pl0n3r/Factory/issues/21/events?per_page=100&page=11",
+        ):
+            with patch("subprocess.run") as gh:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", path)
+                gh.assert_not_called()
+
     def test_observer_uses_canonical_actions_concurrency_group(self):
         from datetime import timezone
         from unittest.mock import patch
