@@ -247,6 +247,57 @@ jobs:
                 .[]
                 | {number, state, title, body, updated_at}
               ]' /tmp/release-search-verified-2.json > /tmp/release-issues-projected.json
+          # RELEASE_INVALID_GATE_METADATA_BEGIN
+          # Metadata from the same TWO verified Search Issues reads. Never infer
+          # state_reason from "closed", or trust one page/version in isolation.
+          # Keep the legacy five-field projection for the independent verifier.
+          python3 - /tmp/release-search-p1-1.json /tmp/release-search-p2-1.json /tmp/release-search-p1-2.json /tmp/release-search-p2-2.json /tmp/release-issues-projected.json <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          def reasons(first, second):
+              seen = {}
+              for filename in (first, second):
+                  page = json.loads(Path(filename).read_text(encoding="utf-8"))
+                  if page is None:
+                      continue
+                  if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                      raise SystemExit("ERROR: Evidence state_reason incompleta")
+                  for item in page["items"]:
+                      if not isinstance(item, dict) or type(item.get("number")) is not int:
+                          raise SystemExit("ERROR: Issue de procedencia inválido")
+                      number = item["number"]
+                      if number in seen:
+                          raise SystemExit("ERROR: Issue de procedencia duplicado")
+                      reason = item.get("state_reason")
+                      if "state_reason" in item and reason is not None and reason not in (
+                          "completed", "not_planned", "duplicate", "reopened"
+                      ):
+                          raise SystemExit("ERROR: state_reason no confiable")
+                      seen[number] = (
+                          item.get("number"), item.get("state"), item.get("updated_at"),
+                          item.get("body"), "state_reason" in item, reason,
+                      )
+              return seen
+
+          first = reasons(sys.argv[1], sys.argv[2])
+          second = reasons(sys.argv[3], sys.argv[4])
+          if first != second:
+              raise SystemExit("ERROR: state_reason cambió entre snapshots")
+          path = Path(sys.argv[5])
+          inventory = json.loads(path.read_text(encoding="utf-8"))
+          if not isinstance(inventory, list) or len(inventory) != len(first):
+              raise SystemExit("ERROR: Inventario de procedencia incompleto")
+          for issue in inventory:
+              raw = second.get(issue.get("number"))
+              if raw is None or (issue["number"], issue["state"], issue["updated_at"], issue["body"]) != raw[:4]:
+                  raise SystemExit("ERROR: La procedencia no corresponde al body actual")
+              if raw[4]:
+                  issue["state_reason"] = raw[5]
+          path.write_text(json.dumps(inventory, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+          PY
+          # RELEASE_INVALID_GATE_METADATA_END
           # RELEASE_GATE_CANDIDATES_START
           # Igual que gate_records: todo window-intent pasa al evaluador y
           # falla cerrado si es inválido. Solo los gates legacy sin ventana
@@ -370,10 +421,58 @@ jobs:
                       (.body | contains("factory-human-decision"))
                       or (.body | contains("factory-release-executed"))
                       or (.body | contains("factory-human-gate-duplicate"))
+                      or (.body | contains("factory-invalid-gate"))
                     )
-                  | {user: {login: .user.login}, body: (.body // "")}
+                  | if (.body | contains("factory-invalid-gate")) then
+                      if .body == "<!-- factory-invalid-gate -->"
+                         and (.created_at | type) == "string"
+                         and (.updated_at | type) == "string"
+                      then {id, user: {login: .user.login}, body, created_at, updated_at}
+                      else error("invalid_gate_journal_not_authentic") end
+                    else
+                      {user: {login: .user.login}, body: (.body // "")}
+                    end
                 )
             ' > /tmp/release-comments.json
+            # RELEASE_INVALID_GATE_JOURNAL_BEGIN
+            # A bot comment is provenance only, NEVER permission to skip a gate.
+            # Without trustworthy current issue state and canonical timestamps,
+            # reject the release snapshot rather than granting false authority.
+            python3 - "$issue" /tmp/release-comments.json <<'PY'
+            import json
+            import sys
+            from datetime import datetime
+            from pathlib import Path
+
+            def stamp(value):
+                if not isinstance(value, str):
+                    raise ValueError("missing timestamp")
+                date = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+                if date.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
+                    raise ValueError("invalid UTC timestamp")
+                return date
+
+            issue = json.loads(sys.argv[1])
+            rows = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+            if not isinstance(rows, list):
+                raise SystemExit("ERROR: Invalidación sin journal completo")
+            for row in rows:
+                if not isinstance(row, dict) or "id" not in row:
+                    continue  # Legacy markers preserve the original wire shape.
+                try:
+                    if (row.get("body") != "<!-- factory-invalid-gate -->"
+                            or row.get("user", {}).get("login") != "github-actions[bot]"
+                            or type(row.get("id")) is not int or row["id"] < 1
+                            or issue.get("state") != "closed"
+                            or issue.get("state_reason") not in ("completed", "not_planned", "duplicate")
+                            or "state_reason" not in issue
+                            or stamp(row.get("created_at")) > stamp(row.get("updated_at"))
+                            or stamp(row.get("updated_at")) > stamp(issue.get("updated_at"))):
+                        raise ValueError("unbound invalidation journal")
+                except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                    raise SystemExit("ERROR: Procedencia de invalidación UNKNOWN") from exc
+            PY
+            # RELEASE_INVALID_GATE_JOURNAL_END
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < /tmp/release-issues.jsonl
