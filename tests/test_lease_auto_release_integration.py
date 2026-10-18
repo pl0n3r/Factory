@@ -1031,6 +1031,69 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                         api.request(method, path)
                     run.assert_not_called()
 
+    def test_collector_and_authenticated_gh_transport_accept_canonical_encoded_get(self):
+        """E2E offline: el colector genera query escapada y GH CLI solo hace GET."""
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_activity_collector import collect_activity
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+        from test_lease_activity_collector import API, NOW
+
+        fake = API()
+        received = []
+
+        def gh_api(args, **kwargs):
+            self.assertEqual(args[:4], [
+                "gh", "api", "-H", "Accept: application/vnd.github+json",
+            ])
+            self.assertTrue(kwargs["check"])
+            self.assertTrue(kwargs["capture_output"])
+            self.assertEqual(kwargs["timeout"], 20)
+            path = args[4]
+            received.append(path)
+            return SimpleNamespace(stdout=json.dumps(fake.request("GET", path)))
+
+        with patch("subprocess.run", side_effect=gh_api):
+            observed = collect_activity(_GhReadOnlyAPI(), 21, now=NOW)
+        self.assertTrue(observed["evidence_complete"])
+        self.assertEqual(observed["activity_source"], "workflow_push")
+        self.assertTrue(any(
+            "/commits?sha=trabajo%2Fissue-21&since=" in path and "%3A" in path
+            for path in received
+        ))
+        self.assertTrue(any(
+            "/actions/runs?branch=trabajo%2Fissue-21" in path
+            for path in received
+        ))
+        self.assertEqual(received, fake.calls)
+
+    def test_gh_read_only_transport_denies_unsafe_encoded_query(self):
+        """Escapes dobles, key spoofing, rutas escapadas y escrituras fallan."""
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+
+        base = "/repos/pl0n3r/Factory"
+        disallowed = (
+            f"{base}/commits?sha=trabajo%252Fissue-21&per_page=100&page=1",
+            f"{base}/commits?sha=trabajo%2Fissue-21&since=%ZZ",
+            f"{base}/commits?sha=trabajo%2fissue-21",
+            f"{base}/commits?sha=trabajo%2Fissue-21&page=1&page=2",
+            f"{base}/commits?sha=trabajo%2Fissue-21&evil=1",
+            f"{base}/commits?sha=trabajo%2Fissue-21&since=%2E%2E",
+            f"{base}/commits?sha=trabajo%2Fissue-21#fragment",
+            f"{base}/%2e%2e/commits?sha=main",
+            f"{base}/actions/runs?branch=other%2Frepo",
+            f"{base}/pulls?state=closed",
+            f"{base}/commits?sha=main%0A",
+        )
+        api = _GhReadOnlyAPI()
+        for path in disallowed:
+            with self.subTest(path=path), patch("subprocess.run") as run:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", path)
+                run.assert_not_called()
+
     def test_observer_uses_canonical_actions_concurrency_group(self):
         from datetime import timezone
         from unittest.mock import patch

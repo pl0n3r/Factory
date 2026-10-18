@@ -83,15 +83,58 @@ class _GhReadOnlyAPI:
         import re
         import subprocess
 
+        # La ruta y la query son superficies distintas: solo los valores de
+        # query pueden usar escapes canónicos (%2F para rama, %3A para UTC).
+        route, sep, query = path.partition("?") if type(path) is str else ("", "", "")
         if (method != "GET" or type(path) is not str
-                or not (path == "/rate_limit"
-                        or path == "/repos/pl0n3r/Factory"
-                        or path.startswith("/repos/pl0n3r/Factory/"))
-                or "://" in path or "#" in path or ".." in path or "%" in path
-                or "\\" in path
+                or not (route == "/rate_limit"
+                        or route == "/repos/pl0n3r/Factory"
+                        or route.startswith("/repos/pl0n3r/Factory/"))
+                or "://" in path or "#" in path or ".." in path
+                or "%" in route or "\\" in path
                 or any(ord(ch) < 32 for ch in path)
                 or re.search(r"[\s;|$<>]", path)):
             raise PermissionError("read_only_transport")
+        if sep:
+            from urllib.parse import quote, unquote
+
+            repo = "/repos/pl0n3r/Factory"
+            if route == f"{repo}/commits":
+                allowed = {"sha", "since", "per_page", "page"}
+            elif route == f"{repo}/actions/runs":
+                allowed = {"branch", "per_page", "page"}
+            elif route == f"{repo}/pulls":
+                allowed = {"state", "per_page", "page"}
+            elif re.fullmatch(
+                    rf"{re.escape(repo)}/(?:issues/[1-9][0-9]*/comments"
+                    rf"|pulls/[1-9][0-9]*/reviews"
+                    rf"|commits/[a-f0-9]{{40}}/check-runs)", route):
+                allowed = {"per_page", "page"}
+            else:
+                raise PermissionError("read_only_transport")
+            parts = query.split("&")
+            seen = set()
+            if not query or len(query) > 512 or len(parts) > 4:
+                raise PermissionError("read_only_transport")
+            for part in parts:
+                key, equal, value = part.partition("=")
+                decoded = unquote(value)
+                if (equal != "=" or key not in allowed or key in seen
+                        or not decoded.isascii() or "%" in decoded
+                        or quote(decoded, safe="") != value):
+                    raise PermissionError("read_only_transport")
+                seen.add(key)
+                if key in ("sha", "branch") and not re.fullmatch(
+                        r"(?:main|trabajo/issue-[1-9][0-9]*)", decoded):
+                    raise PermissionError("read_only_transport")
+                if key == "since" and not UTC_STAMP.fullmatch(decoded):
+                    raise PermissionError("read_only_transport")
+                if key == "state" and decoded != "open":
+                    raise PermissionError("read_only_transport")
+                if key == "per_page" and decoded != "100":
+                    raise PermissionError("read_only_transport")
+                if key == "page" and not re.fullmatch(r"[1-6]", decoded):
+                    raise PermissionError("read_only_transport")
         try:
             result = subprocess.run(
                 ["gh", "api", "-H", "Accept: application/vnd.github+json", path],
