@@ -104,7 +104,10 @@ class _GhReadOnlyAPI:
             elif route == f"{repo}/actions/runs":
                 allowed = {"branch", "per_page", "page"}
             elif route == f"{repo}/pulls":
-                allowed = {"state", "per_page", "page"}
+                allowed = {"state", "head", "per_page", "page"}
+            elif re.fullmatch(
+                    rf"{re.escape(repo)}/issues/[1-9][0-9]*/events", route):
+                allowed = {"per_page", "page"}
             elif re.fullmatch(
                     rf"{re.escape(repo)}/(?:issues/[1-9][0-9]*/comments"
                     rf"|pulls/[1-9][0-9]*/reviews"
@@ -127,13 +130,16 @@ class _GhReadOnlyAPI:
                 if key in ("sha", "branch") and not re.fullmatch(
                         r"(?:main|trabajo/issue-[1-9][0-9]*)", decoded):
                     raise PermissionError("read_only_transport")
+                if key == "head" and not re.fullmatch(
+                        r"pl0n3r:(?:main|trabajo/issue-[1-9][0-9]*)", decoded):
+                    raise PermissionError("read_only_transport")
                 if key == "since" and not UTC_STAMP.fullmatch(decoded):
                     raise PermissionError("read_only_transport")
                 if key == "state" and decoded != "open":
                     raise PermissionError("read_only_transport")
                 if key == "per_page" and decoded != "100":
                     raise PermissionError("read_only_transport")
-                if key == "page" and not re.fullmatch(r"[1-6]", decoded):
+                if key == "page" and not re.fullmatch(r"(?:[1-9]|10)", decoded):
                     raise PermissionError("read_only_transport")
         try:
             result = subprocess.run(
