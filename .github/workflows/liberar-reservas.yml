@@ -30,6 +30,8 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+  checks: read
+  actions: read
 
 concurrency:
   # Solo schedule/dispatch comparten exclusión con Coordinación;
@@ -50,6 +52,8 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
+      checks: read
+      actions: read
     steps:
       - name: Checkout sin credenciales persistidas
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

@@ -48,6 +48,12 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("issues: write", text)
         self.assertNotIn("contents: write", text)
         self.assertIn("pull-requests: read", text)
+        self.assertEqual(text.count("      checks: read"), 1)
+        self.assertEqual(text.count("      actions: read"), 1)
+        self.assertEqual(text.count("  checks: read"), 2)
+        self.assertEqual(text.count("  actions: read"), 2)
+        self.assertNotIn("checks: write", text)
+        self.assertNotIn("actions: write", text)
         self.assertNotIn("pull-requests: write", text)
         self.assertIn("      - 'scripts/coordinar_trabajo.py'", text)
         for dependency in (
