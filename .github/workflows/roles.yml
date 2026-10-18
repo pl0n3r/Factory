@@ -197,8 +197,8 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
-          python3 .factory/scripts/roles_kit.py validate-pr --language "$LANGUAGE" \
-            --verified-offline-scope-file /tmp/roles-verified-offline.json \
+          FACTORY_ROLES_VERIFIED_SCOPE="$(cat /tmp/roles-verified-offline.json)" \
+            python3 .factory/scripts/roles_kit.py validate-pr --language "$LANGUAGE" \
             < /tmp/context.json >> "$GITHUB_STEP_SUMMARY"
 
   mutate:

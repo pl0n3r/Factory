@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import re
 import sys
@@ -656,7 +657,7 @@ def main() -> int:
         choices=("validate-catalog", "suggest", "validate-pr", "labels"),
     )
     parser.add_argument("--language", choices=("es", "en"), default="es")
-    parser.add_argument("--verified-offline-scope-file", type=Path, default=None)
+
     args = parser.parse_args()
 
     try:
@@ -700,9 +701,8 @@ def main() -> int:
             json.dumps(
                 validate_pr(
                     context, catalog, ROLES_DIR, args.language,
-                    verified_scope=(
-                        json.loads(args.verified_offline_scope_file.read_text(encoding="utf-8"))
-                        if args.verified_offline_scope_file is not None else None
+                    verified_scope=json.loads(
+                        os.environ.get("FACTORY_ROLES_VERIFIED_SCOPE", "{}")
                     ),
                 ),
                 ensure_ascii=False,
@@ -710,7 +710,7 @@ def main() -> int:
             )
         )
         return 0
-    except (RoleError, SafeIOError) as exc:
+    except (RoleError, SafeIOError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
