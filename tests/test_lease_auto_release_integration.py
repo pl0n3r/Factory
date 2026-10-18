@@ -1105,7 +1105,9 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             self.assertFalse(LeaseGithubPort(api)._changes_requested(
                 "pl0n3r/Factory", "trabajo/issue-21"))
             paths = [call.args[0][-1] for call in gh.call_args_list]
-            self.assertEqual(len(paths), 2)
+            # LeaseGithubPort._pages termina ante página corta, sin
+            # centinela adicional. Aquí basta el único GET de pulls.
+            self.assertEqual(len(paths), 1)
             self.assertTrue(all("head=pl0n3r%3Atrabajo%2Fissue-21" in p for p in paths))
             self.assertEqual(api.request(
                 "GET", "/repos/pl0n3r/Factory/issues/21/events?per_page=100&page=10"), [])
