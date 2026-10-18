@@ -222,8 +222,8 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
 
 
 
-    def test_unknown_observation_is_noticed_without_failing_the_audit(self):
-        """Un UNKNOWN individual deja continuar el censo, sin escrituras."""
+    def test_unknown_observation_marks_cycle_invalid_but_continues_inventory(self):
+        """El cron no puede acreditar como verde un censo con UNKNOWN."""
         import os
         import shutil
         import subprocess
@@ -241,28 +241,41 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             (root / "lease-active-issues.json").write_text(
                 "[1364,1372]", encoding="utf-8")
             seen = root / "seen.txt"
+            summary = root / "summary.md"
             shim = root / "python3"
             shim.write_text(
-                "#!/bin/sh\n"
-                "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
-                "if [ \"$3\" = 1364 ]; then exit 1; fi\n"
-                "exit 0\n", encoding="utf-8")
+                "#!/bin/sh\\n"
+                "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\\n"
+                "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\\n"
+                "exit 0\\n", encoding="utf-8")
             shim.chmod(0o755)
-            env = {**os.environ, "RUNNER_TEMP": folder,
-                   "SEEN_PATH": str(seen),
-                   "PATH": f"{folder}:{os.environ.get('PATH', '')}"}
-            result = subprocess.run(
-                ["bash", "-c", "set -euo pipefail\n" + block],
-                cwd=ROOT, env=env, capture_output=True, text=True,
-                timeout=15, check=False)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(
-                seen.read_text(encoding="utf-8").splitlines(),
-                ["1364", "1372"])
-            self.assertIn("::notice::Issue #1364", result.stdout)
-            self.assertIn("observación UNKNOWN o fallida", result.stdout)
-            self.assertIn("fail-closed, 0 mutaciones", result.stdout)
-            self.assertNotIn("::error::", result.stdout)
+            for fail_first in (False, True):
+                with self.subTest(fail_first=fail_first):
+                    seen.unlink(missing_ok=True)
+                    summary.unlink(missing_ok=True)
+                    env = {**os.environ, "RUNNER_TEMP": folder,
+                           "SEEN_PATH": str(seen),
+                           "GITHUB_STEP_SUMMARY": str(summary),
+                           "FAIL_FIRST": "1" if fail_first else "0",
+                           "PATH": f"{folder}:{os.environ.get('PATH', '')}"}
+                    result = subprocess.run(
+                        ["bash", "-c", "set -euo pipefail\\n" + block],
+                        cwd=ROOT, env=env, capture_output=True, text=True,
+                        timeout=15, check=False)
+                    self.assertEqual(result.returncode == 0, not fail_first, result.stderr)
+                    self.assertEqual(
+                        seen.read_text(encoding="utf-8").splitlines(),
+                        ["1364", "1372"])
+                    report = summary.read_text(encoding="utf-8")
+                    self.assertIn("liberaciones=0", report)
+                    self.assertIn("ciclo válido de Fase A", report)
+                    if fail_first:
+                        self.assertIn("Observaciones válidas=1; UNKNOWN=1", report)
+                        self.assertIn("::notice::Issue #1364", result.stdout)
+                        self.assertIn("::error::Censo incompleto", result.stdout)
+                    else:
+                        self.assertIn("Observaciones válidas=2; UNKNOWN=0", report)
+                        self.assertNotIn("::error::", result.stdout)
 
     def test_observer_jq_failure_propagates(self):
         """No ocultar error de jq dentro de sustitución de proceso Bash."""

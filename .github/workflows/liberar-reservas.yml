@@ -269,12 +269,26 @@ jobs:
             "$RUNNER_TEMP/lease-active-issues.json" > /dev/null
           jq -r '.[]' "$RUNNER_TEMP/lease-active-issues.json" \
             > "$RUNNER_TEMP/lease-active-issue-numbers.txt"
+          valid_observations=0
+          unknown_observations=0
           while IFS= read -r issue_number; do
             [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
               echo "::error::Inventario de Issues inválido; fail-closed."
               exit 1
             }
-            if ! python3 -m scripts.lease_auto_release_integration "$issue_number"; then
+            if python3 -m scripts.lease_auto_release_integration "$issue_number"; then
+              valid_observations=$((valid_observations + 1))
+            else
+              unknown_observations=$((unknown_observations + 1))
               echo "::notice::Issue #${issue_number}: observación UNKNOWN o fallida (fail-closed, 0 mutaciones)."
             fi
           done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"
+          {
+            echo "### Observador V3 GET-only: resultado por Issue"
+            echo "Observaciones válidas=${valid_observations}; UNKNOWN=${unknown_observations}; liberaciones=0."
+            echo "Un run con UNKNOWN no acredita un ciclo válido de Fase A."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( unknown_observations > 0 )); then
+            echo "::error::Censo incompleto: ${unknown_observations} observaciones UNKNOWN; ciclo NO acreditable."
+            exit 1
+          fi
