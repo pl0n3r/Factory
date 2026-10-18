@@ -4674,7 +4674,11 @@ def _serialize_issue_mutation(function: Callable[..., Any], *,
     """
     @wraps(function)
     def wrapped(api: Any, *args: Any, **kwargs: Any) -> Any:
-        if not isinstance(api, _GITHUB_CLIENT_CLASS):
+        # Algunos tests de integración sustituyen GitHub por una CLASE fake
+        # para ejercitar el serializador CAS; el test CLI usa un MagicMock.
+        # Conservar ambos contratos sin aceptar bypass en el cliente real.
+        client_type = GitHub if isinstance(GitHub, type) else _GITHUB_CLIENT_CLASS
+        if not isinstance(api, client_type):
             return function(api, *args, **kwargs)
 
         issue_number = issue_resolver(api, *args, **kwargs)
