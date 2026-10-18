@@ -1045,6 +1045,40 @@ class CoordinacionTests(unittest.TestCase):
                     api.status_history,
                     [] if stage == "branch" else [STATUS_RESERVED])
 
+
+    def test_take_status_rechecks_canonical_switch_between_rest_writes(self):
+        """PAUSED tras el POST de estado veta DELETE, asignación y marker."""
+        source = FakeGitHub()
+        source.repo = "pl0n3r/Factory"
+        api = GitHub("pl0n3r/Factory", "token-sintetico")
+        writes = []
+
+        def fake_request(method, path, payload=None, allow=()):
+            if method == "GET" and path == "/repos/pl0n3r/Factory/issues/767":
+                return source.request(method, path, payload, allow)
+            if method == "GET" and "/labels/" in path:
+                return {"name": "etiqueta-existente"}
+            if method == "POST" and path == "/repos/pl0n3r/Factory/issues/12/labels":
+                writes.append((method, path))
+                source.kill_switch_marker = "PAUSED"
+                return {}
+            if method != "GET":
+                writes.append((method, path))
+                raise AssertionError("Mutacion posterior a PAUSED")
+            raise AssertionError("GET no permitido: " + path)
+
+        with patch.object(api, "request", side_effect=fake_request):
+            guard = coordinator._TakeGuardedGitHub(api)
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+                guard.set_status(12, STATUS_RESERVED)
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+                guard.try_assign(12, "pl0n3r")
+            with self.assertRaisesRegex(CoordinationError, "(?i)kill switch"):
+                guard.comment(12, "marker V3 no publicable")
+        self.assertEqual(writes, [
+            ("POST", "/repos/pl0n3r/Factory/issues/12/labels")
+        ])
+
     def test_comment_take_uses_canonical_kill_switch(self):
         """El CLI/workflow real de /tomar depende del GET Factory#767."""
         workflow = Path(".github/workflows/coordinacion-trabajo.yml").read_text(
