@@ -12,7 +12,8 @@ permissions:
 jobs:
   automerge:
     # Fase 1: el guard y sus pruebas se integran sin conceder autoridad de merge.
-    # Los filtros de evento evitan despertar el guard ante eventos que serán rechazados.
+    # Fase 1 no filtra eventos: cualquier disparo termina con el job omitido.
+    # Fase 2 deberá restaurar filtros de evento antes de activar otro contrato.
     # El literal false mantiene la fase inerte hasta autorización independiente.
     if: ${{ false }}
     runs-on: ubuntu-latest
