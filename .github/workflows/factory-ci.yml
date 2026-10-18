@@ -434,45 +434,45 @@ jobs:
                     end
                 )
             ' > /tmp/release-comments.json
-            # RELEASE_INVALID_GATE_JOURNAL_BEGIN
-            # A bot comment is provenance only, NEVER permission to skip a gate.
-            # Without trustworthy current issue state and canonical timestamps,
-            # reject the release snapshot rather than granting false authority.
-            python3 - "$issue" /tmp/release-comments.json <<'PY'
-            import json
-            import sys
-            from datetime import datetime
-            from pathlib import Path
+          # RELEASE_INVALID_GATE_JOURNAL_BEGIN
+          # A bot comment is provenance only, NEVER permission to skip a gate.
+          # Without trustworthy current issue state and canonical timestamps,
+          # reject the release snapshot rather than granting false authority.
+          python3 - "$issue" /tmp/release-comments.json <<'PY'
+          import json
+          import sys
+          from datetime import datetime
+          from pathlib import Path
 
-            def stamp(value):
-                if not isinstance(value, str):
-                    raise ValueError("missing timestamp")
-                date = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
-                if date.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
-                    raise ValueError("invalid UTC timestamp")
-                return date
+          def stamp(value):
+              if not isinstance(value, str):
+                  raise ValueError("missing timestamp")
+              date = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+              if date.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
+                  raise ValueError("invalid UTC timestamp")
+              return date
 
-            issue = json.loads(sys.argv[1])
-            rows = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-            if not isinstance(rows, list):
-                raise SystemExit("ERROR: Invalidación sin journal completo")
-            for row in rows:
-                if not isinstance(row, dict) or "id" not in row:
-                    continue  # Legacy markers preserve the original wire shape.
-                try:
-                    if (row.get("body") != "<!-- factory-invalid-gate -->"
-                            or row.get("user", {}).get("login") != "github-actions[bot]"
-                            or type(row.get("id")) is not int or row["id"] < 1
-                            or issue.get("state") != "closed"
-                            or issue.get("state_reason") not in ("completed", "not_planned", "duplicate")
-                            or "state_reason" not in issue
-                            or stamp(row.get("created_at")) > stamp(row.get("updated_at"))
-                            or stamp(row.get("updated_at")) > stamp(issue.get("updated_at"))):
-                        raise ValueError("unbound invalidation journal")
-                except (ValueError, TypeError, KeyError, AttributeError) as exc:
-                    raise SystemExit("ERROR: Procedencia de invalidación UNKNOWN") from exc
-            PY
-            # RELEASE_INVALID_GATE_JOURNAL_END
+          issue = json.loads(sys.argv[1])
+          rows = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          if not isinstance(rows, list):
+              raise SystemExit("ERROR: Invalidación sin journal completo")
+          for row in rows:
+              if not isinstance(row, dict) or "id" not in row:
+                  continue  # Legacy markers preserve the original wire shape.
+              try:
+                  if (row.get("body") != "<!-- factory-invalid-gate -->"
+                          or row.get("user", {}).get("login") != "github-actions[bot]"
+                          or type(row.get("id")) is not int or row["id"] < 1
+                          or issue.get("state") != "closed"
+                          or issue.get("state_reason") not in ("completed", "not_planned", "duplicate")
+                          or "state_reason" not in issue
+                          or stamp(row.get("created_at")) > stamp(row.get("updated_at"))
+                          or stamp(row.get("updated_at")) > stamp(issue.get("updated_at"))):
+                      raise ValueError("unbound invalidation journal")
+              except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                  raise SystemExit("ERROR: Procedencia de invalidación UNKNOWN") from exc
+          PY
+          # RELEASE_INVALID_GATE_JOURNAL_END
             jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
             mv /tmp/release-gates.next /tmp/release-gates.json
           done < /tmp/release-issues.jsonl
