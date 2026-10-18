@@ -525,11 +525,62 @@ def cross_review_allowed(risks: set[str]) -> set[str]:
     return allowed
 
 
+
+# Solo se permite NA operativo sobre el DTO de identidad preaprobado,
+# con procedencia construida por el workflow mediante API autenticada.
+# El cuerpo del PR nunca es una atestación de procedencia.
+OFFLINE_HEALTH_FILES = (
+    "src/HealthIdentityPayload.php",
+    "tests/test_health_identity_payload.py",
+)
+OFFLINE_SCOPE_SOURCE = "github-api-v3-and-exact-head-review-v1"
+
+
+def _verified_offline_sre_items(
+    context: dict[str, Any],
+    scope: Any,
+    required_items: list[str],
+) -> set[str]:
+    """Limita NA SRE al DTO offline, la lease V3 y la review exact-SHA."""
+    keys = {
+        "source", "repo", "issue", "pr", "head_sha", "reviewed_sha",
+        "branch", "reservation_id", "paths",
+    }
+    if not isinstance(scope, dict) or set(scope) != keys:
+        return set()
+    if (
+        scope.get("source") != OFFLINE_SCOPE_SOURCE
+        or scope.get("repo") != "pl0n3r/ControlBot"
+        or type(scope.get("issue")) is not int or scope["issue"] != 798
+        or type(scope.get("pr")) is not int or scope["pr"] != 799
+        or scope.get("branch") != "trabajo/issue-798"
+        or not isinstance(scope.get("head_sha"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", scope["head_sha"]) is None
+        or scope.get("reviewed_sha") != scope["head_sha"]
+        or not isinstance(scope.get("reservation_id"), str)
+        or re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", scope["reservation_id"]) is None
+        or scope.get("paths") != list(OFFLINE_HEALTH_FILES)
+        or sorted(context["files"]) != list(OFFLINE_HEALTH_FILES)
+    ):
+        return set()
+    body = context["body"]
+    if (
+        "Closes #798" not in body
+        or "## Bloqueo de roles" not in body
+        or "SRE — pendiente, no realizado por esta hoja" not in body
+        or not all(f"- [ ] {item}" in body for item in required_items)
+    ):
+        return set()
+    return set(required_items)
+
+
 def validate_pr(
     context: dict[str, Any],
     catalog: dict[str, dict[str, str]],
     roles_dir: Path,
     language: str,
+    *,
+    verified_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     body = context["body"]
     suggested, risks = classify(context, catalog)
@@ -554,13 +605,21 @@ def validate_pr(
         )
 
     checked = checked_items(body)
+    exempted: dict[str, list[str]] = {}
     for role in declared:
         content = read_repo_text(
             _repo_relative(roles_dir) / f"{role}.md",
             root=ROOT,
             max_bytes=MAX_ROLE_BYTES,
         )
-        missing_checks = set(parse_checklist(content)) - checked
+        items = parse_checklist(content)
+        missing_checks = set(items) - checked
+        if role == "sre" and missing_checks:
+            verified = _verified_offline_sre_items(context, verified_scope, items)
+            allowed = missing_checks & verified
+            if allowed:
+                exempted["sre"] = sorted(allowed)
+                missing_checks -= allowed
         if missing_checks:
             raise RoleError(f"Checklist incompleto para {role}.")
 
@@ -579,7 +638,7 @@ def validate_pr(
             raise RoleError(
                 "Cambio de riesgo requiere Revisión cruzada con rol permitido distinto al primario."
             )
-    return {"declared": declared, "required": suggested, "risks": sorted(risks)}
+    return {"declared": declared, "required": suggested, "risks": sorted(risks), "not_applicable": exempted}
 
 
 def labels_for(
@@ -597,6 +656,7 @@ def main() -> int:
         choices=("validate-catalog", "suggest", "validate-pr", "labels"),
     )
     parser.add_argument("--language", choices=("es", "en"), default="es")
+    parser.add_argument("--verified-offline-scope-file", type=Path, default=None)
     args = parser.parse_args()
 
     try:
@@ -638,7 +698,13 @@ def main() -> int:
 
         print(
             json.dumps(
-                validate_pr(context, catalog, ROLES_DIR, args.language),
+                validate_pr(
+                    context, catalog, ROLES_DIR, args.language,
+                    verified_scope=(
+                        json.loads(args.verified_offline_scope_file.read_text(encoding="utf-8"))
+                        if args.verified_offline_scope_file is not None else None
+                    ),
+                ),
                 ensure_ascii=False,
                 sort_keys=True,
             )

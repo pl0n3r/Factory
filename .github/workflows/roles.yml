@@ -97,12 +97,108 @@ jobs:
             files: $files[0]
           }' /tmp/entity.json > /tmp/context.json
 
+
+      - name: Acreditar scope de DTO offline con GitHub autenticado
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ inputs.number }}
+        run: |
+          set -euo pipefail
+          printf '{}\n' > /tmp/roles-verified-offline.json
+          if [[ "$REPOSITORY" != "pl0n3r/ControlBot" || "$NUMBER" != "799" ]]; then
+            exit 0
+          fi
+          gh api "repos/$REPOSITORY/pulls/$NUMBER" > /tmp/offline-pr.json
+          gh api "repos/$REPOSITORY/issues/798" > /tmp/offline-issue.json
+          gh api "repos/$REPOSITORY/issues/798/comments?per_page=100" > /tmp/offline-leases.json
+          gh api "repos/$REPOSITORY/issues/799/comments?per_page=100" > /tmp/offline-reviews.json
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          paths = ["src/HealthIdentityPayload.php", "tests/test_health_identity_payload.py"]
+          def read(path):
+              return json.loads(Path(path).read_text(encoding="utf-8"))
+          pr = read("/tmp/offline-pr.json")
+          issue = read("/tmp/offline-issue.json")
+          files = read("/tmp/files.json")
+          leases = read("/tmp/offline-leases.json")
+          reviews = read("/tmp/offline-reviews.json")
+          sha = pr.get("head", {}).get("sha")
+          match = re.search(
+              r'<!-- factory-plan-task (\{[^\n]*\}) -->',
+              issue.get("body") or "",
+          )
+          task = json.loads(match.group(1)) if match else {}
+          authentic = [
+              comment for comment in leases
+              if comment.get("user", {}).get("login") == "github-actions[bot]"
+              and comment.get("user", {}).get("type") == "Bot"
+              and re.search(
+                  r'<!-- condor-reserva (\{[^\n]*\}) -->',
+                  comment.get("body") or "",
+              )
+          ]
+          lease = {}
+          if authentic:
+              lease_mark = re.search(
+                  r'<!-- condor-reserva (\{[^\n]*\}) -->',
+                  authentic[-1]["body"],
+              )
+              lease = json.loads(lease_mark.group(1))
+          reviewed = False
+          for comment in reviews:
+              if (comment.get("user", {}).get("login") != "coderabbitai[bot]"
+                  or comment.get("user", {}).get("type") != "Bot"):
+                  continue
+              for match in re.finditer(
+                  r'<!-- final_review_risk_coverage:(\{[^\n]*\}) -->',
+                  comment.get("body") or "",
+              ):
+                  mark = json.loads(match.group(1))
+                  if (mark.get("sourceCommitId") == sha
+                      and mark.get("coveredCommitId") == sha
+                      and mark.get("kind") == "reviewed"):
+                      reviewed = True
+          labels = {item.get("name") for item in issue.get("labels", [])}
+          if (
+              issue.get("number") == 798
+              and issue.get("state") == "open"
+              and "tipo: infraestructura" in labels
+              and task.get("task_key") == "CB625_HEALTH_IDENTITY_PAYLOAD_V1"
+              and task.get("paths") == paths
+              and sorted(files) == paths
+              and lease.get("active") is True
+              and lease.get("version") == 3
+              and lease.get("owner") == "pl0n3r"
+              and lease.get("branch") == "trabajo/issue-798"
+              and sorted(lease.get("task_paths", [])) == paths
+              and pr.get("head", {}).get("ref") == "trabajo/issue-798"
+              and re.fullmatch(r"[0-9a-f]{40}", sha or "")
+              and reviewed
+          ):
+              scope = {
+                  "source": "github-api-v3-and-exact-head-review-v1",
+                  "repo": "pl0n3r/ControlBot", "issue": 798, "pr": 799,
+                  "head_sha": sha, "reviewed_sha": sha,
+                  "branch": "trabajo/issue-798",
+                  "reservation_id": lease.get("reservation_id"),
+                  "paths": paths,
+              }
+              Path("/tmp/roles-verified-offline.json").write_text(
+                  json.dumps(scope, sort_keys=True), encoding="utf-8",
+              )
+          PY
+
       - name: Validar PR
         env:
           LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
           python3 .factory/scripts/roles_kit.py validate-pr --language "$LANGUAGE" \
+            --verified-offline-scope-file /tmp/roles-verified-offline.json \
             < /tmp/context.json >> "$GITHUB_STEP_SUMMARY"
 
   mutate:

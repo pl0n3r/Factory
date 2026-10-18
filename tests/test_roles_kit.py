@@ -66,6 +66,74 @@ class RolesKitTests(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = load_catalog(CATALOG, ROLES_DIR)
 
+
+    def _offline_health_fixture(self):
+        files = list(rk.OFFLINE_HEALTH_FILES)
+        declared = ["infraestructura", "ingenieria-software", "qa", "seguridad", "sre"]
+        body = complete_body(declared, primary="ingenieria-software", reviewer="seguridad")
+        sre = rk.parse_checklist((ROLES_DIR / "sre.md").read_text(encoding="utf-8"))
+        for item in sre:
+            body = body.replace("- [x] " + item, "- [ ] " + item)
+        body += (
+            "\nCloses #798\n## Bloqueo de roles\n"
+            "Este DTO no ejecuta ninguna operación productiva.\n"
+            "#### SRE — pendiente, no realizado por esta hoja\n"
+        )
+        labels = [self.catalog[role]["label_es"] for role in declared] + ["tipo: infraestructura"]
+        scope = {
+            "source": rk.OFFLINE_SCOPE_SOURCE,
+            "repo": "pl0n3r/ControlBot",
+            "issue": 798, "pr": 799,
+            "head_sha": "bde659c30a7aaa7029fe01ad523c0c6f1a65ce28",
+            "reviewed_sha": "bde659c30a7aaa7029fe01ad523c0c6f1a65ce28",
+            "branch": "trabajo/issue-798",
+            "reservation_id": "308c0309-3b35-4325-acac-bd946b348068",
+            "paths": files,
+        }
+        return context(body=body, labels=labels, files=files), scope, sre
+
+    def test_offline_health_dto_still_requires_sre_evidence_without_attestation(self):
+        ctx, _scope, _items = self._offline_health_fixture()
+        with self.assertRaisesRegex(RoleError, "Checklist incompleto para sre"):
+            validate_pr(ctx, self.catalog, ROLES_DIR, "es")
+
+    def test_verified_offline_scope_allows_explicit_non_applicable_operational_items(self):
+        ctx, scope, items = self._offline_health_fixture()
+        result = validate_pr(ctx, self.catalog, ROLES_DIR, "es", verified_scope=scope)
+        self.assertIn("sre", result["declared"])
+        self.assertEqual(set(result["not_applicable"]["sre"]), set(items))
+        self.assertIn("sre", result["required"])
+
+    def test_real_deploy_or_forged_applicability_fails_closed(self):
+        ctx, scope, _items = self._offline_health_fixture()
+        cases = [
+            ({**ctx, "files": ctx["files"] + [".github/workflows/deploy.yml"]}, scope),
+            (ctx, {**scope, "source": "pr-body"}),
+            (ctx, {**scope, "repo": "attacker/ControlBot"}),
+            (ctx, {**scope, "head_sha": "a" * 40}),
+            (ctx, {**scope, "reviewed_sha": "b" * 40}),
+            (ctx, {**scope, "paths": ctx["files"] + ["public/health.php"]}),
+            (ctx, {**scope, "issue": 673}),
+            (ctx, {**scope, "reservation_id": "not-a-uuid"}),
+            ({**ctx, "body": ctx["body"].replace("Closes #798", "")}, scope),
+            (ctx, {"source": rk.OFFLINE_SCOPE_SOURCE}),
+        ]
+        for changed_context, claimed_scope in cases:
+            with self.subTest(case=claimed_scope, files=changed_context["files"]):
+                with self.assertRaises(RoleError):
+                    validate_pr(
+                        changed_context, self.catalog, ROLES_DIR, "es",
+                        verified_scope=claimed_scope,
+                    )
+
+    def test_full_roles_checklist_remains_required_without_verified_scope(self):
+        ctx, scope, _items = self._offline_health_fixture()
+        ctx["files"] = [".github/workflows/deploy.yml"]
+        with self.assertRaises(RoleError):
+            validate_pr(ctx, self.catalog, ROLES_DIR, "es", verified_scope=scope)
+        with self.assertRaisesRegex(RoleError, "Checklist incompleto para sre"):
+            validate_pr(self._offline_health_fixture()[0], self.catalog, ROLES_DIR, "es")
+
     def test_catalog_has_all_required_complete_roles(self):
         self.assertTrue(REQUIRED_ROLES <= set(self.catalog))
         self.assertGreaterEqual(len(self.catalog), len(REQUIRED_ROLES))
