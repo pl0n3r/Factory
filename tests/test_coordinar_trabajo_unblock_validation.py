@@ -369,6 +369,12 @@ class UnblockValidationTests(unittest.TestCase):
         self.assertEqual(api.comments, [])
 
     def test_automatic_reblock_allows_future_auto_unblock(self) -> None:
+        """Sin prueba de ausencia de bloqueo humano, reabrir sería inseguro.
+
+        El bot publicó un unblock y un reblock, pero ese historial no
+        descarta un bloqueo humano posterior (incluso idempotente).
+        AC-05 exige UNKNOWN; no debe escribirse AVAILABLE automáticamente.
+        """
         api, blocked, fingerprint = self._reblock_fake_api()
         api._comments.extend(
             [
@@ -386,15 +392,17 @@ class UnblockValidationTests(unittest.TestCase):
             ]
         )
 
-        changed = coordinator.sweep_satisfied_blocks(api)
-
-        self.assertEqual(changed, 1)
-        self.assertIn(
-            coordinator.STATUS_AVAILABLE,
-            coordinator.label_names(blocked),
+        self.assertEqual(
+            coordinator._partial_unblock_provenance(api._comments, fingerprint),
+            "UNKNOWN",
         )
-        self.assertEqual(len(api.comments), 1)
-        self.assertIn("factory-unblock-evidence", api.comments[0][1])
+        self.assertEqual(coordinator.sweep_satisfied_blocks(api), 0)
+        self.assertEqual(coordinator.sweep_satisfied_blocks(api), 0)
+        self.assertEqual(
+            coordinator.label_names(blocked),
+            {coordinator.STATUS_BLOCKED},
+        )
+        self.assertEqual(api.comments, [])
 
     def test_first_auto_unblock_remains_idempotent(self) -> None:
         api, blocked, _fingerprint = self._reblock_fake_api()
