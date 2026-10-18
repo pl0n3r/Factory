@@ -686,6 +686,10 @@ class AutoMergePrGuardTests(unittest.TestCase):
         # Red HIGH/CRITICAL prefixes and bold [P0]/[P1] are real security
         # findings only when coupled to an explicit exploit category.
         findings = (
+            "`12-20`: **🎯 Functional Correctness** | **🔴 Critical** | **⚡ Quick win**",
+            "Line 9: **🔒 Security & Privacy** | **🔴 High**",
+            "scripts/automerge_pr_guard.py:42-44: **Unknown Security Category** | **🔴 Critical**",
+            "Found an issue: **🎯 Functional Correctness** | **🔴 Critical**",
             "`9-13`: **HIGH** security vulnerability in signing",
             "Line 9-13: **CRITICAL** SQL injection in auth",
             "scripts/automerge_pr_guard.py:41-44: HIGH privilege escalation in merge",
@@ -727,6 +731,9 @@ class AutoMergePrGuardTests(unittest.TestCase):
 
         advisory = (
             "- **[P1]** is a notation used in this policy",
+            "Documentation says `12-20`: **🎯 Functional Correctness** | **🔴 Critical**",
+            "Line 22: **Maintainability** | **🔴 Critical**",
+            "Line 22: **🩺 Code Smell** | **🔴 Critical**",
             "Documentation says Line 9: CRITICAL SQL injection",
             "Line 22: HIGH maintainability risk",
             "🔴 HIGH severity issues were not found",
