@@ -111,8 +111,10 @@ jobs:
           fi
           gh api "repos/$REPOSITORY/pulls/$NUMBER" > /tmp/offline-pr.json
           gh api "repos/$REPOSITORY/issues/798" > /tmp/offline-issue.json
-          gh api "repos/$REPOSITORY/issues/798/comments?per_page=100" > /tmp/offline-leases.json
-          gh api "repos/$REPOSITORY/issues/799/comments?per_page=100" > /tmp/offline-reviews.json
+          gh api --paginate "repos/$REPOSITORY/issues/798/comments?per_page=100" --jq '.[]' \
+            | jq -s '.' > /tmp/offline-leases.json
+          gh api --paginate "repos/$REPOSITORY/issues/799/comments?per_page=100" --jq '.[]' \
+            | jq -s '.' > /tmp/offline-reviews.json
           python3 - <<'PY'
           import json
           import re
