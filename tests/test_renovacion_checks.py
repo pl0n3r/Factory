@@ -271,6 +271,9 @@ Ninguno.
             draft_pr["draft"] = True
             api.pull.side_effect = [copy.deepcopy(draft_pr), copy.deepcopy(draft_pr)]
             api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
+            # Count only requests made by the Draft collection, not by the
+            # earlier non-Draft collection on the same mock.
+            api.request.reset_mock()
             snapshot = collect_snapshot(api, 123)
             self.assertIs(snapshot["pr"]["draft"], True)
             self.assertEqual(snapshot["before"], snapshot["after"])
@@ -280,6 +283,26 @@ Ninguno.
             self.assertGreaterEqual(api.request.call_count, 2)
             self.assertTrue(all(call.args[0] == "GET"
                                 for call in api.request.call_args_list))
+            # The collector must reject a Draft fork and a Draft with a
+            # non-main base at the initial authenticated PR boundary. The
+            # rejected input must never reach issue or network inventory.
+            for variant in ("fork", "wrong_base"):
+                invalid = copy.deepcopy(draft_pr)
+                if variant == "fork":
+                    invalid["head"]["repo"]["full_name"] = "outsider/Factory"
+                else:
+                    invalid["base"]["ref"] = "development"
+                api.pull.side_effect = [copy.deepcopy(invalid),
+                                        copy.deepcopy(invalid)]
+                api.issue.side_effect = [copy.deepcopy(issue),
+                                         copy.deepcopy(issue)]
+                api.request.reset_mock()
+                api.issue.reset_mock(side_effect=False)
+                with self.subTest(variant=variant), self.assertRaisesRegex(
+                        EvidenceUnavailable, "pr_not_eligible"):
+                    collect_snapshot(api, 123)
+                api.request.assert_not_called()
+                api.issue.assert_not_called()
             # Changing Draft status between reads invalidates the evidence.
             api.pull.side_effect = [copy.deepcopy(draft_pr), copy.deepcopy(pr)]
             api.issue.side_effect = [copy.deepcopy(issue), copy.deepcopy(issue)]
