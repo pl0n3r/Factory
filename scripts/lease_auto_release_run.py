@@ -262,15 +262,17 @@ def run_cycle(
     # comentario+etiqueta atómicos. Nunca intentar más de tres por ciclo
     # mutante, incluso con fallos parciales o decisiones contradictorias.
     max_attempts = len(issues) if dry_run else 3
+    mutation_attempts = 0
     results: list[tuple[int, Result]] = []
-    for position, issue in enumerate(sorted(issues)):
-        if position >= max_attempts:
+    for issue in sorted(issues):
+        if mutation_attempts >= max_attempts:
             results.append((issue, Result("wait", "cycle_write_cap")))
             continue
-        results.append((
-            issue, execute(
-                issue, port, decision_from_snapshot,
-                feature_enabled=True, dry_run=dry_run,
-            ),
-        ))
+        result = execute(
+            issue, port, decision_from_snapshot,
+            feature_enabled=True, dry_run=dry_run,
+        )
+        results.append((issue, result))
+        if result.write_state != "none":
+            mutation_attempts += 1
     return CycleReport(state, tuple(results))
