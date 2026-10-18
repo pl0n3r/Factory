@@ -361,7 +361,10 @@ class LeaseGithubPort:
         return datetime.fromisoformat(stamps[-1].replace("Z", "+00:00"))
 
     def _changes_requested(self, repo: str, branch: str) -> bool:
-        pulls = self._pages(f"/repos/{repo}/pulls?state=open&head={repo.split('/')[0]}:{branch}")
+        from urllib.parse import quote
+
+        head = quote(f"{repo.split('/')[0]}:{branch}", safe="")
+        pulls = self._pages(f"/repos/{repo}/pulls?state=open&head={head}")
         blocked = False
         for pull in pulls:
             latest: dict[str, str] = {}
