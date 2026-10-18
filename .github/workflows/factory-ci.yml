@@ -430,7 +430,7 @@ jobs:
                       then {id, user: {login: .user.login}, body, created_at, updated_at}
                       else error("invalid_gate_journal_not_authentic") end
                     else
-                      {user: {login: .user.login}, body: (.body // "")}
+                      . | {user: {login: .user.login}, body: (.body // "")}
                     end
                 )
             ' > /tmp/release-comments.json
