@@ -166,7 +166,8 @@ def _identity(s: Snapshot) -> tuple[Any, ...]:
             s.branch, s.branch_sha)
 
 
-def _trusted(s: Any, *, allow_partial: bool = False) -> bool:
+def _trusted(s: Any, *, allow_partial: bool = False,
+             allow_running_ci: bool = False) -> bool:
     if type(s) is not Snapshot:
         return False
     flags = (s.complete, s.authenticated, s.issue_open, s.kill_switch_running,
@@ -174,7 +175,8 @@ def _trusted(s: Any, *, allow_partial: bool = False) -> bool:
     if any(type(f) is not bool for f in flags):
         return False
     if not (s.complete and s.authenticated and s.issue_open
-            and s.kill_switch_running and not s.ci_running
+            and s.kill_switch_running
+            and (allow_running_ci or not s.ci_running)
             and not s.changes_requested and not s.owner_recovered):
         return False
     if (type(s.issue) is not int or s.issue <= 0 or type(s.repository_id) is not int
