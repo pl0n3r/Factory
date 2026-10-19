@@ -17,6 +17,9 @@ ENVELOPE_FIELDS = {
     "identity", "evidence_ref", "observed_at", "observations",
 }
 IDENTITY_FIELDS = {"sha", "release"}
+RELEASE_CONTRACT_FIELDS = {"design", "minimum_release"}
+_DESIGN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,79}$")
+_SEMVER = re.compile(r"^(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _RELEASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
@@ -81,7 +84,9 @@ def classify_performance_envelope(
 
 
 def _envelope(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, Mapping) or set(raw) != ENVELOPE_FIELDS:
+    if not isinstance(raw, Mapping) or set(raw) not in (
+        ENVELOPE_FIELDS, ENVELOPE_FIELDS | {"release_contract"},
+    ):
         raise PerformanceClassifierError("Envelope shape is invalid.")
     if raw["version"] != 1 or raw["classification_authority"] != AUTHORITY:
         raise PerformanceClassifierError("Envelope version or authority is invalid.")
@@ -89,6 +94,8 @@ def _envelope(raw: Any) -> dict[str, Any]:
         raise PerformanceClassifierError("Producer classification must be null.")
     project = _nonempty(raw["project"], "project", 80)
     sha, release = _identity(raw["identity"])
+    if "release_contract" in raw:
+        _check_release_contract(raw["release_contract"], release)
     evidence_ref = _nonempty(raw["evidence_ref"], "evidence reference", 240)
     observations = raw["observations"]
     if not isinstance(observations, list) or not 1 <= len(observations) <= MAX_OBSERVATIONS:
@@ -101,6 +108,29 @@ def _envelope(raw: Any) -> dict[str, Any]:
         "observed_at": _timestamp(raw["observed_at"], "observed_at"),
         "observations": observations,
     }
+
+
+
+def _check_release_contract(raw: Any, release: str) -> None:
+    """Validate optional provenance metadata without granting authority.
+
+    The producer's minimum release is an eligibility check, not a performance
+    budget, a readiness score or permission to emit WorkItems.
+    """
+    if not isinstance(raw, Mapping) or set(raw) != RELEASE_CONTRACT_FIELDS:
+        raise PerformanceClassifierError("Envelope release contract shape is invalid.")
+    design = raw["design"]
+    minimum = raw["minimum_release"]
+    if not isinstance(design, str) or _DESIGN.fullmatch(design) is None:
+        raise PerformanceClassifierError("Envelope release contract design is invalid.")
+    if not isinstance(minimum, str):
+        raise PerformanceClassifierError("Envelope minimum release is invalid.")
+    actual_match = _SEMVER.fullmatch(release)
+    minimum_match = _SEMVER.fullmatch(minimum)
+    if not actual_match or not minimum_match:
+        raise PerformanceClassifierError("Envelope minimum release is invalid.")
+    if tuple(map(int, actual_match.groups())) < tuple(map(int, minimum_match.groups())):
+        raise PerformanceClassifierError("Envelope release precedes producer minimum.")
 
 
 def _identity(raw: Any) -> tuple[str, str]:
