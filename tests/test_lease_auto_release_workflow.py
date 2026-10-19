@@ -298,6 +298,24 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                     report = summary.read_text(encoding="utf-8")
                     self.assertIn("liberaciones=0", report)
                     self.assertIn("ciclo válido de Fase A", report)
+                    self.assertIn(
+                        "| Issue | Estado | Decisión | Inactividad (min) | Fuente | Veto/motivo |",
+                        report,
+                    )
+                    self.assertIn(
+                        "| #1372 | read_only | wait | 5 | reservation_marker | protected_or_active_work |",
+                        report,
+                    )
+                    if fail_first:
+                        self.assertIn(
+                            "| #1364 | UNKNOWN | unknown | UNKNOWN | UNKNOWN | unverifiable_observation |",
+                            report,
+                        )
+                    else:
+                        self.assertIn(
+                            "| #1364 | read_only | wait | 5 | reservation_marker | protected_or_active_work |",
+                            report,
+                        )
                     import json
                     manifest = json.loads(
                         (root / "lease-audit-evidence.json").read_text(encoding="utf-8"))
@@ -361,6 +379,9 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         for sample in (
             (valid, valid),
             (valid, {**valid, "issue": 1372}),
+            ({**valid, "issue": 1372},),  # identidad falsa aunque haya un solo documento
+            ({**valid, "activity_age_minutes": 5.5},),  # evitar minutos fraccionarios
+            ({**valid, "activity_age_minutes": 525601},),  # ventana fuera de rango
             ({**valid, "release_authorized": True},),
         ):
             with self.subTest(sample=len(sample)):

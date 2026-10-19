@@ -308,7 +308,7 @@ jobs:
                        or .activity_source == "workflow_push")
                   and (.activity_age_minutes == null
                        or (.activity_age_minutes | type == "number"
-                           and . >= 0 and floor == .))
+                           and . >= 0 and floor == . and . <= 525600))
                   and .release_authorized == false
                   and .lock_verified == false
                   and .cas_verified == false and .mutations == 0)
@@ -345,6 +345,14 @@ jobs:
             echo "Observaciones válidas=${valid_observations}; UNKNOWN=${unknown_observations}; liberaciones=0."
             echo "Un run con UNKNOWN no acredita un ciclo válido de Fase A."
             echo "El manifiesto del run es solo candidato; QA y procedencia deben verificarlo."
+            echo
+            echo "| Issue | Estado | Decisión | Inactividad (min) | Fuente | Veto/motivo |"
+            echo "| --- | --- | --- | ---: | --- | --- |"
+            # Sólo el manifiesto saneado, nunca stdout REST/CLI: todos los
+            # valores visibles están validados o sintetizados en el censo.
+            jq -r '.issues[] |
+              "| #\(.issue) | \(.state) | \(.action) | \(.activity_age_minutes // "UNKNOWN") | \(.activity_source // "UNKNOWN") | \(.reason) |"
+            ' "$RUNNER_TEMP/lease-audit-evidence.json"
           } >> "$GITHUB_STEP_SUMMARY"
           if (( unknown_observations > 0 )); then
             echo "::error::Censo incompleto: ${unknown_observations} observaciones UNKNOWN; ciclo NO acreditable."
