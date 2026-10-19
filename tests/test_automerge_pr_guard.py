@@ -10,6 +10,8 @@ import json
 import unittest
 from unittest.mock import patch
 
+from scripts.aceptacion_kit import contract_fingerprint
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("automerge_pr_guard", ROOT / "scripts" / "automerge_pr_guard.py")
 assert SPEC and SPEC.loader
@@ -29,12 +31,9 @@ LEASE = {"version": 3, "active": True, "owner": "pl0n3r",
          "branch": "trabajo/issue-1364", "task_paths": PATHS,
          "task_depends_on": [1295, 1321],
          "reservation_id": "a0f85ea8-d865-56f2-905c-6295b5279efa",
-         "acceptance_sha256": "930a40695b142be8d0ad78c4a25c4a2f0631d96763e76a9818c70c40c8883f14", "task_marker_sha256": hashlib.sha256(json.dumps(TASK, ensure_ascii=False,
+         "acceptance_sha256": contract_fingerprint(ACCEPTANCE_BODY), "task_marker_sha256": hashlib.sha256(json.dumps(TASK, ensure_ascii=False,
                                                       separators=(",", ":"), sort_keys=True).encode("utf8")).hexdigest(),
          "reason": "recuperacion-inactividad"}
-# Keep the synthetic lease pinned to the contract fixture used by these tests.
-LEASE["acceptance_sha256"] = mod.acceptance_fingerprint(ACCEPTANCE_BODY)
-
 
 def comment(payload, author="github-actions[bot]"):
     return {"user": {"login": author},
@@ -80,6 +79,40 @@ def evidence():
 
 
 class AutoMergePrGuardTests(unittest.TestCase):
+    def test_fingerprint_matches_canonical_acceptance_producer(self):
+        """Compare independent producer/guard fingerprints, not guard with itself."""
+        prefix = "<!-- factory-acceptance "
+        start = ACCEPTANCE_BODY.index(prefix) + len(prefix)
+        end = ACCEPTANCE_BODY.index(" -->", start)
+        contract = json.loads(ACCEPTANCE_BODY[start:end])
+        contract["criteria"].reverse()
+        reordered = (
+            ACCEPTANCE_BODY[:start]
+            + json.dumps(contract, ensure_ascii=False, separators=(",", ":"))
+            + ACCEPTANCE_BODY[end:]
+        )
+        cases = {
+            "fixture": ACCEPTANCE_BODY,
+            "checked": ACCEPTANCE_BODY.replace("- [ ] [AC-01]", "- [x] [AC-01]", 1),
+            "peripheral_prose": ACCEPTANCE_BODY.replace(
+                "Contexto.\n", "Contexto con acentos: más información.\n", 1
+            ),
+            "criterion_changed": ACCEPTANCE_BODY.replace(
+                "CI Validar green", "CI Validar verde exact-HEAD", 1
+            ),
+            "criteria_reordered": reordered,
+        }
+        for label, body in cases.items():
+            with self.subTest(case=label):
+                self.assertEqual(mod.acceptance_fingerprint(body),
+                                 contract_fingerprint(body))
+        self.assertEqual(LEASE["acceptance_sha256"],
+                         contract_fingerprint(ACCEPTANCE_BODY))
+        self.assertEqual(contract_fingerprint(cases["fixture"]),
+                         contract_fingerprint(cases["criteria_reordered"]))
+        self.assertNotEqual(contract_fingerprint(cases["fixture"]),
+                            contract_fingerprint(cases["criterion_changed"]))
+
     def deny(self, data):
         with self.assertRaises(mod.Denied):
             mod.verify(data, SHA, NOW)
