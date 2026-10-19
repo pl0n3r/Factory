@@ -775,6 +775,38 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             observed.state = "authorized"
 
+        # La evidencia autenticada de CI en curso produce un veto wait:
+        # no usa la lectura mutante y no concede autoridad de liberación.
+        running_api = review_ready_api()
+        running_snapshot = replace(item, ci_running=True)
+
+        class ObservationOnlyPort(ReadOnlyPort):
+            def read(self, issue):
+                raise AssertionError("strict mutating read must not be used")
+            def read_observation(self, issue):
+                assert issue == 21
+                self.reads += 1
+                return self.item
+
+        running_port = ObservationOnlyPort(running_snapshot)
+        running_result = preview_integrated_activity(
+            running_api, running_port, 21, now=NOW)
+        self.assertEqual(
+            (running_result.state, running_result.action, running_result.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertEqual(running_port.reads, 1)
+        self.assertFalse(running_result.release_authorized)
+        self.assertFalse(running_result.lock_verified)
+        self.assertFalse(running_result.cas_verified)
+
+        # Discrepancia entre checks y snapshot: se conserva UNKNOWN.
+        completed_api = review_ready_api()
+        completed_api.checks[0]["status"] = "completed"
+        inconsistent = preview_integrated_activity(
+            completed_api, ObservationOnlyPort(running_snapshot), 21, now=NOW)
+        self.assertEqual(inconsistent.state, "UNKNOWN")
+
         for change in (
             {"branch_sha": "b" * 40},
             {"owner": "different"},
