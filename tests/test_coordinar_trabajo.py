@@ -4447,6 +4447,15 @@ class CoordinacionTests(unittest.TestCase):
                     api.pulls[15]["head"]["repo"]["full_name"] = "other/repo"
                 elif mode == "wrong_branch":
                     api.pulls[15]["head"]["ref"] = "trabajo/issue-999"
+                    # Issue ajeno pero existente: no hay V3 para ese branch.
+                    other = {
+                        "number": 999,
+                        "state": "open",
+                        "labels": [{"name": STATUS_AVAILABLE}],
+                        "body": VALID_ACCEPTANCE_BODY,
+                    }
+                    api.related_issues[999] = other
+                    api.open_issue_data.append(other)
                 elif mode == "closed_issue":
                     api.issue_data["state"] = "closed"
                 before = list(api.status_history)
