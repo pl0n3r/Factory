@@ -2545,6 +2545,83 @@ class CoordinacionTests(unittest.TestCase):
             {"stale_reservations": 2, "satisfied_blocks": 3},
         )
 
+    def test_sweep_pause_after_unblock_comment_fails_closed(self) -> None:
+        """Una pausa entre comentario y label no autoriza otra escritura."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = unblock_marker(
+            kind="branch_sha", branch="main", sha="a" * 40,
+        )
+        api.branches["main"] = "a" * 40
+        original_comment = api.comment
+
+        def pause_after_comment(number, body):
+            original_comment(number, body)
+            api.kill_switch_marker = "PAUSED"
+
+        api.comment = pause_after_comment
+        guarded = coordinator._SweepGuardedGitHub(api)
+        with self.assertRaisesRegex(CoordinationError, "Barrido pausado"):
+            sweep_satisfied_blocks(guarded)
+        self.assertEqual(api.status_history, [])
+        self.assertEqual(coordinator.label_names(api.issue_data), {STATUS_BLOCKED})
+        self.assertEqual(len(api.comments), 1)
+        api.kill_switch_marker = "RUNNING"
+        self.assertEqual(sweep_satisfied_blocks(guarded), 0)
+        self.assertEqual(len(api.comments), 1)
+        self.assertEqual(api.status_history, [])
+
+    def test_partial_unblock_needs_verified_provenance(self) -> None:
+        """El journal bot no prueba una transición parcial ni da autoridad."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = unblock_marker(kind="issue_closed", issue=99)
+        api.related_issues[99] = {"number": 99, "state": "closed", "labels": []}
+        marker = coordinator.parse_unblock_marker(api.issue_data["body"])
+        fingerprint = coordinator.unblock_fingerprint(marker)
+        self.assertEqual(
+            coordinator._partial_unblock_provenance(api.comments, fingerprint),
+            "NEW",
+        )
+        api.comment(
+            12, coordinator._unblock_evidence_comment(fingerprint, "issue:99:closed"),
+        )
+        self.assertEqual(
+            coordinator._partial_unblock_provenance(api.comments, fingerprint),
+            "UNKNOWN",
+        )
+        self.assertIsNone(
+            coordinator._revalidated_unblock_evidence(api, 12, fingerprint)
+        )
+        self.assertEqual(sweep_satisfied_blocks(api), 0)
+        self.assertEqual(api.status_history, [])
+        self.assertEqual(len(api.comments), 1)
+        # Aun con re-bloqueo automático anterior, un acto humano sin
+        # cambio de label puede no dejar traza; no inferir autorización.
+        api.comment(12, coordinator._reblock_evidence_comment(fingerprint))
+        self.assertEqual(sweep_satisfied_blocks(api), 0)
+        self.assertEqual(api.status_history, [])
+        self.assertEqual(len(api.comments), 2)
+
+    def test_manual_reblock_is_never_overridden_by_retry(self) -> None:
+        """Un re-bloqueo humano posterior conserva la prioridad sobre el bot."""
+        api = FakeGitHub()
+        api.issue_data["labels"] = [{"name": STATUS_BLOCKED}]
+        api.issue_data["body"] = unblock_marker(kind="issue_closed", issue=99)
+        api.related_issues[99] = {"number": 99, "state": "closed", "labels": []}
+        self.assertEqual(sweep_satisfied_blocks(api), 1)
+        self.assertEqual(api.status_history, [STATUS_AVAILABLE])
+        api.set_status(12, STATUS_BLOCKED)  # intención humana posterior
+        marker = coordinator.parse_unblock_marker(api.issue_data["body"])
+        fingerprint = coordinator.unblock_fingerprint(marker)
+        api.comment(12, coordinator._reblock_evidence_comment(fingerprint))
+        before = list(api.status_history)
+        self.assertEqual(sweep_satisfied_blocks(api), 0)
+        self.assertEqual(sweep_satisfied_blocks(api), 0)
+        self.assertEqual(api.status_history, before)
+        self.assertEqual(coordinator.label_names(api.issue_data), {STATUS_BLOCKED})
+        self.assertEqual(len(api.comments), 2)
+
     def test_block_sweep_retry_does_not_duplicate_evidence_comment(self) -> None:
         api = FakeGitHub()
         sha = "d" * 40
