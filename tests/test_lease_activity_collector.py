@@ -79,6 +79,8 @@ class API:
         self.review_reads = 0
         self.change_pull_during_recheck = False
         self.change_review_during_recheck = False
+        self.comment_reads = 0
+        self.edit_owner_comment_on_recheck = False
 
     def request(self, method, path):
         assert method == "GET", "read-only collector"
@@ -100,6 +102,13 @@ class API:
             return {"object": {"sha": "b" * 40 if self.race and self.ref_reads > 1 else SHA}}
         page = int(path.rsplit("page=", 1)[-1])
         if "/issues/21/comments?" in path:
+            if page == 1:
+                self.comment_reads += 1
+                if self.edit_owner_comment_on_recheck and self.comment_reads == 2:
+                    for item in self.comments:
+                        if item["user"]["login"] == "pl0n3r":
+                            item["body"] = "Owner edited during observation"
+                            item["updated_at"] = "2026-10-11T09:59:59Z"
             return copy.deepcopy(self.comments) if page == 1 else []
         if "/commits?sha=" in path:
             return copy.deepcopy(self.commits) if page == 1 else []
@@ -435,6 +444,7 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(result["repository_id"], 123)
         self.assertEqual(result["pagination"], {
             "comments": {"pages": 1, "items": 2},
+            "comments_recheck": {"pages": 1, "items": 2},
             "commits": {"pages": 2, "items": 1},
             "pulls": {"pages": 2, "items": 1},
             "reviews": {"pages": 2, "items": 1},
@@ -448,8 +458,8 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         api.issue["labels"].append({"name": "prioridad: crítica"})
         self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
-        self.assertEqual(result["rate_remaining"], 59)
-        self.assertEqual(result["api_requests"], 21)
+        self.assertEqual(result["rate_remaining"], 58)
+        self.assertEqual(result["api_requests"], 22)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
         self.assertTrue(all(isinstance(p, str) for p in api.calls))
 
@@ -491,6 +501,31 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     collect_activity(case, 21, now=NOW),
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
+
+    def test_owner_comment_edited_during_snapshot_is_unknown(self):
+        # Una edición no aumenta issue.comments y puede no actualizar el
+        # updated_at del Issue. El owner comenta antes de la reserva y edita
+        # mientras el recolector consulta PR, reviews y checks.
+        api = API()
+        api.comments[0]["id"] = 2  # marker V3 creado después
+        api.comments[1].update({
+            "id": 1, "user": {"login": "pl0n3r"},
+            "body": "Pre-lease owner comment",
+            "created_at": "2026-10-11T07:00:00Z",
+            "updated_at": "2026-10-11T07:00:00Z",
+        })
+        api.comments.reverse()
+        stable = collect_activity(copy.deepcopy(api), 21, now=NOW)
+        self.assertTrue(stable["evidence_complete"])
+
+        api.edit_owner_comment_on_recheck = True
+        outcome = collect_activity(api, 21, now=NOW)
+        self.assertEqual(
+            outcome, {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(api.comment_reads, 2)
+        self.assertEqual(api.issue_reads, 2)
+        self.assertEqual(api.issue["updated_at"], "2026-10-11T09:45:00Z")
 
     def test_review_race_fails_closed(self):
         api = API()

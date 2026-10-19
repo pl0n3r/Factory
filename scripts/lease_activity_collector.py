@@ -363,6 +363,12 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         )
         if checked_again != checks or runs_again != workflow_runs:
             raise IncompleteEvidence()
+        # Editar un comentario no garantiza que issue.updated_at cambie.
+        # Releer el inventario completo evita acreditar un snapshot que
+        # omitió una edición del titular durante las otras consultas.
+        if pages(f"{path}/comments", name="comments_recheck",
+                 expected=total) != comments:
+            raise IncompleteEvidence()
         effective_remaining = remaining - used
         if effective_remaining < 0 or effective_remaining * 5 < limit:
             raise IncompleteEvidence()
