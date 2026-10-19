@@ -1,11 +1,13 @@
 """Contratos offline del runner V3: ninguna credencial ni red real."""
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts.lease_auto_release_run import (
     decision_from_snapshot, inventory_after_switch_recheck,
     inventory_from_paginated_issues, observe_recent_activity, run_cycle,
+    evaluate_phase_a_candidate,
 )
 from test_lease_release_executor import FakePort, snapshot
 from test_lease_github_port import FakeAPI, NOW
@@ -39,6 +41,127 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
             RecentActivityReport("read_only", (observed,), True)
         with self.assertRaises(TypeError):
             RecoveryInventory(2, 1, 0, 1, True)
+
+
+    def test_phase_a_candidate_requires_authenticated_receipts_and_24h_100_cycles(self):
+        from copy import deepcopy
+        from dataclasses import FrozenInstanceError
+
+        repo = "pl0n3r/Factory"
+        sha = "a" * 40
+        now = datetime(2026, 10, 18, tzinfo=timezone.utc)
+        manifests, receipts = [], []
+        def issue_row(action="wait"):
+            return {
+                "issue": 21, "state": "read_only", "action": action,
+                "reason": "not_old_enough", "activity_age_minutes": 7,
+                "activity_source": "workflow_push",
+                "release_authorized": False, "lock_verified": False,
+                "cas_verified": False, "mutations": 0,
+            }
+        for n in range(100):
+            run = 10001 + n
+            manifests.append({
+                "schema_version": 1, "repository": repo, "head_sha": sha,
+                "run_id": str(run), "status": "candidate_terminal",
+                "terminal_certified": False, "release_authorized": False,
+                "mutations": 0, "valid_observations": 1,
+                "unknown_observations": 0, "issues": [issue_row()],
+            })
+            receipts.append({
+                "id": run, "repository": repo, "head_sha": sha,
+                "event": "schedule", "status": "completed",
+                "conclusion": "success", "artifact_attested": True,
+                "completed_at": (
+                    now + timedelta(minutes=15 * n)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            })
+        result = evaluate_phase_a_candidate(manifests, receipts, [], repository=repo)
+        self.assertEqual(result.status, "candidate_only")
+        self.assertEqual(result.valid_cycles, 100)
+        self.assertGreaterEqual(result.observed_minutes, 1440)
+        self.assertEqual((result.hypothetical_releases, result.qa_correct), (0, 0))
+        self.assertIs(result.release_authorized, False)
+        with self.assertRaises(TypeError):
+            replace(result, release_authorized=True)
+        with self.assertRaises(FrozenInstanceError):
+            setattr(result, "release_authorized", True)
+
+        short = evaluate_phase_a_candidate(
+            manifests[:99], receipts[:99], [], repository=repo,
+        )
+        self.assertEqual(short.status, "insufficient_observation")
+        cramped = deepcopy(receipts)
+        for i, receipt in enumerate(cramped):
+            receipt["completed_at"] = (
+                now + timedelta(minutes=10 * i)
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(evaluate_phase_a_candidate(
+            manifests, cramped, [], repository=repo,
+        ).status, "insufficient_observation")
+
+        for mismatch in (
+            {"event": "pull_request"},
+            {"status": "queued"},
+            {"conclusion": "failure"},
+            {"artifact_attested": False},
+            {"head_sha": "b" * 40},
+            {"repository": "pl0n3r/other"},
+        ):
+            with self.subTest(mismatch=mismatch):
+                altered = deepcopy(receipts)
+                altered[0].update(mismatch)
+                self.assertEqual(evaluate_phase_a_candidate(
+                    manifests, altered, [], repository=repo,
+                ).status, "invalid_evidence")
+        for mismatch in (
+            {"status": "UNKNOWN"},
+            {"status": "deferred_low_quota"},
+            {"terminal_certified": True},
+            {"valid_observations": 2},
+            {"unknown_observations": 1},
+            {"mutations": 1},
+            {"release_authorized": True},
+            {"head_sha": "b" * 40},
+        ):
+            with self.subTest(manifest=mismatch):
+                altered = deepcopy(manifests)
+                altered[0].update(mismatch)
+                self.assertEqual(evaluate_phase_a_candidate(
+                    altered, receipts, [], repository=repo,
+                ).status, "invalid_evidence")
+        duplicated = deepcopy(manifests)
+        duplicated[1]["run_id"] = duplicated[0]["run_id"]
+        self.assertEqual(evaluate_phase_a_candidate(
+            duplicated, receipts, [], repository=repo,
+        ).status, "invalid_evidence")
+
+        with_release = deepcopy(manifests)
+        with_release[0]["issues"] = [issue_row("release")]
+        missing_qa = evaluate_phase_a_candidate(
+            with_release, receipts, [], repository=repo)
+        self.assertEqual(missing_qa.status, "qa_incomplete")
+        qa = {"run_id": 10001, "issue": 21, "verdict": "correct",
+              "evidence_ref": "actions/10001/21"}
+        good = evaluate_phase_a_candidate(
+            with_release, receipts, [qa], repository=repo)
+        self.assertEqual(good.status, "candidate_only")
+        self.assertEqual((good.hypothetical_releases, good.qa_correct), (1, 1))
+        self.assertIs(good.release_authorized, False)
+        wrong = evaluate_phase_a_candidate(
+            with_release, receipts, [{**qa, "verdict": "incorrect"}],
+            repository=repo)
+        self.assertEqual(wrong.status, "false_positive")
+        for invalid_qa in ([qa, qa], [{**qa, "issue": 22}],
+                           [{**qa, "verdict": "maybe"}]):
+            self.assertEqual(evaluate_phase_a_candidate(
+                with_release, receipts, invalid_qa, repository=repo,
+            ).status, "invalid_evidence")
+        malformed = deepcopy(with_release)
+        malformed[0]["issues"][0]["mutations"] = 1
+        self.assertEqual(evaluate_phase_a_candidate(
+            malformed, receipts, [qa], repository=repo,
+        ).status, "invalid_evidence")
 
     def test_authenticated_recent_activity_inventory_is_bounded_and_never_writes(self):
         from datetime import timedelta

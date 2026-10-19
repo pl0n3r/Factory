@@ -79,6 +79,20 @@ observaciones, `terminal_certified=false` y autoridad de liberación negativa,
 sin llamadas REST adicionales. El artefacto vinculado al run distingue
 aplazamiento de auditoría completa, pero no certifica QA.
 
+Una conciliación QA **offline y sin credenciales** está disponible en
+`scripts/lease_auto_release_run.py::evaluate_phase_a_candidate`: requiere
+manifiestos exactamente asociados por ID, SHA y repositorio a recibos de runs
+`schedule` terminales `success`, artefactos acreditados por una verificación
+externa, cero `UNKNOWN`, cero mutaciones, 100 ciclos distintos, intervalo
+>=24 horas y una revisión documentada por cada candidato `release`.
+Rechaza duplicados, resultados `deferred_low_quota`, falsos positivos y
+cualquier fuente sin consistencia. Devuelve `candidate_only` como máximo:
+**no obtiene ni autentica los recibos de GitHub, no acredita un push negativo,
+no convierte una declaración QA en firma auténtica y nunca permite release**.
+Todos los recibos y evidencias deben verificarse manualmente por QA contra
+las APIs/autorización del repositorio local. El cálculo no reemplaza los
+gates de Coordinación ni la publicación independiente de Fase A.
+
 Antes de considerar la Fase B se exigen **24 horas** reales y **100 ciclos**
 **terminales y válidos por repositorio**, **cero falsos positivos** y **QA individual**
 documentada de cada decisión hipotética `release`. No cuentan los ticks de

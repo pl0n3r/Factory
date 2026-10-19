@@ -8,7 +8,8 @@ controles separados: ninguno se infiere de un resultado del decisor.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 
 from scripts.lease_github_port import Inspection, LeaseGithubPort, RECENT, UNKNOWN
@@ -221,6 +222,148 @@ def decision_from_snapshot(snapshot: Any) -> Decision:
         rate_remaining=snapshot.rate_remaining,
         rate_limit=snapshot.rate_limit,
     ))
+
+
+@dataclass(frozen=True)
+class PhaseACandidateAudit:
+    """Conciliación offline no autoritativa: nunca aprueba activación."""
+    status: str
+    valid_cycles: int
+    observed_minutes: int
+    hypothetical_releases: int
+    qa_correct: int
+
+    @property
+    def release_authorized(self) -> bool:
+        return False
+
+
+def evaluate_phase_a_candidate(
+    manifests: Any, run_receipts: Any, qa_reviews: Any, *, repository: Any,
+) -> PhaseACandidateAudit:
+    """Evalúa 24 h / 100 ciclos sin convertir un artefacto en autoridad.
+
+    Cada run_receipt DEBE obtenerse separadamente de GitHub autenticado por QA.
+    Este evaluador puro NO autentica su origen ni comprueba pushes negativos;
+    incluso el resultado candidato requiere validación humana y puertas V3.
+    """
+    reject = PhaseACandidateAudit("invalid_evidence", 0, 0, 0, 0)
+    if (type(repository) is not str
+            or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is None
+            or type(manifests) is not list or not 1 <= len(manifests) <= 500
+            or type(run_receipts) is not list
+            or len(run_receipts) != len(manifests)
+            or type(qa_reviews) is not list or len(qa_reviews) > 2000):
+        return reject
+
+    receipts: dict[int, dict[str, Any]] = {}
+    dates = []
+    release_keys = set()
+    for receipt in run_receipts:
+        if type(receipt) is not dict:
+            return reject
+        run = receipt.get("id")
+        when = receipt.get("completed_at")
+        if (type(run) is not int or run <= 0 or run in receipts
+                or receipt.get("repository") != repository
+                or receipt.get("event") != "schedule"
+                or receipt.get("status") != "completed"
+                or receipt.get("conclusion") != "success"
+                or receipt.get("artifact_attested") is not True
+                or type(receipt.get("head_sha")) is not str
+                or re.fullmatch(r"[a-f0-9]{40}", receipt["head_sha"]) is None
+                or type(when) is not str
+                or re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", when) is None):
+            return reject
+        try:
+            at = datetime.fromisoformat(when.replace("Z", "+00:00"))
+        except ValueError:
+            return reject
+        dates.append(at)
+        receipts[run] = receipt
+
+    observed_runs = set()
+    row_keys = {
+        "issue", "state", "action", "reason", "activity_age_minutes",
+        "activity_source", "release_authorized", "lock_verified",
+        "cas_verified", "mutations",
+    }
+    for m in manifests:
+        if type(m) is not dict:
+            return reject
+        run_id = m.get("run_id")
+        if (type(run_id) is not str or not run_id.isascii()
+                or re.fullmatch(r"[1-9][0-9]*", run_id) is None):
+            return reject
+        run = int(run_id)
+        receipt = receipts.get(run)
+        rows = m.get("issues")
+        if (receipt is None or run in observed_runs
+                or m.get("schema_version") != 1
+                or type(m.get("schema_version")) is not int
+                or m.get("repository") != repository
+                or m.get("head_sha") != receipt["head_sha"]
+                or m.get("status") != "candidate_terminal"
+                or m.get("terminal_certified") is not False
+                or m.get("release_authorized") is not False
+                or type(m.get("mutations")) is not int or m["mutations"] != 0
+                or type(m.get("valid_observations")) is not int
+                or type(m.get("unknown_observations")) is not int
+                or m["unknown_observations"] != 0
+                or type(rows) is not list or not 1 <= len(rows) <= 10
+                or m["valid_observations"] != len(rows)):
+            return reject
+        observed_runs.add(run)
+        seen_issues = set()
+        for row in rows:
+            if (type(row) is not dict or set(row) != row_keys
+                    or type(row.get("issue")) is not int or row["issue"] <= 0
+                    or row["issue"] in seen_issues
+                    or row.get("state") != "read_only"
+                    or row.get("action") not in ("wait", "mark_recovery", "release")
+                    or type(row.get("reason")) is not str
+                    or re.fullmatch(r"[a-z][a-z0-9_]{0,79}", row["reason"]) is None
+                    or row.get("release_authorized") is not False
+                    or row.get("lock_verified") is not False
+                    or row.get("cas_verified") is not False
+                    or type(row.get("mutations")) is not int
+                    or row["mutations"] != 0):
+                return reject
+            age, source = row.get("activity_age_minutes"), row.get("activity_source")
+            if (age is not None and (type(age) is not int or not 0 <= age <= 525600)
+                    or source not in (None, "reservation_marker", "workflow_push",
+                                      "issue_comment", "repository_push")):
+                return reject
+            seen_issues.add(row["issue"])
+            if row["action"] == "release":
+                release_keys.add((run, row["issue"]))
+
+    reviewed = set()
+    false_positive = False
+    for qa in qa_reviews:
+        if (type(qa) is not dict or set(qa) != {
+                "run_id", "issue", "verdict", "evidence_ref"}
+                or type(qa.get("run_id")) is not int
+                or type(qa.get("issue")) is not int
+                or (qa["run_id"], qa["issue"]) not in release_keys
+                or (qa["run_id"], qa["issue"]) in reviewed
+                or qa.get("verdict") not in ("correct", "incorrect")
+                or type(qa.get("evidence_ref")) is not str
+                or not 8 <= len(qa["evidence_ref"]) <= 256):
+            return reject
+        reviewed.add((qa["run_id"], qa["issue"]))
+        false_positive |= qa["verdict"] == "incorrect"
+    period = int((max(dates) - min(dates)) / timedelta(minutes=1))
+    status = (
+        "false_positive" if false_positive else
+        "qa_incomplete" if reviewed != release_keys else
+        "insufficient_observation" if len(observed_runs) < 100 or period < 1440 else
+        "candidate_only"
+    )
+    return PhaseACandidateAudit(
+        status, len(observed_runs), period, len(release_keys),
+        sum(qa["verdict"] == "correct" for qa in qa_reviews),
+    )
 
 
 def run_cycle(
