@@ -530,7 +530,7 @@ class AtomicComposeTests(unittest.TestCase):
     def test_candidate_rejects_unclaimed_files_in_forged_plan(self):
         plan = self.plan()
         plan["sources"][0]["claims"] = ["docs/not-a-claim.md"]
-        with self.assertRaisesRegex(coord.CoordinationError, "archivos duplicados"):
+        with self.assertRaisesRegex(coord.CoordinationError, "fuente sin lease V3 exacta"):
             self.candidate_ci(plan)
 
 
