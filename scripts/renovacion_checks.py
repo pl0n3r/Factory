@@ -135,7 +135,7 @@ def evaluate(evidence: object) -> Decision:
         return denied
     branch = f"trabajo/issue-{num}"
     if (pr.get("branch") != branch or pr.get("repo") != repo
-        or pr.get("state") != "open" or pr.get("draft") is not False
+        or pr.get("state") != "open" or type(pr.get("draft")) is not bool
         or issue.get("state") != "open"
         or issue.get("status") not in ("estado: reservado", "estado: en revisión")
         or issue.get("active") is not True
@@ -303,6 +303,8 @@ def evaluate(evidence: object) -> Decision:
                 "checks": sorted(row["id"] for row in by_name.values()),
                 "approvals": sorted(approval_ids.values())}
     key = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+    if pr["draft"]:
+        return Decision(False, "draft_read_only_evidence", key)
     return Decision(True, "fresh_evidence_candidate_only", key)
 
 
@@ -748,7 +750,7 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
     num = issue_from_branch(branch) if isinstance(branch, str) else None
     if (not isinstance(base_sha, str) or _SHA.fullmatch(base_sha) is None
         or not isinstance(sha, str) or _SHA.fullmatch(sha) is None or num is None
-        or pr.get("state") != "open" or pr.get("draft") is not False
+        or pr.get("state") != "open" or type(pr.get("draft")) is not bool
         or base.get("ref") != "main"
         or (head.get("repo") or {}).get("full_name", "").lower() != api.repo.lower()):
         raise EvidenceUnavailable("pr_not_eligible")
@@ -824,7 +826,7 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
         or (after_pr.get("head") or {}).get("ref") != branch
         or (after_pr.get("base") or {}).get("ref") != "main"
         or (after_pr.get("base") or {}).get("sha") != base_sha
-        or after_pr.get("state") != "open" or after_pr.get("draft") is not False
+        or after_pr.get("state") != "open" or after_pr.get("draft") is not pr.get("draft")
         or after_issue.get("state") != "open"
         or after_status != status
         or after_assignee != assignee
@@ -845,7 +847,7 @@ def collect_snapshot(api: Any, pr_number: int) -> dict:
             "state": "open", "status": status, "active": lease["active"],
             "version": 3, "branch": branch, "reservation_id": identity["uuid"],
             "acceptance_sha256": identity["pin"]},
-        "pr": {"state": "open", "draft": False, "repo": api.repo,
+        "pr": {"state": "open", "draft": pr["draft"], "repo": api.repo,
                "branch": branch, "head_sha": sha, "base_sha": base_sha},
         "before": identity, "after": dict(identity),
         "renewal": {"user": "github-actions[bot]", "reason": "renovar-contrato",
