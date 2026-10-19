@@ -999,6 +999,16 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertEqual((snap.reservation_id, snap.branch_sha, snap.status),
                          (marker["reservation_id"], SHA, "estado: reservado"))
 
+        # CI activo auténtico se observa, pero no habilita CAS mutante.
+        api.checks[0]["status"] = "in_progress"
+        with self.assertRaises(PortNotArmed):
+            port.read(21)
+        observed_ci = port.read_observation(21)
+        self.assertTrue(observed_ci.ci_running)
+        self.assertFalse(_trusted(observed_ci, allow_partial=True))
+        self.assertEqual(api.writes, [])
+        api.checks[0]["status"] = "completed"
+
         # CAS: UUID, SHA, marker/pin o estado distintos no escriben.
         bad_marker = {**snap.marker, "task_marker_sha256": "e" * 64}
         stale = (
