@@ -59,8 +59,15 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 else:
                     fake.push_created_at = "invalid-time"
                 result = collect_activity(fake, 21, now=NOW)
-                self.assertEqual(result,
-                                 {"status": "UNKNOWN", "evidence_complete": False})
+                if scenario == "changes_requested":
+                    # La review externa es veto positivo seguro para
+                    # observación; el ejecutor mutante sigue bloqueado.
+                    self.assertTrue(result["evidence_complete"])
+                    self.assertEqual(result["activity_source"], "workflow_push")
+                else:
+                    self.assertEqual(
+                        result, {"status": "UNKNOWN", "evidence_complete": False},
+                    )
                 self.assertTrue(all(path == "/rate_limit" or path.startswith("/repos/")
                                     for path in fake.calls))
 
