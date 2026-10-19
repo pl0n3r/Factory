@@ -552,6 +552,57 @@ class GitHub:
         """Obtiene todos los Pull Requests cerrados para reconciliar merges."""
         return self.paginate(f"/repos/{self.repo}/pulls?state=closed")
 
+    def exact_check_runs(self, sha: str) -> list[dict[str, Any]]:
+        """Lectura completa de check-runs del SHA, sin inferir verde de un prefijo."""
+        if not isinstance(sha, str) or SHA_RE.fullmatch(sha) is None:
+            raise CoordinationError("CI compuesto: SHA inválido.")
+        result: list[dict[str, Any]] = []
+        count: int | None = None
+        for page in range(1, 31):
+            payload = self.request(
+                "GET",
+                f"/repos/{self.repo}/commits/{sha}/check-runs?per_page=100&page={page}",
+            )
+            if not isinstance(payload, dict):
+                raise CoordinationError("CI compuesto: respuesta de checks inválida.")
+            current = payload.get("total_count")
+            rows = payload.get("check_runs")
+            if (
+                type(current) is not int or not 0 <= current <= 3000
+                or not isinstance(rows, list) or len(rows) > 100
+                or (count is not None and current != count)
+                or any(not isinstance(row, dict) for row in rows)
+            ):
+                raise CoordinationError("CI compuesto: paginación de checks incompleta.")
+            count = current
+            result.extend(rows)
+            if len(result) == count:
+                return result
+            if len(result) > count or len(rows) < 100:
+                raise CoordinationError("CI compuesto: faltan check-runs.")
+        raise CoordinationError("CI compuesto: paginación de checks excedida.")
+
+    def blob_sha_at(self, path: str, commit_sha: str) -> str:
+        """GET-only: identidad de contenido de un archivo en un commit concreto."""
+        if (
+            not isinstance(path, str) or not path or path.startswith(("/", "./"))
+            or any(part in ("", ".", "..") for part in path.split("/"))
+            or not isinstance(commit_sha, str)
+            or SHA_RE.fullmatch(commit_sha) is None
+        ):
+            raise CoordinationError("CI compuesto: archivo o SHA inválidos.")
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repo}/contents/{quote(path, safe='/')}?ref={commit_sha}",
+        )
+        if (
+            not isinstance(payload, dict) or payload.get("type") != "file"
+            or not isinstance(payload.get("sha"), str)
+            or SHA_RE.fullmatch(payload["sha"]) is None
+        ):
+            raise CoordinationError("CI compuesto: blob de archivo ilegible.")
+        return payload["sha"]
+
     def open_issues(self) -> list[dict[str, Any]]:
         """Inventario REST estricto: jamás tratar un prefijo como completo.
 
@@ -2903,6 +2954,117 @@ def plan_atomic_compose_v3(
         "owner": owner,
         "sources": result,
         "file_count": len(files_seen),
+    }
+
+
+
+def verify_exact_integrator_ci_v3(
+    api: GitHub, plan: dict[str, Any], candidate_pr: int,
+) -> dict[str, Any]:
+    """Acredita CI del candidato con seis blobs idénticos, sin conceder merge.
+
+    El preview de CI NO transfiere las V3. La autoridad CAS y el cierre
+    posmerge son puertas separadas: la salida nunca autoriza escritura.
+    """
+    require_global_running(api)
+    if (
+        not isinstance(plan, dict) or plan.get("mode") != "plan_only"
+        or plan.get("write_authorized") is not False
+        or plan.get("version") != 1
+        or not isinstance(plan.get("main_sha"), str)
+        or SHA_RE.fullmatch(plan["main_sha"]) is None
+        or type(candidate_pr) is not int or candidate_pr <= 0
+    ):
+        raise CoordinationError("CI compuesto: plan no autorizado o incompleto.")
+    sources = plan.get("sources")
+    if (
+        not isinstance(sources, list) or len(sources) != 3
+        or api.branch_sha("main") != plan["main_sha"]
+    ):
+        raise CoordinationError("CI compuesto: fuentes o main inconsistentes.")
+    expected: dict[str, str] = {}
+    source_prs: set[int] = set()
+    for row in sources:
+        if (
+            not isinstance(row, dict) or type(row.get("pr")) is not int
+            or row["pr"] <= 0 or not isinstance(row.get("branch_sha"), str)
+            or SHA_RE.fullmatch(row["branch_sha"]) is None
+            or not isinstance(row.get("files"), list) or not row["files"]
+        ):
+            raise CoordinationError("CI compuesto: fila de origen incompleta.")
+        if row["pr"] in source_prs:
+            raise CoordinationError("CI compuesto: PR de origen duplicado.")
+        source_prs.add(row["pr"])
+        for path in row["files"]:
+            if not isinstance(path, str) or path in expected:
+                raise CoordinationError("CI compuesto: archivos duplicados o inválidos.")
+            expected[path] = api.blob_sha_at(path, row["branch_sha"])
+    if (
+        len(expected) != 6 or plan.get("file_count") != len(expected)
+        or candidate_pr in source_prs
+    ):
+        raise CoordinationError("CI compuesto: seis archivos únicos obligatorios.")
+    candidate = api.pull(candidate_pr)
+    head, base = candidate.get("head"), candidate.get("base")
+    if (
+        candidate.get("state") != "open" or candidate.get("draft") is not False
+        or not isinstance(head, dict) or not isinstance(base, dict)
+        or not isinstance(head.get("ref"), str)
+        or re.fullmatch(r"trabajo/issue-[1-9][0-9]*", head["ref"]) is None
+        or not local_pull_source_matches(api, candidate, head["ref"])
+        or not isinstance(head.get("sha"), str)
+        or SHA_RE.fullmatch(head["sha"]) is None
+        or base.get("ref") != "main"
+        or base.get("sha") != plan["main_sha"]
+        or api.branch_sha(head["ref"]) != head["sha"]
+    ):
+        raise CoordinationError("CI compuesto: candidato fuera de main exacto.")
+    proof = api.pull_files_exact_head(candidate_pr)
+    if (
+        not isinstance(proof, dict) or proof.get("complete") is not True
+        or proof.get("head_sha") != head["sha"]
+        or proof.get("base_sha") != plan["main_sha"]
+        or not isinstance(proof.get("files"), list)
+        or set(proof["files"]) != set(expected)
+        or len(proof["files"]) != len(expected)
+    ):
+        raise CoordinationError("CI compuesto: árbol de seis archivos incompleto.")
+    for path, source_blob in expected.items():
+        if api.blob_sha_at(path, head["sha"]) != source_blob:
+            raise CoordinationError("CI compuesto: contenido distinto del origen.")
+    checks = api.exact_check_runs(head["sha"])
+    if not isinstance(checks, list):
+        raise CoordinationError("CI compuesto: checks ausentes.")
+    # El contrato canónico de Factory es Validar. No se acepta una
+    # etiqueta arbitraria, un check de un hijo ni un status GitHub ajeno.
+    gates = [check for check in checks if isinstance(check, dict)
+             and check.get("name") == "Validar"]
+    if (
+        len(gates) != 1 or gates[0].get("head_sha") != head["sha"]
+        or gates[0].get("status") != "completed"
+        or gates[0].get("conclusion") != "success"
+    ):
+        raise CoordinationError("CI compuesto: Validar exact-HEAD no verde.")
+    last = api.pull(candidate_pr)
+    if (
+        api.branch_sha("main") != plan["main_sha"]
+        or api.branch_sha(head["ref"]) != head["sha"]
+        or last.get("state") != "open" or last.get("draft") is not False
+        or not isinstance(last.get("head"), dict)
+        or not isinstance(last.get("base"), dict)
+        or last["head"].get("sha") != head["sha"]
+        or last["base"].get("sha") != plan["main_sha"]
+    ):
+        raise CoordinationError("CI compuesto: candidato cambió tras el check.")
+    require_global_running(api)
+    return {
+        "mode": "ci_evidence_only",
+        "write_authorized": False,
+        "integrator_pr": candidate_pr,
+        "integrator_sha": head["sha"],
+        "main_sha": plan["main_sha"],
+        "files_verified": len(expected),
+        "gate": "Validar",
     }
 
 
