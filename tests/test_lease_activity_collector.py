@@ -34,6 +34,9 @@ class API:
         self.change_assignees_on_recheck = False
         self.remaining = 80
         self.repo_id = 123
+        self.repo_reads = 0
+        self.repo_pushed_at = "2026-10-11T09:45:00Z"
+        self.change_repo_push_on_recheck = False
         self.issue = {
             "number": 21, "state": "open", "comments": 2,
             "updated_at": "2026-10-11T09:45:00Z",
@@ -90,7 +93,12 @@ class API:
         if path == "/rate_limit":
             return {"resources": {"core": {"limit": 100, "remaining": self.remaining}}}
         if path == f"/repos/{REPO}":
-            return {"id": self.repo_id, "full_name": REPO}
+            self.repo_reads += 1
+            watermark = self.repo_pushed_at
+            if self.change_repo_push_on_recheck and self.repo_reads == 2:
+                watermark = "2026-10-11T09:59:59Z"
+            return {"id": self.repo_id, "full_name": REPO,
+                    "pushed_at": watermark}
         if path == f"/repos/{REPO}/issues/21":
             self.issue_reads += 1
             observed = copy.deepcopy(self.issue)
@@ -188,6 +196,30 @@ class LeaseActivityCollectorTests(unittest.TestCase):
             collect_activity(unverified, 21, now=NOW),
             {"status": "UNKNOWN", "evidence_complete": False},
         )
+
+    def test_repository_push_watermark_change_invalidates_snapshot(self):
+        # Un push a otro ref podría no cambiar el HEAD, PR o CI del Issue.
+        # El timestamp global sirve únicamente para invalidar una carrera:
+        # incluso estable NO demuestra ausencia íntegra de pushes.
+        stable = API()
+        self.assertTrue(collect_activity(stable, 21, now=NOW)["evidence_complete"])
+        self.assertEqual(stable.repo_reads, 2)
+
+        race = API()
+        race.change_repo_push_on_recheck = True
+        self.assertEqual(
+            collect_activity(race, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(race.repo_reads, 2)
+        for invalid in (None, "malformed", "2026-10-11T10:00:01Z"):
+            with self.subTest(watermark=invalid):
+                fake = API()
+                fake.repo_pushed_at = invalid
+                self.assertEqual(
+                    collect_activity(fake, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
 
     def test_old_marker_with_authenticated_running_ci_is_veto_only(self):
         """Un CI vivo puede impedir release sin demostrar inactividad."""
@@ -458,8 +490,8 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         api.issue["labels"].append({"name": "prioridad: crítica"})
         self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
-        self.assertEqual(result["rate_remaining"], 58)
-        self.assertEqual(result["api_requests"], 22)
+        self.assertEqual(result["rate_remaining"], 57)
+        self.assertEqual(result["api_requests"], 23)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
         self.assertTrue(all(isinstance(p, str) for p in api.calls))
 

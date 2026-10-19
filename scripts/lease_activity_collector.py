@@ -75,6 +75,10 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(identity.get("id")) is not int or identity["id"] <= 0):
             raise IncompleteEvidence()
         repo_id = identity["id"]
+        # Repositorio.pushed_at es un veto adicional de carrera global,
+        # no una auditoría negativa de pushes ni prueba de inactividad.
+        # Revalidarlo descarta un snapshot si otro ref cambió durante los GET.
+        push_watermark = _time(identity.get("pushed_at"), now)
 
         def pages(path: str, *, name: str, expected: int | None = None,
                   checks: bool = False, commits: bool = False,
@@ -368,6 +372,12 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         # omitió una edición del titular durante las otras consultas.
         if pages(f"{path}/comments", name="comments_recheck",
                  expected=total) != comments:
+            raise IncompleteEvidence()
+        identity_again = get(base)
+        if (not isinstance(identity_again, dict)
+                or identity_again.get("id") != repo_id
+                or identity_again.get("full_name") != repo
+                or _time(identity_again.get("pushed_at"), now) != push_watermark):
             raise IncompleteEvidence()
         effective_remaining = remaining - used
         if effective_remaining < 0 or effective_remaining * 5 < limit:

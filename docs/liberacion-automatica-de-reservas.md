@@ -24,6 +24,13 @@ Por tanto, el preview conserva `wait` y la fuente identificada, pero
 publica `inactividad=UNKNOWN` (minutos = `null`) cuando
 `ci_veto_only=true`, sin atribuir ausencia al marker antiguo.
 Continúa pendiente una auditoría negativa de pushes completa y autenticada.
+El recolector compara también dos lecturas autenticadas del timestamp global
+`pushed_at` del repositorio, antes y después de los inventarios: si cambia,
+falta, es inválido o apunta al futuro, invalida el snapshot como `UNKNOWN`.
+Este watermark de segundo de resolución detecta ciertas carreras de otros
+refs, **pero ni su estabilidad ni su antigüedad prueban la ausencia íntegra
+de pushes** (incluidas carreras en el mismo segundo), por lo que no añade
+ninguna fuente de inactividad ni autoridad para release.
 
 El cron de Factory genera además `lease-audit-evidence.json` con
 `run_id`, `head_sha`, repositorio y resultados por Issue (acción,
