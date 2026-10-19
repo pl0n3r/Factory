@@ -289,6 +289,126 @@ class T(unittest.TestCase):
                 [x for x in base if json.loads(x)["name"] != "CodeQL"]
                 + [json.dumps(missing)], head_sha=HEAD)
 
+
+    def test_other_gates_exclude_real_policy_retries_without_self_dependency(self):
+        """AC-01: solo la política real de Actions se excluye de 'otros gates'."""
+        checks = green_gate_checks() + [
+            check(check_id=920, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+                  conclusion="failure"),
+            check(check_id=921, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+                  status="in_progress", conclusion=None),
+            check(check_id=922, name=policy.POLICY_CHECK_NAME,
+                  conclusion="failure"),
+        ]
+        # Six distinct authenticated categories stay mandatory. Neither a
+        # previous failed nor the current pending policy may require itself.
+        policy.validate_other_gates_green(checks, head_sha=HEAD)
+        # A real reusable Policy failure is equally the previous failed
+        # attempt required for the narrowly scoped rerun fallback.
+        comments, events = sha_less_fixture()
+        prior = green_gate_checks() + [check(
+            check_id=925, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+            conclusion="failure", completed_at="2026-10-04T05:01:00Z",
+        )]
+        self.assertEqual(sha_less_validate(comments, events, checks=prior)[0], 202)
+        without_codeql = [
+            item for item in checks
+            if json.loads(item)["name"] != "CodeQL"
+        ]
+        with self.assertRaisesRegex(PolicyError, "Faltan gates obligatorios verdes"):
+            policy.validate_other_gates_green(without_codeql, head_sha=HEAD)
+
+    def test_other_gates_self_exclusion_does_not_mask_unauthorized_or_failed_checks(self):
+        """AC-02: identity is exact; not a substring, wildcard or user label."""
+        good = green_gate_checks()
+        for name in (policy.POLICY_WORKFLOW_CHECK_NAME, policy.POLICY_CHECK_NAME):
+            # A third-party app must never gain exemption using a policy name.
+            rogue = check(check_id=930, name=name, conclusion="failure",
+                          app_slug="sonarqubecloud", app_id=12526)
+            rows = good + [rogue]
+            with self.subTest(name=name), self.assertRaisesRegex(
+                PolicyError, "Emisor no autorizado"
+            ):
+                policy.validate_other_gates_green(rows, head_sha=HEAD)
+
+        for impostor in (
+            "another / " + policy.POLICY_WORKFLOW_CHECK_NAME,
+            "politica / Validar decisiones y límite de revisión / extra",
+            "Factory policy / Validar decisiones y límite de revisión-evil",
+        ):
+            impostor_check = check(
+                check_id=931, name=impostor, conclusion="failure"
+            )
+            rows = good + [impostor_check]
+            with self.subTest(name=impostor), self.assertRaisesRegex(
+                PolicyError, "Check no verde"
+            ):
+                policy.validate_other_gates_green(rows, head_sha=HEAD)
+
+        pending = check(check_id=932, name="security / external gate",
+                        status="in_progress", conclusion=None)
+        prior_policy = check(
+            check_id=933, name=policy.POLICY_WORKFLOW_CHECK_NAME,
+            conclusion="failure",
+        )
+        rows = good + [prior_policy, pending]
+        with self.assertRaisesRegex(PolicyError, "Check pendiente"):
+            policy.validate_other_gates_green(rows, head_sha=HEAD)
+
+        # Only the exact authenticated reusable name may prove an earlier
+        # policy failure. Homonyms cannot manufacture retry provenance.
+        comments, events = sha_less_fixture()
+        impostor_failure = green_gate_checks() + [check(
+            check_id=935,
+            name="politica / Validar decisiones y límite de revisión / extra",
+            conclusion="failure", completed_at="2026-10-04T05:01:00Z",
+        )]
+        with self.assertRaises(PolicyError):
+            sha_less_validate(comments, events, checks=impostor_failure)
+
+        # A successful Dependabot configuration check is not an unknown emitter.
+        # It is additional evidence and cannot prove any of the six core gates.
+        auxiliary = check(
+            check_id=936, name=".github/dependabot.yml",
+            app_slug="dependabot", app_id=29110,
+        )
+        policy.validate_other_gates_green(good + [auxiliary], head_sha=HEAD)
+        without_codeql = [
+            row for row in good if json.loads(row)["name"] != "CodeQL"
+        ]
+        with self.assertRaisesRegex(PolicyError, "Faltan gates obligatorios verdes"):
+            policy.validate_other_gates_green(without_codeql + [auxiliary], head_sha=HEAD)
+
+        # Spoofed app, wrong ID, or any other Dependabot check name fails closed.
+        for name, slug, app_id in (
+            (".github/dependabot.yml", "github-actions", 15368),
+            (".github/dependabot.yml", "dependabot", 29111),
+            (".github/dependabot.yml", "dependabot", 29110.0),
+            (".github/dependabot.yml/extra", "dependabot", 29110),
+            ("CodeQL", "dependabot", 29110),
+        ):
+            impostor = check(
+                check_id=937, name=name, app_slug=slug, app_id=app_id,
+            )
+            with self.subTest(name=name, slug=slug, app_id=app_id):
+                with self.assertRaisesRegex(PolicyError, "Check con emisor desconocido"):
+                    policy.validate_other_gates_green(good + [impostor], head_sha=HEAD)
+
+        for status, conclusion, message in (
+            ("in_progress", None, "Check pendiente"),
+            ("completed", "failure", "Check no verde"),
+        ):
+            auxiliary_not_green = check(
+                check_id=938, name=".github/dependabot.yml",
+                app_slug="dependabot", app_id=29110,
+                status=status, conclusion=conclusion,
+            )
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(PolicyError, message):
+                    policy.validate_other_gates_green(
+                        good + [auxiliary_not_green], head_sha=HEAD,
+                    )
+
     def test_gates_require_distinct_authenticated_check_ids(self):
         """AC-02: una cadena con seis substrings no acredita seis gates."""
         compound = check(check_id=87, name="ci sonar codeql tests coordinación privacy")

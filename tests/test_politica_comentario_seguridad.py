@@ -142,6 +142,18 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         source = source.replace(status_arg, "", 1).replace(
             status_read, "", 1
         ).replace(status_forward, "", 1)
+        # Normalize exactly the audited Dependabot auxiliary-emitter exception.
+        # Altering its name, app ID or fail-closed behavior invalidates the pin.
+        auxiliary_guard = (
+            '        # Dependabot config validation is an auxiliary check, never a required gate.\n'
+            '        # Trust only its exact GitHub App identity and exact check name.\n'
+            '        if name == ".github/dependabot.yml":\n'
+            '            if slug != "dependabot" or type(app_id) is not int or app_id != 29110:\n'
+            '                raise PolicyError(f"Check con emisor desconocido: {name}.")\n'
+            '        elif (\n'
+        )
+        self.assertEqual(source.count(auxiliary_guard), 1)
+        source = source.replace(auxiliary_guard, "        if (\n", 1)
         pinned_source = source.replace(
             "\n" + risk_block + "\n", "", 1
         ).replace(
@@ -154,7 +166,7 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         git_blob = b"blob " + str(len(pinned_source)).encode("ascii") + b"\0" + pinned_source
         self.assertEqual(
             hashlib.sha1(git_blob).hexdigest(),
-            "0e39726bb61ccb500e0a2365e49e1030beb48724",
+            "b55d26779b822d1f619f1f637f790899440f8d40",
         )
         self.assertIn("--threads-file \"$THREADS_FILE\"", WORKFLOW)
         self.assertIn("check-runs?per_page=100", WORKFLOW)
