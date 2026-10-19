@@ -421,7 +421,7 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
                 or type(report.get("last_activity_at")) is not str
                 or UTC_STAMP.fullmatch(report["last_activity_at"]) is None
                 or report.get("activity_source") not in (
-                    "reservation_marker", "workflow_push")):
+                    "reservation_marker", "workflow_push", "issue_comment")):
             return _unknown(issue, "collector_unknown")
         last = datetime.fromisoformat(
             report["last_activity_at"].replace("Z", "+00:00"))

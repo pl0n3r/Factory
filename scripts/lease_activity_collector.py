@@ -215,14 +215,24 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         for c in comments:
             if c.get("user", {}).get("login") == owner:
                 created = _time(c.get("created_at"), now)
-                # El titular puede editar un comentario anterior al /tomar.
-                # Sólo created_at no detecta esa actividad; ante el login
-                # compartido, tampoco podemos vincularla a la sesión V3.
-                # GitHub REST entrega updated_at en comentarios: sin él
-                # no hay evidencia negativa íntegra, así que UNKNOWN.
+                # Una edición de un comentario anterior a la reserva no es
+                # atribuible a esta sesión; sigue UNKNOWN. En cambio, un
+                # comentario del titular CREADO tras el marker por un usuario
+                # autenticado es evidencia POSITIVA suficiente para vetar
+                # una liberación, no para certificar ausencia de pushes.
                 updated = _time(c.get("updated_at"), now)
-                if updated < created or created >= since or updated >= since:
+                if updated < created:
                     raise IncompleteEvidence()
+                if created < since:
+                    if updated >= since:
+                        raise IncompleteEvidence()
+                    continue
+                if c["user"].get("type") != "User":
+                    raise IncompleteEvidence()
+                if updated == latest and activity_source != "issue_comment":
+                    raise IncompleteEvidence()
+                if updated > latest:
+                    latest, activity_source = updated, "issue_comment"
 
         since_param = quote(since.isoformat().replace("+00:00", "Z"), safe="")
         commits = pages(f"{base}/commits?sha={quote(branch, safe='')}&since={since_param}",
@@ -335,7 +345,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         # /commits?since= query. Once this bounded positive evidence ages out,
         # report UNKNOWN until an authoritative complete push audit exists.
         grace = timedelta(minutes=30)
-        recent = now - since < grace
+        recent = now - latest < grace
         for run in workflow_runs:
             if run.get("event") != "push" or run.get("head_sha") != sha:
                 continue

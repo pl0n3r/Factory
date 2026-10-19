@@ -782,6 +782,32 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             observed.state = "authorized"
 
+        # Comentario nuevo del titular: test de preview sin conceder
+        # autoridad de liberación ni inferir ausencia de push.
+        commented = review_ready_api()
+        commented.checks[0]["status"] = "completed"
+        commented.push_event = "pull_request"
+        commented.comments[1] = {
+            "id": 2, "user": {"login": "pl0n3r", "type": "User"},
+            "body": "Trabajo actual",
+            "created_at": "2026-10-11T09:55:00Z",
+            "updated_at": "2026-10-11T09:55:00Z",
+        }
+        comment_port = ReadOnlyPort(replace(
+            item, last_activity_at=NOW - timedelta(minutes=5)))
+        comment_preview = preview_integrated_activity(
+            commented, comment_port, 21, now=NOW)
+        self.assertEqual(
+            (comment_preview.state, comment_preview.action),
+            ("read_only", "wait"),
+        )
+        self.assertEqual(comment_preview.activity_source, "issue_comment")
+        self.assertEqual(comment_preview.activity_age_minutes, 5)
+        self.assertIs(comment_preview.release_authorized, False)
+        self.assertIs(comment_preview.lock_verified, False)
+        self.assertIs(comment_preview.cas_verified, False)
+        self.assertEqual(comment_port.reads, 1)
+
         # La evidencia autenticada de CI en curso produce un veto wait:
         # no usa la lectura mutante y no concede autoridad de liberación.
         running_api = review_ready_api()

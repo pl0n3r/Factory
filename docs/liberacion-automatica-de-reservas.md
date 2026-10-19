@@ -30,6 +30,13 @@ Por tanto, el preview conserva `wait` y la fuente identificada, pero
 publica `inactividad=UNKNOWN` (minutos = `null`) cuando
 `ci_veto_only=true`, sin atribuir ausencia al marker antiguo.
 Continúa pendiente una auditoría negativa de pushes completa y autenticada.
+Los comentarios nuevos del titular registrados por GitHub después de la
+reserva V3 también son evidencia positiva para `wait`: se valida autor
+`User`, `created_at`/`updated_at`, se releen todas las páginas para
+descartar carreras y se reporta `issue_comment` como fuente. Nunca se usa
+un comentario viejo editado para atribuir inactividad a la sesión, ni la
+ausencia de comentarios como prueba negativa de pushes. Si el comentario
+positivo supera 30 minutos, sin otra fuente vigente el resultado es `UNKNOWN`.
 El recolector compara también dos lecturas autenticadas del timestamp global
 `pushed_at` del repositorio, antes y después de los inventarios: si cambia,
 falta, es inválido o apunta al futuro, invalida el snapshot como `UNKNOWN`.

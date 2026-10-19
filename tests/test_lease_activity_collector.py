@@ -245,6 +245,48 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         )
         self.assertEqual(stable.repo_reads, 2)
 
+    def test_authenticated_owner_comment_is_positive_veto_not_negative_audit(self):
+        """Comentario nuevo del titular permite wait aunque no exista push-run."""
+        no_push = API()
+        no_push.push_event = "pull_request"
+        no_push.checks[0]["status"] = "completed"
+        no_push.comments[1] = {
+            "id": 2, "user": {"login": "pl0n3r", "type": "User"},
+            "body": "Trabajo del titular",
+            "created_at": "2026-10-11T09:55:00Z",
+            "updated_at": "2026-10-11T09:55:00Z",
+        }
+        record = collect_activity(no_push, 21, now=NOW)
+        self.assertTrue(record["evidence_complete"])
+        self.assertEqual(record["activity_source"], "issue_comment")
+        self.assertEqual(record["last_activity_at"], "2026-10-11T09:55:00Z")
+        self.assertFalse(record["ci_veto_only"])
+        self.assertFalse(record["review_veto_only"])
+        self.assertEqual(record["api_requests"], len(no_push.calls))
+        bad_actor = API()
+        bad_actor.push_event = "pull_request"
+        bad_actor.checks[0]["status"] = "completed"
+        bad_actor.comments[1] = {
+            **no_push.comments[1], "user": {"login": "pl0n3r", "type": "Bot"},
+        }
+        unknown = {"status": "UNKNOWN", "evidence_complete": False}
+        self.assertEqual(collect_activity(bad_actor, 21, now=NOW), unknown)
+        stale = API()
+        stale.push_event = "pull_request"
+        stale.checks[0]["status"] = "completed"
+        stale.comments[1] = {
+            **no_push.comments[1],
+            "created_at": "2026-10-11T09:10:00Z",
+            "updated_at": "2026-10-11T09:10:00Z",
+        }
+        self.assertEqual(collect_activity(stale, 21, now=NOW), unknown)
+        race = API()
+        race.push_event = "pull_request"
+        race.checks[0]["status"] = "completed"
+        race.comments[1] = dict(no_push.comments[1])
+        race.edit_owner_comment_on_recheck = True
+        self.assertEqual(collect_activity(race, 21, now=NOW), unknown)
+
     def test_old_marker_with_authenticated_running_ci_is_veto_only(self):
         """Un CI vivo puede impedir release sin demostrar inactividad."""
         api = API()
