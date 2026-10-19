@@ -2704,6 +2704,191 @@ def verified_parallel_file_evidence(
     return compatible, notes, pins
 
 
+
+def plan_atomic_compose_v3(
+    api: GitHub, issue_numbers: list[int], owner: str,
+) -> dict[str, Any]:
+    """Preflight GET-only de tres V3. NUNCA transfiere claims ni concede merge.
+
+    El plan es evidencia efímera de un snapshot, no un permiso de escritura.
+    Cualquier deriva obliga a recomputar bajo lock/CAS antes de una composición
+    futura. La operación mutante se implementará por separado tras AC-02/06.
+    """
+    if (
+        not isinstance(issue_numbers, list)
+        or len(issue_numbers) != 3
+        or any(type(number) is not int or number <= 0 for number in issue_numbers)
+        or len(set(issue_numbers)) != 3
+        or not isinstance(owner, str)
+        or not owner
+    ):
+        raise CoordinationError("Composición V3: se requieren tres Issues únicos y owner.")
+
+    require_global_running(api)
+    main_sha = api.branch_sha("main")
+    if not isinstance(main_sha, str) or re.fullmatch(r"[0-9a-f]{40}", main_sha) is None:
+        raise CoordinationError("Composición V3: main exacto no verificable.")
+
+    # Inventario íntegro ANTES de interpretar una rama como propia.
+    pulls = api.open_pulls()
+    if not isinstance(pulls, list):
+        raise CoordinationError("Composición V3: PRs incompletos.")
+    result: list[dict[str, Any]] = []
+    paths_seen: list[str] = []
+    files_seen: set[str] = set()
+    for number in issue_numbers:
+        issue = api.issue(number)
+        if (
+            issue.get("state") != "open"
+            or not ({STATUS_RESERVED, STATUS_REVIEW} & label_names(issue))
+        ):
+            raise CoordinationError(f"Composición V3: Issue #{number} no reservado.")
+        lease = active_reservation(api, number)
+        branch = branch_for_issue(number)
+        if (
+            lease is None or lease.get("version") != 3
+            or lease.get("owner") != owner
+            or lease.get("branch") != branch
+            or lease.get("active") is not True
+        ):
+            raise CoordinationError(f"Composición V3: lease #{number} inválida.")
+        body = str(issue.get("body") or "")
+        try:
+            task = parse_task_marker(body)
+            pinned_acceptance = contract_fingerprint(body)
+            pinned_task = task_marker_fingerprint(task)
+        except (AcceptanceError, PlanError, TypeError, ValueError) as exc:
+            raise CoordinationError(
+                f"Composición V3: contrato #{number} inválido."
+            ) from exc
+        claims = lease.get("task_paths")
+        if (
+            task is None or not isinstance(claims, list) or not claims
+            or claims != task["paths"]
+            or lease.get("task_depends_on") != task["depends_on"]
+            or lease.get("task_marker_sha256") != pinned_task
+            or lease.get("acceptance_sha256") != pinned_acceptance
+        ):
+            raise CoordinationError(f"Composición V3: claims #{number} cambiaron.")
+        for dependency in task["depends_on"]:
+            dep = api.issue(dependency)
+            if dep.get("state") != "closed":
+                raise CoordinationError(
+                    f"Composición V3: dependencia #{dependency} no cerrada."
+                )
+        for claim in claims:
+            if any(claims_overlap(claim, other) for other in paths_seen):
+                raise CoordinationError("Composición V3: claims superpuestos.")
+            paths_seen.append(claim)
+
+        branch_sha = api.branch_sha(branch)
+        if not isinstance(branch_sha, str) or re.fullmatch(r"[0-9a-f]{40}", branch_sha) is None:
+            raise CoordinationError(f"Composición V3: rama #{number} ilegible.")
+        matching = [pr for pr in pulls if local_pull_source_matches(api, pr, branch)]
+        if len(matching) != 1:
+            raise CoordinationError(f"Composición V3: PR #{number} ambiguo.")
+        pr = matching[0]
+        head, base = pr.get("head"), pr.get("base")
+        pr_number = pr.get("number")
+        if (
+            type(pr_number) is not int or pr_number <= 0
+            or not isinstance(head, dict) or not isinstance(base, dict)
+            or head.get("sha") != branch_sha or base.get("sha") != main_sha
+            or base.get("ref") != "main" or pr.get("state") != "open"
+            or reservation_from_pr_body(str(pr.get("body") or ""))
+                != lease["reservation_id"]
+        ):
+            raise CoordinationError(f"Composición V3: PR #{number} no exact-main.")
+        evidence = api.pull_files_exact_head(pr_number)
+        changed = evidence.get("files") if isinstance(evidence, dict) else None
+        if (
+            not isinstance(evidence, dict) or evidence.get("complete") is not True
+            or evidence.get("head_sha") != branch_sha
+            or evidence.get("base_sha") != main_sha
+            or not isinstance(changed, list) or not changed
+            or any(not isinstance(path, str) or not path for path in changed)
+        ):
+            raise CoordinationError(f"Composición V3: diff #{number} incompleto.")
+        for path in changed:
+            if not any(claims_overlap(path, claim) for claim in claims):
+                raise CoordinationError(f"Composición V3: diff #{number} fuera de claims.")
+            key = _collision_key(path)
+            if key in files_seen:
+                raise CoordinationError("Composición V3: archivo duplicado.")
+            files_seen.add(key)
+        result.append({
+            "issue": number,
+            "pr": pr_number,
+            "branch": branch,
+            "branch_sha": branch_sha,
+            "reservation_id": lease["reservation_id"],
+            "acceptance_sha256": pinned_acceptance,
+            "task_marker_sha256": pinned_task,
+            "claims": list(claims),
+            "files": sorted(changed),
+        })
+
+    # Una cuarta lease con claim superpuesto anula el plan aun si su label
+    # visible fue cambiado a available/blocked. Nunca mover sus derechos.
+    all_issues = api.open_issues()
+    if not isinstance(all_issues, list) or len(all_issues) > 64:
+        raise CoordinationError("Composición V3: inventario de Issues inválido.")
+    for candidate in all_issues:
+        other = candidate.get("number")
+        if type(other) is not int:
+            raise CoordinationError("Composición V3: issue del inventario inválido.")
+        if other in issue_numbers:
+            continue
+        lease = active_reservation(api, other)
+        if lease is None:
+            continue
+        other_claims = lease.get("task_paths")
+        if lease.get("version") != 3 or not isinstance(other_claims, list):
+            raise CoordinationError("Composición V3: lease externa sin claims V3.")
+        if any(claims_overlap(a, b) for a in paths_seen for b in other_claims):
+            raise CoordinationError("Composición V3: colisión con tercero.")
+
+    # La doble lectura es solo coherencia de preview; nunca equivale al CAS
+    # transaccional requerido antes de una futura escritura.
+    if api.branch_sha("main") != main_sha:
+        raise CoordinationError("Composición V3: main cambió durante lectura.")
+    for row in result:
+        number = row["issue"]
+        if (
+            api.branch_sha(row["branch"]) != row["branch_sha"]
+            or active_reservation(api, number) is None
+            or api.issue(number).get("state") != "open"
+        ):
+            raise CoordinationError("Composición V3: una fuente cambió.")
+        latest = active_reservation(api, number)
+        if (
+            latest.get("reservation_id") != row["reservation_id"]
+            or latest.get("task_paths") != row["claims"]
+            or latest.get("acceptance_sha256") != row["acceptance_sha256"]
+            or latest.get("task_marker_sha256") != row["task_marker_sha256"]
+        ):
+            raise CoordinationError("Composición V3: lease cambió.")
+        pr = api.pull(row["pr"])
+        if (
+            pr.get("state") != "open"
+            or not isinstance(pr.get("head"), dict)
+            or not isinstance(pr.get("base"), dict)
+            or pr["head"].get("sha") != row["branch_sha"]
+            or pr["base"].get("sha") != main_sha
+        ):
+            raise CoordinationError("Composición V3: PR cambió.")
+    require_global_running(api)
+    return {
+        "version": 1,
+        "mode": "plan_only",
+        "write_authorized": False,
+        "main_sha": main_sha,
+        "owner": owner,
+        "sources": result,
+        "file_count": len(files_seen),
+    }
+
+
 def reserve_work(
     api: GitHub,
     issue_number: int,
