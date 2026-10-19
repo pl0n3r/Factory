@@ -3425,9 +3425,17 @@ def reconcile_atomic_compose_v3(
         raise CoordinationError("Composición V3: integrador sin marker V3.")
     integrator = api.pull(receipt["integrator_pr"])
     merged_sha = integrator.get("merge_commit_sha")
+    integrator_head, integrator_base = (
+        integrator.get("head"), integrator.get("base")
+    )
     if (
         integrator.get("merged") is not True
         or not isinstance(merged_sha, str) or SHA_RE.fullmatch(merged_sha) is None
+        or not isinstance(integrator_head, dict)
+        or not isinstance(integrator_base, dict)
+        or integrator_head.get("sha") != receipt["integrator_sha"]
+        or integrator_head.get("ref") != branch_for_issue(integrator_issue)
+        or integrator_base.get("ref") != "main"
         or api.branch_sha("main") != merged_sha
     ):
         raise CoordinationError("Composición V3: merge integrador no verificado.")
@@ -3440,8 +3448,15 @@ def reconcile_atomic_compose_v3(
     # Fencing: revalidar V3 de todas las fuentes antes de un cierre.
     for row in receipt["sources"]:
         lease = active_reservation(api, row["issue"])
-        if (lease is None or lease.get("reservation_id") != row["reservation_id"]
-                or api.branch_sha(row["branch"]) != row["branch_sha"]):
+        if (
+            lease is None or lease.get("active") is not True
+            or lease.get("reservation_id") != row["reservation_id"]
+            or lease.get("owner") != receipt["reservation"]["owner"]
+            or lease.get("task_paths") != row["claims"]
+            or lease.get("acceptance_sha256") != row["acceptance_sha256"]
+            or lease.get("task_marker_sha256") != row["task_marker_sha256"]
+            or api.branch_sha(row["branch"]) != row["branch_sha"]
+        ):
             raise CoordinationError("Composición V3: fuente cambió antes de cierre.")
     # Dos fases: autenticar TODAS las fuentes ANTES de mutar una sola.
     # Si el último PR ya se fusionó/cambió no puede cerrar el primero.
