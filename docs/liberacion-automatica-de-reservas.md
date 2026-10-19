@@ -22,6 +22,16 @@ la observación vuelve a `UNKNOWN`. **Un veto tipado nunca demuestra la
 ausencia de pushes y no acredita una decisión hipotética `release`**.
 Continúa pendiente una auditoría negativa de pushes completa y autenticada.
 
+El cron de Factory genera además `lease-audit-evidence.json` con
+`run_id`, `head_sha`, repositorio y resultados por Issue (acción,
+motivo, minutos, fuente y autoridades negativas), limitado por whitelist de
+campos. Cuando hay `UNKNOWN`, persiste únicamente un registro mínimo sin
+cuerpo ni cabeceras REST. Un artefacto de GitHub Actions vinculado al run
+programado conserva este manifiesto 7 días; no se envía a comentarios.
+El manifiesto declara siempre `terminal_certified=false`: ni `success`
+ni `candidate_terminal` certifican los 24 h, los 100 ciclos o el QA.
+Una subida fallida o un artefacto ausente tampoco certifica el run.
+
 Con cuota REST inferior al 20 %, el ciclo publica `deferred_low_quota`,
 omite el censo y termina en verde; ese run **no cuenta** como observación válida.
 

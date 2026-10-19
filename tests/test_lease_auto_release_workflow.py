@@ -37,6 +37,11 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
         self.assertNotIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'true'", workflow)
         self.assertNotIn("issues: write", workflow)
+        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", workflow)
+        self.assertIn("terminal_certified: false", workflow)
+        self.assertIn("if-no-files-found: warn", workflow)
+        self.assertIn("github.event_name == 'schedule'", workflow)
+        self.assertIn("lease-audit-evidence.json", workflow)
         self.assertNotIn("pull-requests: write", workflow)
 
     def test_scheduled_executor_kill_switch_quota_and_shared_lock(self):
@@ -235,7 +240,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         anchor = '          jq -e \'type == "array" and length <= 10'
         self.assertEqual(workflow.count(anchor), 1)
-        block = textwrap.dedent(workflow[workflow.index(anchor):])
+        block = textwrap.dedent(workflow[workflow.index(anchor):].split(\n            "\\n      - name: Conservar evidencia acotada", 1)[0])
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "lease-active-issues.json").write_text(
@@ -247,6 +252,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
                 "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\n"
+                "printf '{\\\"issue\\\":%s,\\\"state\\\":\\\"read_only\\\",\\\"action\\\":\\\"wait\\\",\\\"reason\\\":\\\"protected_or_active_work\\\",\\\"activity_age_minutes\\\":5,\\\"activity_source\\\":\\\"reservation_marker\\\",\\\"release_authorized\\\":false,\\\"lock_verified\\\":false,\\\"cas_verified\\\":false,\\\"mutations\\\":0}\\n' \"$3\"\n"
                 "exit 0\n", encoding="utf-8")
             shim.chmod(0o755)
             for fail_first in (False, True):
@@ -269,6 +275,22 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                     report = summary.read_text(encoding="utf-8")
                     self.assertIn("liberaciones=0", report)
                     self.assertIn("ciclo válido de Fase A", report)
+                    import json
+                    manifest = json.loads(
+                        (root / "lease-audit-evidence.json").read_text(encoding="utf-8"))
+                    self.assertFalse(manifest["terminal_certified"])
+                    self.assertFalse(manifest["release_authorized"])
+                    self.assertEqual(manifest["mutations"], 0)
+                    self.assertEqual(manifest["valid_observations"],
+                                     1 if fail_first else 2)
+                    self.assertEqual(manifest["unknown_observations"],
+                                     1 if fail_first else 0)
+                    self.assertEqual([row["issue"] for row in manifest["issues"]],
+                                     [1364, 1372])
+                    self.assertEqual(manifest["status"],
+                                     "UNKNOWN" if fail_first else "candidate_terminal")
+                    self.assertTrue(all(not row["release_authorized"]
+                                        for row in manifest["issues"]))
                     if fail_first:
                         self.assertIn("Observaciones válidas=1; UNKNOWN=1", report)
                         self.assertIn("::notice::Issue #1364", result.stdout)
@@ -303,7 +325,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         anchor = '          jq -e \'type == "array" and length <= 10'
         self.assertEqual(text.count(anchor), 1)
-        block = textwrap.dedent(text[text.index(anchor):])
+        block = textwrap.dedent(text[text.index(anchor):].split(\n            "\\n      - name: Conservar evidencia acotada", 1)[0])
         script = "set -euo pipefail\n" + block
 
         with tempfile.TemporaryDirectory() as folder:
