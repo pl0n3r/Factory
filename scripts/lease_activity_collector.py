@@ -202,10 +202,14 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         activity_source = "reservation_marker"
         for c in comments:
             if c.get("user", {}).get("login") == owner:
-                when = _time(c.get("created_at"), now)
-                if when >= since:
-                    # login compartido entre agentes: sin credencial de
-                    # sesión, no certificar actividad ni ausencia de ella.
+                created = _time(c.get("created_at"), now)
+                # El titular puede editar un comentario anterior al /tomar.
+                # Sólo created_at no detecta esa actividad; ante el login
+                # compartido, tampoco podemos vincularla a la sesión V3.
+                # GitHub REST entrega updated_at en comentarios: sin él
+                # no hay evidencia negativa íntegra, así que UNKNOWN.
+                updated = _time(c.get("updated_at"), now)
+                if updated < created or created >= since or updated >= since:
                     raise IncompleteEvidence()
 
         since_param = quote(since.isoformat().replace("+00:00", "Z"), safe="")

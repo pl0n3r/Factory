@@ -530,6 +530,40 @@ class LeaseActivityCollectorTests(unittest.TestCase):
             {"status": "UNKNOWN", "evidence_complete": False},
         )
 
+    def test_prelease_owner_comment_edit_is_not_silent_inactivity(self):
+        """Una edición nueva de comentario viejo no acredita ausencia de trabajo."""
+        api = API()
+        old_owner_comment = {
+            "id": 0, "user": {"login": "pl0n3r", "type": "User"},
+            "body": "Comentario anterior a esta reserva",
+            "created_at": "2026-10-11T07:00:00Z",
+            "updated_at": "2026-10-11T07:30:00Z",
+        }
+        api.comments.insert(0, old_owner_comment)
+        api.issue["comments"] = len(api.comments)
+        # Sin edición posterior al marker, un comentario antiguo no basta
+        # por sí mismo para vetar una observación positiva de push reciente.
+        baseline = collect_activity(api, 21, now=NOW)
+        self.assertTrue(baseline["evidence_complete"])
+        self.assertEqual(baseline["activity_source"], "workflow_push")
+
+        for edited in ("2026-10-11T09:59:00Z", None,
+                       "invalid-date", "2026-10-11T06:00:00Z",
+                       "2026-10-11T10:01:00Z"):
+            with self.subTest(updated_at=edited):
+                trial = copy.deepcopy(api)
+                if edited is None:
+                    trial.comments[0].pop("updated_at")
+                else:
+                    trial.comments[0]["updated_at"] = edited
+                trial.issue["updated_at"] = "2026-10-11T09:59:00Z"
+                self.assertEqual(
+                    collect_activity(trial, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertTrue(all(path == "/rate_limit" or path.startswith("/repos/")
+                                    for path in trial.calls))
+
     def test_same_branch_name_from_foreign_fork_is_ignored(self):
         api = API()
         foreign = copy.deepcopy(api.pulls[0])
