@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import sys
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -608,6 +611,106 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _metric_snapshot(target: Path) -> tuple[bytes | None, int]:
+    """Read only fixed-name local regular files, preserving private modes."""
+    if target.is_symlink():
+        raise OSError("salida de métricas simbólica")
+    if not target.exists():
+        return None, 0o600
+    details = target.stat()
+    if not stat.S_ISREG(details.st_mode):
+        raise OSError("salida de métricas no regular")
+    return target.read_bytes(), stat.S_IMODE(details.st_mode) & 0o600
+
+
+def _metric_private_stage(path: Path, content: bytes, mode: int) -> None:
+    """O_EXCL and private permissions reject stale/symlink stage names."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(content)
+    path.chmod(mode)
+
+
+def _metric_restore(
+    target: Path, backup: Path, previous: bytes | None, mode: int,
+) -> None:
+    """Restore by single-file atomic replace; never truncate target in place."""
+    if previous is None:
+        target.unlink(missing_ok=True)
+    else:
+        _metric_private_stage(backup, previous, mode)
+        os.replace(backup, target)
+
+
+def _metric_cleanup_scratch(root: Path) -> None:
+    """Delete only known static names. Unknown entries are never traversed."""
+    (root / ".metricas-json-next").unlink(missing_ok=True)
+    (root / ".metricas-md-next").unlink(missing_ok=True)
+    (root / ".metricas-json-rollback").unlink(missing_ok=True)
+    (root / ".metricas-md-rollback").unlink(missing_ok=True)
+
+
+def _write_artifact_pair(report: dict[str, Any]) -> None:
+    """Private staging plus fail-closed recovery for fixed offline outputs.
+
+    Replacements are atomic per file, not for the JSON/Markdown pair.
+    Readers must reject the generation marker; no publication is enabled.
+    """
+    root = DEFAULT_OUTPUT_DIR
+    if root.is_symlink():
+        raise OSError("directorio de métricas no confiable")
+    root.mkdir(parents=True, exist_ok=True)
+    json_target = root / "recomendaciones.json"
+    md_target = root / "dashboard.md"
+    json_next = root / ".metricas-json-next"
+    md_next = root / ".metricas-md-next"
+    json_backup = root / ".metricas-json-rollback"
+    md_backup = root / ".metricas-md-rollback"
+    marker = root / ".metricas-generation-incomplete"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(marker, flags, 0o600)
+    except FileExistsError as exc:
+        raise OSError("generación incompleta: recuperación necesaria") from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write("generation-incomplete\n")
+
+    committed_json = False
+    committed_md = False
+    try:
+        previous_json, json_mode = _metric_snapshot(json_target)
+        previous_md, md_mode = _metric_snapshot(md_target)
+        json_content = (json.dumps(
+            report, ensure_ascii=False, indent=2, sort_keys=True,
+        ) + "\n").encode("utf-8")
+        md_content = (render_markdown(report) + "\n").encode("utf-8")
+        # Both complete and private before either public output is replaced.
+        _metric_private_stage(json_next, json_content, json_mode)
+        _metric_private_stage(md_next, md_content, md_mode)
+        os.replace(json_next, json_target)
+        committed_json = True
+        os.replace(md_next, md_target)
+        committed_md = True
+    except OSError:
+        try:
+            if committed_md:
+                _metric_restore(md_target, md_backup, previous_md, md_mode)
+            if committed_json:
+                _metric_restore(json_target, json_backup, previous_json, json_mode)
+            _metric_cleanup_scratch(root)
+            marker.unlink()
+        except OSError:
+            # Backups/marker remain for explicit recovery if rollback fails.
+            pass
+        raise
+
+    _metric_cleanup_scratch(root)
+    marker.unlink()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--min-samples", type=int, default=3)
@@ -633,21 +736,7 @@ def main() -> int:
         return 2
 
     try:
-        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        (DEFAULT_OUTPUT_DIR / "recomendaciones.json").write_text(
-            json.dumps(
-                report,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        (DEFAULT_OUTPUT_DIR / "dashboard.md").write_text(
-            render_markdown(report) + "\n",
-            encoding="utf-8",
-        )
+        _write_artifact_pair(report)
     except OSError:
         print(
             "ERROR: no se pudo escribir la evidencia de métricas.",
@@ -715,6 +804,7 @@ def summarize_product_day(
     if not isinstance(snapshots, list) or len(snapshots) != len(repos):
         return _unknown_product("missing_repository_snapshot")
 
+    multi_repo = len(repos) > 1
     result: dict[str, Any] = {}
     for snapshot in snapshots:
         if not isinstance(snapshot, dict):
@@ -742,6 +832,8 @@ def summarize_product_day(
                 or type(pages) is not int or pages < 1
                 or type(verified) is not int or verified != pages):
             return _unknown_product("untrusted_stale_or_partial_snapshot")
+        if multi_repo and observed != anchor:
+            return _unknown_product("incomparable_repository_windows")
         events = snapshot.get("events")
         if not isinstance(events, list) or len(events) > 10000:
             return _unknown_product("missing_or_unbounded_events")
@@ -749,6 +841,10 @@ def summarize_product_day(
         for item in events:
             if not isinstance(item, dict):
                 return _unknown_product("invalid_pr_observation")
+            if multi_repo:
+                event_repo = item.get("repo")
+                if type(event_repo) is not str or event_repo != repo:
+                    return _unknown_product("unverified_event_repository")
             number = item.get("number")
             sha = item.get("merge_commit_sha")
             stamp = _product_timestamp(item.get("merged_at"))
@@ -762,16 +858,17 @@ def summarize_product_day(
                 return _unknown_product("conflicting_pr_observation")
             unique[number] = identity
         try:
-            window_start = observed - timedelta(hours=24)
+            window_end = anchor if multi_repo else observed
+            window_start = window_end - timedelta(hours=24)
         except OverflowError:
             return _unknown_product("invalid_clock_range")
         result[repo] = {
             "repository_sha": repository_sha,
             "run_id": run_id,
-            "merged_prs": sum(window_start < stamp <= observed
+            "merged_prs": sum(window_start < stamp <= window_end
                               for _, stamp in unique.values()),
             "window_start": window_start.isoformat().replace("+00:00", "Z"),
-            "window_end": observed.isoformat().replace("+00:00", "Z"),
+            "window_end": window_end.isoformat().replace("+00:00", "Z"),
             "observations": len(unique),
         }
     return {
