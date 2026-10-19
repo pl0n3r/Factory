@@ -2824,6 +2824,7 @@ def plan_atomic_compose_v3(
             "reservation_id": lease["reservation_id"],
             "acceptance_sha256": pinned_acceptance,
             "task_marker_sha256": pinned_task,
+            "issue_body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
             "claims": list(claims),
             "files": sorted(changed),
         })
@@ -2870,6 +2871,8 @@ def plan_atomic_compose_v3(
         if (
             current_acceptance != row["acceptance_sha256"]
             or current_task != row["task_marker_sha256"]
+            or hashlib.sha256(current_body.encode("utf-8")).hexdigest()
+               != row["issue_body_sha256"]
         ):
             raise CoordinationError("Composición V3: contrato cambió.")
         latest = active_reservation(api, number)
