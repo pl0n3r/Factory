@@ -454,7 +454,7 @@ class AtomicComposeTests(unittest.TestCase):
             self.api.comments[2002][0]["body"] = original.replace(
                 '"active":true', '"active":false'
             )
-            with self.assertRaisesRegex(coord.CoordinationError, "lease V3"):
+            with self.assertRaisesRegex(coord.CoordinationError, r"lease #2002 inválida"):
                 self.candidate_ci()
             self.api.comments[2002][0]["body"] = original
         with self.subTest("revoked during checks"):
@@ -468,8 +468,11 @@ class AtomicComposeTests(unittest.TestCase):
                 return checks
 
             self.api.exact_check_runs = revoked_during_checks
-            with self.assertRaisesRegex(coord.CoordinationError, "fuente cambió"):
+            with self.assertRaisesRegex(coord.CoordinationError, r"lease #2002 inválida"):
                 self.candidate_ci()
+            self.assertIn(("exact_check_runs", self.api.candidate_sha), self.api.log)
+            self.assertFalse(any(event[0] in ("POST", "PATCH", "DELETE")
+                                 for event in self.api.log))
             self.api.exact_check_runs = original_reader
             self.api.comments[2002][0]["body"] = original
 
