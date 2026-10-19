@@ -470,7 +470,10 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
             return _unknown(issue, "future_activity")
         return IntegrationPreview(
             issue, "read_only", decision.action, decision.reason,
-            age if decision.action == "wait" else None,
+            # No atribuir inactividad a un marker antiguo cuando solo
+            # tenemos un veto CI autenticado, no una auditoría de pushes.
+            age if decision.action == "wait"
+            and report["ci_veto_only"] is False else None,
             report["activity_source"] if decision.action == "wait" else None,
         )
     except Exception:

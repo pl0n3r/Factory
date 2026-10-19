@@ -422,7 +422,12 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "lease-active-issues.json"
             numbers = Path(folder) / "lease-active-issue-numbers.txt"
-            env = {**os.environ, "RUNNER_TEMP": folder}
+            summary = Path(folder) / "summary.md"
+            env = {**os.environ, "RUNNER_TEMP": folder,
+                   "GITHUB_STEP_SUMMARY": str(summary),
+                   "GITHUB_REPOSITORY": "pl0n3r/Factory",
+                   "GITHUB_SHA": "a" * 40,
+                   "GITHUB_RUN_ID": "12345"}
             # El caso vacío es válido y no invoca el observador externo.
             source.write_text("[]", encoding="utf-8")
             result = subprocess.run(
@@ -433,6 +438,8 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(numbers.is_file())
             self.assertEqual(numbers.read_text(encoding="utf-8"), "")
+            self.assertTrue(summary.is_file())
+            self.assertIn("Observador V3 GET-only", summary.read_text(encoding="utf-8"))
 
             for malformed in (
                 "{broken", '{"not": "an-array"}',

@@ -814,6 +814,9 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             ("read_only", "wait", "protected_or_active_work"),
         )
         self.assertEqual(old_observed.activity_source, "reservation_marker")
+        self.assertIsNone(old_observed.activity_age_minutes)
+        self.assertIn("inactividad=UNKNOWN", old_observed.summary_line)
+        self.assertNotIn("inactividad=120", old_observed.summary_line)
         self.assertFalse(old_observed.release_authorized)
         old_api.checks[0]["status"] = "completed"
         self.assertEqual(

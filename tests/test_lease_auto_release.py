@@ -256,6 +256,8 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                         "RUNNER_TEMP": folder,
                         "GITHUB_OUTPUT": str(output),
                         "GITHUB_STEP_SUMMARY": str(summary),
+                        "GITHUB_SHA": "a" * 40,
+                        "GITHUB_RUN_ID": "12345",
                         "GH_TOKEN": "unused",
                         "EXPECTED_REPOSITORY": "pl0n3r/Factory",
                         "OBSERVED_REPOSITORY": "pl0n3r/Factory",
@@ -274,7 +276,26 @@ class LeaseAutoReleaseTests(unittest.TestCase):
                     report = summary.read_text(encoding="utf-8") if summary.exists() else ""
                     self.assertEqual("deferred_low_quota" in report, should_defer)
                     self.assertEqual("deferred_low_quota" in proc.stdout, should_defer)
-                    self.assertNotIn("::error::", proc.stdout) if should_defer else None
+                    if should_defer:
+                        self.assertNotIn("::error::", proc.stdout)
+                        evidence = json.loads(
+                            (Path(folder) / "lease-audit-evidence.json").read_text(
+                                encoding="utf-8"
+                            )
+                        )
+                        self.assertEqual(evidence["status"], "deferred_low_quota")
+                        self.assertEqual(evidence["repository"], "pl0n3r/Factory")
+                        self.assertEqual(evidence["head_sha"], "a" * 40)
+                        self.assertEqual(evidence["run_id"], "12345")
+                        self.assertEqual(evidence["issues"], [])
+                        self.assertEqual(evidence["valid_observations"], 0)
+                        self.assertEqual(evidence["mutations"], 0)
+                        self.assertIs(evidence["terminal_certified"], False)
+                        self.assertIs(evidence["release_authorized"], False)
+                    else:
+                        self.assertFalse(
+                            (Path(folder) / "lease-audit-evidence.json").exists()
+                        )
 
 
 if __name__ == "__main__":

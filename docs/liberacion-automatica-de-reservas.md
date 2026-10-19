@@ -20,6 +20,9 @@ autenticados, paginados y estables entre lecturas. Solo se usa desde
 Si el CI finaliza, las fuentes discrepan, cambia el HEAD o falta procedencia,
 la observación vuelve a `UNKNOWN`. **Un veto tipado nunca demuestra la
 ausencia de pushes y no acredita una decisión hipotética `release`**.
+Por tanto, el preview conserva `wait` y la fuente identificada, pero
+publica `inactividad=UNKNOWN` (minutos = `null`) cuando
+`ci_veto_only=true`, sin atribuir ausencia al marker antiguo.
 Continúa pendiente una auditoría negativa de pushes completa y autenticada.
 
 El cron de Factory genera además `lease-audit-evidence.json` con
