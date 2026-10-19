@@ -716,13 +716,16 @@ class AtomicComposeTests(unittest.TestCase):
             self.assertEqual(coord.active_reservation(self.api, 3000),
                              recovered["reservation"])
             self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
-        with self.subTest("CI pending is not authority"):
+        with self.subTest("CI pending never authorizes squash"):
             self.api = ReadOnlyFake()
             self.prepare_composition()
             self.api.checks[0]["status"] = "in_progress"
+            # Árbol autorizado por CAS, pero Validar sigue siendo puerta dura.
+            candidate = self.atomic_compose()
+            self.assertEqual(self.api.grant, candidate)
             with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
-                self.atomic_compose()
-            self.assertIsNone(self.api.grant)
+                self.candidate_ci()
+            self.assertFalse(any(event[0] == "DELETE" for event in self.api.log))
 
     def test_reconcile_only_after_merge_and_main_ci(self):
         self.prepare_composition()
