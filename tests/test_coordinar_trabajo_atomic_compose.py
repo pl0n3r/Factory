@@ -919,6 +919,158 @@ class AtomicComposeTests(unittest.TestCase):
             self.assertEqual(self.api.grant, grant)
             self.api.branches["trabajo/issue-2002"] = f"{2002:040x}"
 
+    def test_composite_denies_untrusted_owner_and_failed_authority(self):
+        self.prepare_composition()
+        with self.subTest("owner approval revoked"):
+            self.api.comments[3000][0]["body"] = "approval revoked"
+            with self.assertRaisesRegex(
+                coord.CoordinationError, "aprobación owner"
+            ):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+            self.api.comments[3000][0]["body"] = "still revoked"
+        with self.subTest("unreadable owner claim"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            self.api.issues[3000]["state"] = "closed"
+            with self.assertRaisesRegex(
+                coord.CoordinationError, "Issue integrador no abierto"
+            ):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+        with self.subTest("missing integrator branch"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            del self.api.branches[self.api.candidate_ref]
+            with self.assertRaises(coord.CoordinationError):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+        with self.subTest("wrong candidate PR head"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            self.api.pulls[4000]["head"]["ref"] = "trabajo/issue-9999"
+            with self.assertRaises(coord.CoordinationError):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+        with self.subTest("duplicate owner approval"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            self.api.comments[3000].append(
+                copy.deepcopy(self.api.comments[3000][0])
+            )
+            with self.assertRaisesRegex(
+                coord.CoordinationError, "aprobación owner"
+            ):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+
+    def test_cas_denies_failed_write_conflict_and_stale_lease(self):
+        self.prepare_composition()
+        current = self.atomic_compose()
+        with self.subTest("unexpected existing grant"):
+            old = copy.deepcopy(self.api.grant)
+            self.api.grant["integrator_sha"] = "f" * 40
+            with self.assertRaises(coord.CoordinationError):
+                self.atomic_compose()
+            self.api.grant = old
+            self.assertEqual(self.atomic_compose(), current)
+        with self.subTest("changed source reservation"):
+            original = self.api.comments[2001][0]["body"]
+            self.api.comments[2001][0]["body"] = original.replace(
+                '"active":true', '"active":false'
+            )
+            with self.assertRaises(coord.CoordinationError):
+                self.atomic_compose()
+            self.api.comments[2001][0]["body"] = original
+            self.assertEqual(self.api.grant, current)
+        with self.subTest("new third-party claim denies reuse"):
+            self.api.extra_issues = [{
+                "number": 3999, "state": "open",
+                "labels": [{"name": coord.STATUS_RESERVED}],
+                "body": "third party",
+            }]
+            overlap = coord.reservation_marker(
+                OWNER, "00000000-0000-4000-8000-000000003999",
+                "trabajo/issue-3999", True, "tomar", ACCEPTANCE,
+                task_snapshot={
+                    "task_marker_sha256": TASK,
+                    "task_paths": [paths(2001)[0]],
+                    "task_depends_on": [],
+                },
+            )
+            self.api.comments[3999] = [{
+                "user": {"login": "github-actions[bot]"},
+                "body": overlap,
+            }]
+            with self.assertRaises(coord.CoordinationError):
+                self.atomic_compose()
+            self.assertEqual(self.api.grant, current)
+
+    def test_reconcile_rejects_bad_merge_and_source_changes(self):
+        self.prepare_composition()
+        self.atomic_compose()
+        with patch.object(coord, "require_global_running"):
+            with self.assertRaisesRegex(
+                coord.CoordinationError, "sin autoridad"
+            ):
+                coord.reconcile_atomic_compose_v3(
+                    self.api, 3000, "intruder", "OWNER"
+                )
+        self.api.pulls[4000]["merged"] = True
+        self.api.pulls[4000]["state"] = "closed"
+        self.api.pulls[4000]["merge_commit_sha"] = "d" * 40
+        self.api.main = "d" * 40
+        self.api.checks[0]["head_sha"] = "d" * 40
+        with self.subTest("main CI missing"):
+            self.api.checks = []
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "Validar exact-main"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+            self.assertEqual(self.api.close_count, 0)
+        self.api.checks = [{
+            "name": "Validar", "head_sha": "d" * 40,
+            "status": "completed", "conclusion": "success",
+        }]
+        with self.subTest("source SHA changed"):
+            self.api.branches["trabajo/issue-2003"] = "e" * 40
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "fuente cambió antes"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+            self.api.branches["trabajo/issue-2003"] = f"{2003:040x}"
+            self.assertEqual(self.api.close_count, 0)
+        with self.subTest("one source already merged independently"):
+            row = self.api.pulls[self.api.pr_by_issue[2002]]
+            row["merged"] = True
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "fusionado por separado"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+            row["merged"] = False
+            self.assertEqual(self.api.close_count, 0)
+        with self.subTest("source head moved"):
+            row = self.api.pulls[self.api.pr_by_issue[2001]]
+            row["head"]["sha"] = "f" * 40
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "hijo cambió"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+            row["head"]["sha"] = self.api.branches["trabajo/issue-2001"]
+            self.assertEqual(self.api.close_count, 0)
+
     def test_cli_compose_and_reconcile_are_explicit(self):
         parser = coord.build_parser()
         args = parser.parse_args([
