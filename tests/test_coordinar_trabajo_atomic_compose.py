@@ -302,5 +302,21 @@ class AtomicComposeTests(unittest.TestCase):
 
 
 
+    def test_contract_drift_during_final_read_is_rejected(self):
+        initial_issue = self.api.issue
+        counts = {}
+
+        def drifted(number):
+            row = initial_issue(number)
+            counts[number] = counts.get(number, 0) + 1
+            if number == 2002 and counts[number] > 1:
+                row["body"] = "2099"
+            return row
+
+        self.api.issue = drifted
+        with self.assertRaisesRegex(coord.CoordinationError, "contrato cambió"):
+            self.plan()
+
+
 if __name__ == "__main__":
     unittest.main()
