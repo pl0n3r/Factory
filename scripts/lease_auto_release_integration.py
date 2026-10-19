@@ -8,7 +8,7 @@ fail-closed, sin credenciales ni transporte de escritura propios.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -396,8 +396,16 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
             report["last_activity_at"].replace("Z", "+00:00"))
         if last > now.astimezone(timezone.utc):
             return _unknown(issue, "future_activity")
-        snapshot = port.read(issue)
-        if (not _trusted(snapshot) or snapshot.marker.get("active") is not True
+        # La vista de diagnóstico no altera Port.read estricto del executor.
+        observation_reader = getattr(type(port), "read_observation", None)
+        snapshot = (port.read_observation(issue) if callable(observation_reader)
+                    else port.read(issue))
+        observation_trusted = (
+            type(snapshot) is Snapshot and type(snapshot.ci_running) is bool
+            and (_trusted(snapshot) or (snapshot.ci_running is True
+                 and _trusted(replace(snapshot, ci_running=False))))
+        )
+        if (not observation_trusted or snapshot.marker.get("active") is not True
                 or snapshot.issue != issue
                 or snapshot.now.astimezone(timezone.utc) != now.astimezone(timezone.utc)
                 or report.get("repo") != getattr(api, "repo", None)
