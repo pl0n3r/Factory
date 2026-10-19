@@ -4697,6 +4697,9 @@ def close_pr_reservation(
             # A second closed webhook must not undo an authentic bot terminal.
             terminal = latest_reservation(api.issue_comments(issue_number))
             if (not merged
+                or not isinstance(terminal, dict)
+                or terminal.get("active") is not False
+                or terminal.get("reason") != "pr-merged"
                 or not authorized_roadmap_partial(
                     api, issue_number, branch, body, terminal,
                     allow_terminal=True,
