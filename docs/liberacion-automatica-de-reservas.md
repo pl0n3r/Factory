@@ -27,6 +27,7 @@ Continúa pendiente una auditoría negativa de pushes completa y autenticada.
 El recolector compara también dos lecturas autenticadas del timestamp global
 `pushed_at` del repositorio, antes y después de los inventarios: si cambia,
 falta, es inválido o apunta al futuro, invalida el snapshot como `UNKNOWN`.
+Por la precisión de un segundo de `pushed_at`, cualquier valor del último minuto también invalida la observación como `UNKNOWN`, incluso si ambas lecturas son iguales: dos pushes pueden compartir el mismo segundo visible. Es una cuarentena conservadora, **no** prueba de cobertura de eventos, integridad histórica ni ausencia de pushes.
 Este watermark de segundo de resolución detecta ciertas carreras de otros
 refs, **pero ni su estabilidad ni su antigüedad prueban la ausencia íntegra
 de pushes** (incluidas carreras en el mismo segundo), por lo que no añade

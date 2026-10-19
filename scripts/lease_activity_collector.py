@@ -79,6 +79,12 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         # no una auditoría negativa de pushes ni prueba de inactividad.
         # Revalidarlo descarta un snapshot si otro ref cambió durante los GET.
         push_watermark = _time(identity.get("pushed_at"), now)
+        # Dos pushes distintos pueden compartir el mismo segundo de pushed_at.
+        # Una marca global muy reciente no acredita estabilidad del inventario,
+        # incluso si coincide en ambas lecturas. Es sólo un veto positivo,
+        # nunca evidencia negativa de ausencia de pushes en refs.
+        if now - push_watermark <= timedelta(seconds=60):
+            raise IncompleteEvidence()
 
         def pages(path: str, *, name: str, expected: int | None = None,
                   checks: bool = False, commits: bool = False,

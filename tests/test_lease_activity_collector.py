@@ -221,6 +221,30 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
 
+    def test_recent_global_push_is_not_stable_negative_evidence(self):
+        # GitHub expone pushed_at con precisión de un segundo; múltiples
+        # pushes a otros refs pueden compartir el mismo watermark visible.
+        for seconds in (0, 1, 30, 60):
+            with self.subTest(seconds=seconds):
+                api = API()
+                api.repo_pushed_at = (
+                    NOW - timedelta(seconds=seconds)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertEqual(api.repo_reads, 1)
+
+        stable = API()
+        stable.repo_pushed_at = (
+            NOW - timedelta(seconds=61)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertTrue(
+            collect_activity(stable, 21, now=NOW)["evidence_complete"]
+        )
+        self.assertEqual(stable.repo_reads, 2)
+
     def test_old_marker_with_authenticated_running_ci_is_veto_only(self):
         """Un CI vivo puede impedir release sin demostrar inactividad."""
         api = API()
