@@ -5461,6 +5461,22 @@ def build_parser() -> argparse.ArgumentParser:
     sweep = sub.add_parser("marcar-inactivas")
     sweep.add_argument("--repo", required=True)
 
+    # Interfaz explícita para ejecución del bot autorizado. No se vincula a
+    # un comentario de usuario arbitrario ni se publica un workflow nuevo.
+    compose = sub.add_parser("componer-v3")
+    compose.add_argument("--repo", required=True)
+    compose.add_argument("--source-issue", action="append", type=int, required=True)
+    compose.add_argument("--integrator-issue", type=int, required=True)
+    compose.add_argument("--integrator-pr", type=int, required=True)
+    compose.add_argument("--actor", required=True)
+    compose.add_argument("--association", required=True)
+
+    reconcile = sub.add_parser("reconciliar-composicion-v3")
+    reconcile.add_argument("--repo", required=True)
+    reconcile.add_argument("--integrator-issue", type=int, required=True)
+    reconcile.add_argument("--actor", required=True)
+    reconcile.add_argument("--association", required=True)
+
     return parser
 
 
@@ -5491,6 +5507,22 @@ def main() -> int:
             validate_pr_claims(api, args.pr)
         elif args.command == "marcar-inactivas":
             run_scheduled_sweep(api)
+        elif args.command == "componer-v3":
+            grant = authorize_atomic_compose_v3(
+                api, args.source_issue, args.integrator_issue,
+                args.integrator_pr, args.actor, args.association
+            )
+            print(json.dumps({
+                "mode": "composed_v3", "integrator_issue": args.integrator_issue,
+                "candidate_sha": grant["integrator_sha"],
+                "reservation_id": grant["reservation"]["reservation_id"],
+                "source_issues": grant["source_ids"],
+            }, sort_keys=True))
+        elif args.command == "reconciliar-composicion-v3":
+            receipt = reconcile_atomic_compose_v3(
+                api, args.integrator_issue, args.actor, args.association
+            )
+            print(json.dumps(receipt, sort_keys=True))
         else:
             parser.error("Comando no soportado.")
     except (CoordinationError, GitHubError) as exc:
