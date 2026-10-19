@@ -5135,8 +5135,62 @@ def collision_validation_errors(
                     f"PR #{number}: SHA cambió entre las lecturas de colisión."
                 )
 
+    # Solo una ref CAS auténtica puede delegar exactamente las tres V3
+    # fuentes al PR integrador. No es una exención global de colisiones.
+    delegated: set[int] = set()
+    selected = next((row for row in initial_pulls
+                     if row.get("number") == pr_number), None)
+    selected_head = selected.get("head") if isinstance(selected, dict) else None
+    selected_branch = (selected_head.get("ref")
+                       if isinstance(selected_head, dict) else None)
+    integration_issue = (issue_from_branch(selected_branch)
+                         if isinstance(selected_branch, str) else None)
+    if integration_issue is not None:
+        holder = active_reservation(api, integration_issue)
+        if isinstance(holder, dict) and holder.get("reason") == "atomic-compose":
+            authority_reader = getattr(api, "composite_authority_v3", None)
+            receipt = (authority_reader(integration_issue)
+                       if callable(authority_reader) else None)
+            if (
+                not isinstance(receipt, dict)
+                or receipt.get("integrator_pr") != pr_number
+                or receipt.get("integrator_sha") != selected_head.get("sha")
+                or receipt.get("reservation") != holder
+                or not isinstance(receipt.get("sources"), list)
+                or len(receipt["sources"]) != 3
+                or not isinstance(first, dict)
+                or receipt.get("main_sha") != first.get("base_sha")
+                or sorted(holder.get("task_paths", [])) != sorted(current_files)
+                or set(receipt.get("source_ids", [])) != {
+                    row.get("issue") for row in receipt["sources"]
+                }
+            ):
+                raise CoordinationError(
+                    "Composición V3: concesión CAS de colisión inválida."
+                )
+            for source in receipt["sources"]:
+                source_pr = source.get("pr")
+                source_lease = active_reservation(api, source["issue"])
+                if (
+                    type(source_pr) is not int or source_pr not in others
+                    or source_lease is None
+                    or source_lease.get("reservation_id")
+                       != source.get("reservation_id")
+                    or source_lease.get("task_paths") != source.get("claims")
+                    or api.branch_sha(source["branch"]) != source["branch_sha"]
+                    or not isinstance(proofs.get(source_pr), dict)
+                    or proofs[source_pr].get("head_sha") != source["branch_sha"]
+                    or set(proofs[source_pr].get("files", []))
+                       != set(source["files"])
+                ):
+                    raise CoordinationError(
+                        "Composición V3: claim delegado cambió."
+                    )
+                delegated.add(source_pr)
     errors: list[str] = []
     for other_pr, files in file_overlaps(current_files, others).items():
+        if other_pr in delegated:
+            continue
         rendered = ", ".join(files)
         errors.append(
             f"Colisión con PR #{other_pr}: ambos modifican {rendered}."
