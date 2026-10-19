@@ -398,6 +398,10 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "### Review skipped",
             "> - **Review skipped**",
             "## Manual review required",
+            "_Review skipped_",
+            "_Review rate limited_",
+            "__Manual review required__",
+            "> - __Review skipped__",
         )
         for notice in notices:
             with self.subTest(notice=notice, channel="review"):
