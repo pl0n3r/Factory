@@ -405,6 +405,99 @@ class LimpiezaRamaTests(unittest.TestCase):
         with self.assertRaises(GitHubError):
             api.delete_branch("trabajo/issue-19")
 
+    def test_delete_branch_cas_authenticates_gate_and_exact_oid(self) -> None:
+        """El GraphQL CAS borra solo beforeOid y nunca hace DELETE por nombre."""
+        api = GitHub("pl0n3r/Factory", "token-prueba")
+        calls = []
+        oid = "a" * 40
+
+        def request(method, path, payload=None, allow=()):
+            calls.append((method, path, payload))
+            if method == "GET":
+                return {"node_id": "R_repo-test"}
+            return {"data": {"updateRefs": {"clientMutationId": None}}}
+
+        api.request = request  # type: ignore[method-assign]
+        with patch.object(coordinator, "require_global_running",
+                          side_effect=lambda _: calls.append(("gate", "", None))):
+            api.delete_branch_if_at("trabajo/issue-19", oid)
+        self.assertEqual([item[0] for item in calls], ["GET", "gate", "POST"])
+        self.assertEqual(calls[0][1], "/repos/pl0n3r/Factory")
+        self.assertEqual(calls[2][1], "/graphql")
+        payload = calls[2][2]["variables"]["input"]
+        self.assertEqual(payload["repositoryId"], "R_repo-test")
+        self.assertEqual(payload["refUpdates"], [{
+            "name": "refs/heads/trabajo/issue-19",
+            "beforeOid": oid,
+            "afterOid": "0" * 40,
+            "force": True,
+        }])
+
+    def test_delete_branch_cas_rejects_invalid_branch_or_oid_without_io(self):
+        """Las referencias no autorizadas fallan antes de GET y de mutación."""
+        api = GitHub("pl0n3r/Factory", "token-prueba")
+        requests = []
+        api.request = lambda *args, **kw: requests.append(args)  # type: ignore[method-assign]
+        for branch, oid in (
+            ("main", "a" * 40), ("refs/heads/trabajo/issue-19", "a" * 40),
+            ("trabajo/issue-19", "invalid"), ("trabajo/issue-19", None),
+            (None, "a" * 40),
+        ):
+            with self.subTest(branch=branch, oid=oid):
+                with self.assertRaisesRegex(CoordinationError, "CAS inválidos"):
+                    api.delete_branch_if_at(branch, oid)
+        self.assertEqual(requests, [])
+
+    def test_delete_branch_cas_rejects_missing_repo_authority(self):
+        """Sin node_id auténtico, GraphQL nunca se ejecuta."""
+        for reply in (None, {}, {"node_id": None}, {"node_id": ""}):
+            with self.subTest(reply=reply):
+                api = GitHub("pl0n3r/Factory", "token-prueba")
+                methods = []
+                def request(method, path, payload=None, allow=()):
+                    methods.append(method)
+                    return reply
+                api.request = request  # type: ignore[method-assign]
+                with self.assertRaisesRegex(CoordinationError, "repo CAS ilegible"):
+                    api.delete_branch_if_at("trabajo/issue-19", "a" * 40)
+                self.assertEqual(methods, ["GET"])
+
+    def test_delete_branch_cas_paused_before_post(self):
+        """Una pausa entre GET y POST nunca borra una referencia."""
+        api = GitHub("pl0n3r/Factory", "token-prueba")
+        methods = []
+        def request(method, path, payload=None, allow=()):
+            methods.append(method)
+            return {"node_id": "R_repo-test"}
+        api.request = request  # type: ignore[method-assign]
+        with patch.object(coordinator, "require_global_running",
+                          side_effect=CoordinationError("PAUSED")):
+            with self.assertRaisesRegex(CoordinationError, "PAUSED"):
+                api.delete_branch_if_at("trabajo/issue-19", "a" * 40)
+        self.assertEqual(methods, ["GET"])
+
+    def test_delete_branch_cas_denies_race_and_malformed_graphql(self):
+        """La API no confirma un CAS con errores, datos vacíos o respuesta rota."""
+        responses = (
+            None, {}, {"errors": [{"message": "beforeOid mismatch"}]},
+            {"data": None}, {"data": {}},
+            {"data": {"updateRefs": None}},
+        )
+        for response in responses:
+            with self.subTest(response=response):
+                api = GitHub("pl0n3r/Factory", "token-prueba")
+                methods = []
+                def request(method, path, payload=None, allow=()):
+                    methods.append(method)
+                    if method == "GET":
+                        return {"node_id": "R_repo-test"}
+                    return response
+                api.request = request  # type: ignore[method-assign]
+                with patch.object(coordinator, "require_global_running"):
+                    with self.assertRaisesRegex(CoordinationError, "CAS denegado"):
+                        api.delete_branch_if_at("trabajo/issue-19", "a" * 40)
+                self.assertEqual(methods, ["GET", "POST"])
+
 
 class WorkflowCoordinacionTests(unittest.TestCase):
     """Cubre el cableado declarativo entre GitHub Events y el coordinador."""
