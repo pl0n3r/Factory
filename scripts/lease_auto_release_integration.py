@@ -173,11 +173,11 @@ def observe_issue_cli(issue: int) -> IntegrationPreview:
     except Exception:
         return _unknown(issue if type(issue) is int and issue > 0 else 0,
                         "repository_identity_unknown")
-    # Igualar literalmente el grupo declarado por Actions y Coordinación.
-    # Nunca se usa para escritura: el transporte sigue bloqueando no-GET.
+    # Mantener el grupo canónico sin armar el Port: aun si cambia
+    # accidentalmente el transporte GET-only, no hay permiso de mutación.
     try:
         port = LeaseGithubPort(
-            api, armed=True,
+            api, armed=False,
             concurrency_group=f"factory-coordination-{repository_id}",
             clock=lambda: now,
         )
