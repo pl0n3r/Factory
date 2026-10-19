@@ -2563,18 +2563,6 @@ class AutoMergePrGuardTests(unittest.TestCase):
             mod.validate_workflow_run_event({})
 
 
-def pull_request_review_event_example():
-    return {
-        "action": "submitted",
-        "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"},
-        "review": {"state": "commented", "user": {"login": "coderabbitai[bot]"}},
-        "pull_request": {"number": 1375, "state": "open", "draft": False,
-                         "head": {"ref": "trabajo/issue-1364", "sha": "c" * 40,
-                                  "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
-                         "base": {"ref": "main"}},
-    }
-
-
     def test_immediate_merge_authority_is_absent_in_phase_one(self):
         """AC-01: la Fase 1 nunca concede autoridad de fusión."""
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
@@ -2595,6 +2583,18 @@ def pull_request_review_event_example():
         # Important: workflow_run.head_sha could be the synthetic PR merge SHA.
         # The authenticated current PR head and the canonical guard decide.
         self.assertNotEqual(workflow_run_event_example()['workflow_run']['head_sha'], SHA)
+
+
+def pull_request_review_event_example():
+    return {
+        "action": "submitted",
+        "repository": {"full_name": "pl0n3r/Factory", "default_branch": "main"},
+        "review": {"state": "commented", "user": {"login": "coderabbitai[bot]"}},
+        "pull_request": {"number": 1375, "state": "open", "draft": False,
+                         "head": {"ref": "trabajo/issue-1364", "sha": "c" * 40,
+                                  "repo": {"full_name": "pl0n3r/Factory", "fork": False}},
+                         "base": {"ref": "main"}},
+    }
 
 
 class PullRequestReviewEventTests(unittest.TestCase):
