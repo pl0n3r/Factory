@@ -1071,6 +1071,90 @@ class AtomicComposeTests(unittest.TestCase):
             row["head"]["sha"] = self.api.branches["trabajo/issue-2001"]
             self.assertEqual(self.api.close_count, 0)
 
+    def test_cas_absent_receipt_or_lost_pr_marker_recovery(self):
+        self.prepare_composition()
+        saved_cas = self.api.commit_composite_authority_v3
+        with self.subTest("ref CAS loses race"):
+            self.api.commit_composite_authority_v3 = (
+                lambda number, main, record: False
+            )
+            with self.assertRaisesRegex(
+                coord.CoordinationError, "CAS ocupado"
+            ):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+            self.assertIsNone(coord.active_reservation(self.api, 3000))
+        self.api.commit_composite_authority_v3 = saved_cas
+        with self.subTest("PR marker failed after valid CAS"):
+            original_updater = self.api.update_pull_body
+
+            def lost_patch(number, body):
+                raise ConnectionError("lost PR body response")
+
+            self.api.update_pull_body = lost_patch
+            with self.assertRaisesRegex(ConnectionError, "lost PR"):
+                self.atomic_compose()
+            self.assertIsNotNone(self.api.grant)
+            self.assertNotIn(
+                "factory-compose-v3",
+                self.api.pulls[4000].get("body", "")
+            )
+            self.api.update_pull_body = original_updater
+            restored = self.atomic_compose()
+            self.assertEqual(self.api.grant, restored)
+            self.assertIn(
+                "<!-- factory-compose-v3: issue-3000 -->",
+                self.api.pulls[4000]["body"],
+            )
+            self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 2)
+        with self.subTest("untrusted PR marker alone is not authority"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            self.api.pulls[4000]["body"] = (
+                "<!-- factory-compose-v3: issue-3000 -->"
+            )
+            self.assertTrue(
+                coord.collision_validation_errors(self.api, 4000)
+            )
+            self.assertIsNone(self.api.grant)
+
+    def test_composite_reconcile_denies_missing_receipt_and_changed_main(self):
+        self.prepare_composition()
+        with self.subTest("never reconcile without CAS"):
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "autoridad CAS ausente"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+        self.atomic_compose()
+        with self.subTest("integrator marker revoked"):
+            marker = self.api.comments[3000][-1]["body"]
+            self.api.comments[3000][-1]["body"] = marker.replace(
+                '"active":true', '"active":false'
+            )
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "integrador sin marker"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+            self.api.comments[3000][-1]["body"] = marker
+        with self.subTest("main is not integrator merge"):
+            self.api.pulls[4000]["merged"] = True
+            self.api.pulls[4000]["merge_commit_sha"] = "c" * 40
+            self.api.pulls[4000]["state"] = "closed"
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "merge integrador no verificado"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+        self.assertEqual(self.api.close_count, 0)
+
     def test_cli_compose_and_reconcile_are_explicit(self):
         parser = coord.build_parser()
         args = parser.parse_args([
