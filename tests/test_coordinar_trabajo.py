@@ -1140,6 +1140,21 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(api.comments, comments_before)
         self.assertEqual(api.status_history, status_before)
 
+    def test_planned_partial_roadmap_replay_survives_new_roadmap_contract(self):
+        """Un cambio autorizado posterior no invalida el terminal del bot."""
+        for merged in (True, False):
+            with self.subTest(merged=merged):
+                api, _current, _marker = self._planned_partial_roadmap_fixture()
+                api.pulls[15].update(state="closed", merged=merged)
+                update_pr_state(api, 15, "closed")
+                comments_before = list(api.comments)
+                status_before = list(api.status_history)
+                api.issue_data["body"] += "\n### Nota nueva aprobada\n"
+                update_pr_state(api, 15, "closed")
+                self.assertEqual(api.issue_data["state"], "open")
+                self.assertEqual(api.comments, comments_before)
+                self.assertEqual(api.status_history, status_before)
+
     def test_planned_partial_roadmap_normal_and_unmerged_behaviors(self):
         """AC-02: flujo normal/legacy, cierre no merged y mezcla de keywords."""
         complete, _current, marker = self._planned_partial_roadmap_fixture()

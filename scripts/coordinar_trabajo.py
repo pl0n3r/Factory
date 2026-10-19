@@ -5165,6 +5165,11 @@ def authorized_roadmap_partial(
         or not isinstance(lease.get("acceptance_sha256"), str)
         or not isinstance(lease.get("task_marker_sha256"), str)):
         return False
+    if allow_terminal and lease.get("active") is False:
+        # El marker del bot fijó acceptance/task V3 al finalizar el PR.
+        # Una edición posterior legítima del roadmap no invalida ese
+        # terminal; jamás usar los nuevos fingerprints para reabrirlo.
+        return not closing_issues(body)
     try:
         task = parse_task_marker(str(issue.get("body") or ""))
         acceptance = contract_fingerprint(str(issue.get("body") or ""))
