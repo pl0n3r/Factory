@@ -1266,6 +1266,62 @@ class AtomicComposeTests(unittest.TestCase):
         ):
             client.composite_authority_v3(-3)
 
+    def test_reconcile_denies_integrator_head_or_claims_changed_after_cas(self):
+        self.prepare_composition()
+        receipt = self.atomic_compose()
+        self.api.pulls[4000]["merged"] = True
+        self.api.pulls[4000]["state"] = "closed"
+        self.api.pulls[4000]["merge_commit_sha"] = "d" * 40
+        self.api.main = "d" * 40
+        self.api.checks = [{
+            "name": "Validar", "head_sha": "d" * 40,
+            "status": "completed", "conclusion": "success",
+        }]
+        original_sha = self.api.pulls[4000]["head"]["sha"]
+        for case, path, injected in (
+            ("head sha", ("head", "sha"), "f" * 40),
+            ("branch", ("head", "ref"), "trabajo/issue-9999"),
+            ("base", ("base", "ref"), "untrusted"),
+        ):
+            with self.subTest(drift=case):
+                target, key = path
+                old = self.api.pulls[4000][target][key]
+                self.api.pulls[4000][target][key] = injected
+                with patch.object(coord, "require_global_running"):
+                    with self.assertRaisesRegex(
+                        coord.CoordinationError, "merge integrador no verificado"
+                    ):
+                        coord.reconcile_atomic_compose_v3(
+                            self.api, 3000, OWNER, "OWNER"
+                        )
+                self.api.pulls[4000][target][key] = old
+                self.assertEqual(self.api.close_count, 0)
+        self.assertEqual(self.api.pulls[4000]["head"]["sha"], original_sha)
+        self.assertEqual(receipt["integrator_sha"], original_sha)
+        row = receipt["sources"][1]
+        original = self.api.comments[row["issue"]][0]["body"]
+        mutated_path = row["claims"][0]
+        self.assertIn(mutated_path, original)
+        self.api.comments[row["issue"]][0]["body"] = original.replace(
+            mutated_path, "docs/changed-v3-claim.md"
+        )
+        try:
+            altered = coord.active_reservation(self.api, row["issue"])
+            self.assertEqual(
+                altered["reservation_id"], row["reservation_id"]
+            )
+            self.assertNotEqual(altered["task_paths"], row["claims"])
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "fuente cambió antes de cierre"
+                ):
+                    coord.reconcile_atomic_compose_v3(
+                        self.api, 3000, OWNER, "OWNER"
+                    )
+            self.assertEqual(self.api.close_count, 0)
+        finally:
+            self.api.comments[row["issue"]][0]["body"] = original
+
     def test_cli_compose_and_reconcile_are_explicit(self):
         parser = coord.build_parser()
         args = parser.parse_args([
