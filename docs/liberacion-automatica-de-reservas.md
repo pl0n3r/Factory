@@ -34,6 +34,10 @@ Una subida fallida o un artefacto ausente tampoco certifica el run.
 
 Con cuota REST inferior al 20 %, el ciclo publica `deferred_low_quota`,
 omite el censo y termina en verde; ese run **no cuenta** como observación válida.
+El cron también escribe un manifiesto tipado con `issues=[]`, cero
+observaciones, `terminal_certified=false` y autoridad de liberación negativa,
+sin llamadas REST adicionales. El artefacto vinculado al run distingue
+aplazamiento de auditoría completa, pero no certifica QA.
 
 Antes de considerar la Fase B se exigen **24 horas** reales y **100 ciclos**
 **terminales y válidos por repositorio**, **cero falsos positivos** y **QA individual**

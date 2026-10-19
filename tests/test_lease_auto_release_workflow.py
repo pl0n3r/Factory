@@ -104,6 +104,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
 
     def test_low_quota_deferred_green_and_24h_100_cycles_qa_gate(self):
         """La cuota baja aplaza en verde; no concede Fase B sin QA por repo."""
+        import json
         import os
         import subprocess
         import tempfile
@@ -114,6 +115,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow.count(anchor), 1)
         branch = workflow.split(anchor, 1)[1].split("\n          fi\n", 1)[0]
         self.assertIn("deferred_low_quota", branch)
+        self.assertIn('> "$RUNNER_TEMP/lease-audit-evidence.json"', branch)
         self.assertIn('echo "allow=false" >> "$GITHUB_OUTPUT"', branch)
         self.assertIn('>> "$GITHUB_STEP_SUMMARY"', branch)
         self.assertIn("exit 0", branch)
@@ -128,7 +130,10 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", "-c", script], cwd=ROOT,
                 env={**os.environ, "GITHUB_OUTPUT": str(output),
-                     "GITHUB_STEP_SUMMARY": str(summary)},
+                     "GITHUB_STEP_SUMMARY": str(summary),
+                     "RUNNER_TEMP": folder,
+                     "OBSERVED_REPOSITORY": "pl0n3r/Factory",
+                     "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "12345"},
                 capture_output=True, text=True, timeout=10, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -137,6 +142,23 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             self.assertIn("deferred_low_quota",
                           summary.read_text(encoding="utf-8"))
             self.assertNotIn("::error::", result.stdout)
+            evidence = json.loads(
+                (Path(folder) / "lease-audit-evidence.json"
+                 ).read_text(encoding="utf-8"))
+            self.assertEqual(evidence["repository"], "pl0n3r/Factory")
+            self.assertEqual(evidence["head_sha"], "a" * 40)
+            self.assertEqual(evidence["run_id"], "12345")
+            self.assertEqual(evidence["status"], "deferred_low_quota")
+            self.assertIs(evidence["terminal_certified"], False)
+            self.assertIs(evidence["release_authorized"], False)
+            self.assertEqual(evidence["mutations"], 0)
+            self.assertEqual(evidence["valid_observations"], 0)
+            self.assertEqual(evidence["unknown_observations"], 0)
+            self.assertEqual(evidence["issues"], [])
+        self.assertIn(
+            "if: ${{ always() && github.event_name == 'schedule' }}",
+            workflow,
+        )
         self.assertIn("if: steps.budget.outputs.allow == 'true'", workflow)
         self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
         docs = (ROOT / "docs" / "liberacion-automatica-de-reservas.md"

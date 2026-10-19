@@ -102,6 +102,17 @@ jobs:
               echo "Presupuesto API insuficiente; ejecución aplazada."
               echo "Observaciones=0; escrituras=0; liberaciones=0."
             } >> "$GITHUB_STEP_SUMMARY"
+            # Identificar los ciclos aplazados sin consultas REST adicionales.
+            # Un run verde por cuota nunca certifica observación de Fase A.
+            jq -nc --arg repository "$OBSERVED_REPOSITORY" \
+              --arg sha "$GITHUB_SHA" --arg run_id "$GITHUB_RUN_ID" '
+              {schema_version: 1, repository: $repository,
+               head_sha: $sha, run_id: $run_id,
+               status: "deferred_low_quota",
+               terminal_certified: false, release_authorized: false,
+               mutations: 0, valid_observations: 0,
+               unknown_observations: 0, issues: []}
+            ' > "$RUNNER_TEMP/lease-audit-evidence.json"
             exit 0
           fi
           echo "allow=true" >> "$GITHUB_OUTPUT"
@@ -339,7 +350,7 @@ jobs:
 
       - name: Conservar evidencia acotada del observador (no certifica ciclos)
         # Sólo el cron sobre main; no se archivan tokens ni respuestas REST.
-        if: ${{ always() && github.event_name == 'schedule' && steps.budget.outputs.allow == 'true' }}
+        if: ${{ always() && github.event_name == 'schedule' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lease-observer-evidence-${{ github.run_id }}
