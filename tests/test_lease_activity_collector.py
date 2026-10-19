@@ -336,9 +336,17 @@ class LeaseActivityCollectorTests(unittest.TestCase):
             "state": "CHANGES_REQUESTED",
             "submitted_at": "2026-10-11T09:25:00Z",
         }]
-        api.change_review_during_recheck = True
+        race = API()
+        race.push_event = "pull_request"
+        race.checks[0]["status"] = "completed"
+        race.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        race.change_review_during_recheck = True
         self.assertEqual(
-            collect_activity(api, 21, now=NOW, allow_review_veto_only=True),
+            collect_activity(race, 21, now=NOW, allow_review_veto_only=True),
             unknown,
         )
         self.assertEqual(
