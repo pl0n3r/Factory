@@ -1,6 +1,6 @@
-"""Regresiones del evento no privilegiado del auto-merge (#1344)."""
-
+"""Regresiones del workflow inerte de auto-merge en Fase 1 (#1364)."""
 from pathlib import Path
+import re
 import unittest
 
 from seguridad.resiliencia import ValidationError, audit_workflow
@@ -12,22 +12,324 @@ WORKFLOW = (
 )
 
 
+def audit_phase_one_workflow(source: str) -> None:
+    """Apply generic auditing plus the exact Fase 1 auto-merge job gate."""
+    audit_workflow(source)
+    lines = source.splitlines()
+    # Phase 1 has a fixed root contract. Duplicate/quoted/space-before-colon
+    # YAML root keys can override jobs/on without matching literal "jobs:".
+    # Reject them rather than trusting the first block a text parser found.
+    root_entries = [
+        raw for raw in lines
+        if raw.strip() and not raw[0].isspace()
+        and not raw.lstrip().startswith("#")
+    ]
+    if root_entries != [
+        "name: Auto-merge cuando esté listo", "on:", "permissions:", "jobs:"
+    ]:
+        raise ValidationError("automerge fase 1 requiere raíz canónica y on único")
+    # Quoted global permission scopes are valid YAML keys but can evade
+    # generic textual checks; Phase 1 grants exactly contents: read.
+    root_permissions = []
+    for raw in lines[lines.index("permissions:") + 1:]:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not raw[0].isspace():
+            break
+        root_permissions.append(raw.rstrip())
+    if root_permissions != ["  contents: read"]:
+        raise ValidationError("automerge fase 1 exige permisos globales read-only")
+    # A second root "on:" replaces trusted events in YAML while inventory
+    # readers that select the first "on:" continue to report safe triggers.
+    if lines.count("on:") != 1:
+        raise ValidationError("automerge fase 1 requiere un bloque on único")
+    # Only the three explicitly inventoried events are allowed. A duplicate
+    # or added event changes the authority even if jobs.automerge is inert.
+    event_body = []
+    for raw in lines[lines.index("on:") + 1:]:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if not raw[0].isspace():
+            break
+        event_body.append(raw.rstrip())
+    # Exact parameters are part of the security contract, not just event
+    # names. Reject changed/duplicated trigger types and workflow sources.
+    if event_body != [
+        "  pull_request:",
+        "    types: [opened, reopened, ready_for_review, synchronize]",
+        "  pull_request_review:",
+        "    types: [submitted]",
+        "  workflow_run:",
+        '    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+        "    types: [completed]",
+    ]:
+        raise ValidationError("automerge fase 1 tiene eventos no autorizados")
+    # Fase 1 permits exactly one inert job. An additional active job could
+    # request id-token/issues/actions:write while the disabled automerge job
+    # still satisfies its own condition.
+    if lines.count("jobs:") != 1:
+        raise ValidationError("automerge fase 1 requiere un bloque jobs único")
+    jobs = lines[lines.index("jobs:") + 1:]
+    active_jobs = []
+    for line in jobs:
+        if line.strip() and not line.lstrip().startswith("#"):
+            if not line[0].isspace():
+                break
+            if re.match(r"^  \S", line):
+                active_jobs.append(line.rstrip())
+    if active_jobs != ["  automerge:"]:
+        raise ValidationError("automerge fase 1 requiere un único job inerte")
+    # Scope the condition to this job, not to any later job in the YAML.
+    start = lines.index("  automerge:") + 1
+    job_lines = []
+    for raw in lines[start:]:
+        if raw.strip() and not raw.lstrip().startswith("#"):
+            indent = len(raw) - len(raw.lstrip(" "))
+            if indent <= 2:
+                break
+        job_lines.append(raw)
+    # Comments and step-level conditions cannot certify a disabled job.
+    effective = [line.strip() for line in job_lines if line.startswith("    if:")]
+    if effective != ["if: ${{ false }}"]:
+        raise ValidationError("automerge fase 1 requiere una única condición if: false")
+    # AC-04: require exactly one direct job permission mapping; other scopes
+    # (including id-token: write) are forbidden even for an inert job.
+    headers = [i for i, raw in enumerate(job_lines)
+               if raw.startswith("    permissions")
+               and not raw.lstrip().startswith("#")]
+    if (len(headers) != 1
+            or job_lines[headers[0]].strip() != "permissions:"):
+        raise ValidationError("automerge fase 1 requiere permisos de solo lectura")
+    scopes = []
+    for raw in job_lines[headers[0] + 1:]:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if len(raw) - len(raw.lstrip(" ")) <= 4:
+            break
+        scopes.append(raw)
+    if scopes != ["      contents: read"]:
+        raise ValidationError("automerge fase 1 requiere permisos de solo lectura")
+    # AC-04: "if: false" is not permission to pre-stage executable code.
+    # Require the single inert diagnostic step; no extra shell, local action,
+    # environment or hidden secondary step may be introduced in Phase 1.
+    active_job_body = [
+        raw.rstrip() for raw in job_lines
+        if raw.strip() and not raw.lstrip().startswith("#")
+    ]
+    if active_job_body != [
+        "    if: ${{ false }}",
+        "    runs-on: ubuntu-latest",
+        "    permissions:",
+        "      contents: read",
+        "    steps:",
+        "      - name: Mantener auto-merge inerte durante Fase 1",
+        "        run: 'echo Fase 1 auto-merge inerte, sin secretos ni operaciones de merge.'",
+    ]:
+        raise ValidationError("automerge fase 1 solo permite paso inerte")
+
 class AutoMergeEventSafetyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_no_untrusted_privileged_trigger_or_global_write(self):
+    def test_phase_one_workflow_is_inert(self):
         source = self.source
-        self.assertIn("on:\n  pull_request:\n", source)
-        self.assertNotIn("pull_request_target", source)
         self.assertIn("permissions:\n  contents: read\njobs:", source)
-        self.assertNotIn("permissions:\n  contents: write", source)
-        audit_workflow(source)
-        with self.assertRaisesRegex(ValidationError, "pull_request_target prohibido"):
-            audit_workflow(
-                source.replace("  pull_request:\n", "  pull_request_target:\n", 1)
-            )
+        self.assertIn("  automerge:\n", source)
+        job = source.split("  automerge:\n", 1)[1]
+        self.assertEqual(
+            [line.strip() for line in job.splitlines() if line.startswith("    if:")],
+            ["if: ${{ false }}"],
+        )
+        self.assertIn("      contents: read", job)
+        self.assertNotIn("contents: write", source)
+        self.assertNotIn("pull-requests: write", source)
+        self.assertNotIn("MERGE_TOKEN", source)
+        self.assertNotIn("AUTOMERGE_TOKEN", source)
+        self.assertNotIn("gh pr merge", source)
+        self.assertNotIn("gh api --method PUT", source)
+        self.assertNotIn("/pulls/${number}/merge", source)
+        self.assertNotIn("pull_request_target", source)
+        self.assertIn("pull_request_review:\n    types: [submitted]", source)
+        self.assertIn(
+            'workflow_run:\n    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+            source,
+        )
+        audit_phase_one_workflow(source)
+
+    def test_comment_only_false_does_not_hide_executable_true_condition(self):
+        source = self.source.replace(
+            "    if: ${{ false }}",
+            "    if: ${{ true }}\n    # if: ${{ false }}",
+            1,
+        )
+        job = source.split("  automerge:\n", 1)[1]
+        self.assertEqual(
+            [line.strip() for line in job.splitlines() if line.startswith("    if:")],
+            ["if: ${{ true }}"],
+        )
+        self.assertNotEqual(
+            [line.strip() for line in job.splitlines() if line.startswith("    if:")],
+            ["if: ${{ false }}"],
+        )
+        with self.assertRaisesRegex(ValidationError, "condición"):
+            audit_phase_one_workflow(source)
+
+    def test_extra_or_overriding_event_cannot_rearm_workflow(self):
+        # Earlier inventory scans only the first on: and collects a set.
+        # Both duplicate roots and extra/duplicate event keys must DENY.
+        additions = (
+            self.source + "on:\n  workflow_dispatch:\n",
+            self.source.replace(
+                "  workflow_run:\n",
+                "  workflow_dispatch:\n  workflow_run:\n", 1
+            ),
+            self.source.replace(
+                "  workflow_run:\n",
+                "  pull_request:\n  workflow_run:\n", 1
+            ),
+        )
+        audit_phase_one_workflow(self.source)
+        for source in additions:
+            with self.subTest(mutant=source):
+                self.assertNotEqual(source, self.source)
+                with self.assertRaisesRegex(ValidationError, "on único|eventos"):
+                    audit_phase_one_workflow(source)
+
+    def test_alternate_yaml_root_keys_cannot_override_jobs_or_events(self):
+        # YAML permits whitespace or quoting around root mapping keys.
+        # A second "jobs :" could run an active job while the first stays inert.
+        variants = (
+            "on :\n  workflow_dispatch:\n",
+            '"on":\n  workflow_dispatch:\n',
+            "jobs :\n  unattended:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: echo active\n",
+            '"jobs":\n  unattended:\n    runs-on: ubuntu-latest\n'
+            '    steps:\n      - run: echo active\n',
+        )
+        for added in variants:
+            with self.subTest(added=added):
+                mutant = self.source + added
+                with self.assertRaisesRegex(ValidationError, "raíz canónica"):
+                    audit_phase_one_workflow(mutant)
+
+    def test_event_parameters_cannot_expand_phase_one_triggers(self):
+        # Only the event names were previously checked, not their parameters.
+        canonical = (
+            "    types: [opened, reopened, ready_for_review, synchronize]"
+        )
+        self.assertIn(canonical, self.source)
+        mutants = (
+            self.source.replace(canonical, "    types: [closed]", 1),
+            self.source.replace(
+                canonical, canonical + "\n    types: [closed]", 1),
+            self.source.replace(
+                '    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]',
+                '    workflows: ["untrusted-workflow"]', 1),
+            self.source.replace(
+                "  pull_request_review:\n    types: [submitted]",
+                "  pull_request_review:\n    types: [edited]", 1),
+        )
+        for mutant in mutants:
+            with self.subTest(mutant=mutant):
+                self.assertNotEqual(mutant, self.source)
+                with self.assertRaisesRegex(ValidationError, "eventos"):
+                    audit_phase_one_workflow(mutant)
+
+    def test_quoted_global_write_scopes_are_denied(self):
+        # Quoted keys are valid YAML while the generic text auditor checks
+        # only unquoted global write permissions.
+        valid = "permissions:\n  contents: read\njobs:"
+        self.assertIn(valid, self.source)
+        for key in ('"id-token"', "'issues'"):
+            with self.subTest(key=key):
+                mutated = self.source.replace(
+                    valid, "permissions:\n  contents: read\n  "
+                    + key + ": write\njobs:", 1
+                )
+                self.assertNotEqual(mutated, self.source)
+                with self.assertRaisesRegex(ValidationError, "permisos globales"):
+                    audit_phase_one_workflow(mutated)
+
+    def test_false_condition_in_another_job_does_not_certify_automerge(self):
+        # A decoy job with if:false must not mask an enabled automerge job.
+        source = self.source.replace("    if: ${{ false }}\n", "", 1) + (
+            "  dummy:\n"
+            "    if: ${{ false }}\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo dummy\n"
+        )
+        with self.assertRaisesRegex(ValidationError, "único job|condición"):
+            audit_phase_one_workflow(source)
+
+    def test_missing_condition_in_single_job_is_rejected(self):
+        # Extra-job rejection must not hide a missing condition on the only job.
+        source = self.source.replace("    if: ${{ false }}\n", "", 1)
+        with self.assertRaisesRegex(ValidationError, "condición"):
+            audit_phase_one_workflow(source)
+
+    def test_additional_active_job_with_write_permissions_is_denied(self):
+        # A sibling job with default true can acquire write privileges even
+        # when jobs.automerge stays disabled.
+        source = self.source + (
+            "  unattended_diagnostics:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    permissions:\n"
+            "      id-token: write\n"
+            "      issues: write\n"
+            "    steps:\n"
+            "      - run: echo active\n"
+        )
+        with self.assertRaisesRegex(ValidationError, "único job"):
+            audit_phase_one_workflow(source)
+
+    def test_inert_job_rejects_extra_write_scope(self):
+        # Disabled jobs cannot hold write, duplicate, implicit or flow permissions.
+        valid = "    permissions:\n      contents: read\n"
+        self.assertIn(valid, self.source)
+        audit_phase_one_workflow(self.source)
+        cases = {
+            "id_token_write": valid + "      id-token: write\n",
+            "issues_write": valid + "      issues: write\n",
+            "flow_write": "    permissions: {contents: read, id-token: write}\n",
+            "missing_mapping": "",
+            "duplicate_mapping": valid + valid,
+        }
+        for name, replacement in cases.items():
+            with self.subTest(name=name):
+                mutated = self.source.replace(valid, replacement, 1)
+                self.assertNotEqual(mutated, self.source)
+                with self.assertRaisesRegex(ValidationError, "permisos"):
+                    audit_phase_one_workflow(mutated)
+
+    def test_phase_one_denies_pre_staged_executable_steps(self):
+        # The disabled job must remain a single inert echo step; generic
+        # workflow auditing alone permits local actions and arbitrary shell.
+        inert = "        run: 'echo Fase 1 auto-merge inerte, sin secretos ni operaciones de merge.'"
+        self.assertIn(inert, self.source)
+        mutants = (
+            self.source.replace(inert, "        run: 'echo arbitrary'", 1),
+            self.source.replace(inert, inert + "\n      - run: echo second-step", 1),
+            self.source.replace(
+                inert, "        uses: ./scripts/local-step", 1
+            ),
+            self.source.replace(
+                inert, inert + "\n        env:\n          GH_TOKEN: fake", 1
+            ),
+            self.source.replace(
+                inert, inert + "\n        continue-on-error: true", 1
+            ),
+        )
+        audit_phase_one_workflow(self.source)
+        for source in mutants:
+            with self.subTest(source=source):
+                self.assertNotEqual(source, self.source)
+                with self.assertRaisesRegex(ValidationError, "paso inerte"):
+                    audit_phase_one_workflow(source)
+
+    def test_attempt_to_restore_merge_authority_is_detected(self):
+        source = self.source
         with self.assertRaisesRegex(ValidationError, "permisos de escritura"):
             audit_workflow(
                 source.replace(
@@ -36,29 +338,8 @@ class AutoMergeEventSafetyTests(unittest.TestCase):
                     1,
                 )
             )
-
-    def test_job_write_is_scoped_and_fork_denied(self):
-        source = self.source
-        self.assertIn("  automerge:\n", source)
-        job = source.split("  automerge:\n", 1)[1]
-        # Enabling auto-merge needs both rights, constrained to this job.
-        self.assertIn(
-            "    permissions:\n      contents: write\n      pull-requests: write",
-            job,
-        )
-        for required in (
-            "github.event.pull_request.draft == false",
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            "github.event.pull_request.head.repo.fork == false",
-            "github.event.pull_request.base.ref == 'main'",
-            "github.actor != 'dependabot[bot]'",
-            "GH_TOKEN:",
-            "gh pr merge --auto --squash",
-        ):
-            with self.subTest(required=required):
-                self.assertIn(required, job)
-        self.assertNotIn("pull_request_target", source)
-        audit_workflow(source)
+        self.assertNotIn("gh pr merge", source)
+        self.assertNotIn("gh api --method PUT", source)
 
 
 if __name__ == "__main__":

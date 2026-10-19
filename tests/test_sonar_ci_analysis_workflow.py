@@ -61,11 +61,21 @@ class SonarCiAnalysisWorkflowTests(unittest.TestCase):
         automerge = (
             ROOT / ".github" / "workflows" / "automerge.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            "if: github.event.pull_request.draft == false &&", automerge
+        # Fase 1 solo prepara guard y pruebas; este workflow no puede fusionar.
+        self.assertIn("permissions:\n  contents: read\njobs:", automerge)
+        self.assertIn("  automerge:\n", automerge)
+        self.assertEqual(
+            [line.strip() for line in automerge.split("  automerge:\n", 1)[1].splitlines()
+             if line.startswith("    if:")],
+            ["if: ${{ false }}"],
         )
-        self.assertIn("ready_for_review", automerge)
-        self.assertIn('gh pr merge --auto --squash "$PR_URL"', automerge)
+        self.assertNotIn("contents: write", automerge)
+        self.assertNotIn("pull-requests: write", automerge)
+        self.assertNotIn("AUTOMERGE_TOKEN", automerge)
+        self.assertNotIn("MERGE_TOKEN", automerge)
+        self.assertNotIn("gh pr merge", automerge)
+        self.assertNotIn("gh api --method PUT", automerge)
+
 
     def test_coverage_report_is_wired_into_scanner(self):
         text = self.text
