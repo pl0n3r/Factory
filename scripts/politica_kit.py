@@ -873,6 +873,7 @@ def _sha_less_timeline_retry(
     return bot_event["id"], bot_event["created_at"]
 
 
+# F1389_NO_QUOTA_MODULE_BEGIN
 # Decisión del dueño (2026-10-17, Factory#1389): «que no bloquee sin cupo». Rige siempre en fase construccion.
 NO_QUOTA_REASON = "reviewer-sin-cupo-decision-dueno-2026-10-17"
 
@@ -927,6 +928,7 @@ def validate_rate_limited_no_block(
         )
     created_at, comment_id = rate_limits[-1]
     return comment_id, created_at
+# F1389_NO_QUOTA_MODULE_END
 
 
 def validate_rate_limit_fallback(
@@ -1273,6 +1275,7 @@ def validate_required_bot_review_or_fallback(
             "review_reason": "reviewer-bot-presence-only",
             "risk_status": "clear",
         }
+    # F1389_NO_QUOTA_HOOK_BEGIN
     if no_block_without_quota:
         try:
             quota_id, quota_at = validate_rate_limited_no_block(
@@ -1295,6 +1298,7 @@ def validate_required_bot_review_or_fallback(
                 "rate_limit_created_at": quota_at,
                 "phase": phase,
             }
+    # F1389_NO_QUOTA_HOOK_END
     retry_id, retry_at = validate_rate_limit_fallback(
         required_review_bot=required_review_bot,
         head_sha=head_sha,
