@@ -800,6 +800,38 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(running_result.lock_verified)
         self.assertFalse(running_result.cas_verified)
 
+        # Una revisión externa CHANGES_REQUESTED verificada por dos
+        # lectores implica "wait" sólo en la vista read-only, aunque
+        # el CI haya terminado. Nunca concede permiso de escritura.
+        review_api = review_ready_api()
+        review_api.checks[0]["status"] = "completed"
+        review_api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        review_port = ObservationOnlyPort(replace(
+            item, changes_requested=True))
+        review_result = preview_integrated_activity(
+            review_api, review_port, 21, now=NOW)
+        self.assertEqual(
+            (review_result.state, review_result.action, review_result.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertFalse(review_result.release_authorized)
+        self.assertFalse(review_result.lock_verified)
+        self.assertFalse(review_result.cas_verified)
+        self.assertEqual(review_port.reads, 1)
+        # Revisión desaparecida de la fuente: no convertir un veto
+        # declarado por el Port en observación confiable.
+        review_api.reviews = []
+        self.assertEqual(
+            preview_integrated_activity(
+                review_api, ObservationOnlyPort(replace(
+                    item, changes_requested=True)), 21, now=NOW).state,
+            "UNKNOWN",
+        )
+
         # Veto tipado aun sin un push reciente: CI activo y corroborado
         # bloquea cualquier transición, pero NO prueba inactividad.
         old_api = review_ready_api()

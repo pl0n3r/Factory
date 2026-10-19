@@ -262,8 +262,9 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                         "PENDING", "COMMENTED", "APPROVED", "DISMISSED",
                         "CHANGES_REQUESTED"):
                     raise IncompleteEvidence()
-                if review_state == "CHANGES_REQUESTED":
-                    raise IncompleteEvidence()
+                # CHANGES_REQUESTED es un veto positivo verificable,
+                # no una prueba de ausencia de pushes. La vista read-only
+                # contrastará este veto con reviews actuales del Port.
                 if author["login"] == owner and review_state != "PENDING":
                     when = _time(review.get("submitted_at"), now)
                     if when >= since:

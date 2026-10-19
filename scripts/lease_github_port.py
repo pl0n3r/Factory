@@ -341,9 +341,12 @@ class LeaseGithubPort:
                 rate_limit=report["rate_limit"],
             )
             if not _trusted(snapshot, allow_partial=True):
-                if not (observation_only and snapshot.ci_running is True
-                        and _trusted(replace(snapshot, ci_running=False),
-                                     allow_partial=True)):
+                if not (observation_only
+                        and (snapshot.ci_running is True
+                             or snapshot.changes_requested is True)
+                        and _trusted(replace(
+                            snapshot, ci_running=False, changes_requested=False,
+                        ), allow_partial=True)):
                     raise ValueError("untrusted_snapshot")
             return snapshot
         except PortNotArmed:

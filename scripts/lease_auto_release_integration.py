@@ -429,8 +429,11 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         observation_trusted = (
             type(snapshot) is Snapshot and type(snapshot.ci_running) is bool
             and (_trusted(snapshot) or (callable(observation_reader)
-                 and snapshot.ci_running is True
-                 and _trusted(replace(snapshot, ci_running=False))))
+                 and (snapshot.ci_running is True
+                      or snapshot.changes_requested is True)
+                 and _trusted(replace(
+                     snapshot, ci_running=False, changes_requested=False,
+                 ))))
         )
         if (not observation_trusted or snapshot.marker.get("active") is not True
                 or snapshot.issue != issue
@@ -456,8 +459,11 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         )
         if veto is None:
             return _unknown(issue, "review_evidence_unknown")
-        if veto or snapshot.changes_requested:
-            return _unknown(issue, "changes_requested_veto")
+        # Veto positivo de review sólo acreditado si las dos fronteras
+        # (Port y API de reviews revalidada) coinciden. Nunca es prueba
+        # de inactividad, ni habilita la ruta mutante del executor.
+        if veto != snapshot.changes_requested:
+            return _unknown(issue, "review_veto_inconsistent")
         decision: Decision = decision_from_snapshot(snapshot)
         # Un preview no es autoridad: aunque ambos lectores devuelvan
         # datos positivos, nunca expone una acción que pueda liberar V3.

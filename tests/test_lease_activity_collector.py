@@ -316,10 +316,16 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     "state": "CHANGES_REQUESTED",
                     "submitted_at": "2026-10-11T09:25:00Z",
                 }]
-                self.assertEqual(
-                    collect_activity(api, 21, now=NOW),
-                    {"status": "UNKNOWN", "evidence_complete": False},
-                )
+                result = collect_activity(api, 21, now=NOW)
+                if reviewer == "other":
+                    # Positivo autenticado: se admite para el veto read-only.
+                    self.assertTrue(result["evidence_complete"])
+                    self.assertEqual(result["activity_source"], "workflow_push")
+                else:
+                    # Identidad compartida: review del owner sigue UNKNOWN.
+                    self.assertEqual(
+                        result, {"status": "UNKNOWN", "evidence_complete": False},
+                    )
                 self.assertTrue(any("/pulls/35/reviews?" in p for p in api.calls))
 
     def test_dismissed_and_approved_reviews_are_not_change_requests(self):
