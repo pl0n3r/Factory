@@ -334,6 +334,21 @@ def evaluate_phase_a_candidate(
                     or source not in (None, "reservation_marker", "workflow_push",
                                       "issue_comment", "repository_push")):
                 return reject
+            # Las reglas de decisión del decisor son condiciones NECESARIAS,
+            # no pruebas de una auditoría negativa completa. Un manifiesto
+            # que dice release a los 7 minutos contradice el umbral real,
+            # incluso si un registro de QA lo llama "correct".
+            if row["action"] == "mark_recovery" and (
+                    row["reason"] != "inactive_30_minutes"
+                    or type(age) is not int or age < 30 or source is None):
+                return reject
+            if row["action"] == "release" and (
+                    row["reason"] != "inactive_after_recovery_grace"
+                    or type(age) is not int or age < 40 or source is None):
+                return reject
+            if row["action"] == "wait" and row["reason"] in (
+                    "inactive_30_minutes", "inactive_after_recovery_grace"):
+                return reject
             seen_issues.add(row["issue"])
             if row["action"] == "release":
                 release_keys.add((run, row["issue"]))

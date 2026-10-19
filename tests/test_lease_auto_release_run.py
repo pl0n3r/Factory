@@ -137,7 +137,19 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         ).status, "invalid_evidence")
 
         with_release = deepcopy(manifests)
-        with_release[0]["issues"] = [issue_row("release")]
+        # Los candidatos release necesitan ≥40 min y motivo real del decisor;
+        # un "release" dentro de ventana activa no puede pasar por QA.
+        suspicious = deepcopy(manifests)
+        suspicious[0]["issues"] = [issue_row("release")]
+        self.assertEqual(evaluate_phase_a_candidate(
+            suspicious, receipts, [], repository=repo,
+        ).status, "invalid_evidence")
+        with_release[0]["issues"] = [{
+            **issue_row("release"),
+            "reason": "inactive_after_recovery_grace",
+            "activity_age_minutes": 45,
+            "activity_source": "reservation_marker",
+        }]
         missing_qa = evaluate_phase_a_candidate(
             with_release, receipts, [], repository=repo)
         self.assertEqual(missing_qa.status, "qa_incomplete")
@@ -162,6 +174,43 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         self.assertEqual(evaluate_phase_a_candidate(
             malformed, receipts, [qa], repository=repo,
         ).status, "invalid_evidence")
+        for bad in (
+            {"reason": "not_old_enough"},
+            {"activity_age_minutes": 39},
+            {"activity_age_minutes": None},
+            {"activity_source": None},
+        ):
+            with self.subTest(release_inconsistent=bad):
+                trial = deepcopy(with_release)
+                trial[0]["issues"][0].update(bad)
+                self.assertEqual(evaluate_phase_a_candidate(
+                    trial, receipts, [qa], repository=repo,
+                ).status, "invalid_evidence")
+        for inconsistent in (
+            {**issue_row("mark_recovery"), "reason": "inactive_30_minutes",
+             "activity_age_minutes": 29},
+            {**issue_row("mark_recovery"), "reason": "wrong",
+             "activity_age_minutes": 31},
+            {**issue_row("mark_recovery"), "reason": "inactive_30_minutes",
+             "activity_age_minutes": 31, "activity_source": None},
+            {**issue_row(), "reason": "inactive_after_recovery_grace"},
+        ):
+            with self.subTest(action=inconsistent["action"],
+                              reason=inconsistent["reason"]):
+                trial = deepcopy(manifests)
+                trial[0]["issues"] = [inconsistent]
+                self.assertEqual(evaluate_phase_a_candidate(
+                    trial, receipts, [], repository=repo,
+                ).status, "invalid_evidence")
+        matching_recovery = deepcopy(manifests)
+        matching_recovery[0]["issues"] = [{
+            **issue_row("mark_recovery"),
+            "reason": "inactive_30_minutes",
+            "activity_age_minutes": 32,
+        }]
+        self.assertEqual(evaluate_phase_a_candidate(
+            matching_recovery, receipts, [], repository=repo,
+        ).status, "candidate_only")
 
     def test_authenticated_recent_activity_inventory_is_bounded_and_never_writes(self):
         from datetime import timedelta

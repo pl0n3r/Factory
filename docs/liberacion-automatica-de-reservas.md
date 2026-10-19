@@ -86,7 +86,13 @@ manifiestos exactamente asociados por ID, SHA y repositorio a recibos de runs
 externa, cero `UNKNOWN`, cero mutaciones, 100 ciclos distintos, intervalo
 >=24 horas y una revisión documentada por cada candidato `release`.
 Rechaza duplicados, resultados `deferred_low_quota`, falsos positivos y
-cualquier fuente sin consistencia. Devuelve `candidate_only` como máximo:
+cualquier fuente sin consistencia. En particular, un candidato
+`mark_recovery` requiere motivo `inactive_30_minutes`, fuente identificada y
+antigüedad ≥30 min; un `release` requiere motivo
+`inactive_after_recovery_grace`, fuente identificada y ≥40 min. Una fila
+`release` con sólo 7 minutos, aunque QA la marcara `correct`, es
+`invalid_evidence`, no `candidate_only`. Estas son condiciones necesarias,
+pero no reemplazan la prueba negativa de pushes ni la auditoría humana. Devuelve `candidate_only` como máximo:
 **no obtiene ni autentica los recibos de GitHub, no acredita un push negativo,
 no convierte una declaración QA en firma auténtica y nunca permite release**.
 Todos los recibos y evidencias deben verificarse manualmente por QA contra
