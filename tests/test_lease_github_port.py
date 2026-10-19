@@ -981,6 +981,33 @@ class LeaseGithubPortTests(unittest.TestCase):
                 call()
         self.assertEqual(quiet.writes, [])
 
+        # GET autenticado con el Port desarmado: ni siquiera un
+        # transporte que acepta POST/PATCH puede habilitar una transición.
+        observer = LeaseGithubPort(quiet, armed=False,
+                                   concurrency_group=group, clock=lambda: NOW)
+        observed = observer.read_observation(21)
+        self.assertTrue(_trusted(observed, allow_partial=True))
+        self.assertFalse(observed.ci_running)
+        with self.assertRaises(PortNotArmed):
+            observer.read(21)
+        with self.assertRaises(PortNotArmed):
+            observer.append(21, _release_marker(observed), observed)
+        with self.assertRaises(PortNotArmed):
+            observer.status(21, RECOVERY, observed)
+        self.assertEqual(quiet.writes, [])
+        quiet.checks[0]["status"] = "in_progress"
+        waiting = observer.read_observation(21)
+        self.assertTrue(waiting.ci_running)
+        self.assertFalse(_trusted(waiting, allow_partial=True))
+        self.assertEqual(quiet.writes, [])
+        quiet.checks[0]["status"] = "completed"
+        unauthenticated = WriteAPI()
+        unauthenticated.authenticated = False
+        with self.assertRaises(PortNotArmed):
+            LeaseGithubPort(unauthenticated, armed=False,
+                            concurrency_group=group,
+                            clock=lambda: NOW).read_observation(21)
+
         api = WriteAPI()
         port = LeaseGithubPort(api, armed=True, concurrency_group=group,
                                clock=lambda: NOW)
