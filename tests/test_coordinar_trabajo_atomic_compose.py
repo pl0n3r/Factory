@@ -223,5 +223,84 @@ class AtomicComposeTests(unittest.TestCase):
             self.plan()
 
 
+    def test_invalid_identity_and_wrong_status_fail_closed(self):
+        for candidate, who in (([2001, 2002], OWNER), (ISSUES, ""),
+                               ([2001, 2001, 2002], OWNER)):
+            with self.subTest(candidate=candidate, owner=who):
+                with self.assertRaises(coord.CoordinationError):
+                    coord.plan_atomic_compose_v3(self.api, candidate, who)
+        with self.subTest("issue no reservado"):
+            self.api.issues[2002]["labels"] = [{"name": coord.STATUS_BLOCKED}]
+            with self.assertRaisesRegex(coord.CoordinationError, "no reservado"):
+                self.plan()
+            self.api.issues[2002]["labels"] = [{"name": coord.STATUS_RESERVED}]
+
+    def test_untrusted_lease_contract_and_owner_are_rejected(self):
+        original = self.api.comments[2001][0]["body"]
+        cases = [
+            original.replace('"owner":"pl0n3r"', '"owner":"attacker"'),
+            original.replace(ACCEPTANCE, "e" * 64),
+            original.replace(TASK, "f" * 64),
+            original.replace("compose-2001", "compose-9999"),
+        ]
+        for value in cases:
+            with self.subTest(marker=value[-60:]):
+                self.api.comments[2001][0]["body"] = value
+                with self.assertRaises(coord.CoordinationError):
+                    self.plan()
+        self.api.comments[2001][0]["body"] = original
+
+    def test_pr_base_body_and_changed_file_scope_rejected(self):
+        pr_id = self.api.pr_by_issue[2002]
+        original = copy.deepcopy(self.api.pulls[pr_id])
+        with self.subTest("base stale"):
+            self.api.pulls[pr_id]["base"]["sha"] = "b" * 40
+            with self.assertRaises(coord.CoordinationError):
+                self.plan()
+        self.api.pulls[pr_id] = copy.deepcopy(original)
+        with self.subTest("body sin reserva"):
+            self.api.pulls[pr_id]["body"] = "sin marker de reserva"
+            with self.assertRaises(coord.CoordinationError):
+                self.plan()
+        self.api.pulls[pr_id] = copy.deepcopy(original)
+        with self.subTest("archivo fuera del claim"):
+            self.api.changed[pr_id]["files"] = [*paths(2002), "new/unauthorized.py"]
+            with self.assertRaisesRegex(coord.CoordinationError, "fuera de claims"):
+                self.plan()
+        self.api.changed[pr_id]["files"] = paths(2002)
+        with self.subTest("diff vacío"):
+            self.api.changed[pr_id]["files"] = []
+            with self.assertRaises(coord.CoordinationError):
+                self.plan()
+        self.api.changed[pr_id]["files"] = paths(2002)
+
+    def test_third_party_legacy_lease_rejected_without_claims(self):
+        self.api.extra_issues.append({"number": 2004, "state": "open"})
+        self.api.comments[2004] = [{
+            "user": {"login": "github-actions[bot]"},
+            "body": coord.reservation_marker(
+                OWNER, "00000000-0000-4000-8000-000000002004",
+                "trabajo/issue-2004", True, "tomar", ACCEPTANCE),
+        }]
+        with self.assertRaisesRegex(coord.CoordinationError, "sin claims V3"):
+            self.plan()
+
+    def test_third_party_disjoint_v3_does_not_block_read_only_plan(self):
+        self.api.extra_issues.append({"number": 2004, "state": "open"})
+        self.api.comments[2004] = [{
+            "user": {"login": "github-actions[bot]"},
+            "body": coord.reservation_marker(
+                OWNER, "00000000-0000-4000-8000-000000002004",
+                "trabajo/issue-2004", True, "tomar", ACCEPTANCE,
+                task_snapshot={"task_marker_sha256": TASK,
+                               "task_paths": ["unrelated.txt"],
+                               "task_depends_on": []}),
+        }]
+        plan = self.plan()
+        self.assertIs(plan["write_authorized"], False)
+        self.assertEqual(plan["file_count"], 6)
+
+
+
 if __name__ == "__main__":
     unittest.main()
