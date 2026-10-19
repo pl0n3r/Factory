@@ -902,11 +902,15 @@ class AtomicComposeTests(unittest.TestCase):
             self.api.issues[3000]["body"] = original
             self.assertIsNone(self.api.grant)
         with self.subTest("draft tree can be reserved, not merged"):
+            approved_plan = self.plan()
             self.api.pulls[4000]["draft"] = True
             grant = self.atomic_compose()
             self.assertEqual(grant["reservation"]["reason"], "atomic-compose")
-            with self.assertRaisesRegex(coord.CoordinationError, "fuera de main"):
-                self.candidate_ci()
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(coord.CoordinationError, "fuera de main"):
+                    coord.verify_exact_integrator_ci_v3(
+                        self.api, approved_plan, 4000
+                    )
             self.api.pulls[4000]["draft"] = False
         with self.subTest("source version drift after CAS is denied"):
             self.api.branches["trabajo/issue-2002"] = "e" * 40
