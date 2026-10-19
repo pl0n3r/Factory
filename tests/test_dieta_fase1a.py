@@ -58,7 +58,7 @@ class DietaFase1ATests(unittest.TestCase):
     def test_optional_triggers_removed_only_after_dependency_and_consumer_preflight(self):
         """AC-01: solo desaparecen triggers opcionales sin callers vivos."""
         actual = self.actual_workflows()
-        self.assertEqual(len(actual), 32)
+        self.assertEqual(len(actual), 31 + len(POST_BASELINE_WORKFLOWS))
         self.assertEqual(set(self.rows) | set(POST_BASELINE_WORKFLOWS), actual)
         for name in REMOVED:
             with self.subTest(removed=name):
