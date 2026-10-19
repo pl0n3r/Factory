@@ -7,6 +7,7 @@ el preview nunca concede escritura, aun cuando todos los GET sean correctos.
 from __future__ import annotations
 
 import copy
+import hashlib
 import unittest
 from unittest.mock import patch
 
@@ -80,6 +81,50 @@ class ReadOnlyFake:
                 "files": paths(n),
             }
         self.log = []
+        # Candidato de integración simulado, distinto de los tres PRs fuente.
+        # El mock almacena identidad de contenido por blob, no solo nombres.
+        self.candidate_sha = "b" * 40
+        self.candidate_ref = "trabajo/issue-3000"
+        self.branches[self.candidate_ref] = self.candidate_sha
+        files = [path for n in ISSUES for path in paths(n)]
+        self.blobs = {}
+        for n in ISSUES:
+            for path in paths(n):
+                self.blobs[(path, self.branches[f"trabajo/issue-{n}"])] = hashlib.sha1(
+                    path.encode("utf-8")
+                ).hexdigest()
+        for path in files:
+            self.blobs[(path, self.candidate_sha)] = hashlib.sha1(
+                path.encode("utf-8")
+            ).hexdigest()
+        self.pulls[4000] = {
+            "number": 4000,
+            "state": "open",
+            "draft": False,
+            "head": {
+                "ref": self.candidate_ref,
+                "sha": self.candidate_sha,
+                "repo": {"full_name": self.repo, "name": "Factory",
+                         "owner": {"login": "pl0n3r"}},
+            },
+            "base": {"ref": "main", "sha": MAIN},
+        }
+        self.changed[4000] = {
+            "complete": True, "head_sha": self.candidate_sha,
+            "base_sha": MAIN, "files": files,
+        }
+        self.checks = [{
+            "name": "Validar", "head_sha": self.candidate_sha,
+            "status": "completed", "conclusion": "success",
+        }]
+
+    def blob_sha_at(self, path, sha):
+        self.log.append(("blob_sha_at", path, sha))
+        return self.blobs[(path, sha)]
+
+    def exact_check_runs(self, sha):
+        self.log.append(("exact_check_runs", sha))
+        return copy.deepcopy(self.checks)
 
     def issue(self, number):
         self.log.append(("issue", number))
@@ -316,6 +361,91 @@ class AtomicComposeTests(unittest.TestCase):
         self.api.issue = drifted
         with self.assertRaisesRegex(coord.CoordinationError, "contrato cambió"):
             self.plan()
+
+
+    def candidate_ci(self, plan=None):
+        if plan is None:
+            plan = self.plan()
+        with patch.object(coord, "require_global_running"):
+            return coord.verify_exact_integrator_ci_v3(self.api, plan, 4000)
+
+    def test_exact_integrator_sha_ci_never_reuses_child_checks(self):
+        proof = self.candidate_ci()
+        self.assertEqual(proof["mode"], "ci_evidence_only")
+        self.assertIs(proof["write_authorized"], False)
+        self.assertEqual(proof["files_verified"], 6)
+        self.assertEqual(proof["integrator_sha"], self.api.candidate_sha)
+        self.assertIn(("exact_check_runs", self.api.candidate_sha), self.api.log)
+        self.assertFalse(any(event[0] in ("POST", "PATCH", "DELETE")
+                             for event in self.api.log))
+        for field, value in (
+            ("status", "in_progress"), ("conclusion", "failure"),
+            ("head_sha", "c" * 40), ("name", "other-job"),
+        ):
+            with self.subTest(check_field=field):
+                self.api.checks[0][field] = value
+                with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
+                    self.candidate_ci()
+                self.api.checks[0][field] = {
+                    "status": "completed", "conclusion": "success",
+                    "head_sha": self.api.candidate_sha, "name": "Validar",
+                }[field]
+        with self.subTest("reused child green"):
+            self.api.checks[0]["head_sha"] = self.api.branches["trabajo/issue-2001"]
+            with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
+                self.candidate_ci()
+
+    def test_candidate_rejects_missing_files_modified_blobs_and_draft(self):
+        with self.subTest("filename missing"):
+            self.api.changed[4000]["files"] = self.api.changed[4000]["files"][:-1]
+            with self.assertRaisesRegex(coord.CoordinationError, "seis archivos"):
+                self.candidate_ci()
+            self.api.changed[4000]["files"] = [
+                p for number in ISSUES for p in paths(number)
+            ]
+        with self.subTest("blob altered"):
+            path = paths(2003)[1]
+            self.api.blobs[(path, self.api.candidate_sha)] = "e" * 40
+            with self.assertRaisesRegex(coord.CoordinationError, "contenido distinto"):
+                self.candidate_ci()
+            self.api.blobs[(path, self.api.candidate_sha)] = hashlib.sha1(
+                path.encode("utf-8")
+            ).hexdigest()
+        with self.subTest("draft"):
+            self.api.pulls[4000]["draft"] = True
+            with self.assertRaisesRegex(coord.CoordinationError, "fuera de main"):
+                self.candidate_ci()
+            self.api.pulls[4000]["draft"] = False
+
+    def test_candidate_fails_closed_for_duplicate_or_unknown_checks(self):
+        with self.subTest("no checks"):
+            self.api.checks = []
+            with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
+                self.candidate_ci()
+        with self.subTest("duplicated checks"):
+            self.api.checks = [{
+                "name": "Validar", "head_sha": self.api.candidate_sha,
+                "status": "completed", "conclusion": "success",
+            }] * 2
+            with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
+                self.candidate_ci()
+
+    def test_candidate_rejects_main_and_head_race(self):
+        first = self.api.pull
+        calls = {"candidate": 0}
+
+        def drifting_pr(number):
+            item = first(number)
+            if number == 4000:
+                calls["candidate"] += 1
+                if calls["candidate"] > 1:
+                    item["head"]["sha"] = "c" * 40
+            return item
+
+        self.api.pull = drifting_pr
+        with self.assertRaisesRegex(coord.CoordinationError, "cambió"):
+            self.candidate_ci()
+
 
 
 if __name__ == "__main__":
