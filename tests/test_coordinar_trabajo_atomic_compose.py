@@ -808,6 +808,132 @@ class AtomicComposeTests(unittest.TestCase):
             self.assertTrue(coord.active_reservation(self.api, n)["active"])
             self.assertIsNotNone(self.api.branch_sha(f"trabajo/issue-{n}"))
 
+
+    def test_adapter_single_ref_cas_and_untrusted_registry(self):
+        self.prepare_composition()
+        grant = self.atomic_compose()
+        client = coord.GitHub("pl0n3r/brvtal", token="fixture-token")
+        head = "d" * 40
+        ref = "factory-compose-v3/issue-3000"
+        stored = {}
+        calls = []
+
+        def branch_sha(name):
+            return stored.get(name)
+
+        def request(method, path, payload=None, **kwargs):
+            calls.append((method, path))
+            if method == "GET" and path.endswith(f"/git/commits/{MAIN}"):
+                return {"tree": {"sha": "c" * 40}}
+            if method == "POST" and "/git/commits" in path:
+                self.assertTrue(payload["message"].startswith("factory-compose-v3:"))
+                self.assertEqual(payload["parents"], [MAIN])
+                return {"sha": head}
+            if method == "GET" and path.endswith(f"/git/commits/{head}"):
+                return {"message": "factory-compose-v3:" + json.dumps(grant)}
+            raise AssertionError("Unexpected network path " + path)
+
+        def create_branch(name, sha):
+            self.assertEqual(name, ref)
+            self.assertEqual(sha, head)
+            if name in stored:
+                return False
+            stored[name] = sha
+            return True
+
+        client.branch_sha = branch_sha
+        client.request = request
+        client.create_branch = create_branch
+        self.assertIsNone(client.composite_authority_v3(3000))
+        with patch.object(coord, "require_global_running"):
+            self.assertTrue(client.commit_composite_authority_v3(3000, MAIN, grant))
+        self.assertEqual(client.composite_authority_v3(3000), grant)
+        self.assertFalse(client.commit_composite_authority_v3(3000, MAIN, grant))
+        self.assertEqual(len([row for row in calls if row[0] == "POST"]), 1)
+        self.assertFalse(client.commit_composite_authority_v3(0, MAIN, grant))
+        original_request = client.request
+        with self.subTest("noncanonical ledger rejected"):
+            def corrupted(method, path, payload=None, **kwargs):
+                if path.endswith(f"/git/commits/{head}"):
+                    return {"message": "factory-compose-v3:broken json"}
+                return original_request(method, path, payload, **kwargs)
+            client.request = corrupted
+            with self.assertRaisesRegex(coord.CoordinationError, "registro ilegible"):
+                client.composite_authority_v3(3000)
+            client.request = original_request
+        with self.subTest("inactive forged marker rejected"):
+            forged = copy.deepcopy(grant)
+            forged["reservation"]["active"] = False
+            def forged_response(method, path, payload=None, **kwargs):
+                if path.endswith(f"/git/commits/{head}"):
+                    return {"message": "factory-compose-v3:" + json.dumps(forged)}
+                return original_request(method, path, payload, **kwargs)
+            client.request = forged_response
+            with self.assertRaisesRegex(coord.CoordinationError, "registro inválido"):
+                client.composite_authority_v3(3000)
+            client.request = original_request
+        with self.subTest("invalid base tree denies any authority"):
+            stored.clear()
+            def missing_tree(method, path, payload=None, **kwargs):
+                if path.endswith(f"/git/commits/{MAIN}"):
+                    return {"tree": None}
+                return original_request(method, path, payload, **kwargs)
+            client.request = missing_tree
+            with self.assertRaisesRegex(coord.CoordinationError, "árbol"):
+                client.commit_composite_authority_v3(3000, MAIN, grant)
+            self.assertFalse(stored)
+
+    def test_composite_fails_closed_for_identity_changes_and_draft(self):
+        self.prepare_composition()
+        with self.subTest("wrong actor"):
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(coord.CoordinationError, "actor"):
+                    coord.authorize_atomic_compose_v3(
+                        self.api, ISSUES, 3000, 4000, "attacker", "OWNER"
+                    )
+            self.assertIsNone(self.api.grant)
+        with self.subTest("unowned issue"):
+            original = self.api.issues[3000]["body"]
+            self.api.issues[3000]["body"] = "2001"
+            with self.assertRaisesRegex(
+                coord.CoordinationError, "claims integradores"
+            ):
+                self.atomic_compose()
+            self.api.issues[3000]["body"] = original
+            self.assertIsNone(self.api.grant)
+        with self.subTest("draft tree can be reserved, not merged"):
+            self.api.pulls[4000]["draft"] = True
+            grant = self.atomic_compose()
+            self.assertEqual(grant["reservation"]["reason"], "atomic-compose")
+            with self.assertRaisesRegex(coord.CoordinationError, "fuera de main"):
+                self.candidate_ci()
+            self.api.pulls[4000]["draft"] = False
+        with self.subTest("source version drift after CAS is denied"):
+            self.api.branches["trabajo/issue-2002"] = "e" * 40
+            with self.assertRaises(coord.CoordinationError):
+                self.atomic_compose()
+            self.assertEqual(self.api.grant, grant)
+            self.api.branches["trabajo/issue-2002"] = f"{2002:040x}"
+
+    def test_cli_compose_and_reconcile_are_explicit(self):
+        parser = coord.build_parser()
+        args = parser.parse_args([
+            "componer-v3", "--repo", "pl0n3r/brvtal",
+            "--source-issue", "2001", "--source-issue", "2002",
+            "--source-issue", "2003", "--integrator-issue", "3000",
+            "--integrator-pr", "4000", "--actor", OWNER,
+            "--association", "OWNER"
+        ])
+        self.assertEqual(args.source_issue, ISSUES)
+        self.assertEqual(args.integrator_issue, 3000)
+        self.assertEqual(args.integrator_pr, 4000)
+        post = parser.parse_args([
+            "reconciliar-composicion-v3", "--repo", "pl0n3r/brvtal",
+            "--integrator-issue", "3000", "--actor", OWNER,
+            "--association", "OWNER"
+        ])
+        self.assertEqual(post.command, "reconciliar-composicion-v3")
+
     def test_candidate_rejects_unclaimed_files_in_forged_plan(self):
         plan = self.plan()
         plan["sources"][0]["claims"] = ["docs/not-a-claim.md"]
