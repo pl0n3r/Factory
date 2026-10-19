@@ -378,11 +378,15 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                         or activity["id"] <= 0 or activity["id"] in ids):
                     raise IncompleteEvidence()
                 ids.add(activity["id"])
-                if activity.get("activity_type") not in ("push", "force_push"):
+                # REST "List repository activities" usa push_type
+                # normal/force, pushed_at y pusher (NO activity_type,
+                # timestamp y actor, que no pertenecen a este endpoint).
+                # Ningún feed de actividades garantiza auditoría NEGATIVA.
+                if activity.get("push_type") not in ("normal", "force"):
                     continue
                 if activity.get("ref") != f"refs/heads/{branch}":
                     raise IncompleteEvidence()
-                actor = activity.get("actor")
+                actor = activity.get("pusher")
                 if (type(actor) is not dict
                         or type(actor.get("login")) is not str
                         or actor.get("type") != "User"
@@ -391,7 +395,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                         or type(activity.get("after")) is not str
                         or SHA.fullmatch(activity["after"]) is None):
                     raise IncompleteEvidence()
-                stamp = _time(activity.get("timestamp"), now)
+                stamp = _time(activity.get("pushed_at"), now)
                 if stamp > push_watermark:
                     raise IncompleteEvidence()
                 if (actor["login"] == owner and stamp >= since

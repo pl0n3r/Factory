@@ -361,10 +361,10 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         """Push por REST /activity: wait sí, ausencia no prueba release."""
         unknown = {"status": "UNKNOWN", "evidence_complete": False}
         row = {
-            "id": 31, "activity_type": "push",
+            "id": 31, "push_type": "normal",
             "ref": "refs/heads/trabajo/issue-21",
-            "timestamp": "2026-10-11T09:42:00Z",
-            "actor": {"login": "pl0n3r", "type": "User"},
+            "pushed_at": "2026-10-11T09:42:00Z",
+            "pusher": {"login": "pl0n3r", "type": "User"},
             "before": "b" * 40, "after": SHA,
         }
         api = API()
@@ -374,7 +374,7 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         output = collect_activity(api, 21, now=NOW)
         self.assertTrue(output["evidence_complete"])
         self.assertEqual(output["activity_source"], "repository_push")
-        self.assertEqual(output["last_activity_at"], row["timestamp"])
+        self.assertEqual(output["last_activity_at"], row["pushed_at"])
         self.assertEqual(api.activity_reads, 2)
         self.assertFalse(output["ci_veto_only"])
         self.assertFalse(output["review_veto_only"])
@@ -383,11 +383,12 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         api.activity_rows = []
         self.assertEqual(collect_activity(api, 21, now=NOW), unknown)
         for patch in (
-            {"actor": {"login": "another", "type": "User"}},
-            {"actor": {"login": "pl0n3r", "type": "Bot"}},
+            {"pusher": {"login": "another", "type": "User"}},
+            {"pusher": {"login": "pl0n3r", "type": "Bot"}},
+            {"pusher": None},
             {"ref": "refs/heads/main"},
-            {"timestamp": "2026-10-11T09:00:00Z"},
-            {"timestamp": "2026-10-11T10:00:01Z"},
+            {"pushed_at": "2026-10-11T09:00:00Z"},
+            {"pushed_at": "2026-10-11T10:00:01Z"},
             {"before": "bad"},
         ):
             with self.subTest(patch=patch):
@@ -408,11 +409,22 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         force = API()
         force.push_event = "pull_request"
         force.checks[0]["status"] = "completed"
-        force.activity_rows = [{**row, "activity_type": "force_push"}]
+        force.activity_rows = [{**row, "push_type": "force"}]
         self.assertEqual(
             collect_activity(force, 21, now=NOW)["activity_source"],
             "repository_push",
         )
+        # El esquema incorrecto anterior nunca debe crear evidencia.
+        legacy = API()
+        legacy.push_event = "pull_request"
+        legacy.checks[0]["status"] = "completed"
+        legacy.activity_rows = [{
+            "id": 31, "activity_type": "push",
+            "ref": row["ref"], "timestamp": row["pushed_at"],
+            "actor": row["pusher"], "before": row["before"],
+            "after": row["after"],
+        }]
+        self.assertEqual(collect_activity(legacy, 21, now=NOW), unknown)
 
     def test_old_marker_external_review_veto_is_positive_only(self):
         """Review vigente puede vetar una liberación sin probar inactividad."""

@@ -31,9 +31,14 @@ publica `inactividad=UNKNOWN` (minutos = `null`) cuando
 `ci_veto_only=true`, sin atribuir ausencia al marker antiguo.
 Continúa pendiente una auditoría negativa de pushes completa y autenticada.
 Un GET de `/repos/{owner}/{repo}/activity` puede certificar una actividad
-**positiva** del titular en la rama: `push` o `force_push`, actor
-`User`, `ref` exacto, SHAs y timestamp válidos, inventario revalidado
-en dos lecturas. La fuente se informa como `repository_push`.
+**positiva** del titular en la rama: `push_type=normal|force`,
+`pusher.type=User`, `pusher.login` igual al titular, `ref` exacto,
+SHAs y `pushed_at` válidos, inventario revalidado en dos lecturas.
+Estos son los campos del endpoint GitHub **List repository activities**;
+`activity_type/actor/timestamp` no sustituyen este esquema y producen
+`UNKNOWN`. La fuente se informa como `repository_push`. El historial
+de actividad no ofrece cobertura íntegra garantizada para inferir
+ausencia de pushes.
 **No** se acepta inventario vacío, truncado, cambiado, retrasado o inválido
 como prueba *negativa* de pushes: en ese caso el estado sigue `UNKNOWN`,
 no se simulan `mark_recovery` ni `release`. Se consulta sólo cuando
