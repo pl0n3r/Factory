@@ -468,7 +468,7 @@ class AtomicComposeTests(unittest.TestCase):
                 return checks
 
             self.api.exact_check_runs = revoked_during_checks
-            with self.assertRaisesRegex(coord.CoordinationError, r"lease #2002 inválida"):
+            with self.assertRaisesRegex(coord.CoordinationError, r"fuente cambió tras el check"):
                 self.candidate_ci()
             self.assertIn(("exact_check_runs", self.api.candidate_sha), self.api.log)
             self.assertFalse(any(event[0] in ("POST", "PATCH", "DELETE")
