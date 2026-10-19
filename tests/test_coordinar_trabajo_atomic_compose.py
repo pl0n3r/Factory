@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import unittest
 from unittest.mock import patch
 
@@ -526,6 +527,243 @@ class AtomicComposeTests(unittest.TestCase):
         self.api.pulls[pr_number] = original
         self.assertFalse(any(event[0] in ("POST", "PATCH", "DELETE")
                              for event in self.api.log))
+
+
+    def prepare_composition(self):
+        """API sintética: las escrituras son eventos atómicos observables."""
+        api = self.api
+        api.issues[3000] = {
+            "number": 3000, "state": "open", "body": "3000",
+            "labels": [{"name": coord.STATUS_REVIEW}],
+        }
+        api.comments[3000] = []
+        api.grant = None
+        api.lock_held = False
+        api.fail_commit = None
+        api.fail_comment = False
+        api.fail_close_at = None
+        api.close_count = 0
+        api.branches[coord.recovery_lock_branch(2147483647)] = None
+        original_branch_sha = api.branch_sha
+
+        def branch_sha(branch):
+            if branch == coord.recovery_lock_branch(2147483647):
+                return "f" * 40 if api.lock_held else None
+            return original_branch_sha(branch)
+
+        def acquire_issue_lock(number, sha):
+            api.log.append(("acquire_lock", number, sha))
+            if api.lock_held or number != 2147483647:
+                return None
+            api.lock_held = True
+            return "f" * 40
+
+        def release_owned_issue_lock_after_pause(number, token):
+            api.log.append(("release_lock", number, token))
+            if api.lock_held and token == "f" * 40:
+                api.lock_held = False
+
+        def composite_authority_v3(number):
+            api.log.append(("authority_read", number))
+            return copy.deepcopy(api.grant)
+
+        def commit_composite_authority_v3(number, main, record):
+            api.log.append(("CAS", number, main))
+            if api.fail_commit == "pre":
+                raise ConnectionError("failed before CAS")
+            if api.grant is not None:
+                return False
+            api.grant = copy.deepcopy(record)
+            if api.fail_commit == "after":
+                raise ConnectionError("lost CAS response")
+            return True
+
+        def comment(number, body):
+            api.log.append(("POST", number))
+            if api.fail_comment:
+                raise ConnectionError("lost comment response")
+            api.comments[number].append({
+                "user": {"login": "github-actions[bot]"}, "body": body
+            })
+
+        def close_pull(number):
+            api.log.append(("PATCH", number))
+            api.close_count += 1
+            if api.fail_close_at == api.close_count:
+                raise ConnectionError("partial GitHub response")
+            api.pulls[number]["state"] = "closed"
+
+        api.branch_sha = branch_sha
+        api.acquire_issue_lock = acquire_issue_lock
+        api.release_owned_issue_lock_after_pause = release_owned_issue_lock_after_pause
+        api.composite_authority_v3 = composite_authority_v3
+        api.commit_composite_authority_v3 = commit_composite_authority_v3
+        api.comment = comment
+        api.close_pull = close_pull
+
+        plan = self.plan()
+        intention = {
+            "version": 1, "integrator_issue": 3000,
+            "candidate_pr": 4000, "candidate_sha": api.candidate_sha,
+            "main_sha": MAIN, "owner": OWNER,
+            "sources": [[r["issue"], r["pr"], r["branch_sha"],
+                         r["reservation_id"]] for r in plan["sources"]],
+            "claims": sorted(p for n in ISSUES for p in paths(n)),
+        }
+        digest = hashlib.sha256(json.dumps(
+            intention, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")).hexdigest()
+        api.comments[3000].append({
+            "user": {"login": OWNER},
+            "body": '<!-- factory-compose-approval ' + json.dumps(
+                {"version": 1, "intention_sha256": digest},
+                separators=(",", ":"), sort_keys=True
+            ) + ' -->',
+        })
+        return plan
+
+    def atomic_compose(self):
+        with (
+            patch.object(coord, "require_global_running"),
+            patch.object(
+                coord, "parse_task_marker",
+                side_effect=lambda body: {
+                    "paths": sorted(p for n in ISSUES for p in paths(n))
+                    if body == "3000" else paths(int(body)),
+                    "depends_on": [],
+                },
+            ),
+            patch.object(coord, "task_marker_fingerprint", return_value=TASK),
+            patch.object(coord, "contract_fingerprint", return_value=ACCEPTANCE),
+        ):
+            return coord.authorize_atomic_compose_v3(
+                self.api, ISSUES, 3000, 4000, OWNER, "OWNER"
+            )
+
+    def test_authorized_cas_compose_preserves_source_refs(self):
+        plan = self.prepare_composition()
+        before = {n: self.api.branch_sha(f"trabajo/issue-{n}")
+                  for n in ISSUES}
+        before_prs = {n: copy.deepcopy(self.api.pulls[self.api.pr_by_issue[n]])
+                      for n in ISSUES}
+        grant = self.atomic_compose()
+        self.assertEqual(grant["version"], 3)
+        self.assertEqual(grant["integrator_sha"], self.api.candidate_sha)
+        self.assertEqual(grant["approval_sha256"], hashlib.sha256(json.dumps({
+            "version": 1, "integrator_issue": 3000, "candidate_pr": 4000,
+            "candidate_sha": self.api.candidate_sha, "main_sha": MAIN,
+            "owner": OWNER,
+            "sources": [[r["issue"], r["pr"], r["branch_sha"],
+                         r["reservation_id"]] for r in plan["sources"]],
+            "claims": sorted(p for n in ISSUES for p in paths(n)),
+        }, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest())
+        self.assertEqual(grant["reservation"]["version"], 3)
+        self.assertEqual(grant["reservation"]["task_paths"],
+                         sorted(p for n in ISSUES for p in paths(n)))
+        self.assertEqual(self.api.grant, grant)
+        self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
+        self.assertEqual(coord.active_reservation(self.api, 3000),
+                         grant["reservation"])
+        for n in ISSUES:
+            self.assertEqual(self.api.branch_sha(f"trabajo/issue-{n}"),
+                             before[n])
+            self.assertEqual(self.api.pulls[self.api.pr_by_issue[n]],
+                             before_prs[n])
+            self.assertTrue(coord.active_reservation(self.api, n)["active"])
+        # Reintentos no crean segunda concesión ni otra nota de autoridad.
+        comment_count = len(self.api.comments[3000])
+        self.assertEqual(self.atomic_compose(), grant)
+        self.assertEqual(len(self.api.comments[3000]), comment_count)
+        self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
+
+    def test_simultaneous_attempts_and_partial_api_rollback(self):
+        self.prepare_composition()
+        self.api.lock_held = True
+        with self.assertRaisesRegex(coord.CoordinationError, "repo-wide ocupado"):
+            self.atomic_compose()
+        self.assertIsNone(self.api.grant)
+        self.api.lock_held = False
+        self.api.fail_commit = "pre"
+        with self.assertRaisesRegex(ConnectionError, "before CAS"):
+            self.atomic_compose()
+        self.assertIsNone(self.api.grant)
+        self.assertFalse(self.api.lock_held)
+        self.api.fail_commit = "after"
+        first = self.atomic_compose()
+        self.assertEqual(first, self.api.grant)
+        self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 2)
+        self.api.fail_commit = None
+        self.assertEqual(self.atomic_compose(), first)
+        self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 2)
+        self.assertFalse(any(ev[0] == "DELETE" for ev in self.api.log))
+        with self.subTest("approval not owner"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            self.api.comments[3000][0]["user"]["login"] = "attacker"
+            with self.assertRaisesRegex(coord.CoordinationError, "aprobación owner"):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+        with self.subTest("lost bot marker response and idempotent recovery"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            self.api.fail_comment = True
+            with self.assertRaisesRegex(ConnectionError, "comment"):
+                self.atomic_compose()
+            self.assertIsNotNone(self.api.grant)
+            self.assertIsNone(coord.active_reservation(self.api, 3000))
+            self.api.fail_comment = False
+            recovered = self.atomic_compose()
+            self.assertEqual(coord.active_reservation(self.api, 3000),
+                             recovered["reservation"])
+            self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
+        with self.subTest("CI pending is not authority"):
+            self.api = ReadOnlyFake()
+            self.prepare_composition()
+            self.api.checks[0]["status"] = "in_progress"
+            with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
+                self.atomic_compose()
+            self.assertIsNone(self.api.grant)
+
+    def test_reconcile_only_after_merge_and_main_ci(self):
+        self.prepare_composition()
+        grant = self.atomic_compose()
+        with patch.object(coord, "require_global_running"):
+            with self.assertRaisesRegex(coord.CoordinationError, "merge integrador"):
+                coord.reconcile_atomic_compose_v3(self.api, 3000, OWNER, "OWNER")
+        self.assertEqual(self.api.close_count, 0)
+        self.api.pulls[4000]["merged"] = True
+        self.api.pulls[4000]["state"] = "closed"
+        self.api.pulls[4000]["merge_commit_sha"] = "d" * 40
+        self.api.main = "d" * 40
+        self.api.checks[0]["head_sha"] = "d" * 40
+        self.api.checks[0]["status"] = "in_progress"
+        with patch.object(coord, "require_global_running"):
+            with self.assertRaisesRegex(coord.CoordinationError, "Validar exact-main"):
+                coord.reconcile_atomic_compose_v3(self.api, 3000, OWNER, "OWNER")
+        self.assertEqual(self.api.close_count, 0)
+        self.api.checks[0]["status"] = "completed"
+        self.api.fail_close_at = 2
+        with patch.object(coord, "require_global_running"):
+            with self.assertRaisesRegex(ConnectionError, "partial"):
+                coord.reconcile_atomic_compose_v3(self.api, 3000, OWNER, "OWNER")
+        self.assertEqual(self.api.pulls[self.api.pr_by_issue[2001]]["state"],
+                         "closed")
+        self.assertEqual(self.api.pulls[self.api.pr_by_issue[2002]]["state"],
+                         "open")
+        self.api.fail_close_at = None
+        with patch.object(coord, "require_global_running"):
+            proof = coord.reconcile_atomic_compose_v3(
+                self.api, 3000, OWNER, "OWNER"
+            )
+        self.assertEqual(proof["mode"], "reconciled_after_merge")
+        self.assertEqual(proof["source_prs"],
+                         [self.api.pr_by_issue[n] for n in ISSUES])
+        self.assertEqual(self.api.grant, grant)
+        for n in ISSUES:
+            self.assertEqual(self.api.pulls[self.api.pr_by_issue[n]]["state"],
+                             "closed")
+            self.assertTrue(coord.active_reservation(self.api, n)["active"])
+            self.assertIsNotNone(self.api.branch_sha(f"trabajo/issue-{n}"))
 
     def test_candidate_rejects_unclaimed_files_in_forged_plan(self):
         plan = self.plan()
