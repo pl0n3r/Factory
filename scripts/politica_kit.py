@@ -873,6 +873,64 @@ def _sha_less_timeline_retry(
     return bot_event["id"], bot_event["created_at"]
 
 
+# F1389_NO_QUOTA_MODULE_BEGIN
+# Decisión del dueño (2026-10-17, Factory#1389): «que no bloquee sin cupo». Rige siempre en fase construccion.
+NO_QUOTA_REASON = "reviewer-sin-cupo-decision-dueno-2026-10-17"
+
+
+def validate_rate_limited_no_block(
+    *,
+    required_review_bot: str,
+    head_sha: str,
+    head_committed_at: str,
+    phase: str,
+    review_lines: list[str],
+    comment_lines: list[str],
+    check_lines: list[str],
+    thread_lines: list[str],
+) -> tuple[int, str]:
+    """El reviewer está SIN CUPO sobre el HEAD exacto: no bloquea si el resto de gates está verde.
+
+    Exige evidencia de rate-limit del bot posterior al commit del HEAD (no un skip por otra causa),
+    CI/Sonar/CodeQL en verde sobre ese HEAD, ningún CHANGES_REQUESTED ni finding bloqueante abierto.
+    No exige el reintento del dueño que pide validate_rate_limit_fallback.
+    """
+    if phase != "construccion":
+        raise PolicyError("Sin cupo solo se acepta en construccion.")
+    committed_at = _parse_iso_timestamp(
+        head_committed_at, noun="Timestamp del HEAD exacto"
+    )
+    for review in parse_reviews(review_lines):
+        user = review.get("user")
+        if (
+            isinstance(user, dict)
+            and user.get("type") == "Bot"
+            and user.get("login") == required_review_bot
+            and review.get("commit_id") == head_sha
+            and review.get("state") == "CHANGES_REQUESTED"
+        ):
+            raise PolicyError(
+                "Existe CHANGES_REQUESTED bloqueante del reviewer sobre el HEAD exacto."
+            )
+    if _has_open_blocking_finding(
+        thread_lines, required_review_bot=required_review_bot
+    ):
+        raise PolicyError("Existe finding bloqueante abierto del reviewer requerido.")
+    validate_other_gates_green(check_lines, head_sha=head_sha)
+    rate_limits = _rate_limit_comments(
+        comment_lines,
+        required_review_bot=required_review_bot,
+        not_before=committed_at,
+    )
+    if not rate_limits:
+        raise PolicyError(
+            "Sin evidencia de rate-limit del reviewer posterior al HEAD exacto."
+        )
+    created_at, comment_id = rate_limits[-1]
+    return comment_id, created_at
+# F1389_NO_QUOTA_MODULE_END
+
+
 def validate_rate_limit_fallback(
     *,
     required_review_bot: str,
@@ -1184,6 +1242,7 @@ def validate_required_bot_review_or_fallback(
     timeline_lines: list[str] | None = None,
     run_attempt: int = 1,
     verified_status_lines: list[str] | None = None,
+    no_block_without_quota: bool = False,
 ) -> dict[str, Any]:
     run_attempt = _validate_run_attempt(run_attempt)
     if required_review_bot == "":
@@ -1216,6 +1275,31 @@ def validate_required_bot_review_or_fallback(
             "review_reason": "reviewer-bot-presence-only",
             "risk_status": "clear",
         }
+    # F1389_NO_QUOTA_HOOK_BEGIN
+    if no_block_without_quota:
+        try:
+            quota_id, quota_at = validate_rate_limited_no_block(
+                required_review_bot=required_review_bot,
+                head_sha=head_sha,
+                head_committed_at=head_committed_at,
+                phase=phase,
+                review_lines=lines,
+                comment_lines=comment_lines,
+                check_lines=check_lines,
+                thread_lines=thread_lines,
+            )
+        except PolicyError:
+            pass  # sigue la ruta normal (fallback con reintento del dueño) y sus negativas
+        else:
+            return {
+                "review_fallback": True,
+                "review_reason": NO_QUOTA_REASON,
+                "rate_limit_comment_id": quota_id,
+                "rate_limit_created_at": quota_at,
+                "phase": phase,
+                "head_sha": head_sha,
+            }
+    # F1389_NO_QUOTA_HOOK_END
     retry_id, retry_at = validate_rate_limit_fallback(
         required_review_bot=required_review_bot,
         head_sha=head_sha,
@@ -1357,6 +1441,7 @@ def main() -> int:
             run_attempt=run_attempt,
             timeline_lines=timeline_lines,
             verified_status_lines=verified_status_lines,
+            no_block_without_quota=True,
         )
     except PolicyError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

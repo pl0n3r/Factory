@@ -2,17 +2,23 @@ name: Auto-merge cuando esté listo
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: ["CI factory", "Sonar CI-based", "Evidencia CodeQL"]
+    types: [completed]
 permissions:
   contents: read
 jobs:
   automerge:
-    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.fork == false && github.event.pull_request.base.ref == 'main' && github.actor != 'dependabot[bot]'
+    # Fase 1: el guard y sus pruebas se integran sin conceder autoridad de merge.
+    # Fase 1 no filtra eventos: cualquier disparo termina con el job omitido.
+    # Fase 2 deberá restaurar filtros de evento antes de activar otro contrato.
+    # El literal false mantiene la fase inerte hasta autorización independiente.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
-      - env:
-          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN || secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+      - name: Mantener auto-merge inerte durante Fase 1
+        run: 'echo Fase 1 auto-merge inerte, sin secretos ni operaciones de merge.'
