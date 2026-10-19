@@ -1179,7 +1179,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertIs(result, healthy)
         request.assert_called_once_with("GET", "/repos/pl0n3r/Factory")
         kwargs = port_type.call_args.kwargs
-        self.assertTrue(kwargs["armed"])
+        self.assertIs(kwargs["armed"], False)  # el observador NO tiene permiso CAS
         self.assertEqual(kwargs["concurrency_group"],
                          "factory-coordination-987654")
         self.assertEqual(kwargs["clock"]().tzinfo, timezone.utc)
