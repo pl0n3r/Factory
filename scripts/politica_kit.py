@@ -39,6 +39,8 @@ MAX_PHASE_BYTES = 512 * 1024
 MAX_EVIDENCE_ITEM_BYTES = 100_000
 RATE_LIMIT_TEXTS = ("Review rate limited", "Review limit reached")
 POLICY_CHECK_NAME = "Factory policy / Validar decisiones y límite de revisión"
+# Real check-run identity emitted by the reusable GitHub Actions job.
+POLICY_WORKFLOW_CHECK_NAME = "politica / Validar decisiones y límite de revisión"
 ACCEPTANCE_CHECK_NAME = "acceptance / Criterios de aceptación"
 ALLOWED_GATE_CONCLUSIONS = {"success", "neutral", "skipped"}
 
@@ -414,7 +416,12 @@ def _latest_checks_by_name(
             raise PolicyError("Check sin emisor autenticado.")
         slug = app.get("slug")
         app_id = app.get("id")
-        if (
+        # Dependabot config validation is an auxiliary check, never a required gate.
+        # Trust only its exact GitHub App identity and exact check name.
+        if name == ".github/dependabot.yml":
+            if slug != "dependabot" or type(app_id) is not int or app_id != 29110:
+                raise PolicyError(f"Check con emisor desconocido: {name}.")
+        elif (
             not isinstance(slug, str)
             or type(app_id) is not int
             or TRUSTED_CHECK_APPS.get(slug) != app_id
@@ -470,7 +477,14 @@ def validate_other_gates_green(
     }
     candidates: dict[str, list[int]] = {category: [] for category in categories}
     for name, check in latest.items():
-        if name in {POLICY_CHECK_NAME, ACCEPTANCE_CHECK_NAME, "Validar"}:
+        # The policy cannot depend on its own previous/parallel check-runs.
+        # Ignore only the two exact names when issued by GitHub Actions.
+        # This is *not* evidence that policy or reviewer approval passed.
+        if name in {POLICY_CHECK_NAME, POLICY_WORKFLOW_CHECK_NAME}:
+            if check["app"]["slug"] != "github-actions":
+                raise PolicyError(f"Emisor no autorizado para política: {name}.")
+            continue
+        if name in {ACCEPTANCE_CHECK_NAME, "Validar"}:
             continue
         status = check.get("status")
         conclusion = check.get("conclusion")
@@ -900,7 +914,10 @@ def validate_rate_limit_fallback(
 
     failed_policy_checks: list[str] = []
     for check in parse_checks(check_lines):
-        if (check.get("name") == POLICY_CHECK_NAME
+        # The reusable Actions job publishes a different exact check name.
+        # Earlier failures of either trusted Policy job can establish the
+        # narrow precondition for a retry; independent gates remain required.
+        if (check.get("name") in {POLICY_CHECK_NAME, POLICY_WORKFLOW_CHECK_NAME}
                 and check.get("head_sha") == head_sha
                 and check.get("status") == "completed"
                 and check.get("conclusion") == "failure"):
