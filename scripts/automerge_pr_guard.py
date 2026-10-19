@@ -687,6 +687,23 @@ def verify_review(reviews, comments, issue_comments, expected, now):
             or len(reviews) > 500 or len(comments) > 500
             or len(issue_comments) > 500):
         raise Denied("review_evidence_incomplete")
+    # GitHub may publish an inline thread reply as a blank COMMENTED review.
+    # Accept only authentic CodeRabbit reply-only envelopes. All linked
+    # inline comments are still checked below for severe or unknown findings.
+    reply_review_ids = set()
+    non_reply_review_ids = set()
+    for entry in comments:
+        if type(entry) is not dict:
+            continue  # The later inline evidence loop denies malformed rows.
+        review_id = entry.get("pull_request_review_id")
+        if type(review_id) is not int or review_id <= 0:
+            continue
+        is_bot_reply = (type(entry.get("user")) is dict
+                        and entry["user"].get("login") == "coderabbitai[bot]"
+                        and type(entry.get("in_reply_to_id")) is int
+                        and entry["in_reply_to_id"] > 0)
+        (reply_review_ids if is_bot_reply else non_reply_review_ids).add(review_id)
+    reply_review_ids.difference_update(non_reply_review_ids)
     clean = False
     substantive_times = []
     for row in reviews:
@@ -714,6 +731,14 @@ def verify_review(reviews, comments, issue_comments, expected, now):
         commit_id = row.get("commit_id")
         if type(commit_id) is not str or HEX_SHA.fullmatch(commit_id) is None:
             raise Denied("coderabbit_review_commit_unknown")
+        # Reply-only reviews are neither security approval nor unknown:
+        # their linked inline evidence is validated independently below.
+        # Missing/untrusted/mixed reply linkage still fails closed.
+        if (row.get("state") == "COMMENTED"
+                and type(row.get("id")) is int and row["id"] > 0
+                and type(row.get("body")) is str and not row["body"].strip()
+                and row["id"] in reply_review_ids):
+            continue
         if commit_id != expected:
             # A different commit SHA does not prove a prior HIGH/CRITICAL
             # finding has been resolved. Fail closed absent authenticated

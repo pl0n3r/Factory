@@ -1311,6 +1311,55 @@ class AutoMergePrGuardTests(unittest.TestCase):
                                     "body": "Minor maintainability suggestion"}]
             mod.verify(q, SHA, NOW)
 
+    def test_coderabbit_blank_thread_reply_is_not_a_substantive_review(self):
+        """Real inline replies are transported as blank COMMENTED reviews."""
+        for review_sha in (SHA, BASE):
+            with self.subTest(review_sha=review_sha):
+                q = evidence()
+                q["reviews"].append({
+                    "id": 5516613695, "user": {"login": "coderabbitai[bot]"},
+                    "state": "COMMENTED", "commit_id": review_sha,
+                    "submitted_at": "2026-10-14T03:58:00Z", "body": "",
+                })
+                reply = {"user": {"login": "coderabbitai[bot]"},
+                         "pull_request_review_id": 5516613695,
+                         "in_reply_to_id": 4269530243,
+                         "commit_id": SHA, "body": "Minor suggestion acknowledged."}
+                q["comments"] = [reply]
+                mod.verify(q, SHA, NOW)  # A separate clean review authorizes.
+
+                # A reply-only review never substitutes for a real assessment.
+                only_reply = deepcopy(q)
+                only_reply["reviews"] = only_reply["reviews"][-1:]
+                self.deny(only_reply)
+
+                # Linked replies with severe findings still veto.
+                severe = deepcopy(q)
+                severe["comments"][0]["body"] = "Security HIGH vulnerability"
+                self.deny(severe)
+
+                # Mixed, spoofed or unlinked evidence retains fail-closed.
+                for change in ("missing_reply", "bad_reply_id", "wrong_author",
+                               "mixed_original", "missing_review_id"):
+                    with self.subTest(sha=review_sha, invalid=change):
+                        invalid = deepcopy(q)
+                        inline = invalid["comments"][0]
+                        if change == "missing_reply":
+                            inline.pop("in_reply_to_id")
+                        elif change == "bad_reply_id":
+                            inline["in_reply_to_id"] = 0
+                        elif change == "wrong_author":
+                            inline["user"]["login"] = "untrusted"
+                        elif change == "mixed_original":
+                            invalid["comments"].append({
+                                "user": {"login": "coderabbitai[bot]"},
+                                "pull_request_review_id": 5516613695,
+                                "commit_id": SHA, "body": "Minor standalone note",
+                            })
+                        else:
+                            invalid["reviews"][-1].pop("id")
+                        self.deny(invalid)
+
     def test_incomplete_second_coderabbit_review_fails_closed(self):
         """A clean same-SHA review must not conceal another empty bot review."""
         for body in (None, "", "   "):
