@@ -1245,7 +1245,10 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         )[1]
         for state, action, code in (
             ("read_only", "wait", 0),
+            ("read_only", "mark_recovery", 0),
+            ("read_only", "release", 0),
             ("UNKNOWN", "unknown", 1),
+            ("UNKNOWN", "release", 1),
             ("read_only", "unknown", 1),
         ):
             with self.subTest(state=state, action=action):
