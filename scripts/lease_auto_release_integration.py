@@ -20,6 +20,24 @@ from scripts.lease_release_executor import Snapshot, _trusted
 UTC_STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 ACTIVE = frozenset({"estado: reservado", "estado: en revisión",
                     "estado: requiere recuperación"})
+FACTORY_REPO_ROUTE = "/repos/pl0n3r/Factory"
+
+
+def _allowed_unparameterized_get(route: str) -> bool:
+    """Only endpoints needed for the V3 GET observer, not all repo resources."""
+    if route in (
+        "/rate_limit", FACTORY_REPO_ROUTE,
+        FACTORY_REPO_ROUTE + "/issues/767",
+        FACTORY_REPO_ROUTE + "/contents/datos.yml",
+    ):
+        return True
+    base = re.escape(FACTORY_REPO_ROUTE)
+    return (
+        re.fullmatch(rf"{base}/issues/[1-9][0-9]*", route) is not None
+        or re.fullmatch(
+            rf"{base}/git/ref/heads/trabajo/issue-[1-9][0-9]*", route
+        ) is not None
+    )
 
 
 @dataclass(frozen=True)
@@ -88,8 +106,9 @@ class _GhReadOnlyAPI:
         route, sep, query = path.partition("?") if type(path) is str else ("", "", "")
         if (method != "GET" or type(path) is not str
                 or not (route == "/rate_limit"
-                        or route == "/repos/pl0n3r/Factory"
-                        or route.startswith("/repos/pl0n3r/Factory/"))
+                        or route == FACTORY_REPO_ROUTE
+                        or route.startswith(FACTORY_REPO_ROUTE + "/"))
+                or (not sep and not _allowed_unparameterized_get(route))
                 or "://" in path or "#" in path or ".." in path
                 or "%" in route or "\\" in path
                 or any(ord(ch) < 32 for ch in path)
@@ -98,7 +117,7 @@ class _GhReadOnlyAPI:
         if sep:
             from urllib.parse import quote, unquote
 
-            repo = "/repos/pl0n3r/Factory"
+            repo = FACTORY_REPO_ROUTE
             if route == f"{repo}/commits":
                 allowed = {"sha", "since", "per_page", "page"}
             elif route == f"{repo}/actions/runs":
@@ -164,7 +183,7 @@ def observe_issue_cli(issue: int) -> IntegrationPreview:
     api = _GhReadOnlyAPI()
     now = datetime.now(timezone.utc)
     try:
-        identity = api.request("GET", "/repos/pl0n3r/Factory")
+        identity = api.request("GET", FACTORY_REPO_ROUTE)
         repository_id = identity.get("id") if type(identity) is dict else None
         if (type(repository_id) is not int or repository_id <= 0
                 or identity.get("full_name") != _GhReadOnlyAPI.repo):

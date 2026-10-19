@@ -1086,6 +1086,50 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                         api.request(method, path)
                     run.assert_not_called()
 
+    def test_read_only_transport_denies_unparameterized_repository_sweep(self):
+        """GET is not a blanket permission to read arbitrary repo endpoints."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+
+        api = _GhReadOnlyAPI()
+        allowed = (
+            "/rate_limit",
+            "/repos/pl0n3r/Factory",
+            "/repos/pl0n3r/Factory/issues/767",
+            "/repos/pl0n3r/Factory/issues/21",
+            "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-21",
+            "/repos/pl0n3r/Factory/contents/datos.yml",
+        )
+        with patch("subprocess.run", return_value=SimpleNamespace(
+            stdout="{}",
+        )) as gh:
+            for path in allowed:
+                with self.subTest(allow=path):
+                    self.assertEqual(api.request("GET", path), {})
+            self.assertEqual(gh.call_count, len(allowed))
+
+        # Previous broad prefix check permitted all these REST GETs.
+        # They are not needed for the V3 inspector and must be blocked
+        # before invoking the authenticated GitHub CLI subprocess.
+        forbidden = (
+            "/repos/pl0n3r/Factory/contents/.github/workflows/ci.yml",
+            "/repos/pl0n3r/Factory/actions/secrets",
+            "/repos/pl0n3r/Factory/collaborators",
+            "/repos/pl0n3r/Factory/issues/21/comments",
+            "/repos/pl0n3r/Factory/pulls",
+            "/repos/pl0n3r/Factory/git/ref/heads/main",
+            "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-0",
+            "/repos/pl0n3r/Factory/issues/0",
+            "/repos/pl0n3r/Factory/issues/021",
+            "/repos/pl0n3r/Factory/issues/21/events",
+        )
+        for path in forbidden:
+            with self.subTest(deny=path), patch("subprocess.run") as gh:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", path)
+                gh.assert_not_called()
+
     def test_collector_and_authenticated_gh_transport_accept_canonical_encoded_get(self):
         """E2E offline: el colector genera query escapada y GH CLI solo hace GET."""
         import json
