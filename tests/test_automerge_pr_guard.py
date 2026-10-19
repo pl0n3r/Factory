@@ -1070,6 +1070,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "id": 200, "context": "CodeRabbit", "state": "success",
             "description": "Review skipped: draft PR",
             "creator": {"login": "coderabbitai[bot]"},
+            # Immutable GitHub status predates the substantive same-SHA review.
+            "created_at": "2026-10-14T03:58:00Z",
         })
         mod.verify(q, SHA, NOW)
 
