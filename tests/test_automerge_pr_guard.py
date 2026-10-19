@@ -2852,6 +2852,8 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
     """Fase 1 no contiene una sección de shell con autoridad de fusión."""
 
     def test_immediate_merge_authority_is_absent_in_phase_one(self):
+        import sys
+        print("AC01_TRACE entered=true path=" + str(ROOT / ".github" / "workflows" / "automerge.yml") + " exists=" + str((ROOT / ".github" / "workflows" / "automerge.yml").exists()), file=sys.stderr)
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
         requirements = ("    if: ${{ false }}",)
         forbidden = ("gh api --method PUT", "gh pr merge", "MERGE_TOKEN",
