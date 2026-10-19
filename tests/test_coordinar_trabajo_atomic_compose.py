@@ -1155,6 +1155,117 @@ class AtomicComposeTests(unittest.TestCase):
                     )
         self.assertEqual(self.api.close_count, 0)
 
+    def test_cas_adapter_rejects_invalid_sha_and_commit_responses(self):
+        client = coord.GitHub("pl0n3r/brvtal", token="fixture-token")
+        branch_ref = "factory-compose-v3/issue-3000"
+        state = {"ref": None, "tree": "b" * 40, "commit": "c" * 40,
+                 "create": True}
+        writes = []
+
+        def branch_sha(name):
+            return state["ref"]
+
+        def request(method, path, payload=None, **kwargs):
+            writes.append((method, path))
+            if method == "GET" and path.endswith(f"/git/commits/{MAIN}"):
+                return {"tree": {"sha": state["tree"]}}
+            if method == "POST" and path.endswith("/git/commits"):
+                return {"sha": state["commit"]}
+            raise AssertionError(f"unexpected API {method} {path}")
+
+        def create_branch(name, sha):
+            self.assertEqual(name, branch_ref)
+            if not state["create"]:
+                return False
+            state["ref"] = sha
+            return True
+
+        client.branch_sha = branch_sha
+        client.request = request
+        client.create_branch = create_branch
+        for invalid_issue, invalid_base in ((0, MAIN), (3000, "x" * 40)):
+            with self.subTest(invalid_issue=invalid_issue, base=invalid_base):
+                self.assertFalse(client.commit_composite_authority_v3(
+                    invalid_issue, invalid_base, {"version": 3}
+                ))
+        for case, tree, commit in (
+            ("bad tree", "e", "c" * 40),
+            ("bad created commit", "b" * 40, "e"),
+        ):
+            with self.subTest(case=case):
+                state["tree"], state["commit"] = tree, commit
+                with patch.object(coord, "require_global_running"):
+                    with self.assertRaises(coord.CoordinationError):
+                        client.commit_composite_authority_v3(
+                            3000, MAIN, {"version": 3}
+                        )
+                self.assertIsNone(state["ref"])
+        state["tree"], state["commit"] = "b" * 40, "c" * 40
+        state["create"] = False
+        with patch.object(coord, "require_global_running"):
+            self.assertFalse(client.commit_composite_authority_v3(
+                3000, MAIN, {"version": 3}
+            ))
+        self.assertIsNone(state["ref"])
+        state["create"] = True
+        with patch.object(
+            coord, "require_global_running",
+            side_effect=coord.CoordinationError("PAUSED"),
+        ):
+            with self.assertRaisesRegex(coord.CoordinationError, "PAUSED"):
+                client.commit_composite_authority_v3(
+                    3000, MAIN, {"version": 3}
+                )
+        self.assertIsNone(state["ref"])
+        self.assertTrue(any(row[0] == "POST" for row in writes))
+
+    def test_cas_adapter_fails_closed_on_corrupt_record_shapes(self):
+        self.prepare_composition()
+        grant = self.atomic_compose()
+        client = coord.GitHub("pl0n3r/brvtal", token="fixture-token")
+        client.branch_sha = lambda name: "c" * 40
+        stored = {"record": grant, "message": None}
+
+        def request(method, path, payload=None, **kwargs):
+            if stored["message"] is not None:
+                return {"message": stored["message"]}
+            return {
+                "message": "factory-compose-v3:"
+                + json.dumps(stored["record"], sort_keys=True)
+            }
+
+        client.request = request
+        self.assertEqual(client.composite_authority_v3(3000), grant)
+        for case in (
+            {"version": 2},
+            {"integrator_issue": 9999},
+            {"integrator_sha": None},
+            {"sources": []},
+            {"reservation": {"active": True}},
+        ):
+            with self.subTest(changed=case):
+                stored["record"] = {**grant, **case}
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "registro inválido"
+                ):
+                    client.composite_authority_v3(3000)
+        stored["record"] = grant
+        for bad_message in ("unexpected", "factory-compose-v3:[]"):
+            with self.subTest(message=bad_message):
+                stored["message"] = bad_message
+                with self.assertRaises(coord.CoordinationError):
+                    client.composite_authority_v3(3000)
+        stored["message"] = None
+        client.branch_sha = lambda name: "not-a-sha"
+        with self.assertRaisesRegex(
+            coord.CoordinationError, "ref de autoridad ilegible"
+        ):
+            client.composite_authority_v3(3000)
+        with self.assertRaisesRegex(
+            coord.CoordinationError, "Issue integrador inválido"
+        ):
+            client.composite_authority_v3(-3)
+
     def test_cli_compose_and_reconcile_are_explicit(self):
         parser = coord.build_parser()
         args = parser.parse_args([
