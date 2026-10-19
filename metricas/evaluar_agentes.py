@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import sys
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -608,6 +611,100 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
+    """Guard two offline artifacts against recoverable partial writes.
+
+    The marker prevents concurrent writers and flags incomplete recovery;
+    two independent renames are NOT an atomic transaction for readers/crashes.
+    All paths are fixed literals, never derived from report content.
+    """
+    if output_dir.is_symlink():
+        raise OSError("directorio de métricas no confiable")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    marker = output_dir / ".metricas-generation-incomplete"
+    lock_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    lock_flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(marker, lock_flags, 0o600)
+    except FileExistsError as exc:
+        raise OSError("generación incompleta: recuperación necesaria") from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
+        lock_file.write("generation-incomplete\n")
+
+    stage: Path | None = None
+    installed: list[str] = []
+    existed: set[str] = set()
+
+    def cleanup() -> None:
+        if stage is not None:
+            for filename in (
+                "recomendaciones.json.next", "dashboard.md.next",
+                "recomendaciones.json.bak", "dashboard.md.bak",
+            ):
+                (stage / filename).unlink(missing_ok=True)
+            stage.rmdir()
+
+    try:
+        stage = Path(tempfile.mkdtemp(prefix=".metricas-txn-", dir=output_dir))
+        next_json = stage / "recomendaciones.json.next"
+        next_md = stage / "dashboard.md.next"
+        next_json.write_text(json.dumps(
+            report, ensure_ascii=False, indent=2, sort_keys=True,
+        ) + "\n", encoding="utf-8")
+        next_md.write_text(render_markdown(report) + "\n", encoding="utf-8")
+
+        for name in ("recomendaciones.json", "dashboard.md"):
+            target = output_dir / name
+            if target.is_symlink():
+                raise OSError("archivo de métricas simbólico")
+            if target.exists():
+                details = target.stat()
+                if not stat.S_ISREG(details.st_mode):
+                    raise OSError("salida de métricas no regular")
+                # Preserve an existing private mode and never make it public.
+                safe_mode = stat.S_IMODE(details.st_mode) & 0o600
+                backup = (stage / "recomendaciones.json.bak"
+                          if name == "recomendaciones.json"
+                          else stage / "dashboard.md.bak")
+                backup.write_bytes(target.read_bytes())
+                backup.chmod(safe_mode)
+                existed.add(name)
+            else:
+                safe_mode = 0o600
+            next_file = next_json if name == "recomendaciones.json" else next_md
+            next_file.chmod(safe_mode)
+
+        os.replace(next_json, output_dir / "recomendaciones.json")
+        installed.append("recomendaciones.json")
+        os.replace(next_md, output_dir / "dashboard.md")
+        installed.append("dashboard.md")
+    except OSError:
+        recovered = True
+        for name in reversed(installed):
+            try:
+                target = output_dir / name
+                if name not in existed:
+                    target.unlink(missing_ok=True)
+                elif name == "recomendaciones.json":
+                    os.replace(stage / "recomendaciones.json.bak", target)
+                else:
+                    os.replace(stage / "dashboard.md.bak", target)
+            except OSError:
+                recovered = False
+        if recovered:
+            try:
+                cleanup()
+                marker.unlink()
+            except OSError:
+                # Keep the marker if staging/cleanup could not be verified.
+                pass
+        raise
+
+    # If cleanup fails, keep marker: consumers must not promote this pair.
+    cleanup()
+    marker.unlink()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--min-samples", type=int, default=3)
@@ -633,21 +730,7 @@ def main() -> int:
         return 2
 
     try:
-        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        (DEFAULT_OUTPUT_DIR / "recomendaciones.json").write_text(
-            json.dumps(
-                report,
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        (DEFAULT_OUTPUT_DIR / "dashboard.md").write_text(
-            render_markdown(report) + "\n",
-            encoding="utf-8",
-        )
+        _write_artifact_pair(report, DEFAULT_OUTPUT_DIR)
     except OSError:
         print(
             "ERROR: no se pudo escribir la evidencia de métricas.",
@@ -715,6 +798,7 @@ def summarize_product_day(
     if not isinstance(snapshots, list) or len(snapshots) != len(repos):
         return _unknown_product("missing_repository_snapshot")
 
+    multi_repo = len(repos) > 1
     result: dict[str, Any] = {}
     for snapshot in snapshots:
         if not isinstance(snapshot, dict):
@@ -742,6 +826,8 @@ def summarize_product_day(
                 or type(pages) is not int or pages < 1
                 or type(verified) is not int or verified != pages):
             return _unknown_product("untrusted_stale_or_partial_snapshot")
+        if multi_repo and observed != anchor:
+            return _unknown_product("incomparable_repository_windows")
         events = snapshot.get("events")
         if not isinstance(events, list) or len(events) > 10000:
             return _unknown_product("missing_or_unbounded_events")
@@ -749,6 +835,10 @@ def summarize_product_day(
         for item in events:
             if not isinstance(item, dict):
                 return _unknown_product("invalid_pr_observation")
+            if multi_repo:
+                event_repo = item.get("repo")
+                if type(event_repo) is not str or event_repo != repo:
+                    return _unknown_product("unverified_event_repository")
             number = item.get("number")
             sha = item.get("merge_commit_sha")
             stamp = _product_timestamp(item.get("merged_at"))
@@ -762,16 +852,17 @@ def summarize_product_day(
                 return _unknown_product("conflicting_pr_observation")
             unique[number] = identity
         try:
-            window_start = observed - timedelta(hours=24)
+            window_end = anchor if multi_repo else observed
+            window_start = window_end - timedelta(hours=24)
         except OverflowError:
             return _unknown_product("invalid_clock_range")
         result[repo] = {
             "repository_sha": repository_sha,
             "run_id": run_id,
-            "merged_prs": sum(window_start < stamp <= observed
+            "merged_prs": sum(window_start < stamp <= window_end
                               for _, stamp in unique.values()),
             "window_start": window_start.isoformat().replace("+00:00", "Z"),
-            "window_end": observed.isoformat().replace("+00:00", "Z"),
+            "window_end": window_end.isoformat().replace("+00:00", "Z"),
             "observations": len(unique),
         }
     return {
