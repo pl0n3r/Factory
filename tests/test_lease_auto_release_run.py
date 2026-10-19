@@ -54,7 +54,7 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         def issue_row(action="wait"):
             return {
                 "issue": 21, "state": "read_only", "action": action,
-                "reason": "not_old_enough", "activity_age_minutes": 7,
+                "reason": "activity_window", "activity_age_minutes": 7,
                 "activity_source": "workflow_push",
                 "release_authorized": False, "lock_verified": False,
                 "cas_verified": False, "mutations": 0,
@@ -186,6 +186,33 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
                 self.assertEqual(evaluate_phase_a_candidate(
                     trial, receipts, [qa], repository=repo,
                 ).status, "invalid_evidence")
+        for invalid_wait in (
+            {"reason": "not_old_enough"},
+            {"reason": "unattended_paused"},
+            {"reason": "live_protected"},
+            {"reason": "inactive_30_minutes"},
+            {"reason": "activity_window", "activity_age_minutes": 30},
+            {"reason": "activity_window", "activity_age_minutes": None},
+            {"reason": "activity_window", "activity_source": None},
+            {"reason": "recovery_grace", "activity_age_minutes": 29},
+            {"reason": "recovery_grace", "activity_source": None},
+        ):
+            with self.subTest(wait_row=invalid_wait):
+                trial = deepcopy(manifests)
+                trial[0]["issues"] = [{**issue_row(), **invalid_wait}]
+                self.assertEqual(evaluate_phase_a_candidate(
+                    trial, receipts, [], repository=repo,
+                ).status, "invalid_evidence")
+        for reason, age in (("recovery_grace", 35),
+                            ("protected_or_active_work", None)):
+            trial = deepcopy(manifests)
+            trial[0]["issues"] = [{
+                **issue_row(), "reason": reason,
+                "activity_age_minutes": age,
+            }]
+            self.assertEqual(evaluate_phase_a_candidate(
+                trial, receipts, [], repository=repo,
+            ).status, "candidate_only")
         for inconsistent in (
             {**issue_row("mark_recovery"), "reason": "inactive_30_minutes",
              "activity_age_minutes": 29},

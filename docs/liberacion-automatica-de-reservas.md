@@ -91,7 +91,12 @@ cualquier fuente sin consistencia. En particular, un candidato
 antigüedad ≥30 min; un `release` requiere motivo
 `inactive_after_recovery_grace`, fuente identificada y ≥40 min. Una fila
 `release` con sólo 7 minutos, aunque QA la marcara `correct`, es
-`invalid_evidence`, no `candidate_only`. Estas son condiciones necesarias,
+`invalid_evidence`, no `candidate_only`. Los `wait` acreditables
+necesitan motivo real del decisor (`activity_window` con edad inferior a
+30 min, `recovery_grace` con edad ≥30 min, o
+`protected_or_active_work`). Un motivo sintético `not_old_enough`,
+un switch pausado o un `activity_window` sin fuente no pueden sumar
+a los 100 ciclos válidos de Fase A. Estas son condiciones necesarias,
 pero no reemplazan la prueba negativa de pushes ni la auditoría humana. Devuelve `candidate_only` como máximo:
 **no obtiene ni autentica los recibos de GitHub, no acredita un push negativo,
 no convierte una declaración QA en firma auténtica y nunca permite release**.

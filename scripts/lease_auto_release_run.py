@@ -346,9 +346,19 @@ def evaluate_phase_a_candidate(
                     row["reason"] != "inactive_after_recovery_grace"
                     or type(age) is not int or age < 40 or source is None):
                 return reject
-            if row["action"] == "wait" and row["reason"] in (
-                    "inactive_30_minutes", "inactive_after_recovery_grace"):
-                return reject
+            # Sólo motivos del decisor para una V3 activa en construcción.
+            # Ningún nombre de motivo inventado acredita un ciclo de QA.
+            if row["action"] == "wait":
+                if row["reason"] not in (
+                        "activity_window", "recovery_grace",
+                        "protected_or_active_work"):
+                    return reject
+                if row["reason"] == "activity_window" and (
+                        type(age) is not int or age >= 30 or source is None):
+                    return reject
+                if row["reason"] == "recovery_grace" and (
+                        type(age) is not int or age < 30 or source is None):
+                    return reject
             seen_issues.add(row["issue"])
             if row["action"] == "release":
                 release_keys.add((run, row["issue"]))
