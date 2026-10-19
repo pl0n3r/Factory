@@ -247,6 +247,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 matching.append(pull)
         if len(matching) > 1:
             raise IncompleteEvidence()
+        reviews = []
         if matching:
             reviews = pages(f"{base}/pulls/{matching[0]['number']}/reviews", name="reviews")
             for review in reviews:
@@ -340,6 +341,15 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                        for k in ("state", "number", "comments", "updated_at", "labels", "assignees"))
                 or branch_sha() != sha):
             raise IncompleteEvidence()
+        if pages(f"{base}/pulls?state=open", name="pulls_recheck") != pulls:
+            raise IncompleteEvidence()
+        if matching:
+            reviews_again = pages(
+                f"{base}/pulls/{matching[0]['number']}/reviews",
+                name="reviews_recheck",
+            )
+            if reviews_again != reviews:
+                raise IncompleteEvidence()
         # GitHub puede lanzar/rerun CI sin cambiar Issue ni ref.
         # La segunda lectura descarta snapshots con runs/checks cambiantes.
         checked_again = pages(

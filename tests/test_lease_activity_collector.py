@@ -75,6 +75,10 @@ class API:
         self.run_reads = 0
         self.restart_check_during_recheck = False
         self.start_run_during_recheck = False
+        self.pull_reads = 0
+        self.review_reads = 0
+        self.change_pull_during_recheck = False
+        self.change_review_during_recheck = False
 
     def request(self, method, path):
         assert method == "GET", "read-only collector"
@@ -100,9 +104,21 @@ class API:
         if "/commits?sha=" in path:
             return copy.deepcopy(self.commits) if page == 1 else []
         if "/pulls?state=open" in path:
+            if page == 1:
+                self.pull_reads += 1
+                if self.change_pull_during_recheck and self.pull_reads == 2:
+                    self.pulls[0]["draft"] = True
             return (copy.deepcopy(self.pulls) if page == 1
                     else copy.deepcopy(self.extra_pull_page) if page == 2 else [])
         if "/pulls/35/reviews?" in path:
+            if page == 1:
+                self.review_reads += 1
+                if self.change_review_during_recheck and self.review_reads == 2:
+                    self.reviews.append({
+                        "id": 19, "user": {"login": "security-reviewer"},
+                        "state": "CHANGES_REQUESTED",
+                        "submitted_at": "2026-10-11T09:58:00Z",
+                    })
             return copy.deepcopy(self.reviews) if page == 1 else []
         if "/check-runs?" in path:
             self.check_reads += 1
@@ -418,14 +434,16 @@ class LeaseActivityCollectorTests(unittest.TestCase):
             "reviews": {"pages": 2, "items": 1},
             "checks": {"pages": 1, "items": 1},
             "runs": {"pages": 1, "items": 1},
+            "pulls_recheck": {"pages": 2, "items": 1},
+            "reviews_recheck": {"pages": 2, "items": 1},
             "checks_recheck": {"pages": 1, "items": 1},
             "runs_recheck": {"pages": 1, "items": 1},
         })
         api.issue["labels"].append({"name": "prioridad: crítica"})
         self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
-        self.assertEqual(result["rate_remaining"], 63)
-        self.assertEqual(result["api_requests"], 17)
+        self.assertEqual(result["rate_remaining"], 59)
+        self.assertEqual(result["api_requests"], 21)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
         self.assertTrue(all(isinstance(p, str) for p in api.calls))
 
@@ -467,6 +485,16 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     collect_activity(case, 21, now=NOW),
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
+
+    def test_review_race_fails_closed(self):
+        api = API()
+        api.change_review_during_recheck = True
+        self.assertEqual(collect_activity(api, 21, now=NOW)["status"], "UNKNOWN")
+
+    def test_pr_metadata_race_fails_closed(self):
+        api = API()
+        api.change_pull_during_recheck = True
+        self.assertEqual(collect_activity(api, 21, now=NOW)["status"], "UNKNOWN")
 
     def test_check_run_statuses_match_github_rest_contract(self):
         for status in ("queued", "in_progress", "requested", "waiting", "pending", "completed"):
