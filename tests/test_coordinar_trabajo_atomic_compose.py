@@ -767,6 +767,39 @@ class AtomicComposeTests(unittest.TestCase):
                     )
             self.assertFalse(any(event[0] == "DELETE" for event in self.api.log))
 
+    def test_cas_retry_rejects_tampered_nested_reservation(self):
+        # Reproduce un CAS durable tras perder el POST del marker: no hay
+        # V3 visible todavía, pero un receipt ya puede estar presembrado.
+        cases = (
+            ("owner", "attacker"),
+            ("branch", "trabajo/issue-3999"),
+            ("acceptance_sha256", "e" * 64),
+            ("task_marker_sha256", "e" * 64),
+            ("task_paths", ["docs/other.md"]),
+            ("task_depends_on", [2001]),
+            ("reason", "tomar"),
+            ("active", False),
+        )
+        for field, forged in cases:
+            with self.subTest(field=field):
+                self.api = ReadOnlyFake()
+                self.prepare_composition()
+                self.api.fail_comment = True
+                with self.assertRaisesRegex(ConnectionError, "comment"):
+                    self.atomic_compose()
+                self.api.fail_comment = False
+                original = copy.deepcopy(self.api.grant)
+                self.api.grant["reservation"][field] = forged
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "CAS previo incompatible"
+                ):
+                    self.atomic_compose()
+                self.assertIsNone(coord.active_reservation(self.api, 3000))
+                self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
+                self.api.grant = original
+                self.assertEqual(self.atomic_compose(), original)
+                self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
+
     def test_reconcile_only_after_merge_and_main_ci(self):
         self.prepare_composition()
         grant = self.atomic_compose()

@@ -3345,7 +3345,16 @@ def authorize_atomic_compose_v3(
             # Reintento tras 5xx/pérdida de respuesta: jamás añadir otra V3.
             same = {k: v for k, v in previous.items() if k != "reservation"}
             desired = {k: v for k, v in proposal.items() if k != "reservation"}
-            if same != desired:
+            prior_lease = previous.get("reservation")
+            proposed_lease = proposal["reservation"]
+            # Solo la identidad UUID puede diferir entre reintentos.
+            # Los demás campos V3 deben coincidir con el contrato actual.
+            if (
+                same != desired
+                or not isinstance(prior_lease, dict)
+                or {k: v for k, v in prior_lease.items() if k != "reservation_id"}
+                != {k: v for k, v in proposed_lease.items() if k != "reservation_id"}
+            ):
                 raise CoordinationError("Composición V3: CAS previo incompatible.")
             proposal = previous
         else:
