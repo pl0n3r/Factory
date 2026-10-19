@@ -11,7 +11,7 @@ Ningún merge ni dispatch lo arma: lo decide el runner con su feature flag.
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from math import ceil
 import base64
@@ -265,7 +265,15 @@ class LeaseGithubPort:
             return invalid
 
     def read(self, issue: int) -> Snapshot:
-        """Snapshot completo y autenticado; cualquier duda lanza PortNotArmed."""
+        """Snapshot estricto: CI activo prohíbe toda mutación."""
+        return self._read_snapshot(issue, observation_only=False)
+
+    def read_observation(self, issue: int) -> Snapshot:
+        """Vista de diagnóstico; no concede autoridad de escritura."""
+        return self._read_snapshot(issue, observation_only=True)
+
+    def _read_snapshot(self, issue: int, *, observation_only: bool) -> Snapshot:
+        """Verifica la misma evidencia; solo diagnóstico admite veto CI."""
         try:
             self._need_armed()
             if type(issue) is not int or issue <= 0 or not self._running():
@@ -324,7 +332,10 @@ class LeaseGithubPort:
                 rate_limit=report["rate_limit"],
             )
             if not _trusted(snapshot, allow_partial=True):
-                raise ValueError("untrusted_snapshot")
+                if not (observation_only and snapshot.ci_running is True
+                        and _trusted(replace(snapshot, ci_running=False),
+                                     allow_partial=True)):
+                    raise ValueError("untrusted_snapshot")
             return snapshot
         except PortNotArmed:
             raise
