@@ -612,96 +612,112 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
-    """Guard two offline artifacts against recoverable partial writes.
+    """Write two fixed offline artifact paths; preserve a fail-closed marker.
 
-    The marker prevents concurrent writers and flags incomplete recovery;
-    two independent renames are NOT an atomic transaction for readers/crashes.
-    All paths are fixed literals, never derived from report content.
+    Two renames cannot protect live readers or sudden power loss. No metrics
+    publication is permitted, even when both staged files are installed.
     """
     if output_dir.is_symlink():
         raise OSError("directorio de métricas no confiable")
     output_dir.mkdir(parents=True, exist_ok=True)
     marker = output_dir / ".metricas-generation-incomplete"
-    lock_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    lock_flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(marker, lock_flags, 0o600)
+        descriptor = os.open(marker, flags, 0o600)
     except FileExistsError as exc:
         raise OSError("generación incompleta: recuperación necesaria") from exc
-    with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
-        lock_file.write("generation-incomplete\n")
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write("generation-incomplete\n")
 
     stage: Path | None = None
-    installed: list[str] = []
-    existed: set[str] = set()
+    replaced_json = False
+    replaced_md = False
+    had_json = False
+    had_md = False
 
-    def cleanup() -> None:
+    def clean_staging() -> None:
         if stage is not None:
-            for filename in (
-                "recomendaciones.json.next", "dashboard.md.next",
-                "recomendaciones.json.bak", "dashboard.md.bak",
-            ):
-                (stage / filename).unlink(missing_ok=True)
+            (stage / "recomendaciones.json.next").unlink(missing_ok=True)
+            (stage / "dashboard.md.next").unlink(missing_ok=True)
+            (stage / "recomendaciones.json.bak").unlink(missing_ok=True)
+            (stage / "dashboard.md.bak").unlink(missing_ok=True)
             stage.rmdir()
 
     try:
         stage = Path(tempfile.mkdtemp(prefix=".metricas-txn-", dir=output_dir))
-        next_json = stage / "recomendaciones.json.next"
-        next_md = stage / "dashboard.md.next"
-        next_json.write_text(json.dumps(
-            report, ensure_ascii=False, indent=2, sort_keys=True,
-        ) + "\n", encoding="utf-8")
-        next_md.write_text(render_markdown(report) + "\n", encoding="utf-8")
+        staged_json = stage / "recomendaciones.json.next"
+        staged_md = stage / "dashboard.md.next"
+        previous_json = stage / "recomendaciones.json.bak"
+        previous_md = stage / "dashboard.md.bak"
+        target_json = output_dir / "recomendaciones.json"
+        target_md = output_dir / "dashboard.md"
 
-        for name in ("recomendaciones.json", "dashboard.md"):
-            target = output_dir / name
-            if target.is_symlink():
-                raise OSError("archivo de métricas simbólico")
-            if target.exists():
-                details = target.stat()
-                if not stat.S_ISREG(details.st_mode):
-                    raise OSError("salida de métricas no regular")
-                # Preserve an existing private mode and never make it public.
-                safe_mode = stat.S_IMODE(details.st_mode) & 0o600
-                backup = (stage / "recomendaciones.json.bak"
-                          if name == "recomendaciones.json"
-                          else stage / "dashboard.md.bak")
-                backup.write_bytes(target.read_bytes())
-                backup.chmod(safe_mode)
-                existed.add(name)
-            else:
-                safe_mode = 0o600
-            next_file = next_json if name == "recomendaciones.json" else next_md
-            next_file.chmod(safe_mode)
+        staged_json.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n", encoding="utf-8",
+        )
+        staged_md.write_text(render_markdown(report) + "\n", encoding="utf-8")
 
-        os.replace(next_json, output_dir / "recomendaciones.json")
-        installed.append("recomendaciones.json")
-        os.replace(next_md, output_dir / "dashboard.md")
-        installed.append("dashboard.md")
+        if target_json.is_symlink() or target_md.is_symlink():
+            raise OSError("salida de métricas simbólica")
+        if target_json.exists():
+            metadata_json = target_json.stat()
+            if not stat.S_ISREG(metadata_json.st_mode):
+                raise OSError("salida JSON no regular")
+            private_json_mode = stat.S_IMODE(metadata_json.st_mode) & 0o600
+            previous_json.write_bytes(target_json.read_bytes())
+            previous_json.chmod(private_json_mode)
+            had_json = True
+        else:
+            private_json_mode = 0o600
+        if target_md.exists():
+            metadata_md = target_md.stat()
+            if not stat.S_ISREG(metadata_md.st_mode):
+                raise OSError("salida Markdown no regular")
+            private_md_mode = stat.S_IMODE(metadata_md.st_mode) & 0o600
+            previous_md.write_bytes(target_md.read_bytes())
+            previous_md.chmod(private_md_mode)
+            had_md = True
+        else:
+            private_md_mode = 0o600
+
+        staged_json.chmod(private_json_mode)
+        staged_md.chmod(private_md_mode)
+        os.replace(staged_json, target_json)
+        replaced_json = True
+        os.replace(staged_md, target_md)
+        replaced_md = True
     except OSError:
-        recovered = True
-        for name in reversed(installed):
+        restored = True
+        if replaced_md:
             try:
-                target = output_dir / name
-                if name not in existed:
-                    target.unlink(missing_ok=True)
-                elif name == "recomendaciones.json":
-                    os.replace(stage / "recomendaciones.json.bak", target)
+                if had_md:
+                    os.replace(stage / "dashboard.md.bak",
+                               output_dir / "dashboard.md")
                 else:
-                    os.replace(stage / "dashboard.md.bak", target)
+                    (output_dir / "dashboard.md").unlink(missing_ok=True)
             except OSError:
-                recovered = False
-        if recovered:
+                restored = False
+        if replaced_json:
             try:
-                cleanup()
+                if had_json:
+                    os.replace(stage / "recomendaciones.json.bak",
+                               output_dir / "recomendaciones.json")
+                else:
+                    (output_dir / "recomendaciones.json").unlink(missing_ok=True)
+            except OSError:
+                restored = False
+        if restored:
+            try:
+                clean_staging()
                 marker.unlink()
             except OSError:
-                # Keep the marker if staging/cleanup could not be verified.
+                # A failed cleanup is not proof of safe restoration.
                 pass
         raise
 
-    # If cleanup fails, keep marker: consumers must not promote this pair.
-    cleanup()
+    clean_staging()
     marker.unlink()
 
 
