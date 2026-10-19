@@ -3,12 +3,12 @@ import unittest
 
 from metricas.evaluar_agentes import summarize_product_day
 
-AS_OF = "2026-10-11T10:00:00Z"
+AS_OF = "2026-10-11T09:30:00Z"
 
 
 def pr(number, merged_at, sha="a" * 40):
     return {"number": number, "merged": True, "merged_at": merged_at,
-            "merge_commit_sha": sha}
+            "merge_commit_sha": sha, "repo": "pl0n3r/Factory"}
 
 
 def snapshot(repo, events=None):
@@ -38,7 +38,7 @@ class ProductoDiarioTests(unittest.TestCase):
         a = summarize_product_day([first, other], as_of=AS_OF,
                                   repos=[repo, "pl0n3r/GrindFlow"])
         b = summarize_product_day([other, {**first, "events": list(reversed(first["events"]))}],
-                                  as_of="2026-10-11T05:00:00-05:00",
+                                  as_of="2026-10-11T04:30:00-05:00",
                                   repos=["pl0n3r/GrindFlow", repo])
         self.assertEqual(a, b)
         self.assertEqual(a["status"], "MEASURED")
