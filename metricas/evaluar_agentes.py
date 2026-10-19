@@ -612,113 +612,70 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def _write_artifact_pair(report: dict[str, Any]) -> None:
-    """Write two fixed offline artifact paths; preserve a fail-closed marker.
+    """Fail-closed offline two-file update with in-memory rollback.
 
-    Two renames cannot protect live readers or sudden power loss. No metrics
-    publication is permitted, even when both staged files are installed.
+    The marker blocks other writers and prevents use after an interrupted or
+    unrecoverable generation. This is NOT an atomic snapshot for live readers.
+    Runtime destinations are fixed project files, not caller-controlled paths.
     """
     output_dir = DEFAULT_OUTPUT_DIR
     if output_dir.is_symlink():
         raise OSError("directorio de métricas no confiable")
     output_dir.mkdir(parents=True, exist_ok=True)
+    json_file = output_dir / "recomendaciones.json"
+    markdown_file = output_dir / "dashboard.md"
     marker = output_dir / ".metricas-generation-incomplete"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_NOFOLLOW", 0)
+
+    if json_file.is_symlink() or markdown_file.is_symlink():
+        raise OSError("salida de métricas simbólica")
+    if json_file.exists() and not stat.S_ISREG(json_file.stat().st_mode):
+        raise OSError("salida JSON no regular")
+    if markdown_file.exists() and not stat.S_ISREG(markdown_file.stat().st_mode):
+        raise OSError("salida Markdown no regular")
+
+    previous_json = json_file.read_bytes() if json_file.exists() else None
+    previous_markdown = (
+        markdown_file.read_bytes() if markdown_file.exists() else None
+    )
+    json_content = json.dumps(
+        report, ensure_ascii=False, indent=2, sort_keys=True,
+    ) + "\n"
+    markdown_content = render_markdown(report) + "\n"
+
     try:
-        descriptor = os.open(marker, flags, 0o600)
+        with marker.open("x", encoding="utf-8") as lock:
+            lock.write("generation-incomplete\n")
     except FileExistsError as exc:
         raise OSError("generación incompleta: recuperación necesaria") from exc
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        stream.write("generation-incomplete\n")
-
-    stage: Path | None = None
-    replaced_json = False
-    replaced_md = False
-    had_json = False
-    had_md = False
-
-    def clean_staging() -> None:
-        if stage is not None:
-            (stage / "recomendaciones.json.next").unlink(missing_ok=True)
-            (stage / "dashboard.md.next").unlink(missing_ok=True)
-            (stage / "recomendaciones.json.bak").unlink(missing_ok=True)
-            (stage / "dashboard.md.bak").unlink(missing_ok=True)
-            stage.rmdir()
 
     try:
-        stage = Path(tempfile.mkdtemp(prefix=".metricas-txn-", dir=output_dir))
-        staged_json = stage / "recomendaciones.json.next"
-        staged_md = stage / "dashboard.md.next"
-        previous_json = stage / "recomendaciones.json.bak"
-        previous_md = stage / "dashboard.md.bak"
-        target_json = output_dir / "recomendaciones.json"
-        target_md = output_dir / "dashboard.md"
-
-        staged_json.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n", encoding="utf-8",
-        )
-        staged_md.write_text(render_markdown(report) + "\n", encoding="utf-8")
-
-        if target_json.is_symlink() or target_md.is_symlink():
-            raise OSError("salida de métricas simbólica")
-        if target_json.exists():
-            metadata_json = target_json.stat()
-            if not stat.S_ISREG(metadata_json.st_mode):
-                raise OSError("salida JSON no regular")
-            private_json_mode = stat.S_IMODE(metadata_json.st_mode) & 0o600
-            previous_json.write_bytes(target_json.read_bytes())
-            previous_json.chmod(private_json_mode)
-            had_json = True
+        # Private on creation; existing files never gain permissions.
+        if not json_file.exists():
+            json_file.touch(mode=0o600, exist_ok=False)
         else:
-            private_json_mode = 0o600
-        if target_md.exists():
-            metadata_md = target_md.stat()
-            if not stat.S_ISREG(metadata_md.st_mode):
-                raise OSError("salida Markdown no regular")
-            private_md_mode = stat.S_IMODE(metadata_md.st_mode) & 0o600
-            previous_md.write_bytes(target_md.read_bytes())
-            previous_md.chmod(private_md_mode)
-            had_md = True
+            json_file.chmod(0o600)
+        if not markdown_file.exists():
+            markdown_file.touch(mode=0o600, exist_ok=False)
         else:
-            private_md_mode = 0o600
-
-        staged_json.chmod(private_json_mode)
-        staged_md.chmod(private_md_mode)
-        os.replace(staged_json, target_json)
-        replaced_json = True
-        os.replace(staged_md, target_md)
-        replaced_md = True
+            markdown_file.chmod(0o600)
+        json_file.write_text(json_content, encoding="utf-8")
+        markdown_file.write_text(markdown_content, encoding="utf-8")
     except OSError:
-        restored = True
-        if replaced_md:
-            try:
-                if had_md:
-                    os.replace(stage / "dashboard.md.bak",
-                               output_dir / "dashboard.md")
-                else:
-                    (output_dir / "dashboard.md").unlink(missing_ok=True)
-            except OSError:
-                restored = False
-        if replaced_json:
-            try:
-                if had_json:
-                    os.replace(stage / "recomendaciones.json.bak",
-                               output_dir / "recomendaciones.json")
-                else:
-                    (output_dir / "recomendaciones.json").unlink(missing_ok=True)
-            except OSError:
-                restored = False
-        if restored:
-            try:
-                clean_staging()
-                marker.unlink()
-            except OSError:
-                # A failed cleanup is not proof of safe restoration.
-                pass
+        try:
+            if previous_json is None:
+                json_file.unlink(missing_ok=True)
+            else:
+                json_file.write_bytes(previous_json)
+            if previous_markdown is None:
+                markdown_file.unlink(missing_ok=True)
+            else:
+                markdown_file.write_bytes(previous_markdown)
+            # Only a verified full restoration clears the unsafe marker.
+            marker.unlink()
+        except OSError:
+            # The marker stays and blocks any subsequent unattended writes.
+            pass
         raise
-
-    clean_staging()
     marker.unlink()
 
 

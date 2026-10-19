@@ -1,6 +1,5 @@
 """Fail-closed JSON/Markdown pair publishing for Factory #1198."""
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,15 +27,15 @@ class MetricAtomicOutputTests(unittest.TestCase):
             root = Path(temp)
             (root / "recomendaciones.json").write_text("old-json\n")
             (root / "dashboard.md").write_text("old-md\n")
-            original = os.replace
+            original = Path.write_text
 
-            def fail_second(source, destination):
-                if Path(source).name == "dashboard.md.next":
+            def fail_second(path, content, **kwargs):
+                if path.name == "dashboard.md":
                     raise OSError("synthetic write failure")
-                return original(source, destination)
+                return original(path, content, **kwargs)
 
-            with patch("metricas.evaluar_agentes.os.replace",
-                       side_effect=fail_second):
+            with patch.object(Path, "write_text", autospec=True,
+                              side_effect=fail_second):
                 with self.assertRaises(OSError):
                     write_report(report(), root)
             self.assertEqual("old-json\n",
@@ -69,17 +68,23 @@ class MetricAtomicOutputTests(unittest.TestCase):
             root = Path(temp)
             (root / "recomendaciones.json").write_text("old-json\n")
             (root / "dashboard.md").write_text("old-md\n")
-            original = os.replace
+            original_write = Path.write_text
+            original_bytes = Path.write_bytes
 
-            def fail_restore(source, destination):
-                if Path(source).name in (
-                    "dashboard.md.next", "recomendaciones.json.bak",
-                ):
-                    raise OSError("synthetic failure")
-                return original(source, destination)
+            def fail_second(path, content, **kwargs):
+                if path.name == "dashboard.md":
+                    raise OSError("synthetic second-write failure")
+                return original_write(path, content, **kwargs)
 
-            with patch("metricas.evaluar_agentes.os.replace",
-                       side_effect=fail_restore):
+            def fail_restore(path, content):
+                if path.name == "recomendaciones.json":
+                    raise OSError("synthetic rollback failure")
+                return original_bytes(path, content)
+
+            with patch.object(Path, "write_text", autospec=True,
+                              side_effect=fail_second), patch.object(
+                Path, "write_bytes", autospec=True, side_effect=fail_restore
+            ):
                 with self.assertRaises(OSError):
                     write_report(report(), root)
             self.assertTrue(
