@@ -341,6 +341,67 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                         self.assertNotIn("::error::", result.stdout)
 
 
+    def test_manifest_rejects_empty_or_inconsistent_phase_a_evidence(self):
+        """La etiqueta candidate_terminal exige ≥1 observación y cardinalidad real."""
+        import json
+        import shutil
+        import subprocess
+
+        if not shutil.which("jq"):
+            self.skipTest("jq necesario para probar el manifiesto ejecutable")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        anchor = '            --argjson unknown "$unknown_observations" ' + chr(39) + '\n'
+        end = '\n            ' + chr(39) + ' "$RUNNER_TEMP/lease-observer-results.jsonl"'
+        self.assertEqual(workflow.count(anchor), 1)
+        manifest_filter = workflow.split(anchor, 1)[1].split(end, 1)[0]
+        valid_row = {
+            "issue": 1364, "state": "read_only", "action": "wait",
+            "reason": "protected_or_active_work", "activity_age_minutes": 5,
+            "activity_source": "workflow_push", "release_authorized": False,
+            "lock_verified": False, "cas_verified": False, "mutations": 0,
+        }
+        unknown_row = {
+            "issue": 1372, "state": "UNKNOWN", "action": "unknown",
+            "reason": "unverifiable_observation", "release_authorized": False,
+            "lock_verified": False, "cas_verified": False, "mutations": 0,
+        }
+
+        def run(rows, valid, unknown):
+            return subprocess.run(
+                ["jq", "-sc", "--arg", "repo", "pl0n3r/Factory",
+                 "--arg", "sha", "a" * 40, "--arg", "run_id", "123",
+                 "--argjson", "valid", str(valid), "--argjson", "unknown",
+                 str(unknown), manifest_filter],
+                input="".join(json.dumps(row) + "\n" for row in rows),
+                text=True, capture_output=True, check=False, timeout=10,
+            )
+
+        for rows, valid, unknown, status in (
+            ([], 0, 0, "UNKNOWN"),
+            ([valid_row], 1, 0, "candidate_terminal"),
+            ([unknown_row], 0, 1, "UNKNOWN"),
+        ):
+            with self.subTest(valid=valid, unknown=unknown, status=status):
+                outcome = run(rows, valid, unknown)
+                self.assertEqual(outcome.returncode, 0, outcome.stderr)
+                payload = json.loads(outcome.stdout)
+                self.assertEqual(payload["status"], status)
+                self.assertEqual(len(payload["issues"]), valid + unknown)
+                self.assertIs(payload["terminal_certified"], False)
+                self.assertIs(payload["release_authorized"], False)
+                self.assertEqual(payload["mutations"], 0)
+
+        for rows, valid, unknown in (
+            ([valid_row], 2, 0),                    # fila faltante
+            ([valid_row, valid_row], 2, 0),        # Issue duplicado
+            ([valid_row, unknown_row], 2, 0),      # tipos vs contadores
+            ([valid_row], 0, 1),                  # UNKNOWN falso
+            ([], 1, 0),                          # censo vacío marcado válido
+        ):
+            with self.subTest(valid=valid, unknown=unknown, count=len(rows)):
+                outcome = run(rows, valid, unknown)
+                self.assertNotEqual(outcome.returncode, 0)
+
     def test_observer_rejects_duplicate_json_documents_per_issue(self):
         """Un stdout multirregistro no puede inflar el manifiesto del censo."""
         import json
@@ -438,6 +499,15 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(numbers.is_file())
             self.assertEqual(numbers.read_text(encoding="utf-8"), "")
+            # El ciclo sin Issues no debe etiquetarse candidate_terminal.
+            import json
+            empty_evidence = json.loads(
+                (Path(folder) / "lease-audit-evidence.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(empty_evidence["status"], "UNKNOWN")
+            self.assertEqual(empty_evidence["valid_observations"], 0)
+            self.assertEqual(empty_evidence["issues"], [])
+            self.assertIs(empty_evidence["terminal_certified"], False)
             self.assertTrue(summary.is_file())
             self.assertIn("Observador V3 GET-only", summary.read_text(encoding="utf-8"))
 

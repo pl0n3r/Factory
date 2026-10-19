@@ -332,18 +332,28 @@ jobs:
             --arg run_id "${GITHUB_RUN_ID:-UNKNOWN}" \
             --argjson valid "$valid_observations" \
             --argjson unknown "$unknown_observations" '
-              {schema_version: 1, repository: $repo, head_sha: $sha,
-               run_id: $run_id, status:
-                 (if $unknown > 0 then "UNKNOWN" else "candidate_terminal" end),
-               terminal_certified: false, release_authorized: false,
-               mutations: 0, valid_observations: $valid,
-               unknown_observations: $unknown, issues: .}
+              . as $rows
+              | if ($valid < 0 or $unknown < 0
+                    or ($rows | length) != ($valid + $unknown)
+                    or ($rows | map(.issue) | unique | length) != ($rows | length)
+                    or ($rows | map(select(.state == "read_only")) | length) != $valid
+                    or ($rows | map(select(.state == "UNKNOWN")) | length) != $unknown)
+                then error("inconsistent_observation_inventory")
+                else
+                  {schema_version: 1, repository: $repo, head_sha: $sha,
+                   run_id: $run_id, status:
+                     (if $unknown > 0 or $valid == 0
+                      then "UNKNOWN" else "candidate_terminal" end),
+                   terminal_certified: false, release_authorized: false,
+                   mutations: 0, valid_observations: $valid,
+                   unknown_observations: $unknown, issues: $rows}
+                end
             ' "$RUNNER_TEMP/lease-observer-results.jsonl" \
               > "$RUNNER_TEMP/lease-audit-evidence.json"
           {
             echo "### Observador V3 GET-only: resultado por Issue"
             echo "Observaciones válidas=${valid_observations}; UNKNOWN=${unknown_observations}; liberaciones=0."
-            echo "Un run con UNKNOWN no acredita un ciclo válido de Fase A."
+            echo "Un run con UNKNOWN o censo vacío no acredita un ciclo válido de Fase A."
             echo "El manifiesto del run es solo candidato; QA y procedencia deben verificarlo."
             echo
             echo "| Issue | Estado | Decisión | Inactividad (min) | Fuente | Veto/motivo |"

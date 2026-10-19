@@ -33,6 +33,12 @@ cuerpo ni cabeceras REST. El filtro exige exactamente **un objeto JSON
 válido por Issue**; si el CLI emite dos registros, datos fuera de esquema
 o JSON inválido, conserva `UNKNOWN` y no acredita el ciclo. El resumen del job muestra una fila saneada por Issue con estado, decisión, minutos enteros acotados (o `UNKNOWN`), fuente autenticada (o `UNKNOWN`) y razón del veto, sin imprimir el stdout REST ni del CLI. Un artefacto de GitHub Actions vinculado al run
 programado conserva este manifiesto 7 días; no se envía a comentarios.
+El manifiesto sólo puede marcar `candidate_terminal` cuando existe al menos
+una observación válida, ninguna `UNKNOWN` y la cantidad, estados e IDs únicos
+coinciden exactamente con los contadores del ciclo. Un censo vacío se mantiene
+`UNKNOWN` aunque el workflow termine en verde; discrepancias de conteo o
+IDs duplicados invalidan la generación del manifiesto. Ninguno de estos
+estados acredita por sí solo los 100 ciclos ni sustituye el QA externo.
 El manifiesto declara siempre `terminal_certified=false`: ni `success`
 ni `candidate_terminal` certifican los 24 h, los 100 ciclos o el QA.
 Una subida fallida o un artefacto ausente tampoco certifica el run.
