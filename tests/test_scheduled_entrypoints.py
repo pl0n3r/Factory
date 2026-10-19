@@ -24,6 +24,13 @@ SAFE_ARGS = {
     "producto/feedback.py": ("--help",),
 }
 
+# El nuevo generador solo es una entrada programada cuando su workflow
+# jurídico existe. Se ejecuta únicamente --help sin red ni credenciales.
+JURIDICA_WORKFLOW = WORKFLOWS / "revision-juridica-sync.yml"
+if JURIDICA_WORKFLOW.is_file() and not JURIDICA_WORKFLOW.is_symlink():
+    EXPECTED.add("scripts/generar_revision_juridica.py")
+    SAFE_ARGS["scripts/generar_revision_juridica.py"] = ("--help",)
+
 
 class ScheduledEntrypointTests(unittest.TestCase):
     def _env(self) -> dict[str, str]:
