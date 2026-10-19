@@ -358,6 +358,50 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                     latest = pushed_at
                     activity_source = "workflow_push"
                 recent = True
+        # Eventos push del repositorio son evidencia POSITIVA de actividad
+        # (incluso en ausencia de workflow push). Nunca se usa un feed
+        # retrasado, vacío o truncado como prueba negativa de inactividad.
+        activity_path = (
+            f"{base}/activity?per_page=100"
+            f"&ref={quote(branch, safe='')}&time_period=day"
+        )
+        observed_activities = None
+        if not recent and not running and not external_review_veto:
+            observed_activities = get(activity_path)
+            if (type(observed_activities) is not list
+                    or len(observed_activities) >= 100):
+                raise IncompleteEvidence()
+            ids = set()
+            for activity in observed_activities:
+                if (type(activity) is not dict
+                        or type(activity.get("id")) is not int
+                        or activity["id"] <= 0 or activity["id"] in ids):
+                    raise IncompleteEvidence()
+                ids.add(activity["id"])
+                if activity.get("activity_type") not in ("push", "force_push"):
+                    continue
+                if activity.get("ref") != f"refs/heads/{branch}":
+                    raise IncompleteEvidence()
+                actor = activity.get("actor")
+                if (type(actor) is not dict
+                        or type(actor.get("login")) is not str
+                        or actor.get("type") != "User"
+                        or type(activity.get("before")) is not str
+                        or SHA.fullmatch(activity["before"]) is None
+                        or type(activity.get("after")) is not str
+                        or SHA.fullmatch(activity["after"]) is None):
+                    raise IncompleteEvidence()
+                stamp = _time(activity.get("timestamp"), now)
+                if stamp > push_watermark:
+                    raise IncompleteEvidence()
+                if (actor["login"] == owner and stamp >= since
+                        and now - stamp < grace):
+                    if stamp == latest and activity_source != "repository_push":
+                        raise IncompleteEvidence()
+                    if stamp > latest:
+                        latest, activity_source = stamp, "repository_push"
+                    recent = True
+
         # Veto CI autenticado: una acción de release es imposible mientras
         # esté en curso. La EXCEPCIÓN aplica únicamente al observador
         # desarmado; NO prueba ausencia de pushes ni sirve para CAS mutante.
@@ -408,6 +452,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or identity_again.get("id") != repo_id
                 or identity_again.get("full_name") != repo
                 or _time(identity_again.get("pushed_at"), now) != push_watermark):
+            raise IncompleteEvidence()
+        if observed_activities is not None and get(activity_path) != observed_activities:
             raise IncompleteEvidence()
         effective_remaining = remaining - used
         if effective_remaining < 0 or effective_remaining * 5 < limit:

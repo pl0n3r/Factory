@@ -64,11 +64,12 @@ class IntegrationPreview:
                    and 0 <= self.activity_age_minutes <= 525600
                    else "UNKNOWN")
         source = (self.activity_source
-                  if self.activity_source in ("reservation_marker", "workflow_push")
+                  if self.activity_source in (
+                      "reservation_marker", "workflow_push",
+                      "issue_comment", "repository_push")
                   else "UNKNOWN")
-        # Sólo acredita el marker del bot o un workflow push exact-SHA;
-        # no inferir actividad del titular por login compartido ni por
-        # reviews/checks sin testigo temporal autenticado.
+        # Fuente positiva autenticada o veto sin inactividad atribuida;
+        # nunca convertir inventarios vacíos en ausencia de pushes.
         return (f"- Issue #{issue}: `{action}`; inactividad={minutes} min; "
                 f"fuente={source}; veto/razón={reason}; autoridad=NO.\n")
 
@@ -118,7 +119,9 @@ class _GhReadOnlyAPI:
             from urllib.parse import quote, unquote
 
             repo = FACTORY_REPO_ROUTE
-            if route == f"{repo}/commits":
+            if route == f"{repo}/activity":
+                allowed = {"per_page", "ref", "time_period"}
+            elif route == f"{repo}/commits":
                 allowed = {"sha", "since", "per_page", "page"}
             elif route == f"{repo}/actions/runs":
                 allowed = {"branch", "per_page", "page"}
@@ -152,6 +155,11 @@ class _GhReadOnlyAPI:
                 if key == "head" and not re.fullmatch(
                         r"pl0n3r:(?:main|trabajo/issue-[1-9][0-9]*)", decoded):
                     raise PermissionError("read_only_transport")
+                if key == "ref" and not re.fullmatch(
+                        r"trabajo/issue-[1-9][0-9]*", decoded):
+                    raise PermissionError("read_only_transport")
+                if key == "time_period" and decoded != "day":
+                    raise PermissionError("read_only_transport")
                 if key == "since" and not UTC_STAMP.fullmatch(decoded):
                     raise PermissionError("read_only_transport")
                 if key == "state" and decoded != "open":
@@ -160,6 +168,9 @@ class _GhReadOnlyAPI:
                     raise PermissionError("read_only_transport")
                 if key == "page" and not re.fullmatch(r"(?:[1-9]|10)", decoded):
                     raise PermissionError("read_only_transport")
+            if (route == f"{repo}/activity"
+                    and seen != {"per_page", "ref", "time_period"}):
+                raise PermissionError("read_only_transport")
         try:
             result = subprocess.run(
                 ["gh", "api", "-H", "Accept: application/vnd.github+json", path],
@@ -421,7 +432,8 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
                 or type(report.get("last_activity_at")) is not str
                 or UTC_STAMP.fullmatch(report["last_activity_at"]) is None
                 or report.get("activity_source") not in (
-                    "reservation_marker", "workflow_push", "issue_comment")):
+                    "reservation_marker", "workflow_push",
+                    "issue_comment", "repository_push")):
             return _unknown(issue, "collector_unknown")
         last = datetime.fromisoformat(
             report["last_activity_at"].replace("Z", "+00:00"))

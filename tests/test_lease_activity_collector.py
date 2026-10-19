@@ -84,6 +84,9 @@ class API:
         self.change_review_during_recheck = False
         self.comment_reads = 0
         self.edit_owner_comment_on_recheck = False
+        self.activity_rows = []
+        self.activity_reads = 0
+        self.activity_change_on_recheck = False
 
     def request(self, method, path):
         assert method == "GET", "read-only collector"
@@ -108,6 +111,12 @@ class API:
         if path.endswith("/git/ref/heads/trabajo/issue-21"):
             self.ref_reads += 1
             return {"object": {"sha": "b" * 40 if self.race and self.ref_reads > 1 else SHA}}
+        if path == f"/repos/{REPO}/activity?per_page=100&ref=trabajo%2Fissue-21&time_period=day":
+            self.activity_reads += 1
+            rows = copy.deepcopy(self.activity_rows)
+            if self.activity_change_on_recheck and self.activity_reads == 2:
+                rows.append({"id": 999, "activity_type": "branch_creation"})
+            return rows
         page = int(path.rsplit("page=", 1)[-1])
         if "/issues/21/comments?" in path:
             if page == 1:
@@ -347,6 +356,63 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(observed["last_activity_at"], "2026-10-11T09:40:00Z")
         self.assertTrue(all("secret" not in str(v).lower()
                             for v in observed.values()))
+
+    def test_repository_activity_push_is_positive_only_and_double_read(self):
+        """Push por REST /activity: wait sí, ausencia no prueba release."""
+        unknown = {"status": "UNKNOWN", "evidence_complete": False}
+        row = {
+            "id": 31, "activity_type": "push",
+            "ref": "refs/heads/trabajo/issue-21",
+            "timestamp": "2026-10-11T09:42:00Z",
+            "actor": {"login": "pl0n3r", "type": "User"},
+            "before": "b" * 40, "after": SHA,
+        }
+        api = API()
+        api.push_event = "pull_request"
+        api.checks[0]["status"] = "completed"
+        api.activity_rows = [row]
+        output = collect_activity(api, 21, now=NOW)
+        self.assertTrue(output["evidence_complete"])
+        self.assertEqual(output["activity_source"], "repository_push")
+        self.assertEqual(output["last_activity_at"], row["timestamp"])
+        self.assertEqual(api.activity_reads, 2)
+        self.assertFalse(output["ci_veto_only"])
+        self.assertFalse(output["review_veto_only"])
+        self.assertEqual(output["api_requests"], len(api.calls))
+
+        api.activity_rows = []
+        self.assertEqual(collect_activity(api, 21, now=NOW), unknown)
+        for patch in (
+            {"actor": {"login": "another", "type": "User"}},
+            {"actor": {"login": "pl0n3r", "type": "Bot"}},
+            {"ref": "refs/heads/main"},
+            {"timestamp": "2026-10-11T09:00:00Z"},
+            {"timestamp": "2026-10-11T10:00:01Z"},
+            {"before": "bad"},
+        ):
+            with self.subTest(patch=patch):
+                other = API()
+                other.push_event = "pull_request"
+                other.checks[0]["status"] = "completed"
+                other.activity_rows = [{**row, **patch}]
+                self.assertEqual(collect_activity(other, 21, now=NOW), unknown)
+
+        race = API()
+        race.push_event = "pull_request"
+        race.checks[0]["status"] = "completed"
+        race.activity_rows = [row]
+        race.activity_change_on_recheck = True
+        self.assertEqual(collect_activity(race, 21, now=NOW), unknown)
+        self.assertEqual(race.activity_reads, 2)
+
+        force = API()
+        force.push_event = "pull_request"
+        force.checks[0]["status"] = "completed"
+        force.activity_rows = [{**row, "activity_type": "force_push"}]
+        self.assertEqual(
+            collect_activity(force, 21, now=NOW)["activity_source"],
+            "repository_push",
+        )
 
     def test_old_marker_external_review_veto_is_positive_only(self):
         """Review vigente puede vetar una liberación sin probar inactividad."""

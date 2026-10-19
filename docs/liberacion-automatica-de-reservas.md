@@ -30,6 +30,14 @@ Por tanto, el preview conserva `wait` y la fuente identificada, pero
 publica `inactividad=UNKNOWN` (minutos = `null`) cuando
 `ci_veto_only=true`, sin atribuir ausencia al marker antiguo.
 Continúa pendiente una auditoría negativa de pushes completa y autenticada.
+Un GET de `/repos/{owner}/{repo}/activity` puede certificar una actividad
+**positiva** del titular en la rama: `push` o `force_push`, actor
+`User`, `ref` exacto, SHAs y timestamp válidos, inventario revalidado
+en dos lecturas. La fuente se informa como `repository_push`.
+**No** se acepta inventario vacío, truncado, cambiado, retrasado o inválido
+como prueba *negativa* de pushes: en ese caso el estado sigue `UNKNOWN`,
+no se simulan `mark_recovery` ni `release`. Se consulta sólo cuando
+no existe otro veto positivo suficiente.
 Los comentarios nuevos del titular registrados por GitHub después de la
 reserva V3 también son evidencia positiva para `wait`: se valida autor
 `User`, `created_at`/`updated_at`, se releen todas las páginas para

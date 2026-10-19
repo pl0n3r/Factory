@@ -306,7 +306,8 @@ jobs:
                   and (.activity_source == null
                        or .activity_source == "reservation_marker"
                        or .activity_source == "workflow_push"
-                       or .activity_source == "issue_comment")
+                       or .activity_source == "issue_comment"
+                       or .activity_source == "repository_push")
                   and (.activity_age_minutes == null
                        or (.activity_age_minutes | type == "number"
                            and . >= 0 and floor == . and . <= 525600))

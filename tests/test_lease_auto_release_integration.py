@@ -808,6 +808,29 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertIs(comment_preview.cas_verified, False)
         self.assertEqual(comment_port.reads, 1)
 
+        # Un push autenticado vía REST independiente también confirma wait.
+        from test_lease_activity_collector import SHA
+        pushed = review_ready_api()
+        pushed.push_event = "pull_request"
+        pushed.checks[0]["status"] = "completed"
+        pushed.activity_rows = [{
+            "id": 37, "activity_type": "push",
+            "ref": "refs/heads/trabajo/issue-21",
+            "timestamp": "2026-10-11T09:42:00Z",
+            "actor": {"login": "pl0n3r", "type": "User"},
+            "before": "b" * 40, "after": SHA,
+        }]
+        positive_port = ReadOnlyPort(replace(
+            item, last_activity_at=NOW - timedelta(minutes=18)))
+        positive = preview_integrated_activity(
+            pushed, positive_port, 21, now=NOW)
+        self.assertEqual((positive.state, positive.action), ("read_only", "wait"))
+        self.assertEqual(positive.activity_source, "repository_push")
+        self.assertEqual(positive.activity_age_minutes, 18)
+        self.assertIn("fuente=repository_push", positive.summary_line)
+        self.assertFalse(positive.release_authorized)
+        self.assertEqual(positive_port.reads, 1)
+
         # La evidencia autenticada de CI en curso produce un veto wait:
         # no usa la lectura mutante y no concede autoridad de liberación.
         running_api = review_ready_api()
@@ -1187,6 +1210,33 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                     with self.assertRaises(PermissionError):
                         api.request(method, path)
                     run.assert_not_called()
+
+    def test_repository_activity_get_enforces_ref_and_time_window(self):
+        """Activity API: solo ref V3 propio, un día y GET autenticado."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+
+        api = _GhReadOnlyAPI()
+        good = ("/repos/pl0n3r/Factory/activity?per_page=100"
+                "&ref=trabajo%2Fissue-21&time_period=day")
+        with patch("subprocess.run", return_value=SimpleNamespace(stdout="[]")) as gh:
+            self.assertEqual(api.request("GET", good), [])
+            gh.assert_called_once()
+        for bad in (
+            "/repos/pl0n3r/Factory/activity",
+            good.replace("day", "year"),
+            good.replace("trabajo%2Fissue-21", "main"),
+            good.replace("trabajo%2Fissue-21", "trabajo%252Fissue-21"),
+            good.replace("per_page=100", "per_page=500"),
+            good + "&actor=someone",
+            good + "&time_period=day",
+            good.replace("&ref=trabajo%2Fissue-21", ""),
+        ):
+            with self.subTest(bad=bad), patch("subprocess.run") as gh:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", bad)
+                gh.assert_not_called()
 
     def test_read_only_transport_denies_unparameterized_repository_sweep(self):
         """GET is not a blanket permission to read arbitrary repo endpoints."""
