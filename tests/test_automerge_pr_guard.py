@@ -1070,6 +1070,8 @@ class AutoMergePrGuardTests(unittest.TestCase):
             "id": 200, "context": "CodeRabbit", "state": "success",
             "description": "Review skipped: draft PR",
             "creator": {"login": "coderabbitai[bot]"},
+            # Immutable GitHub status predates the substantive same-SHA review.
+            "created_at": "2026-10-14T03:58:00Z",
         })
         mod.verify(q, SHA, NOW)
 
@@ -1107,6 +1109,37 @@ class AutoMergePrGuardTests(unittest.TestCase):
         q["status_history"].append({"id": 300, "context": "ci/test",
                                      "state": "success", "description": "pass",
                                      "creator": {"login": "ci-bot"}})
+        mod.verify(q, SHA, NOW)
+
+    def test_historical_coderabbit_skip_needs_later_exact_sha_review(self):
+        """AC-05: green status cannot launder a prior quota/skip notification."""
+        base = evidence()
+        historical = {"id": 199, "context": "CodeRabbit", "state": "failure",
+                      "description": "Review rate limited",
+                      "creator": {"login": "coderabbitai[bot]"},
+                      "created_at": "2026-10-14T03:58:00Z"}
+        base["status_history"].insert(0, historical)
+        # The clean exact-HEAD review at 03:59 truly supersedes 03:58.
+        mod.verify(base, SHA, NOW)
+        for changed in ("2026-10-14T03:59:30Z", "2026-10-14T03:59:00Z",
+                        "", "not-a-date", "2026-10-14T03:58:00", None):
+            with self.subTest(status_created_at=changed):
+                q = deepcopy(base)
+                if changed is None:
+                    del q["status_history"][0]["created_at"]
+                else:
+                    q["status_history"][0]["created_at"] = changed
+                self.deny(q)
+        q = deepcopy(base)
+        q["reviews"][0]["commit_id"] = BASE
+        self.deny(q)
+        # Unrelated statuses must not be treated as CodeRabbit skip events.
+        q = evidence()
+        q["status_history"].insert(0, {
+            "id": 199, "context": "other-check", "state": "failure",
+            "description": "Review rate limited",
+            "creator": {"login": "github-actions[bot]"},
+        })
         mod.verify(q, SHA, NOW)
 
     def test_coderabbit_status_history_is_paginated_and_permissioned(self):
@@ -2530,6 +2563,28 @@ class AutoMergePrGuardTests(unittest.TestCase):
             mod.validate_workflow_run_event({})
 
 
+    def test_immediate_merge_authority_is_absent_in_phase_one(self):
+        """AC-01: la Fase 1 nunca concede autoridad de fusión."""
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        self.assertIn("    if: ${{ false }}", workflow)
+        for forbidden in ("gh api --method PUT", "gh pr merge", "MERGE_TOKEN",
+                          "AUTOMERGE_TOKEN", "secrets.", "contents: write",
+                          "pull-requests: write"):
+            self.assertNotIn(forbidden, workflow)
+
+    def test_completed_ci_can_resolve_current_exact_head(self):
+        pr={'number':1364,'state':'open','draft':False,
+            'head':{'ref':'trabajo/issue-1364', 'sha':SHA,
+                    'repo':{'full_name':'pl0n3r/Factory','fork':False}},
+            'base':{'ref':'main'}}
+        with patch.object(mod,'get',return_value=pr) as get:
+            self.assertEqual(mod.resolve_workflow_run('test-token',workflow_run_event_example()), (1364,SHA))
+        get.assert_called_once_with('test-token','/repos/pl0n3r/Factory/pulls/1364')
+        # Important: workflow_run.head_sha could be the synthetic PR merge SHA.
+        # The authenticated current PR head and the canonical guard decide.
+        self.assertNotEqual(workflow_run_event_example()['workflow_run']['head_sha'], SHA)
+
+
 def pull_request_review_event_example():
     return {
         "action": "submitted",
@@ -2622,17 +2677,6 @@ def workflow_run_event_example():
 
 
 class WorkflowRunEventTests(unittest.TestCase):
-    def test_completed_ci_can_resolve_current_exact_head(self):
-        pr={'number':1364,'state':'open','draft':False,
-            'head':{'ref':'trabajo/issue-1364', 'sha':SHA,
-                    'repo':{'full_name':'pl0n3r/Factory','fork':False}},
-            'base':{'ref':'main'}}
-        with patch.object(mod,'get',return_value=pr) as get:
-            self.assertEqual(mod.resolve_workflow_run('test-token',workflow_run_event_example()), (1364,SHA))
-        get.assert_called_once_with('test-token','/repos/pl0n3r/Factory/pulls/1364')
-        # Important: workflow_run.head_sha could be the synthetic PR merge SHA.
-        # The authenticated current PR head and the canonical guard decide.
-        self.assertNotEqual(workflow_run_event_example()['workflow_run']['head_sha'], SHA)
 
     def test_workflow_run_pr_number_is_not_issue_number(self):
         """PR #1375 may close Issue #1364; GitHub allocates both independently."""
@@ -2817,17 +2861,6 @@ class MainCliContractTests(unittest.TestCase):
 
 class AutoMergeShellOutcomeTests(unittest.TestCase):
     """Fase 1 no contiene una sección de shell con autoridad de fusión."""
-
-    def test_immediate_merge_authority_is_absent_in_phase_one(self):
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertIn("    if: ${{ false }}", workflow)
-        self.assertNotIn("gh api --method PUT", workflow)
-        self.assertNotIn("gh pr merge", workflow)
-        self.assertNotIn("MERGE_TOKEN", workflow)
-        self.assertNotIn("AUTOMERGE_TOKEN", workflow)
-        self.assertNotIn("secrets.", workflow)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("pull-requests: write", workflow)
 
 
     def test_event_triggers_are_declared_while_phase_one_stays_inert(self):

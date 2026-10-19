@@ -616,7 +616,64 @@ def verify_sonar_evidence(sonar, checks, expected, number):
             raise Denied("sonar_high_critical_or_ambiguous_new_code")
 
 
-def verify_coderabbit_status(payload, expected, history):
+def verify_historical_coderabbit_skip(status, substantive_times):
+    """A quota/skip can be superseded only by a later same-SHA real review."""
+    if not review_incomplete_notice(status["description"]):
+        return
+    created_at = status.get("created_at")
+    try:
+        skipped_at = datetime.fromisoformat(
+            created_at.replace("Z", "+00:00")
+        ) if type(created_at) is str else None
+    except ValueError:
+        skipped_at = None
+    if skipped_at is None or skipped_at.tzinfo is None:
+        raise Denied("coderabbit_historical_skip_not_superseded")
+    skipped_utc = skipped_at.astimezone(timezone.utc)
+    if not any(reviewed > skipped_utc for reviewed in substantive_times):
+        raise Denied("coderabbit_historical_skip_not_superseded")
+
+
+def _verify_coderabbit_history_record(row, substantive_times):
+    """Authenticate all CodeRabbit status records before considering recency."""
+    if row["context"] != "CodeRabbit":
+        return False
+    if (type(row.get("creator")) is not dict
+            or row["creator"].get("login") != "coderabbitai[bot]"):
+        raise Denied("coderabbit_status_publisher_untrusted")
+    description = row.get("description")
+    if type(description) is not str or not description.strip():
+        raise Denied("coderabbit_historical_status_unknown")
+    if severe_finding(description):
+        raise Denied("coderabbit_historical_severe_unresolved")
+    verify_historical_coderabbit_skip(row, substantive_times)
+    return True
+
+
+def _verify_coderabbit_history(history, substantive_times):
+    """Validate a complete status history and identify its newest bot entry."""
+    if type(history) is not list or not 1 <= len(history) <= 500:
+        raise Denied("coderabbit_status_history_incomplete")
+    # Only authenticated substantive same-SHA reviews may supersede a skip.
+    if (type(substantive_times) is not tuple or not substantive_times
+            or any(type(t) is not datetime or t.tzinfo is None
+                   or t.utcoffset() is None for t in substantive_times)):
+        raise Denied("coderabbit_substantive_time_unknown")
+    seen_ids = set()
+    newest = None
+    for row in history:
+        if (type(row) is not dict or type(row.get("id")) is not int
+                or row["id"] <= 0 or row["id"] in seen_ids
+                or type(row.get("context")) is not str):
+            raise Denied("coderabbit_status_history_invalid")
+        seen_ids.add(row["id"])
+        if _verify_coderabbit_history_record(row, substantive_times):
+            if newest is None or row["id"] > newest["id"]:
+                newest = row
+    return newest
+
+
+def verify_coderabbit_status(payload, expected, history, substantive_times):
     """A green commit status can still indicate that CodeRabbit skipped review.
 
     This source is independent of pull-request reviews and comments. It must
@@ -641,34 +698,9 @@ def verify_coderabbit_status(payload, expected, history):
                 latest = row
     if latest is None:
         raise Denied("coderabbit_commit_status_missing")
-    # The combined /status response omits `creator`. Anyone with commit-status
-    # write permission can publish the string context='CodeRabbit'. Authenticate
-    # the historical status source from GET /commits/{sha}/statuses, which does
-    # include each status's GitHub `creator`, and cross-check both snapshots.
-    if type(history) is not list or not 1 <= len(history) <= 500:
-        raise Denied("coderabbit_status_history_incomplete")
-    seen_history_ids = set()
-    history_latest = None
-    for row in history:
-        if (type(row) is not dict or type(row.get("id")) is not int
-                or row["id"] <= 0 or row["id"] in seen_history_ids
-                or type(row.get("context")) is not str):
-            raise Denied("coderabbit_status_history_invalid")
-        seen_history_ids.add(row["id"])
-        if row["context"] == "CodeRabbit":
-            if (type(row.get("creator")) is not dict
-                    or row["creator"].get("login") != "coderabbitai[bot]"):
-                raise Denied("coderabbit_status_publisher_untrusted")
-            # /status hides older entries for the same context. A later green
-            # entry on the same immutable HEAD cannot prove that an earlier
-            # HIGH/CRITICAL finding was fixed or investigated.
-            description = row.get("description")
-            if type(description) is not str or not description.strip():
-                raise Denied("coderabbit_historical_status_unknown")
-            if severe_finding(description):
-                raise Denied("coderabbit_historical_severe_unresolved")
-            if history_latest is None or row["id"] > history_latest["id"]:
-                history_latest = row
+    # /status omits creator and older records: independently check the full
+    # authenticated /statuses history before trusting the latest status.
+    history_latest = _verify_coderabbit_history(history, substantive_times)
     if (history_latest is None or latest["id"] != history_latest["id"]
             or latest.get("state") != history_latest.get("state")
             or latest.get("description") != history_latest.get("description")):
@@ -831,6 +863,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
                     or not any(t > skipped_at.astimezone(timezone.utc)
                                for t in substantive_times)):
                 raise Denied("coderabbit_skipped_not_superseded")
+    return tuple(substantive_times)
 
 
 def verify_freeze(windows, now):
@@ -935,10 +968,12 @@ def verify(snapshot, expected, now):
     number = pr.get("number") if type(pr) is dict else None
     verify_sonar_evidence(snapshot.get("sonar_evidence"), snapshot.get("checks"),
                           expected, number)
+    substantive_times = verify_review(
+        snapshot.get("reviews"), snapshot.get("comments"),
+        snapshot.get("issue_comments"), expected, now,
+    )
     verify_coderabbit_status(snapshot.get("commit_status"), expected,
-                             snapshot.get("status_history"))
-    verify_review(snapshot.get("reviews"), snapshot.get("comments"),
-                  snapshot.get("issue_comments"), expected, now)
+                             snapshot.get("status_history"), substantive_times)
     verify_freeze(snapshot.get("windows"), now)
 
 
