@@ -1,0 +1,77 @@
+name: Sincronización de revisión jurídica
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/cumplimiento-datos-licencias.md
+      - legal/reglas-datos.yml
+      - legal/plantillas/**
+      - config/version.json
+      - scripts/generar_revision_juridica.py
+  schedule:
+    - cron: '19 6 * * *'
+concurrency:
+  group: revision-juridica-sync
+  cancel-in-progress: false
+jobs:
+  verificar:
+    permissions:
+      contents: read
+      issues: write
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Descargar main sin credenciales persistentes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Detectar diferencia sin escritura
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 scripts/generar_revision_juridica.py --check; then
+            echo 'stale=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'stale=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Crear Issue si aún no existe
+        if: steps.diff.outputs.stale == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          label='revision-juridica-desfase'
+          if ! gh label list --repo "$GH_REPO" --limit 1000 --json name --jq '.[].name' | grep -Fxq "$label"; then
+            gh label create "$label" --repo "$GH_REPO" --color '5319E7' --description 'Paquete jurídico desactualizado'
+          fi
+          count="$(gh issue list --repo "$GH_REPO" --state open --label "$label" --limit 100 --json number --jq 'length')"
+          [[ "$count" =~ ^[0-9]+$ ]] || exit 1
+          if [[ "$count" != '0' ]]; then
+            echo "::notice::Issue de desfase ya existe."
+            exit 0
+          fi
+          cat > "$RUNNER_TEMP/desfase.md" <<'EOF'
+          ### Contexto
+          Las copias derivadas de la revisión jurídica no coinciden con las fuentes de main.
+          ### Alcance
+          Regenerar exclusivamente revision-juridica/ usando el generador y entregar PR coordinado.
+          ### Fuera de alcance
+          Modificar textos jurídicos fuente, usar datos reales o escribir directamente en main.
+          ### Criterios de aceptación
+          - [ ] [AC-01] El test de integridad de la entrega pasa en el PR.
+          ### Contrato ejecutable
+          <!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"test","target":"tests/test_revision_juridica.py::RevisionJuridicaTests::test_generated_artifacts_are_current"}]} -->
+          ### Rutas reclamadas
+          - revision-juridica/
+          <!-- factory-plan-task {"version":1,"epic":1387,"task_key":"REVISION_JURIDICA_SYNC","order":2,"owner":"pl0n3r","roles":["legal-privacidad","ingenieria-software"],"depends_on":[1387],"paths":["revision-juridica/"]} -->
+          EOF
+          gh issue create --repo "$GH_REPO" \
+            --title 'docs(legal): corregir desfase del paquete jurídico' \
+            --body-file "$RUNNER_TEMP/desfase.md" \
+            --label "$label" --label 'tipo: documentación' \
+            --label 'prioridad: media' --label 'estado: disponible' \
+            --label 'rol: legal-privacidad'
