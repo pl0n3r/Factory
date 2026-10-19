@@ -2853,14 +2853,24 @@ class AutoMergeShellOutcomeTests(unittest.TestCase):
 
     def test_immediate_merge_authority_is_absent_in_phase_one(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        self.assertIn("    if: ${{ false }}", workflow)
-        self.assertNotIn("gh api --method PUT", workflow)
-        self.assertNotIn("gh pr merge", workflow)
-        self.assertNotIn("MERGE_TOKEN", workflow)
-        self.assertNotIn("AUTOMERGE_TOKEN", workflow)
-        self.assertNotIn("secrets.", workflow)
-        self.assertNotIn("contents: write", workflow)
-        self.assertNotIn("pull-requests: write", workflow)
+        requirements = ("    if: ${{ false }}",)
+        forbidden = ("gh api --method PUT", "gh pr merge", "MERGE_TOKEN",
+                     "AUTOMERGE_TOKEN", "secrets.", "contents: write",
+                     "pull-requests: write")
+        # Emit sanitized, bounded diagnostics only when a contract assertion
+        # fails in isolated acceptance. Never soften the actual assertion.
+        if any(item not in workflow for item in requirements) or any(
+                item in workflow for item in forbidden):
+            import sys
+            print("AUTO_MERGE_PHASE1_CONTRACT:",
+                  "required=" + repr([x for x in requirements if x not in workflow]),
+                  "forbidden=" + repr([x for x in forbidden if x in workflow]),
+                  "path=" + str(ROOT / ".github" / "workflows" / "automerge.yml"),
+                  file=sys.stderr)
+        for required in requirements:
+            self.assertIn(required, workflow)
+        for value in forbidden:
+            self.assertNotIn(value, workflow)
 
 
     def test_event_triggers_are_declared_while_phase_one_stays_inert(self):
