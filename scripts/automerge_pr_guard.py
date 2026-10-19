@@ -616,6 +616,24 @@ def verify_sonar_evidence(sonar, checks, expected, number):
             raise Denied("sonar_high_critical_or_ambiguous_new_code")
 
 
+def verify_historical_coderabbit_skip(status, substantive_times):
+    """A quota/skip can be superseded only by a later same-SHA real review."""
+    if not review_incomplete_notice(status["description"]):
+        return
+    created_at = status.get("created_at")
+    try:
+        skipped_at = datetime.fromisoformat(
+            created_at.replace("Z", "+00:00")
+        ) if type(created_at) is str else None
+    except ValueError:
+        skipped_at = None
+    if skipped_at is None or skipped_at.tzinfo is None:
+        raise Denied("coderabbit_historical_skip_not_superseded")
+    skipped_utc = skipped_at.astimezone(timezone.utc)
+    if not any(reviewed > skipped_utc for reviewed in substantive_times):
+        raise Denied("coderabbit_historical_skip_not_superseded")
+
+
 def verify_coderabbit_status(payload, expected, history, substantive_times):
     """A green commit status can still indicate that CodeRabbit skipped review.
 
@@ -674,19 +692,7 @@ def verify_coderabbit_status(payload, expected, history, substantive_times):
                 raise Denied("coderabbit_historical_status_unknown")
             if severe_finding(description):
                 raise Denied("coderabbit_historical_severe_unresolved")
-            if review_incomplete_notice(description):
-                created = row.get("created_at")
-                try:
-                    skipped_at = datetime.fromisoformat(
-                        created.replace("Z", "+00:00")
-                    ) if type(created) is str else None
-                except ValueError:
-                    skipped_at = None
-                if (skipped_at is None or skipped_at.tzinfo is None
-                        or skipped_at.utcoffset() is None
-                        or not any(reviewed > skipped_at.astimezone(timezone.utc)
-                                   for reviewed in substantive_times)):
-                    raise Denied("coderabbit_historical_skip_not_superseded")
+            verify_historical_coderabbit_skip(row, substantive_times)
             if history_latest is None or row["id"] > history_latest["id"]:
                 history_latest = row
     if (history_latest is None or latest["id"] != history_latest["id"]
