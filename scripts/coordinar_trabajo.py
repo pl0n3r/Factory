@@ -4685,15 +4685,31 @@ def close_pr_reservation(
     partial = relation is not None and relation[1] == "roadmap_partial"
     if partial:
         if (relation[0] != issue_number
-            or current is None
-            or not authorized_roadmap_partial(api, issue_number, branch, body, current)
             or not local_pull_source_matches(api, pull, branch)
             or not isinstance(pull.get("base"), dict)
             or pull["base"].get("ref") != "main"
             or not isinstance(pull.get("head"), dict)
             or pull["head"].get("ref") != branch):
             raise CoordinationError(
-                "Cierre parcial: identidad de PR/Issue o autoridad V3 no verificable."
+                "Cierre parcial: identidad de PR/Issue no verificable."
+            )
+        if current is None:
+            # A second closed webhook must not undo an authentic bot terminal.
+            terminal = latest_reservation(api.issue_comments(issue_number))
+            if (not merged
+                or not authorized_roadmap_partial(
+                    api, issue_number, branch, body, terminal,
+                    allow_terminal=True,
+                )):
+                raise CoordinationError(
+                    "Cierre parcial: sin V3 activa ni terminal auténtico."
+                )
+            return
+        if not authorized_roadmap_partial(
+            api, issue_number, branch, body, current
+        ):
+            raise CoordinationError(
+                "Cierre parcial: V3, task y aceptación no auténticos."
             )
         head_sha = pull["head"].get("sha")
         actual_sha = api.branch_sha(branch)
@@ -5072,17 +5088,26 @@ def authorized_roadmap_partial(
     branch: str,
     body: str,
     current: dict[str, Any] | None = None,
+    *,
+    allow_terminal: bool = False,
 ) -> bool:
     """Confirma snapshot bot V3 de una hoja del propio roadmap antes de mutar."""
     issue = api.issue(issue_number)
     lease = current if current is not None else active_reservation(api, issue_number)
+    status_ok = (
+        isinstance(lease, dict)
+        and (lease.get("active") is True
+             or (allow_terminal and lease.get("active") is False
+                 and lease.get("reason") == "pr-merged"
+                 and api.branch_sha(branch) is None))
+    )
     if (issue.get("state") != "open"
         or "tipo: producto" not in label_names(issue)
-        or not isinstance(lease, dict)
+        or not status_ok
         or lease.get("version") != 3
-        or lease.get("active") is not True
+        or not isinstance(lease.get("owner"), str)
+        or not lease.get("owner")
         or lease.get("branch") != branch
-        or lease.get("owner") != "pl0n3r"
         or reservation_from_pr_body(body) != lease.get("reservation_id")
         or not isinstance(lease.get("acceptance_sha256"), str)
         or not isinstance(lease.get("task_marker_sha256"), str)):
