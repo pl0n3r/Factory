@@ -9,6 +9,12 @@ from unittest.mock import patch
 from metricas.evaluar_agentes import _write_artifact_pair, render_markdown
 
 
+def write_report(data, directory):
+    # Explicit test-only injection of the trusted root, never a CLI argument.
+    with patch("metricas.evaluar_agentes.DEFAULT_OUTPUT_DIR", directory):
+        _write_artifact_pair(data)
+
+
 def report():
     return {
         "records": 0, "min_samples": 3, "period": "all",
@@ -32,7 +38,7 @@ class MetricAtomicOutputTests(unittest.TestCase):
             with patch("metricas.evaluar_agentes.os.replace",
                        side_effect=fail_second):
                 with self.assertRaises(OSError):
-                    _write_artifact_pair(report(), root)
+                    write_report(report(), root)
             self.assertEqual("old-json\n",
                              (root / "recomendaciones.json").read_text())
             self.assertEqual("old-md\n", (root / "dashboard.md").read_text())
@@ -44,7 +50,7 @@ class MetricAtomicOutputTests(unittest.TestCase):
     def test_successful_generation_updates_both(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            _write_artifact_pair(report(), root)
+            write_report(report(), root)
             self.assertEqual(report(), json.loads(
                 (root / "recomendaciones.json").read_text(),
             ))
@@ -75,12 +81,12 @@ class MetricAtomicOutputTests(unittest.TestCase):
             with patch("metricas.evaluar_agentes.os.replace",
                        side_effect=fail_restore):
                 with self.assertRaises(OSError):
-                    _write_artifact_pair(report(), root)
+                    write_report(report(), root)
             self.assertTrue(
                 (root / ".metricas-generation-incomplete").exists()
             )
             with self.assertRaises(OSError):
-                _write_artifact_pair(report(), root)
+                write_report(report(), root)
 
     def test_symlink_output_fails_closed(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -89,7 +95,7 @@ class MetricAtomicOutputTests(unittest.TestCase):
             outside = Path(temp) / "outside"
             (root / "recomendaciones.json").symlink_to(outside)
             with self.assertRaises(OSError):
-                _write_artifact_pair(report(), root)
+                write_report(report(), root)
             self.assertFalse(outside.exists())
 
 

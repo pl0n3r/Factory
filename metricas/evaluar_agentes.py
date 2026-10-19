@@ -611,12 +611,13 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _write_artifact_pair(report: dict[str, Any], output_dir: Path) -> None:
+def _write_artifact_pair(report: dict[str, Any]) -> None:
     """Write two fixed offline artifact paths; preserve a fail-closed marker.
 
     Two renames cannot protect live readers or sudden power loss. No metrics
     publication is permitted, even when both staged files are installed.
     """
+    output_dir = DEFAULT_OUTPUT_DIR
     if output_dir.is_symlink():
         raise OSError("directorio de métricas no confiable")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -746,7 +747,7 @@ def main() -> int:
         return 2
 
     try:
-        _write_artifact_pair(report, DEFAULT_OUTPUT_DIR)
+        _write_artifact_pair(report)
     except OSError:
         print(
             "ERROR: no se pudo escribir la evidencia de métricas.",
