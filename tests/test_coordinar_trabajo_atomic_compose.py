@@ -676,6 +676,37 @@ class AtomicComposeTests(unittest.TestCase):
         self.assertEqual(len(self.api.comments[3000]), comment_count)
         self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
 
+    def test_only_authenticated_composite_sources_skip_collision(self):
+        self.prepare_composition()
+        self.assertTrue(coord.collision_validation_errors(self.api, 4000))
+        receipt = self.atomic_compose()
+        self.assertEqual(coord.collision_validation_errors(self.api, 4000), [])
+        self.assertEqual(receipt["source_ids"], ISSUES)
+        other = copy.deepcopy(self.api.pulls[self.api.pr_by_issue[2001]])
+        other["number"] = 4999
+        other["head"]["sha"] = "a" * 40
+        other["head"]["ref"] = "trabajo/issue-4999"
+        self.api.pulls[4999] = other
+        self.api.changed[4999] = {
+            "complete": True, "head_sha": "a" * 40,
+            "base_sha": MAIN, "files": [paths(2001)[0]]
+        }
+        with self.subTest("third party never bypassed"):
+            errors = coord.collision_validation_errors(self.api, 4000)
+            self.assertTrue(any("PR #4999" in error for error in errors))
+        del self.api.pulls[4999]
+        del self.api.changed[4999]
+        with self.subTest("revoked source blocks delegation"):
+            original = self.api.comments[2002][0]["body"]
+            self.api.comments[2002][0]["body"] = original.replace(
+                '"active":true', '"active":false'
+            )
+            with self.assertRaisesRegex(
+                coord.CoordinationError, "claim delegado cambió"
+            ):
+                coord.collision_validation_errors(self.api, 4000)
+            self.api.comments[2002][0]["body"] = original
+
     def test_simultaneous_attempts_and_partial_api_rollback(self):
         self.prepare_composition()
         self.api.lock_held = True
