@@ -3006,9 +3006,25 @@ def verify_exact_integrator_ci_v3(
             or current_lease.get("owner") != plan.get("owner")
             or current_lease.get("branch") != row["branch"]
             or current_lease.get("reservation_id") != row["reservation_id"]
+            or current_lease.get("task_paths") != row["claims"]
+            or current_lease.get("acceptance_sha256") != row.get("acceptance_sha256")
+            or current_lease.get("task_marker_sha256") != row.get("task_marker_sha256")
             or api.branch_sha(row["branch"]) != row["branch_sha"]
         ):
             raise CoordinationError("CI compuesto: fuente sin lease V3 exacta.")
+        source_pr = api.pull(row["pr"])
+        source_head, source_base = source_pr.get("head"), source_pr.get("base")
+        if (
+            source_pr.get("state") != "open"
+            or not isinstance(source_head, dict) or not isinstance(source_base, dict)
+            or source_head.get("ref") != row["branch"]
+            or source_head.get("sha") != row["branch_sha"]
+            or source_base.get("ref") != "main"
+            or source_base.get("sha") != plan["main_sha"]
+            or reservation_from_pr_body(str(source_pr.get("body") or ""))
+               != row["reservation_id"]
+        ):
+            raise CoordinationError("CI compuesto: PR fuente perdió identidad V3.")
         for path in row["files"]:
             if (
                 not isinstance(path, str) or path in expected
@@ -3080,9 +3096,25 @@ def verify_exact_integrator_ci_v3(
             current_lease is None
             or current_lease.get("reservation_id") != row["reservation_id"]
             or current_lease.get("owner") != plan["owner"]
+            or current_lease.get("task_paths") != row["claims"]
+            or current_lease.get("acceptance_sha256") != row.get("acceptance_sha256")
+            or current_lease.get("task_marker_sha256") != row.get("task_marker_sha256")
             or api.branch_sha(row["branch"]) != row["branch_sha"]
         ):
             raise CoordinationError("CI compuesto: fuente cambió tras el check.")
+        source_pr = api.pull(row["pr"])
+        if (
+            source_pr.get("state") != "open"
+            or not isinstance(source_pr.get("head"), dict)
+            or not isinstance(source_pr.get("base"), dict)
+            or source_pr["head"].get("ref") != row["branch"]
+            or source_pr["head"].get("sha") != row["branch_sha"]
+            or source_pr["base"].get("ref") != "main"
+            or source_pr["base"].get("sha") != plan["main_sha"]
+            or reservation_from_pr_body(str(source_pr.get("body") or ""))
+               != row["reservation_id"]
+        ):
+            raise CoordinationError("CI compuesto: PR fuente cambió tras el check.")
     require_global_running(api)
     return {
         "mode": "ci_evidence_only",
