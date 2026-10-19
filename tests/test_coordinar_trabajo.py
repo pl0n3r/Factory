@@ -4359,6 +4359,102 @@ class CoordinacionTests(unittest.TestCase):
         with self.assertRaises(CoordinationError):
             parse_comment_command("/liberar no-es-uuid")
 
+    @staticmethod
+    def _review_event_pull(api: FakeGitHub, *, draft: bool = False) -> dict:
+        return {
+            "number": 15,
+            "state": "open",
+            "draft": draft,
+            "head": {"ref": "trabajo/issue-12", "repo": {"full_name": api.repo}},
+            "base": {"ref": "main"},
+        }
+
+    def test_opened_and_ready_for_review_preserve_blocked_v3_issue(self) -> None:
+        """AC-01: un evento PR no puede borrar una reserva V3 bloqueada."""
+        for action in ("opened", "ready_for_review"):
+            with self.subTest(action=action):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.set_status(12, STATUS_BLOCKED)
+                api.pulls[15] = self._review_event_pull(api)
+                before = list(api.status_history)
+                comments_before = list(api.comments)
+
+                update_pr_state(api, 15, action)
+
+                self.assertEqual(api.status_history, before)
+                self.assertEqual(api.comments, comments_before)
+                self.assertIn(
+                    STATUS_BLOCKED,
+                    {row["name"] for row in api.issue_data["labels"]},
+                )
+                self.assertEqual(
+                    active_reservation(api, 12)["reservation_id"], SESSION_A,
+                )
+                self.assertIn("trabajo/issue-12", api.branches)
+
+    def test_converted_to_draft_preserves_blocked_and_recovery(self) -> None:
+        """AC-02: convertir a borrador no recupera ni desbloquea Issues."""
+        for status in (STATUS_BLOCKED, STATUS_RECOVERY):
+            with self.subTest(status=status):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.set_status(12, status)
+                api.pulls[15] = self._review_event_pull(api, draft=True)
+                before = list(api.status_history)
+
+                update_pr_state(api, 15, "converted_to_draft")
+
+                self.assertEqual(api.status_history, before)
+                self.assertIn(
+                    status,
+                    {row["name"] for row in api.issue_data["labels"]},
+                )
+                self.assertEqual(
+                    active_reservation(api, 12)["reservation_id"], SESSION_A,
+                )
+
+    def test_pr_review_status_sync_only_when_issue_authority_valid(self) -> None:
+        """AC-03: transiciones normales, sin elevar fuentes ajenas o sin V3."""
+        for action, starting, expected in (
+            ("opened", STATUS_RESERVED, STATUS_REVIEW),
+            ("ready_for_review", STATUS_REVIEW, STATUS_REVIEW),
+            ("converted_to_draft", STATUS_REVIEW, STATUS_RESERVED),
+        ):
+            with self.subTest(action=action):
+                api = FakeGitHub()
+                add_active_reservation(api)
+                api.set_status(12, starting)
+                api.status_history.clear()
+                api.pulls[15] = self._review_event_pull(
+                    api, draft=action == "converted_to_draft",
+                )
+
+                update_pr_state(api, 15, action)
+
+                self.assertEqual(api.status_history, [expected])
+                self.assertEqual(
+                    active_reservation(api, 12)["reservation_id"], SESSION_A,
+                )
+
+        for mode in ("no_reservation", "foreign_repo", "wrong_branch", "closed_issue"):
+            with self.subTest(mode=mode):
+                api = FakeGitHub()
+                if mode != "no_reservation":
+                    add_active_reservation(api)
+                api.pulls[15] = self._review_event_pull(api)
+                if mode == "foreign_repo":
+                    api.pulls[15]["head"]["repo"]["full_name"] = "other/repo"
+                elif mode == "wrong_branch":
+                    api.pulls[15]["head"]["ref"] = "trabajo/issue-999"
+                elif mode == "closed_issue":
+                    api.issue_data["state"] = "closed"
+                before = list(api.status_history)
+
+                update_pr_state(api, 15, "ready_for_review")
+
+                self.assertEqual(api.status_history, before)
+
     def test_pr_opened_ready_moves_to_review(self) -> None:
         """Un PR no draft abierto desde reserva pasa a revisión."""
         api = FakeGitHub()

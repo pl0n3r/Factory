@@ -4650,6 +4650,10 @@ def sync_review_status(
     issue = api.issue(issue_number)
     if not current or issue.get("state") != "open":
         return True
+    # Los eventos de PR no tienen autoridad para levantar bloqueos ni recovery.
+    # Solo el flujo explicito de Coordinacion puede reconciliar esos estados.
+    if STATUS_BLOCKED in label_names(issue) or STATUS_RECOVERY in label_names(issue):
+        return True
     if action == "opened" and pull.get("draft"):
         return True
 
