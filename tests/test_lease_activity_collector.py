@@ -164,6 +164,50 @@ class LeaseActivityCollectorTests(unittest.TestCase):
             {"status": "UNKNOWN", "evidence_complete": False},
         )
 
+    def test_old_marker_with_authenticated_running_ci_is_veto_only(self):
+        """Un CI vivo puede impedir release sin demostrar inactividad."""
+        api = API()
+        api.push_event = "pull_request"  # no push-run reciente verificable
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        observed = collect_activity(
+            api, 21, now=NOW, allow_ci_veto_only=True)
+        self.assertTrue(observed["evidence_complete"])
+        self.assertTrue(observed["ci_running"])
+        self.assertTrue(observed["ci_veto_only"])
+        self.assertEqual(observed["activity_source"], "reservation_marker")
+        self.assertEqual(observed["last_activity_at"], "2026-10-11T08:00:00Z")
+        self.assertTrue(all(path.startswith("/repos/") or path == "/rate_limit"
+                            for path in api.calls))
+        api.checks[0]["status"] = "completed"
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW, allow_ci_veto_only=True),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        tampered = API()
+        tampered.push_event = "pull_request"
+        tampered.change_assignees_on_recheck = True
+        self.assertEqual(
+            collect_activity(tampered, 21, now=NOW, allow_ci_veto_only=True),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        race = API()
+        race.push_event = "pull_request"
+        race.restart_check_during_recheck = True
+        # La carrera no puede certificar un veto estable ni inactividad.
+        race.checks[0]["status"] = "completed"
+        self.assertEqual(
+            collect_activity(race, 21, now=NOW, allow_ci_veto_only=True),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(
+            collect_activity(API(), 21, now=NOW,
+                             allow_ci_veto_only="yes"),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
     def test_old_authored_commit_recent_push_is_unknown_without_provenance(self):
         # A commit authored before the lease can be pushed moments ago.
         api = API()

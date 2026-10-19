@@ -381,12 +381,20 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
     try:
         if now.utcoffset() is None:
             return _unknown(issue, "invalid_clock")
-        report = collect_activity(api, issue, now=now)
+        observation_reader = getattr(type(port), "read_observation", None)
+        report = collect_activity(
+            api, issue, now=now,
+            allow_ci_veto_only=callable(observation_reader),
+        )
         if (type(report) is not dict
                 or report.get("evidence_complete") is not True
                 or report.get("issue_number") != issue
                 or report.get("status") not in ACTIVE
                 or type(report.get("ci_running")) is not bool
+                or type(report.get("ci_veto_only")) is not bool
+                or (report["ci_veto_only"] and (
+                    not callable(observation_reader)
+                    or report["ci_running"] is not True))
                 or type(report.get("last_activity_at")) is not str
                 or UTC_STAMP.fullmatch(report["last_activity_at"]) is None
                 or report.get("activity_source") not in (
@@ -397,7 +405,6 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         if last > now.astimezone(timezone.utc):
             return _unknown(issue, "future_activity")
         # La vista de diagnóstico no altera Port.read estricto del executor.
-        observation_reader = getattr(type(port), "read_observation", None)
         snapshot = (port.read_observation(issue) if callable(observation_reader)
                     else port.read(issue))
         observation_trusted = (

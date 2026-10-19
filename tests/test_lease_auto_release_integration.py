@@ -800,6 +800,29 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(running_result.lock_verified)
         self.assertFalse(running_result.cas_verified)
 
+        # Veto tipado aun sin un push reciente: CI activo y corroborado
+        # bloquea cualquier transición, pero NO prueba inactividad.
+        old_api = review_ready_api()
+        old_api.push_event = "pull_request"
+        old_snapshot = replace(
+            running_snapshot, last_activity_at=NOW - timedelta(hours=2))
+        old_port = ObservationOnlyPort(old_snapshot)
+        old_observed = preview_integrated_activity(
+            old_api, old_port, 21, now=NOW)
+        self.assertEqual(
+            (old_observed.state, old_observed.action, old_observed.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertEqual(old_observed.activity_source, "reservation_marker")
+        self.assertFalse(old_observed.release_authorized)
+        old_api.checks[0]["status"] = "completed"
+        self.assertEqual(
+            preview_integrated_activity(
+                old_api, ObservationOnlyPort(replace(
+                    old_snapshot, ci_running=False)), 21, now=NOW).state,
+            "UNKNOWN",
+        )
+
         # Discrepancia entre checks y snapshot: se conserva UNKNOWN.
         completed_api = review_ready_api()
         completed_api.checks[0]["status"] = "completed"

@@ -32,7 +32,8 @@ def _time(value: Any, now: datetime) -> datetime:
 
 
 def collect_activity(api: Any, issue_number: int, *, now: datetime,
-                     max_requests: int = 32) -> dict[str, Any]:
+                     max_requests: int = 32,
+                     allow_ci_veto_only: bool = False) -> dict[str, Any]:
     """Observa una hoja sin mutar GitHub ni decidir liberaciones.
 
     api.request debe ser el transporte REST autenticado. El resultado es
@@ -46,6 +47,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(repo) is not str
                 or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None
                 or type(max_requests) is not int or not 1 <= max_requests <= 40
+                or type(allow_ci_veto_only) is not bool
                 or type(now) is not datetime or now.tzinfo is None
                 or now.utcoffset() is None):
             return unknown
@@ -320,7 +322,12 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                     latest = pushed_at
                     activity_source = "workflow_push"
                 recent = True
-        if not recent:
+        # Veto CI autenticado: una acción de release es imposible mientras
+        # esté en curso. La EXCEPCIÓN aplica únicamente al observador
+        # desarmado; NO prueba ausencia de pushes ni sirve para CAS mutante.
+        # El transporte y las identidades siguen revalidados abajo.
+        ci_veto_only = not recent
+        if ci_veto_only and not (allow_ci_veto_only and running):
             raise IncompleteEvidence()
 
         verify = get(path)
@@ -351,7 +358,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             "branch": branch, "branch_sha": sha, "pagination": pagination,
             "last_activity_at": latest.isoformat().replace("+00:00", "Z"),
             "activity_source": activity_source,
-            "ci_running": running, "rate_limit": limit,
+            "ci_running": running, "ci_veto_only": ci_veto_only,
+            "rate_limit": limit,
             "rate_remaining": effective_remaining, "api_requests": used,
         }
     except Exception:

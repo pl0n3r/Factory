@@ -293,7 +293,10 @@ class LeaseGithubPort:
                 # recolector sólo entiende reservas activas, así que se
                 # evalúa la actividad SIN ese comentario del bot.
                 api = _WithoutComment(self._api, issue, latest[0])
-            report = collect_activity(api, issue, now=now)
+            report = collect_activity(
+                api, issue, now=now,
+                allow_ci_veto_only=observation_only,
+            )
             if (type(report) is not dict or report.get("evidence_complete") is not True
                     or report.get("status") not in ACTIVE
                     or report.get("issue_number") != issue):
