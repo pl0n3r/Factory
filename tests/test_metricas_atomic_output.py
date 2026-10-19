@@ -1,5 +1,6 @@
-"""Fail-closed JSON/Markdown pair publishing for Factory #1198."""
+"""Fail-closed staged JSON/Markdown publishing for Factory #1198."""
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from metricas.evaluar_agentes import _write_artifact_pair, render_markdown
 
 
 def write_report(data, directory):
-    # Explicit test-only injection of the trusted root, never a CLI argument.
+    # Inject only a trusted test directory, never a CLI path.
     with patch("metricas.evaluar_agentes.DEFAULT_OUTPUT_DIR", directory):
         _write_artifact_pair(data)
 
@@ -27,20 +28,22 @@ class MetricAtomicOutputTests(unittest.TestCase):
             root = Path(temp)
             (root / "recomendaciones.json").write_text("old-json\n")
             (root / "dashboard.md").write_text("old-md\n")
-            original = Path.write_text
+            original = os.replace
 
-            def fail_second(path, content, **kwargs):
-                if path.name == "dashboard.md":
-                    raise OSError("synthetic write failure")
-                return original(path, content, **kwargs)
+            def fail_second(source, destination):
+                if Path(source).name == ".metricas-md-next":
+                    raise OSError("synthetic second-publish failure")
+                return original(source, destination)
 
-            with patch.object(Path, "write_text", autospec=True,
-                              side_effect=fail_second):
+            data = report()
+            with patch("metricas.evaluar_agentes.os.replace",
+                       side_effect=fail_second):
                 with self.assertRaises(OSError):
-                    write_report(report(), root)
+                    write_report(data, root)
             self.assertEqual("old-json\n",
                              (root / "recomendaciones.json").read_text())
-            self.assertEqual("old-md\n", (root / "dashboard.md").read_text())
+            self.assertEqual("old-md\n",
+                             (root / "dashboard.md").read_text())
             self.assertEqual(
                 sorted(p.name for p in root.iterdir()),
                 ["dashboard.md", "recomendaciones.json"],
@@ -68,30 +71,51 @@ class MetricAtomicOutputTests(unittest.TestCase):
             root = Path(temp)
             (root / "recomendaciones.json").write_text("old-json\n")
             (root / "dashboard.md").write_text("old-md\n")
-            original_write = Path.write_text
-            original_bytes = Path.write_bytes
+            original = os.replace
 
-            def fail_second(path, content, **kwargs):
-                if path.name == "dashboard.md":
-                    raise OSError("synthetic second-write failure")
-                return original_write(path, content, **kwargs)
+            def fail_second_and_rollback(source, destination):
+                if Path(source).name in (
+                    ".metricas-md-next", ".metricas-json-rollback",
+                ):
+                    raise OSError("synthetic publish/rollback failure")
+                return original(source, destination)
 
-            def fail_restore(path, content):
-                if path.name == "recomendaciones.json":
-                    raise OSError("synthetic rollback failure")
-                return original_bytes(path, content)
-
-            with patch.object(Path, "write_text", autospec=True,
-                              side_effect=fail_second), patch.object(
-                Path, "write_bytes", autospec=True, side_effect=fail_restore
-            ):
+            data = report()
+            with patch("metricas.evaluar_agentes.os.replace",
+                       side_effect=fail_second_and_rollback):
                 with self.assertRaises(OSError):
-                    write_report(report(), root)
+                    write_report(data, root)
             self.assertTrue(
                 (root / ".metricas-generation-incomplete").exists()
             )
             with self.assertRaises(OSError):
-                write_report(report(), root)
+                write_report(data, root)
+
+    def test_second_staging_failure_never_changes_published_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "recomendaciones.json").write_text("old-json\n")
+            (root / "dashboard.md").write_text("old-md\n")
+            from metricas.evaluar_agentes import _metric_private_stage
+
+            def reject_markdown_stage(path, content, mode):
+                if path.name == ".metricas-md-next":
+                    raise OSError("synthetic staging failure")
+                return _metric_private_stage(path, content, mode)
+
+            data = report()
+            with patch("metricas.evaluar_agentes._metric_private_stage",
+                       side_effect=reject_markdown_stage):
+                with self.assertRaises(OSError):
+                    write_report(data, root)
+            self.assertEqual("old-json\n",
+                             (root / "recomendaciones.json").read_text())
+            self.assertEqual("old-md\n",
+                             (root / "dashboard.md").read_text())
+            self.assertEqual(
+                sorted(p.name for p in root.iterdir()),
+                ["dashboard.md", "recomendaciones.json"],
+            )
 
     def test_symlink_output_fails_closed(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -99,8 +123,9 @@ class MetricAtomicOutputTests(unittest.TestCase):
             root.mkdir()
             outside = Path(temp) / "outside"
             (root / "recomendaciones.json").symlink_to(outside)
+            data = report()
             with self.assertRaises(OSError):
-                write_report(report(), root)
+                write_report(data, root)
             self.assertFalse(outside.exists())
 
 

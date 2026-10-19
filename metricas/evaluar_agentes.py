@@ -611,71 +611,103 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _write_artifact_pair(report: dict[str, Any]) -> None:
-    """Fail-closed offline two-file update with in-memory rollback.
-
-    The marker blocks other writers and prevents use after an interrupted or
-    unrecoverable generation. This is NOT an atomic snapshot for live readers.
-    Runtime destinations are fixed project files, not caller-controlled paths.
-    """
-    output_dir = DEFAULT_OUTPUT_DIR
-    if output_dir.is_symlink():
-        raise OSError("directorio de métricas no confiable")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    json_file = output_dir / "recomendaciones.json"
-    markdown_file = output_dir / "dashboard.md"
-    marker = output_dir / ".metricas-generation-incomplete"
-
-    if json_file.is_symlink() or markdown_file.is_symlink():
+def _metric_snapshot(target: Path) -> tuple[bytes | None, int]:
+    """Read only fixed-name local regular files, preserving private modes."""
+    if target.is_symlink():
         raise OSError("salida de métricas simbólica")
-    if json_file.exists() and not stat.S_ISREG(json_file.stat().st_mode):
-        raise OSError("salida JSON no regular")
-    if markdown_file.exists() and not stat.S_ISREG(markdown_file.stat().st_mode):
-        raise OSError("salida Markdown no regular")
+    if not target.exists():
+        return None, 0o600
+    details = target.stat()
+    if not stat.S_ISREG(details.st_mode):
+        raise OSError("salida de métricas no regular")
+    return target.read_bytes(), stat.S_IMODE(details.st_mode) & 0o600
 
-    previous_json = json_file.read_bytes() if json_file.exists() else None
-    previous_markdown = (
-        markdown_file.read_bytes() if markdown_file.exists() else None
-    )
-    json_content = json.dumps(
-        report, ensure_ascii=False, indent=2, sort_keys=True,
-    ) + "\n"
-    markdown_content = render_markdown(report) + "\n"
 
+def _metric_private_stage(path: Path, content: bytes, mode: int) -> None:
+    """O_EXCL and private permissions reject stale/symlink stage names."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(content)
+    path.chmod(mode)
+
+
+def _metric_restore(
+    target: Path, backup: Path, previous: bytes | None, mode: int,
+) -> None:
+    """Restore by single-file atomic replace; never truncate target in place."""
+    if previous is None:
+        target.unlink(missing_ok=True)
+    else:
+        _metric_private_stage(backup, previous, mode)
+        os.replace(backup, target)
+
+
+def _metric_cleanup_scratch(root: Path) -> None:
+    """Delete only known static names. Unknown entries are never traversed."""
+    (root / ".metricas-json-next").unlink(missing_ok=True)
+    (root / ".metricas-md-next").unlink(missing_ok=True)
+    (root / ".metricas-json-rollback").unlink(missing_ok=True)
+    (root / ".metricas-md-rollback").unlink(missing_ok=True)
+
+
+def _write_artifact_pair(report: dict[str, Any]) -> None:
+    """Private staging plus fail-closed recovery for fixed offline outputs.
+
+    Replacements are atomic per file, not for the JSON/Markdown pair.
+    Readers must reject the generation marker; no publication is enabled.
+    """
+    root = DEFAULT_OUTPUT_DIR
+    if root.is_symlink():
+        raise OSError("directorio de métricas no confiable")
+    root.mkdir(parents=True, exist_ok=True)
+    json_target = root / "recomendaciones.json"
+    md_target = root / "dashboard.md"
+    json_next = root / ".metricas-json-next"
+    md_next = root / ".metricas-md-next"
+    json_backup = root / ".metricas-json-rollback"
+    md_backup = root / ".metricas-md-rollback"
+    marker = root / ".metricas-generation-incomplete"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        with marker.open("x", encoding="utf-8") as lock:
-            lock.write("generation-incomplete\n")
+        descriptor = os.open(marker, flags, 0o600)
     except FileExistsError as exc:
         raise OSError("generación incompleta: recuperación necesaria") from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write("generation-incomplete\n")
 
+    committed_json = False
+    committed_md = False
     try:
-        # Private on creation; existing files never gain permissions.
-        if not json_file.exists():
-            json_file.touch(mode=0o600, exist_ok=False)
-        else:
-            json_file.chmod(0o600)
-        if not markdown_file.exists():
-            markdown_file.touch(mode=0o600, exist_ok=False)
-        else:
-            markdown_file.chmod(0o600)
-        json_file.write_text(json_content, encoding="utf-8")
-        markdown_file.write_text(markdown_content, encoding="utf-8")
+        previous_json, json_mode = _metric_snapshot(json_target)
+        previous_md, md_mode = _metric_snapshot(md_target)
+        json_content = (json.dumps(
+            report, ensure_ascii=False, indent=2, sort_keys=True,
+        ) + "\n").encode("utf-8")
+        md_content = (render_markdown(report) + "\n").encode("utf-8")
+        # Both complete and private before either public output is replaced.
+        _metric_private_stage(json_next, json_content, json_mode)
+        _metric_private_stage(md_next, md_content, md_mode)
+        os.replace(json_next, json_target)
+        committed_json = True
+        os.replace(md_next, md_target)
+        committed_md = True
     except OSError:
         try:
-            if previous_json is None:
-                json_file.unlink(missing_ok=True)
-            else:
-                json_file.write_bytes(previous_json)
-            if previous_markdown is None:
-                markdown_file.unlink(missing_ok=True)
-            else:
-                markdown_file.write_bytes(previous_markdown)
-            # Only a verified full restoration clears the unsafe marker.
+            if committed_md:
+                _metric_restore(md_target, md_backup, previous_md, md_mode)
+            if committed_json:
+                _metric_restore(json_target, json_backup, previous_json, json_mode)
+            _metric_cleanup_scratch(root)
             marker.unlink()
         except OSError:
-            # The marker stays and blocks any subsequent unattended writes.
+            # Backups/marker remain for explicit recovery if rollback fails.
             pass
         raise
+
+    _metric_cleanup_scratch(root)
     marker.unlink()
 
 
