@@ -2575,6 +2575,28 @@ def pull_request_review_event_example():
     }
 
 
+    def test_immediate_merge_authority_is_absent_in_phase_one(self):
+        """AC-01: la Fase 1 nunca concede autoridad de fusión."""
+        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
+        self.assertIn("    if: ${{ false }}", workflow)
+        for forbidden in ("gh api --method PUT", "gh pr merge", "MERGE_TOKEN",
+                          "AUTOMERGE_TOKEN", "secrets.", "contents: write",
+                          "pull-requests: write"):
+            self.assertNotIn(forbidden, workflow)
+
+    def test_completed_ci_can_resolve_current_exact_head(self):
+        pr={'number':1364,'state':'open','draft':False,
+            'head':{'ref':'trabajo/issue-1364', 'sha':SHA,
+                    'repo':{'full_name':'pl0n3r/Factory','fork':False}},
+            'base':{'ref':'main'}}
+        with patch.object(mod,'get',return_value=pr) as get:
+            self.assertEqual(mod.resolve_workflow_run('test-token',workflow_run_event_example()), (1364,SHA))
+        get.assert_called_once_with('test-token','/repos/pl0n3r/Factory/pulls/1364')
+        # Important: workflow_run.head_sha could be the synthetic PR merge SHA.
+        # The authenticated current PR head and the canonical guard decide.
+        self.assertNotEqual(workflow_run_event_example()['workflow_run']['head_sha'], SHA)
+
+
 class PullRequestReviewEventTests(unittest.TestCase):
     def test_review_submission_resolves_current_authenticated_head(self):
         pr = {"number": 1375, "state": "open", "draft": False,
@@ -2655,17 +2677,6 @@ def workflow_run_event_example():
 
 
 class WorkflowRunEventTests(unittest.TestCase):
-    def test_completed_ci_can_resolve_current_exact_head(self):
-        pr={'number':1364,'state':'open','draft':False,
-            'head':{'ref':'trabajo/issue-1364', 'sha':SHA,
-                    'repo':{'full_name':'pl0n3r/Factory','fork':False}},
-            'base':{'ref':'main'}}
-        with patch.object(mod,'get',return_value=pr) as get:
-            self.assertEqual(mod.resolve_workflow_run('test-token',workflow_run_event_example()), (1364,SHA))
-        get.assert_called_once_with('test-token','/repos/pl0n3r/Factory/pulls/1364')
-        # Important: workflow_run.head_sha could be the synthetic PR merge SHA.
-        # The authenticated current PR head and the canonical guard decide.
-        self.assertNotEqual(workflow_run_event_example()['workflow_run']['head_sha'], SHA)
 
     def test_workflow_run_pr_number_is_not_issue_number(self):
         """PR #1375 may close Issue #1364; GitHub allocates both independently."""
@@ -2850,29 +2861,6 @@ class MainCliContractTests(unittest.TestCase):
 
 class AutoMergeShellOutcomeTests(unittest.TestCase):
     """Fase 1 no contiene una sección de shell con autoridad de fusión."""
-
-    def test_immediate_merge_authority_is_absent_in_phase_one(self):
-        import sys
-        print("AC01_TRACE entered=true path=" + str(ROOT / ".github" / "workflows" / "automerge.yml") + " exists=" + str((ROOT / ".github" / "workflows" / "automerge.yml").exists()), file=sys.stderr)
-        workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text()
-        requirements = ("    if: ${{ false }}",)
-        forbidden = ("gh api --method PUT", "gh pr merge", "MERGE_TOKEN",
-                     "AUTOMERGE_TOKEN", "secrets.", "contents: write",
-                     "pull-requests: write")
-        # Emit sanitized, bounded diagnostics only when a contract assertion
-        # fails in isolated acceptance. Never soften the actual assertion.
-        if any(item not in workflow for item in requirements) or any(
-                item in workflow for item in forbidden):
-            import sys
-            print("AUTO_MERGE_PHASE1_CONTRACT:",
-                  "required=" + repr([x for x in requirements if x not in workflow]),
-                  "forbidden=" + repr([x for x in forbidden if x in workflow]),
-                  "path=" + str(ROOT / ".github" / "workflows" / "automerge.yml"),
-                  file=sys.stderr)
-        for required in requirements:
-            self.assertIn(required, workflow)
-        for value in forbidden:
-            self.assertNotIn(value, workflow)
 
 
     def test_event_triggers_are_declared_while_phase_one_stays_inert(self):
