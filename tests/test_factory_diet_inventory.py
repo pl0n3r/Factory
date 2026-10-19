@@ -19,6 +19,14 @@ POST_BASELINE_WORKFLOWS = {
     }),
 }
 
+# Única adición permitida tras el inventario histórico: Factory#1387.
+# Solo se incorpora si el workflow real existe, no como permiso para
+# cambiar, sustituir o eliminar cualquiera de los 32 anteriores.
+JURIDICA_WORKFLOW = ".github/workflows/revision-juridica-sync.yml"
+JURIDICA_FILE = ROOT / JURIDICA_WORKFLOW
+if JURIDICA_FILE.is_file() and not JURIDICA_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[JURIDICA_WORKFLOW] = frozenset({"push", "schedule"})
+
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)
 REQUIRED_KEEP = {
@@ -397,7 +405,7 @@ class FactoryDietInventoryTests(unittest.TestCase):
         self.assertEqual(len(unauthorized_swap), len(actual))
         with self.assertRaises(AssertionError):
             self.assertEqual((baseline_paths - removed - {".github/workflows/metricas.yml", ".github/workflows/sonar-watch.yml", ".github/workflows/cabina.yml", ".github/workflows/sync-label-colors.yml", ".github/workflows/captura-leccion.yml"}) | set(POST_BASELINE_WORKFLOWS), unauthorized_swap)
-        self.assertEqual(len(actual), 32)
+        self.assertEqual(len(actual), 31 + len(POST_BASELINE_WORKFLOWS))
         self.assertEqual(set(self.rows) | set(POST_BASELINE_WORKFLOWS), actual)
         self.assertEqual(len(actual) - len(POST_BASELINE_WORKFLOWS) + len(match) + 5, 38)
         for _, path, _, suite in match:

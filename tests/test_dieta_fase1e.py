@@ -21,7 +21,7 @@ class DietaFase1ETests(unittest.TestCase):
 
     def test_only_offline_capture_trigger_is_retired_after_lease_dependency(self):
         active = self.active()
-        self.assertEqual(len(active), 32)
+        self.assertEqual(len(active), len(EXPECTED_ACTIVE))
         self.assertEqual(active, set(EXPECTED_ACTIVE))
         self.assertNotIn(RETIRED, active)
         self.assertFalse((WF / RETIRED).exists())
@@ -72,7 +72,7 @@ class DietaFase1ETests(unittest.TestCase):
         self.assertEqual(active, set(EXPECTED_ACTIVE))
         victim = next(iter(sorted(active)))
         swapped = (active - {victim}) | {"trigger-no-autorizado.yml"}
-        self.assertEqual(len(swapped), 32)
+        self.assertEqual(len(swapped), len(EXPECTED_ACTIVE))
         self.assertNotEqual(swapped, set(EXPECTED_ACTIVE))
 
 
