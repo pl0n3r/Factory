@@ -3443,19 +3443,43 @@ def reconcile_atomic_compose_v3(
         if (lease is None or lease.get("reservation_id") != row["reservation_id"]
                 or api.branch_sha(row["branch"]) != row["branch_sha"]):
             raise CoordinationError("Composición V3: fuente cambió antes de cierre.")
+    # Dos fases: autenticar TODAS las fuentes ANTES de mutar una sola.
+    # Si el último PR ya se fusionó/cambió no puede cerrar el primero.
+    # Los cerrados no fusionados se admiten para reintentos parciales.
+    open_source_prs: list[dict[str, Any]] = []
+    for row in receipt["sources"]:
+        pr = api.pull(row["pr"])
+        head, base = pr.get("head"), pr.get("base")
+        if pr.get("merged") is True:
+            raise CoordinationError("Composición V3: hijo fusionado por separado.")
+        if (
+            pr.get("state") not in ("open", "closed")
+            or not isinstance(head, dict) or not isinstance(base, dict)
+            or head.get("sha") != row["branch_sha"]
+            or head.get("ref") != row["branch"]
+            or base.get("ref") != "main"
+        ):
+            raise CoordinationError("Composición V3: hijo cambió durante cierre.")
+        if pr["state"] == "open":
+            open_source_prs.append(row)
     # El registro probatorio/las ramas origen quedan. Cerrar PRs solo,
     # no borrar refs, ni emitir /liberar, ni invalidar leases históricas.
     require_global_running(api)
-    for row in receipt["sources"]:
+    for row in open_source_prs:
+        # CAS lógico best effort por PR: revalidar justo antes del PATCH.
+        # Un fallo REST puede cerrar solo un prefijo, luego se reintenta.
         pr = api.pull(row["pr"])
-        if pr.get("merged") is True:
-            raise CoordinationError("Composición V3: hijo fusionado por separado.")
-        if pr.get("state") == "open":
-            if (pr.get("head", {}).get("sha") != row["branch_sha"]
-                    or pr.get("base", {}).get("ref") != "main"):
-                raise CoordinationError("Composición V3: hijo cambió durante cierre.")
-            require_global_running(api)
-            api.close_pull(row["pr"])
+        head, base = pr.get("head"), pr.get("base")
+        if (
+            pr.get("state") != "open" or pr.get("merged") is True
+            or not isinstance(head, dict) or not isinstance(base, dict)
+            or head.get("sha") != row["branch_sha"]
+            or head.get("ref") != row["branch"]
+            or base.get("ref") != "main"
+        ):
+            raise CoordinationError("Composición V3: hijo cambió durante cierre.")
+        require_global_running(api)
+        api.close_pull(row["pr"])
     return {
         "mode": "reconciled_after_merge", "integrator_issue": integrator_issue,
         "main_sha": merged_sha,
