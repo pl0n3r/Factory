@@ -539,6 +539,10 @@ class LeaseActivityCollectorTests(unittest.TestCase):
             "created_at": "2026-10-11T07:00:00Z",
             "updated_at": "2026-10-11T07:30:00Z",
         }
+        # Preserve API cursor ordering: IDs must be positive and increasing.
+        api.comments[0]["id"] = 2  # reserva de bot
+        api.comments[1]["id"] = 3  # comentario ajeno
+        old_owner_comment["id"] = 1
         api.comments.insert(0, old_owner_comment)
         api.issue["comments"] = len(api.comments)
         # Sin edición posterior al marker, un comentario antiguo no basta
