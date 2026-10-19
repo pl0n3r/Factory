@@ -46,6 +46,10 @@ EXPECTED_ACTIVE = frozenset([
     "sonar.yml",
     "unattended-watchdog.yml"
 ])
+# Mantener los 32 nombres históricos exactos y una única adición opcional.
+LEGAL_SYNC = WF / "revision-juridica-sync.yml"
+if LEGAL_SYNC.is_file() and not LEGAL_SYNC.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"revision-juridica-sync.yml"})
 HARD_GATES = (
     "factory-ci.yml", "sonar.yml", "codeql-evidence.yml",
     "seguridad.yml", "costos.yml", "unattended-watchdog.yml",
@@ -66,7 +70,7 @@ class DietaFase1CTests(unittest.TestCase):
     def test_sonar_watch_optional_workflow_removed_after_consumer_preflight(self):
         active = self.actual()
         self.assertEqual(active, EXPECTED_ACTIVE)
-        self.assertEqual(len(active), 32)
+        self.assertEqual(len(active), len(EXPECTED_ACTIVE))
         self.assertNotIn(REMOVED, active)
         self.assertIn("122 YAML", self.document)
         self.assertIn("check requerido `Validar`", self.document)
@@ -153,7 +157,7 @@ class DietaFase1CTests(unittest.TestCase):
         self.assertEqual(active, EXPECTED_ACTIVE)
         victim = next(iter(sorted(active)))
         swapped = (active - {victim}) | {"workflow-no-autorizado.yml"}
-        self.assertEqual(len(swapped), 32)
+        self.assertEqual(len(swapped), len(EXPECTED_ACTIVE))
         self.assertNotEqual(swapped, EXPECTED_ACTIVE)
 
 
