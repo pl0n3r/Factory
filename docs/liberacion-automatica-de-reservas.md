@@ -10,6 +10,18 @@ hipotéticas y vetos en el resumen de cada run/artefacto, y mantiene **0
 escrituras, 0 reservas liberadas**. `UNKNOWN`, 403 y fuente incompleta no
 acreditan inactividad ni crean autoridad para mutar.
 
+**CI activo como veto de observación (no prueba de inactividad).**
+`collect_activity(..., allow_ci_veto_only=True)` permite emitir evidencia
+`ci_veto_only=true` únicamente cuando los checks o runs de la rama están
+autenticados, paginados y estables entre lecturas. Solo se usa desde
+`LeaseGithubPort.read_observation()` y el preview GET-only: devuelve
+`read_only/wait`, aunque la última actividad positiva sea antigua. La ruta
+`read()` y cualquier ejecución mutante conservan el rechazo de esa evidencia.
+Si el CI finaliza, las fuentes discrepan, cambia el HEAD o falta procedencia,
+la observación vuelve a `UNKNOWN`. **Un veto tipado nunca demuestra la
+ausencia de pushes y no acredita una decisión hipotética `release`**.
+Continúa pendiente una auditoría negativa de pushes completa y autenticada.
+
 Con cuota REST inferior al 20 %, el ciclo publica `deferred_low_quota`,
 omite el censo y termina en verde; ese run **no cuenta** como observación válida.
 
