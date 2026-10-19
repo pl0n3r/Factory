@@ -814,10 +814,10 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         pushed.push_event = "pull_request"
         pushed.checks[0]["status"] = "completed"
         pushed.activity_rows = [{
-            "id": 37, "activity_type": "push",
+            "id": 37, "push_type": "normal",
             "ref": "refs/heads/trabajo/issue-21",
-            "timestamp": "2026-10-11T09:42:00Z",
-            "actor": {"login": "pl0n3r", "type": "User"},
+            "pushed_at": "2026-10-11T09:42:00Z",
+            "pusher": {"login": "pl0n3r", "type": "User"},
             "before": "b" * 40, "after": SHA,
         }]
         positive_port = ReadOnlyPort(replace(
