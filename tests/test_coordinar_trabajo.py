@@ -1057,6 +1057,14 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(terminal["task_marker_sha256"],
                          current["task_marker_sha256"])
         self.assertIn('factory-plan-task', api.issue_data["body"])
+        # Replay of an authentic closed event is a no-op after the trusted
+        # bot terminal; the roadmap is never reclassified as completed.
+        status_before = list(api.status_history)
+        comments_before = list(api.comments)
+        update_pr_state(api, 15, "closed")
+        self.assertEqual(api.status_history, status_before)
+        self.assertEqual(api.comments, comments_before)
+        self.assertEqual(api.issue_data["state"], "open")
 
     def test_planned_partial_roadmap_normal_and_unmerged_behaviors(self):
         """AC-02: flujo normal/legacy, cierre no merged y mezcla de keywords."""
