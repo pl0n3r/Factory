@@ -2854,13 +2854,27 @@ def plan_atomic_compose_v3(
         raise CoordinationError("Composición V3: main cambió durante lectura.")
     for row in result:
         number = row["issue"]
+        current_issue = api.issue(number)
         if (
             api.branch_sha(row["branch"]) != row["branch_sha"]
-            or active_reservation(api, number) is None
-            or api.issue(number).get("state") != "open"
+            or current_issue.get("state") != "open"
+            or not ({STATUS_RESERVED, STATUS_REVIEW} & label_names(current_issue))
         ):
             raise CoordinationError("Composición V3: una fuente cambió.")
+        try:
+            current_body = str(current_issue.get("body") or "")
+            current_acceptance = contract_fingerprint(current_body)
+            current_task = task_marker_fingerprint(parse_task_marker(current_body))
+        except (AcceptanceError, PlanError, TypeError, ValueError) as exc:
+            raise CoordinationError("Composición V3: contrato cambió.") from exc
+        if (
+            current_acceptance != row["acceptance_sha256"]
+            or current_task != row["task_marker_sha256"]
+        ):
+            raise CoordinationError("Composición V3: contrato cambió.")
         latest = active_reservation(api, number)
+        if latest is None:
+            raise CoordinationError("Composición V3: lease ausente.")
         if (
             latest.get("reservation_id") != row["reservation_id"]
             or latest.get("task_paths") != row["claims"]
