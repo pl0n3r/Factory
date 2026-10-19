@@ -73,6 +73,24 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         # Solo el nuevo gate CLI (helper + invocación) puede diferir de ese
         # motor; toda alteración adicional vuelve a invalidar la huella.
         source = (ROOT / "scripts/politica_kit.py").read_text(encoding="utf-8")
+        # Factory#1389 (decisión del dueño 2026-10-17, «que no bloquee sin cupo»): se retira
+        # únicamente su inserción delimitada; el resto del motor sigue bajo la huella fija.
+        for begin, end, tail in (
+            ("# F1389_NO_QUOTA_MODULE_BEGIN\n", "# F1389_NO_QUOTA_MODULE_END\n", "\n\n"),
+            ("    # F1389_NO_QUOTA_HOOK_BEGIN\n", "    # F1389_NO_QUOTA_HOOK_END\n", ""),
+        ):
+            self.assertEqual(source.count(begin), 1)
+            self.assertEqual(source.count(end), 1)
+            head, rest = source.split(begin, 1)
+            _block, after = rest.split(end, 1)
+            self.assertTrue(after.startswith(tail))
+            source = head + after[len(tail):]
+        for line in (
+            "    no_block_without_quota: bool = False,\n",
+            "            no_block_without_quota=True,\n",
+        ):
+            self.assertEqual(source.count(line), 1)
+            source = source.replace(line, "", 1)
         phase_helper = (
             'def validate_rounds_for_phase(rounds: int, limit: int, phase_file: Path | None) -> None:\n'
             '    """Rondas informativas solo si datos.yml base acredita construccion.\n'
