@@ -404,6 +404,7 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         report = collect_activity(
             api, issue, now=now,
             allow_ci_veto_only=callable(observation_reader),
+            allow_review_veto_only=callable(observation_reader),
         )
         if (type(report) is not dict
                 or report.get("evidence_complete") is not True
@@ -411,6 +412,9 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
                 or report.get("status") not in ACTIVE
                 or type(report.get("ci_running")) is not bool
                 or type(report.get("ci_veto_only")) is not bool
+                or type(report.get("review_veto_only")) is not bool
+                or (report["review_veto_only"]
+                    and not callable(observation_reader))
                 or (report["ci_veto_only"] and (
                     not callable(observation_reader)
                     or report["ci_running"] is not True))
@@ -462,7 +466,8 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         # Veto positivo de review sólo acreditado si las dos fronteras
         # (Port y API de reviews revalidada) coinciden. Nunca es prueba
         # de inactividad, ni habilita la ruta mutante del executor.
-        if veto != snapshot.changes_requested:
+        if (veto != snapshot.changes_requested
+                or (report["review_veto_only"] and veto is not True)):
             return _unknown(issue, "review_veto_inconsistent")
         decision: Decision = decision_from_snapshot(snapshot)
         # Un preview no es autoridad: aunque ambos lectores devuelvan
@@ -479,7 +484,8 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
             # No atribuir inactividad a un marker antiguo cuando solo
             # tenemos un veto CI autenticado, no una auditoría de pushes.
             age if decision.action == "wait"
-            and report["ci_veto_only"] is False else None,
+            and not (report["ci_veto_only"] or report["review_veto_only"])
+            else None,
             report["activity_source"] if decision.action == "wait" else None,
         )
     except Exception:

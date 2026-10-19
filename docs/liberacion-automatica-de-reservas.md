@@ -18,8 +18,14 @@ autenticados, paginados y estables entre lecturas. Solo se usa desde
 `read_only/wait`, aunque la última actividad positiva sea antigua. La ruta
 `read()` y cualquier ejecución mutante conservan el rechazo de esa evidencia.
 Si el CI finaliza, las fuentes discrepan, cambia el HEAD o falta procedencia,
-la observación vuelve a `UNKNOWN`. **Un veto tipado nunca demuestra la
-ausencia de pushes y no acredita una decisión hipotética `release`**.
+la observación vuelve a `UNKNOWN`. También se admite el veto positivo de
+una revisión externa `CHANGES_REQUESTED` cuando los dos inventarios de
+reviews y el Port concuerdan con el PR exact-SHA, incluso si no hay push
+reciente. Su resultado es exclusivamente `read_only/wait` con
+`inactividad=UNKNOWN`: una aprobación posterior, desaparición del veto
+o carrera devuelve `UNKNOWN`, nunca una falsa prueba negativa.
+**Un veto tipado nunca demuestra la ausencia de pushes y no acredita una
+decisión hipotética `release`**.
 Por tanto, el preview conserva `wait` y la fuente identificada, pero
 publica `inactividad=UNKNOWN` (minutos = `null`) cuando
 `ci_veto_only=true`, sin atribuir ausencia al marker antiguo.

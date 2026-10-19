@@ -839,6 +839,40 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             "UNKNOWN",
         )
 
+        # Sin push reciente, una revisión externa bloqueante y corroborada
+        # sigue siendo veto positivo wait. No atribuir dos horas de inactividad.
+        stale_review_api = review_ready_api()
+        stale_review_api.push_event = "pull_request"
+        stale_review_api.checks[0]["status"] = "completed"
+        stale_review_api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        stale_review_port = ObservationOnlyPort(replace(
+            item, last_activity_at=NOW - timedelta(hours=2),
+            changes_requested=True))
+        stale_review = preview_integrated_activity(
+            stale_review_api, stale_review_port, 21, now=NOW)
+        self.assertEqual(
+            (stale_review.state, stale_review.action, stale_review.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertIsNone(stale_review.activity_age_minutes)
+        self.assertIn("inactividad=UNKNOWN", stale_review.summary_line)
+        self.assertFalse(stale_review.release_authorized)
+        self.assertFalse(stale_review.lock_verified)
+        self.assertFalse(stale_review.cas_verified)
+        # Cambio de revisión o discordancia entre fuentes debe fallar cerrado.
+        stale_review_api.reviews[0]["state"] = "APPROVED"
+        self.assertEqual(
+            preview_integrated_activity(
+                stale_review_api, ObservationOnlyPort(replace(
+                    item, last_activity_at=NOW - timedelta(hours=2),
+                    changes_requested=True)), 21, now=NOW).state,
+            "UNKNOWN",
+        )
+
         # Veto tipado aun sin un push reciente: CI activo y corroborado
         # bloquea cualquier transición, pero NO prueba inactividad.
         old_api = review_ready_api()

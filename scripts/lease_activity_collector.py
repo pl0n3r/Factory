@@ -33,7 +33,8 @@ def _time(value: Any, now: datetime) -> datetime:
 
 def collect_activity(api: Any, issue_number: int, *, now: datetime,
                      max_requests: int = 32,
-                     allow_ci_veto_only: bool = False) -> dict[str, Any]:
+                     allow_ci_veto_only: bool = False,
+                     allow_review_veto_only: bool = False) -> dict[str, Any]:
     """Observa una hoja sin mutar GitHub ni decidir liberaciones.
 
     api.request debe ser el transporte REST autenticado. El resultado es
@@ -48,6 +49,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None
                 or type(max_requests) is not int or not 1 <= max_requests <= 40
                 or type(allow_ci_veto_only) is not bool
+                or type(allow_review_veto_only) is not bool
                 or type(now) is not datetime or now.tzinfo is None
                 or now.utcoffset() is None):
             return unknown
@@ -281,6 +283,14 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                         # La review pertenece al login, no a la sesión V3.
                         raise IncompleteEvidence()
 
+        # El veto de revisión es positivo, pero su vigencia solo se
+        # certifica después contra el Port y otra lectura autenticada.
+        # Una APPROVED posterior no puede convertirse en actividad negativa.
+        external_review_veto = any(
+            review.get("state") == "CHANGES_REQUESTED"
+            and review.get("user", {}).get("login") != owner
+            for review in reviews
+        )
         checks = pages(f"{base}/commits/{sha}/check-runs", name="checks", checks=True)
         running = False
         for check in checks:
@@ -342,8 +352,12 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         # esté en curso. La EXCEPCIÓN aplica únicamente al observador
         # desarmado; NO prueba ausencia de pushes ni sirve para CAS mutante.
         # El transporte y las identidades siguen revalidados abajo.
-        ci_veto_only = not recent
-        if ci_veto_only and not (allow_ci_veto_only and running):
+        no_recent_evidence = not recent
+        ci_veto_only = no_recent_evidence and running
+        review_veto_only = no_recent_evidence and external_review_veto
+        if no_recent_evidence and not (
+                (allow_ci_veto_only and ci_veto_only)
+                or (allow_review_veto_only and review_veto_only)):
             raise IncompleteEvidence()
 
         verify = get(path)
@@ -396,6 +410,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             "last_activity_at": latest.isoformat().replace("+00:00", "Z"),
             "activity_source": activity_source,
             "ci_running": running, "ci_veto_only": ci_veto_only,
+            "review_veto_only": review_veto_only,
             "rate_limit": limit,
             "rate_remaining": effective_remaining, "api_requests": used,
         }

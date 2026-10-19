@@ -306,6 +306,46 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertTrue(all("secret" not in str(v).lower()
                             for v in observed.values()))
 
+    def test_old_marker_external_review_veto_is_positive_only(self):
+        """Review vigente puede vetar una liberación sin probar inactividad."""
+        api = API()
+        api.push_event = "pull_request"
+        api.checks[0]["status"] = "completed"
+        api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        unknown = {"status": "UNKNOWN", "evidence_complete": False}
+        self.assertEqual(collect_activity(api, 21, now=NOW), unknown)
+        report = collect_activity(
+            api, 21, now=NOW, allow_review_veto_only=True)
+        self.assertTrue(report["evidence_complete"])
+        self.assertFalse(report["ci_running"])
+        self.assertFalse(report["ci_veto_only"])
+        self.assertTrue(report["review_veto_only"])
+        self.assertEqual(report["activity_source"], "reservation_marker")
+        self.assertEqual(report["last_activity_at"], "2026-10-11T08:00:00Z")
+        api.reviews = []
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW, allow_review_veto_only=True),
+            unknown,
+        )
+        api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        api.change_review_during_recheck = True
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW, allow_review_veto_only=True),
+            unknown,
+        )
+        self.assertEqual(
+            collect_activity(API(), 21, now=NOW, allow_review_veto_only="yes"),
+            unknown,
+        )
+
     def test_branch_push_provenance_missing_or_racy_fails_closed(self):
         # No push-run evidence means we cannot prove the *absence* of a push.
         for event, stamp, head in (
