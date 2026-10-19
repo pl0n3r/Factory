@@ -634,6 +634,45 @@ def verify_historical_coderabbit_skip(status, substantive_times):
         raise Denied("coderabbit_historical_skip_not_superseded")
 
 
+def _verify_coderabbit_history_record(row, substantive_times):
+    """Authenticate all CodeRabbit status records before considering recency."""
+    if row["context"] != "CodeRabbit":
+        return False
+    if (type(row.get("creator")) is not dict
+            or row["creator"].get("login") != "coderabbitai[bot]"):
+        raise Denied("coderabbit_status_publisher_untrusted")
+    description = row.get("description")
+    if type(description) is not str or not description.strip():
+        raise Denied("coderabbit_historical_status_unknown")
+    if severe_finding(description):
+        raise Denied("coderabbit_historical_severe_unresolved")
+    verify_historical_coderabbit_skip(row, substantive_times)
+    return True
+
+
+def _verify_coderabbit_history(history, substantive_times):
+    """Validate a complete status history and identify its newest bot entry."""
+    if type(history) is not list or not 1 <= len(history) <= 500:
+        raise Denied("coderabbit_status_history_incomplete")
+    # Only authenticated substantive same-SHA reviews may supersede a skip.
+    if (type(substantive_times) is not tuple or not substantive_times
+            or any(type(t) is not datetime or t.tzinfo is None
+                   or t.utcoffset() is None for t in substantive_times)):
+        raise Denied("coderabbit_substantive_time_unknown")
+    seen_ids = set()
+    newest = None
+    for row in history:
+        if (type(row) is not dict or type(row.get("id")) is not int
+                or row["id"] <= 0 or row["id"] in seen_ids
+                or type(row.get("context")) is not str):
+            raise Denied("coderabbit_status_history_invalid")
+        seen_ids.add(row["id"])
+        if _verify_coderabbit_history_record(row, substantive_times):
+            if newest is None or row["id"] > newest["id"]:
+                newest = row
+    return newest
+
+
 def verify_coderabbit_status(payload, expected, history, substantive_times):
     """A green commit status can still indicate that CodeRabbit skipped review.
 
@@ -659,42 +698,9 @@ def verify_coderabbit_status(payload, expected, history, substantive_times):
                 latest = row
     if latest is None:
         raise Denied("coderabbit_commit_status_missing")
-    # The combined /status response omits `creator`. Anyone with commit-status
-    # write permission can publish the string context='CodeRabbit'. Authenticate
-    # the historical status source from GET /commits/{sha}/statuses, which does
-    # include each status's GitHub `creator`, and cross-check both snapshots.
-    if type(history) is not list or not 1 <= len(history) <= 500:
-        raise Denied("coderabbit_status_history_incomplete")
-    # A historical quota/skip status is not neutral evidence. Only an
-    # authenticated substantive review of this exact SHA, submitted AFTER
-    # the immutable GitHub status, may supersede it.
-    if (type(substantive_times) is not tuple or not substantive_times
-            or any(type(t) is not datetime or t.tzinfo is None
-                   or t.utcoffset() is None for t in substantive_times)):
-        raise Denied("coderabbit_substantive_time_unknown")
-    seen_history_ids = set()
-    history_latest = None
-    for row in history:
-        if (type(row) is not dict or type(row.get("id")) is not int
-                or row["id"] <= 0 or row["id"] in seen_history_ids
-                or type(row.get("context")) is not str):
-            raise Denied("coderabbit_status_history_invalid")
-        seen_history_ids.add(row["id"])
-        if row["context"] == "CodeRabbit":
-            if (type(row.get("creator")) is not dict
-                    or row["creator"].get("login") != "coderabbitai[bot]"):
-                raise Denied("coderabbit_status_publisher_untrusted")
-            # /status hides older entries for the same context. A later green
-            # entry on the same immutable HEAD cannot prove that an earlier
-            # HIGH/CRITICAL finding was fixed or investigated.
-            description = row.get("description")
-            if type(description) is not str or not description.strip():
-                raise Denied("coderabbit_historical_status_unknown")
-            if severe_finding(description):
-                raise Denied("coderabbit_historical_severe_unresolved")
-            verify_historical_coderabbit_skip(row, substantive_times)
-            if history_latest is None or row["id"] > history_latest["id"]:
-                history_latest = row
+    # /status omits creator and older records: independently check the full
+    # authenticated /statuses history before trusting the latest status.
+    history_latest = _verify_coderabbit_history(history, substantive_times)
     if (history_latest is None or latest["id"] != history_latest["id"]
             or latest.get("state") != history_latest.get("state")
             or latest.get("description") != history_latest.get("description")):
