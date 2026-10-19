@@ -476,6 +476,57 @@ class AtomicComposeTests(unittest.TestCase):
             self.api.exact_check_runs = original_reader
             self.api.comments[2002][0]["body"] = original
 
+    def test_candidate_reauthenticates_source_reservations_and_prs(self):
+        # Un plan de preview no es autoridad: revalidar V3 y PR fuente.
+        for field, forged in (
+            ("acceptance_sha256", "e" * 64),
+            ("task_marker_sha256", "e" * 64),
+            ("claims", ["docs/not-reserved.md"]),
+        ):
+            with self.subTest(forged_pin=field):
+                plan = self.plan()
+                plan["sources"][1][field] = forged
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "fuente sin lease V3 exacta"
+                ):
+                    self.candidate_ci(plan)
+        plan = self.plan()
+        pr_number = self.api.pr_by_issue[2002]
+        original = copy.deepcopy(self.api.pulls[pr_number])
+        for case in ("head", "base", "body", "state"):
+            with self.subTest(source_pr=case):
+                tampered = copy.deepcopy(original)
+                if case == "head":
+                    tampered["head"]["sha"] = "f" * 40
+                elif case == "base":
+                    tampered["base"]["sha"] = "f" * 40
+                elif case == "body":
+                    tampered["body"] = "<!-- condor-reserva-id: fabricated -->"
+                else:
+                    tampered["state"] = "closed"
+                self.api.pulls[pr_number] = tampered
+                with self.assertRaisesRegex(
+                    coord.CoordinationError, "PR fuente perdió identidad V3"
+                ):
+                    self.candidate_ci(plan)
+                self.api.pulls[pr_number] = copy.deepcopy(original)
+        original_checks = self.api.exact_check_runs
+
+        def race_after_checks(sha):
+            checked = original_checks(sha)
+            self.api.pulls[pr_number]["body"] = "PR changed"
+            return checked
+
+        self.api.exact_check_runs = race_after_checks
+        with self.assertRaisesRegex(
+            coord.CoordinationError, "PR fuente cambió tras el check"
+        ):
+            self.candidate_ci(plan)
+        self.api.exact_check_runs = original_checks
+        self.api.pulls[pr_number] = original
+        self.assertFalse(any(event[0] in ("POST", "PATCH", "DELETE")
+                             for event in self.api.log))
+
     def test_candidate_rejects_unclaimed_files_in_forged_plan(self):
         plan = self.plan()
         plan["sources"][0]["claims"] = ["docs/not-a-claim.md"]
