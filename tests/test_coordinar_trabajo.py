@@ -1104,7 +1104,7 @@ class CoordinacionTests(unittest.TestCase):
                         })
                 elif attack == "stale_acceptance":
                     api.issue_data["body"] = api.issue_data["body"].replace(
-                        "Contexto de prueba", "Cambio no fijado",
+                        '"target":"Tests de scripts"', '"target":"Validar"',
                     )
                 elif attack == "false_owner":
                     current["owner"] = "attacker"
