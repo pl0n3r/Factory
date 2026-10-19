@@ -3394,6 +3394,16 @@ def authorize_atomic_compose_v3(
             ))
         if active_reservation(api, integrator_issue) != reservation:
             raise CoordinationError("Composición V3: V3 bot sin confirmación.")
+        # Flag de activación de colisiones: jamás consultar leases extra en PRs
+        # normales. Si PATCH responde 5xx, reintento recupera la misma V3 CAS.
+        candidate = api.pull(candidate_pr)
+        marker = f"<!-- factory-compose-v3: issue-{integrator_issue} -->"
+        body = str(candidate.get("body") or "")
+        if marker not in body:
+            require_global_running(api)
+            api.update_pull_body(candidate_pr, body + "\n" + marker + "\n")
+        if marker not in str(api.pull(candidate_pr).get("body") or ""):
+            raise CoordinationError("Composición V3: PR sin marker CAS.")
         return proposal
     finally:
         # CAS de cleanup propio también si #767 se pausa tras adquirir.
@@ -5145,7 +5155,12 @@ def collision_validation_errors(
                        if isinstance(selected_head, dict) else None)
     integration_issue = (issue_from_branch(selected_branch)
                          if isinstance(selected_branch, str) else None)
-    if integration_issue is not None:
+    if (
+        integration_issue is not None
+        and isinstance(selected, dict)
+        and f"<!-- factory-compose-v3: issue-{integration_issue} -->"
+            in str(selected.get("body") or "")
+    ):
         holder = active_reservation(api, integration_issue)
         if isinstance(holder, dict) and holder.get("reason") == "atomic-compose":
             authority_reader = getattr(api, "composite_authority_v3", None)
