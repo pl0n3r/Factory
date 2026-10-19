@@ -81,6 +81,11 @@
       "id": "D-069",
       "status": "active",
       "text": "Factory#1189: en fase construccion el agente titular fusiona su propio PR mediante squash y registra el SHA cuando no es borrador, su reserva V3/claims/dependencias siguen válidos, main y HEAD exacto están reconciliados, todos los checks obligatorios aplicables (CI/Validar, aceptación, Sonar, CodeQL, CodeRabbit/Policy, coordinación y seguridad) están terminales verdes, no hay CHANGES_REQUESTED ni hilos bloqueantes, y pasan las protecciones de rama, el freeze Factory#921 y los gates operativos Factory#912/D-043/D-059 pertinentes. No exige APPROVED independiente ni esperar otra cuenta. Si un gate falla, queda pendiente, es UNKNOWN o cambia main/HEAD, NO fusiona: registra el motivo verificable. Los PR de código de release/seguridad/política siguen ese mismo criterio de construcción sin segundo aprobador; mover Factory@v1, autorizar/publicar releases, desplegar, gastar, usar datos reales y salir a live mantienen sus puertas propias. Prohibido --admin, forzar checks o fusionar en fase live."
+    },
+    {
+      "id": "D-070",
+      "status": "active",
+      "text": "Factory#1389: por decisión expresa del dueño del 2026-10-17, en fase construccion un rate-limit auténtico de CodeRabbit posterior al commit del HEAD exacto no bloquea por sí solo cuando el resto de controles (CI/Validar, Sonar y CodeQL) están terminales verdes en ese SHA y no existen CHANGES_REQUESTED ni hallazgos graves abiertos. La salida de política registra motivo, identidad de la evidencia y SHA exacto para auditoría; cualquier ausencia de evidencia, otro motivo de skip, gates UNKNOWN/rojos, hallazgo grave o fase live conserva el veto. Esto no autoriza mover Factory@v1 ni cambiar las puertas de release, producción o seguridad."
     }
   ]
 }
