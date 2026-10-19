@@ -2987,21 +2987,39 @@ def verify_exact_integrator_ci_v3(
     for row in sources:
         if (
             not isinstance(row, dict) or type(row.get("pr")) is not int
-            or row["pr"] <= 0 or not isinstance(row.get("branch_sha"), str)
+            or row["pr"] <= 0 or type(row.get("issue")) is not int
+            or row["issue"] <= 0 or not isinstance(row.get("branch"), str)
+            or row["branch"] != branch_for_issue(row["issue"])
+            or not isinstance(row.get("reservation_id"), str)
+            or not isinstance(row.get("branch_sha"), str)
             or SHA_RE.fullmatch(row["branch_sha"]) is None
+            or not isinstance(row.get("claims"), list)
             or not isinstance(row.get("files"), list) or not row["files"]
         ):
             raise CoordinationError("CI compuesto: fila de origen incompleta.")
         if row["pr"] in source_prs:
             raise CoordinationError("CI compuesto: PR de origen duplicado.")
         source_prs.add(row["pr"])
+        current_lease = active_reservation(api, row["issue"])
+        if (
+            current_lease is None or current_lease.get("version") != 3
+            or current_lease.get("owner") != plan.get("owner")
+            or current_lease.get("branch") != row["branch"]
+            or current_lease.get("reservation_id") != row["reservation_id"]
+            or api.branch_sha(row["branch"]) != row["branch_sha"]
+        ):
+            raise CoordinationError("CI compuesto: fuente sin lease V3 exacta.")
         for path in row["files"]:
-            if not isinstance(path, str) or path in expected:
+            if (
+                not isinstance(path, str) or path in expected
+                or not any(claims_overlap(path, claim)
+                           for claim in row["claims"])
+            ):
                 raise CoordinationError("CI compuesto: archivos duplicados o inválidos.")
             expected[path] = api.blob_sha_at(path, row["branch_sha"])
     if (
-        len(expected) != 6 or plan.get("file_count") != len(expected)
-        or candidate_pr in source_prs
+        len(expected) != 6 or type(plan.get("file_count")) is not int
+        or plan["file_count"] != len(expected) or candidate_pr in source_prs
     ):
         raise CoordinationError("CI compuesto: seis archivos únicos obligatorios.")
     candidate = api.pull(candidate_pr)
@@ -3056,6 +3074,15 @@ def verify_exact_integrator_ci_v3(
         or last["base"].get("sha") != plan["main_sha"]
     ):
         raise CoordinationError("CI compuesto: candidato cambió tras el check.")
+    for row in sources:
+        current_lease = active_reservation(api, row["issue"])
+        if (
+            current_lease is None
+            or current_lease.get("reservation_id") != row["reservation_id"]
+            or current_lease.get("owner") != plan["owner"]
+            or api.branch_sha(row["branch"]) != row["branch_sha"]
+        ):
+            raise CoordinationError("CI compuesto: fuente cambió tras el check.")
     require_global_running(api)
     return {
         "mode": "ci_evidence_only",
