@@ -322,6 +322,52 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                         self.assertIn("Observaciones válidas=2; UNKNOWN=0", report)
                         self.assertNotIn("::error::", result.stdout)
 
+
+    def test_observer_rejects_duplicate_json_documents_per_issue(self):
+        """Un stdout multirregistro no puede inflar el manifiesto del censo."""
+        import json
+        import shutil
+        import subprocess
+
+        if not shutil.which("jq"):
+            self.skipTest("jq necesario para validar el contrato JSON")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        anchor = '              jq -sce --argjson issue "$issue_number" \''
+        self.assertEqual(workflow.count(anchor), 1)
+        jq_filter = workflow.split(anchor, 1)[1].split(
+            '\n              \' "$RUNNER_TEMP/lease-observer-raw.json"', 1)[0]
+        self.assertIn("select(length == 1) | .[0]", jq_filter)
+
+        valid = {
+            "issue": 1364, "state": "read_only", "action": "wait",
+            "reason": "protected_or_active_work", "activity_age_minutes": 5,
+            "activity_source": "reservation_marker",
+            "release_authorized": False, "lock_verified": False,
+            "cas_verified": False, "mutations": 0,
+        }
+
+        def run(*values):
+            return subprocess.run(
+                ["jq", "-sce", "--argjson", "issue", "1364", jq_filter],
+                input="\n".join(json.dumps(v) for v in values),
+                text=True, capture_output=True, check=False, timeout=10,
+            )
+
+        single = run(valid)
+        self.assertEqual(single.returncode, 0, single.stderr)
+        self.assertEqual(json.loads(single.stdout)["issue"], 1364)
+        # jq -e por defecto valida cada documento por separado y aceptaría
+        # dos objetos, contabilizando una sola observación y dos filas.
+        for sample in (
+            (valid, valid),
+            (valid, {**valid, "issue": 1372}),
+            ({**valid, "release_authorized": True},),
+        ):
+            with self.subTest(sample=len(sample)):
+                rejected = run(*sample)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertEqual(rejected.stdout.strip(), "")
+
     def test_observer_jq_failure_propagates(self):
         """No ocultar error de jq dentro de sustitución de proceso Bash."""
         workflow = WORKFLOW.read_text(encoding="utf-8")

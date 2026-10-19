@@ -26,7 +26,9 @@ El cron de Factory genera además `lease-audit-evidence.json` con
 `run_id`, `head_sha`, repositorio y resultados por Issue (acción,
 motivo, minutos, fuente y autoridades negativas), limitado por whitelist de
 campos. Cuando hay `UNKNOWN`, persiste únicamente un registro mínimo sin
-cuerpo ni cabeceras REST. Un artefacto de GitHub Actions vinculado al run
+cuerpo ni cabeceras REST. El filtro exige exactamente **un objeto JSON
+válido por Issue**; si el CLI emite dos registros, datos fuera de esquema
+o JSON inválido, conserva `UNKNOWN` y no acredita el ciclo. Un artefacto de GitHub Actions vinculado al run
 programado conserva este manifiesto 7 días; no se envía a comentarios.
 El manifiesto declara siempre `terminal_certified=false`: ni `success`
 ni `candidate_terminal` certifican los 24 h, los 100 ciclos o el QA.

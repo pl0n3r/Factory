@@ -293,8 +293,11 @@ jobs:
             # de diagnóstico y autoridades negativas del CLI.
             if python3 -m scripts.lease_auto_release_integration "$issue_number" \
                 > "$RUNNER_TEMP/lease-observer-raw.json" &&
-              jq -ce --argjson issue "$issue_number" '
-                select(type == "object"
+              # Un único documento por Issue: rechazar stdout con dos
+              # objetos JSON aunque individualmente pasen la whitelist.
+              jq -sce --argjson issue "$issue_number" '
+                select(length == 1) | .[0]
+                | select(type == "object"
                   and .issue == $issue and .state == "read_only"
                   and (.action == "wait" or .action == "mark_recovery"
                        or .action == "release")
