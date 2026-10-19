@@ -137,13 +137,17 @@ GitHub cerraría el Issue fuera de la autoridad del coordinador. Un PR normal
 mantiene su palabra de cierre obligatoria; la excepción previa
 `post_merge_validation` permanece **solo para incidentes**.
 
-Durante `pull_request.closed` de la hoja parcial verificada, Factory revoca la
-reserva auténtica, conserva la evidencia terminal `pr-merged`, desasigna al
-titular, elimina su rama y mantiene el **Issue OPEN**, sin aplicar el estado
-`completado`. Si falta identidad del PR, snapshot del task, contrato, permiso,
-HEAD, rama o hay un marker duplicado/forjado, el cierre parcial falla cerrado
-antes de borrar la rama o invalidar el estado. El evento `closed` y sus jobs
-siguen activos; no se omite el coordinador.
+Durante `pull_request.closed` de una hoja parcial validada, el cierre
+**con merge** conserva el marker terminal `pr-merged`; el cierre **sin merge**
+usa `pr-cerrado-sin-merge`. Ambos revocan la V3, desasignan al titular,
+eliminan la rama únicamente mediante CAS del HEAD validado y mantienen el
+**Issue OPEN**, sin aplicar el estado `completado`. Un webhook repetido con
+terminal bot auténtico termina la limpieza de labels y assignee si un 5xx
+interrumpió el primer intento, sin publicar otro marker, tocar ramas nuevas
+ni aceptar un terminal falso. Si falta identidad del PR, snapshot del task,
+contrato, permiso, HEAD, rama, o hay un marker duplicado/forjado, falla cerrado
+antes de borrar una referencia o invalidar el estado. El evento `closed` y
+sus jobs siguen activos; no se omite el coordinador.
 
 El merge de un slice no equivale a completar el roadmap, ni acredita decisiones
 humanas, D-061 o validación real de Safari/ControlBot. El cambio en `Factory

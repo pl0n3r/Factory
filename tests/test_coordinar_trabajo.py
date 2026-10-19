@@ -241,6 +241,12 @@ class FakeGitHub:
         """Elimina una rama si existe."""
         self.branches.pop(branch, None)
 
+    def delete_branch_if_at(self, branch: str, expected_sha: str) -> None:
+        """Rechaza el delete si hubo push entre leer HEAD y borrar."""
+        if self.branch_sha(branch) != expected_sha:
+            raise CoordinationError("Cierre parcial: CAS denegado.")
+        self.delete_branch(branch)
+
     def acquire_issue_lock(self, issue_number: int, sha: str) -> str | None:
         branch = coordinator.recovery_lock_branch(issue_number)
         self.lock_counter = getattr(self, "lock_counter", 0) + 1
@@ -1065,6 +1071,74 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(api.status_history, status_before)
         self.assertEqual(api.comments, comments_before)
         self.assertEqual(api.issue_data["state"], "open")
+
+    def test_planned_partial_roadmap_replay_repairs_interrupted_cleanup(self):
+        """El marker terminal auténtico permite completar un 5xx parcial."""
+        for merged in (True, False):
+            for failed in ("unassign", "status"):
+                with self.subTest(merged=merged, failed=failed):
+                    api, _current, _marker = self._planned_partial_roadmap_fixture()
+                    api.assignees.add("pl0n3r")
+                    api.pulls[15].update(state="closed", merged=merged)
+                    method = "try_unassign" if failed == "unassign" else "set_status"
+                    with patch.object(
+                        api, method, side_effect=CoordinationError("HTTP 503")
+                    ):
+                        with self.assertRaisesRegex(CoordinationError, "HTTP 503"):
+                            update_pr_state(api, 15, "closed")
+                    self.assertNotIn("trabajo/issue-12", api.branches)
+                    terminal = latest_reservation(api.issue_comments(12))
+                    self.assertIsNotNone(terminal)
+                    self.assertEqual(
+                        terminal["reason"],
+                        "pr-merged" if merged else "pr-cerrado-sin-merge",
+                    )
+                    self.assertEqual(terminal["active"], False)
+                    self.assertEqual(
+                        terminal["task_marker_sha256"], _current["task_marker_sha256"]
+                    )
+                    comments_before = list(api.comments)
+                    update_pr_state(api, 15, "closed")
+                    self.assertEqual(api.comments, comments_before)
+                    self.assertEqual(api.issue_data["state"], "open")
+                    self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
+                    self.assertNotIn("pl0n3r", api.assignees)
+                    status_before = list(api.status_history)
+                    update_pr_state(api, 15, "closed")
+                    self.assertEqual(api.status_history, status_before)
+                    self.assertEqual(api.comments, comments_before)
+
+    def test_planned_partial_roadmap_delete_requires_cas_exact_sha(self):
+        """Un push entre HEAD read y DELETE no elimina trabajo no revisado."""
+        api, _current, _marker = self._planned_partial_roadmap_fixture()
+        api.pulls[15].update(state="closed", merged=True)
+        original = api.delete_branch_if_at
+
+        def raced_delete(branch, expected_sha):
+            api.branches[branch] = "c" * 40
+            original(branch, expected_sha)
+
+        before = list(api.comments)
+        with patch.object(api, "delete_branch_if_at", side_effect=raced_delete):
+            with self.assertRaisesRegex(CoordinationError, "CAS denegado"):
+                update_pr_state(api, 15, "closed")
+        self.assertEqual(api.branches["trabajo/issue-12"], "c" * 40)
+        self.assertEqual(api.comments, before)
+        self.assertEqual(api.status_history, [])
+
+    def test_planned_partial_roadmap_replay_rejects_recreated_branch(self):
+        """No limpiar labels si la rama fue recreada después del terminal."""
+        api, _current, _marker = self._planned_partial_roadmap_fixture()
+        api.pulls[15].update(state="closed", merged=True)
+        update_pr_state(api, 15, "closed")
+        api.branches["trabajo/issue-12"] = "c" * 40
+        comments_before = list(api.comments)
+        status_before = list(api.status_history)
+        with self.assertRaisesRegex(CoordinationError, "terminal auténtico"):
+            update_pr_state(api, 15, "closed")
+        self.assertEqual(api.branches["trabajo/issue-12"], "c" * 40)
+        self.assertEqual(api.comments, comments_before)
+        self.assertEqual(api.status_history, status_before)
 
     def test_planned_partial_roadmap_normal_and_unmerged_behaviors(self):
         """AC-02: flujo normal/legacy, cierre no merged y mezcla de keywords."""

@@ -455,6 +455,37 @@ class GitHub:
             if self.branch_sha(branch) is not None:
                 raise
 
+    def delete_branch_if_at(self, branch: str, expected_sha: str) -> None:
+        """CAS: borra solo la generación exacta de rama validada del PR."""
+        if (not isinstance(branch, str) or not branch.startswith("trabajo/issue-")
+            or not isinstance(expected_sha, str)
+            or SHA_RE.fullmatch(expected_sha) is None):
+            raise CoordinationError("Cierre parcial: referencia o HEAD CAS inválidos.")
+        repository = self.request("GET", f"/repos/{self.repo}")
+        repo_id = repository.get("node_id") if isinstance(repository, dict) else None
+        if not isinstance(repo_id, str) or not repo_id:
+            raise CoordinationError("Cierre parcial: identidad de repo CAS ilegible.")
+        require_global_running(self)
+        response = self.request("POST", "/graphql", {
+            "query": ("mutation($input:UpdateRefsInput!){"
+                      "updateRefs(input:$input){clientMutationId}}"),
+            "variables": {"input": {
+                "repositoryId": repo_id,
+                "refUpdates": [{
+                    "name": f"refs/heads/{branch}",
+                    "beforeOid": expected_sha,
+                    "afterOid": "0" * 40,
+                    "force": True,
+                }],
+            }},
+        })
+        if (not isinstance(response, dict) or response.get("errors")
+            or not isinstance(response.get("data"), dict)
+            or not isinstance(response["data"].get("updateRefs"), dict)):
+            raise CoordinationError(
+                "Cierre parcial: CAS denegado, no borrar commits ajenos."
+            )
+
     def acquire_issue_lock(self, issue_number: int, head_sha: str) -> str | None:
         """Cada adquisición apunta a un commit de nonce irrepetible.
 
@@ -4694,12 +4725,12 @@ def close_pr_reservation(
                 "Cierre parcial: identidad de PR/Issue no verificable."
             )
         if current is None:
-            # A second closed webhook must not undo an authentic bot terminal.
+            # Replay solo de un terminal bot auténtico con motivo acorde al PR.
             terminal = latest_reservation(api.issue_comments(issue_number))
-            if (not merged
-                or not isinstance(terminal, dict)
+            expected_reason = "pr-merged" if merged else "pr-cerrado-sin-merge"
+            if (not isinstance(terminal, dict)
                 or terminal.get("active") is not False
-                or terminal.get("reason") != "pr-merged"
+                or terminal.get("reason") != expected_reason
                 or not authorized_roadmap_partial(
                     api, issue_number, branch, body, terminal,
                     allow_terminal=True,
@@ -4707,6 +4738,20 @@ def close_pr_reservation(
                 raise CoordinationError(
                     "Cierre parcial: sin V3 activa ni terminal auténtico."
                 )
+            issue = api.issue(issue_number)
+            labels = label_names(issue)
+            # Un error después del marker terminal puede dejar el roadmap
+            # reservado/en revisión. Completar solo esa limpieza pendiente,
+            # jamás borrar una rama nueva ni reabrir una sesión vencida.
+            if STATUS_BLOCKED not in labels and STATUS_AVAILABLE not in labels:
+                assignees = issue.get("assignees")
+                if isinstance(assignees, list) and any(
+                    isinstance(user, dict)
+                    and user.get("login") == terminal["owner"]
+                    for user in assignees
+                ):
+                    api.try_unassign(issue_number, terminal["owner"])
+                api.set_status(issue_number, STATUS_AVAILABLE)
             return
         if not authorized_roadmap_partial(
             api, issue_number, branch, body, current
@@ -4722,12 +4767,15 @@ def close_pr_reservation(
             raise CoordinationError(
                 "Cierre parcial: HEAD cambió, falta o no coincide con branch."
             )
-    api.delete_branch(branch)
+        if actual_sha is not None:
+            api.delete_branch_if_at(branch, head_sha)
+    else:
+        api.delete_branch(branch)
 
     if current:
         pr_reservation = reservation_from_pr_body(str(pull.get("body") or ""))
         same_reservation = (
-            merged
+            (merged or partial)
             and current.get("branch") == branch
             and pr_reservation == current.get("reservation_id")
         )
@@ -5101,7 +5149,9 @@ def authorized_roadmap_partial(
         isinstance(lease, dict)
         and (lease.get("active") is True
              or (allow_terminal and lease.get("active") is False
-                 and lease.get("reason") == "pr-merged"
+                 and lease.get("reason") in (
+                     "pr-merged", "pr-cerrado-sin-merge"
+                 )
                  and api.branch_sha(branch) is None))
     )
     if (issue.get("state") != "open"
