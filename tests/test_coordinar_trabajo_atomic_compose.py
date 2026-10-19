@@ -1106,7 +1106,7 @@ class AtomicComposeTests(unittest.TestCase):
                 "<!-- factory-compose-v3: issue-3000 -->",
                 self.api.pulls[4000]["body"],
             )
-            self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 2)
+            self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
         with self.subTest("untrusted PR marker alone is not authority"):
             self.api = ReadOnlyFake()
             self.prepare_composition()
