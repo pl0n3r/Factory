@@ -402,7 +402,8 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
                     else port.read(issue))
         observation_trusted = (
             type(snapshot) is Snapshot and type(snapshot.ci_running) is bool
-            and (_trusted(snapshot) or (snapshot.ci_running is True
+            and (_trusted(snapshot) or (callable(observation_reader)
+                 and snapshot.ci_running is True
                  and _trusted(replace(snapshot, ci_running=False))))
         )
         if (not observation_trusted or snapshot.marker.get("active") is not True
