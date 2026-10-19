@@ -1109,6 +1109,37 @@ class AutoMergePrGuardTests(unittest.TestCase):
                                      "creator": {"login": "ci-bot"}})
         mod.verify(q, SHA, NOW)
 
+    def test_historical_coderabbit_skip_needs_later_exact_sha_review(self):
+        """AC-05: green status cannot launder a prior quota/skip notification."""
+        base = evidence()
+        historical = {"id": 199, "context": "CodeRabbit", "state": "failure",
+                      "description": "Review rate limited",
+                      "creator": {"login": "coderabbitai[bot]"},
+                      "created_at": "2026-10-14T03:58:00Z"}
+        base["status_history"].insert(0, historical)
+        # The clean exact-HEAD review at 03:59 truly supersedes 03:58.
+        mod.verify(base, SHA, NOW)
+        for changed in ("2026-10-14T03:59:30Z", "2026-10-14T03:59:00Z",
+                        "", "not-a-date", "2026-10-14T03:58:00", None):
+            with self.subTest(status_created_at=changed):
+                q = deepcopy(base)
+                if changed is None:
+                    del q["status_history"][0]["created_at"]
+                else:
+                    q["status_history"][0]["created_at"] = changed
+                self.deny(q)
+        q = deepcopy(base)
+        q["reviews"][0]["commit_id"] = BASE
+        self.deny(q)
+        # Unrelated statuses must not be treated as CodeRabbit skip events.
+        q = evidence()
+        q["status_history"].insert(0, {
+            "id": 199, "context": "other-check", "state": "failure",
+            "description": "Review rate limited",
+            "creator": {"login": "github-actions[bot]"},
+        })
+        mod.verify(q, SHA, NOW)
+
     def test_coderabbit_status_history_is_paginated_and_permissioned(self):
         workflow = (ROOT / ".github" / "workflows" / "automerge.yml").read_text(encoding="utf8")
         lines = workflow.splitlines()

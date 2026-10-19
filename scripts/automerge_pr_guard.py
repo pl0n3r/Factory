@@ -616,7 +616,7 @@ def verify_sonar_evidence(sonar, checks, expected, number):
             raise Denied("sonar_high_critical_or_ambiguous_new_code")
 
 
-def verify_coderabbit_status(payload, expected, history):
+def verify_coderabbit_status(payload, expected, history, substantive_times):
     """A green commit status can still indicate that CodeRabbit skipped review.
 
     This source is independent of pull-request reviews and comments. It must
@@ -647,6 +647,13 @@ def verify_coderabbit_status(payload, expected, history):
     # include each status's GitHub `creator`, and cross-check both snapshots.
     if type(history) is not list or not 1 <= len(history) <= 500:
         raise Denied("coderabbit_status_history_incomplete")
+    # A historical quota/skip status is not neutral evidence. Only an
+    # authenticated substantive review of this exact SHA, submitted AFTER
+    # the immutable GitHub status, may supersede it.
+    if (type(substantive_times) is not tuple or not substantive_times
+            or any(type(t) is not datetime or t.tzinfo is None
+                   or t.utcoffset() is None for t in substantive_times)):
+        raise Denied("coderabbit_substantive_time_unknown")
     seen_history_ids = set()
     history_latest = None
     for row in history:
@@ -667,6 +674,19 @@ def verify_coderabbit_status(payload, expected, history):
                 raise Denied("coderabbit_historical_status_unknown")
             if severe_finding(description):
                 raise Denied("coderabbit_historical_severe_unresolved")
+            if review_incomplete_notice(description):
+                created = row.get("created_at")
+                try:
+                    skipped_at = datetime.fromisoformat(
+                        created.replace("Z", "+00:00")
+                    ) if type(created) is str else None
+                except ValueError:
+                    skipped_at = None
+                if (skipped_at is None or skipped_at.tzinfo is None
+                        or skipped_at.utcoffset() is None
+                        or not any(reviewed > skipped_at.astimezone(timezone.utc)
+                                   for reviewed in substantive_times)):
+                    raise Denied("coderabbit_historical_skip_not_superseded")
             if history_latest is None or row["id"] > history_latest["id"]:
                 history_latest = row
     if (history_latest is None or latest["id"] != history_latest["id"]
@@ -831,6 +851,7 @@ def verify_review(reviews, comments, issue_comments, expected, now):
                     or not any(t > skipped_at.astimezone(timezone.utc)
                                for t in substantive_times)):
                 raise Denied("coderabbit_skipped_not_superseded")
+    return tuple(substantive_times)
 
 
 def verify_freeze(windows, now):
@@ -935,10 +956,12 @@ def verify(snapshot, expected, now):
     number = pr.get("number") if type(pr) is dict else None
     verify_sonar_evidence(snapshot.get("sonar_evidence"), snapshot.get("checks"),
                           expected, number)
+    substantive_times = verify_review(
+        snapshot.get("reviews"), snapshot.get("comments"),
+        snapshot.get("issue_comments"), expected, now,
+    )
     verify_coderabbit_status(snapshot.get("commit_status"), expected,
-                             snapshot.get("status_history"))
-    verify_review(snapshot.get("reviews"), snapshot.get("comments"),
-                  snapshot.get("issue_comments"), expected, now)
+                             snapshot.get("status_history"), substantive_times)
     verify_freeze(snapshot.get("windows"), now)
 
 
