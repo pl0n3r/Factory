@@ -601,6 +601,12 @@ class AtomicComposeTests(unittest.TestCase):
         api.comment = comment
         api.close_pull = close_pull
 
+        def update_pull_body(number, body):
+            api.log.append(("PATCH_BODY", number))
+            api.pulls[number]["body"] = body
+
+        api.update_pull_body = update_pull_body
+
         plan = self.plan()
         intention = {
             "version": 1, "integrator_issue": 3000,
@@ -749,13 +755,16 @@ class AtomicComposeTests(unittest.TestCase):
             self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
         with self.subTest("CI pending never authorizes squash"):
             self.api = ReadOnlyFake()
-            self.prepare_composition()
+            planned = self.prepare_composition()
             self.api.checks[0]["status"] = "in_progress"
             # Árbol autorizado por CAS, pero Validar sigue siendo puerta dura.
             candidate = self.atomic_compose()
             self.assertEqual(self.api.grant, candidate)
-            with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
-                self.candidate_ci()
+            with patch.object(coord, "require_global_running"):
+                with self.assertRaisesRegex(coord.CoordinationError, "Validar"):
+                    coord.verify_exact_integrator_ci_v3(
+                        self.api, planned, 4000
+                    )
             self.assertFalse(any(event[0] == "DELETE" for event in self.api.log))
 
     def test_reconcile_only_after_merge_and_main_ci(self):
