@@ -448,5 +448,38 @@ class AtomicComposeTests(unittest.TestCase):
 
 
 
+    def test_candidate_rejects_revoked_or_racing_source_reservation(self):
+        original = self.api.comments[2002][0]["body"]
+        with self.subTest("revoked before candidate"):
+            self.api.comments[2002][0]["body"] = original.replace(
+                '"active":true', '"active":false'
+            )
+            with self.assertRaisesRegex(coord.CoordinationError, "lease V3"):
+                self.candidate_ci()
+            self.api.comments[2002][0]["body"] = original
+        with self.subTest("revoked during checks"):
+            original_reader = self.api.exact_check_runs
+
+            def revoked_during_checks(sha):
+                checks = original_reader(sha)
+                self.api.comments[2002][0]["body"] = original.replace(
+                    '"active":true', '"active":false'
+                )
+                return checks
+
+            self.api.exact_check_runs = revoked_during_checks
+            with self.assertRaisesRegex(coord.CoordinationError, "fuente cambió"):
+                self.candidate_ci()
+            self.api.exact_check_runs = original_reader
+            self.api.comments[2002][0]["body"] = original
+
+    def test_candidate_rejects_unclaimed_files_in_forged_plan(self):
+        plan = self.plan()
+        plan["sources"][0]["claims"] = ["docs/not-a-claim.md"]
+        with self.assertRaisesRegex(coord.CoordinationError, "archivos duplicados"):
+            self.candidate_ci(plan)
+
+
+
 if __name__ == "__main__":
     unittest.main()
