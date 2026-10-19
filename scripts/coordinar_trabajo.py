@@ -2820,6 +2820,7 @@ def verified_parallel_file_evidence(
 
 def plan_atomic_compose_v3(
     api: GitHub, issue_numbers: list[int], owner: str,
+    *, integrator_issue: int | None = None,
 ) -> dict[str, Any]:
     """Preflight GET-only de tres V3. NUNCA transfiere claims ni concede merge.
 
@@ -2956,6 +2957,24 @@ def plan_atomic_compose_v3(
         lease = active_reservation(api, other)
         if lease is None:
             continue
+        if integrator_issue is not None and other == integrator_issue:
+            # Solo ignorar el claim compuesto SI un CAS auténtico lo emite
+            # para exactamente estas 3 V3; nunca omitir un cuarto titular.
+            reader = getattr(api, "composite_authority_v3", None)
+            receipt = reader(integrator_issue) if callable(reader) else None
+            if (
+                not isinstance(receipt, dict)
+                or receipt.get("main_sha") != main_sha
+                or receipt.get("sources") != result
+                or receipt.get("source_ids") != issue_numbers
+                or receipt.get("reservation") != lease
+                or sorted(lease.get("task_paths", [])) != sorted(files_seen)
+                or lease.get("owner") != owner
+            ):
+                raise CoordinationError(
+                    "Composición V3: integrador sin cesión CAS exacta."
+                )
+            continue
         other_claims = lease.get("task_paths")
         if lease.get("version") != 3 or not isinstance(other_claims, list):
             raise CoordinationError("Composición V3: lease externa sin claims V3.")
@@ -3022,6 +3041,7 @@ def plan_atomic_compose_v3(
 
 def verify_exact_integrator_ci_v3(
     api: GitHub, plan: dict[str, Any], candidate_pr: int,
+    *, tree_only: bool = False,
 ) -> dict[str, Any]:
     """Acredita CI del candidato con seis blobs idénticos, sin conceder merge.
 
@@ -3103,7 +3123,8 @@ def verify_exact_integrator_ci_v3(
     candidate = api.pull(candidate_pr)
     head, base = candidate.get("head"), candidate.get("base")
     if (
-        candidate.get("state") != "open" or candidate.get("draft") is not False
+        candidate.get("state") != "open"
+        or (not tree_only and candidate.get("draft") is not False)
         or not isinstance(head, dict) or not isinstance(base, dict)
         or not isinstance(head.get("ref"), str)
         or re.fullmatch(r"trabajo/issue-[1-9][0-9]*", head["ref"]) is None
@@ -3128,24 +3149,26 @@ def verify_exact_integrator_ci_v3(
     for path, source_blob in expected.items():
         if api.blob_sha_at(path, head["sha"]) != source_blob:
             raise CoordinationError("CI compuesto: contenido distinto del origen.")
-    checks = api.exact_check_runs(head["sha"])
-    if not isinstance(checks, list):
-        raise CoordinationError("CI compuesto: checks ausentes.")
-    # El contrato canónico de Factory es Validar. No se acepta una
-    # etiqueta arbitraria, un check de un hijo ni un status GitHub ajeno.
-    gates = [check for check in checks if isinstance(check, dict)
-             and check.get("name") == "Validar"]
-    if (
-        len(gates) != 1 or gates[0].get("head_sha") != head["sha"]
-        or gates[0].get("status") != "completed"
-        or gates[0].get("conclusion") != "success"
-    ):
-        raise CoordinationError("CI compuesto: Validar exact-HEAD no verde.")
+    if not tree_only:
+        checks = api.exact_check_runs(head["sha"])
+        if not isinstance(checks, list):
+            raise CoordinationError("CI compuesto: checks ausentes.")
+        # El contrato canónico de Factory es Validar. No se acepta una
+        # etiqueta arbitraria, un check de un hijo ni un status GitHub ajeno.
+        gates = [check for check in checks if isinstance(check, dict)
+                 and check.get("name") == "Validar"]
+        if (
+            len(gates) != 1 or gates[0].get("head_sha") != head["sha"]
+            or gates[0].get("status") != "completed"
+            or gates[0].get("conclusion") != "success"
+        ):
+            raise CoordinationError("CI compuesto: Validar exact-HEAD no verde.")
     last = api.pull(candidate_pr)
     if (
         api.branch_sha("main") != plan["main_sha"]
         or api.branch_sha(head["ref"]) != head["sha"]
-        or last.get("state") != "open" or last.get("draft") is not False
+        or last.get("state") != "open"
+        or (not tree_only and last.get("draft") is not False)
         or not isinstance(last.get("head"), dict)
         or not isinstance(last.get("base"), dict)
         or last["head"].get("sha") != head["sha"]
@@ -3179,13 +3202,13 @@ def verify_exact_integrator_ci_v3(
             raise CoordinationError("CI compuesto: PR fuente cambió tras el check.")
     require_global_running(api)
     return {
-        "mode": "ci_evidence_only",
+        "mode": "tree_evidence_only" if tree_only else "ci_evidence_only",
         "write_authorized": False,
         "integrator_pr": candidate_pr,
         "integrator_sha": head["sha"],
         "main_sha": plan["main_sha"],
         "files_verified": len(expected),
-        "gate": "Validar",
+        "gate": "tree_only" if tree_only else "Validar",
     }
 
 
@@ -3224,7 +3247,10 @@ def _composite_v3_grant(
         or api.branch_sha(branch_for_issue(integrator_issue)) is None
     ):
         raise CoordinationError("Composición V3: claims integradores no autorizados.")
-    evidence = verify_exact_integrator_ci_v3(api, plan, candidate_pr)
+    # Preparar autoridad no equivale a autorizar squash; CI se valida después.
+    evidence = verify_exact_integrator_ci_v3(
+        api, plan, candidate_pr, tree_only=True
+    )
     candidate_sha = evidence["integrator_sha"]
     candidate = api.pull(candidate_pr)
     if candidate["head"]["ref"] != branch_for_issue(integrator_issue):
@@ -3306,7 +3332,9 @@ def authorize_atomic_compose_v3(
         if (api.branch_sha(recovery_lock_branch(lock_issue)) != lock
                 or api.branch_sha("main") != main):
             raise CoordinationError("Composición V3: lock/main cambiaron.")
-        plan = plan_atomic_compose_v3(api, issue_numbers, actor)
+        plan = plan_atomic_compose_v3(
+            api, issue_numbers, actor, integrator_issue=integrator_issue
+        )
         if plan["main_sha"] != main:
             raise CoordinationError("Composición V3: main derivó.")
         proposal = _composite_v3_grant(
@@ -3323,7 +3351,9 @@ def authorize_atomic_compose_v3(
         else:
             require_global_running(api)
             # Releer TODO bajo lock antes de la única mutación de autoridad.
-            now = plan_atomic_compose_v3(api, issue_numbers, actor)
+            now = plan_atomic_compose_v3(
+                api, issue_numbers, actor, integrator_issue=integrator_issue
+            )
             if now != plan or api.branch_sha("main") != main:
                 raise CoordinationError("Composición V3: carrera antes de CAS.")
             verified = _composite_v3_grant(
