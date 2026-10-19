@@ -1297,6 +1297,7 @@ def validate_required_bot_review_or_fallback(
                 "rate_limit_comment_id": quota_id,
                 "rate_limit_created_at": quota_at,
                 "phase": phase,
+                "head_sha": head_sha,
             }
     # F1389_NO_QUOTA_HOOK_END
     retry_id, retry_at = validate_rate_limit_fallback(

@@ -48,6 +48,7 @@ class PoliticaSinCupoTests(unittest.TestCase):
         self.assertTrue(result["review_fallback"])
         self.assertEqual(result["review_reason"], policy.NO_QUOTA_REASON)
         self.assertEqual(result["rate_limit_comment_id"], 300)
+        self.assertEqual(result["head_sha"], HEAD)
 
     def test_rate_limited_still_blocks_with_open_high_or_critical_finding(self):
         with self.assertRaises(PolicyError):
