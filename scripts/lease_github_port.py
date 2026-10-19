@@ -275,7 +275,13 @@ class LeaseGithubPort:
     def _read_snapshot(self, issue: int, *, observation_only: bool) -> Snapshot:
         """Verifica la misma evidencia; solo diagnóstico admite veto CI."""
         try:
-            self._need_armed()
+            # Observación autenticada no necesita armar una capacidad mutante.
+            # read()/lock()/append()/status() conservan el guard estricto.
+            if observation_only:
+                if getattr(self._api, "authenticated", False) is not True:
+                    raise PortNotArmed("unauthenticated_observation")
+            else:
+                self._need_armed()
             if type(issue) is not int or issue <= 0 or not self._running():
                 raise ValueError("untrusted_scope")
             now = self._clock()
