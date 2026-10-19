@@ -240,7 +240,8 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         anchor = '          jq -e \'type == "array" and length <= 10'
         self.assertEqual(workflow.count(anchor), 1)
-        block = textwrap.dedent(workflow[workflow.index(anchor):].split(\n            "\\n      - name: Conservar evidencia acotada", 1)[0])
+        block = textwrap.dedent(workflow[workflow.index(anchor):].split(
+            "\n      - name: Conservar evidencia acotada", 1)[0])
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "lease-active-issues.json").write_text(
@@ -252,7 +253,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
                 "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\n"
-                "printf '{\\\"issue\\\":%s,\\\"state\\\":\\\"read_only\\\",\\\"action\\\":\\\"wait\\\",\\\"reason\\\":\\\"protected_or_active_work\\\",\\\"activity_age_minutes\\\":5,\\\"activity_source\\\":\\\"reservation_marker\\\",\\\"release_authorized\\\":false,\\\"lock_verified\\\":false,\\\"cas_verified\\\":false,\\\"mutations\\\":0}\\n' \"$3\"\n"
+                "printf '{\"issue\":%s,\"state\":\"read_only\",\"action\":\"wait\",\"reason\":\"protected_or_active_work\",\"activity_age_minutes\":5,\"activity_source\":\"reservation_marker\",\"release_authorized\":false,\"lock_verified\":false,\"cas_verified\":false,\"mutations\":0}\n' \"$3\"\n"
                 "exit 0\n", encoding="utf-8")
             shim.chmod(0o755)
             for fail_first in (False, True):
@@ -325,7 +326,8 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         anchor = '          jq -e \'type == "array" and length <= 10'
         self.assertEqual(text.count(anchor), 1)
-        block = textwrap.dedent(text[text.index(anchor):].split(\n            "\\n      - name: Conservar evidencia acotada", 1)[0])
+        block = textwrap.dedent(text[text.index(anchor):].split(
+            "\n      - name: Conservar evidencia acotada", 1)[0])
         script = "set -euo pipefail\n" + block
 
         with tempfile.TemporaryDirectory() as folder:
