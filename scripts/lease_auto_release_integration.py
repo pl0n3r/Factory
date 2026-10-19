@@ -478,9 +478,12 @@ if __name__ == "__main__":
         if summary_path:
             with open(summary_path, "a", encoding="utf-8") as report:
                 report.write(result.summary_line)
-        # UNKNOWN no debe producir un workflow verde: no hubo evidencia
-        # verificable. Sólo un preview read-only/wait es terminal válido.
-        if result.state != "read_only" or result.action != "wait":
+        # UNKNOWN nunca acredita un ciclo. Las decisiones hipotéticas
+        # tipadas son terminales para QA, pero este CLI no ejecuta escrituras.
+        if (result.state != "read_only"
+                or result.action not in ("wait", "mark_recovery", "release")
+                or result.release_authorized or result.lock_verified
+                or result.cas_verified):
             raise SystemExit(1)
     except Exception:
         # No registrar excepciones ni datos privados; señalizar fallo real
