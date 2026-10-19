@@ -296,6 +296,7 @@ class LeaseGithubPort:
             report = collect_activity(
                 api, issue, now=now,
                 allow_ci_veto_only=observation_only,
+                allow_review_veto_only=observation_only,
             )
             if (type(report) is not dict or report.get("evidence_complete") is not True
                     or report.get("status") not in ACTIVE

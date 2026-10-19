@@ -61,6 +61,33 @@ class FakeAPI(ActivityAPI):
 
 
 class LeaseGithubPortTests(unittest.TestCase):
+    def test_external_review_veto_only_visible_to_read_only_port(self):
+        """El Port no habilita el veto externo en su ruta estricta."""
+        from unittest.mock import patch
+
+        api = FakeAPI()
+        api.authenticated = True
+        port = LeaseGithubPort(
+            api, armed=True, concurrency_group="test", clock=lambda: NOW,
+        )
+        with patch.object(port, "_latest_bot_marker", return_value=None), \
+             patch("scripts.lease_github_port.collect_activity",
+                   return_value={"status": "UNKNOWN"}) as collector:
+            with self.assertRaises(PortNotArmed):
+                port.read_observation(21)
+            self.assertIs(
+                collector.call_args.kwargs["allow_review_veto_only"], True)
+            self.assertIs(
+                collector.call_args.kwargs["allow_ci_veto_only"], True)
+            collector.reset_mock()
+            with self.assertRaises(PortNotArmed):
+                port.read(21)
+            self.assertIs(
+                collector.call_args.kwargs["allow_review_veto_only"], False)
+            self.assertIs(
+                collector.call_args.kwargs["allow_ci_veto_only"], False)
+        self.assertTrue(all(path == GLOBAL_SWITCH for path in api.calls))
+
     def test_read_only_inspection_never_allows_caller_to_set_authority(self):
         from dataclasses import FrozenInstanceError, replace
         from scripts.lease_github_port import Inspection
