@@ -915,8 +915,8 @@ def closing_issues(body: str) -> set[int]:
 
 
 
-def post_merge_incident_issue(body: str) -> int | None:
-    """Extrae una relación no-closing explícita para validar un incidente post-merge."""
+def issue_lifecycle_relation(body: str) -> tuple[int, str] | None:
+    """Interpreta un único lifecycle cerrado, sin confiar en el propio PR."""
     matches = POST_MERGE_INCIDENT_RE.findall(body or "")
     if not matches:
         return None
@@ -934,21 +934,26 @@ def post_merge_incident_issue(body: str) -> int | None:
         raise CoordinationError(
             "factory-issue-lifecycle solo admite version, issue y mode."
         )
-    version = payload.get("version")
-    issue = payload.get("issue")
-    mode = payload.get("mode")
-    if version != 1 or isinstance(version, bool):
+    version, issue, mode = (
+        payload.get("version"), payload.get("issue"), payload.get("mode")
+    )
+    if type(version) is not int or version != 1:
         raise CoordinationError("factory-issue-lifecycle requiere version=1.")
-    if (
-        not isinstance(issue, int)
-        or isinstance(issue, bool)
-        or issue <= 0
-        or mode != "post_merge_validation"
-    ):
+    if (type(issue) is not int or issue <= 0
+            or mode not in ("post_merge_validation", "roadmap_partial")):
         raise CoordinationError(
-            "factory-issue-lifecycle requiere issue positivo y mode=post_merge_validation."
+            "factory-issue-lifecycle requiere issue positivo y "
+            "mode=post_merge_validation o roadmap_partial."
         )
-    return issue
+    return issue, mode
+
+
+def post_merge_incident_issue(body: str) -> int | None:
+    """Compatibilidad: solo la excepción original de incidentes."""
+    relation = issue_lifecycle_relation(body)
+    if relation is None or relation[1] != "post_merge_validation":
+        return None
+    return relation[0]
 
 def reservation_from_pr_body(body: str) -> str | None:
     """Extrae la reserva del PR; el marker oculto es la autoridad canónica."""
@@ -4673,9 +4678,32 @@ def close_pr_reservation(
     pull: dict[str, Any],
     current: dict[str, Any] | None,
 ) -> None:
-    """Cierra la reserva y actualiza el Issue al cerrarse un PR."""
-    api.delete_branch(branch)
+    """Revoca la reserva; solo una hoja V3 verificada preserva roadmap OPEN."""
     merged = bool(pull.get("merged"))
+    body = str(pull.get("body") or "")
+    relation = issue_lifecycle_relation(body)
+    partial = relation is not None and relation[1] == "roadmap_partial"
+    if partial:
+        if (relation[0] != issue_number
+            or current is None
+            or not authorized_roadmap_partial(api, issue_number, branch, body, current)
+            or not local_pull_source_matches(api, pull, branch)
+            or not isinstance(pull.get("base"), dict)
+            or pull["base"].get("ref") != "main"
+            or not isinstance(pull.get("head"), dict)
+            or pull["head"].get("ref") != branch):
+            raise CoordinationError(
+                "Cierre parcial: identidad de PR/Issue o autoridad V3 no verificable."
+            )
+        head_sha = pull["head"].get("sha")
+        actual_sha = api.branch_sha(branch)
+        if (not isinstance(head_sha, str)
+            or SHA_RE.fullmatch(head_sha) is None
+            or (actual_sha is not None and actual_sha != head_sha)):
+            raise CoordinationError(
+                "Cierre parcial: HEAD cambió, falta o no coincide con branch."
+            )
+    api.delete_branch(branch)
 
     if current:
         pr_reservation = reservation_from_pr_body(str(pull.get("body") or ""))
@@ -4710,7 +4738,10 @@ def close_pr_reservation(
         api.try_unassign(issue_number, str(current["owner"]))
 
     issue = api.issue(issue_number)
-    if merged or issue.get("state") != "open":
+    if partial and issue.get("state") == "open":
+        if STATUS_BLOCKED not in label_names(issue):
+            api.set_status(issue_number, STATUS_AVAILABLE)
+    elif merged or issue.get("state") != "open":
         api.set_status(issue_number, STATUS_COMPLETED)
     elif STATUS_BLOCKED not in label_names(issue):
         api.set_status(issue_number, STATUS_AVAILABLE)
@@ -5035,6 +5066,44 @@ def reservation_validation_errors(
     return errors
 
 
+def authorized_roadmap_partial(
+    api: GitHub,
+    issue_number: int,
+    branch: str,
+    body: str,
+    current: dict[str, Any] | None = None,
+) -> bool:
+    """Confirma snapshot bot V3 de una hoja del propio roadmap antes de mutar."""
+    issue = api.issue(issue_number)
+    lease = current if current is not None else active_reservation(api, issue_number)
+    if (issue.get("state") != "open"
+        or "tipo: producto" not in label_names(issue)
+        or not isinstance(lease, dict)
+        or lease.get("version") != 3
+        or lease.get("active") is not True
+        or lease.get("branch") != branch
+        or lease.get("owner") != "pl0n3r"
+        or reservation_from_pr_body(body) != lease.get("reservation_id")
+        or not isinstance(lease.get("acceptance_sha256"), str)
+        or not isinstance(lease.get("task_marker_sha256"), str)):
+        return False
+    try:
+        task = parse_task_marker(str(issue.get("body") or ""))
+        acceptance = contract_fingerprint(str(issue.get("body") or ""))
+    except (PlanError, AcceptanceError):
+        return False
+    return bool(
+        task is not None
+        and task["epic"] == issue_number  # This V3 is only a slice of its roadmap.
+        and task["owner"] == lease["owner"]
+        and task["paths"] == lease.get("task_paths")
+        and task["depends_on"] == lease.get("task_depends_on")
+        and task_marker_fingerprint(task) == lease["task_marker_sha256"]
+        and acceptance == lease["acceptance_sha256"]
+        and not closing_issues(body)
+    )
+
+
 def issue_contract_errors(
     api: GitHub,
     issue_number: int,
@@ -5046,45 +5115,46 @@ def issue_contract_errors(
     errors: list[str] = []
     closings = closing_issues(body)
     try:
-        post_merge_issue = post_merge_incident_issue(body)
+        lifecycle = issue_lifecycle_relation(body)
     except CoordinationError as exc:
         errors.append(str(exc))
-        post_merge_issue = None
+        lifecycle = None
 
     issue = api.issue(issue_number)
     labels = label_names(issue)
     is_incident = bool({"tipo: incidente", "type: incident"} & labels)
-
-    if issue_number in closings:
-        if post_merge_issue is not None:
+    if lifecycle is not None:
+        target, mode = lifecycle
+        if closings:
             errors.append(
                 "El PR no puede mezclar una relación de cierre con "
                 "factory-issue-lifecycle post-merge."
             )
-    elif post_merge_issue is None:
+        if target != issue_number:
+            errors.append(
+                "factory-issue-lifecycle debe apuntar al mismo Issue de la rama reservada."
+            )
+        elif mode == "post_merge_validation" and not is_incident:
+            errors.append(
+                "factory-issue-lifecycle post-merge solo se permite para Issues de incidente."
+            )
+        elif mode == "roadmap_partial" and not authorized_roadmap_partial(
+            api, issue_number, branch, body
+        ):
+            errors.append(
+                "factory-issue-lifecycle roadmap_partial requiere hoja propia "
+                "con reserva V3 bot, claims y aceptación fijados."
+            )
+    elif issue_number not in closings:
         errors.append(
             f"El PR debe incluir Closes #{issue_number} (o Fixes/Resolves) en el cuerpo."
-        )
-    elif post_merge_issue != issue_number:
-        errors.append(
-            "factory-issue-lifecycle debe apuntar al mismo Issue de la rama reservada."
-        )
-    elif not is_incident:
-        errors.append(
-            "factory-issue-lifecycle post-merge solo se permite para Issues de incidente."
         )
 
     if issue.get("state") != "open":
         errors.append(f"Issue #{issue_number} debe estar abierto durante el PR.")
     if require_reservation:
         errors.extend(
-            reservation_validation_errors(
-                api,
-                issue,
-                issue_number,
-                branch,
-                body,
-            )
+            reservation_validation_errors(api, issue, issue_number, branch, body)
         )
     return errors
 
