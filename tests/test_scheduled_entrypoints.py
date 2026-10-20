@@ -31,6 +31,12 @@ if JURIDICA_WORKFLOW.is_file() and not JURIDICA_WORKFLOW.is_symlink():
     EXPECTED.add("scripts/generar_revision_juridica.py")
     SAFE_ARGS["scripts/generar_revision_juridica.py"] = ("--help",)
 
+# Factory#1425: el nuevo cron local se prueba con --help y sin credenciales.
+QUEUE_OBSERVER = WORKFLOWS / "salud-cola.yml"
+if QUEUE_OBSERVER.is_file() and not QUEUE_OBSERVER.is_symlink():
+    EXPECTED.add("scripts/salud_cola_observar.py")
+    SAFE_ARGS["scripts/salud_cola_observar.py"] = ("--help",)
+
 
 class ScheduledEntrypointTests(unittest.TestCase):
     def _env(self) -> dict[str, str]:

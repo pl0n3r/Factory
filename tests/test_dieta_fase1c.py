@@ -46,10 +46,14 @@ EXPECTED_ACTIVE = frozenset([
     "sonar.yml",
     "unattended-watchdog.yml"
 ])
-# Mantener los 32 nombres históricos exactos y una única adición opcional.
+# Mantener los 32 nombres históricos exactos; sumar las adiciones posteriores validadas.
 LEGAL_SYNC = WF / "revision-juridica-sync.yml"
 if LEGAL_SYNC.is_file() and not LEGAL_SYNC.is_symlink():
     EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"revision-juridica-sync.yml"})
+# Factory#1425: observador GET-only posterior al ledger F1C, sin bajas.
+QUEUE_OBSERVER = WF / "salud-cola.yml"
+if QUEUE_OBSERVER.is_file() and not QUEUE_OBSERVER.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"salud-cola.yml"})
 HARD_GATES = (
     "factory-ci.yml", "sonar.yml", "codeql-evidence.yml",
     "seguridad.yml", "costos.yml", "unattended-watchdog.yml",
