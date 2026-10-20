@@ -26,8 +26,8 @@ class ObservationError(ValueError):
     """Evidencia inválida o incompleta: jamás convertir en saludable."""
 
 
-def observe(get_json):
-    """Obtener un único censo local con paginación y cuota verificadas."""
+def _low_quota(get_json):
+    """Validar el presupuesto REST; nunca adivinar cuota si falta evidencia."""
     budget = get_json("/rate_limit")
     if not isinstance(budget, dict) or not isinstance(budget.get("resources"), dict):
         raise ObservationError("quota_unknown")
@@ -40,10 +40,52 @@ def observe(get_json):
         or limit <= 0 or remaining < 0 or remaining > limit
     ):
         raise ObservationError("quota_invalid")
-    if remaining * 5 < limit:
+    return remaining * 5 < limit
+
+
+def _classify_issue(item, seen, counts):
+    """Una fila de GitHub: PR se excluye; Issue inválido falla cerrado."""
+    if not isinstance(item, dict):
+        raise ObservationError("invalid_item")
+    if "pull_request" in item:
+        return "pr"
+    number, labels = item.get("number"), item.get("labels")
+    if (
+        type(number) is not int or number <= 0 or number in seen
+        or not isinstance(labels, list)
+    ):
+        raise ObservationError("invalid_or_duplicate_issue")
+    seen.add(number)
+    if any(not isinstance(x, dict) or not isinstance(x.get("name"), str) for x in labels):
+        raise ObservationError("invalid_labels")
+    active = [STATE_LABELS[x["name"]] for x in labels if x["name"] in STATE_LABELS]
+    if len(active) != 1:
+        return "unknown"
+    counts[active[0]] += 1
+    return "classified"
+
+
+def _collect_page(items, seen, counts):
+    """Validar página antes de acumular censos; nunca combinar estados dudosos."""
+    if not isinstance(items, list) or len(items) > PAGE_SIZE:
+        raise ObservationError("invalid_page")
+    undecidable = 0
+    excluded_prs = 0
+    for item in items:
+        result = _classify_issue(item, seen, counts)
+        if result == "pr":
+            excluded_prs += 1
+        elif result == "unknown":
+            undecidable += 1
+    return undecidable, excluded_prs
+
+
+def observe(get_json):
+    """Obtener un único censo local con paginación y cuota verificadas."""
+    if _low_quota(get_json):
         return {"status": "DEFERRED_LOW_QUOTA", "scope": REPO, "writes": 0}
 
-    counts = {state: 0 for state in STATE_LABELS.values()}
+    counts = dict.fromkeys(STATE_LABELS.values(), 0)
     seen = set()
     undecidable = 0
     excluded_prs = 0
@@ -51,29 +93,9 @@ def observe(get_json):
         items = get_json(
             f"/repos/{REPO}/issues?state=open&per_page={PAGE_SIZE}&page={page}"
         )
-        if not isinstance(items, list) or len(items) > PAGE_SIZE:
-            raise ObservationError("invalid_page")
-        for item in items:
-            if not isinstance(item, dict):
-                raise ObservationError("invalid_item")
-            if "pull_request" in item:
-                excluded_prs += 1
-                continue
-            number = item.get("number")
-            labels = item.get("labels")
-            if (
-                type(number) is not int or number <= 0 or number in seen
-                or not isinstance(labels, list)
-            ):
-                raise ObservationError("invalid_or_duplicate_issue")
-            seen.add(number)
-            if any(not isinstance(x, dict) or not isinstance(x.get("name"), str) for x in labels):
-                raise ObservationError("invalid_labels")
-            active = [STATE_LABELS[x["name"]] for x in labels if x["name"] in STATE_LABELS]
-            if len(active) == 1:
-                counts[active[0]] += 1
-            else:
-                undecidable += 1
+        page_unknown, page_prs = _collect_page(items, seen, counts)
+        undecidable += page_unknown
+        excluded_prs += page_prs
         if len(items) < PAGE_SIZE:
             return {
                 "status": "UNKNOWN" if undecidable else "OBSERVED_LOCAL_ONLY",
@@ -86,7 +108,6 @@ def observe(get_json):
                 "writes": 0,
             }
     raise ObservationError("pagination_incomplete")
-
 
 def github_get_json(path):
     """Solo dos familias GET internas; nunca acepta URL arbitraria."""
@@ -126,7 +147,7 @@ def main() -> int:
         return 2
     try:
         outcome = observe(github_get_json)
-    except (ObservationError, OSError, ValueError):
+    except (OSError, ValueError):
         outcome = {"status": "UNKNOWN", "scope": REPO, "writes": 0}
     print(json.dumps(outcome, ensure_ascii=False, sort_keys=True))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
