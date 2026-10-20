@@ -130,17 +130,21 @@ def guard_from_payload(payload: object) -> GuardDecision | None:
     )
 
 
-def _normalize_open_alerts(value: object) -> dict[str, tuple[int, str]]:
+def _normalize_open_alerts(value: object) -> dict[str, tuple[int, str, bool]]:
     if not isinstance(value, dict):
         raise RuntimeValidationError("invalid_open_alerts")
-    result: dict[str, tuple[int, str]] = {}
+    result: dict[str, tuple[int, str, bool]] = {}
     for fingerprint, raw in value.items():
         if not isinstance(fingerprint, str) or FINGERPRINT_RE.fullmatch(fingerprint) is None:
             raise RuntimeValidationError("invalid_open_alert")
         if isinstance(raw, int) and not isinstance(raw, bool):
-            number, state = raw, "open"
-        elif isinstance(raw, dict) and set(raw) == {"number", "state"}:
+            number, state, reason = raw, "open", None
+        elif isinstance(raw, dict) and set(raw) in (
+            {"number", "state"},
+            {"number", "state", "state_reason"},
+        ):
             number, state = raw["number"], raw["state"]
+            reason = raw.get("state_reason")
         else:
             raise RuntimeValidationError("invalid_open_alert")
         if (
@@ -148,9 +152,13 @@ def _normalize_open_alerts(value: object) -> dict[str, tuple[int, str]]:
             or not isinstance(number, int)
             or number <= 0
             or state not in {"open", "closed"}
+            or reason not in (None, "completed", "not_planned", "duplicate", "reopened")
+            or (state != "closed" and reason == "not_planned")
         ):
             raise RuntimeValidationError("invalid_open_alert")
-        result[fingerprint] = (number, state)
+        # A completed or unspecified closure may legitimately be reopened.
+        # Only the explicit authenticated cancellation vetoes a reopen.
+        result[fingerprint] = (number, state, state == "closed" and reason == "not_planned")
     return result
 
 
@@ -201,6 +209,7 @@ def evaluate_runtime(
         for incident in decision.incidents
         if incident.fingerprint in current
         and current[incident.fingerprint][1] == "closed"
+        and not current[incident.fingerprint][2]
     )
 
     has_unknown_incident = any(
@@ -520,7 +529,16 @@ class GitHubIssueClient:
                 fingerprint, number, state = owned
                 if fingerprint in result and result[fingerprint]["number"] != number:
                     raise RuntimeValidationError("duplicate_owned_alert_fingerprint")
-                result[fingerprint] = {"number": number, "state": state}
+                reason = issue.get("state_reason")
+                if (
+                    reason not in (None, "completed", "not_planned", "duplicate", "reopened")
+                    or (state != "closed" and reason == "not_planned")
+                ):
+                    raise RuntimeValidationError("invalid_owned_alert_state_reason")
+                record: dict[str, object] = {"number": number, "state": state}
+                if state == "closed" and reason == "not_planned":
+                    record["state_reason"] = "not_planned"
+                result[fingerprint] = record
             if len(payload) < COLLECTION_PAGE_SIZE:
                 return result
         raise RuntimeValidationError("github_issue_listing_truncated")
