@@ -22,8 +22,10 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
                 ).read_text(encoding="utf-8")
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertEqual(readme.count("### Liberación automática de reservas V3 (#1382)"), 1)
+        self.assertNotIn("PR Draft #1383", readme)
         for expected in (
-            "Fase A — observación GET-only", "Implementación parcial",
+            "Fase A — observación GET-only", "Código GET-only integrado",
+            "PR #1383", "**sin certificación**",
             "Fase B — liberación automática", "NO ACTIVADA",
             "FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'",
             "24 horas", "100 ciclos terminales y válidos por repositorio",
