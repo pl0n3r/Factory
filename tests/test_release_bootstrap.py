@@ -54,10 +54,6 @@ class ReleaseBootstrapTests(unittest.TestCase):
             self.template_release,
         )
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_rearm_chain_stops_at_human_decided_gate(self):
         """AC-01: una cadena larga de rearmados sigue válida si termina en el OWNER."""
         from test_release_bootstrap_runtime import (
@@ -101,3 +97,6 @@ if __name__ == "__main__":
             ROOT / ".github" / "workflows" / "release-bootstrap.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("{1.." + str(MAX_REARM_DEPTH) + "}", workflow)
+if __name__ == "__main__":
+    unittest.main()
+
