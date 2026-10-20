@@ -21,17 +21,77 @@ UTC_STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 ACTIVE = frozenset({"estado: reservado", "estado: en revisión",
                     "estado: requiere recuperación"})
 FACTORY_REPO_ROUTE = "/repos/pl0n3r/Factory"
+GLOBAL_SWITCH_ROUTE = FACTORY_REPO_ROUTE + "/issues/767"
+SUPPORTED_OBSERVER_REPOSITORIES = frozenset({
+    "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+    "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+    "pl0n3r/FactoryRunner",
+})
 
 
-def _allowed_unparameterized_get(route: str) -> bool:
+def _repository_route(repo: str) -> str:
+    """Los repos autorizados son literales; los bodies de Issues no los definen."""
+    if type(repo) is not str or repo not in SUPPORTED_OBSERVER_REPOSITORIES:
+        raise PermissionError("repository_not_authorized")
+    return "/repos/" + repo
+
+
+def local_active_issue_ids(pages: Any, repo: str) -> list[int] | None:
+    """Censo local paginado y fail-closed; jamás infiere ausencia de actividad."""
+    try:
+        _repository_route(repo)
+        if type(pages) is not list or not 1 <= len(pages) <= 10:
+            return None
+        seen: set[int] = set()
+        active: list[int] = []
+        valid_statuses = {
+            "estado: reservado", "estado: en revisión",
+            "estado: requiere recuperación", "status: reserved",
+            "status: in review", "status: recovery required",
+        }
+        for index, page in enumerate(pages):
+            if type(page) is not list or len(page) > 100:
+                return None
+            if index < len(pages) - 1 and len(page) != 100:
+                return None
+            for issue in page:
+                if (type(issue) is not dict
+                        or type(issue.get("number")) is not int
+                        or issue["number"] <= 0 or issue["number"] in seen
+                        or issue.get("state") != "open"
+                        or type(issue.get("labels")) is not list):
+                    return None
+                seen.add(issue["number"])
+                if "pull_request" in issue:
+                    if type(issue["pull_request"]) is not dict:
+                        return None
+                    continue
+                names: set[str] = set()
+                for label in issue["labels"]:
+                    if (type(label) is not dict or
+                            type(label.get("name")) is not str):
+                        return None
+                    names.add(label["name"])
+                if len(names & valid_statuses) > 1:
+                    return None
+                if names & valid_statuses:
+                    active.append(issue["number"])
+                    if len(active) > 10:
+                        return None
+        return sorted(active)
+    except (TypeError, ValueError, PermissionError):
+        return None
+
+
+
+def _allowed_unparameterized_get(route: str, repo_route: str = FACTORY_REPO_ROUTE) -> bool:
     """Only endpoints needed for the V3 GET observer, not all repo resources."""
     if route in (
-        "/rate_limit", FACTORY_REPO_ROUTE,
-        FACTORY_REPO_ROUTE + "/issues/767",
-        FACTORY_REPO_ROUTE + "/contents/datos.yml",
+        "/rate_limit", repo_route, GLOBAL_SWITCH_ROUTE,
+        repo_route + "/contents/datos.yml",
     ):
         return True
-    base = re.escape(FACTORY_REPO_ROUTE)
+    base = re.escape(repo_route)
     return (
         re.fullmatch(rf"{base}/issues/[1-9][0-9]*", route) is not None
         or re.fullmatch(
@@ -97,6 +157,10 @@ class _GhReadOnlyAPI:
     repo = "pl0n3r/Factory"
     authenticated = True
 
+    def __init__(self, repo: str = "pl0n3r/Factory") -> None:
+        self.repo = repo
+        self._repo_route = _repository_route(repo)
+
     def request(self, method: str, path: str) -> Any:
         import json
         import re
@@ -105,11 +169,13 @@ class _GhReadOnlyAPI:
         # La ruta y la query son superficies distintas: solo los valores de
         # query pueden usar escapes canónicos (%2F para rama, %3A para UTC).
         route, sep, query = path.partition("?") if type(path) is str else ("", "", "")
+        repo_route = self._repo_route
         if (method != "GET" or type(path) is not str
                 or not (route == "/rate_limit"
-                        or route == FACTORY_REPO_ROUTE
-                        or route.startswith(FACTORY_REPO_ROUTE + "/"))
-                or (not sep and not _allowed_unparameterized_get(route))
+                        or route == repo_route
+                        or route.startswith(repo_route + "/")
+                        or route == GLOBAL_SWITCH_ROUTE)
+                or (not sep and not _allowed_unparameterized_get(route, repo_route))
                 or "://" in path or "#" in path or ".." in path
                 or "%" in route or "\\" in path
                 or any(ord(ch) < 32 for ch in path)
@@ -118,7 +184,7 @@ class _GhReadOnlyAPI:
         if sep:
             from urllib.parse import quote, unquote
 
-            repo = FACTORY_REPO_ROUTE
+            repo = repo_route
             if route == f"{repo}/activity":
                 allowed = {"per_page", "ref", "time_period"}
             elif route == f"{repo}/commits":
@@ -188,16 +254,17 @@ def observe_issue_cli(issue: int) -> IntegrationPreview:
     from datetime import datetime, timezone
     from scripts.lease_github_port import LeaseGithubPort
 
-    if os.environ.get("GITHUB_REPOSITORY") != _GhReadOnlyAPI.repo:
+    repo_name = os.environ.get("GITHUB_REPOSITORY")
+    if repo_name not in SUPPORTED_OBSERVER_REPOSITORIES:
         return _unknown(issue if type(issue) is int and issue > 0 else 0,
                         "repository_not_authorized")
-    api = _GhReadOnlyAPI()
+    api = _GhReadOnlyAPI(repo_name)
     now = datetime.now(timezone.utc)
     try:
-        identity = api.request("GET", FACTORY_REPO_ROUTE)
+        identity = api.request("GET", _repository_route(repo_name))
         repository_id = identity.get("id") if type(identity) is dict else None
         if (type(repository_id) is not int or repository_id <= 0
-                or identity.get("full_name") != _GhReadOnlyAPI.repo):
+                or identity.get("full_name") != repo_name):
             return _unknown(issue if type(issue) is int and issue > 0 else 0,
                             "repository_identity_unknown")
     except Exception:
