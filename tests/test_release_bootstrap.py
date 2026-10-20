@@ -5,6 +5,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+from test_release_bootstrap_runtime import (
+    SHA,
+    ReleaseBootstrapError,
+    bot_source_issue,
+    owner_source_issue,
+    rearmed_gate_body,
+    valid_rearmed_v2_payload,
+    validate_payload,
+)
+
 RELEASE = ROOT / ".github" / "workflows" / "release.yml"
 TEMPLATE_RELEASE = ROOT / "template" / ".github" / "workflows" / "release.yml"
 GUIDE = ROOT / "docs" / "release-bootstrap.md"
@@ -56,16 +67,6 @@ class ReleaseBootstrapTests(unittest.TestCase):
 
     def test_rearm_chain_stops_at_human_decided_gate(self):
         """AC-01: una cadena larga de rearmados sigue válida si termina en el OWNER."""
-        from test_release_bootstrap_runtime import (
-            SHA,
-            ReleaseBootstrapError,
-            bot_source_issue,
-            owner_source_issue,
-            rearmed_gate_body,
-            valid_rearmed_v2_payload,
-            validate_payload,
-        )
-
         def chain(bots):
             sources = [
                 bot_source_issue(number=1000 + i, source_issue=1001 + i)
