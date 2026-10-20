@@ -51,6 +51,11 @@ def audit(root: Path, targets: Sequence[str] = DEFAULT_TARGETS) -> dict[str, obj
             continue
         scanned.append(consumer)
         for file in sorted(workflow_dir.rglob("*")):
+            # Python does not descend into symlinked directories by default.
+            # Their contents must not be silently counted as audited.
+            if file.is_symlink():
+                unreadable.append(f"{consumer}:{file.relative_to(workflow_dir).as_posix()}:symlink")
+                continue
             if file.suffix not in (".yml", ".yaml"):
                 continue
             if file.is_symlink() or not file.is_file():

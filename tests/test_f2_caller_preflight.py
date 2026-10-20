@@ -134,5 +134,34 @@ class F2CallerPreflightTests(unittest.TestCase):
         self.assertEqual({"roles.yml", "etiquetas-pr.yml"}, {item["reusable"] for item in report["references"]})
 
 
+    def test_nested_symlink_directory_with_hidden_caller_blocks_removal(self):
+        outside = self.root / "untrusted-workflows"
+        outside.mkdir()
+        (outside / "caller.yml").write_text(
+            "jobs:\\n  check:\\n    uses: pl0n3r/factory/.github/workflows/readme.yml@v1\\n",
+            encoding="utf-8",
+        )
+        symlink = self.root / "Condor" / ".github" / "workflows" / "shared"
+        symlink.symlink_to(outside, target_is_directory=True)
+
+        report = audit(self.root, ["readme.yml"])
+        self.assertEqual("BLOCKED", report["status"])
+        self.assertIn("Condor:shared:symlink", report["unreadable_files"])
+        self.assertEqual([], report["references"])
+        self.assertEqual([], report["missing_consumers"])
+
+    def test_nested_symlink_directory_without_callers_still_blocks_removal(self):
+        outside = self.root / "empty-workflows"
+        outside.mkdir()
+        symlink = self.root / "GrindFlow" / ".github" / "workflows" / "nested"
+        symlink.symlink_to(outside, target_is_directory=True)
+
+        report = audit(self.root, ["roles.yml"])
+        self.assertEqual("BLOCKED", report["status"])
+        self.assertIn("GrindFlow:nested:symlink", report["unreadable_files"])
+        self.assertEqual([], report["references"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
