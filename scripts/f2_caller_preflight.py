@@ -37,8 +37,16 @@ def audit(root: Path, targets: Sequence[str] = DEFAULT_TARGETS) -> dict[str, obj
     scanned: list[str] = []
 
     for consumer in CONSUMERS:
-        workflow_dir = root / consumer / ".github" / "workflows"
-        if not workflow_dir.is_dir() or workflow_dir.is_symlink():
+        checkout_dir = root / consumer
+        github_dir = checkout_dir / ".github"
+        workflow_dir = github_dir / "workflows"
+        # A symlinked ancestor can make an unrelated checkout appear authentic.
+        if (
+            checkout_dir.is_symlink()
+            or github_dir.is_symlink()
+            or workflow_dir.is_symlink()
+            or not workflow_dir.is_dir()
+        ):
             missing.append(consumer)
             continue
         scanned.append(consumer)

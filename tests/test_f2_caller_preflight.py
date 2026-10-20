@@ -39,6 +39,34 @@ class F2CallerPreflightTests(unittest.TestCase):
         self.assertEqual({"v1", "f7661bc123"}, {item["ref"] for item in report["references"]})
         self.assertEqual({"Condor", "GrindFlow"}, {item["consumer"] for item in report["references"]})
 
+    def test_symlinked_consumer_checkout_blocks_even_when_contents_look_safe(self):
+        checkout = self.root / "Condor"
+        relocated = self.root / "different-condor"
+        checkout.rename(relocated)
+        checkout.symlink_to(relocated, target_is_directory=True)
+        self.assertTrue((checkout / ".github" / "workflows").is_dir())
+        self.assertFalse((checkout / ".github" / "workflows").is_symlink())
+
+        report = audit(self.root, ["readme.yml"])
+        self.assertEqual("BLOCKED", report["status"])
+        self.assertEqual(["Condor"], report["missing_consumers"])
+        self.assertNotIn("Condor", report["scanned_consumers"])
+        self.assertEqual([], report["references"])
+
+    def test_symlinked_github_ancestor_blocks_even_when_contents_look_safe(self):
+        github_dir = self.root / "GrindFlow" / ".github"
+        relocated = self.root / "GrindFlow" / "different-github"
+        github_dir.rename(relocated)
+        github_dir.symlink_to(relocated, target_is_directory=True)
+        self.assertTrue((github_dir / "workflows").is_dir())
+        self.assertFalse((github_dir / "workflows").is_symlink())
+
+        report = audit(self.root, ["readme.yml"])
+        self.assertEqual("BLOCKED", report["status"])
+        self.assertEqual(["GrindFlow"], report["missing_consumers"])
+        self.assertNotIn("GrindFlow", report["scanned_consumers"])
+        self.assertEqual([], report["references"])
+
     def test_all_scanned_with_no_references_can_be_safe(self):
         self.workflow("Condor", "normal.yml", "jobs:\n  build:\n    uses: actions/checkout@v4\n")
         report = audit(self.root, ["readme.yml"])
