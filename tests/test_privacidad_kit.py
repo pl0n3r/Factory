@@ -233,6 +233,28 @@ class PrivacyKitTests(unittest.TestCase):
         self.assertIn("no inventa un plazo legal", rights)
         self.assertNotIn("30 días", rights)
 
+    def test_all_six_rights_are_documented_safely(self):
+        """Generated rights catalog is complete without legal approval claims."""
+        documents = generate_documents(load_rules(), data_map())
+        for path in ("canal-derechos.md", "politica-tratamiento.md"):
+            with self.subTest(document=path):
+                text = documents[path]
+                for mechanism in (
+                    "acceso", "rectificación/corrección", "actualización",
+                    "portabilidad", "supresión/eliminación", "revocación",
+                ):
+                    self.assertIn(mechanism, text)
+                self.assertIn("revisión jurídica", text)
+                self.assertIn(PLACEHOLDER_TOKEN, text)
+                self.assertNotIn("consentimiento otorgado", text)
+        self.assertIn(
+            "no inventa un plazo legal", documents["canal-derechos.md"]
+        )
+        self.assertIn(
+            "no implica que exista un servicio automatizado",
+            documents["politica-tratamiento.md"],
+        )
+
     def test_owner_placeholders_are_preserved(self):
         rules = load_rules()
         documents = generate_documents(rules, data_map())
