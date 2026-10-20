@@ -165,6 +165,39 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
                         self.assertNotEqual(result.returncode, 0)
                         self.assertEqual(output.read_text(encoding="utf-8"), "")
 
+    def test_exact_sha_mode_defines_final_recheck_before_branch(self):
+        """Bootstrap exact-SHA must define the same fail-closed freshness guard."""
+        preflight = BOOTSTRAP.split("\n  preflight:", 1)[1].split("\n  consumer-compat:", 1)[0]
+        function = "require_exact_main_success() {"
+        latest = 'if [[ "$expected_mode" == "latest" ]]; then'
+        final = "# EXACT_MAIN_FINAL_RECHECK_BEGIN"
+        self.assertEqual(preflight.count(function), 1)
+        self.assertLess(preflight.index(function), preflight.index(latest))
+        self.assertLess(preflight.index(latest), preflight.index(final))
+        for name in ("CI factory", "Sonar CI-based",
+                     "Evidencia CodeQL", "Unattended Watchdog"):
+            self.assertEqual(
+                preflight.split(latest, 1)[1].split(final, 1)[0].count(
+                    f'require_exact_main_success "{name}"'), 1,
+            )
+            self.assertEqual(
+                preflight.split(final, 1)[1].count(
+                    f'require_exact_main_success "{name}"'), 1,
+            )
+
+    def test_release_bootstrap_preflight_shell_syntax(self):
+        """Read the embedded Bash, including the exact and latest branches."""
+        begin = "        run: |\n"
+        end = "\n  consumer-compat:"
+        preflight = BOOTSTRAP.split("\n  preflight:", 1)[1].split(end, 1)[0]
+        self.assertEqual(preflight.count(begin), 1)
+        script = textwrap.dedent(preflight.split(begin, 1)[1])
+        result = subprocess.run(
+            ["bash", "-n"], input=script, capture_output=True,
+            text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_preflight_command_imports_run_as_in_the_workflow(self):
         """Regresión #102: el comando exacto del workflow debe resolver sus imports."""
         match = re.search(r"python3 (-m [\w.]+|scripts/release_bootstrap\.py)", BOOTSTRAP)
