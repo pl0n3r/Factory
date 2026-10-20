@@ -49,6 +49,16 @@ class F2CallerPreflightTests(unittest.TestCase):
         self.assertEqual("BLOCKED", report["status"])
         self.assertIn("AutoFactory", report["missing_consumers"])
 
+    def test_unrecognized_caller_form_fails_closed(self):
+        self.workflow(
+            "Condor", "folded.yml",
+            "jobs:\n  test:\n    uses: >-\n      pl0n3r/factory/.github/workflows/readme.yml@v1\n",
+        )
+        report = audit(self.root, ["readme.yml"])
+        self.assertEqual("BLOCKED", report["status"])
+        self.assertEqual([], report["references"])
+        self.assertTrue(any("caller_ambiguo" in x for x in report["unreadable_files"]))
+
     def test_multiple_consumers_and_yaml_extensions(self):
         self.workflow("ControlBot", "roles.yaml", "jobs:\n  one:\n    uses: pl0n3r/factory/.github/workflows/roles.yml@v1\n")
         self.workflow("FactoryRunner", "labels.yml", "  uses: \"pl0n3r/factory/.github/workflows/etiquetas-pr.yml@deafbeef\"\n")

@@ -53,7 +53,13 @@ def audit(root: Path, targets: Sequence[str] = DEFAULT_TARGETS) -> dict[str, obj
             except (OSError, UnicodeError):
                 unreadable.append(f"{consumer}:{file.relative_to(workflow_dir).as_posix()}")
                 continue
-            for match in CALLER.finditer(contents):
+            # A mentioned Factory caller that does not match the supported form
+            # must never be reported as absent (e.g. YAML folded scalars).
+            known_callers = list(CALLER.finditer(contents))
+            prefix = "pl0n3r/factory/.github/workflows/"
+            if contents.lower().count(prefix) != len(known_callers):
+                unreadable.append(f"{consumer}:{file.relative_to(workflow_dir).as_posix()}:caller_ambiguo")
+            for match in known_callers:
                 reusable, ref = match.groups()
                 if reusable.lower() in wanted:
                     references.append({
