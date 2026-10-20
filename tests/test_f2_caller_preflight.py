@@ -1,10 +1,14 @@
 """Regression coverage for the read-only F2 reusable-caller preflight."""
 
+import contextlib
+import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from scripts.f2_caller_preflight import CONSUMERS, audit
+from scripts.f2_caller_preflight import CONSUMERS, audit, main
 
 
 class F2CallerPreflightTests(unittest.TestCase):
@@ -58,6 +62,40 @@ class F2CallerPreflightTests(unittest.TestCase):
         self.assertEqual("BLOCKED", report["status"])
         self.assertEqual([], report["references"])
         self.assertTrue(any("caller_ambiguo" in x for x in report["unreadable_files"]))
+
+    def test_unreadable_utf8_and_symlink_block_removal(self):
+        unreadable = self.root / "Condor" / ".github" / "workflows" / "unreadable.yml"
+        unreadable.write_bytes(b"\\xff")
+        link = self.root / "Condor" / ".github" / "workflows" / "external.yml"
+        link.symlink_to(unreadable)
+        report = audit(self.root, ["readme.yml"])
+        self.assertEqual("BLOCKED", report["status"])
+        self.assertEqual(2, len(report["unreadable_files"]))
+
+    def test_invalid_target_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "targets"):
+            audit(self.root, ["../other.yml"])
+        with self.assertRaisesRegex(ValueError, "targets"):
+            audit(self.root, [])
+
+    def test_cli_reports_safe_and_blocked_with_exit_codes(self):
+        args = ["preflight", "--root", str(self.root), "--target", "readme.yml"]
+        with patch("sys.argv", args), contextlib.redirect_stdout(io.StringIO()) as out:
+            status = main()
+        self.assertEqual(0, status)
+        self.assertEqual("SAFE", json.loads(out.getvalue())["status"])
+        self.workflow("brvtal", "reader.yml", "jobs:\\n  read:\\n    uses: pl0n3r/factory/.github/workflows/readme.yml@v1\\n")
+        with patch("sys.argv", args), contextlib.redirect_stdout(io.StringIO()) as out:
+            status = main()
+        self.assertEqual(2, status)
+        self.assertEqual("BLOCKED", json.loads(out.getvalue())["status"])
+
+    def test_cli_invalid_target_fails_closed(self):
+        args = ["preflight", "--root", str(self.root), "--target", "../invalid.yml"]
+        with patch("sys.argv", args), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as stopped:
+                main()
+        self.assertEqual(2, stopped.exception.code)
 
     def test_multiple_consumers_and_yaml_extensions(self):
         self.workflow("ControlBot", "roles.yaml", "jobs:\n  one:\n    uses: pl0n3r/factory/.github/workflows/roles.yml@v1\n")
