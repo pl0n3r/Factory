@@ -138,7 +138,7 @@ class F2CallerPreflightTests(unittest.TestCase):
         outside = self.root / "untrusted-workflows"
         outside.mkdir()
         (outside / "caller.yml").write_text(
-            "jobs:\\n  check:\\n    uses: pl0n3r/factory/.github/workflows/readme.yml@v1\\n",
+            "jobs:\n  check:\n    uses: pl0n3r/factory/.github/workflows/readme.yml@v1\n",
             encoding="utf-8",
         )
         symlink = self.root / "Condor" / ".github" / "workflows" / "shared"
