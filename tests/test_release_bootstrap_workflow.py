@@ -189,8 +189,9 @@ class ReleaseBootstrapWorkflowTests(unittest.TestCase):
         """Read the embedded Bash, including the exact and latest branches."""
         begin = "        run: |\n"
         end = "\n  consumer-compat:"
-        self.assertEqual(BOOTSTRAP.count(begin), 1)
-        script = textwrap.dedent(BOOTSTRAP.split(begin, 1)[1].split(end, 1)[0])
+        preflight = BOOTSTRAP.split("\n  preflight:", 1)[1].split(end, 1)[0]
+        self.assertEqual(preflight.count(begin), 1)
+        script = textwrap.dedent(preflight.split(begin, 1)[1])
         result = subprocess.run(
             ["bash", "-n"], input=script, capture_output=True,
             text=True, timeout=10,
