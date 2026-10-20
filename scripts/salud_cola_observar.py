@@ -127,9 +127,9 @@ def main() -> int:
     if summary:
         with Path(summary).open("a", encoding="utf-8") as stream:
             stream.write(
-                "### Factory queue — observación GET-only\\n"
-                + "\\n`" + outcome["status"] + "` — No concede reservas, "
-                + "no certifica salud global y no crea incidentes.\\n"
+                "### Factory queue — observación GET-only\n"
+                + "\n`" + outcome["status"] + "` — No concede reservas, "
+                + "no certifica salud global y no crea incidentes.\n"
             )
     return 2 if outcome["status"] == "UNKNOWN" else 0
 

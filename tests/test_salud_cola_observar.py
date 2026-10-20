@@ -36,7 +36,9 @@ class SaludColaObservadorTests(unittest.TestCase):
         def incomplete(path):
             if path == "/rate_limit":
                 return {"resources": {"core": {"limit": 5000, "remaining": 5000}}}
-            return [{"number": n, "labels": [{"name": "estado: disponible"}]} for n in range(1, 101)]
+            page = int(path.rsplit("=", 1)[-1])
+            return [{"number": n, "labels": [{"name": "estado: disponible"}]}
+                    for n in range(1 + (page - 1) * 100, 101 + (page - 1) * 100)]
         with self.assertRaisesRegex(ObservationError, "pagination_incomplete"):
             observe(incomplete)
 
