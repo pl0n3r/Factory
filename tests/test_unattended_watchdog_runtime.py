@@ -268,6 +268,109 @@ class UnattendedWatchdogRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved.create, ())
         self.assertEqual(resolved.close, (123,))
 
+    def test_not_planned_closed_watchdog_alert_is_not_reopened(self):
+        active = evidence(
+            work_ready=True,
+            ready_since="2026-10-02T00:40:00Z",
+            next_dispatch_planned=False,
+        )
+        _, first = evaluate_runtime(config(), guard(), active, {})
+        self.assertEqual(len(first.create), 1)
+        fingerprint = first.create[0].fingerprint
+        cancelled = {
+            fingerprint: {
+                "number": 818,
+                "state": "closed",
+                "state_reason": "not_planned",
+            },
+        }
+        decision, plan = evaluate_runtime(config(), guard(), active, cancelled)
+        self.assertEqual(decision.action, "BLOCKED")
+        self.assertEqual(plan.create, ())
+        self.assertEqual(plan.reopen, ())
+        self.assertEqual(plan.close, ())
+        self.assertTrue(any(item.fingerprint == fingerprint for item in decision.incidents))
+
+    def test_closed_completed_watchdog_alert_is_still_reopened(self):
+        active = evidence(
+            work_ready=True,
+            ready_since="2026-10-02T00:40:00Z",
+            next_dispatch_planned=False,
+        )
+        _, first = evaluate_runtime(config(), guard(), active, {})
+        fingerprint = first.create[0].fingerprint
+        for record in (
+            {"number": 818, "state": "closed", "state_reason": "completed"},
+            {"number": 818, "state": "closed"},
+            {"number": 818, "state": "closed", "state_reason": "duplicate"},
+        ):
+            with self.subTest(record=record):
+                decision, plan = evaluate_runtime(
+                    config(), guard(), active, {fingerprint: record},
+                )
+                self.assertEqual(decision.action, "BLOCKED")
+                self.assertEqual(plan.create, ())
+                self.assertEqual(tuple(number for number, _ in plan.reopen), (818,))
+        unknown_evidence = evidence(presence=presence(freshness="unknown"))
+        decision, plan = evaluate_runtime(
+            config(), guard(), unknown_evidence,
+            {fingerprint: {"number": 818, "state": "open"}},
+        )
+        self.assertEqual(decision.action, "BLOCKED")
+        self.assertEqual(plan.close, ())
+
+    def test_owned_alert_list_preserves_explicit_not_planned_state_reason(self):
+        fingerprint = "f" * 64
+        owned = {
+            "number": 818,
+            "state": "closed",
+            "state_reason": "not_planned",
+            "title": f"{ALERT_TITLE} UNKNOWN {fingerprint[:12]}",
+            "body": (
+                '<!-- factory-unattended-watchdog-alert '
+                f'{{"version":1,"fingerprint":"{fingerprint}"}} -->'
+            ),
+            "user": {"login": "github-actions[bot]"},
+        }
+
+        def transport(method, path, payload):
+            self.assertEqual(method, "GET")
+            self.assertIn("state=all", path)
+            return [owned]
+
+        client = GitHubIssueClient("token", "pl0n3r/Factory", transport)
+        self.assertEqual(
+            client.list_owned_alerts(),
+            {
+                fingerprint: {
+                    "number": 818,
+                    "state": "closed",
+                    "state_reason": "not_planned",
+                }
+            },
+        )
+        owned["state_reason"] = "completed"
+        self.assertEqual(
+            client.list_owned_alerts(),
+            {fingerprint: {"number": 818, "state": "closed"}},
+        )
+        del owned["state_reason"]
+        self.assertEqual(
+            client.list_owned_alerts(),
+            {fingerprint: {"number": 818, "state": "closed"}},
+        )
+        for reason in ("invalid", 42, True, ["not_planned"], {}):
+            with self.subTest(reason=reason):
+                owned["state_reason"] = reason
+                with self.assertRaisesRegex(
+                    RuntimeValidationError, "invalid_owned_alert_state_reason",
+                ):
+                    client.list_owned_alerts()
+        owned["state"] = "open"
+        owned["state_reason"] = "not_planned"
+        with self.assertRaises(RuntimeValidationError):
+            client.list_owned_alerts()
+
     def test_missing_invalid_or_unknown_input_fails_closed_explicitly(self):
         cases = (
             (None, guard(), evidence()),
