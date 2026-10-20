@@ -54,6 +54,10 @@ if LEGAL_SYNC.is_file() and not LEGAL_SYNC.is_symlink():
 QUEUE_OBSERVER = WF / "salud-cola.yml"
 if QUEUE_OBSERVER.is_file() and not QUEUE_OBSERVER.is_symlink():
     EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"salud-cola.yml"})
+# Factory#1442: adición del reusable consumidor, sin tocar baseline F1C.
+CONSUMER_OBSERVER = WF / "observador-reservas-consumidor.yml"
+if CONSUMER_OBSERVER.is_file() and not CONSUMER_OBSERVER.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"observador-reservas-consumidor.yml"})
 HARD_GATES = (
     "factory-ci.yml", "sonar.yml", "codeql-evidence.yml",
     "seguridad.yml", "costos.yml", "unattended-watchdog.yml",
