@@ -81,13 +81,23 @@ class ReleaseBootstrapTests(unittest.TestCase):
         self.assertEqual(
             validate_payload(chain(17)), {"status": "ready", "sha": SHA}
         )
+        oversized = chain(64)
         with self.assertRaises(ReleaseBootstrapError):
-            validate_payload(chain(64))
+            validate_payload(oversized)
+
+        undecided = chain(17)
+        undecided["gate"]["comments"] = []
+        with self.assertRaisesRegex(ReleaseBootstrapError, "Decisión v2"):
+            validate_payload(undecided)
+
         cyclic = chain(3)
+        cyclic["rearm_sources"][1]["body"] = bot_source_issue(
+            number=1001, source_issue=1000
+        )["body"]
         cyclic["rearm_sources"][2] = dict(
             cyclic["rearm_sources"][0]
         )
-        with self.assertRaises(ReleaseBootstrapError):
+        with self.assertRaisesRegex(ReleaseBootstrapError, "cíclica"):
             validate_payload(cyclic)
 
     def test_workflow_and_script_share_rearm_depth(self):
