@@ -241,6 +241,12 @@ class FakeGitHub:
         """Elimina una rama si existe."""
         self.branches.pop(branch, None)
 
+    def delete_branch_if_at(self, branch: str, expected_sha: str) -> None:
+        """Rechaza el delete si hubo push entre leer HEAD y borrar."""
+        if self.branch_sha(branch) != expected_sha:
+            raise CoordinationError("Cierre parcial: CAS denegado.")
+        self.delete_branch(branch)
+
     def acquire_issue_lock(self, issue_number: int, sha: str) -> str | None:
         branch = coordinator.recovery_lock_branch(issue_number)
         self.lock_counter = getattr(self, "lock_counter", 0) + 1
@@ -398,6 +404,99 @@ class LimpiezaRamaTests(unittest.TestCase):
         api.request = request  # type: ignore[method-assign]
         with self.assertRaises(GitHubError):
             api.delete_branch("trabajo/issue-19")
+
+    def test_delete_branch_cas_authenticates_gate_and_exact_oid(self) -> None:
+        """El GraphQL CAS borra solo beforeOid y nunca hace DELETE por nombre."""
+        api = GitHub("pl0n3r/Factory", "token-prueba")
+        calls = []
+        oid = "a" * 40
+
+        def request(method, path, payload=None, allow=()):
+            calls.append((method, path, payload))
+            if method == "GET":
+                return {"node_id": "R_repo-test"}
+            return {"data": {"updateRefs": {"clientMutationId": None}}}
+
+        api.request = request  # type: ignore[method-assign]
+        with patch.object(coordinator, "require_global_running",
+                          side_effect=lambda _: calls.append(("gate", "", None))):
+            api.delete_branch_if_at("trabajo/issue-19", oid)
+        self.assertEqual([item[0] for item in calls], ["GET", "gate", "POST"])
+        self.assertEqual(calls[0][1], "/repos/pl0n3r/Factory")
+        self.assertEqual(calls[2][1], "/graphql")
+        payload = calls[2][2]["variables"]["input"]
+        self.assertEqual(payload["repositoryId"], "R_repo-test")
+        self.assertEqual(payload["refUpdates"], [{
+            "name": "refs/heads/trabajo/issue-19",
+            "beforeOid": oid,
+            "afterOid": "0" * 40,
+            "force": True,
+        }])
+
+    def test_delete_branch_cas_rejects_invalid_branch_or_oid_without_io(self):
+        """Las referencias no autorizadas fallan antes de GET y de mutación."""
+        api = GitHub("pl0n3r/Factory", "token-prueba")
+        requests = []
+        api.request = lambda *args, **kw: requests.append(args)  # type: ignore[method-assign]
+        for branch, oid in (
+            ("main", "a" * 40), ("refs/heads/trabajo/issue-19", "a" * 40),
+            ("trabajo/issue-19", "invalid"), ("trabajo/issue-19", None),
+            (None, "a" * 40),
+        ):
+            with self.subTest(branch=branch, oid=oid):
+                with self.assertRaisesRegex(CoordinationError, "CAS inválidos"):
+                    api.delete_branch_if_at(branch, oid)
+        self.assertEqual(requests, [])
+
+    def test_delete_branch_cas_rejects_missing_repo_authority(self):
+        """Sin node_id auténtico, GraphQL nunca se ejecuta."""
+        for reply in (None, {}, {"node_id": None}, {"node_id": ""}):
+            with self.subTest(reply=reply):
+                api = GitHub("pl0n3r/Factory", "token-prueba")
+                methods = []
+                def request(method, path, payload=None, allow=()):
+                    methods.append(method)
+                    return reply
+                api.request = request  # type: ignore[method-assign]
+                with self.assertRaisesRegex(CoordinationError, "repo CAS ilegible"):
+                    api.delete_branch_if_at("trabajo/issue-19", "a" * 40)
+                self.assertEqual(methods, ["GET"])
+
+    def test_delete_branch_cas_paused_before_post(self):
+        """Una pausa entre GET y POST nunca borra una referencia."""
+        api = GitHub("pl0n3r/Factory", "token-prueba")
+        methods = []
+        def request(method, path, payload=None, allow=()):
+            methods.append(method)
+            return {"node_id": "R_repo-test"}
+        api.request = request  # type: ignore[method-assign]
+        with patch.object(coordinator, "require_global_running",
+                          side_effect=CoordinationError("PAUSED")):
+            with self.assertRaisesRegex(CoordinationError, "PAUSED"):
+                api.delete_branch_if_at("trabajo/issue-19", "a" * 40)
+        self.assertEqual(methods, ["GET"])
+
+    def test_delete_branch_cas_denies_race_and_malformed_graphql(self):
+        """La API no confirma un CAS con errores, datos vacíos o respuesta rota."""
+        responses = (
+            None, {}, {"errors": [{"message": "beforeOid mismatch"}]},
+            {"data": None}, {"data": {}},
+            {"data": {"updateRefs": None}},
+        )
+        for response in responses:
+            with self.subTest(response=response):
+                api = GitHub("pl0n3r/Factory", "token-prueba")
+                methods = []
+                def request(method, path, payload=None, allow=()):
+                    methods.append(method)
+                    if method == "GET":
+                        return {"node_id": "R_repo-test"}
+                    return response
+                api.request = request  # type: ignore[method-assign]
+                with patch.object(coordinator, "require_global_running"):
+                    with self.assertRaisesRegex(CoordinationError, "CAS denegado"):
+                        api.delete_branch_if_at("trabajo/issue-19", "a" * 40)
+                self.assertEqual(methods, ["GET", "POST"])
 
 
 class WorkflowCoordinacionTests(unittest.TestCase):
@@ -982,6 +1081,258 @@ class EstadoCoordinacionTests(unittest.TestCase):
 
 class CoordinacionTests(unittest.TestCase):
     """Cubre contratos de reserva, sesión, transición y colisiones."""
+
+    @staticmethod
+    def _planned_partial_roadmap_fixture():
+        from scripts.orquestador_kit import task_marker_fingerprint
+
+        api = FakeGitHub()
+        sha = "a" * 40
+        branch = "trabajo/issue-12"
+        task = {
+            "version": 1, "epic": 12, "task_key": "AUTHENTIC_SLICE",
+            "order": 1, "owner": "pl0n3r",
+            "roles": ["ingenieria-software"], "depends_on": [],
+            "paths": ["src/a.php"],
+        }
+        api.issue_data["body"] = (
+            VALID_ACCEPTANCE_BODY + "\n"
+            + "<!-- factory-plan-task "
+            + json.dumps(task, separators=(",", ":")) + " -->"
+        )
+        api.issue_data["labels"] = [
+            {"name": STATUS_REVIEW}, {"name": "tipo: producto"},
+        ]
+        api.branches[branch] = sha
+        acceptance = contract_fingerprint(api.issue_data["body"])
+        current = {
+            "version": 3, "owner": "pl0n3r",
+            "reservation_id": SESSION_A,
+            "branch": branch, "active": True, "reason": "tomar",
+            "acceptance_sha256": acceptance,
+            "task_marker_sha256": task_marker_fingerprint(task),
+            "task_paths": ["src/a.php"], "task_depends_on": [],
+        }
+        api.comment(12, reservation_marker(
+            "pl0n3r", SESSION_A, branch, True, "tomar",
+            acceptance, task_snapshot={
+                "task_marker_sha256": current["task_marker_sha256"],
+                "task_paths": current["task_paths"],
+                "task_depends_on": [],
+            },
+        ))
+        marker = (
+            '<!-- factory-issue-lifecycle '
+            '{"version":1,"issue":12,"mode":"roadmap_partial"} -->'
+        )
+        body = marker + "\n<!-- condor-reserva-id: " + SESSION_A + " -->"
+        api.pulls[15] = {
+            "number": 15, "state": "open", "draft": False,
+            "head": {"ref": branch, "sha": sha,
+                     "repo": {"full_name": api.repo}},
+            "base": {"ref": "main", "sha": "b" * 40},
+            "body": body, "merged": False,
+        }
+        api.pull_files_map[15] = {"src/a.php"}
+        return api, current, marker
+
+    def test_planned_partial_roadmap_merged_keeps_issue_open_and_uncompleted(self):
+        """AC-01: el merge legítimo revoca V3 sin completar cinco AC externos."""
+        api, current, marker = self._planned_partial_roadmap_fixture()
+        self.assertEqual(coordinator.issue_lifecycle_relation(
+            api.pulls[15]["body"]), (12, "roadmap_partial"))
+        validate_pull(api, 15, True)
+        api.pulls[15].update(state="closed", merged=True)
+        update_pr_state(api, 15, "closed")
+        self.assertEqual(api.issue_data["state"], "open")
+        self.assertEqual(api.status_history, [STATUS_AVAILABLE])
+        self.assertNotIn(STATUS_COMPLETED, api.status_history)
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        terminal = latest_reservation(api.issue_comments(12))
+        self.assertIsNotNone(terminal)
+        self.assertFalse(terminal["active"])
+        self.assertEqual(terminal["reason"], "pr-merged")
+        self.assertEqual(terminal["reservation_id"], SESSION_A)
+        self.assertEqual(terminal["task_marker_sha256"],
+                         current["task_marker_sha256"])
+        self.assertIn('factory-plan-task', api.issue_data["body"])
+        # Replay of an authentic closed event is a no-op after the trusted
+        # bot terminal; the roadmap is never reclassified as completed.
+        status_before = list(api.status_history)
+        comments_before = list(api.comments)
+        update_pr_state(api, 15, "closed")
+        self.assertEqual(api.status_history, status_before)
+        self.assertEqual(api.comments, comments_before)
+        self.assertEqual(api.issue_data["state"], "open")
+
+    def test_planned_partial_roadmap_replay_repairs_interrupted_cleanup(self):
+        """El marker terminal auténtico permite completar un 5xx parcial."""
+        for merged in (True, False):
+            for failed in ("unassign", "status"):
+                with self.subTest(merged=merged, failed=failed):
+                    api, _current, _marker = self._planned_partial_roadmap_fixture()
+                    api.assignees.add("pl0n3r")
+                    api.pulls[15].update(state="closed", merged=merged)
+                    method = "try_unassign" if failed == "unassign" else "set_status"
+                    with patch.object(
+                        api, method, side_effect=CoordinationError("HTTP 503")
+                    ):
+                        with self.assertRaisesRegex(CoordinationError, "HTTP 503"):
+                            update_pr_state(api, 15, "closed")
+                    self.assertNotIn("trabajo/issue-12", api.branches)
+                    terminal = latest_reservation(api.issue_comments(12))
+                    self.assertIsNotNone(terminal)
+                    self.assertEqual(
+                        terminal["reason"],
+                        "pr-merged" if merged else "pr-cerrado-sin-merge",
+                    )
+                    self.assertEqual(terminal["active"], False)
+                    self.assertEqual(
+                        terminal["task_marker_sha256"], _current["task_marker_sha256"]
+                    )
+                    comments_before = list(api.comments)
+                    update_pr_state(api, 15, "closed")
+                    self.assertEqual(api.comments, comments_before)
+                    self.assertEqual(api.issue_data["state"], "open")
+                    self.assertEqual(api.status_history[-1], STATUS_AVAILABLE)
+                    self.assertNotIn("pl0n3r", api.assignees)
+                    status_before = list(api.status_history)
+                    update_pr_state(api, 15, "closed")
+                    self.assertEqual(api.status_history, status_before)
+                    self.assertEqual(api.comments, comments_before)
+
+    def test_planned_partial_roadmap_delete_requires_cas_exact_sha(self):
+        """Un push entre HEAD read y DELETE no elimina trabajo no revisado."""
+        api, _current, _marker = self._planned_partial_roadmap_fixture()
+        api.pulls[15].update(state="closed", merged=True)
+        original = api.delete_branch_if_at
+
+        def raced_delete(branch, expected_sha):
+            api.branches[branch] = "c" * 40
+            original(branch, expected_sha)
+
+        before = list(api.comments)
+        with patch.object(api, "delete_branch_if_at", side_effect=raced_delete):
+            with self.assertRaisesRegex(CoordinationError, "CAS denegado"):
+                update_pr_state(api, 15, "closed")
+        self.assertEqual(api.branches["trabajo/issue-12"], "c" * 40)
+        self.assertEqual(api.comments, before)
+        self.assertEqual(api.status_history, [])
+
+    def test_planned_partial_roadmap_replay_rejects_recreated_branch(self):
+        """No limpiar labels si la rama fue recreada después del terminal."""
+        api, _current, _marker = self._planned_partial_roadmap_fixture()
+        api.pulls[15].update(state="closed", merged=True)
+        update_pr_state(api, 15, "closed")
+        api.branches["trabajo/issue-12"] = "c" * 40
+        comments_before = list(api.comments)
+        status_before = list(api.status_history)
+        with self.assertRaisesRegex(CoordinationError, "terminal auténtico"):
+            update_pr_state(api, 15, "closed")
+        self.assertEqual(api.branches["trabajo/issue-12"], "c" * 40)
+        self.assertEqual(api.comments, comments_before)
+        self.assertEqual(api.status_history, status_before)
+
+    def test_planned_partial_roadmap_replay_survives_new_roadmap_contract(self):
+        """Un cambio autorizado posterior no invalida el terminal del bot."""
+        for merged in (True, False):
+            with self.subTest(merged=merged):
+                api, _current, _marker = self._planned_partial_roadmap_fixture()
+                api.pulls[15].update(state="closed", merged=merged)
+                update_pr_state(api, 15, "closed")
+                comments_before = list(api.comments)
+                status_before = list(api.status_history)
+                api.issue_data["body"] += "\n### Nota nueva aprobada\n"
+                update_pr_state(api, 15, "closed")
+                self.assertEqual(api.issue_data["state"], "open")
+                self.assertEqual(api.comments, comments_before)
+                self.assertEqual(api.status_history, status_before)
+
+    def test_planned_partial_roadmap_normal_and_unmerged_behaviors(self):
+        """AC-02: flujo normal/legacy, cierre no merged y mezcla de keywords."""
+        complete, _current, marker = self._planned_partial_roadmap_fixture()
+        complete.pulls[15]["body"] = (
+            f"Closes #12\n<!-- condor-reserva-id: {SESSION_A} -->"
+        )
+        complete.pulls[15].update(state="closed", merged=True)
+        update_pr_state(complete, 15, "closed")
+        self.assertEqual(complete.status_history[-1], STATUS_COMPLETED)
+
+        no_merge, _current, marker = self._planned_partial_roadmap_fixture()
+        no_merge.pulls[15].update(state="closed", merged=False)
+        update_pr_state(no_merge, 15, "closed")
+        self.assertEqual(no_merge.status_history[-1], STATUS_AVAILABLE)
+        self.assertNotIn("trabajo/issue-12", no_merge.branches)
+        self.assertFalse(latest_reservation(no_merge.issue_comments(12))["active"])
+
+        mixed, _current, marker = self._planned_partial_roadmap_fixture()
+        mixed.pulls[15]["body"] += "\nCloses #12"
+        with self.assertRaisesRegex(CoordinationError, "mezclar"):
+            validate_pull(mixed, 15, True)
+        self.assertEqual(mixed.status_history, [])
+
+    def test_planned_partial_roadmap_forged_and_stale_authority_fail_closed(self):
+        """AC-03: no alterar reserva, rama ni labels con pruebas no auténticas."""
+        for attack in (
+            "not_product", "stale_pin", "stale_acceptance", "false_owner",
+            "wrong_issue", "duplicate", "different_uuid", "other_epic",
+            "wrong_sha", "no_lease",
+        ):
+            with self.subTest(attack=attack):
+                api, current, marker = self._planned_partial_roadmap_fixture()
+                pull = api.pulls[15]
+                if attack == "not_product":
+                    api.issue_data["labels"] = [{"name": STATUS_REVIEW}]
+                elif attack == "stale_pin":
+                    current["task_marker_sha256"] = "f" * 64
+                    api.comments[0]["body"] = reservation_marker(
+                        "pl0n3r", SESSION_A, "trabajo/issue-12", True,
+                        "tomar", current["acceptance_sha256"],
+                        task_snapshot={
+                            "task_marker_sha256": "f" * 64,
+                            "task_paths": ["src/a.php"], "task_depends_on": [],
+                        })
+                elif attack == "stale_acceptance":
+                    api.issue_data["body"] = api.issue_data["body"].replace(
+                        '"target":"Tests de scripts"', '"target":"Validar"',
+                    )
+                elif attack == "false_owner":
+                    current["owner"] = "attacker"
+                elif attack == "wrong_issue":
+                    pull["body"] = pull["body"].replace(
+                        '"issue":12', '"issue":13'
+                    )
+                elif attack == "duplicate":
+                    pull["body"] += "\n" + marker
+                elif attack == "different_uuid":
+                    pull["body"] = pull["body"].replace(SESSION_A, SESSION_B)
+                elif attack == "other_epic":
+                    api.issue_data["body"] = api.issue_data["body"].replace(
+                        '"epic":12', '"epic":900'
+                    )
+                elif attack == "wrong_sha":
+                    pull["head"]["sha"] = "c" * 40
+                elif attack == "no_lease":
+                    current = None
+                before = list(api.comments)
+                branch_before = dict(api.branches)
+                pull.update(state="closed", merged=True)
+                with self.assertRaises(CoordinationError):
+                    coordinator.close_pr_reservation(
+                        api, 12, "trabajo/issue-12", pull, current,
+                    )
+                self.assertEqual(api.comments, before)
+                self.assertEqual(api.status_history, [])
+                self.assertEqual(api.branches, branch_before)
+
+    def test_planned_partial_roadmap_lifecycle_is_documented(self):
+        """AC-04: excepción limitada, sin elevarla a release productiva."""
+        doc = (Path(__file__).resolve().parents[1]
+               / "docs" / "orquestador.md").read_text(encoding="utf-8")
+        for text in ("roadmap_partial", "factory-plan-task",
+                     "reserva V3", "Issue OPEN", "Factory@v1"):
+            self.assertIn(text, doc)
+
 
     def test_new_reservation_paused_or_unknown_zero_writes(self):
         """El primer preflight /tomar veta PAUSED/UNKNOWN antes de crear refs."""

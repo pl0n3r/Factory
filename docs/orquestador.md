@@ -112,3 +112,45 @@ La puerta de **validación de PR** consulta `GitHub.pull_files_exact_head`, que 
 **Exclusividad V3 obligatoria (Factory #1234):** incluso con `CONDOR_PARALLEL_FILE_GRANTS=1`, un diff exact-SHA de un PR no concede independencia para claims declarados solapados. Si una lease A reclama `src/` y solo ha cambiado `src/a.py`, A todavía puede modificar `src/b.py` en un push futuro; por tanto no se concede a B una segunda lease sobre `src/b.py`. El check de archivos propios de A acepta ambos paths bajo `src/`, y un check de colisión entre PRs posterior llega demasiado tarde para proteger la exclusividad de la reserva.
 
 El cálculo de archivos cambiados se conserva **únicamente como diagnóstico**, sin autoridad para omitir la colisión de claims ni siquiera mediante opt-in. El interruptor permanece fail-closed: valor ausente, `0`, `1`, `false` o cualquier valor desconocido no habilita grants que solapen claims, hasta implementar y probar enforcement vinculante de escrituras futuras o merge-train serializado. Claims realmente disjuntos conservan el paralelismo normal; versiones, README, lockfiles, renames y aliases siguen siendo archivos compartidos cuando corresponda. Ningún check verde aislado reemplaza la reserva V3, la revisión de seguridad y CI exact-HEAD.
+
+
+## Hojas parciales de roadmap con V3 fijada
+
+Para **un Issue OPEN de tipo producto** cuyo `factory-plan-task.epic` es el
+mismo número del Issue (hoja de hardening dentro de un roadmap más amplio), se
+permite el lifecycle no-closing `roadmap_partial` únicamente cuando el
+coordinador verifica la **reserva V3** vigente emitida por el bot: rama
+`trabajo/issue-N`, UUID coincidente en el cuerpo del PR, owner canónico,
+fingerprints intactos de aceptación y del task, y los paths/dependencias
+idénticos al snapshot V3. No basta una declaración del autor del PR ni un
+comentario que simule el marcador del bot.
+
+Ejemplo de relación para una hoja que **no completa** el Issue padre:
+
+```html
+<!-- factory-issue-lifecycle {"version":1,"issue":129,"mode":"roadmap_partial"} -->
+<!-- condor-reserva-id: <UUID_V3_AUTENTICO> -->
+```
+
+No se utiliza `Closes #129` ni `Fixes`/`Resolves` junto a esta relación:
+GitHub cerraría el Issue fuera de la autoridad del coordinador. Un PR normal
+mantiene su palabra de cierre obligatoria; la excepción previa
+`post_merge_validation` permanece **solo para incidentes**.
+
+Durante `pull_request.closed` de una hoja parcial validada, el cierre
+**con merge** conserva el marker terminal `pr-merged`; el cierre **sin merge**
+usa `pr-cerrado-sin-merge`. Ambos revocan la V3, desasignan al titular,
+eliminan la rama únicamente mediante CAS del HEAD validado y mantienen el
+**Issue OPEN**, sin aplicar el estado `completado`. Un webhook repetido con
+terminal bot auténtico termina la limpieza de labels y assignee si un 5xx
+interrumpió el primer intento, sin publicar otro marker, tocar ramas nuevas
+ni aceptar un terminal falso. Si falta identidad del PR, snapshot del task,
+contrato, permiso, HEAD, rama, o hay un marker duplicado/forjado, falla cerrado
+antes de borrar una referencia o invalidar el estado. El evento `closed` y
+sus jobs siguen activos; no se omite el coordinador.
+
+El merge de un slice no equivale a completar el roadmap, ni acredita decisiones
+humanas, D-061 o validación real de Safari/ControlBot. El cambio en `Factory
+main` **no actualiza Factory@v1**: publicar o mover `@v1` exige el bootstrap,
+freeze, CI y autorización de release independientes. Los consumidores en `@v1`
+conservan el comportamiento anterior hasta su promoción legítima.
