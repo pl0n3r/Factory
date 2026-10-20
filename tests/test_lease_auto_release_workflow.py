@@ -15,6 +15,35 @@ class DenyTransport:
 
 
 class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
+    def test_readme_reports_both_reservation_release_phases(self):
+        """El README muestra Fase A incompleta y Fase B sin autoridad."""
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        docs = (ROOT / "docs" / "liberacion-automatica-de-reservas.md"
+                ).read_text(encoding="utf-8")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertEqual(readme.count("### Liberación automática de reservas V3 (#1382)"), 1)
+        for expected in (
+            "Fase A — observación GET-only", "Implementación parcial",
+            "Fase B — liberación automática", "NO ACTIVADA",
+            "FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'",
+            "24 horas", "100 ciclos terminales y válidos por repositorio",
+            "cero falsos positivos", "QA individual", "deferred_low_quota",
+            "GITHUB_TOKEN", "No se usa un token multi-repositorio",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, readme)
+        self.assertIn("24 horas", docs)
+        self.assertIn("100 ciclos", docs)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+        self.assertNotIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'true'", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", workflow)
+        self.assertIn("terminal_certified: false", workflow)
+        self.assertIn("if-no-files-found: warn", workflow)
+        self.assertIn("github.event_name == 'schedule'", workflow)
+        self.assertIn("lease-audit-evidence.json", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+
     def test_scheduled_executor_kill_switch_quota_and_shared_lock(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("cron: '*/10 * * * *'", text)
@@ -24,6 +53,12 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("issues: write", text)
         self.assertNotIn("contents: write", text)
         self.assertIn("pull-requests: read", text)
+        self.assertEqual(text.count("      checks: read"), 1)
+        self.assertEqual(text.count("      actions: read"), 1)
+        self.assertEqual(text.count("  checks: read"), 2)
+        self.assertEqual(text.count("  actions: read"), 2)
+        self.assertNotIn("checks: write", text)
+        self.assertNotIn("actions: write", text)
         self.assertNotIn("pull-requests: write", text)
         self.assertIn("      - 'scripts/coordinar_trabajo.py'", text)
         for dependency in (
@@ -66,6 +101,73 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(result.results[0][1].reason, "feature_disabled")
         self.assertFalse(result.results[0][1].wrote)
 
+
+    def test_low_quota_deferred_green_and_24h_100_cycles_qa_gate(self):
+        """La cuota baja aplaza en verde; no concede Fase B sin QA por repo."""
+        import json
+        import os
+        import subprocess
+        import tempfile
+        import textwrap
+
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        anchor = "          if (( remaining * 5 < limit )); then"
+        self.assertEqual(workflow.count(anchor), 1)
+        branch = workflow.split(anchor, 1)[1].split("\n          fi\n", 1)[0]
+        self.assertIn("deferred_low_quota", branch)
+        self.assertIn('> "$RUNNER_TEMP/lease-audit-evidence.json"', branch)
+        self.assertIn('echo "allow=false" >> "$GITHUB_OUTPUT"', branch)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', branch)
+        self.assertIn("exit 0", branch)
+        self.assertNotIn("exit 1", branch)
+        self.assertNotIn("::error::", branch)
+        script = ("set -euo pipefail\nremaining=19\nlimit=100\n"
+                  + "if (( remaining * 5 < limit )); then\n"
+                  + textwrap.dedent(branch) + "\nfi\n")
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "output"
+            summary = Path(folder) / "summary"
+            result = subprocess.run(
+                ["bash", "-c", script], cwd=ROOT,
+                env={**os.environ, "GITHUB_OUTPUT": str(output),
+                     "GITHUB_STEP_SUMMARY": str(summary),
+                     "RUNNER_TEMP": folder,
+                     "OBSERVED_REPOSITORY": "pl0n3r/Factory",
+                     "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "12345"},
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8").strip(),
+                             "allow=false")
+            self.assertIn("deferred_low_quota",
+                          summary.read_text(encoding="utf-8"))
+            self.assertNotIn("::error::", result.stdout)
+            evidence = json.loads(
+                (Path(folder) / "lease-audit-evidence.json"
+                 ).read_text(encoding="utf-8"))
+            self.assertEqual(evidence["repository"], "pl0n3r/Factory")
+            self.assertEqual(evidence["head_sha"], "a" * 40)
+            self.assertEqual(evidence["run_id"], "12345")
+            self.assertEqual(evidence["status"], "deferred_low_quota")
+            self.assertIs(evidence["terminal_certified"], False)
+            self.assertIs(evidence["release_authorized"], False)
+            self.assertEqual(evidence["mutations"], 0)
+            self.assertEqual(evidence["valid_observations"], 0)
+            self.assertEqual(evidence["unknown_observations"], 0)
+            self.assertEqual(evidence["issues"], [])
+        self.assertIn(
+            "if: ${{ always() && github.event_name == 'schedule' }}",
+            workflow,
+        )
+        self.assertIn("if: steps.budget.outputs.allow == 'true'", workflow)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+        docs = (ROOT / "docs" / "liberacion-automatica-de-reservas.md"
+                ).read_text(encoding="utf-8")
+        for requirement in ("24 horas", "100 ciclos", "terminales",
+                            "por repositorio", "cero falsos positivos",
+                            "QA individual"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, docs)
 
     def test_inline_observer_inventory_executes_fail_closed(self):
         """Regresión real del Python embebido en el workflow, sin API ni mutaciones."""
@@ -147,8 +249,8 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
 
 
 
-    def test_unknown_observation_is_noticed_without_failing_the_audit(self):
-        """Un UNKNOWN individual deja continuar el censo, sin escrituras."""
+    def test_unknown_observation_marks_cycle_invalid_but_continues_inventory(self):
+        """El cron no puede acreditar como verde un censo con UNKNOWN."""
         import os
         import shutil
         import subprocess
@@ -160,34 +262,193 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         anchor = '          jq -e \'type == "array" and length <= 10'
         self.assertEqual(workflow.count(anchor), 1)
-        block = textwrap.dedent(workflow[workflow.index(anchor):])
+        block = textwrap.dedent(workflow[workflow.index(anchor):].split(
+            "\n      - name: Conservar evidencia acotada", 1)[0])
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "lease-active-issues.json").write_text(
                 "[1364,1372]", encoding="utf-8")
             seen = root / "seen.txt"
+            summary = root / "summary.md"
             shim = root / "python3"
             shim.write_text(
                 "#!/bin/sh\n"
                 "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
-                "if [ \"$3\" = 1364 ]; then exit 1; fi\n"
+                "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\n"
+                "printf '{\"issue\":%s,\"state\":\"read_only\",\"action\":\"wait\",\"reason\":\"protected_or_active_work\",\"activity_age_minutes\":5,\"activity_source\":\"reservation_marker\",\"release_authorized\":false,\"lock_verified\":false,\"cas_verified\":false,\"mutations\":0}\n' \"$3\"\n"
                 "exit 0\n", encoding="utf-8")
             shim.chmod(0o755)
-            env = {**os.environ, "RUNNER_TEMP": folder,
-                   "SEEN_PATH": str(seen),
-                   "PATH": f"{folder}:{os.environ.get('PATH', '')}"}
-            result = subprocess.run(
-                ["bash", "-c", "set -euo pipefail\n" + block],
-                cwd=ROOT, env=env, capture_output=True, text=True,
-                timeout=15, check=False)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(
-                seen.read_text(encoding="utf-8").splitlines(),
-                ["1364", "1372"])
-            self.assertIn("::notice::Issue #1364", result.stdout)
-            self.assertIn("observación UNKNOWN o fallida", result.stdout)
-            self.assertIn("fail-closed, 0 mutaciones", result.stdout)
-            self.assertNotIn("::error::", result.stdout)
+            for fail_first in (False, True):
+                with self.subTest(fail_first=fail_first):
+                    seen.unlink(missing_ok=True)
+                    summary.unlink(missing_ok=True)
+                    env = {**os.environ, "RUNNER_TEMP": folder,
+                           "SEEN_PATH": str(seen),
+                           "GITHUB_STEP_SUMMARY": str(summary),
+                           "FAIL_FIRST": "1" if fail_first else "0",
+                           "PATH": f"{folder}:{os.environ.get('PATH', '')}"}
+                    result = subprocess.run(
+                        ["bash", "-c", "set -euo pipefail\n" + block],
+                        cwd=ROOT, env=env, capture_output=True, text=True,
+                        timeout=15, check=False)
+                    self.assertEqual(result.returncode == 0, not fail_first, result.stderr)
+                    self.assertEqual(
+                        seen.read_text(encoding="utf-8").splitlines(),
+                        ["1364", "1372"])
+                    report = summary.read_text(encoding="utf-8")
+                    self.assertIn("liberaciones=0", report)
+                    self.assertIn("ciclo válido de Fase A", report)
+                    self.assertIn(
+                        "| Issue | Estado | Decisión | Inactividad (min) | Fuente | Veto/motivo |",
+                        report,
+                    )
+                    self.assertIn(
+                        "| #1372 | read_only | wait | 5 | reservation_marker | protected_or_active_work |",
+                        report,
+                    )
+                    if fail_first:
+                        self.assertIn(
+                            "| #1364 | UNKNOWN | unknown | UNKNOWN | UNKNOWN | unverifiable_observation |",
+                            report,
+                        )
+                    else:
+                        self.assertIn(
+                            "| #1364 | read_only | wait | 5 | reservation_marker | protected_or_active_work |",
+                            report,
+                        )
+                    import json
+                    manifest = json.loads(
+                        (root / "lease-audit-evidence.json").read_text(encoding="utf-8"))
+                    self.assertFalse(manifest["terminal_certified"])
+                    self.assertFalse(manifest["release_authorized"])
+                    self.assertEqual(manifest["mutations"], 0)
+                    self.assertEqual(manifest["valid_observations"],
+                                     1 if fail_first else 2)
+                    self.assertEqual(manifest["unknown_observations"],
+                                     1 if fail_first else 0)
+                    self.assertEqual([row["issue"] for row in manifest["issues"]],
+                                     [1364, 1372])
+                    self.assertEqual(manifest["status"],
+                                     "UNKNOWN" if fail_first else "candidate_terminal")
+                    self.assertTrue(all(not row["release_authorized"]
+                                        for row in manifest["issues"]))
+                    if fail_first:
+                        self.assertIn("Observaciones válidas=1; UNKNOWN=1", report)
+                        self.assertIn("::notice::Issue #1364", result.stdout)
+                        self.assertIn("::error::Censo incompleto", result.stdout)
+                    else:
+                        self.assertIn("Observaciones válidas=2; UNKNOWN=0", report)
+                        self.assertNotIn("::error::", result.stdout)
+
+
+    def test_manifest_rejects_empty_or_inconsistent_phase_a_evidence(self):
+        """La etiqueta candidate_terminal exige ≥1 observación y cardinalidad real."""
+        import json
+        import shutil
+        import subprocess
+
+        if not shutil.which("jq"):
+            self.skipTest("jq necesario para probar el manifiesto ejecutable")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        anchor = '            --argjson unknown "$unknown_observations" ' + chr(39) + '\n'
+        end = '\n            ' + chr(39) + ' "$RUNNER_TEMP/lease-observer-results.jsonl"'
+        self.assertEqual(workflow.count(anchor), 1)
+        manifest_filter = workflow.split(anchor, 1)[1].split(end, 1)[0]
+        valid_row = {
+            "issue": 1364, "state": "read_only", "action": "wait",
+            "reason": "protected_or_active_work", "activity_age_minutes": 5,
+            "activity_source": "workflow_push", "release_authorized": False,
+            "lock_verified": False, "cas_verified": False, "mutations": 0,
+        }
+        unknown_row = {
+            "issue": 1372, "state": "UNKNOWN", "action": "unknown",
+            "reason": "unverifiable_observation", "release_authorized": False,
+            "lock_verified": False, "cas_verified": False, "mutations": 0,
+        }
+
+        def run(rows, valid, unknown):
+            return subprocess.run(
+                ["jq", "-sc", "--arg", "repo", "pl0n3r/Factory",
+                 "--arg", "sha", "a" * 40, "--arg", "run_id", "123",
+                 "--argjson", "valid", str(valid), "--argjson", "unknown",
+                 str(unknown), manifest_filter],
+                input="".join(json.dumps(row) + "\n" for row in rows),
+                text=True, capture_output=True, check=False, timeout=10,
+            )
+
+        for rows, valid, unknown, status in (
+            ([], 0, 0, "UNKNOWN"),
+            ([valid_row], 1, 0, "candidate_terminal"),
+            ([unknown_row], 0, 1, "UNKNOWN"),
+        ):
+            with self.subTest(valid=valid, unknown=unknown, status=status):
+                outcome = run(rows, valid, unknown)
+                self.assertEqual(outcome.returncode, 0, outcome.stderr)
+                payload = json.loads(outcome.stdout)
+                self.assertEqual(payload["status"], status)
+                self.assertEqual(len(payload["issues"]), valid + unknown)
+                self.assertIs(payload["terminal_certified"], False)
+                self.assertIs(payload["release_authorized"], False)
+                self.assertEqual(payload["mutations"], 0)
+
+        for rows, valid, unknown in (
+            ([valid_row], 2, 0),                    # fila faltante
+            ([valid_row, valid_row], 2, 0),        # Issue duplicado
+            ([valid_row, unknown_row], 2, 0),      # tipos vs contadores
+            ([valid_row], 0, 1),                  # UNKNOWN falso
+            ([], 1, 0),                          # censo vacío marcado válido
+        ):
+            with self.subTest(valid=valid, unknown=unknown, count=len(rows)):
+                outcome = run(rows, valid, unknown)
+                self.assertNotEqual(outcome.returncode, 0)
+
+    def test_observer_rejects_duplicate_json_documents_per_issue(self):
+        """Un stdout multirregistro no puede inflar el manifiesto del censo."""
+        import json
+        import shutil
+        import subprocess
+
+        if not shutil.which("jq"):
+            self.skipTest("jq necesario para validar el contrato JSON")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        anchor = '              jq -sce --argjson issue "$issue_number" \''
+        self.assertEqual(workflow.count(anchor), 1)
+        jq_filter = workflow.split(anchor, 1)[1].split(
+            '\n              \' "$RUNNER_TEMP/lease-observer-raw.json"', 1)[0]
+        self.assertIn("select(length == 1) | .[0]", jq_filter)
+
+        valid = {
+            "issue": 1364, "state": "read_only", "action": "wait",
+            "reason": "protected_or_active_work", "activity_age_minutes": 5,
+            "activity_source": "reservation_marker",
+            "release_authorized": False, "lock_verified": False,
+            "cas_verified": False, "mutations": 0,
+        }
+
+        def run(*values):
+            return subprocess.run(
+                ["jq", "-sce", "--argjson", "issue", "1364", jq_filter],
+                input="\n".join(json.dumps(v) for v in values),
+                text=True, capture_output=True, check=False, timeout=10,
+            )
+
+        single = run(valid)
+        self.assertEqual(single.returncode, 0, single.stderr)
+        self.assertEqual(json.loads(single.stdout)["issue"], 1364)
+        # jq -e por defecto valida cada documento por separado y aceptaría
+        # dos objetos, contabilizando una sola observación y dos filas.
+        for sample in (
+            (valid, valid),
+            (valid, {**valid, "issue": 1372}),
+            ({**valid, "issue": 1372},),  # identidad falsa aunque haya un solo documento
+            ({**valid, "activity_age_minutes": 5.5},),  # evitar minutos fraccionarios
+            ({**valid, "activity_age_minutes": 525601},),  # ventana fuera de rango
+            ({**valid, "release_authorized": True},),
+        ):
+            with self.subTest(sample=len(sample)):
+                rejected = run(*sample)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertEqual(rejected.stdout.strip(), "")
 
     def test_observer_jq_failure_propagates(self):
         """No ocultar error de jq dentro de sustitución de proceso Bash."""
@@ -215,13 +476,19 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         anchor = '          jq -e \'type == "array" and length <= 10'
         self.assertEqual(text.count(anchor), 1)
-        block = textwrap.dedent(text[text.index(anchor):])
+        block = textwrap.dedent(text[text.index(anchor):].split(
+            "\n      - name: Conservar evidencia acotada", 1)[0])
         script = "set -euo pipefail\n" + block
 
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "lease-active-issues.json"
             numbers = Path(folder) / "lease-active-issue-numbers.txt"
-            env = {**os.environ, "RUNNER_TEMP": folder}
+            summary = Path(folder) / "summary.md"
+            env = {**os.environ, "RUNNER_TEMP": folder,
+                   "GITHUB_STEP_SUMMARY": str(summary),
+                   "GITHUB_REPOSITORY": "pl0n3r/Factory",
+                   "GITHUB_SHA": "a" * 40,
+                   "GITHUB_RUN_ID": "12345"}
             # El caso vacío es válido y no invoca el observador externo.
             source.write_text("[]", encoding="utf-8")
             result = subprocess.run(
@@ -232,6 +499,17 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(numbers.is_file())
             self.assertEqual(numbers.read_text(encoding="utf-8"), "")
+            # El ciclo sin Issues no debe etiquetarse candidate_terminal.
+            import json
+            empty_evidence = json.loads(
+                (Path(folder) / "lease-audit-evidence.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(empty_evidence["status"], "UNKNOWN")
+            self.assertEqual(empty_evidence["valid_observations"], 0)
+            self.assertEqual(empty_evidence["issues"], [])
+            self.assertIs(empty_evidence["terminal_certified"], False)
+            self.assertTrue(summary.is_file())
+            self.assertIn("Observador V3 GET-only", summary.read_text(encoding="utf-8"))
 
             for malformed in (
                 "{broken", '{"not": "an-array"}',

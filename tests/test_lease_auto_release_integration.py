@@ -59,8 +59,15 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                 else:
                     fake.push_created_at = "invalid-time"
                 result = collect_activity(fake, 21, now=NOW)
-                self.assertEqual(result,
-                                 {"status": "UNKNOWN", "evidence_complete": False})
+                if scenario == "changes_requested":
+                    # La review externa es veto positivo seguro para
+                    # observación; el ejecutor mutante sigue bloqueado.
+                    self.assertTrue(result["evidence_complete"])
+                    self.assertEqual(result["activity_source"], "workflow_push")
+                else:
+                    self.assertEqual(
+                        result, {"status": "UNKNOWN", "evidence_complete": False},
+                    )
                 self.assertTrue(all(path == "/rate_limit" or path.startswith("/repos/")
                                     for path in fake.calls))
 
@@ -752,6 +759,20 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertIs(observed.lock_verified, False)
         self.assertIs(observed.cas_verified, False)
         self.assertEqual(port.reads, 1)
+        self.assertEqual(observed.activity_source, "workflow_push")
+        self.assertEqual(observed.activity_age_minutes, 20)
+        # El marker V3 editado por el bot debe conservar su procedencia.
+        newer = review_ready_api()
+        newer.checks[0]["status"] = "completed"
+        newer.comments[0]["updated_at"] = "2026-10-11T09:50:00Z"
+        new_item = replace(item, last_activity_at=NOW - timedelta(minutes=10))
+        new_port = ReadOnlyPort(new_item)
+        updated = preview_integrated_activity(newer, new_port, 21, now=NOW)
+        self.assertEqual((updated.state, updated.action), ("read_only", "wait"))
+        self.assertEqual(updated.activity_source, "reservation_marker")
+        self.assertEqual(updated.activity_age_minutes, 10)
+        self.assertEqual(new_port.reads, 1)
+        self.assertFalse(updated.release_authorized)
         with self.assertRaises(TypeError):
             replace(observed, release_authorized=True)
         with self.assertRaises(TypeError):
@@ -760,6 +781,179 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
             replace(observed, cas_verified=True)
         with self.assertRaises(FrozenInstanceError):
             observed.state = "authorized"
+
+        # Comentario nuevo del titular: test de preview sin conceder
+        # autoridad de liberación ni inferir ausencia de push.
+        commented = review_ready_api()
+        commented.checks[0]["status"] = "completed"
+        commented.push_event = "pull_request"
+        commented.comments[1] = {
+            "id": 2, "user": {"login": "pl0n3r", "type": "User"},
+            "body": "Trabajo actual",
+            "created_at": "2026-10-11T09:55:00Z",
+            "updated_at": "2026-10-11T09:55:00Z",
+        }
+        comment_port = ReadOnlyPort(replace(
+            item, last_activity_at=NOW - timedelta(minutes=5)))
+        comment_preview = preview_integrated_activity(
+            commented, comment_port, 21, now=NOW)
+        self.assertEqual(
+            (comment_preview.state, comment_preview.action),
+            ("read_only", "wait"),
+        )
+        self.assertEqual(comment_preview.activity_source, "issue_comment")
+        self.assertEqual(comment_preview.activity_age_minutes, 5)
+        self.assertIs(comment_preview.release_authorized, False)
+        self.assertIs(comment_preview.lock_verified, False)
+        self.assertIs(comment_preview.cas_verified, False)
+        self.assertEqual(comment_port.reads, 1)
+
+        # Un push autenticado vía REST independiente también confirma wait.
+        from test_lease_activity_collector import SHA
+        pushed = review_ready_api()
+        pushed.push_event = "pull_request"
+        pushed.checks[0]["status"] = "completed"
+        pushed.activity_rows = [{
+            "id": 37, "push_type": "normal",
+            "ref": "refs/heads/trabajo/issue-21",
+            "pushed_at": "2026-10-11T09:42:00Z",
+            "pusher": {"login": "pl0n3r", "type": "User"},
+            "before": "b" * 40, "after": SHA,
+        }]
+        positive_port = ReadOnlyPort(replace(
+            item, last_activity_at=NOW - timedelta(minutes=18)))
+        positive = preview_integrated_activity(
+            pushed, positive_port, 21, now=NOW)
+        self.assertEqual((positive.state, positive.action), ("read_only", "wait"))
+        self.assertEqual(positive.activity_source, "repository_push")
+        self.assertEqual(positive.activity_age_minutes, 18)
+        self.assertIn("fuente=repository_push", positive.summary_line)
+        self.assertFalse(positive.release_authorized)
+        self.assertEqual(positive_port.reads, 1)
+
+        # La evidencia autenticada de CI en curso produce un veto wait:
+        # no usa la lectura mutante y no concede autoridad de liberación.
+        running_api = review_ready_api()
+        running_snapshot = replace(item, ci_running=True)
+
+        class ObservationOnlyPort(ReadOnlyPort):
+            def read(self, issue):
+                raise AssertionError("strict mutating read must not be used")
+            def read_observation(self, issue):
+                assert issue == 21
+                self.reads += 1
+                return self.item
+
+        running_port = ObservationOnlyPort(running_snapshot)
+        running_result = preview_integrated_activity(
+            running_api, running_port, 21, now=NOW)
+        self.assertEqual(
+            (running_result.state, running_result.action, running_result.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertEqual(running_port.reads, 1)
+        self.assertFalse(running_result.release_authorized)
+        self.assertFalse(running_result.lock_verified)
+        self.assertFalse(running_result.cas_verified)
+
+        # Una revisión externa CHANGES_REQUESTED verificada por dos
+        # lectores implica "wait" sólo en la vista read-only, aunque
+        # el CI haya terminado. Nunca concede permiso de escritura.
+        review_api = review_ready_api()
+        review_api.checks[0]["status"] = "completed"
+        review_api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        review_port = ObservationOnlyPort(replace(
+            item, changes_requested=True))
+        review_result = preview_integrated_activity(
+            review_api, review_port, 21, now=NOW)
+        self.assertEqual(
+            (review_result.state, review_result.action, review_result.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertFalse(review_result.release_authorized)
+        self.assertFalse(review_result.lock_verified)
+        self.assertFalse(review_result.cas_verified)
+        self.assertEqual(review_port.reads, 1)
+        # Revisión desaparecida de la fuente: no convertir un veto
+        # declarado por el Port en observación confiable.
+        review_api.reviews = []
+        self.assertEqual(
+            preview_integrated_activity(
+                review_api, ObservationOnlyPort(replace(
+                    item, changes_requested=True)), 21, now=NOW).state,
+            "UNKNOWN",
+        )
+
+        # Sin push reciente, una revisión externa bloqueante y corroborada
+        # sigue siendo veto positivo wait. No atribuir dos horas de inactividad.
+        stale_review_api = review_ready_api()
+        stale_review_api.push_event = "pull_request"
+        stale_review_api.checks[0]["status"] = "completed"
+        stale_review_api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        stale_review_port = ObservationOnlyPort(replace(
+            item, last_activity_at=NOW - timedelta(hours=2),
+            changes_requested=True))
+        stale_review = preview_integrated_activity(
+            stale_review_api, stale_review_port, 21, now=NOW)
+        self.assertEqual(
+            (stale_review.state, stale_review.action, stale_review.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertIsNone(stale_review.activity_age_minutes)
+        self.assertIn("inactividad=UNKNOWN", stale_review.summary_line)
+        self.assertFalse(stale_review.release_authorized)
+        self.assertFalse(stale_review.lock_verified)
+        self.assertFalse(stale_review.cas_verified)
+        # Cambio de revisión o discordancia entre fuentes debe fallar cerrado.
+        stale_review_api.reviews[0]["state"] = "APPROVED"
+        self.assertEqual(
+            preview_integrated_activity(
+                stale_review_api, ObservationOnlyPort(replace(
+                    item, last_activity_at=NOW - timedelta(hours=2),
+                    changes_requested=True)), 21, now=NOW).state,
+            "UNKNOWN",
+        )
+
+        # Veto tipado aun sin un push reciente: CI activo y corroborado
+        # bloquea cualquier transición, pero NO prueba inactividad.
+        old_api = review_ready_api()
+        old_api.push_event = "pull_request"
+        old_snapshot = replace(
+            running_snapshot, last_activity_at=NOW - timedelta(hours=2))
+        old_port = ObservationOnlyPort(old_snapshot)
+        old_observed = preview_integrated_activity(
+            old_api, old_port, 21, now=NOW)
+        self.assertEqual(
+            (old_observed.state, old_observed.action, old_observed.reason),
+            ("read_only", "wait", "protected_or_active_work"),
+        )
+        self.assertEqual(old_observed.activity_source, "reservation_marker")
+        self.assertIsNone(old_observed.activity_age_minutes)
+        self.assertIn("inactividad=UNKNOWN", old_observed.summary_line)
+        self.assertNotIn("inactividad=120", old_observed.summary_line)
+        self.assertFalse(old_observed.release_authorized)
+        old_api.checks[0]["status"] = "completed"
+        self.assertEqual(
+            preview_integrated_activity(
+                old_api, ObservationOnlyPort(replace(
+                    old_snapshot, ci_running=False)), 21, now=NOW).state,
+            "UNKNOWN",
+        )
+
+        # Discrepancia entre checks y snapshot: se conserva UNKNOWN.
+        completed_api = review_ready_api()
+        completed_api.checks[0]["status"] = "completed"
+        inconsistent = preview_integrated_activity(
+            completed_api, ObservationOnlyPort(running_snapshot), 21, now=NOW)
+        self.assertEqual(inconsistent.state, "UNKNOWN")
 
         for change in (
             {"branch_sha": "b" * 40},
@@ -883,6 +1077,105 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertFalse(result.release_authorized)
 
 
+    def test_summary_line_and_cli_report_never_grant_release_authority(self):
+        """Cubrir casos hostiles, cotas y reporte del entrypoint sin red."""
+        import contextlib
+        import io
+        import os
+        import sys
+        import tempfile
+        from pathlib import Path
+        from scripts.lease_auto_release_integration import IntegrationPreview
+
+        valid = IntegrationPreview(
+            21, "read_only", "wait", "not_old_enough",
+            17, "workflow_push",
+        )
+        self.assertIn("Issue #21", valid.summary_line)
+        self.assertIn("inactividad=17 min", valid.summary_line)
+        self.assertIn("fuente=workflow_push", valid.summary_line)
+        self.assertIn("autoridad=NO", valid.summary_line)
+        self.assertFalse(valid.release_authorized)
+        self.assertFalse(valid.lock_verified)
+        self.assertFalse(valid.cas_verified)
+
+        for age in (None, -1, 525601, True, 2.5, "10"):
+            with self.subTest(age=age):
+                value = replace(valid, activity_age_minutes=age)
+                self.assertIn("inactividad=UNKNOWN", value.summary_line)
+        self.assertIn("inactividad=525600 min",
+                      replace(valid, activity_age_minutes=525600).summary_line)
+        self.assertIn("inactividad=0 min",
+                      replace(valid, activity_age_minutes=0).summary_line)
+        for source in (None, "commit", "different/repo", "unknown\nsecret"):
+            with self.subTest(source=source):
+                value = replace(valid, activity_source=source)
+                self.assertIn("fuente=UNKNOWN", value.summary_line)
+                self.assertNotIn("secret", value.summary_line)
+        for action in ("write", None, "release\nsecret", True):
+            with self.subTest(action=action):
+                self.assertIn(chr(96) + "unknown" + chr(96),
+                              replace(valid, action=action).summary_line)
+        for reason in (None, True, "TOKEN=secret", "private\npayload", "a" * 97):
+            with self.subTest(reason=reason):
+                note = replace(valid, reason=reason).summary_line
+                self.assertIn("veto/razón=untrusted_reason", note)
+                self.assertNotIn("secret", note)
+                self.assertNotIn("payload", note)
+        for issue in (None, True, 0, -21):
+            with self.subTest(issue=issue):
+                self.assertIn("Issue #0", replace(valid, issue=issue).summary_line)
+
+        source_file = (Path(__file__).resolve().parents[1] /
+                       "scripts" / "lease_auto_release_integration.py")
+        source_code = source_file.read_text(encoding="utf-8")
+        prefix, tail = source_code.split('if __name__ == "__main__":', 1)
+        # Cobertura: preservar líneas reales del archivo original al ejecutar
+        # el bloque CLI aislado; sin esto Sonar atribuye hits a líneas 1..N.
+        entrypoint = ("\n" * prefix.count("\n") +
+                      'if __name__ == "__main__":' + tail)
+        self.assertEqual(entrypoint.count("\n", 0, entrypoint.index(
+            'if __name__ == "__main__":')) + 1,
+            prefix.count("\n") + 1)
+        with tempfile.TemporaryDirectory() as folder:
+            summary = Path(folder) / "summary.md"
+            output = io.StringIO()
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                with patch.object(sys, "argv", ["observer", "21"]):
+                    with contextlib.redirect_stdout(output):
+                        exec(compile(entrypoint, str(source_file), "exec"), {
+                            "__name__": "__main__",
+                            "observe_issue_cli": lambda issue: valid,
+                        })
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["issue"], 21)
+            self.assertEqual(payload["activity_age_minutes"], 17)
+            self.assertEqual(payload["activity_source"],
+                             "workflow_push")
+            self.assertFalse(payload["release_authorized"])
+            self.assertEqual(payload["mutations"], 0)
+            self.assertEqual(summary.read_text(encoding="utf-8"),
+                             valid.summary_line)
+
+            unsafe = replace(valid, state="UNKNOWN", action="unknown",
+                             reason="collector_unknown")
+            output = io.StringIO()
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                with patch.object(sys, "argv", ["observer", "21"]):
+                    with contextlib.redirect_stdout(output):
+                        with self.assertRaises(SystemExit) as err:
+                            exec(compile(entrypoint, str(source_file), "exec"), {
+                                "__name__": "__main__",
+                                "observe_issue_cli": lambda issue: unsafe,
+                            })
+            self.assertEqual(err.exception.code, 1)
+            lines = output.getvalue().splitlines()
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(json.loads(lines[0])["state"], "UNKNOWN")
+            self.assertFalse(json.loads(lines[0])["release_authorized"])
+            self.assertEqual(summary.read_text(encoding="utf-8"),
+                             valid.summary_line + unsafe.summary_line)
+
     def test_read_only_transport_allows_exact_repository_identity_and_denies_writes(self):
         from unittest.mock import patch
         from scripts.lease_auto_release_integration import _GhReadOnlyAPI
@@ -918,6 +1211,167 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
                         api.request(method, path)
                     run.assert_not_called()
 
+    def test_repository_activity_get_enforces_ref_and_time_window(self):
+        """Activity API: solo ref V3 propio, un día y GET autenticado."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+
+        api = _GhReadOnlyAPI()
+        good = ("/repos/pl0n3r/Factory/activity?per_page=100"
+                "&ref=trabajo%2Fissue-21&time_period=day")
+        with patch("subprocess.run", return_value=SimpleNamespace(stdout="[]")) as gh:
+            self.assertEqual(api.request("GET", good), [])
+            gh.assert_called_once()
+        for bad in (
+            "/repos/pl0n3r/Factory/activity",
+            good.replace("day", "year"),
+            good.replace("trabajo%2Fissue-21", "main"),
+            good.replace("trabajo%2Fissue-21", "trabajo%252Fissue-21"),
+            good.replace("per_page=100", "per_page=500"),
+            good + "&actor=someone",
+            good + "&time_period=day",
+            good.replace("&ref=trabajo%2Fissue-21", ""),
+        ):
+            with self.subTest(bad=bad), patch("subprocess.run") as gh:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", bad)
+                gh.assert_not_called()
+
+    def test_read_only_transport_denies_unparameterized_repository_sweep(self):
+        """GET is not a blanket permission to read arbitrary repo endpoints."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+
+        api = _GhReadOnlyAPI()
+        allowed = (
+            "/rate_limit",
+            "/repos/pl0n3r/Factory",
+            "/repos/pl0n3r/Factory/issues/767",
+            "/repos/pl0n3r/Factory/issues/21",
+            "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-21",
+            "/repos/pl0n3r/Factory/contents/datos.yml",
+        )
+        with patch("subprocess.run", return_value=SimpleNamespace(
+            stdout="{}",
+        )) as gh:
+            for path in allowed:
+                with self.subTest(allow=path):
+                    self.assertEqual(api.request("GET", path), {})
+            self.assertEqual(gh.call_count, len(allowed))
+
+        # Previous broad prefix check permitted all these REST GETs.
+        # They are not needed for the V3 inspector and must be blocked
+        # before invoking the authenticated GitHub CLI subprocess.
+        forbidden = (
+            "/repos/pl0n3r/Factory/contents/.github/workflows/ci.yml",
+            "/repos/pl0n3r/Factory/actions/secrets",
+            "/repos/pl0n3r/Factory/collaborators",
+            "/repos/pl0n3r/Factory/issues/21/comments",
+            "/repos/pl0n3r/Factory/pulls",
+            "/repos/pl0n3r/Factory/git/ref/heads/main",
+            "/repos/pl0n3r/Factory/git/ref/heads/trabajo/issue-0",
+            "/repos/pl0n3r/Factory/issues/0",
+            "/repos/pl0n3r/Factory/issues/021",
+            "/repos/pl0n3r/Factory/issues/21/events",
+        )
+        for path in forbidden:
+            with self.subTest(deny=path), patch("subprocess.run") as gh:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", path)
+                gh.assert_not_called()
+
+    def test_collector_and_authenticated_gh_transport_accept_canonical_encoded_get(self):
+        """E2E offline: el colector genera query escapada y GH CLI solo hace GET."""
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_activity_collector import collect_activity
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+        from test_lease_activity_collector import API, NOW
+
+        fake = API()
+        received = []
+
+        def gh_api(args, **kwargs):
+            self.assertEqual(args[:4], [
+                "gh", "api", "-H", "Accept: application/vnd.github+json",
+            ])
+            self.assertTrue(kwargs["check"])
+            self.assertTrue(kwargs["capture_output"])
+            self.assertEqual(kwargs["timeout"], 20)
+            path = args[4]
+            received.append(path)
+            return SimpleNamespace(stdout=json.dumps(fake.request("GET", path)))
+
+        with patch("subprocess.run", side_effect=gh_api):
+            observed = collect_activity(_GhReadOnlyAPI(), 21, now=NOW)
+        self.assertTrue(observed["evidence_complete"])
+        self.assertEqual(observed["activity_source"], "workflow_push")
+        self.assertTrue(any(
+            "/commits?sha=trabajo%2Fissue-21&since=" in path and "%3A" in path
+            for path in received
+        ))
+        self.assertTrue(any(
+            "/actions/runs?branch=trabajo%2Fissue-21" in path
+            for path in received
+        ))
+        self.assertEqual(received, fake.calls)
+
+    def test_gh_read_only_transport_denies_unsafe_encoded_query(self):
+        """Escapes dobles, key spoofing, rutas escapadas y escrituras fallan."""
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+
+        base = "/repos/pl0n3r/Factory"
+        disallowed = (
+            f"{base}/commits?sha=trabajo%252Fissue-21&per_page=100&page=1",
+            f"{base}/commits?sha=trabajo%2Fissue-21&since=%ZZ",
+            f"{base}/commits?sha=trabajo%2fissue-21",
+            f"{base}/commits?sha=trabajo%2Fissue-21&page=1&page=2",
+            f"{base}/commits?sha=trabajo%2Fissue-21&evil=1",
+            f"{base}/commits?sha=trabajo%2Fissue-21&since=%2E%2E",
+            f"{base}/commits?sha=trabajo%2Fissue-21#fragment",
+            f"{base}/%2e%2e/commits?sha=main",
+            f"{base}/actions/runs?branch=other%2Frepo",
+            f"{base}/pulls?state=closed",
+            f"{base}/commits?sha=main%0A",
+        )
+        api = _GhReadOnlyAPI()
+        for path in disallowed:
+            with self.subTest(path=path), patch("subprocess.run") as run:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", path)
+                run.assert_not_called()
+
+    def test_transport_encodes_port_head_and_accepts_events_page_ten(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_auto_release_integration import _GhReadOnlyAPI
+        from scripts.lease_github_port import LeaseGithubPort
+
+        api = _GhReadOnlyAPI()
+        with patch("subprocess.run", return_value=SimpleNamespace(stdout="[]")) as gh:
+            self.assertFalse(LeaseGithubPort(api)._changes_requested(
+                "pl0n3r/Factory", "trabajo/issue-21"))
+            paths = [call.args[0][-1] for call in gh.call_args_list]
+            # LeaseGithubPort._pages termina ante página corta, sin
+            # centinela adicional. Aquí basta el único GET de pulls.
+            self.assertEqual(len(paths), 1)
+            self.assertTrue(all("head=pl0n3r%3Atrabajo%2Fissue-21" in p for p in paths))
+            self.assertEqual(api.request(
+                "GET", "/repos/pl0n3r/Factory/issues/21/events?per_page=100&page=10"), [])
+        for path in (
+            "/repos/pl0n3r/Factory/pulls?state=open&head=other%3Atrabajo%2Fissue-21",
+            "/repos/pl0n3r/Factory/pulls?state=open&head=pl0n3r:trabajo/issue-21",
+            "/repos/pl0n3r/Factory/issues/21/events?per_page=100&page=11",
+        ):
+            with patch("subprocess.run") as gh:
+                with self.assertRaises(PermissionError):
+                    api.request("GET", path)
+                gh.assert_not_called()
+
     def test_observer_uses_canonical_actions_concurrency_group(self):
         from datetime import timezone
         from unittest.mock import patch
@@ -944,7 +1398,7 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         self.assertIs(result, healthy)
         request.assert_called_once_with("GET", "/repos/pl0n3r/Factory")
         kwargs = port_type.call_args.kwargs
-        self.assertTrue(kwargs["armed"])
+        self.assertIs(kwargs["armed"], False)  # el observador NO tiene permiso CAS
         self.assertEqual(kwargs["concurrency_group"],
                          "factory-coordination-987654")
         self.assertEqual(kwargs["clock"]().tzinfo, timezone.utc)
@@ -1010,7 +1464,10 @@ class LeaseAutoReleaseIntegrationTests(unittest.TestCase):
         )[1]
         for state, action, code in (
             ("read_only", "wait", 0),
+            ("read_only", "mark_recovery", 0),
+            ("read_only", "release", 0),
             ("UNKNOWN", "unknown", 1),
+            ("UNKNOWN", "release", 1),
             ("read_only", "unknown", 1),
         ):
             with self.subTest(state=state, action=action):

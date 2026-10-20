@@ -1,5 +1,123 @@
 # Liberación automática de reservas V3 — diseño controlado (#1175)
 
+### Fase A distribuida (#1382) — sólo observación
+
+La auditoría empieza en Factory y se adoptará separadamente en cada consumidor
+mediante Coordinación `@v1` y su propio `GITHUB_TOKEN`. **No existe censo
+central entre repositorios ni credencial compartida multi-repo.** El observador
+ejecuta GET autenticados contra el repositorio local, informa decisiones
+hipotéticas y vetos en el resumen de cada run/artefacto, y mantiene **0
+escrituras, 0 reservas liberadas**. `UNKNOWN`, 403 y fuente incompleta no
+acreditan inactividad ni crean autoridad para mutar.
+
+**CI activo como veto de observación (no prueba de inactividad).**
+`collect_activity(..., allow_ci_veto_only=True)` permite emitir evidencia
+`ci_veto_only=true` únicamente cuando los checks o runs de la rama están
+autenticados, paginados y estables entre lecturas. Solo se usa desde
+`LeaseGithubPort.read_observation()` y el preview GET-only: devuelve
+`read_only/wait`, aunque la última actividad positiva sea antigua. La ruta
+`read()` y cualquier ejecución mutante conservan el rechazo de esa evidencia.
+Si el CI finaliza, las fuentes discrepan, cambia el HEAD o falta procedencia,
+la observación vuelve a `UNKNOWN`. También se admite el veto positivo de
+una revisión externa `CHANGES_REQUESTED` cuando los dos inventarios de
+reviews y el Port concuerdan con el PR exact-SHA, incluso si no hay push
+reciente. Su resultado es exclusivamente `read_only/wait` con
+`inactividad=UNKNOWN`: una aprobación posterior, desaparición del veto
+o carrera devuelve `UNKNOWN`, nunca una falsa prueba negativa.
+**Un veto tipado nunca demuestra la ausencia de pushes y no acredita una
+decisión hipotética `release`**.
+Por tanto, el preview conserva `wait` y la fuente identificada, pero
+publica `inactividad=UNKNOWN` (minutos = `null`) cuando
+`ci_veto_only=true`, sin atribuir ausencia al marker antiguo.
+Continúa pendiente una auditoría negativa de pushes completa y autenticada.
+Un GET de `/repos/{owner}/{repo}/activity` puede certificar una actividad
+**positiva** del titular en la rama: `push_type=normal|force`,
+`pusher.type=User`, `pusher.login` igual al titular, `ref` exacto,
+SHAs y `pushed_at` válidos, inventario revalidado en dos lecturas.
+Estos son los campos del endpoint GitHub **List repository activities**;
+`activity_type/actor/timestamp` no sustituyen este esquema y producen
+`UNKNOWN`. La fuente se informa como `repository_push`. El historial
+de actividad no ofrece cobertura íntegra garantizada para inferir
+ausencia de pushes.
+**No** se acepta inventario vacío, truncado, cambiado, retrasado o inválido
+como prueba *negativa* de pushes: en ese caso el estado sigue `UNKNOWN`,
+no se simulan `mark_recovery` ni `release`. Se consulta sólo cuando
+no existe otro veto positivo suficiente.
+Los comentarios nuevos del titular registrados por GitHub después de la
+reserva V3 también son evidencia positiva para `wait`: se valida autor
+`User`, `created_at`/`updated_at`, se releen todas las páginas para
+descartar carreras y se reporta `issue_comment` como fuente. Nunca se usa
+un comentario viejo editado para atribuir inactividad a la sesión, ni la
+ausencia de comentarios como prueba negativa de pushes. Si el comentario
+positivo supera 30 minutos, sin otra fuente vigente el resultado es `UNKNOWN`.
+El recolector compara también dos lecturas autenticadas del timestamp global
+`pushed_at` del repositorio, antes y después de los inventarios: si cambia,
+falta, es inválido o apunta al futuro, invalida el snapshot como `UNKNOWN`.
+Por la precisión de un segundo de `pushed_at`, cualquier valor del último minuto también invalida la observación como `UNKNOWN`, incluso si ambas lecturas son iguales: dos pushes pueden compartir el mismo segundo visible. Es una cuarentena conservadora, **no** prueba de cobertura de eventos, integridad histórica ni ausencia de pushes.
+Este watermark de segundo de resolución detecta ciertas carreras de otros
+refs, **pero ni su estabilidad ni su antigüedad prueban la ausencia íntegra
+de pushes** (incluidas carreras en el mismo segundo), por lo que no añade
+ninguna fuente de inactividad ni autoridad para release.
+
+El cron de Factory genera además `lease-audit-evidence.json` con
+`run_id`, `head_sha`, repositorio y resultados por Issue (acción,
+motivo, minutos, fuente y autoridades negativas), limitado por whitelist de
+campos. Cuando hay `UNKNOWN`, persiste únicamente un registro mínimo sin
+cuerpo ni cabeceras REST. El filtro exige exactamente **un objeto JSON
+válido por Issue**; si el CLI emite dos registros, datos fuera de esquema
+o JSON inválido, conserva `UNKNOWN` y no acredita el ciclo. El resumen del job muestra una fila saneada por Issue con estado, decisión, minutos enteros acotados (o `UNKNOWN`), fuente autenticada (o `UNKNOWN`) y razón del veto, sin imprimir el stdout REST ni del CLI. Un artefacto de GitHub Actions vinculado al run
+programado conserva este manifiesto 7 días; no se envía a comentarios.
+El manifiesto sólo puede marcar `candidate_terminal` cuando existe al menos
+una observación válida, ninguna `UNKNOWN` y la cantidad, estados e IDs únicos
+coinciden exactamente con los contadores del ciclo. Un censo vacío se mantiene
+`UNKNOWN` aunque el workflow termine en verde; discrepancias de conteo o
+IDs duplicados invalidan la generación del manifiesto. Ninguno de estos
+estados acredita por sí solo los 100 ciclos ni sustituye el QA externo.
+El manifiesto declara siempre `terminal_certified=false`: ni `success`
+ni `candidate_terminal` certifican los 24 h, los 100 ciclos o el QA.
+Una subida fallida o un artefacto ausente tampoco certifica el run.
+
+Con cuota REST inferior al 20 %, el ciclo publica `deferred_low_quota`,
+omite el censo y termina en verde; ese run **no cuenta** como observación válida.
+El cron también escribe un manifiesto tipado con `issues=[]`, cero
+observaciones, `terminal_certified=false` y autoridad de liberación negativa,
+sin llamadas REST adicionales. El artefacto vinculado al run distingue
+aplazamiento de auditoría completa, pero no certifica QA.
+
+Una conciliación QA **offline y sin credenciales** está disponible en
+`scripts/lease_auto_release_run.py::evaluate_phase_a_candidate`: requiere
+manifiestos exactamente asociados por ID, SHA y repositorio a recibos de runs
+`schedule` terminales `success`, artefactos acreditados por una verificación
+externa, cero `UNKNOWN`, cero mutaciones, 100 ciclos distintos, intervalo
+>=24 horas y una revisión documentada por cada candidato `release`.
+Rechaza duplicados, resultados `deferred_low_quota`, falsos positivos y
+cualquier fuente sin consistencia. En particular, un candidato
+`mark_recovery` requiere motivo `inactive_30_minutes`, fuente identificada y
+antigüedad ≥30 min; un `release` requiere motivo
+`inactive_after_recovery_grace`, fuente identificada y ≥40 min. Una fila
+`release` con sólo 7 minutos, aunque QA la marcara `correct`, es
+`invalid_evidence`, no `candidate_only`. Los `wait` acreditables
+necesitan motivo real del decisor (`activity_window` con edad inferior a
+30 min, `recovery_grace` con edad ≥30 min, o
+`protected_or_active_work`). Un motivo sintético `not_old_enough`,
+un switch pausado o un `activity_window` sin fuente no pueden sumar
+a los 100 ciclos válidos de Fase A. Estas son condiciones necesarias,
+pero no reemplazan la prueba negativa de pushes ni la auditoría humana. Devuelve `candidate_only` como máximo:
+**no obtiene ni autentica los recibos de GitHub, no acredita un push negativo,
+no convierte una declaración QA en firma auténtica y nunca permite release**.
+Todos los recibos y evidencias deben verificarse manualmente por QA contra
+las APIs/autorización del repositorio local. El cálculo no reemplaza los
+gates de Coordinación ni la publicación independiente de Fase A.
+
+Antes de considerar la Fase B se exigen **24 horas** reales y **100 ciclos**
+**terminales y válidos por repositorio**, **cero falsos positivos** y **QA individual**
+documentada de cada decisión hipotética `release`. No cuentan los ticks de
+cron no ejecutados, los runs aplazados o las observaciones `UNKNOWN`.
+Cualquier falso positivo o resultado sin procedencia autenticada bloquea la
+activación. El flag `FACTORY_LEASE_AUTO_RELEASE_ENABLED` permanece en
+`false`; mover `@v1` y activar liberaciones requieren puertas independientes.
+
+
 ## Qué está implementado y qué NO
 
 Esta entrega introduce un **decisor puro, determinista y sin efectos** en

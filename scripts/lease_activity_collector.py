@@ -32,7 +32,9 @@ def _time(value: Any, now: datetime) -> datetime:
 
 
 def collect_activity(api: Any, issue_number: int, *, now: datetime,
-                     max_requests: int = 32) -> dict[str, Any]:
+                     max_requests: int = 32,
+                     allow_ci_veto_only: bool = False,
+                     allow_review_veto_only: bool = False) -> dict[str, Any]:
     """Observa una hoja sin mutar GitHub ni decidir liberaciones.
 
     api.request debe ser el transporte REST autenticado. El resultado es
@@ -46,6 +48,8 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(repo) is not str
                 or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) is None
                 or type(max_requests) is not int or not 1 <= max_requests <= 40
+                or type(allow_ci_veto_only) is not bool
+                or type(allow_review_veto_only) is not bool
                 or type(now) is not datetime or now.tzinfo is None
                 or now.utcoffset() is None):
             return unknown
@@ -73,6 +77,16 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 or type(identity.get("id")) is not int or identity["id"] <= 0):
             raise IncompleteEvidence()
         repo_id = identity["id"]
+        # Repositorio.pushed_at es un veto adicional de carrera global,
+        # no una auditoría negativa de pushes ni prueba de inactividad.
+        # Revalidarlo descarta un snapshot si otro ref cambió durante los GET.
+        push_watermark = _time(identity.get("pushed_at"), now)
+        # Dos pushes distintos pueden compartir el mismo segundo de pushed_at.
+        # Una marca global muy reciente no acredita estabilidad del inventario,
+        # incluso si coincide en ambas lecturas. Es sólo un veto positivo,
+        # nunca evidencia negativa de ausencia de pushes en refs.
+        if now - push_watermark <= timedelta(seconds=60):
+            raise IncompleteEvidence()
 
         def pages(path: str, *, name: str, expected: int | None = None,
                   checks: bool = False, commits: bool = False,
@@ -197,13 +211,28 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
 
         sha = branch_sha()
         latest = since
+        activity_source = "reservation_marker"
         for c in comments:
             if c.get("user", {}).get("login") == owner:
-                when = _time(c.get("created_at"), now)
-                if when >= since:
-                    # login compartido entre agentes: sin credencial de
-                    # sesión, no certificar actividad ni ausencia de ella.
+                created = _time(c.get("created_at"), now)
+                # Una edición de un comentario anterior a la reserva no es
+                # atribuible a esta sesión; sigue UNKNOWN. En cambio, un
+                # comentario del titular CREADO tras el marker por un usuario
+                # autenticado es evidencia POSITIVA suficiente para vetar
+                # una liberación, no para certificar ausencia de pushes.
+                updated = _time(c.get("updated_at"), now)
+                if updated < created:
                     raise IncompleteEvidence()
+                if created < since:
+                    if updated >= since:
+                        raise IncompleteEvidence()
+                    continue
+                if c["user"].get("type") != "User":
+                    raise IncompleteEvidence()
+                if updated == latest and activity_source != "issue_comment":
+                    raise IncompleteEvidence()
+                if updated > latest:
+                    latest, activity_source = updated, "issue_comment"
 
         since_param = quote(since.isoformat().replace("+00:00", "Z"), safe="")
         commits = pages(f"{base}/commits?sha={quote(branch, safe='')}&since={since_param}",
@@ -240,6 +269,7 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                 matching.append(pull)
         if len(matching) > 1:
             raise IncompleteEvidence()
+        reviews = []
         if matching:
             reviews = pages(f"{base}/pulls/{matching[0]['number']}/reviews", name="reviews")
             for review in reviews:
@@ -254,14 +284,23 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                         "PENDING", "COMMENTED", "APPROVED", "DISMISSED",
                         "CHANGES_REQUESTED"):
                     raise IncompleteEvidence()
-                if review_state == "CHANGES_REQUESTED":
-                    raise IncompleteEvidence()
+                # CHANGES_REQUESTED es un veto positivo verificable,
+                # no una prueba de ausencia de pushes. La vista read-only
+                # contrastará este veto con reviews actuales del Port.
                 if author["login"] == owner and review_state != "PENDING":
                     when = _time(review.get("submitted_at"), now)
                     if when >= since:
                         # La review pertenece al login, no a la sesión V3.
                         raise IncompleteEvidence()
 
+        # El veto de revisión es positivo, pero su vigencia solo se
+        # certifica después contra el Port y otra lectura autenticada.
+        # Una APPROVED posterior no puede convertirse en actividad negativa.
+        external_review_veto = any(
+            review.get("state") == "CHANGES_REQUESTED"
+            and review.get("user", {}).get("login") != owner
+            for review in reviews
+        )
         checks = pages(f"{base}/commits/{sha}/check-runs", name="checks", checks=True)
         running = False
         for check in checks:
@@ -306,15 +345,77 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         # /commits?since= query. Once this bounded positive evidence ages out,
         # report UNKNOWN until an authoritative complete push audit exists.
         grace = timedelta(minutes=30)
-        recent = now - since < grace
+        recent = now - latest < grace
         for run in workflow_runs:
             if run.get("event") != "push" or run.get("head_sha") != sha:
                 continue
             pushed_at = _time(run.get("created_at"), now)
             if pushed_at >= since and now - pushed_at < grace:
-                latest = max(latest, pushed_at)
+                if pushed_at == latest and activity_source != "workflow_push":
+                    # Dos fuentes de segundo idéntico: imposible atribuir.
+                    raise IncompleteEvidence()
+                if pushed_at > latest:
+                    latest = pushed_at
+                    activity_source = "workflow_push"
                 recent = True
-        if not recent:
+        # Eventos push del repositorio son evidencia POSITIVA de actividad
+        # (incluso en ausencia de workflow push). Nunca se usa un feed
+        # retrasado, vacío o truncado como prueba negativa de inactividad.
+        activity_path = (
+            f"{base}/activity?per_page=100"
+            f"&ref={quote(branch, safe='')}&time_period=day"
+        )
+        observed_activities = None
+        if not recent and not running and not external_review_veto:
+            observed_activities = get(activity_path)
+            if (type(observed_activities) is not list
+                    or len(observed_activities) >= 100):
+                raise IncompleteEvidence()
+            ids = set()
+            for activity in observed_activities:
+                if (type(activity) is not dict
+                        or type(activity.get("id")) is not int
+                        or activity["id"] <= 0 or activity["id"] in ids):
+                    raise IncompleteEvidence()
+                ids.add(activity["id"])
+                # REST "List repository activities" usa push_type
+                # normal/force, pushed_at y pusher (NO activity_type,
+                # timestamp y actor, que no pertenecen a este endpoint).
+                # Ningún feed de actividades garantiza auditoría NEGATIVA.
+                if activity.get("push_type") not in ("normal", "force"):
+                    continue
+                if activity.get("ref") != f"refs/heads/{branch}":
+                    raise IncompleteEvidence()
+                actor = activity.get("pusher")
+                if (type(actor) is not dict
+                        or type(actor.get("login")) is not str
+                        or actor.get("type") != "User"
+                        or type(activity.get("before")) is not str
+                        or SHA.fullmatch(activity["before"]) is None
+                        or type(activity.get("after")) is not str
+                        or SHA.fullmatch(activity["after"]) is None):
+                    raise IncompleteEvidence()
+                stamp = _time(activity.get("pushed_at"), now)
+                if stamp > push_watermark:
+                    raise IncompleteEvidence()
+                if (actor["login"] == owner and stamp >= since
+                        and now - stamp < grace):
+                    if stamp == latest and activity_source != "repository_push":
+                        raise IncompleteEvidence()
+                    if stamp > latest:
+                        latest, activity_source = stamp, "repository_push"
+                    recent = True
+
+        # Veto CI autenticado: una acción de release es imposible mientras
+        # esté en curso. La EXCEPCIÓN aplica únicamente al observador
+        # desarmado; NO prueba ausencia de pushes ni sirve para CAS mutante.
+        # El transporte y las identidades siguen revalidados abajo.
+        no_recent_evidence = not recent
+        ci_veto_only = no_recent_evidence and running
+        review_veto_only = no_recent_evidence and external_review_veto
+        if no_recent_evidence and not (
+                (allow_ci_veto_only and ci_veto_only)
+                or (allow_review_veto_only and review_veto_only)):
             raise IncompleteEvidence()
 
         verify = get(path)
@@ -323,6 +424,15 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
                        for k in ("state", "number", "comments", "updated_at", "labels", "assignees"))
                 or branch_sha() != sha):
             raise IncompleteEvidence()
+        if pages(f"{base}/pulls?state=open", name="pulls_recheck") != pulls:
+            raise IncompleteEvidence()
+        if matching:
+            reviews_again = pages(
+                f"{base}/pulls/{matching[0]['number']}/reviews",
+                name="reviews_recheck",
+            )
+            if reviews_again != reviews:
+                raise IncompleteEvidence()
         # GitHub puede lanzar/rerun CI sin cambiar Issue ni ref.
         # La segunda lectura descarta snapshots con runs/checks cambiantes.
         checked_again = pages(
@@ -335,6 +445,20 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
         )
         if checked_again != checks or runs_again != workflow_runs:
             raise IncompleteEvidence()
+        # Editar un comentario no garantiza que issue.updated_at cambie.
+        # Releer el inventario completo evita acreditar un snapshot que
+        # omitió una edición del titular durante las otras consultas.
+        if pages(f"{path}/comments", name="comments_recheck",
+                 expected=total) != comments:
+            raise IncompleteEvidence()
+        identity_again = get(base)
+        if (not isinstance(identity_again, dict)
+                or identity_again.get("id") != repo_id
+                or identity_again.get("full_name") != repo
+                or _time(identity_again.get("pushed_at"), now) != push_watermark):
+            raise IncompleteEvidence()
+        if observed_activities is not None and get(activity_path) != observed_activities:
+            raise IncompleteEvidence()
         effective_remaining = remaining - used
         if effective_remaining < 0 or effective_remaining * 5 < limit:
             raise IncompleteEvidence()
@@ -344,7 +468,10 @@ def collect_activity(api: Any, issue_number: int, *, now: datetime,
             "owner": owner, "lease_id": lease["reservation_id"],
             "branch": branch, "branch_sha": sha, "pagination": pagination,
             "last_activity_at": latest.isoformat().replace("+00:00", "Z"),
-            "ci_running": running, "rate_limit": limit,
+            "activity_source": activity_source,
+            "ci_running": running, "ci_veto_only": ci_veto_only,
+            "review_veto_only": review_veto_only,
+            "rate_limit": limit,
             "rate_remaining": effective_remaining, "api_requests": used,
         }
     except Exception:

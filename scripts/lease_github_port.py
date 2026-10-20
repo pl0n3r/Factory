@@ -11,7 +11,7 @@ Ningún merge ni dispatch lo arma: lo decide el runner con su feature flag.
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from math import ceil
 import base64
@@ -265,9 +265,23 @@ class LeaseGithubPort:
             return invalid
 
     def read(self, issue: int) -> Snapshot:
-        """Snapshot completo y autenticado; cualquier duda lanza PortNotArmed."""
+        """Snapshot estricto: CI activo prohíbe toda mutación."""
+        return self._read_snapshot(issue, observation_only=False)
+
+    def read_observation(self, issue: int) -> Snapshot:
+        """Vista de diagnóstico; no concede autoridad de escritura."""
+        return self._read_snapshot(issue, observation_only=True)
+
+    def _read_snapshot(self, issue: int, *, observation_only: bool) -> Snapshot:
+        """Verifica la misma evidencia; solo diagnóstico admite veto CI."""
         try:
-            self._need_armed()
+            # Observación autenticada no necesita armar una capacidad mutante.
+            # read()/lock()/append()/status() conservan el guard estricto.
+            if observation_only:
+                if getattr(self._api, "authenticated", False) is not True:
+                    raise PortNotArmed("unauthenticated_observation")
+            else:
+                self._need_armed()
             if type(issue) is not int or issue <= 0 or not self._running():
                 raise ValueError("untrusted_scope")
             now = self._clock()
@@ -279,7 +293,11 @@ class LeaseGithubPort:
                 # recolector sólo entiende reservas activas, así que se
                 # evalúa la actividad SIN ese comentario del bot.
                 api = _WithoutComment(self._api, issue, latest[0])
-            report = collect_activity(api, issue, now=now)
+            report = collect_activity(
+                api, issue, now=now,
+                allow_ci_veto_only=observation_only,
+                allow_review_veto_only=observation_only,
+            )
             if (type(report) is not dict or report.get("evidence_complete") is not True
                     or report.get("status") not in ACTIVE
                     or report.get("issue_number") != issue):
@@ -324,7 +342,13 @@ class LeaseGithubPort:
                 rate_limit=report["rate_limit"],
             )
             if not _trusted(snapshot, allow_partial=True):
-                raise ValueError("untrusted_snapshot")
+                if not (observation_only
+                        and (snapshot.ci_running is True
+                             or snapshot.changes_requested is True)
+                        and _trusted(replace(
+                            snapshot, ci_running=False, changes_requested=False,
+                        ), allow_partial=True)):
+                    raise ValueError("untrusted_snapshot")
             return snapshot
         except PortNotArmed:
             raise
@@ -361,7 +385,10 @@ class LeaseGithubPort:
         return datetime.fromisoformat(stamps[-1].replace("Z", "+00:00"))
 
     def _changes_requested(self, repo: str, branch: str) -> bool:
-        pulls = self._pages(f"/repos/{repo}/pulls?state=open&head={repo.split('/')[0]}:{branch}")
+        from urllib.parse import quote
+
+        head = quote(f"{repo.split('/')[0]}:{branch}", safe="")
+        pulls = self._pages(f"/repos/{repo}/pulls?state=open&head={head}")
         blocked = False
         for pull in pulls:
             latest: dict[str, str] = {}

@@ -34,6 +34,9 @@ class API:
         self.change_assignees_on_recheck = False
         self.remaining = 80
         self.repo_id = 123
+        self.repo_reads = 0
+        self.repo_pushed_at = "2026-10-11T09:45:00Z"
+        self.change_repo_push_on_recheck = False
         self.issue = {
             "number": 21, "state": "open", "comments": 2,
             "updated_at": "2026-10-11T09:45:00Z",
@@ -75,6 +78,15 @@ class API:
         self.run_reads = 0
         self.restart_check_during_recheck = False
         self.start_run_during_recheck = False
+        self.pull_reads = 0
+        self.review_reads = 0
+        self.change_pull_during_recheck = False
+        self.change_review_during_recheck = False
+        self.comment_reads = 0
+        self.edit_owner_comment_on_recheck = False
+        self.activity_rows = []
+        self.activity_reads = 0
+        self.activity_change_on_recheck = False
 
     def request(self, method, path):
         assert method == "GET", "read-only collector"
@@ -84,7 +96,12 @@ class API:
         if path == "/rate_limit":
             return {"resources": {"core": {"limit": 100, "remaining": self.remaining}}}
         if path == f"/repos/{REPO}":
-            return {"id": self.repo_id, "full_name": REPO}
+            self.repo_reads += 1
+            watermark = self.repo_pushed_at
+            if self.change_repo_push_on_recheck and self.repo_reads == 2:
+                watermark = "2026-10-11T09:59:59Z"
+            return {"id": self.repo_id, "full_name": REPO,
+                    "pushed_at": watermark}
         if path == f"/repos/{REPO}/issues/21":
             self.issue_reads += 1
             observed = copy.deepcopy(self.issue)
@@ -94,15 +111,40 @@ class API:
         if path.endswith("/git/ref/heads/trabajo/issue-21"):
             self.ref_reads += 1
             return {"object": {"sha": "b" * 40 if self.race and self.ref_reads > 1 else SHA}}
+        if path == f"/repos/{REPO}/activity?per_page=100&ref=trabajo%2Fissue-21&time_period=day":
+            self.activity_reads += 1
+            rows = copy.deepcopy(self.activity_rows)
+            if self.activity_change_on_recheck and self.activity_reads == 2:
+                rows.append({"id": 999, "activity_type": "branch_creation"})
+            return rows
         page = int(path.rsplit("page=", 1)[-1])
         if "/issues/21/comments?" in path:
+            if page == 1:
+                self.comment_reads += 1
+                if self.edit_owner_comment_on_recheck and self.comment_reads == 2:
+                    for item in self.comments:
+                        if item["user"]["login"] == "pl0n3r":
+                            item["body"] = "Owner edited during observation"
+                            item["updated_at"] = "2026-10-11T09:59:59Z"
             return copy.deepcopy(self.comments) if page == 1 else []
         if "/commits?sha=" in path:
             return copy.deepcopy(self.commits) if page == 1 else []
         if "/pulls?state=open" in path:
+            if page == 1:
+                self.pull_reads += 1
+                if self.change_pull_during_recheck and self.pull_reads == 2:
+                    self.pulls[0]["draft"] = True
             return (copy.deepcopy(self.pulls) if page == 1
                     else copy.deepcopy(self.extra_pull_page) if page == 2 else [])
         if "/pulls/35/reviews?" in path:
+            if page == 1:
+                self.review_reads += 1
+                if self.change_review_during_recheck and self.review_reads == 2:
+                    self.reviews.append({
+                        "id": 19, "user": {"login": "security-reviewer"},
+                        "state": "CHANGES_REQUESTED",
+                        "submitted_at": "2026-10-11T09:58:00Z",
+                    })
             return copy.deepcopy(self.reviews) if page == 1 else []
         if "/check-runs?" in path:
             self.check_reads += 1
@@ -136,6 +178,168 @@ class API:
 
 
 class LeaseActivityCollectorTests(unittest.TestCase):
+    def test_activity_source_is_attributed_to_marker_or_exact_sha_push(self):
+        """Sólo dos fuentes autenticadas, con empate temporal fail-closed."""
+        via_push = API()
+        reported = collect_activity(via_push, 21, now=NOW)
+        self.assertTrue(reported["evidence_complete"])
+        self.assertEqual(reported["activity_source"], "workflow_push")
+        self.assertEqual(reported["last_activity_at"], "2026-10-11T09:40:00Z")
+
+        via_marker = API()
+        via_marker.comments[0]["updated_at"] = "2026-10-11T09:55:00Z"
+        reported = collect_activity(via_marker, 21, now=NOW)
+        self.assertTrue(reported["evidence_complete"])
+        self.assertEqual(reported["activity_source"], "reservation_marker")
+        self.assertEqual(reported["last_activity_at"], "2026-10-11T09:55:00Z")
+
+        collision = API()
+        collision.comments[0]["updated_at"] = "2026-10-11T09:40:00Z"
+        self.assertEqual(
+            collect_activity(collision, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        unverified = API()
+        unverified.push_event = "pull_request"
+        self.assertEqual(
+            collect_activity(unverified, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
+    def test_repository_push_watermark_change_invalidates_snapshot(self):
+        # Un push a otro ref podría no cambiar el HEAD, PR o CI del Issue.
+        # El timestamp global sirve únicamente para invalidar una carrera:
+        # incluso estable NO demuestra ausencia íntegra de pushes.
+        stable = API()
+        self.assertTrue(collect_activity(stable, 21, now=NOW)["evidence_complete"])
+        self.assertEqual(stable.repo_reads, 2)
+
+        race = API()
+        race.change_repo_push_on_recheck = True
+        self.assertEqual(
+            collect_activity(race, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(race.repo_reads, 2)
+        for invalid in (None, "malformed", "2026-10-11T10:00:01Z"):
+            with self.subTest(watermark=invalid):
+                fake = API()
+                fake.repo_pushed_at = invalid
+                self.assertEqual(
+                    collect_activity(fake, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+
+    def test_recent_global_push_is_not_stable_negative_evidence(self):
+        # GitHub expone pushed_at con precisión de un segundo; múltiples
+        # pushes a otros refs pueden compartir el mismo watermark visible.
+        for seconds in (0, 1, 30, 60):
+            with self.subTest(seconds=seconds):
+                api = API()
+                api.repo_pushed_at = (
+                    NOW - timedelta(seconds=seconds)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                self.assertEqual(
+                    collect_activity(api, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertEqual(api.repo_reads, 1)
+
+        stable = API()
+        stable.repo_pushed_at = (
+            NOW - timedelta(seconds=61)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertTrue(
+            collect_activity(stable, 21, now=NOW)["evidence_complete"]
+        )
+        self.assertEqual(stable.repo_reads, 2)
+
+    def test_authenticated_owner_comment_is_positive_veto_not_negative_audit(self):
+        """Comentario nuevo del titular permite wait aunque no exista push-run."""
+        no_push = API()
+        no_push.push_event = "pull_request"
+        no_push.checks[0]["status"] = "completed"
+        no_push.comments[1] = {
+            "id": 2, "user": {"login": "pl0n3r", "type": "User"},
+            "body": "Trabajo del titular",
+            "created_at": "2026-10-11T09:55:00Z",
+            "updated_at": "2026-10-11T09:55:00Z",
+        }
+        record = collect_activity(no_push, 21, now=NOW)
+        self.assertTrue(record["evidence_complete"])
+        self.assertEqual(record["activity_source"], "issue_comment")
+        self.assertEqual(record["last_activity_at"], "2026-10-11T09:55:00Z")
+        self.assertFalse(record["ci_veto_only"])
+        self.assertFalse(record["review_veto_only"])
+        self.assertEqual(record["api_requests"], len(no_push.calls))
+        bad_actor = API()
+        bad_actor.push_event = "pull_request"
+        bad_actor.checks[0]["status"] = "completed"
+        bad_actor.comments[1] = {
+            **no_push.comments[1], "user": {"login": "pl0n3r", "type": "Bot"},
+        }
+        unknown = {"status": "UNKNOWN", "evidence_complete": False}
+        self.assertEqual(collect_activity(bad_actor, 21, now=NOW), unknown)
+        stale = API()
+        stale.push_event = "pull_request"
+        stale.checks[0]["status"] = "completed"
+        stale.comments[1] = {
+            **no_push.comments[1],
+            "created_at": "2026-10-11T09:10:00Z",
+            "updated_at": "2026-10-11T09:10:00Z",
+        }
+        self.assertEqual(collect_activity(stale, 21, now=NOW), unknown)
+        race = API()
+        race.push_event = "pull_request"
+        race.checks[0]["status"] = "completed"
+        race.comments[1] = dict(no_push.comments[1])
+        race.edit_owner_comment_on_recheck = True
+        self.assertEqual(collect_activity(race, 21, now=NOW), unknown)
+
+    def test_old_marker_with_authenticated_running_ci_is_veto_only(self):
+        """Un CI vivo puede impedir release sin demostrar inactividad."""
+        api = API()
+        api.push_event = "pull_request"  # no push-run reciente verificable
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        observed = collect_activity(
+            api, 21, now=NOW, allow_ci_veto_only=True)
+        self.assertTrue(observed["evidence_complete"])
+        self.assertTrue(observed["ci_running"])
+        self.assertTrue(observed["ci_veto_only"])
+        self.assertEqual(observed["activity_source"], "reservation_marker")
+        self.assertEqual(observed["last_activity_at"], "2026-10-11T08:00:00Z")
+        self.assertTrue(all(path.startswith("/repos/") or path == "/rate_limit"
+                            for path in api.calls))
+        api.checks[0]["status"] = "completed"
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW, allow_ci_veto_only=True),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        tampered = API()
+        tampered.push_event = "pull_request"
+        tampered.change_assignees_on_recheck = True
+        self.assertEqual(
+            collect_activity(tampered, 21, now=NOW, allow_ci_veto_only=True),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        race = API()
+        race.push_event = "pull_request"
+        race.restart_check_during_recheck = True
+        # La carrera no puede certificar un veto estable ni inactividad.
+        race.checks[0]["status"] = "completed"
+        self.assertEqual(
+            collect_activity(race, 21, now=NOW, allow_ci_veto_only=True),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(
+            collect_activity(API(), 21, now=NOW,
+                             allow_ci_veto_only="yes"),
+            {"status": "UNKNOWN", "evidence_complete": False},
+        )
+
     def test_old_authored_commit_recent_push_is_unknown_without_provenance(self):
         # A commit authored before the lease can be pushed moments ago.
         api = API()
@@ -152,6 +356,123 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(observed["last_activity_at"], "2026-10-11T09:40:00Z")
         self.assertTrue(all("secret" not in str(v).lower()
                             for v in observed.values()))
+
+    def test_repository_activity_push_is_positive_only_and_double_read(self):
+        """Push por REST /activity: wait sí, ausencia no prueba release."""
+        unknown = {"status": "UNKNOWN", "evidence_complete": False}
+        row = {
+            "id": 31, "push_type": "normal",
+            "ref": "refs/heads/trabajo/issue-21",
+            "pushed_at": "2026-10-11T09:42:00Z",
+            "pusher": {"login": "pl0n3r", "type": "User"},
+            "before": "b" * 40, "after": SHA,
+        }
+        api = API()
+        api.push_event = "pull_request"
+        api.checks[0]["status"] = "completed"
+        api.activity_rows = [row]
+        output = collect_activity(api, 21, now=NOW)
+        self.assertTrue(output["evidence_complete"])
+        self.assertEqual(output["activity_source"], "repository_push")
+        self.assertEqual(output["last_activity_at"], row["pushed_at"])
+        self.assertEqual(api.activity_reads, 2)
+        self.assertFalse(output["ci_veto_only"])
+        self.assertFalse(output["review_veto_only"])
+        self.assertEqual(output["api_requests"], len(api.calls))
+
+        api.activity_rows = []
+        self.assertEqual(collect_activity(api, 21, now=NOW), unknown)
+        for patch in (
+            {"pusher": {"login": "another", "type": "User"}},
+            {"pusher": {"login": "pl0n3r", "type": "Bot"}},
+            {"pusher": None},
+            {"ref": "refs/heads/main"},
+            {"pushed_at": "2026-10-11T09:00:00Z"},
+            {"pushed_at": "2026-10-11T10:00:01Z"},
+            {"before": "bad"},
+        ):
+            with self.subTest(patch=patch):
+                other = API()
+                other.push_event = "pull_request"
+                other.checks[0]["status"] = "completed"
+                other.activity_rows = [{**row, **patch}]
+                self.assertEqual(collect_activity(other, 21, now=NOW), unknown)
+
+        race = API()
+        race.push_event = "pull_request"
+        race.checks[0]["status"] = "completed"
+        race.activity_rows = [row]
+        race.activity_change_on_recheck = True
+        self.assertEqual(collect_activity(race, 21, now=NOW), unknown)
+        self.assertEqual(race.activity_reads, 2)
+
+        force = API()
+        force.push_event = "pull_request"
+        force.checks[0]["status"] = "completed"
+        force.activity_rows = [{**row, "push_type": "force"}]
+        self.assertEqual(
+            collect_activity(force, 21, now=NOW)["activity_source"],
+            "repository_push",
+        )
+        # El esquema incorrecto anterior nunca debe crear evidencia.
+        legacy = API()
+        legacy.push_event = "pull_request"
+        legacy.checks[0]["status"] = "completed"
+        legacy.activity_rows = [{
+            "id": 31, "activity_type": "push",
+            "ref": row["ref"], "timestamp": row["pushed_at"],
+            "actor": row["pusher"], "before": row["before"],
+            "after": row["after"],
+        }]
+        self.assertEqual(collect_activity(legacy, 21, now=NOW), unknown)
+
+    def test_old_marker_external_review_veto_is_positive_only(self):
+        """Review vigente puede vetar una liberación sin probar inactividad."""
+        api = API()
+        api.push_event = "pull_request"
+        api.checks[0]["status"] = "completed"
+        api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        unknown = {"status": "UNKNOWN", "evidence_complete": False}
+        self.assertEqual(collect_activity(api, 21, now=NOW), unknown)
+        report = collect_activity(
+            api, 21, now=NOW, allow_review_veto_only=True)
+        self.assertTrue(report["evidence_complete"])
+        self.assertFalse(report["ci_running"])
+        self.assertFalse(report["ci_veto_only"])
+        self.assertTrue(report["review_veto_only"])
+        self.assertEqual(report["activity_source"], "reservation_marker")
+        self.assertEqual(report["last_activity_at"], "2026-10-11T08:00:00Z")
+        api.reviews = []
+        self.assertEqual(
+            collect_activity(api, 21, now=NOW, allow_review_veto_only=True),
+            unknown,
+        )
+        api.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        race = API()
+        race.push_event = "pull_request"
+        race.checks[0]["status"] = "completed"
+        race.reviews = [{
+            "id": 12, "user": {"login": "external-reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-10-11T09:25:00Z",
+        }]
+        race.change_review_during_recheck = True
+        self.assertEqual(
+            collect_activity(race, 21, now=NOW, allow_review_veto_only=True),
+            unknown,
+        )
+        self.assertEqual(
+            collect_activity(API(), 21, now=NOW, allow_review_veto_only="yes"),
+            unknown,
+        )
 
     def test_branch_push_provenance_missing_or_racy_fails_closed(self):
         # No push-run evidence means we cannot prove the *absence* of a push.
@@ -228,10 +549,16 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     "state": "CHANGES_REQUESTED",
                     "submitted_at": "2026-10-11T09:25:00Z",
                 }]
-                self.assertEqual(
-                    collect_activity(api, 21, now=NOW),
-                    {"status": "UNKNOWN", "evidence_complete": False},
-                )
+                result = collect_activity(api, 21, now=NOW)
+                if reviewer == "other":
+                    # Positivo autenticado: se admite para el veto read-only.
+                    self.assertTrue(result["evidence_complete"])
+                    self.assertEqual(result["activity_source"], "workflow_push")
+                else:
+                    # Identidad compartida: review del owner sigue UNKNOWN.
+                    self.assertEqual(
+                        result, {"status": "UNKNOWN", "evidence_complete": False},
+                    )
                 self.assertTrue(any("/pulls/35/reviews?" in p for p in api.calls))
 
     def test_dismissed_and_approved_reviews_are_not_change_requests(self):
@@ -341,19 +668,22 @@ class LeaseActivityCollectorTests(unittest.TestCase):
         self.assertEqual(result["repository_id"], 123)
         self.assertEqual(result["pagination"], {
             "comments": {"pages": 1, "items": 2},
+            "comments_recheck": {"pages": 1, "items": 2},
             "commits": {"pages": 2, "items": 1},
             "pulls": {"pages": 2, "items": 1},
             "reviews": {"pages": 2, "items": 1},
             "checks": {"pages": 1, "items": 1},
             "runs": {"pages": 1, "items": 1},
+            "pulls_recheck": {"pages": 2, "items": 1},
+            "reviews_recheck": {"pages": 2, "items": 1},
             "checks_recheck": {"pages": 1, "items": 1},
             "runs_recheck": {"pages": 1, "items": 1},
         })
         api.issue["labels"].append({"name": "prioridad: crítica"})
         self.assertTrue(collect_activity(api, 21, now=NOW)["evidence_complete"])
         self.assertTrue(result["ci_running"])
-        self.assertEqual(result["rate_remaining"], 63)
-        self.assertEqual(result["api_requests"], 17)
+        self.assertEqual(result["rate_remaining"], 57)
+        self.assertEqual(result["api_requests"], 23)
         self.assertTrue(all("secret" not in str(x).lower() for x in result.values()))
         self.assertTrue(all(isinstance(p, str) for p in api.calls))
 
@@ -395,6 +725,41 @@ class LeaseActivityCollectorTests(unittest.TestCase):
                     collect_activity(case, 21, now=NOW),
                     {"status": "UNKNOWN", "evidence_complete": False},
                 )
+
+    def test_owner_comment_edited_during_snapshot_is_unknown(self):
+        # Una edición no aumenta issue.comments y puede no actualizar el
+        # updated_at del Issue. El owner comenta antes de la reserva y edita
+        # mientras el recolector consulta PR, reviews y checks.
+        api = API()
+        api.comments[0]["id"] = 2  # marker V3 creado después
+        api.comments[1].update({
+            "id": 1, "user": {"login": "pl0n3r"},
+            "body": "Pre-lease owner comment",
+            "created_at": "2026-10-11T07:00:00Z",
+            "updated_at": "2026-10-11T07:00:00Z",
+        })
+        api.comments.reverse()
+        stable = collect_activity(copy.deepcopy(api), 21, now=NOW)
+        self.assertTrue(stable["evidence_complete"])
+
+        api.edit_owner_comment_on_recheck = True
+        outcome = collect_activity(api, 21, now=NOW)
+        self.assertEqual(
+            outcome, {"status": "UNKNOWN", "evidence_complete": False},
+        )
+        self.assertEqual(api.comment_reads, 2)
+        self.assertEqual(api.issue_reads, 2)
+        self.assertEqual(api.issue["updated_at"], "2026-10-11T09:45:00Z")
+
+    def test_review_race_fails_closed(self):
+        api = API()
+        api.change_review_during_recheck = True
+        self.assertEqual(collect_activity(api, 21, now=NOW)["status"], "UNKNOWN")
+
+    def test_pr_metadata_race_fails_closed(self):
+        api = API()
+        api.change_pull_during_recheck = True
+        self.assertEqual(collect_activity(api, 21, now=NOW)["status"], "UNKNOWN")
 
     def test_check_run_statuses_match_github_rest_contract(self):
         for status in ("queued", "in_progress", "requested", "waiting", "pending", "completed"):
@@ -457,6 +822,44 @@ class LeaseActivityCollectorTests(unittest.TestCase):
             collect_activity(api, 21, now=NOW),
             {"status": "UNKNOWN", "evidence_complete": False},
         )
+
+    def test_prelease_owner_comment_edit_is_not_silent_inactivity(self):
+        """Una edición nueva de comentario viejo no acredita ausencia de trabajo."""
+        api = API()
+        old_owner_comment = {
+            "id": 0, "user": {"login": "pl0n3r", "type": "User"},
+            "body": "Comentario anterior a esta reserva",
+            "created_at": "2026-10-11T07:00:00Z",
+            "updated_at": "2026-10-11T07:30:00Z",
+        }
+        # Preserve API cursor ordering: IDs must be positive and increasing.
+        api.comments[0]["id"] = 2  # reserva de bot
+        api.comments[1]["id"] = 3  # comentario ajeno
+        old_owner_comment["id"] = 1
+        api.comments.insert(0, old_owner_comment)
+        api.issue["comments"] = len(api.comments)
+        # Sin edición posterior al marker, un comentario antiguo no basta
+        # por sí mismo para vetar una observación positiva de push reciente.
+        baseline = collect_activity(api, 21, now=NOW)
+        self.assertTrue(baseline["evidence_complete"])
+        self.assertEqual(baseline["activity_source"], "workflow_push")
+
+        for edited in ("2026-10-11T09:59:00Z", None,
+                       "invalid-date", "2026-10-11T06:00:00Z",
+                       "2026-10-11T10:01:00Z"):
+            with self.subTest(updated_at=edited):
+                trial = copy.deepcopy(api)
+                if edited is None:
+                    trial.comments[0].pop("updated_at")
+                else:
+                    trial.comments[0]["updated_at"] = edited
+                trial.issue["updated_at"] = "2026-10-11T09:59:00Z"
+                self.assertEqual(
+                    collect_activity(trial, 21, now=NOW),
+                    {"status": "UNKNOWN", "evidence_complete": False},
+                )
+                self.assertTrue(all(path == "/rate_limit" or path.startswith("/repos/")
+                                    for path in trial.calls))
 
     def test_same_branch_name_from_foreign_fork_is_ignored(self):
         api = API()

@@ -8,7 +8,7 @@ fail-closed, sin credenciales ni transporte de escritura propios.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,6 +20,24 @@ from scripts.lease_release_executor import Snapshot, _trusted
 UTC_STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 ACTIVE = frozenset({"estado: reservado", "estado: en revisión",
                     "estado: requiere recuperación"})
+FACTORY_REPO_ROUTE = "/repos/pl0n3r/Factory"
+
+
+def _allowed_unparameterized_get(route: str) -> bool:
+    """Only endpoints needed for the V3 GET observer, not all repo resources."""
+    if route in (
+        "/rate_limit", FACTORY_REPO_ROUTE,
+        FACTORY_REPO_ROUTE + "/issues/767",
+        FACTORY_REPO_ROUTE + "/contents/datos.yml",
+    ):
+        return True
+    base = re.escape(FACTORY_REPO_ROUTE)
+    return (
+        re.fullmatch(rf"{base}/issues/[1-9][0-9]*", route) is not None
+        or re.fullmatch(
+            rf"{base}/git/ref/heads/trabajo/issue-[1-9][0-9]*", route
+        ) is not None
+    )
 
 
 @dataclass(frozen=True)
@@ -29,6 +47,31 @@ class IntegrationPreview:
     state: str
     action: str
     reason: str
+    activity_age_minutes: int | None = None
+    activity_source: str | None = None
+
+    @property
+    def summary_line(self) -> str:
+        """Resumir sólo datos tipados; jamás imprimir comentarios o identidades."""
+        issue = self.issue if type(self.issue) is int and self.issue > 0 else 0
+        action = (self.action if self.action in
+                  ("wait", "mark_recovery", "release", "unknown") else "unknown")
+        reason = (self.reason if type(self.reason) is str
+                  and re.fullmatch(r"[a-z0-9_]{1,96}", self.reason)
+                  else "untrusted_reason")
+        minutes = (str(self.activity_age_minutes)
+                   if type(self.activity_age_minutes) is int
+                   and 0 <= self.activity_age_minutes <= 525600
+                   else "UNKNOWN")
+        source = (self.activity_source
+                  if self.activity_source in (
+                      "reservation_marker", "workflow_push",
+                      "issue_comment", "repository_push")
+                  else "UNKNOWN")
+        # Fuente positiva autenticada o veto sin inactividad atribuida;
+        # nunca convertir inventarios vacíos en ausencia de pushes.
+        return (f"- Issue #{issue}: `{action}`; inactividad={minutes} min; "
+                f"fuente={source}; veto/razón={reason}; autoridad=NO.\n")
 
     @property
     def release_authorized(self) -> bool:
@@ -59,15 +102,75 @@ class _GhReadOnlyAPI:
         import re
         import subprocess
 
+        # La ruta y la query son superficies distintas: solo los valores de
+        # query pueden usar escapes canónicos (%2F para rama, %3A para UTC).
+        route, sep, query = path.partition("?") if type(path) is str else ("", "", "")
         if (method != "GET" or type(path) is not str
-                or not (path == "/rate_limit"
-                        or path == "/repos/pl0n3r/Factory"
-                        or path.startswith("/repos/pl0n3r/Factory/"))
-                or "://" in path or "#" in path or ".." in path or "%" in path
-                or "\\" in path
+                or not (route == "/rate_limit"
+                        or route == FACTORY_REPO_ROUTE
+                        or route.startswith(FACTORY_REPO_ROUTE + "/"))
+                or (not sep and not _allowed_unparameterized_get(route))
+                or "://" in path or "#" in path or ".." in path
+                or "%" in route or "\\" in path
                 or any(ord(ch) < 32 for ch in path)
                 or re.search(r"[\s;|$<>]", path)):
             raise PermissionError("read_only_transport")
+        if sep:
+            from urllib.parse import quote, unquote
+
+            repo = FACTORY_REPO_ROUTE
+            if route == f"{repo}/activity":
+                allowed = {"per_page", "ref", "time_period"}
+            elif route == f"{repo}/commits":
+                allowed = {"sha", "since", "per_page", "page"}
+            elif route == f"{repo}/actions/runs":
+                allowed = {"branch", "per_page", "page"}
+            elif route == f"{repo}/pulls":
+                allowed = {"state", "head", "per_page", "page"}
+            elif re.fullmatch(
+                    rf"{re.escape(repo)}/issues/[1-9][0-9]*/events", route):
+                allowed = {"per_page", "page"}
+            elif re.fullmatch(
+                    rf"{re.escape(repo)}/(?:issues/[1-9][0-9]*/comments"
+                    rf"|pulls/[1-9][0-9]*/reviews"
+                    rf"|commits/[a-f0-9]{{40}}/check-runs)", route):
+                allowed = {"per_page", "page"}
+            else:
+                raise PermissionError("read_only_transport")
+            parts = query.split("&")
+            seen = set()
+            if not query or len(query) > 512 or len(parts) > 4:
+                raise PermissionError("read_only_transport")
+            for part in parts:
+                key, equal, value = part.partition("=")
+                decoded = unquote(value)
+                if (equal != "=" or key not in allowed or key in seen
+                        or not decoded.isascii() or "%" in decoded
+                        or quote(decoded, safe="") != value):
+                    raise PermissionError("read_only_transport")
+                seen.add(key)
+                if key in ("sha", "branch") and not re.fullmatch(
+                        r"(?:main|trabajo/issue-[1-9][0-9]*)", decoded):
+                    raise PermissionError("read_only_transport")
+                if key == "head" and not re.fullmatch(
+                        r"pl0n3r:(?:main|trabajo/issue-[1-9][0-9]*)", decoded):
+                    raise PermissionError("read_only_transport")
+                if key == "ref" and not re.fullmatch(
+                        r"trabajo/issue-[1-9][0-9]*", decoded):
+                    raise PermissionError("read_only_transport")
+                if key == "time_period" and decoded != "day":
+                    raise PermissionError("read_only_transport")
+                if key == "since" and not UTC_STAMP.fullmatch(decoded):
+                    raise PermissionError("read_only_transport")
+                if key == "state" and decoded != "open":
+                    raise PermissionError("read_only_transport")
+                if key == "per_page" and decoded != "100":
+                    raise PermissionError("read_only_transport")
+                if key == "page" and not re.fullmatch(r"(?:[1-9]|10)", decoded):
+                    raise PermissionError("read_only_transport")
+            if (route == f"{repo}/activity"
+                    and seen != {"per_page", "ref", "time_period"}):
+                raise PermissionError("read_only_transport")
         try:
             result = subprocess.run(
                 ["gh", "api", "-H", "Accept: application/vnd.github+json", path],
@@ -91,7 +194,7 @@ def observe_issue_cli(issue: int) -> IntegrationPreview:
     api = _GhReadOnlyAPI()
     now = datetime.now(timezone.utc)
     try:
-        identity = api.request("GET", "/repos/pl0n3r/Factory")
+        identity = api.request("GET", FACTORY_REPO_ROUTE)
         repository_id = identity.get("id") if type(identity) is dict else None
         if (type(repository_id) is not int or repository_id <= 0
                 or identity.get("full_name") != _GhReadOnlyAPI.repo):
@@ -100,11 +203,11 @@ def observe_issue_cli(issue: int) -> IntegrationPreview:
     except Exception:
         return _unknown(issue if type(issue) is int and issue > 0 else 0,
                         "repository_identity_unknown")
-    # Igualar literalmente el grupo declarado por Actions y Coordinación.
-    # Nunca se usa para escritura: el transporte sigue bloqueando no-GET.
+    # Mantener el grupo canónico sin armar el Port: aun si cambia
+    # accidentalmente el transporte GET-only, no hay permiso de mutación.
     try:
         port = LeaseGithubPort(
-            api, armed=True,
+            api, armed=False,
             concurrency_group=f"factory-coordination-{repository_id}",
             clock=lambda: now,
         )
@@ -308,21 +411,47 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
     try:
         if now.utcoffset() is None:
             return _unknown(issue, "invalid_clock")
-        report = collect_activity(api, issue, now=now)
+        observation_reader = getattr(type(port), "read_observation", None)
+        report = collect_activity(
+            api, issue, now=now,
+            allow_ci_veto_only=callable(observation_reader),
+            allow_review_veto_only=callable(observation_reader),
+        )
         if (type(report) is not dict
                 or report.get("evidence_complete") is not True
                 or report.get("issue_number") != issue
                 or report.get("status") not in ACTIVE
                 or type(report.get("ci_running")) is not bool
+                or type(report.get("ci_veto_only")) is not bool
+                or type(report.get("review_veto_only")) is not bool
+                or (report["review_veto_only"]
+                    and not callable(observation_reader))
+                or (report["ci_veto_only"] and (
+                    not callable(observation_reader)
+                    or report["ci_running"] is not True))
                 or type(report.get("last_activity_at")) is not str
-                or UTC_STAMP.fullmatch(report["last_activity_at"]) is None):
+                or UTC_STAMP.fullmatch(report["last_activity_at"]) is None
+                or report.get("activity_source") not in (
+                    "reservation_marker", "workflow_push",
+                    "issue_comment", "repository_push")):
             return _unknown(issue, "collector_unknown")
         last = datetime.fromisoformat(
             report["last_activity_at"].replace("Z", "+00:00"))
         if last > now.astimezone(timezone.utc):
             return _unknown(issue, "future_activity")
-        snapshot = port.read(issue)
-        if (not _trusted(snapshot) or snapshot.marker.get("active") is not True
+        # La vista de diagnóstico no altera Port.read estricto del executor.
+        snapshot = (port.read_observation(issue) if callable(observation_reader)
+                    else port.read(issue))
+        observation_trusted = (
+            type(snapshot) is Snapshot and type(snapshot.ci_running) is bool
+            and (_trusted(snapshot) or (callable(observation_reader)
+                 and (snapshot.ci_running is True
+                      or snapshot.changes_requested is True)
+                 and _trusted(replace(
+                     snapshot, ci_running=False, changes_requested=False,
+                 ))))
+        )
+        if (not observation_trusted or snapshot.marker.get("active") is not True
                 or snapshot.issue != issue
                 or snapshot.now.astimezone(timezone.utc) != now.astimezone(timezone.utc)
                 or report.get("repo") != getattr(api, "repo", None)
@@ -346,8 +475,12 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         )
         if veto is None:
             return _unknown(issue, "review_evidence_unknown")
-        if veto or snapshot.changes_requested:
-            return _unknown(issue, "changes_requested_veto")
+        # Veto positivo de review sólo acreditado si las dos fronteras
+        # (Port y API de reviews revalidada) coinciden. Nunca es prueba
+        # de inactividad, ni habilita la ruta mutante del executor.
+        if (veto != snapshot.changes_requested
+                or (report["review_veto_only"] and veto is not True)):
+            return _unknown(issue, "review_veto_inconsistent")
         decision: Decision = decision_from_snapshot(snapshot)
         # Un preview no es autoridad: aunque ambos lectores devuelvan
         # datos positivos, nunca expone una acción que pueda liberar V3.
@@ -355,8 +488,18 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
             return _unknown(issue, "invalid_decision")
         if decision.action not in ("unknown", "wait"):
             return _unknown(issue, "inactivity_not_proven")
-        return IntegrationPreview(issue, "read_only", decision.action,
-                                  decision.reason)
+        age = int((now.astimezone(timezone.utc) - last).total_seconds() // 60)
+        if age < 0:
+            return _unknown(issue, "future_activity")
+        return IntegrationPreview(
+            issue, "read_only", decision.action, decision.reason,
+            # No atribuir inactividad a un marker antiguo cuando solo
+            # tenemos un veto CI autenticado, no una auditoría de pushes.
+            age if decision.action == "wait"
+            and not (report["ci_veto_only"] or report["review_veto_only"])
+            else None,
+            report["activity_source"] if decision.action == "wait" else None,
+        )
     except Exception:
         # Sin nombres de usuario, payloads, headers ni tokens en errores.
         return _unknown(issue, "unverifiable_integration")
@@ -376,14 +519,24 @@ if __name__ == "__main__":
             "state": result.state,
             "action": result.action,
             "reason": result.reason,
+            "activity_age_minutes": result.activity_age_minutes,
+            "activity_source": result.activity_source,
             "release_authorized": False,
             "lock_verified": False,
             "cas_verified": False,
             "mutations": 0,
         }, sort_keys=True))
-        # UNKNOWN no debe producir un workflow verde: no hubo evidencia
-        # verificable. Sólo un preview read-only/wait es terminal válido.
-        if result.state != "read_only" or result.action != "wait":
+        import os
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as report:
+                report.write(result.summary_line)
+        # UNKNOWN nunca acredita un ciclo. Las decisiones hipotéticas
+        # tipadas son terminales para QA, pero este CLI no ejecuta escrituras.
+        if (result.state != "read_only"
+                or result.action not in ("wait", "mark_recovery", "release")
+                or result.release_authorized or result.lock_verified
+                or result.cas_verified):
             raise SystemExit(1)
     except Exception:
         # No registrar excepciones ni datos privados; señalizar fallo real

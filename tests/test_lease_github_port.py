@@ -61,6 +61,33 @@ class FakeAPI(ActivityAPI):
 
 
 class LeaseGithubPortTests(unittest.TestCase):
+    def test_external_review_veto_only_visible_to_read_only_port(self):
+        """El Port no habilita el veto externo en su ruta estricta."""
+        from unittest.mock import patch
+
+        api = FakeAPI()
+        api.authenticated = True
+        port = LeaseGithubPort(
+            api, armed=True, concurrency_group="test", clock=lambda: NOW,
+        )
+        with patch.object(port, "_latest_bot_marker", return_value=None), \
+             patch("scripts.lease_github_port.collect_activity",
+                   return_value={"status": "UNKNOWN"}) as collector:
+            with self.assertRaises(PortNotArmed):
+                port.read_observation(21)
+            self.assertIs(
+                collector.call_args.kwargs["allow_review_veto_only"], True)
+            self.assertIs(
+                collector.call_args.kwargs["allow_ci_veto_only"], True)
+            collector.reset_mock()
+            with self.assertRaises(PortNotArmed):
+                port.read(21)
+            self.assertIs(
+                collector.call_args.kwargs["allow_review_veto_only"], False)
+            self.assertIs(
+                collector.call_args.kwargs["allow_ci_veto_only"], False)
+        self.assertTrue(all(path == GLOBAL_SWITCH for path in api.calls))
+
     def test_read_only_inspection_never_allows_caller_to_set_authority(self):
         from dataclasses import FrozenInstanceError, replace
         from scripts.lease_github_port import Inspection
@@ -981,6 +1008,33 @@ class LeaseGithubPortTests(unittest.TestCase):
                 call()
         self.assertEqual(quiet.writes, [])
 
+        # GET autenticado con el Port desarmado: ni siquiera un
+        # transporte que acepta POST/PATCH puede habilitar una transición.
+        observer = LeaseGithubPort(quiet, armed=False,
+                                   concurrency_group=group, clock=lambda: NOW)
+        observed = observer.read_observation(21)
+        self.assertTrue(_trusted(observed, allow_partial=True))
+        self.assertFalse(observed.ci_running)
+        with self.assertRaises(PortNotArmed):
+            observer.read(21)
+        with self.assertRaises(PortNotArmed):
+            observer.append(21, _release_marker(observed), observed)
+        with self.assertRaises(PortNotArmed):
+            observer.status(21, RECOVERY, observed)
+        self.assertEqual(quiet.writes, [])
+        quiet.checks[0]["status"] = "in_progress"
+        waiting = observer.read_observation(21)
+        self.assertTrue(waiting.ci_running)
+        self.assertFalse(_trusted(waiting, allow_partial=True))
+        self.assertEqual(quiet.writes, [])
+        quiet.checks[0]["status"] = "completed"
+        unauthenticated = WriteAPI()
+        unauthenticated.authenticated = False
+        with self.assertRaises(PortNotArmed):
+            LeaseGithubPort(unauthenticated, armed=False,
+                            concurrency_group=group,
+                            clock=lambda: NOW).read_observation(21)
+
         api = WriteAPI()
         port = LeaseGithubPort(api, armed=True, concurrency_group=group,
                                clock=lambda: NOW)
@@ -998,6 +1052,16 @@ class LeaseGithubPortTests(unittest.TestCase):
         self.assertTrue(_trusted(snap, allow_partial=True))
         self.assertEqual((snap.reservation_id, snap.branch_sha, snap.status),
                          (marker["reservation_id"], SHA, "estado: reservado"))
+
+        # CI activo auténtico se observa, pero no habilita CAS mutante.
+        api.checks[0]["status"] = "in_progress"
+        with self.assertRaises(PortNotArmed):
+            port.read(21)
+        observed_ci = port.read_observation(21)
+        self.assertTrue(observed_ci.ci_running)
+        self.assertFalse(_trusted(observed_ci, allow_partial=True))
+        self.assertEqual(api.writes, [])
+        api.checks[0]["status"] = "completed"
 
         # CAS: UUID, SHA, marker/pin o estado distintos no escriben.
         bad_marker = {**snap.marker, "task_marker_sha256": "e" * 64}

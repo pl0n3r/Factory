@@ -193,6 +193,21 @@ El canal `v1` solo cambia mediante una puerta humana ligada al SHA exacto. Los c
 | Revisión jurídica (#53) | 🧭 Decisión humana separada |
 | GitHub Pages de la cabina (#35) | 🧭 Default seguro B: no publicar |
 
+### Liberación automática de reservas V3 (#1382)
+
+| Fase | Estado verificable | Autoridad |
+| --- | --- | --- |
+| **Fase A — observación GET-only** | Implementación parcial en el PR Draft #1383; pendientes los ciclos reales y el informe completo de decisiones por Issue | Solo lectura, `GITHUB_TOKEN` del repositorio local; `deferred_low_quota` omite el ciclo sin mutaciones |
+| **Fase B — liberación automática** | **NO ACTIVADA**; `FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'` | Prohibida hasta acreditar **24 horas y 100 ciclos terminales y válidos por repositorio**, **cero falsos positivos** y **QA individual** por decisión hipotética `release` |
+
+Cada consumidor inspeccionará exclusivamente sus propios Issues mediante el workflow
+reutilizable de Coordinación `@v1`, una vez publicada una versión autorizada.
+**No se usa un token multi-repositorio.** Un resultado `UNKNOWN`, un cron
+programado sin run real o un `deferred_low_quota` no cuentan como ciclos
+válidos ni prueban inactividad. Merge, publicación de `@v1` y activación
+son puertas independientes. La documentación técnica está en
+[liberación automática de reservas](docs/liberacion-automatica-de-reservas.md).
+
 ### Estado de las tandas
 
 #### TANDA 2 · adopción del kit

@@ -30,6 +30,8 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+  checks: read
+  actions: read
 
 concurrency:
   # Solo schedule/dispatch comparten exclusión con Coordinación;
@@ -50,6 +52,8 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
+      checks: read
+      actions: read
     steps:
       - name: Checkout sin credenciales persistidas
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -90,10 +94,26 @@ jobs:
           remaining="$(jq -r '.resources.core.remaining' "$RUNNER_TEMP/lease-rate.json")"
           limit="$(jq -r '.resources.core.limit' "$RUNNER_TEMP/lease-rate.json")"
           if (( remaining * 5 < limit )); then
-            echo "Auditoría aplazada: API por debajo del 20 %. Ninguna reserva se toca."
+            # Cuota baja no es error del workflow: sin GET adicionales ni mutaciones.
             echo "allow=false" >> "$GITHUB_OUTPUT"
-            echo "::error::Pruebas no ejecutadas por cuota baja; auditoría no acreditada."
-            exit 1
+            echo "::notice::deferred_low_quota: API inferior al 20%; 0 observaciones y 0 liberaciones."
+            {
+              echo "### Auditoría V3: deferred_low_quota"
+              echo "Presupuesto API insuficiente; ejecución aplazada."
+              echo "Observaciones=0; escrituras=0; liberaciones=0."
+            } >> "$GITHUB_STEP_SUMMARY"
+            # Identificar los ciclos aplazados sin consultas REST adicionales.
+            # Un run verde por cuota nunca certifica observación de Fase A.
+            jq -nc --arg repository "$OBSERVED_REPOSITORY" \
+              --arg sha "$GITHUB_SHA" --arg run_id "$GITHUB_RUN_ID" '
+              {schema_version: 1, repository: $repository,
+               head_sha: $sha, run_id: $run_id,
+               status: "deferred_low_quota",
+               terminal_certified: false, release_authorized: false,
+               mutations: 0, valid_observations: 0,
+               unknown_observations: 0, issues: []}
+            ' > "$RUNNER_TEMP/lease-audit-evidence.json"
+            exit 0
           fi
           echo "allow=true" >> "$GITHUB_OUTPUT"
 
@@ -260,12 +280,103 @@ jobs:
             "$RUNNER_TEMP/lease-active-issues.json" > /dev/null
           jq -r '.[]' "$RUNNER_TEMP/lease-active-issues.json" \
             > "$RUNNER_TEMP/lease-active-issue-numbers.txt"
+          valid_observations=0
+          unknown_observations=0
+          : > "$RUNNER_TEMP/lease-observer-results.jsonl"
           while IFS= read -r issue_number; do
             [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || {
               echo "::error::Inventario de Issues inválido; fail-closed."
               exit 1
             }
-            if ! python3 -m scripts.lease_auto_release_integration "$issue_number"; then
+            # Jamás archivar stdout sin validar: podría contener datos
+            # privados del transporte. Sólo exportar los seis campos
+            # de diagnóstico y autoridades negativas del CLI.
+            if python3 -m scripts.lease_auto_release_integration "$issue_number" \
+                > "$RUNNER_TEMP/lease-observer-raw.json" &&
+              # Un único documento por Issue: rechazar stdout con dos
+              # objetos JSON aunque individualmente pasen la whitelist.
+              jq -sce --argjson issue "$issue_number" '
+                select(length == 1) | .[0]
+                | select(type == "object"
+                  and .issue == $issue and .state == "read_only"
+                  and (.action == "wait" or .action == "mark_recovery"
+                       or .action == "release")
+                  and (.reason | type == "string"
+                       and test("^[a-z][a-z0-9_]{0,79}$"))
+                  and (.activity_source == null
+                       or .activity_source == "reservation_marker"
+                       or .activity_source == "workflow_push"
+                       or .activity_source == "issue_comment"
+                       or .activity_source == "repository_push")
+                  and (.activity_age_minutes == null
+                       or (.activity_age_minutes | type == "number"
+                           and . >= 0 and floor == . and . <= 525600))
+                  and .release_authorized == false
+                  and .lock_verified == false
+                  and .cas_verified == false and .mutations == 0)
+                | {issue, state, action, reason,
+                   activity_age_minutes, activity_source,
+                   release_authorized, lock_verified, cas_verified, mutations}
+              ' "$RUNNER_TEMP/lease-observer-raw.json" \
+                >> "$RUNNER_TEMP/lease-observer-results.jsonl"; then
+              valid_observations=$((valid_observations + 1))
+            else
+              unknown_observations=$((unknown_observations + 1))
+              # Registro con datos mínimos, no repetir el JSON rechazado.
+              printf '{"issue":%s,"state":"UNKNOWN","action":"unknown","reason":"unverifiable_observation","release_authorized":false,"lock_verified":false,"cas_verified":false,"mutations":0}\n' \
+                "$issue_number" >> "$RUNNER_TEMP/lease-observer-results.jsonl"
               echo "::notice::Issue #${issue_number}: observación UNKNOWN o fallida (fail-closed, 0 mutaciones)."
             fi
           done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"
+          # Candidato de evidencia: jamás equivale a QA certificado.
+          jq -sc --arg repo "${GITHUB_REPOSITORY:-UNKNOWN}" \
+            --arg sha "${GITHUB_SHA:-UNKNOWN}" \
+            --arg run_id "${GITHUB_RUN_ID:-UNKNOWN}" \
+            --argjson valid "$valid_observations" \
+            --argjson unknown "$unknown_observations" '
+              . as $rows
+              | if ($valid < 0 or $unknown < 0
+                    or ($rows | length) != ($valid + $unknown)
+                    or ($rows | map(.issue) | unique | length) != ($rows | length)
+                    or ($rows | map(select(.state == "read_only")) | length) != $valid
+                    or ($rows | map(select(.state == "UNKNOWN")) | length) != $unknown)
+                then error("inconsistent_observation_inventory")
+                else
+                  {schema_version: 1, repository: $repo, head_sha: $sha,
+                   run_id: $run_id, status:
+                     (if $unknown > 0 or $valid == 0
+                      then "UNKNOWN" else "candidate_terminal" end),
+                   terminal_certified: false, release_authorized: false,
+                   mutations: 0, valid_observations: $valid,
+                   unknown_observations: $unknown, issues: $rows}
+                end
+            ' "$RUNNER_TEMP/lease-observer-results.jsonl" \
+              > "$RUNNER_TEMP/lease-audit-evidence.json"
+          {
+            echo "### Observador V3 GET-only: resultado por Issue"
+            echo "Observaciones válidas=${valid_observations}; UNKNOWN=${unknown_observations}; liberaciones=0."
+            echo "Un run con UNKNOWN o censo vacío no acredita un ciclo válido de Fase A."
+            echo "El manifiesto del run es solo candidato; QA y procedencia deben verificarlo."
+            echo
+            echo "| Issue | Estado | Decisión | Inactividad (min) | Fuente | Veto/motivo |"
+            echo "| --- | --- | --- | ---: | --- | --- |"
+            # Sólo el manifiesto saneado, nunca stdout REST/CLI: todos los
+            # valores visibles están validados o sintetizados en el censo.
+            jq -r '.issues[] |
+              "| #\(.issue) | \(.state) | \(.action) | \(.activity_age_minutes // "UNKNOWN") | \(.activity_source // "UNKNOWN") | \(.reason) |"
+            ' "$RUNNER_TEMP/lease-audit-evidence.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if (( unknown_observations > 0 )); then
+            echo "::error::Censo incompleto: ${unknown_observations} observaciones UNKNOWN; ciclo NO acreditable."
+            exit 1
+          fi
+
+      - name: Conservar evidencia acotada del observador (no certifica ciclos)
+        # Sólo el cron sobre main; no se archivan tokens ni respuestas REST.
+        if: ${{ always() && github.event_name == 'schedule' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lease-observer-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/lease-audit-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

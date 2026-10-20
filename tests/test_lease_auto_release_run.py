@@ -1,13 +1,16 @@
 """Contratos offline del runner V3: ninguna credencial ni red real."""
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts.lease_auto_release_run import (
     decision_from_snapshot, inventory_after_switch_recheck,
     inventory_from_paginated_issues, observe_recent_activity, run_cycle,
+    evaluate_phase_a_candidate,
 )
 from test_lease_release_executor import FakePort, snapshot
+from test_lease_github_port import FakeAPI, NOW
 
 
 class NoAccessPort:
@@ -39,10 +42,206 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             RecoveryInventory(2, 1, 0, 1, True)
 
+
+    def test_phase_a_candidate_requires_authenticated_receipts_and_24h_100_cycles(self):
+        from copy import deepcopy
+        from dataclasses import FrozenInstanceError
+
+        repo = "pl0n3r/Factory"
+        sha = "a" * 40
+        now = datetime(2026, 10, 18, tzinfo=timezone.utc)
+        manifests, receipts = [], []
+        def issue_row(action="wait"):
+            return {
+                "issue": 21, "state": "read_only", "action": action,
+                "reason": "activity_window", "activity_age_minutes": 7,
+                "activity_source": "workflow_push",
+                "release_authorized": False, "lock_verified": False,
+                "cas_verified": False, "mutations": 0,
+            }
+        for n in range(100):
+            run = 10001 + n
+            manifests.append({
+                "schema_version": 1, "repository": repo, "head_sha": sha,
+                "run_id": str(run), "status": "candidate_terminal",
+                "terminal_certified": False, "release_authorized": False,
+                "mutations": 0, "valid_observations": 1,
+                "unknown_observations": 0, "issues": [issue_row()],
+            })
+            receipts.append({
+                "id": run, "repository": repo, "head_sha": sha,
+                "event": "schedule", "status": "completed",
+                "conclusion": "success", "artifact_attested": True,
+                "completed_at": (
+                    now + timedelta(minutes=15 * n)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            })
+        result = evaluate_phase_a_candidate(manifests, receipts, [], repository=repo)
+        self.assertEqual(result.status, "candidate_only")
+        self.assertEqual(result.valid_cycles, 100)
+        self.assertGreaterEqual(result.observed_minutes, 1440)
+        self.assertEqual((result.hypothetical_releases, result.qa_correct), (0, 0))
+        self.assertIs(result.release_authorized, False)
+        with self.assertRaises(TypeError):
+            replace(result, release_authorized=True)
+        with self.assertRaises(FrozenInstanceError):
+            setattr(result, "release_authorized", True)
+
+        short = evaluate_phase_a_candidate(
+            manifests[:99], receipts[:99], [], repository=repo,
+        )
+        self.assertEqual(short.status, "insufficient_observation")
+        cramped = deepcopy(receipts)
+        for i, receipt in enumerate(cramped):
+            receipt["completed_at"] = (
+                now + timedelta(minutes=10 * i)
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(evaluate_phase_a_candidate(
+            manifests, cramped, [], repository=repo,
+        ).status, "insufficient_observation")
+
+        for mismatch in (
+            {"event": "pull_request"},
+            {"status": "queued"},
+            {"conclusion": "failure"},
+            {"artifact_attested": False},
+            {"head_sha": "b" * 40},
+            {"repository": "pl0n3r/other"},
+        ):
+            with self.subTest(mismatch=mismatch):
+                altered = deepcopy(receipts)
+                altered[0].update(mismatch)
+                self.assertEqual(evaluate_phase_a_candidate(
+                    manifests, altered, [], repository=repo,
+                ).status, "invalid_evidence")
+        for mismatch in (
+            {"status": "UNKNOWN"},
+            {"status": "deferred_low_quota"},
+            {"terminal_certified": True},
+            {"valid_observations": 2},
+            {"unknown_observations": 1},
+            {"mutations": 1},
+            {"release_authorized": True},
+            {"head_sha": "b" * 40},
+        ):
+            with self.subTest(manifest=mismatch):
+                altered = deepcopy(manifests)
+                altered[0].update(mismatch)
+                self.assertEqual(evaluate_phase_a_candidate(
+                    altered, receipts, [], repository=repo,
+                ).status, "invalid_evidence")
+        duplicated = deepcopy(manifests)
+        duplicated[1]["run_id"] = duplicated[0]["run_id"]
+        self.assertEqual(evaluate_phase_a_candidate(
+            duplicated, receipts, [], repository=repo,
+        ).status, "invalid_evidence")
+
+        with_release = deepcopy(manifests)
+        # Los candidatos release necesitan ≥40 min y motivo real del decisor;
+        # un "release" dentro de ventana activa no puede pasar por QA.
+        suspicious = deepcopy(manifests)
+        suspicious[0]["issues"] = [issue_row("release")]
+        self.assertEqual(evaluate_phase_a_candidate(
+            suspicious, receipts, [], repository=repo,
+        ).status, "invalid_evidence")
+        with_release[0]["issues"] = [{
+            **issue_row("release"),
+            "reason": "inactive_after_recovery_grace",
+            "activity_age_minutes": 45,
+            "activity_source": "reservation_marker",
+        }]
+        missing_qa = evaluate_phase_a_candidate(
+            with_release, receipts, [], repository=repo)
+        self.assertEqual(missing_qa.status, "qa_incomplete")
+        qa = {"run_id": 10001, "issue": 21, "verdict": "correct",
+              "evidence_ref": "actions/10001/21"}
+        good = evaluate_phase_a_candidate(
+            with_release, receipts, [qa], repository=repo)
+        self.assertEqual(good.status, "candidate_only")
+        self.assertEqual((good.hypothetical_releases, good.qa_correct), (1, 1))
+        self.assertIs(good.release_authorized, False)
+        wrong = evaluate_phase_a_candidate(
+            with_release, receipts, [{**qa, "verdict": "incorrect"}],
+            repository=repo)
+        self.assertEqual(wrong.status, "false_positive")
+        for invalid_qa in ([qa, qa], [{**qa, "issue": 22}],
+                           [{**qa, "verdict": "maybe"}]):
+            self.assertEqual(evaluate_phase_a_candidate(
+                with_release, receipts, invalid_qa, repository=repo,
+            ).status, "invalid_evidence")
+        malformed = deepcopy(with_release)
+        malformed[0]["issues"][0]["mutations"] = 1
+        self.assertEqual(evaluate_phase_a_candidate(
+            malformed, receipts, [qa], repository=repo,
+        ).status, "invalid_evidence")
+        for bad in (
+            {"reason": "not_old_enough"},
+            {"activity_age_minutes": 39},
+            {"activity_age_minutes": None},
+            {"activity_source": None},
+        ):
+            with self.subTest(release_inconsistent=bad):
+                trial = deepcopy(with_release)
+                trial[0]["issues"][0].update(bad)
+                self.assertEqual(evaluate_phase_a_candidate(
+                    trial, receipts, [qa], repository=repo,
+                ).status, "invalid_evidence")
+        for invalid_wait in (
+            {"reason": "not_old_enough"},
+            {"reason": "unattended_paused"},
+            {"reason": "live_protected"},
+            {"reason": "inactive_30_minutes"},
+            {"reason": "activity_window", "activity_age_minutes": 30},
+            {"reason": "activity_window", "activity_age_minutes": None},
+            {"reason": "activity_window", "activity_source": None},
+            {"reason": "recovery_grace", "activity_age_minutes": 29},
+            {"reason": "recovery_grace", "activity_source": None},
+        ):
+            with self.subTest(wait_row=invalid_wait):
+                trial = deepcopy(manifests)
+                trial[0]["issues"] = [{**issue_row(), **invalid_wait}]
+                self.assertEqual(evaluate_phase_a_candidate(
+                    trial, receipts, [], repository=repo,
+                ).status, "invalid_evidence")
+        for reason, age in (("recovery_grace", 35),
+                            ("protected_or_active_work", None)):
+            trial = deepcopy(manifests)
+            trial[0]["issues"] = [{
+                **issue_row(), "reason": reason,
+                "activity_age_minutes": age,
+            }]
+            self.assertEqual(evaluate_phase_a_candidate(
+                trial, receipts, [], repository=repo,
+            ).status, "candidate_only")
+        for inconsistent in (
+            {**issue_row("mark_recovery"), "reason": "inactive_30_minutes",
+             "activity_age_minutes": 29},
+            {**issue_row("mark_recovery"), "reason": "wrong",
+             "activity_age_minutes": 31},
+            {**issue_row("mark_recovery"), "reason": "inactive_30_minutes",
+             "activity_age_minutes": 31, "activity_source": None},
+            {**issue_row(), "reason": "inactive_after_recovery_grace"},
+        ):
+            with self.subTest(action=inconsistent["action"],
+                              reason=inconsistent["reason"]):
+                trial = deepcopy(manifests)
+                trial[0]["issues"] = [inconsistent]
+                self.assertEqual(evaluate_phase_a_candidate(
+                    trial, receipts, [], repository=repo,
+                ).status, "invalid_evidence")
+        matching_recovery = deepcopy(manifests)
+        matching_recovery[0]["issues"] = [{
+            **issue_row("mark_recovery"),
+            "reason": "inactive_30_minutes",
+            "activity_age_minutes": 32,
+        }]
+        self.assertEqual(evaluate_phase_a_candidate(
+            matching_recovery, receipts, [], repository=repo,
+        ).status, "candidate_only")
+
     def test_authenticated_recent_activity_inventory_is_bounded_and_never_writes(self):
         from datetime import timedelta
         from scripts.lease_github_port import LeaseGithubPort, RECENT, UNKNOWN
-        from test_lease_github_port import FakeAPI, NOW
 
         api = FakeAPI()
         observed = observe_recent_activity(
@@ -103,6 +302,56 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
         # Los inválidos sin fecha lejana no han tocado el Port; el último
         # caso puede leer solo GET y aun así carece de autoridad.
         self.assertEqual(blocked.switch_reads, 1)
+
+    def test_observation_reports_current_repository_without_writes(self):
+        """Fase A informa cada Issue local; lo no atribuible sigue UNKNOWN."""
+        from scripts.lease_auto_release_integration import (
+            IntegrationPreview, _GhReadOnlyAPI,
+        )
+        from scripts.lease_github_port import LeaseGithubPort
+
+        api = FakeAPI()
+        result = observe_recent_activity(
+            [21], LeaseGithubPort(api), now=NOW,
+        )
+        self.assertEqual(result.state, "read_only")
+        self.assertFalse(result.release_authorized)
+        self.assertTrue(all(
+            path in ("/rate_limit", "/repos/pl0n3r/Factory")
+            or path.startswith("/repos/pl0n3r/Factory/")
+            for path in api.calls
+        ))
+        self.assertFalse(any(
+            path.startswith("/repos/other") for path in api.calls))
+        self.assertEqual(_GhReadOnlyAPI.repo, "pl0n3r/Factory")
+        valid = IntegrationPreview(
+            21, "read_only", "wait", "not_old_enough", 17,
+            "workflow_push",
+        )
+        note = valid.summary_line
+        self.assertIn("Issue #21", note)
+        self.assertIn("inactividad=17 min", note)
+        self.assertIn("fuente=workflow_push", note)
+        self.assertIn("veto/razón=not_old_enough", note)
+        self.assertIn("autoridad=NO", note)
+        unknown = IntegrationPreview(
+            21, "UNKNOWN", "unknown", "collector_unknown",
+        )
+        self.assertIn("inactividad=UNKNOWN", unknown.summary_line)
+        self.assertIn("fuente=UNKNOWN", unknown.summary_line)
+        self.assertFalse(unknown.release_authorized)
+        malicious = IntegrationPreview(
+            21, "UNKNOWN", "unknown", "password_secret\nTOKEN=abc",
+        )
+        self.assertNotIn("password_secret", malicious.summary_line)
+        self.assertNotIn("TOKEN", malicious.summary_line)
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github/workflows" / "liberar-reservas.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("GITHUB_REPOSITORY: ${{ github.repository }}", workflow)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
 
     def test_switch_recheck_rejects_pause_and_untrusted_state_during_inventory(self):
         from scripts.unattended_kill_switch import (
@@ -337,6 +586,75 @@ class LeaseAutoReleaseRunTests(unittest.TestCase):
             run_cycle([1191], NoAccessPort(),
                       feature_enabled="true").state, "invalid_flags",
         )
+
+    def test_authorized_activation_caps_three_releases_and_preserves_pr_branch(self):
+        """Un lote autorizado jamás ejecuta cuatro posibles liberaciones."""
+        from unittest.mock import patch
+        from scripts.lease_release_executor import Result
+
+        port = FakePort(snapshot())
+        original = (port.item.branch, port.item.branch_sha,
+                    port.item.reservation_id)
+        # Caso real aislado: el puerto conserva la rama canónica al liberar.
+        single = run_cycle(
+            [1191], port, feature_enabled=True,
+            dry_run=False, mutations_authorized=True,
+        )
+        self.assertEqual(single.results[0][1].reason, "released")
+        self.assertEqual((port.item.branch, port.item.branch_sha,
+                          port.item.reservation_id), original)
+        self.assertEqual([kind for kind, _ in port.writes],
+                         ["comment", "status"])
+        self.assertNotIn("delete_branch", [kind for kind, _ in port.writes])
+        self.assertNotIn("close_pr", [kind for kind, _ in port.writes])
+
+        with patch(
+            "scripts.lease_auto_release_run.execute",
+            return_value=Result("release", "released", True, "complete"),
+        ) as simulate:
+            cycle = run_cycle(
+                [5, 4, 3, 2, 1], object(),
+                feature_enabled=True, dry_run=False,
+                mutations_authorized=True,
+            )
+            self.assertEqual(simulate.call_count, 3)
+            self.assertEqual([issue for issue, _ in cycle.results],
+                             [1, 2, 3, 4, 5])
+            self.assertEqual(
+                [result.reason for _, result in cycle.results],
+                ["released", "released", "released",
+                 "cycle_write_cap", "cycle_write_cap"])
+            self.assertFalse(cycle.results[3][1].wrote)
+            self.assertFalse(cycle.results[4][1].wrote)
+        with patch(
+            "scripts.lease_auto_release_run.execute",
+            return_value=Result("release", "dry_run"),
+        ) as simulate:
+            cycle = run_cycle([1, 2, 3, 4], object(),
+                              feature_enabled=True, dry_run=True)
+            self.assertEqual(simulate.call_count, 4)
+            self.assertTrue(all(not result.wrote
+                                for _, result in cycle.results))
+        # En el workflow real Fase B no está activada.
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github" / "workflows" / "liberar-reservas.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+        self.assertNotIn("issues: write", workflow)
+        self.assertNotIn("pull-requests: write", workflow)
+
+    def test_cap_skips_vetoes_but_counts_partial_writes(self):
+        from unittest.mock import patch
+        from scripts.lease_release_executor import Result
+        outcomes = [Result("wait", "veto"), Result("release", "ok", True, "complete"),
+                    Result("wait", "veto"), Result("release", "partial", False, "partial"),
+                    Result("release", "ok", True, "complete")]
+        with patch("scripts.lease_auto_release_run.execute", side_effect=outcomes) as fake:
+            cycle = run_cycle([1, 2, 3, 4, 5, 6], object(),
+                              feature_enabled=True, dry_run=False, mutations_authorized=True)
+        self.assertEqual(fake.call_count, 5)
+        self.assertEqual([r.reason for _, r in cycle.results],
+                         ["veto", "ok", "veto", "partial", "ok", "cycle_write_cap"])
 
     def test_verified_stale_grace_and_resume_serialized_with_kill_switch(self):
         self.assertEqual(
