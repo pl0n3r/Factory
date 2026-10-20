@@ -33,6 +33,12 @@ QUEUE_FILE = ROOT / QUEUE_WORKFLOW
 if QUEUE_FILE.is_file() and not QUEUE_FILE.is_symlink():
     POST_BASELINE_WORKFLOWS[QUEUE_WORKFLOW] = frozenset({"schedule", "workflow_dispatch"})
 
+# Factory#1442: reusable GET-only posterior al ledger histórico.
+CONSUMER_OBSERVER_WORKFLOW = ".github/workflows/observador-reservas-consumidor.yml"
+CONSUMER_OBSERVER_FILE = ROOT / CONSUMER_OBSERVER_WORKFLOW
+if CONSUMER_OBSERVER_FILE.is_file() and not CONSUMER_OBSERVER_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[CONSUMER_OBSERVER_WORKFLOW] = frozenset({"workflow_call"})
+
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)
 REQUIRED_KEEP = {
