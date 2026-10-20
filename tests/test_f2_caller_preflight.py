@@ -65,7 +65,7 @@ class F2CallerPreflightTests(unittest.TestCase):
 
     def test_unreadable_utf8_and_symlink_block_removal(self):
         unreadable = self.root / "Condor" / ".github" / "workflows" / "unreadable.yml"
-        unreadable.write_bytes(b"\\xff")
+        unreadable.write_bytes(b"\xff")
         link = self.root / "Condor" / ".github" / "workflows" / "external.yml"
         link.symlink_to(unreadable)
         report = audit(self.root, ["readme.yml"])
@@ -84,7 +84,7 @@ class F2CallerPreflightTests(unittest.TestCase):
             status = main()
         self.assertEqual(0, status)
         self.assertEqual("SAFE", json.loads(out.getvalue())["status"])
-        self.workflow("brvtal", "reader.yml", "jobs:\\n  read:\\n    uses: pl0n3r/factory/.github/workflows/readme.yml@v1\\n")
+        self.workflow("brvtal", "reader.yml", "jobs:\n  read:\n    uses: pl0n3r/factory/.github/workflows/readme.yml@v1\n")
         with patch("sys.argv", args), contextlib.redirect_stdout(io.StringIO()) as out:
             status = main()
         self.assertEqual(2, status)
