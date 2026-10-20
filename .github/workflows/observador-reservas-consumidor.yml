@@ -1,0 +1,204 @@
+name: Observador V3 por consumidor (GET-only, sin autoridad de release)
+
+on:
+  workflow_call:
+
+# Este reusable sólo utiliza el token local de su caller. Jamás exporta
+# datos privados de REST a logs, Issues, PRs ni artefactos.
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  checks: read
+  actions: read
+
+concurrency:
+  group: factory-coordination-${{ github.repository_id }}
+  cancel-in-progress: false
+
+jobs:
+  observar:
+    name: Observar únicamente el repositorio llamador
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      checks: read
+      actions: read
+    env:
+      FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'
+      # Manifiesto fijo: release_authorized: false; terminal_certified: false
+      # mutations: 0 — NO cuenta como 100 ciclos ni autoriza Fase B.
+    steps:
+      - name: Checkout Factory en el mismo commit del reusable
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .factory
+          persist-credentials: false
+
+      - name: Preflight local, switch global y cuota
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          case "$repo" in
+            pl0n3r/Factory|pl0n3r/Condor|pl0n3r/GrindFlow|pl0n3r/brvtal|pl0n3r/ControlBot|pl0n3r/AutoFactory|pl0n3r/FactoryRunner) ;;
+            *) echo "::error::Repositorio caller no autorizado"; exit 1 ;;
+          esac
+          gh api "/repos/$repo" > "$RUNNER_TEMP/lease-local-identity.json"
+          jq -e --arg repo "$repo" '
+            .full_name == $repo and (.id | type == "number" and . > 0)
+          ' "$RUNNER_TEMP/lease-local-identity.json" >/dev/null || {
+            echo "::error::Identidad del caller UNKNOWN"
+            exit 1
+          }
+          gh api /rate_limit > "$RUNNER_TEMP/lease-local-rate.json"
+          jq -e '.resources.core | .remaining >= 0 and .limit > 0
+                  and .remaining <= .limit' "$RUNNER_TEMP/lease-local-rate.json" >/dev/null || {
+            echo "::error::Cuota no verificable"
+            exit 1
+          }
+          remaining="$(jq -r '.resources.core.remaining' "$RUNNER_TEMP/lease-local-rate.json")"
+          limit="$(jq -r '.resources.core.limit' "$RUNNER_TEMP/lease-local-rate.json")"
+          if (( remaining * 5 < limit )); then
+            echo "allow=false" >> "$GITHUB_OUTPUT"
+            jq -nc --arg repo "$repo" --arg sha "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" '
+              {schema_version:1,repository:$repo,head_sha:$sha,run_id:$run,
+               status:"deferred_low_quota",terminal_certified:false,
+               release_authorized:false,mutations:0,valid_observations:0,
+               unknown_observations:0,issues:[]}
+            ' > "$RUNNER_TEMP/lease-observer-consumer.json"
+            echo "deferred_low_quota; escrituras=0; liberaciones=0" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "allow=true" >> "$GITHUB_OUTPUT"
+
+      - name: Inventariar Issues locales y registrar decisiones sanitizadas
+        if: steps.preflight.outputs.allow == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          gh api "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-local-switch-before.json"
+          gh api --paginate --slurp "/repos/$repo/issues?state=open&per_page=100" > "$RUNNER_TEMP/lease-local-issues.json"
+          gh api "/repos/pl0n3r/Factory/issues/767" > "$RUNNER_TEMP/lease-local-switch-after.json"
+          PYTHONPATH=.factory python3 - "$RUNNER_TEMP/lease-local-switch-before.json" \
+            "$RUNNER_TEMP/lease-local-switch-after.json" "$RUNNER_TEMP/lease-local-issues.json" \
+            "$RUNNER_TEMP/lease-local-numbers.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
+          from scripts.lease_auto_release_integration import local_active_issue_ids
+          before, after, source, target = map(Path, sys.argv[1:])
+          a, b = (json.loads(p.read_text(encoding="utf-8")) for p in (before, after))
+          if (evaluate_unattended_kill_switch(a).state != "RUNNING"
+                  or evaluate_unattended_kill_switch(b).state != "RUNNING"):
+              raise SystemExit("::error::Kill switch global UNKNOWN/PAUSED")
+          numbers = local_active_issue_ids(
+              json.loads(source.read_text(encoding="utf-8")),
+              os.environ["GITHUB_REPOSITORY"],
+          )
+          if numbers is None:
+              raise SystemExit("::error::Censo local UNKNOWN/incompleto")
+          target.write_text(json.dumps(numbers), encoding="utf-8")
+          PY
+          : > "$RUNNER_TEMP/lease-local-results.jsonl"
+          jq -r '.[]' "$RUNNER_TEMP/lease-local-numbers.json" |
+          while IFS= read -r issue_number; do
+            [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] || exit 1
+            if PYTHONPATH=.factory python3 -m scripts.lease_auto_release_integration "$issue_number" \
+               > "$RUNNER_TEMP/lease-local-raw.json"; then
+              :
+            else
+              # Error de transporte o evidencia UNKNOWN: nunca forzar edad/inactividad.
+              printf '%s\n' '{"state":"UNKNOWN","action":"unknown","reason":"observer_failed","release_authorized":false,"mutations":0}' \
+                > "$RUNNER_TEMP/lease-local-raw.json"
+            fi
+            python3 - "$issue_number" "$RUNNER_TEMP/lease-local-raw.json" \
+               >> "$RUNNER_TEMP/lease-local-results.jsonl" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+          number = int(sys.argv[1])
+          try:
+              raw = json.loads(Path(sys.argv[2]).read_text())
+              if (not isinstance(raw, dict)
+                      or raw.get("issue") != number
+                      or raw.get("state") != "read_only"
+                      or raw.get("action") != "wait"
+                      or raw.get("release_authorized") is not False
+                      or raw.get("lock_verified") is not False
+                      or raw.get("cas_verified") is not False
+                      or raw.get("mutations") != 0
+                      or not isinstance(raw.get("reason"), str)
+                      or not re.fullmatch(r"[a-z0-9_]{1,80}", raw["reason"])
+                      or raw.get("activity_source") not in
+                          ("reservation_marker", "workflow_push",
+                           "issue_comment", "repository_push", None)
+                      or (raw.get("activity_age_minutes") is not None and
+                          (type(raw["activity_age_minutes"]) is not int or
+                           not 0 <= raw["activity_age_minutes"] <= 525600))):
+                  raise ValueError("invalid_evidence")
+              out = {key: raw.get(key) for key in (
+                  "issue", "state", "action", "reason",
+                  "activity_source", "activity_age_minutes",
+                  "release_authorized", "lock_verified",
+                  "cas_verified", "mutations")}
+          except (ValueError, TypeError, OSError):
+              out = {
+                  "issue": number, "state": "UNKNOWN", "action": "unknown",
+                  "reason": "unverifiable_observation", "release_authorized": False,
+                  "lock_verified": False, "cas_verified": False, "mutations": 0}
+          print(json.dumps(out, separators=(",", ":"), sort_keys=True))
+          PY
+          done
+          python3 - "$RUNNER_TEMP/lease-local-results.jsonl" \
+            "$RUNNER_TEMP/lease-observer-consumer.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+          valid = sum(x["state"] == "read_only" for x in rows)
+          unknown = len(rows) - valid
+          record = {
+              "schema_version": 1,
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "head_sha": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "status": ("candidate_terminal" if valid and not unknown else "UNKNOWN"),
+              "terminal_certified": False,
+              "release_authorized": False,
+              "mutations": 0,
+              "valid_observations": valid,
+              "unknown_observations": unknown,
+              "issues": rows,
+          }
+          Path(sys.argv[2]).write_text(json.dumps(record, sort_keys=True) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"### Observador de reservas V3: {record['repository']}\n")
+              summary.write(f"Válidas={valid}, UNKNOWN={unknown}; 0 mutaciones; QA pendiente.\n")
+              for row in rows:
+                  summary.write(f"- #{row['issue']}: {row['action']} ({row['reason']})\n")
+          PY
+
+      - name: Conservar manifiesto del run (no certifica 24 h ni 100 ciclos)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lease-consumer-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/lease-observer-consumer.json
+          if-no-files-found: warn
+          retention-days: 7
