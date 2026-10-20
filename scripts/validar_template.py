@@ -22,7 +22,7 @@ def validate() -> list[str]:
     for path in (TEMPLATE/".github/workflows").glob("*.yml"):
         text=path.read_text(encoding="utf-8")
         for use in re.findall(r"^\s*uses:\s*([^\s]+)",text,flags=re.MULTILINE):
-            if use.startswith("pl0n3r/factory/"):
+            if use.casefold().startswith("pl0n3r/factory/"):
                 if not use.endswith("@v1"):
                     errors.append(f"{path}: Factory debe consumirse por @v1")
             elif not re.search(r"@[0-9a-f]{40}$",use):
