@@ -18,27 +18,27 @@ class TemplateContractTests(unittest.TestCase):
             file = workflows / "consumidor.yml"
             with patch.object(contract, "TEMPLATE", root), patch.object(contract, "REQUIRED", []):
                 file.write_text(
-                    "jobs:\\n  observer:\\n    uses: pl0n3r/Factory/.github/workflows/observador-reservas-consumidor.yml@v1\\n",
+                    "jobs:\n  observer:\n    uses: pl0n3r/Factory/.github/workflows/observador-reservas-consumidor.yml@v1\n",
                     encoding="utf-8",
                 )
                 self.assertEqual(contract.validate(), [])
                 file.write_text(
-                    "jobs:\\n  observer:\\n    uses: pl0n3r/factory/.github/workflows/observador-reservas-consumidor.yml@v1\\n",
+                    "jobs:\n  observer:\n    uses: pl0n3r/factory/.github/workflows/observador-reservas-consumidor.yml@v1\n",
                     encoding="utf-8",
                 )
                 self.assertEqual(contract.validate(), [])
                 file.write_text(
-                    "jobs:\\n  observer:\\n    uses: pl0n3r/Factory/.github/workflows/observador-reservas-consumidor.yml@main\\n",
+                    "jobs:\n  observer:\n    uses: pl0n3r/Factory/.github/workflows/observador-reservas-consumidor.yml@main\n",
                     encoding="utf-8",
                 )
                 self.assertTrue(any("por @v1" in error for error in contract.validate()))
                 file.write_text(
-                    "jobs:\\n  observer:\\n    uses: actions/checkout@v4\\n",
+                    "jobs:\n  observer:\n    uses: actions/checkout@v4\n",
                     encoding="utf-8",
                 )
                 self.assertTrue(any("no fijada a SHA" in error for error in contract.validate()))
                 file.write_text(
-                    "jobs:\\n  observer:\\n    uses: actions/checkout@" + "a" * 40 + "\\n",
+                    "jobs:\n  observer:\n    uses: actions/checkout@" + "a" * 40 + "\n",
                     encoding="utf-8",
                 )
                 self.assertEqual(contract.validate(), [])
