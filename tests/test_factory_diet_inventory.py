@@ -19,13 +19,19 @@ POST_BASELINE_WORKFLOWS = {
     }),
 }
 
-# Única adición permitida tras el inventario histórico: Factory#1387.
+# Adiciones explícitas posteriores al inventario histórico: Factory#1387 y #1425.
 # Solo se incorpora si el workflow real existe, no como permiso para
 # cambiar, sustituir o eliminar cualquiera de los 32 anteriores.
 JURIDICA_WORKFLOW = ".github/workflows/revision-juridica-sync.yml"
 JURIDICA_FILE = ROOT / JURIDICA_WORKFLOW
 if JURIDICA_FILE.is_file() and not JURIDICA_FILE.is_symlink():
     POST_BASELINE_WORKFLOWS[JURIDICA_WORKFLOW] = frozenset({"push", "schedule"})
+
+# Observador local posterior al inventario histórico; no altera el ledger.
+QUEUE_WORKFLOW = ".github/workflows/salud-cola.yml"
+QUEUE_FILE = ROOT / QUEUE_WORKFLOW
+if QUEUE_FILE.is_file() and not QUEUE_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[QUEUE_WORKFLOW] = frozenset({"schedule", "workflow_dispatch"})
 
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)
