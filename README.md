@@ -197,7 +197,7 @@ El canal `v1` solo cambia mediante una puerta humana ligada al SHA exacto. Los c
 
 | Fase | Estado verificable | Autoridad |
 | --- | --- | --- |
-| **Fase A — observación GET-only** | Implementación parcial en el PR Draft #1383; pendientes los ciclos reales y el informe completo de decisiones por Issue | Solo lectura, `GITHUB_TOKEN` del repositorio local; `deferred_low_quota` omite el ciclo sin mutaciones |
+| **Fase A — observación GET-only** | Código GET-only integrado en `main` mediante [PR #1383](https://github.com/pl0n3r/Factory/pull/1383); **sin certificación** de 24 horas / 100 ciclos terminales válidos ni QA de candidatos | Solo lectura, `GITHUB_TOKEN` del repositorio local; `deferred_low_quota` omite el ciclo sin mutaciones |
 | **Fase B — liberación automática** | **NO ACTIVADA**; `FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'` | Prohibida hasta acreditar **24 horas y 100 ciclos terminales y válidos por repositorio**, **cero falsos positivos** y **QA individual** por decisión hipotética `release` |
 
 Cada consumidor inspeccionará exclusivamente sus propios Issues mediante el workflow
