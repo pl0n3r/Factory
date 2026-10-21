@@ -438,7 +438,7 @@ print(json.dumps(pages[index]))
 
     def test_check_snapshot_ignores_only_nonsemantic_rest_metadata(self):
         """AC-01: metadata REST mutable no reemplaza evidencia original."""
-        print("AC01-ENTERED", flush=True)
+        print("AC01-ENTERED", file=__import__("sys").stderr, flush=True)
         before = self._mock_check_page(1, (11,))
         after = copy.deepcopy(before)
         original = before["check_runs"][0]
@@ -460,7 +460,7 @@ print(json.dumps(pages[index]))
             self.assertEqual(calls, 2)
         except AssertionError as exc:
             # Diagnóstico únicamente si la aceptación aislada falla.
-            print("AC01-SNAPSHOT-ERROR:", repr(exc), flush=True)
+            print("AC01-SNAPSHOT-ERROR:", repr(exc), file=__import__("sys").stderr, flush=True)
             raise
 
     def test_check_snapshot_rejects_security_relevant_changes(self):
