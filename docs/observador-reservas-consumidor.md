@@ -17,7 +17,12 @@ y comprueba `github.repository` contra el conjunto literal autorizado. El
 caller `template/.github/workflows/observador-reservas-consumidor.yml`
 programa el trabajo **en el repositorio que lo adopte**; no dispone de token
 transversal. El único GET fuera de ese repositorio es Factory #767, la fuente
-canónica del kill switch global. Todo resultado de permisos ausentes, cambios
+canónica del kill switch global.
+
+El caller utiliza `lease-consumer-caller-${{ github.repository_id }}` y el
+reusable utiliza `factory-coordination-${{ github.repository_id }}`. Los grupos
+son diferentes para evitar que el caller bloquee al reusable que invoca;
+el reusable conserva la exclusión con Coordinación. Todo resultado de permisos ausentes, cambios
 de identidad, cuota inferior al 20 %, actividad incompleta o fuente desconocida
 falla cerrado.
 
