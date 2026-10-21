@@ -300,9 +300,62 @@ class RolesKitTests(unittest.TestCase):
         self.assertIn("checkout_head != head", step)
         self.assertIn('sorted(files) != paths', step)
         self.assertIn("generator.expected_files(", step)
+        self.assertIn("map_offline_legal_generated_copies(canonical)", step)
+        self.assertIn('["git", "hash-object", str(script)]', step)
         self.assertIn("OFFLINE_LEGAL_DOC_STAMP, OFFLINE_LEGAL_DOC_ORIGIN_SHA", step)
         self.assertIn("verify_offline_legal_artifact_bytes(root, canonical)", step)
         self.assertIn('c.get("app", {}).get("id") == 15368', step)
+
+    def test_controlbot_generated_files_mapping_is_behavioral_and_fail_closed(self):
+        """Ocho claves reales del generador -> seis rutas autenticadas #838."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generated = {
+                name: ("Contenido de " + name + "\n").encode("utf-8")
+                for name in rk.OFFLINE_LEGAL_GENERATED_FILES
+            }
+            index = "revision-juridica/00-LEEME.md"
+            generated[index] = (
+                f"Última actualización automática (UTC): {rk.OFFLINE_LEGAL_DOC_STAMP} "
+                f"| SHA de origen: {rk.OFFLINE_LEGAL_DOC_ORIGIN_SHA}\n"
+            ).encode("utf-8")
+            self.assertEqual(len(generated), 8)
+            for name in rk.OFFLINE_LEGAL_DOC_FILES:
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                derived = "revision-juridica/" + Path(name).name
+                target.write_bytes(generated.get(name, generated[derived]))
+            # La excepción anterior fallaba incluso para copias correctas.
+            with self.assertRaisesRegex(RoleError, "no canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, generated)
+            canonical = rk.map_offline_legal_generated_copies(generated)
+            self.assertEqual(
+                canonical["docs/privacidad/canal-derechos.md"],
+                generated["revision-juridica/canal-derechos.md"],
+            )
+            self.assertEqual(
+                canonical["docs/privacidad/politica-tratamiento.md"],
+                generated["revision-juridica/politica-tratamiento.md"],
+            )
+            rk.verify_offline_legal_artifact_bytes(root, canonical)
+            # Cambiar una fuente no puede pasar aunque el render sea intacto.
+            altered = root / "docs/privacidad/canal-derechos.md"
+            altered.write_bytes(b"texto no autorizado")
+            with self.assertRaisesRegex(RoleError, "byte a byte"):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            for name in sorted(generated):
+                with self.subTest(missing=name), self.assertRaises(RoleError):
+                    rk.map_offline_legal_generated_copies({
+                        key: val for key, val in generated.items() if key != name
+                    })
+            with self.assertRaises(RoleError):
+                rk.map_offline_legal_generated_copies({**generated, "other": b"extra"})
+            with self.assertRaises(RoleError):
+                rk.map_offline_legal_generated_copies({
+                    **generated, "revision-juridica/canal-derechos.md": "texto",
+                })
+            with self.assertRaises(RoleError):
+                rk.map_offline_legal_generated_copies(None)
 
     def test_non_doc_incident_requires_all_sre_evidence(self):
         ctx, scope, _ = self._offline_legal_docs_fixture()
