@@ -53,6 +53,23 @@ class ReleaseAutoEligibilityTests(unittest.TestCase):
                 self.assertFalse(result["authorizes_release"])
                 self.assertEqual(0, result["mutations"])
 
+    def test_human_gate_does_not_mask_invalid_snapshot(self) -> None:
+        combinations = (
+            {"phase": "live", "checks": []},
+            {"phase": "live", "observed_main_sha": "b" * 40},
+            {"release_machinery_changed": True, "evidence_authenticated": False},
+            {"release_machinery_changed": True, "candidate_version": "1.0.38"},
+            {"release_machinery_changed": True, "v1_tag_protected": False},
+        )
+        for changes in combinations:
+            with self.subTest(changes=changes):
+                case = _snapshot()
+                case.update(changes)
+                result = evaluate(case)
+                self.assertEqual("BLOCKED", result["decision"])
+                self.assertFalse(result["authorizes_release"])
+                self.assertEqual(0, result["mutations"])
+
     def test_unknown_stale_failed_or_missing_gate_fails_closed(self) -> None:
         variants = [
             {"phase": "unknown"},

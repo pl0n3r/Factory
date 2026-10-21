@@ -60,9 +60,6 @@ def evaluate(snapshot: object) -> dict[str, Any]:
     touched = snapshot.get("release_machinery_changed")
     if type(touched) is not bool:
         return _result("BLOCKED", "release_change_classification_unknown")
-    if phase == "live" or touched:
-        return _result("HUMAN_GATE_REQUIRED", "live_or_release_machinery")
-
     if snapshot.get("v1_tag_protected") is not True:
         return _result("BLOCKED", "v1_tag_unprotected_or_unknown")
     if snapshot.get("evidence_authenticated") is not True:
@@ -103,4 +100,6 @@ def evaluate(snapshot: object) -> dict[str, Any]:
 
     if not REQUIRED_CHECKS.issubset(seen):
         return _result("BLOCKED", "required_check_missing")
+    if phase == "live" or touched:
+        return _result("HUMAN_GATE_REQUIRED", "live_or_release_machinery")
     return _result("DRY_RUN_ELIGIBLE", "offline_snapshot_only")
