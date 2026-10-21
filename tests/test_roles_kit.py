@@ -204,6 +204,72 @@ class RolesKitTests(unittest.TestCase):
                 with self.assertRaises(RoleError):
                     validate_pr(changed, self.catalog, ROLES_DIR, "es", verified_scope=forged)
 
+    def test_legal_document_scope_requires_pinned_byte_exact_artifacts(self):
+        """No basta auto-consistencia: los metadatos deben ser independientes."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            canonical = {}
+            for filename in rk.OFFLINE_LEGAL_DOC_FILES:
+                dest = root / filename
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                data = ("ejemplo canónico para " + filename + "\n").encode("utf-8")
+                if filename == "revision-juridica/00-LEEME.md":
+                    data = (
+                        f"Última actualización automática (UTC): {rk.OFFLINE_LEGAL_DOC_STAMP} "
+                        f"| SHA de origen: {rk.OFFLINE_LEGAL_DOC_ORIGIN_SHA}\n"
+                        "# Paquete de revisión jurídica\n"
+                    ).encode("utf-8")
+                canonical[filename] = data
+                dest.write_bytes(data)
+            rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index = root / "revision-juridica/00-LEEME.md"
+            original = index.read_bytes()
+            index.write_bytes(original.replace(
+                rk.OFFLINE_LEGAL_DOC_ORIGIN_SHA.encode("ascii"), b"a" * 40
+            ))
+            with self.assertRaisesRegex(RoleError, "origen no acreditados"):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index.write_bytes(original.replace(b"2026-10-19", b"2026-10-20"))
+            with self.assertRaises(RoleError):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index.write_bytes(original)
+            for filename in rk.OFFLINE_LEGAL_DOC_FILES:
+                target = root / filename
+                target.write_bytes(canonical[filename] + b"\nAlteración")
+                with self.subTest(filename=filename), self.assertRaisesRegex(
+                    RoleError, "byte a byte"
+                ):
+                    rk.verify_offline_legal_artifact_bytes(root, canonical)
+                target.write_bytes(canonical[filename])
+            with self.assertRaisesRegex(RoleError, "no canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, {})
+            missing = root / rk.OFFLINE_LEGAL_DOC_FILES[-1]
+            missing.unlink()
+            with self.assertRaises(RoleError):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+
+    def test_legal_document_workflow_rebuilds_from_pinned_trusted_sources(self):
+        workflow = (ROOT / ".github/workflows/roles.yml").read_text(
+            encoding="utf-8"
+        )
+        checkout = workflow.split(
+            "      - name: Descargar PR jurídico HEAD exacto (solo lectura)", 1
+        )[1].split(
+            "      - name: Acreditar N/A SRE documental desde V3 y checks exact-HEAD", 1
+        )[0]
+        self.assertIn("repository: pl0n3r/ControlBot", checkout)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", checkout)
+        self.assertIn("persist-credentials: false", checkout)
+        step = workflow.split(
+            "      - name: Acreditar N/A SRE documental desde V3 y checks exact-HEAD", 1
+        )[1].split("      - name: Validar PR", 1)[0]
+        self.assertIn("checkout_head != head", step)
+        self.assertIn('sorted(files) != paths', step)
+        self.assertIn("generator.expected_files(", step)
+        self.assertIn("OFFLINE_LEGAL_DOC_STAMP, OFFLINE_LEGAL_DOC_ORIGIN_SHA", step)
+        self.assertIn("verify_offline_legal_artifact_bytes(root, canonical)", step)
+        self.assertIn('c.get("app", {}).get("id") == 15368', step)
+
     def test_non_doc_incident_requires_all_sre_evidence(self):
         ctx, scope, _ = self._offline_legal_docs_fixture()
         other = {**ctx, "files": ["docs/privacidad/extra.md"]}
