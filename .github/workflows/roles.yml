@@ -200,6 +200,15 @@ jobs:
               )
           PY
 
+      - name: Descargar PR jurídico HEAD exacto (solo lectura)
+        if: github.repository == 'pl0n3r/ControlBot' && inputs.number == 838
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/ControlBot
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .controlbot-legal
+          persist-credentials: false
+
       - name: Acreditar N/A SRE documental desde V3 y checks exact-HEAD
         if: github.repository == 'pl0n3r/ControlBot' && inputs.number == 838
         env:
@@ -291,6 +300,35 @@ jobs:
               ]
               if not found or max(found, key=lambda c: c["id"]).get("conclusion") != "success":
                   raise SystemExit("Missing exact-head trusted green check: " + name)
+          # Content-bound, no solo seis filenames/metadatos: salida del
+          # generador que el diff auténtico demuestra no modificado en el PR.
+          import importlib.util
+          import subprocess
+          import sys
+          root = Path(".controlbot-legal").resolve()
+          checkout_head = subprocess.check_output(
+              ["git", "-C", str(root), "rev-parse", "HEAD"],
+              text=True, timeout=10,
+          ).strip()
+          if checkout_head != head:
+              raise SystemExit("Legal checkout SHA differs from event HEAD")
+          script = root / "scripts" / "generar_revision_juridica.py"
+          if not script.is_file() or script.is_symlink():
+              raise SystemExit("Canonical legal generator unavailable")
+          spec = importlib.util.spec_from_file_location("cb_legal_gen", script)
+          if spec is None or spec.loader is None:
+              raise SystemExit("Canonical legal generator could not load")
+          generator = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(generator)
+          sys.path.insert(0, str(Path(".factory").resolve()))
+          from scripts.roles_kit import (
+              OFFLINE_LEGAL_DOC_ORIGIN_SHA, OFFLINE_LEGAL_DOC_STAMP,
+              verify_offline_legal_artifact_bytes,
+          )
+          canonical = generator.expected_files(
+              root, OFFLINE_LEGAL_DOC_STAMP, OFFLINE_LEGAL_DOC_ORIGIN_SHA,
+          )
+          verify_offline_legal_artifact_bytes(root, canonical)
           scope = {
               "source": "github-api-v3-and-exact-head-ci-docs-v1",
               "repo": "pl0n3r/ControlBot", "issue": 837, "pr": 838,
