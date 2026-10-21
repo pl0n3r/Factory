@@ -153,6 +153,68 @@ class RolesKitTests(unittest.TestCase):
         self.assertIn('raise SystemExit("PR head differs from the triggering event head")', step)
         self.assertEqual(step.count("| jq -s '.' > /tmp/offline-"), 2)
 
+    def _offline_legal_docs_fixture(self):
+        files = list(rk.OFFLINE_LEGAL_DOC_FILES)
+        declared = ["ingenieria-software", "qa", "seguridad", "sre", "legal-privacidad", "dba", "contenido"]
+        body = complete_body(declared, primary="ingenieria-software", reviewer="seguridad")
+        sre = rk.parse_checklist((ROLES_DIR / "sre.md").read_text(encoding="utf-8"))
+        for item in sre:
+            body = body.replace("- [x] " + item, "- [ ] " + item)
+        body += "\nCloses #837\nSRE — **pendiente de evidencia operativa real**; ninguna casilla acredita ejecución.\n"
+        labels = [self.catalog[role]["label_es"] for role in declared] + ["tipo: incidente"]
+        scope = {
+            "source": rk.OFFLINE_LEGAL_DOC_SOURCE,
+            "repo": "pl0n3r/ControlBot", "issue": 837, "pr": 838,
+            "head_sha": "2efd14b92517434044720ff3cb12d47fe18de216",
+            "branch": "trabajo/issue-837",
+            "reservation_id": "fd7832c7-d93a-4bf8-a960-2adb8c6449c9",
+            "paths": files,
+            "checks": list(rk.OFFLINE_LEGAL_DOC_CHECKS),
+        }
+        return context(body=body, labels=labels, files=files, title="Corrección de privacidad"), scope, sre
+
+    def test_verified_offline_legal_doc_sync_attestation_is_narrow_and_does_not_claim_sre_performed(self):
+        ctx, scope, items = self._offline_legal_docs_fixture()
+        with self.assertRaisesRegex(RoleError, "Checklist incompleto para sre"):
+            validate_pr(ctx, self.catalog, ROLES_DIR, "es")
+        result = validate_pr(ctx, self.catalog, ROLES_DIR, "es", verified_scope=scope)
+        self.assertEqual(set(result["not_applicable"]["sre"]), set(items))
+        self.assertIn("sre", result["required"])
+        self.assertFalse(any("- [x] " + item in ctx["body"] for item in items))
+
+    def test_forged_legal_doc_sync_scope_wrong_paths_or_head_fails_closed(self):
+        ctx, scope, _ = self._offline_legal_docs_fixture()
+        mutations = [
+            (ctx, {**scope, "source": "pr-body"}),
+            (ctx, {**scope, "repo": "other/ControlBot"}),
+            (ctx, {**scope, "issue": 798}),
+            (ctx, {**scope, "pr": 799}),
+            (ctx, {**scope, "head_sha": "stale"}),
+            (ctx, {**scope, "branch": "trabajo/issue-798"}),
+            (ctx, {**scope, "reservation_id": "not-a-uuid"}),
+            (ctx, {**scope, "checks": ["Validar"]}),
+            (ctx, {**scope, "checks": ["Validar", "privacidad / Privacidad como código", "bypass"]}),
+            (ctx, {**scope, "paths": scope["paths"][:-1]}),
+            (ctx, {**scope, "extra": True}),
+            ({**ctx, "files": ctx["files"] + [".github/workflows/deploy.yml"]}, scope),
+            ({**ctx, "body": ctx["body"].replace("Closes #837", "")}, scope),
+        ]
+        for changed, forged in mutations:
+            with self.subTest(forged=forged):
+                with self.assertRaises(RoleError):
+                    validate_pr(changed, self.catalog, ROLES_DIR, "es", verified_scope=forged)
+
+    def test_non_doc_incident_requires_all_sre_evidence(self):
+        ctx, scope, _ = self._offline_legal_docs_fixture()
+        other = {**ctx, "files": ["docs/privacidad/extra.md"]}
+        with self.assertRaisesRegex(RoleError, "Checklist incompleto para sre"):
+            validate_pr(other, self.catalog, ROLES_DIR, "es", verified_scope=scope)
+        old_ctx, old_scope, _ = self._offline_health_fixture()
+        self.assertEqual(
+            validate_pr(old_ctx, self.catalog, ROLES_DIR, "es", verified_scope=old_scope)["not_applicable"]["sre"],
+            sorted(rk.parse_checklist((ROLES_DIR / "sre.md").read_text(encoding="utf-8"))),
+        )
+
     def test_catalog_has_all_required_complete_roles(self):
         self.assertTrue(REQUIRED_ROLES <= set(self.catalog))
         self.assertGreaterEqual(len(self.catalog), len(REQUIRED_ROLES))
