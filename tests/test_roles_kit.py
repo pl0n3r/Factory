@@ -235,7 +235,7 @@ class RolesKitTests(unittest.TestCase):
             index.write_bytes(original)
             for filename in rk.OFFLINE_LEGAL_DOC_FILES:
                 target = root / filename
-                target.write_bytes(canonical[filename] + b"\nAlteración")
+                target.write_bytes(canonical[filename] + b"\nAlteracion")
                 with self.subTest(filename=filename), self.assertRaisesRegex(
                     RoleError, "byte a byte"
                 ):

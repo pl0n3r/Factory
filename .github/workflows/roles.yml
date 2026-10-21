@@ -312,7 +312,7 @@ jobs:
           ).strip()
           if checkout_head != head:
               raise SystemExit("Legal checkout SHA differs from event HEAD")
-          script = root / "scripts/generar_revision_juridica.py"
+          script = root / "scripts" / "generar_revision_juridica.py"
           if not script.is_file() or script.is_symlink():
               raise SystemExit("Canonical legal generator unavailable")
           spec = importlib.util.spec_from_file_location("cb_legal_gen", script)
