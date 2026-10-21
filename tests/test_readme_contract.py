@@ -356,43 +356,52 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertEqual(self.factory_project["phase"], "construction")
         validate_project_metadata(self.contract, self.factory_project)
 
-    def test_factory_readme_adopts_contract_v1(self):
-        """El README raíz adopta anatomía y markers sin convertirse en roadmap."""
-        for section in self.contract["sections"][1:]:
-            with self.subTest(section=section["id"]):
-                self.assertEqual(
-                    self.factory_readme.count(f"## {section['title']}"),
-                    1,
-                )
-        status = self.contract["derived_blocks"]["status"]
-        self.assertEqual(self.factory_readme.count(status["start_marker"]), 1)
-        self.assertEqual(self.factory_readme.count(status["end_marker"]), 1)
-        self.assertEqual(self.factory_readme.count("## Operational Cockpit"), 1)
-        self.assertEqual(self.factory_readme.count("## Work Queue"), 1)
-        self.assertNotIn("## Changelog", self.factory_readme)
-        self.assertNotIn("## Roadmap completo", self.factory_readme)
-
-    def test_factory_readme_status_is_derived_fail_closed(self):
-        """Sin evidencia el cockpit queda UNKNOWN y nunca GREEN manual."""
-        validate_readme(
-            self.factory_readme,
-            self.contract,
-            self.factory_project,
-            {},
+    def test_factory_readme_adopts_contract_v2(self):
+        """AC-02: portada real usa once secciones, enlaces vivos y no conserva tablas v1."""
+        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        self.assertEqual(contract["version"], 2)
+        self.assertEqual(
+            [section["id"] for section in contract["sections"]],
+            [section["id"] for section in self.contract["sections"]],
         )
-        start = self.contract["derived_blocks"]["status"]["start_marker"]
-        end = self.contract["derived_blocks"]["status"]["end_marker"]
-        status_block = self.factory_readme.split(start, 1)[1].split(end, 1)[0]
-        self.assertIn("| CI | UNKNOWN |", status_block)
-        self.assertIn("| health | UNKNOWN |", status_block)
-        self.assertNotIn("GREEN", status_block)
-        with self.assertRaises(ReadmeEngineError):
-            generate_readme(
-                self.factory_readme,
-                self.contract,
-                self.factory_project,
-                {"health": {"state": "GREEN"}},
+        for section in contract["sections"][1:]:
+            self.assertEqual(
+                self.factory_readme.count(f"## {section['title']}"), 1
             )
+        for marker in (
+            "<!-- factory:status:",
+            "<!-- factory:progress-readiness:",
+            "### Progress + Readiness",
+            "UNKNOWN",
+        ):
+            self.assertNotIn(marker, self.factory_readme)
+        for live_source in (
+            "https://github.com/pl0n3r/Factory/actions/workflows/ci.yml",
+            "https://github.com/pl0n3r/Factory/releases",
+            "https://control.condorapp.com.co/",
+        ):
+            self.assertIn(live_source, self.factory_readme)
+        self.assertNotIn("## Changelog", self.factory_readme)
+        validate_readme(self.factory_readme, contract, self.factory_project, {})
+
+    def test_factory_readme_live_sources_replace_derived_status(self):
+        """AC-03: README real v2 falla cerrado sin permitir estados artificiales."""
+        contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        validate_readme(self.factory_readme, contract, self.factory_project, {})
+        bad_status = self.factory_readme.replace(
+            "## Work Queue",
+            "| main SHA | UNKNOWN |\n\n## Work Queue",
+            1,
+        )
+        bad_destination = self.factory_readme.replace(
+            "## Operational Cockpit\n\n",
+            "## Operational Cockpit\n\n[falso](https://example.invalid/health)\n\n",
+            1,
+        )
+        for candidate in (bad_status, bad_destination):
+            self.assertNotEqual(candidate, self.factory_readme)
+            with self.assertRaises(ValueError):
+                validate_readme(candidate, contract, self.factory_project, {})
 
     def test_factory_readme_view_has_canonical_sources(self):
         """La vista derivada usa fuentes externas al README y metadata separada."""
