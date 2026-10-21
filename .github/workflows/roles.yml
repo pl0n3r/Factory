@@ -57,6 +57,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
+      checks: read
     steps:
       - name: Validar contexto read-only
         env:
@@ -197,6 +198,108 @@ jobs:
               Path("/tmp/roles-verified-offline.json").write_text(
                   json.dumps(scope, sort_keys=True), encoding="utf-8",
               )
+          PY
+
+      - name: Acreditar N/A SRE documental desde V3 y checks exact-HEAD
+        if: github.repository == 'pl0n3r/ControlBot' && inputs.number == 838
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ inputs.number }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" == "pl0n3r/ControlBot" && "$NUMBER" == "838" ]] || exit 0
+          gh api "repos/$REPOSITORY/pulls/$NUMBER" > /tmp/legal-pr.json
+          gh api "repos/$REPOSITORY/issues/837" > /tmp/legal-issue.json
+          gh api --paginate "repos/$REPOSITORY/issues/837/comments?per_page=100" --jq '.[]' | jq -s '.' > /tmp/legal-leases.json
+          gh api --paginate "repos/$REPOSITORY/commits/$EVENT_HEAD_SHA/check-runs?per_page=100" --jq '.check_runs[]' | jq -s '.' > /tmp/legal-checks.json
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+          
+          def load(path):
+              return json.loads(Path(path).read_text(encoding="utf-8"))
+          paths = [
+              "docs/privacidad/canal-derechos.md",
+              "docs/privacidad/politica-tratamiento.md",
+              "revision-juridica/00-LEEME.md",
+              "revision-juridica/canal-derechos.md",
+              "revision-juridica/paquete-completo.md",
+              "revision-juridica/politica-tratamiento.md",
+          ]
+          pr, issue, files = load("/tmp/legal-pr.json"), load("/tmp/legal-issue.json"), load("/tmp/files.json")
+          leases, runs = load("/tmp/legal-leases.json"), load("/tmp/legal-checks.json")
+          head = os.environ.get("EVENT_HEAD_SHA")
+          if not head or not re.fullmatch(r"[0-9a-f]{40}", head):
+              raise SystemExit("Invalid event SHA")
+          if (
+              pr.get("state") != "open"
+              or pr.get("draft") is not False
+              or pr.get("number") != 838
+              or pr.get("head", {}).get("sha") != head
+              or pr.get("head", {}).get("ref") != "trabajo/issue-837"
+              or pr.get("head", {}).get("repo", {}).get("full_name") != "pl0n3r/ControlBot"
+              or pr.get("base", {}).get("repo", {}).get("full_name") != "pl0n3r/ControlBot"
+              or issue.get("state") != "open"
+              or issue.get("number") != 837
+              or sorted(files) != paths
+              or len(files) != len(paths)
+          ):
+              raise SystemExit("Scope of legal-document PR unverified")
+          marker = re.search(r'<!-- factory-plan-task (\{[^\n]*\}) -->', issue.get("body") or "")
+          task = json.loads(marker.group(1)) if marker else {}
+          labels = {v.get("name") for v in issue.get("labels") or []}
+          if (
+              task.get("task_key") != "CB_PRIVACY_DOC_SYNC_V1"
+              or sorted(task.get("paths", [])) != paths
+              or task.get("depends_on") != []
+              or "tipo: incidente" not in labels
+              or "rol: sre" not in labels
+          ):
+              raise SystemExit("Unpinned task/role")
+          authentic = [
+              v for v in leases
+              if v.get("user", {}).get("login") == "github-actions[bot]"
+              and v.get("user", {}).get("type") == "Bot"
+              and re.search(r'<!-- condor-reserva (\{[^\n]*\}) -->', v.get("body") or "")
+          ]
+          if not authentic:
+              raise SystemExit("No authenticated V3 receipt")
+          raw = re.search(r'<!-- condor-reserva (\{[^\n]*\}) -->', authentic[-1]["body"])
+          lease = json.loads(raw.group(1))
+          if (
+              lease.get("version") != 3 or lease.get("active") is not True
+              or lease.get("owner") != "pl0n3r"
+              or lease.get("branch") != "trabajo/issue-837"
+              or sorted(lease.get("task_paths", [])) != paths
+              or lease.get("task_marker_sha256") != "7c93d50525ea913cd8cfb45218965d122d8a10858d1219d6997d5b5eb71e55f2"
+              or lease.get("acceptance_sha256") != "80eb2e833760534e348d7e1e9a0bf25578e2ad6f0480339a461ef28d970921a0"
+              or not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", lease.get("reservation_id") or "")
+          ):
+              raise SystemExit("Invalid/expired V3 for legal-doc task")
+          names = ("Validar", "privacidad / Privacidad como código")
+          for name in names:
+              found = [
+                  c for c in runs
+                  if c.get("name") == name
+                  and c.get("head_sha") == head
+                  and c.get("app", {}).get("id") == 15368
+                  and isinstance(c.get("id"), int)
+              ]
+              if not found or max(found, key=lambda c: c["id"]).get("conclusion") != "success":
+                  raise SystemExit("Missing exact-head trusted green check: " + name)
+          scope = {
+              "source": "github-api-v3-and-exact-head-ci-docs-v1",
+              "repo": "pl0n3r/ControlBot", "issue": 837, "pr": 838,
+              "head_sha": head, "branch": "trabajo/issue-837",
+              "reservation_id": lease["reservation_id"], "paths": paths,
+              "checks": list(names),
+          }
+          Path("/tmp/roles-verified-offline.json").write_text(
+              json.dumps(scope, sort_keys=True), encoding="utf-8")
           PY
 
       - name: Validar PR

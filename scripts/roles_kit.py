@@ -537,6 +537,59 @@ OFFLINE_HEALTH_FILES = (
 OFFLINE_SCOPE_SOURCE = "github-api-v3-and-exact-head-review-v1"
 
 
+# Solo N/A para seis derivados declarativos autenticados, nunca para deploy.
+OFFLINE_LEGAL_DOC_FILES = (
+    "docs/privacidad/canal-derechos.md",
+    "docs/privacidad/politica-tratamiento.md",
+    "revision-juridica/00-LEEME.md",
+    "revision-juridica/canal-derechos.md",
+    "revision-juridica/paquete-completo.md",
+    "revision-juridica/politica-tratamiento.md",
+)
+OFFLINE_LEGAL_DOC_SOURCE = "github-api-v3-and-exact-head-ci-docs-v1"
+OFFLINE_LEGAL_DOC_CHECKS = ("Validar", "privacidad / Privacidad como código")
+
+
+def _verified_offline_legal_sre_items(
+    context: dict[str, Any],
+    scope: Any,
+    required_items: list[str],
+) -> set[str]:
+    """Reconoce N/A SRE solo desde un snapshot GitHub del workflow; no del PR."""
+    keys = {
+        "source", "repo", "issue", "pr", "head_sha", "branch",
+        "reservation_id", "paths", "checks",
+    }
+    if not isinstance(scope, dict) or set(scope) != keys:
+        return set()
+    if (
+        scope.get("source") != OFFLINE_LEGAL_DOC_SOURCE
+        or scope.get("repo") != "pl0n3r/ControlBot"
+        or type(scope.get("issue")) is not int or scope["issue"] != 837
+        or type(scope.get("pr")) is not int or scope["pr"] != 838
+        or scope.get("branch") != "trabajo/issue-837"
+        or not isinstance(scope.get("head_sha"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", scope["head_sha"]) is None
+        or not isinstance(scope.get("reservation_id"), str)
+        or re.fullmatch(
+            r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
+            scope["reservation_id"],
+        ) is None
+        or scope.get("paths") != list(OFFLINE_LEGAL_DOC_FILES)
+        or sorted(context["files"]) != list(OFFLINE_LEGAL_DOC_FILES)
+        or scope.get("checks") != list(OFFLINE_LEGAL_DOC_CHECKS)
+    ):
+        return set()
+    body = context["body"]
+    if (
+        "Closes #837" not in body
+        or not all(f"- [ ] {item}" in body for item in required_items)
+    ):
+        return set()
+    return set(required_items)
+
+
+
 def _verified_offline_sre_items(
     context: dict[str, Any],
     scope: Any,
@@ -617,6 +670,8 @@ def validate_pr(
         missing_checks = set(items) - checked
         if role == "sre" and missing_checks:
             verified = _verified_offline_sre_items(context, verified_scope, items)
+            if not verified:
+                verified = _verified_offline_legal_sre_items(context, verified_scope, items)
             allowed = missing_checks & verified
             if allowed:
                 exempted["sre"] = sorted(allowed)
