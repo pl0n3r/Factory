@@ -69,24 +69,32 @@ def _invalid_release_context(snapshot: Mapping) -> str | None:
     return None
 
 
+def _invalid_check_record(item: object, main_sha: str, seen: set[str]) -> str | None:
+    """Valida un check sin aceptar campos adicionales ni identidades duplicadas."""
+    if not isinstance(item, dict) or set(item) != {
+        "name", "head_sha", "status", "conclusion", "authenticated"
+    }:
+        return "check_record_invalid"
+    name = item["name"]
+    if not isinstance(name, str) or not name or len(name) > 128 or name in seen:
+        return "check_name_invalid_or_duplicate"
+    if item["authenticated"] is not True or item["head_sha"] != main_sha:
+        return "check_untrusted_or_wrong_sha"
+    if item["status"] != "completed" or item["conclusion"] != "success":
+        return "check_not_terminal_green"
+    return None
+
+
 def _invalid_checks(checks: object, main_sha: str) -> str | None:
     """Comprueba completitud y origen del conjunto de checks para un SHA."""
     if not isinstance(checks, list) or not checks or len(checks) > 100:
         return "checks_missing_or_unbounded"
     seen: set[str] = set()
     for item in checks:
-        if not isinstance(item, dict) or set(item) != {
-            "name", "head_sha", "status", "conclusion", "authenticated"
-        }:
-            return "check_record_invalid"
-        name = item["name"]
-        if not isinstance(name, str) or not name or len(name) > 128 or name in seen:
-            return "check_name_invalid_or_duplicate"
-        seen.add(name)
-        if item["authenticated"] is not True or item["head_sha"] != main_sha:
-            return "check_untrusted_or_wrong_sha"
-        if item["status"] != "completed" or item["conclusion"] != "success":
-            return "check_not_terminal_green"
+        invalid = _invalid_check_record(item, main_sha, seen)
+        if invalid is not None:
+            return invalid
+        seen.add(item["name"])
     if not REQUIRED_CHECKS.issubset(seen):
         return "required_check_missing"
     return None
