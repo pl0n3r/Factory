@@ -266,7 +266,7 @@ class RolesKitTests(unittest.TestCase):
                 rk.verify_offline_legal_artifact_bytes(root, canonical)
             index_link.unlink()
             index_backup.rename(index_link)
-            copy_link = root / rk.OFFLINE_LEGAL_DOC_FILES[2]
+            copy_link = root / rk.OFFLINE_LEGAL_DOC_FILES[3]
             copy_backup = root / "copia-original.md"
             copy_link.rename(copy_backup)
             copy_link.symlink_to(copy_backup)
