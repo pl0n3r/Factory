@@ -438,6 +438,7 @@ print(json.dumps(pages[index]))
 
     def test_check_snapshot_ignores_only_nonsemantic_rest_metadata(self):
         """AC-01: metadata REST mutable no reemplaza evidencia original."""
+        print("AC01-ENTERED", flush=True)
         before = self._mock_check_page(1, (11,))
         after = copy.deepcopy(before)
         original = before["check_runs"][0]
