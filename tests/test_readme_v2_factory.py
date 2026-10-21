@@ -46,7 +46,7 @@ class ReadmeV2FactoryTests(unittest.TestCase):
         contract = json.loads((ROOT / "readme/contract.json").read_text(encoding="utf-8"))
         metadata = json.loads((ROOT / "readme/projects/factory.json").read_text(encoding="utf-8"))
         for corrupt in (
-            readme.replace("## Work Queue", "| CI | UNKNOWN |\n\n## Work Queue", 1),
+            readme.replace("## Work Queue", "| main SHA | UNKNOWN |\n\n## Work Queue", 1),
             readme.replace(
                 "## Operational Cockpit\n\n",
                 "## Operational Cockpit\n\n[fake](https://example.invalid/health)\n\n",
