@@ -113,6 +113,8 @@ class ReleaseAutoEligibilityTests(unittest.TestCase):
             {"candidate_version": "1.0.39-rc.1"},
             {"published_version": "1.0.38-beta"},
             {"published_version": None},
+            {"candidate_version": "1.0.٣٩"},
+            {"published_version": "１.０.３８"},
         ):
             with self.subTest(changes=changes):
                 case = _snapshot()
