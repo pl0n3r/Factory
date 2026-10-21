@@ -555,6 +555,36 @@ OFFLINE_LEGAL_DOC_CHECKS = ("Validar", "privacidad / Privacidad como código")
 OFFLINE_LEGAL_DOC_STAMP = "2026-10-19"
 OFFLINE_LEGAL_DOC_ORIGIN_SHA = "cc747f4fa603390a3accc624c58308fa6c9757a4"
 
+# Contrato real de ControlBot.expected_files(root, stamp, source_sha).
+# Devuelve 8 derivados; los 2 fuentes reclamadas no están entre sus keys.
+OFFLINE_LEGAL_GENERATED_FILES = frozenset({
+    "revision-juridica/00-LEEME.md",
+    "revision-juridica/aviso-privacidad.md",
+    "revision-juridica/canal-derechos.md",
+    "revision-juridica/politica-tratamiento.md",
+    "revision-juridica/registro-tratamientos.md",
+    "revision-juridica/retencion.md",
+    "revision-juridica/terminos-condiciones.md",
+    "revision-juridica/paquete-completo.md",
+})
+
+
+def map_offline_legal_generated_copies(generated: dict[str, bytes]) -> dict[str, bytes]:
+    """Añade solo dos alias fuente desde las copias de un render canónico.
+
+    Nunca infiere bytes esperados del índice autoescrito; los deriva
+    exclusivamente de ControlBot.expected_files del generador fijado.
+    """
+    if not isinstance(generated, dict) or set(generated) != OFFLINE_LEGAL_GENERATED_FILES:
+        raise RoleError("Contrato de ocho derivados jurídicos ausente o inesperado.")
+    if not all(type(value) is bytes for value in generated.values()):
+        raise RoleError("El render jurídico debe contener solo bytes.")
+    mapped = dict(generated)
+    for name in ("canal-derechos.md", "politica-tratamiento.md"):
+        mapped["docs/privacidad/" + name] = generated["revision-juridica/" + name]
+    return mapped
+
+
 
 def verify_offline_legal_artifact_bytes(
     root: Path, canonical_output: dict[str, bytes],
