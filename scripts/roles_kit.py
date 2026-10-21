@@ -550,6 +550,50 @@ OFFLINE_LEGAL_DOC_SOURCE = "github-api-v3-and-exact-head-ci-docs-v1"
 OFFLINE_LEGAL_DOC_CHECKS = ("Validar", "privacidad / Privacidad como código")
 
 
+# La excepción de PR #838 es puntual: no confiar en metadatos del propio documento.
+# Ambos valores vienen de la generación auténtica conocida, no del body del PR.
+OFFLINE_LEGAL_DOC_STAMP = "2026-10-19"
+OFFLINE_LEGAL_DOC_ORIGIN_SHA = "cc747f4fa603390a3accc624c58308fa6c9757a4"
+
+
+def verify_offline_legal_artifact_bytes(
+    root: Path, canonical_output: dict[str, bytes],
+) -> None:
+    """Rechaza la N/A si algún artefacto no es idéntico al render canónico.
+
+    canonical_output se obtiene de generar_revision_juridica.expected_files()
+    sobre un checkout exact-HEAD cuyo generador no está entre los seis cambios.
+    Ni el stamp ni el source SHA se aceptan desde el índice del propio PR.
+    """
+    if not isinstance(canonical_output, dict):
+        raise RoleError("Falta render canónico de documentos jurídicos.")
+    index_path = root / "revision-juridica/00-LEEME.md"
+    if not index_path.is_file() or index_path.is_symlink():
+        raise RoleError("Falta índice jurídico canónico.")
+    expected_header = (
+        f"Última actualización automática (UTC): {OFFLINE_LEGAL_DOC_STAMP} "
+        f"| SHA de origen: {OFFLINE_LEGAL_DOC_ORIGIN_SHA}"
+    ).encode("utf-8")
+    try:
+        header = index_path.read_bytes().split(b"\n", 1)[0]
+    except OSError as exc:
+        raise RoleError("No se puede leer la procedencia jurídica.") from exc
+    if header != expected_header:
+        raise RoleError("Fecha/SHA de origen no acreditados independientemente.")
+    for name in OFFLINE_LEGAL_DOC_FILES:
+        expected = canonical_output.get(name)
+        target = root / name
+        if not isinstance(expected, bytes) or not target.is_file() or target.is_symlink():
+            raise RoleError("Artefacto jurídico inexistente o no canónico: " + name)
+        try:
+            actual = target.read_bytes()
+        except OSError as exc:
+            raise RoleError("No se puede leer el artefacto jurídico: " + name) from exc
+        if actual != expected:
+            raise RoleError("Artefacto jurídico no coincide byte a byte: " + name)
+
+
+
 def _verified_offline_legal_sre_items(
     context: dict[str, Any],
     scope: Any,

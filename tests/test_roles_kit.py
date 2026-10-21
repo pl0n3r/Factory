@@ -204,6 +204,106 @@ class RolesKitTests(unittest.TestCase):
                 with self.assertRaises(RoleError):
                     validate_pr(changed, self.catalog, ROLES_DIR, "es", verified_scope=forged)
 
+    def test_legal_document_scope_requires_pinned_byte_exact_artifacts(self):
+        """No basta auto-consistencia: los metadatos deben ser independientes."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            canonical = {}
+            for filename in rk.OFFLINE_LEGAL_DOC_FILES:
+                dest = root / filename
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                data = ("ejemplo canónico para " + filename + "\n").encode("utf-8")
+                if filename == "revision-juridica/00-LEEME.md":
+                    data = (
+                        f"Última actualización automática (UTC): {rk.OFFLINE_LEGAL_DOC_STAMP} "
+                        f"| SHA de origen: {rk.OFFLINE_LEGAL_DOC_ORIGIN_SHA}\n"
+                        "# Paquete de revisión jurídica\n"
+                    ).encode("utf-8")
+                canonical[filename] = data
+                dest.write_bytes(data)
+            rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index = root / "revision-juridica/00-LEEME.md"
+            original = index.read_bytes()
+            index.write_bytes(original.replace(
+                rk.OFFLINE_LEGAL_DOC_ORIGIN_SHA.encode("ascii"), b"a" * 40
+            ))
+            with self.assertRaisesRegex(RoleError, "origen no acreditados"):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index.write_bytes(original.replace(b"2026-10-19", b"2026-10-20"))
+            with self.assertRaises(RoleError):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index.write_bytes(original)
+            for filename in rk.OFFLINE_LEGAL_DOC_FILES:
+                target = root / filename
+                target.write_bytes(canonical[filename] + b"\nAlteracion")
+                with self.subTest(filename=filename), self.assertRaisesRegex(
+                    RoleError, "byte a byte"
+                ):
+                    rk.verify_offline_legal_artifact_bytes(root, canonical)
+                target.write_bytes(canonical[filename])
+            with self.assertRaisesRegex(RoleError, "no canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, {})
+            # Fallos de I/O en índice y copias: fail-closed sin conceder N/A.
+            with patch.object(Path, "read_bytes", side_effect=OSError("denegado")):
+                with self.assertRaisesRegex(RoleError, "procedencia jurídica"):
+                    rk.verify_offline_legal_artifact_bytes(root, canonical)
+            original_read = Path.read_bytes
+
+            def fail_copy_read(path):
+                if path == root / rk.OFFLINE_LEGAL_DOC_FILES[1]:
+                    raise OSError("documento inaccesible")
+                return original_read(path)
+
+            with patch.object(Path, "read_bytes", fail_copy_read):
+                with self.assertRaisesRegex(RoleError, "No se puede leer"):
+                    rk.verify_offline_legal_artifact_bytes(root, canonical)
+            # Un enlace a un archivo válido sigue siendo una entrada no canónica.
+            index_link = root / "revision-juridica/00-LEEME.md"
+            index_backup = root / "index-original.md"
+            index_link.rename(index_backup)
+            index_link.symlink_to(index_backup)
+            with self.assertRaisesRegex(RoleError, "índice jurídico canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index_link.unlink()
+            index_backup.rename(index_link)
+            copy_link = root / rk.OFFLINE_LEGAL_DOC_FILES[3]
+            copy_backup = root / "copia-original.md"
+            copy_link.rename(copy_backup)
+            copy_link.symlink_to(copy_backup)
+            with self.assertRaisesRegex(RoleError, "no canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            copy_link.unlink()
+            copy_backup.rename(copy_link)
+            # Un objeto no dict o el documento ausente también deben rechazarse.
+            with self.assertRaisesRegex(RoleError, "Falta render canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, None)
+            missing = root / rk.OFFLINE_LEGAL_DOC_FILES[-1]
+            missing.unlink()
+            with self.assertRaises(RoleError):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+
+    def test_legal_document_workflow_rebuilds_from_pinned_trusted_sources(self):
+        workflow = (ROOT / ".github/workflows/roles.yml").read_text(
+            encoding="utf-8"
+        )
+        checkout = workflow.split(
+            "      - name: Descargar PR jurídico HEAD exacto (solo lectura)", 1
+        )[1].split(
+            "      - name: Acreditar N/A SRE documental desde V3 y checks exact-HEAD", 1
+        )[0]
+        self.assertIn("repository: pl0n3r/ControlBot", checkout)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", checkout)
+        self.assertIn("persist-credentials: false", checkout)
+        step = workflow.split(
+            "      - name: Acreditar N/A SRE documental desde V3 y checks exact-HEAD", 1
+        )[1].split("      - name: Validar PR", 1)[0]
+        self.assertIn("checkout_head != head", step)
+        self.assertIn('sorted(files) != paths', step)
+        self.assertIn("generator.expected_files(", step)
+        self.assertIn("OFFLINE_LEGAL_DOC_STAMP, OFFLINE_LEGAL_DOC_ORIGIN_SHA", step)
+        self.assertIn("verify_offline_legal_artifact_bytes(root, canonical)", step)
+        self.assertIn('c.get("app", {}).get("id") == 15368', step)
+
     def test_non_doc_incident_requires_all_sre_evidence(self):
         ctx, scope, _ = self._offline_legal_docs_fixture()
         other = {**ctx, "files": ["docs/privacidad/extra.md"]}
