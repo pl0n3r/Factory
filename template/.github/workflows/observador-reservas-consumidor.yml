@@ -15,7 +15,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: factory-coordination-${{ github.repository_id }}
+  group: lease-consumer-caller-${{ github.repository_id }}
   cancel-in-progress: false
 
 jobs:
