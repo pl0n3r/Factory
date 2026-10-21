@@ -452,9 +452,15 @@ print(json.dumps(pages[index]))
             "check_suite": {"id": 81, "status": "completed"},
             "updated_at": "2026-10-21T01:00:01Z",
         })
-        self.assertEqual(self._execute_checks_snapshot_shell(
-            [before, after], expected_pass=True, expected_count=1,
-            expected_raw=after["check_runs"]), 2)
+        try:
+            calls = self._execute_checks_snapshot_shell(
+                [before, after], expected_pass=True, expected_count=1,
+                expected_raw=after["check_runs"])
+            self.assertEqual(calls, 2)
+        except AssertionError as exc:
+            # Diagnóstico únicamente si la aceptación aislada falla.
+            print("AC01-SNAPSHOT-ERROR:", repr(exc), flush=True)
+            raise
 
     def test_check_snapshot_rejects_security_relevant_changes(self):
         """AC-02: id, nombre, SHA, emisor, estados y output no son ignorables."""
