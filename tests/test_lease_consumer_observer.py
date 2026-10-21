@@ -95,6 +95,10 @@ class LeaseConsumerObserverTests(unittest.TestCase):
                     "observador-reservas-consumidor.yml").read_text()
         self.assertIn("workflow_call:", reusable)
         self.assertIn("schedule:", caller)
+        # No usar la misma clave en caller y reusable; bloquearía el subworkflow.
+        self.assertIn("group: lease-consumer-caller-${{ github.repository_id }}", caller)
+        self.assertNotIn("group: factory-coordination-${{ github.repository_id }}", caller)
+        self.assertIn("group: factory-coordination-${{ github.repository_id }}", reusable)
         self.assertIn("uses: pl0n3r/Factory/.github/workflows/"
                       "observador-reservas-consumidor.yml@v1", caller)
         for document in (caller, reusable):
