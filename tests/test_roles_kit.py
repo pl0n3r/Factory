@@ -243,6 +243,40 @@ class RolesKitTests(unittest.TestCase):
                 target.write_bytes(canonical[filename])
             with self.assertRaisesRegex(RoleError, "no canónico"):
                 rk.verify_offline_legal_artifact_bytes(root, {})
+            # Fallos de I/O en índice y copias: fail-closed sin conceder N/A.
+            with patch.object(Path, "read_bytes", side_effect=OSError("denegado")):
+                with self.assertRaisesRegex(RoleError, "procedencia jurídica"):
+                    rk.verify_offline_legal_artifact_bytes(root, canonical)
+            original_read = Path.read_bytes
+
+            def fail_copy_read(path):
+                if path == root / rk.OFFLINE_LEGAL_DOC_FILES[1]:
+                    raise OSError("documento inaccesible")
+                return original_read(path)
+
+            with patch.object(Path, "read_bytes", fail_copy_read):
+                with self.assertRaisesRegex(RoleError, "No se puede leer"):
+                    rk.verify_offline_legal_artifact_bytes(root, canonical)
+            # Un enlace a un archivo válido sigue siendo una entrada no canónica.
+            index_link = root / "revision-juridica/00-LEEME.md"
+            index_backup = root / "index-original.md"
+            index_link.rename(index_backup)
+            index_link.symlink_to(index_backup)
+            with self.assertRaisesRegex(RoleError, "índice jurídico canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            index_link.unlink()
+            index_backup.rename(index_link)
+            copy_link = root / rk.OFFLINE_LEGAL_DOC_FILES[2]
+            copy_backup = root / "copia-original.md"
+            copy_link.rename(copy_backup)
+            copy_link.symlink_to(copy_backup)
+            with self.assertRaisesRegex(RoleError, "no canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, canonical)
+            copy_link.unlink()
+            copy_backup.rename(copy_link)
+            # Un objeto no dict o el documento ausente también deben rechazarse.
+            with self.assertRaisesRegex(RoleError, "Falta render canónico"):
+                rk.verify_offline_legal_artifact_bytes(root, None)
             missing = root / rk.OFFLINE_LEGAL_DOC_FILES[-1]
             missing.unlink()
             with self.assertRaises(RoleError):
