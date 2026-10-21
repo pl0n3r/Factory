@@ -369,7 +369,7 @@ class PoliticaWorkflowContractTests(unittest.TestCase):
         ]}
 
     def _execute_checks_snapshot_shell(self, responses, *, expected_pass,
-                                       expected_count=0):
+                                       expected_count=0, expected_raw=None):
         """Ejecuta el Bash de producción con gh REST simulado y contador."""
         if shutil.which("jq") is None:
             self.skipTest("jq no disponible")
@@ -419,6 +419,8 @@ print(json.dumps(pages[index]))
                 rows = [json.loads(x) for x in checks.read_text().splitlines()]
                 self.assertEqual(len(rows), expected_count)
                 self.assertEqual(len({row["id"] for row in rows}), expected_count)
+                if expected_raw is not None:
+                    self.assertEqual(rows, expected_raw, "Policy requiere checks REST originales")
             else:
                 self.assertFalse(marker.exists(), "No ejecutar evaluador sin prueba")
             return int((root / "calls").read_text())
@@ -433,6 +435,45 @@ print(json.dumps(pages[index]))
         ]
         self.assertEqual(self._execute_checks_snapshot_shell(
             cases, expected_pass=True, expected_count=120), 6)
+
+    def test_check_snapshot_ignores_only_nonsemantic_rest_metadata(self):
+        """AC-01: metadata REST mutable no reemplaza evidencia original."""
+        before = self._mock_check_page(1, (11,))
+        after = copy.deepcopy(before)
+        original = before["check_runs"][0]
+        updated = after["check_runs"][0]
+        original.update({
+            "html_url": "https://github.com/example/checks/old",
+            "check_suite": {"id": 81, "status": "in_progress"},
+            "updated_at": "2026-10-21T01:00:00Z",
+        })
+        updated.update({
+            "html_url": "https://github.com/example/checks/new",
+            "check_suite": {"id": 81, "status": "completed"},
+            "updated_at": "2026-10-21T01:00:01Z",
+        })
+        self.assertEqual(self._execute_checks_snapshot_shell(
+            [before, after], expected_pass=True, expected_count=1,
+            expected_raw=after["check_runs"]), 2)
+
+    def test_check_snapshot_rejects_security_relevant_changes(self):
+        """AC-02: id, nombre, SHA, emisor, estados y output no son ignorables."""
+        base = self._mock_check_page(1, (11,))
+        variations = {
+            "name": {"name": "otro-check"},
+            "head_sha": {"head_sha": "b" * 40},
+            "app": {"app": {"slug": "other-app", "id": 777}},
+            "status": {"status": "in_progress"},
+            "conclusion": {"conclusion": "failure"},
+            "output": {"output": {"annotations_count": 1, "title": "new"}},
+            "id": {"id": 12},
+        }
+        for field, change in variations.items():
+            with self.subTest(field=field):
+                altered = copy.deepcopy(base)
+                altered["check_runs"][0].update(change)
+                self._execute_checks_snapshot_shell(
+                    [base, altered, base], expected_pass=False)
 
     def test_authenticated_checks_persistent_drift_and_partial_snapshot_fail_closed(self):
         """AC-02: drift persistente, IDs variables, truncado, duplicado y >500."""
