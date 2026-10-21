@@ -323,8 +323,13 @@ jobs:
                 exit 1
               }
   
-              # Estabilizar también IDs, estados y metadatos, no solo total_count.
-              jq -s -c 'sort_by(.id)' "$checks_file" > "$current_snapshot"
+              # Solo identidad y resultado evaluables estabilizan el snapshot.
+              # Metadata REST de check_suite, URLs o timestamps no son gates.
+              # El motor Policy recibe checks_file ORIGINAL sin ninguna poda.
+              # Preservar output completo, incluida la evidencia de anotaciones.
+              jq -s -c 'sort_by(.id) | map({
+                id, name, head_sha, app, status, conclusion, output
+              })' "$checks_file" > "$current_snapshot"
               if [[ "$previous_complete" == true ]] && \
                  cmp -s "$previous_snapshot" "$current_snapshot"; then
                 stable_snapshot=true
