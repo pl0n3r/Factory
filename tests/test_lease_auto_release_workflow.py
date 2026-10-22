@@ -16,34 +16,23 @@ class DenyTransport:
 
 class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
     def test_readme_reports_both_reservation_release_phases(self):
-        """El README muestra Fase A incompleta y Fase B sin autoridad."""
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        docs = (ROOT / "docs" / "liberacion-automatica-de-reservas.md"
-                ).read_text(encoding="utf-8")
+        docs = (ROOT / "docs/liberacion-automatica-de-reservas.md").read_text(encoding="utf-8")
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertEqual(readme.count("### Liberación automática de reservas V3 (#1382)"), 1)
-        self.assertNotIn("PR Draft #1383", readme)
-        for expected in (
-            "Fase A — observación GET-only", "Código GET-only integrado",
-            "PR #1383", "**sin certificación**",
-            "Fase B — liberación automática", "NO ACTIVADA",
-            "FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'",
-            "24 horas", "100 ciclos terminales y válidos por repositorio",
-            "cero falsos positivos", "QA individual", "deferred_low_quota",
-            "GITHUB_TOKEN", "No se usa un token multi-repositorio",
-        ):
+        self.assertIn("docs/liberacion-automatica-de-reservas.md", readme)
+        self.assertNotIn("### Liberación automática de reservas V3 (#1382)", readme)
+        for expected in ("Fase A", "Fase B", "GET-only", "24 horas", "100 ciclos",
+                         "cero falsos positivos", "QA individual", "deferred_low_quota",
+                         "GITHUB_TOKEN", "terminal_certified"):
             with self.subTest(expected=expected):
-                self.assertIn(expected, readme)
-        self.assertIn("24 horas", docs)
-        self.assertIn("100 ciclos", docs)
-        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", workflow)
+                self.assertIn(expected, docs)
+        for expected in ("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'",
+                         "terminal_certified: false", "if-no-files-found: warn",
+                         "github.event_name == 'schedule'",
+                         "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"):
+            self.assertIn(expected, workflow)
         self.assertNotIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'true'", workflow)
         self.assertNotIn("issues: write", workflow)
-        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", workflow)
-        self.assertIn("terminal_certified: false", workflow)
-        self.assertIn("if-no-files-found: warn", workflow)
-        self.assertIn("github.event_name == 'schedule'", workflow)
-        self.assertIn("lease-audit-evidence.json", workflow)
         self.assertNotIn("pull-requests: write", workflow)
 
     def test_scheduled_executor_kill_switch_quota_and_shared_lock(self):

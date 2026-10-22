@@ -1,397 +1,101 @@
 # 🏭 Factory: la fábrica de software de pl0n3r
 
-**Factory es el "manual y la caja de herramientas" que comparten todos los proyectos.** En vez de que cada proyecto (Condor, GrindFlow, BRVTAL, FactoryRunner…) tenga sus propias reglas, su propio CI y sus propios scripts copiados y cada vez más distintos, todo eso vive **una sola vez aquí** y los proyectos lo usan.
+**Factory reúne el kit de gobernanza, los flujos reutilizables y las herramientas de coordinación de los proyectos.** Aquí se define *cómo* se construye y valida software; cada producto define *qué* construye.
 
-> **En una frase:** aquí se define *cómo* se construye el software; en cada proyecto solo se define *qué* se construye.
-
----
+> Repositorio de **gobernanza y herramientas compartidas**, no una aplicación pública con un endpoint `/health` propio. Las señales operativas se consultan en sus fuentes.
 
 ## Operational Cockpit
 
-<!-- factory:status:start -->
-| Señal | Estado |
-| --- | --- |
-| main SHA | UNKNOWN |
-| versión | UNKNOWN |
-| CI | UNKNOWN |
-| release | UNKNOWN |
-| health | UNKNOWN |
-| smoke/observer | UNKNOWN |
-| quality/security | UNKNOWN |
-| Issue activo | UNKNOWN |
-| PR activo | UNKNOWN |
-| último release | UNKNOWN |
-<!-- factory:status:end -->
+[![CI de Factory](https://github.com/pl0n3r/Factory/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pl0n3r/Factory/actions/workflows/ci.yml)
+[![Última release](https://img.shields.io/github/v/release/pl0n3r/Factory)](https://github.com/pl0n3r/Factory/releases)
 
-> Este bloque es derivado. UNKNOWN/PENDING significa que falta evidencia canónica. Nunca se escribe GREEN manualmente.
+[GitHub Actions](https://github.com/pl0n3r/Factory/actions) · [GitHub Releases](https://github.com/pl0n3r/Factory/releases) · [Orquestador de ControlBot](https://control.condorapp.com.co/)
+
+Estas insignias consultan fuentes vivas al visualizar la página; no representan aprobación de despliegue ni requieren commits de actualización del README. Para el estado exacto de un PR, consulta sus checks y su SHA. Factory no anuncia aquí un estado de salud productiva que no pueda medir.
 
 ## Work Queue
 
-- **NOW:** [cola automática y prioridades canónicas](PLAN-AGENTES.md#0-dónde-trabajar-modo-dirigido-o-modo-despachador).
-- **NEXT:** [Issues ready de Factory](https://github.com/pl0n3r/Factory/issues).
-- **LATER:** [épicos y planificación](https://github.com/pl0n3r/Factory/issues?q=is%3Aissue+is%3Aopen).
-- **BLOCKED:** bloqueos y puertas se consultan en sus Issues y en [decisiones.yml](decisiones.yml).
+- **NOW:** [Issues abiertos con estado y prioridad](https://github.com/pl0n3r/Factory/issues?q=is%3Aissue+is%3Aopen) y [PR en curso](https://github.com/pl0n3r/Factory/pulls).
+- **NEXT:** [Hojas disponibles para agentes](https://github.com/pl0n3r/Factory/issues?q=is%3Aissue+is%3Aopen+label%3A%22estado%3A+disponible%22), sujetas a reserva V3 y dependencias.
+- **LATER:** [Épicos y decisiones del roadmap](https://github.com/pl0n3r/Factory/issues) y [plan de agentes](PLAN-AGENTES.md).
+- **BLOCKED:** [Issues bloqueados](https://github.com/pl0n3r/Factory/issues?q=is%3Aissue+is%3Aopen+label%3A%22estado%3A+bloqueado%22) con causa y condición de desbloqueo en cada Issue.
 
-Esta vista enlaza las fuentes canónicas y no añade una copia operativa paralela del Roadmap ni del changelog.
+Esta vista resume; no duplica el Roadmap ni actúa como changelog.
 
 ## Qué hace el producto
 
-Factory publica contratos y herramientas compartidas para que cada repositorio no mantenga copias divergentes de la misma infraestructura: reusable workflows, scripts deterministas de gobernanza, catálogo de etiquetas, perfiles profesionales y template de proyectos.
+Factory mantiene [workflows reutilizables](.github/workflows/), [scripts de coordinación y controles](scripts/), [roles de agentes](agentes/roles/), [plantilla de consumidores](template/) y [contratos documentados](docs/). Evita que los proyectos copien implementaciones de CI, seguridad y reservas que después puedan divergir.
 
-Los consumidores usan el kit por canales versionados como `@v1`; las decisiones humanas reservadas siguen en [PLAN-AGENTES.md](PLAN-AGENTES.md) y [decisiones.yml](decisiones.yml).
+La coordinación usa [reservas V3 con claims](docs/orquestador.md), aceptación ejecutable y revisiones de calidad. El kit llega a sus consumidores mediante versiones publicadas del canal [`@v1`](https://github.com/pl0n3r/Factory/releases), nunca solo porque cambie `main`.
 
 ## Arquitectura en 60 segundos
 
 ```mermaid
 flowchart LR
-    O["Dueño / decisiones"] --> F["Factory · governance/kit"]
+    O["Decisiones del propietario"] --> F["Factory: kit y contratos"]
     F --> C["Condor"]
     F --> G["GrindFlow"]
     F --> B["BRVTAL"]
     F --> R["FactoryRunner"]
     F --> CB["ControlBot"]
     F --> AF["AutoFactory"]
-    F --> N["Proyecto nuevo / template"]
 ```
 
-Factory es la capa de **governance/kit**. No reemplaza el estado ni la lógica de negocio de los productos.
+Factory conserva [gobernanza y políticas](AGENTES.md); [ControlBot](https://github.com/pl0n3r/ControlBot) es el *control plane*; [FactoryRunner](https://github.com/pl0n3r/FactoryRunner), el *execution plane*; [AutoFactory](https://github.com/pl0n3r/AutoFactory), una herramienta local. Condor, GrindFlow y BRVTAL son productos. La cola compartida **no mezcla sus responsabilidades arquitectónicas**.
 
 ## Stack e infraestructura
 
-**Stack declarado:** Python 3 + GitHub Actions + reusable workflows.
+**Stack del kit:** Python 3 (biblioteca estándar), [GitHub Actions](.github/workflows/), configuración JSON/YAML, comprobaciones de seguridad y reusable workflows publicados por el canal protegido de [Releases](https://github.com/pl0n3r/Factory/releases).
 
-La ejecución de producto permanece en cada repositorio consumidor; Factory publica contratos, validadores y automatización compartida.
+Las aplicaciones, bases de datos, entornos de alojamiento y operaciones de producción pertenecen a cada consumidor. Factory ofrece contratos y verificadores, no presupone su infraestructura ni comparte credenciales entre proyectos. Ver [política operativa](PLAN-AGENTES.md) y [reglas técnicas](AGENTES.md).
 
 ## Ciclo de entrega
 
-Issue → criterios de aceptación → reserva → rama canónica → PR → CI/revisión → merge → release del kit cuando aplica → validación del consumidor.
+Issue con criterios verificables → `/tomar` y reserva V3 → rama `trabajo/issue-N` → PR → `Validar`, análisis de seguridad y revisión → squash permitido → [release protegida del kit](docs/release-bootstrap.md), **solo cuando exista autorización** → pruebas del consumidor.
 
-Un merge no equivale a release y un release no equivale a producción validada. La evidencia operativa permanece en checks, Releases, health/smoke e Issues canónicos.
+Un PR fusionado no equivale a release; una release publicada no certifica por sí misma el estado productivo de los consumidores. Las puertas de datos reales, gasto, cambios irreversibles, despliegue y go-live siguen en [PLAN-AGENTES.md](PLAN-AGENTES.md).
 
 ## Calidad y seguridad
 
-- criterios de aceptación ejecutables y fail-closed;
-- acciones de terceros fijadas a SHA cuando el contrato lo exige;
-- mínimo privilegio y trust boundaries explícitos;
-- límites de rondas de revisión y coordinación anti-duplicación;
-- privacidad, secretos y datos personales tratados por las políticas comunes;
-- rollback y puertas humanas conservan la autoridad definida en [PLAN-AGENTES.md](PLAN-AGENTES.md).
+- [Aceptación ejecutable](docs/aceptacion-ejecutable.md), coordinación por archivos y pruebas `unittest` dentro de [CI](.github/workflows/ci.yml).
+- [Control de decisiones y autorización](decisiones.yml) y [kill switch global](https://github.com/pl0n3r/Factory/issues/767).
+- Checks `Validar`, CodeQL y SonarCloud consultables desde cada commit o PR; ningún resultado desconocido se convierte en éxito por escribirlo en este README.
+- Actions con permisos mínimos, límites de eventos y revisiones; secretos, tokens y datos personales fuera de repositorios y logs.
+- [Liberación automática de reservas](docs/liberacion-automatica-de-reservas.md): observación GET-only y activación mutante son fases distintas con puertas independientes.
 
 ## Roadmap y fuentes de verdad
 
-- **Cómo trabajan los agentes y prioridad global:** [PLAN-AGENTES.md](PLAN-AGENTES.md)
-- **Contrato técnico de Factory:** [AGENTES.md](AGENTES.md)
-- **Decisiones vigentes del dueño:** [decisiones.yml](decisiones.yml)
-- **Trabajo y aceptación:** [GitHub Issues](https://github.com/pl0n3r/Factory/issues)
-- **Cambios revisados:** [Pull Requests](https://github.com/pl0n3r/Factory/pulls)
-- **Entregas del kit:** [GitHub Releases](https://github.com/pl0n3r/Factory/releases)
-- **README Contract v1:** [docs/readme-contract.md](docs/readme-contract.md)
+- **Prioridades, tandas, reservas y autoridad:** [PLAN-AGENTES.md](PLAN-AGENTES.md).
+- **Estructura técnica y límites del kit:** [AGENTES.md](AGENTES.md).
+- **Decisiones vigentes:** [decisiones.yml](decisiones.yml).
+- **Contrato de la portada:** [README Contract v2](docs/readme-contract.md) y [readme/contract.json](readme/contract.json).
+- **Trabajo y aceptación:** [GitHub Issues](https://github.com/pl0n3r/Factory/issues) y [Pull Requests](https://github.com/pl0n3r/Factory/pulls).
+- **Código entregado a consumidores:** [Releases oficiales](https://github.com/pl0n3r/Factory/releases).
+- **Implementación y reglas de fases:** [Documentación técnica](docs/).
 
 El README es una portada y una guía humana. No reemplaza ninguna de estas fuentes.
 
 ## Desarrollo local
 
-Validación principal del repositorio:
+La [plantilla de continuación de AutoFactory](template/docs/PROMPT-CONTINUACION.md) conserva las dos variantes canónicas del mensaje.
+
+Desde la raíz del repositorio, con Python 3:
 
 ```bash
 python3 -m py_compile scripts/*.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
+Son comandos de verificación local; la evidencia de integración exige además el [workflow CI](.github/workflows/ci.yml) sobre el commit exacto.
+
 ## Mapa de la fábrica
 
-- **Factory:** governance/kit compartido y fuente de contratos comunes.
-- **ControlBot:** control plane privado de dashboard, decisiones y orquestación.
-- **FactoryRunner:** execution plane autónomo.
-- **AutoFactory:** herramienta local/manual independiente.
-- **Condor:** producto.
-- **GrindFlow:** producto.
-- **BRVTAL:** producto.
-
-Los siete repositorios son elegibles para el despachador, pero esa elegibilidad **no mezcla sus responsabilidades arquitectónicas**.
-
----
-
-## ¿Por qué existe?
-
-Hoy los proyectos los construyen agentes de IA (GPT) de forma autónoma. Funcionó, pero aparecieron cuatro problemas:
-
-| Problema | Ejemplo real |
-| --- | --- |
-| 🔴 El código llega a producción, pero la base de datos no | Condor quedó caído (HTTP 500) porque las migraciones nunca se aplicaron |
-| 🔁 Los agentes deshacen decisiones del dueño | Una decisión aprobada fue revertida por otro agente citando una regla vieja |
-| 💸 Trabajo sin freno | Un PR de ~100 líneas acumuló ~70 commits de ida y vuelta con los revisores automáticos |
-| 🧬 Cada proyecto evoluciona distinto | Etiquetas, releases y CI diferentes en cada repositorio |
-
-Factory resuelve esto centralizando las reglas y automatizaciones, con límites claros.
-
----
-
-## ¿Cómo funciona?
-
-```mermaid
-flowchart LR
-    F["🏭 factory<br/>reglas + CI + scripts"] --> C["Condor"]
-    F --> G["GrindFlow"]
-    F --> B["BRVTAL"]
-    F --> R["FactoryRunner"]
-    F --> N["Proyecto nuevo<br/>(desde el template)"]
-```
-
-1. **Factory publica el kit:** CI, deploy con rollback, releases, etiquetas, coordinación de agentes y reglas.
-2. **Cada proyecto lo usa** con una línea (`uses: pl0n3r/factory/...@v1`) y solo configura lo suyo: dominio, tecnología e idioma.
-3. **Una mejora aquí llega a todos los proyectos** automáticamente, sin copiar nada.
-4. **Un proyecto nuevo** se crea desde el template y nace con todo funcionando.
-
-### El ciclo de cada cambio (cuando el kit esté listo)
-
-```mermaid
-flowchart LR
-    I["Issue con criterios<br/>de aceptación"] --> A["Agente con su<br/>rol profesional"]
-    A --> P["PR"] --> Q["CI + revisión<br/>(máx. 3 rondas)"]
-    Q --> M["Merge automático"] --> D["Deploy: backup →<br/>migración → release"]
-    D --> S{"¿Producción<br/>sana?"}
-    S -- Sí --> V["🟢 Validado"]
-    S -- No --> R["↩️ Rollback<br/>automático"]
-```
-
----
-
-## ¿Qué va a contener?
-
-| Pieza | Para qué sirve |
-| --- | --- |
-| **CI común** | Las mismas pruebas y controles de calidad en todos los proyectos |
-| **Deploy con rollback** | Backup → migración → publicación; si algo falla, vuelve solo a la versión anterior |
-| **Releases** | Cada versión crea su tag y su GitHub Release automáticamente |
-| **Etiquetas** | Todo Issue y PR con tipo, prioridad y estado, validado |
-| **Coordinación** | `/tomar`, `/liberar`: evita que dos agentes hagan lo mismo |
-| **Decisiones del dueño como código** | Ningún agente puede revertir una decisión tuya |
-| **Roles profesionales** | El agente actúa como DBA, SRE, UX, diseñador, marketing… según la tarea |
-| **Métricas y costos** | Tiempo, calidad y costo de cada tarea, con reporte semanal |
-| **Template** | Esqueleto para crear un proyecto nuevo ya listo |
-
----
-
-## Estado actual
-
-✅ **TANDA 1 está cerrada.** Condor, GrindFlow y BRVTAL tienen evidencia de producción verde; Factory publicó `v1.0.0` y el self-test consumidor de `@v1` pasó. La adopción del kit está en **TANDA 2**.
-
-El canal `v1` solo cambia mediante una puerta humana ligada al SHA exacto. Los cambios posteriores de Factory se preparan en `main` y llegan a los consumidores únicamente tras un release protegido `v1.x`.
-
-| Etapa | Estado |
-| --- | --- |
-| Plan, kit base, roles, orquestación, aceptación, métricas, costos y memoria (#1–#14) | ✅ Cerrado |
-| Privacidad como código (#54) | ✅ Cerrado |
-| Raíz de confianza del canal v1 (#83) | ✅ Cerrado |
-| Publicación `v1.0.0` | ✅ Publicado + self-test en verde |
-| Catálogo canónico de etiquetas (#100/#105) | ✅ Integrado en `main` |
-| `v1.0.5` | ✅ Publicado; desbloqueó soporte Node y expuso el defecto de permission envelope downstream |
-| Candidato de mantenimiento `v1.0.6` (#171) | 🚧 Corrige coordinación reusable/caller; pendiente merge + puerta exact-SHA |
-| Release de mantenimiento `v1.x` | 🔐 Requiere puerta `factory-release` por SHA |
-| Adopción en Condor, GrindFlow, BRVTAL y FactoryRunner | 🚧 TANDA 2 en curso |
-| Revisión jurídica (#53) | 🧭 Decisión humana separada |
-| GitHub Pages de la cabina (#35) | 🧭 Default seguro B: no publicar |
-
-### Liberación automática de reservas V3 (#1382)
-
-| Fase | Estado verificable | Autoridad |
-| --- | --- | --- |
-| **Fase A — observación GET-only** | Código GET-only integrado en `main` mediante [PR #1383](https://github.com/pl0n3r/Factory/pull/1383); **sin certificación** de 24 horas / 100 ciclos terminales válidos ni QA de candidatos | Solo lectura, `GITHUB_TOKEN` del repositorio local; `deferred_low_quota` omite el ciclo sin mutaciones |
-| **Fase B — liberación automática** | **NO ACTIVADA**; `FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'` | Prohibida hasta acreditar **24 horas y 100 ciclos terminales y válidos por repositorio**, **cero falsos positivos** y **QA individual** por decisión hipotética `release` |
-
-Cada consumidor inspeccionará exclusivamente sus propios Issues mediante el workflow
-reutilizable de Coordinación `@v1`, una vez publicada una versión autorizada.
-**No se usa un token multi-repositorio.** Un resultado `UNKNOWN`, un cron
-programado sin run real o un `deferred_low_quota` no cuentan como ciclos
-válidos ni prueban inactividad. Merge, publicación de `@v1` y activación
-son puertas independientes. La documentación técnica está en
-[liberación automática de reservas](docs/liberacion-automatica-de-reservas.md).
-
-### Estado de las tandas
-
-#### TANDA 2 · adopción del kit
-
-TANDA 2 termina **solo cuando los cuatro épicos canónicos estén cerrados como completados**. El estado actual es:
-
-| Proyecto | Épico | Estado |
-| --- | --- | --- |
-| Condor | #192 | ✅ Completado |
-| GrindFlow | #129 | 🚧 Pendiente / bloqueado |
-| BRVTAL | #630 | 🚧 Pendiente / bloqueado |
-| FactoryRunner | #1 | 🚧 Pendiente / bloqueado |
-
-**Condición global:** mientras cualquiera de esos cuatro épicos siga abierto, TANDA 3 no comienza globalmente.
-
-#### TANDA 3 · desarrollo normal
-
-TANDA 3 comienza cuando los cuatro épicos de TANDA 2 estén completados. Su prioridad operativa es:
-
-**incidente de producción → crítica → alta → media**
-
-Frentes iniciales definidos por `PLAN-AGENTES.md`:
-
-- **Condor:** pedidos, e-commerce, stock y recuperación de cuenta.
-- **GrindFlow:** recuperación de cuenta y continuación del roadmap.
-- **BRVTAL:** recuperación de cuenta y pendientes de producto.
-- **FactoryRunner:** identity/heartbeat → órdenes/eventos → adapters programáticos → browser execution.
-- **Factory, ControlBot y AutoFactory:** también forman parte de la cola automática; se despachan por readiness y prioridad sin alterar su rol arquitectónico.
-
-Esta sección es un resumen operativo; [`PLAN-AGENTES.md`](PLAN-AGENTES.md) sigue siendo la fuente de verdad.
-
-El cierre histórico está resumido en **[docs/tanda1-handoff.md](docs/tanda1-handoff.md)** y el proceso de publicación en **[docs/release-bootstrap.md](docs/release-bootstrap.md)**.
-
-### Roadmap cronológico
-
-| Orden | Hito | Estado actual |
-| --- | --- | --- |
-| 1 | #1–#14 + #54 | ✅ TANDA 1 técnica cerrada |
-| 2 | Primer canal `v1` + `v1.0.0` | ✅ Publicado y validado |
-| 3 | #100/#105 catálogo de etiquetas | ✅ Integrado en `main` |
-| 4 | Release protegido posterior | 🔐 `factory-release` + SHA exacto |
-| 5 | Condor#192 · GrindFlow#129 · brvtal#630 · FactoryRunner#1 | 🚧 TANDA 2 |
-| 6 | TANDA 3 · desarrollo normal | 🔒 Bloqueada hasta completar los cuatro épicos de TANDA 2 |
-
----
-
-## ¿Qué hago yo (el dueño)?
-
-**Casi nada.** Esa es la idea. Abres un agente de IA (GPT u otro), le pegas uno de estos prompts y lo dejas trabajar.
-
-### Los dos modos de lanzar un agente
-
-| Modo | Cuándo usarlo | Qué hace el agente |
-| --- | --- | --- |
-| **Dirigido** | Quieres que trabaje en un proyecto concreto | Lee factory y trabaja **solo** en ese proyecto |
-| **Despachador** | Quieres que él decida dónde hace falta | Lee factory, revisa todos los proyectos y **baja al que más lo necesita** |
-
-**Modo dirigido** (cambia el repositorio según el proyecto):
-
-```
-Trabajas en el repositorio pl0n3r/Condor. Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md para este repositorio.
-```
-
-**Cola automática de Factory:** `pl0n3r/factory`, `pl0n3r/Condor`, `pl0n3r/GrindFlow`, `pl0n3r/brvtal`, `pl0n3r/ControlBot`, `pl0n3r/AutoFactory` y `pl0n3r/FactoryRunner`. Los siete son elegibles; su rol arquitectónico no cambia por entrar en la cola.
-
-**Modo despachador:**
-
-```
-Lee y ejecuta https://github.com/pl0n3r/factory/blob/main/PLAN-AGENTES.md en modo despachador.
-```
-
-### Mensaje de continuación (AutoFactory)
-
-El mensaje de continuación ayuda a completar **una unidad de trabajo por turno** y a reducir informes y mensajes repetidos por hora. Sirve tanto para un agente como para varios, en **modo dirigido o despachador**: pega una de las siguientes variantes en el **campo de prompt personalizado** de cada perfil de AutoFactory.
-
-**Mensaje estándar (copiar completo):**
-
-~~~text
-Preflight obligatorio: verifica el interruptor global canónico Factory #767. Solo RUNNING permite evaluar trabajo; PAUSED, UNKNOWN, fallo de lectura o marcador inválido: detén el turno, no tomes otro Issue, no mutas y no fusionas.
-RUNNING no basta: exige reserva V3, CI exact-SHA y demás gates. Un bloqueo local de Issue permite buscar otro solo con RUNNING y Coordinación válida.
-Continúa sin parar hasta terminar una unidad de trabajo completa.
-Pasos:
-(1) relee el estado de tu issue reservado y de su PR;
-(2) si no tienes reserva, toma el siguiente issue disponible con prioridad crítica;
-(3) implementa, prueba y deja el PR en verde;
-(4) si todos los controles están en verde y no hay cambios pedidos, fusiónalo (squash) y comenta el SHA;
-(5) pasa de inmediato al siguiente issue disponible.
-No te detengas a dar informes de estado; comenta solo hitos (PR abierto, fusionado, bloqueo real).
-Si algo está bloqueado de verdad, di el motivo concreto, etiqueta el issue y toma otro.
-~~~
-
-**Variante breve para QA/seguridad (copiar completo):**
-
-~~~text
-Preflight obligatorio: verifica el interruptor global canónico Factory #767. Solo RUNNING permite evaluar trabajo; PAUSED, UNKNOWN, fallo de lectura o marcador inválido: detén el turno, no tomes otro Issue, no mutas y no fusionas.
-RUNNING no basta: exige reserva V3, CI exact-SHA y demás gates. Un bloqueo local de Issue permite buscar otro solo con RUNNING y Coordinación válida.
-Completa una unidad verificable de QA o seguridad: relee el issue y el PR exactos; revisa el cambio y sus controles; reproduce una regresión concreta cuando sea posible; registra un único hallazgo nuevo y accionable o la evidencia de cierre. No te apropies de una reserva ajena, no repitas comentarios de estado ni apruebes por inferencia. Si el frente está bloqueado, documenta la causa y pasa al siguiente frente seguro.
-~~~
-
-Estos bloques se mantienen idénticos a la [fuente canónica](template/docs/PROMPT-CONTINUACION.md). No sustituyen el interruptor global, la reserva V3, el CI exact-SHA ni la pausa manual de AutoFactory.
-
-El despachador elige en este orden: HEALTH degradado → incidente abierto → reparación activa válida → decisión tuya ya respondida → prioridad crítica → alta → media. Antes de elegir aplica readiness, reservas, dependencias, PR equivalente y claims de paths para no duplicar trabajo; anuncia en el Issue por qué eligió ese frente y, al terminar, vuelve a elegir. Detalle en la sección 0 de [PLAN-AGENTES.md](PLAN-AGENTES.md).
-
-### Cómo combinarlos
-
-- **Un solo agente:** modo despachador.
-- **Varios agentes a la vez:** pueden operar en modo despachador; Factory aplica readiness, reservas y claims para repartir trabajo entre los siete repositorios sin duplicarlo.
-- **Algo urgente en un proyecto:** un agente dirigido a ese proyecto.
-
-### Qué más te toca
-
-1. Pegar y guardar el mensaje de continuación adecuado en el campo de prompt personalizado de **cada perfil de AutoFactory** (estándar o QA/seguridad), sin copiar credenciales ni contenido de chats.
-2. Cuando un agente termine o se detenga, vuelve a lanzarlo con el mismo prompt: él sabe en qué va.
-3. Responder solo las decisiones que te corresponden (**producto, marca, dinero, legal, datos reales de clientes, mover/publicar el canal `v1` de Factory o pasar a live**). Te llegan asignadas en GitHub con la etiqueta `decisión: dueño` y aparecen en la cabina.
-4. Mirar la **cabina de mando**: https://pl0n3r.github.io/factory/ (estado de todos los proyectos, actualizado cada hora).
-
-### Cómo funciona por dentro
-
-```
-Prompt → factory/PLAN-AGENTES.md (cómo trabajar)
-       → factory/agentes/roles/<rol>.md (qué profesional ser)
-       → AGENTES.md del proyecto (cómo es ese proyecto)
-       → trabajo en el proyecto: /tomar → código → PR → CI
-```
-
----
-
-## Proyectos de la fábrica
-
-| Proyecto | Qué es | Sitio |
-| --- | --- | --- |
-| [Condor](https://github.com/pl0n3r/Condor) | Plataforma multi-empresa: catálogo, inventario, pedidos y tienda pública | [condorapp.com.co](https://www.condorapp.com.co) |
-| [GrindFlow](https://github.com/pl0n3r/GrindFlow) | SaaS de gestión corporativa | [grindflow.com.co](https://www.grindflow.com.co) |
-| [BRVTAL](https://github.com/pl0n3r/brvtal) | Sitio público y panel editorial DISCADMIN | [brvtal.com.co](https://www.brvtal.com.co) |
-| [FactoryRunner](https://github.com/pl0n3r/FactoryRunner) | Execution plane autónomo: agentes, órdenes, adapters y browser execution | En construcción · `control.condorapp.com.co` como target primario |
-
-### Infraestructura y herramientas dentro de la cola automática
-
-- **Factory:** gobierno, kit y capacidades transversales.
-- **ControlBot:** centro de mando/control plane privado.
-- **FactoryRunner:** execution plane autónomo.
-- **AutoFactory:** herramienta local/manual independiente en su arquitectura funcional.
-- **Condor, GrindFlow y BRVTAL:** productos.
-
-Los siete repositorios comparten elegibilidad de despacho automático. Esto no fusiona responsabilidades ni convierte AutoFactory en dependencia de FactoryRunner/ControlBot.
-
----
-
-## Glosario rápido
-
-- **Kit:** el conjunto de herramientas compartidas que publica este repo.
-- **Reusable workflow:** un proceso de CI escrito una vez aquí y usado por todos los proyectos.
-- **Rollback:** volver automáticamente a la versión anterior si la nueva falla.
-- **Migración:** cambio en la estructura de la base de datos que acompaña al código nuevo.
-- **Template:** plantilla para crear un proyecto nuevo con todo incluido.
-- **Épico:** un Issue grande que agrupa varios Issues más pequeños.
-
-
----
-
-## Living Software
-
-**Living Software está integrado y endurecido a nivel de arquitectura/protocolo; #227 cierra el hardening final de provenance.** Ese estado no amplía autoridad externa ni habilita producción autónoma irrestricta.
-
-El objetivo es que Factory pueda observar, recordar, aprender, proponer, experimentar, medir, podar y reparar sin convertir aprendizaje en autoridad. El contrato canónico está documentado en [docs/factory-living-software.md](docs/factory-living-software.md) y las reglas operativas viven en [PLAN-AGENTES.md](PLAN-AGENTES.md#9-living-software-ciclo-operativo-canónico).
-
-El ciclo de alto nivel es:
-
-`observe → learn → experiment → adopt_or_reject → measure → prune`
-
-Ese resumen no reemplaza el lifecycle completo de Constitution. Toda adopción conserva rollback, trazabilidad, invariantes protegidos y límites de autoridad humana.
-
-El conocimiento aprendido usa un lifecycle propio y revocable: `candidate → active → needs_review → deprecated → archived`. Una regla cuya evidencia envejece deja de poder aumentar autonomía hasta revalidarse; pruning solo propone consolidación/retiro y preserva historia. Ver [docs/knowledge-lifecycle.md](docs/knowledge-lifecycle.md).
-
-### Estado de confianza actual
-
-- **#209 Autonomy authority + canonical evidence:** ✅ cerrado.
-- **#211 Factory Lab promotion provenance:** ✅ cerrado.
-- **#213 Growth/Pruning source evidence:** ✅ cerrado.
-- **#215 Repair human authority + immunity provenance:** ✅ cerrado.
-- **#221 deterministic renewal retry:** ✅ cerrado.
-- **#223 trusted Repair/Immune provenance:** ✅ cerrado en integridad/append-only.
-- **#227 non-self-certifiable provenance:** ✅ cerrado; stores caller-built no constituyen trust productivo y Repair/Immune solo aceptan readers autenticados/read-only.
-
-Con #227 cerrado y sus AC verdes, cerrar **#143** significa **arquitectura/protocolo Living Software integrado y endurecido**. No garantiza autonomía completa, no convierte Promotion/Repair en ejecución automática y **no concede autoridad de producción autónoma irrestricta**.
-
-Las puertas humanas vigentes no cambian: dinero, legal, datos reales/personales, borrado irreversible, publicación/live y demás decisiones reservadas siguen fuera de la autoridad autónoma.
+- **[Factory](https://github.com/pl0n3r/Factory):** gobernanza, kit común, releases y aceptación.
+- **[ControlBot](https://github.com/pl0n3r/ControlBot):** panel de control y decisiones con acceso restringido.
+- **[FactoryRunner](https://github.com/pl0n3r/FactoryRunner):** plano de ejecución autónoma.
+- **[AutoFactory](https://github.com/pl0n3r/AutoFactory):** extensión local/manual Chrome y Safari.
+- **[Condor](https://github.com/pl0n3r/Condor):** producto de operaciones comerciales.
+- **[GrindFlow](https://github.com/pl0n3r/GrindFlow):** SaaS para creadores y distribución.
+- **[BRVTAL](https://github.com/pl0n3r/brvtal):** publicación web y panel editorial.
+
+Los siete repositorios son elegibles para el despacho, pero esa elegibilidad no mezcla sus responsabilidades arquitectónicas. El seguimiento de eventos, liberaciones, versiones y decisiones se conserva en Issues, Actions y Releases en vez de duplicarse aquí.

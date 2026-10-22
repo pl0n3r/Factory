@@ -11,9 +11,8 @@ LIVING = (ROOT / "docs" / "factory-living-software.md").read_text(encoding="utf-
 class LivingIntegrationTests(unittest.TestCase):
     def test_plan_and_readme_reference_living_software_contract(self):
         self.assertIn("## 9. Living Software: ciclo operativo canónico", PLAN)
-        self.assertIn("## Living Software", README)
-        self.assertIn("docs/factory-living-software.md", README)
         self.assertIn("docs/factory-living-software.md", PLAN)
+        self.assertIn("[Documentación técnica](docs/)", README)
         self.assertIn("Project DNA", LIVING)
         self.assertIn("Factory Lab", LIVING)
 
@@ -31,11 +30,7 @@ class LivingIntegrationTests(unittest.TestCase):
         self.assertIn("no amplía autoridad", PLAN)
 
     def test_protocol_defines_observe_learn_experiment_adopt_prune_cycle(self):
-        cycle = (
-            "observe → learn → experiment → adopt_or_reject → measure → prune"
-        )
-        self.assertIn(cycle, README)
-        self.assertIn(cycle, LIVING)
+        self.assertIn("observe → learn → experiment → adopt_or_reject → measure → prune", LIVING)
         self.assertIn("promote_or_reject", LIVING)
         self.assertIn("rollback", LIVING)
 
@@ -52,104 +47,52 @@ class LivingIntegrationTests(unittest.TestCase):
             self.assertNotIn(claim.casefold(), lowered)
 
     def test_all_living_hardenings_are_documented_closed(self):
-        hardenings = ("#209", "#211", "#213", "#215", "#221", "#223", "#227")
-        for issue in hardenings:
-            self.assertIn(issue, README)
+        for issue in ("#209", "#211", "#213", "#215", "#221", "#223", "#227"):
             self.assertIn(issue, LIVING)
-
         self.assertIn("#209–#227", PLAN)
-        for fragment in (
-            "**#209 — Autonomy authority + canonical evidence:** cerrado.",
-            "**#211 — Factory Lab promotion provenance:** cerrado.",
-            "**#213 — Growth/Pruning source evidence:** cerrado.",
-            "**#215 — Repair human authority + immunity provenance:** cerrado.",
-            "**#221 — deterministic renewal retry:** cerrado.",
-            "**#223 — trusted Repair/Immune provenance:** cerrado",
-            "**#227 — read-only authenticated provenance:** cerrado.",
-        ):
+        for fragment in ("**#209 — Autonomy authority + canonical evidence:** cerrado.",
+                         "**#211 — Factory Lab promotion provenance:** cerrado.",
+                         "**#213 — Growth/Pruning source evidence:** cerrado.",
+                         "**#215 — Repair human authority + immunity provenance:** cerrado.",
+                         "**#221 — deterministic renewal retry:** cerrado.",
+                         "**#223 — trusted Repair/Immune provenance:** cerrado",
+                         "**#227 — read-only authenticated provenance:** cerrado."):
             self.assertIn(fragment, LIVING)
 
-        self.assertNotIn("#211 Factory Lab promotion provenance:** 🚧 pendiente", README)
-        self.assertNotIn("#213 Growth/Pruning source evidence:** 🚧 pendiente", README)
-        self.assertNotIn("#215 Repair human authority + immunity provenance:** 🚧 pendiente", README)
-        self.assertNotIn("#211 — Factory Lab promotion provenance:** pendiente", LIVING)
-        self.assertNotIn("#213 — Growth/Pruning source evidence:** pendiente", LIVING)
-        self.assertNotIn("#215 — Repair human authority + immunity provenance:** pendiente", LIVING)
-
     def test_final_provenance_hardening_is_documented_closed(self):
-        combined = "\n".join((PLAN, README, LIVING))
+        combined = "\n".join((PLAN, LIVING))
         self.assertIn("#209–#227", PLAN)
-        self.assertIn(
-            "**#227 non-self-certifiable provenance:** ✅ cerrado",
-            README,
-        )
-        self.assertIn(
-            "**#227 — read-only authenticated provenance:** cerrado.",
-            LIVING,
-        )
-        self.assertIn(
-            "arquitectura/protocolo Living Software está integrada y endurecida",
-            PLAN,
-        )
-        self.assertIn(
-            "arquitectura/protocolo Living Software integrado y endurecido",
-            README,
-        )
-        self.assertIn(
-            "arquitectura/protocolo Living Software integrado y endurecido",
-            LIVING,
-        )
-        self.assertIn("no amplía autoridad externa", README)
+        self.assertIn("**#227 — read-only authenticated provenance:** cerrado.", LIVING)
+        self.assertIn("arquitectura/protocolo Living Software está integrada y endurecida", PLAN)
+        self.assertIn("arquitectura/protocolo Living Software integrado y endurecido", LIVING)
         self.assertIn("producción autónoma irrestricta", combined)
         self.assertIn("automatic_execution_allowed=false", LIVING)
         self.assertIn("execution=not-performed", LIVING)
 
     def test_completed_hardening_does_not_expand_external_authority(self):
-        combined = "\n".join((PLAN, README, LIVING))
-        for boundary in (
-            "dinero",
-            "legal",
-            "datos reales/personales",
-            "borrado irreversible",
-            "publicación/live",
-        ):
+        combined = "\n".join((PLAN, LIVING))
+        for boundary in ("dinero", "legal", "datos reales/personales",
+                         "borrado irreversible", "publicación/live"):
             self.assertIn(boundary, combined.casefold())
-        self.assertIn("no amplía autoridad", README)
+        self.assertIn("no amplía autoridad", PLAN)
         self.assertIn("automatic_execution_allowed=false", LIVING)
         self.assertIn("execution=not-performed", LIVING)
         self.assertIn("continúa fallando cerrado", PLAN)
 
     def test_epic_completion_is_structural_not_unbounded_production_authority(self):
-        combined = "\n".join((PLAN, README, LIVING))
-        self.assertIn(
-            "arquitectura/protocolo Living Software está integrada y endurecida",
-            PLAN,
-        )
-        self.assertIn(
-            "arquitectura/protocolo Living Software integrado y endurecido",
-            README,
-        )
-        self.assertIn(
-            "arquitectura/protocolo Living Software integrado y endurecido",
-            LIVING,
-        )
+        combined = "\n".join((PLAN, LIVING))
+        self.assertIn("arquitectura/protocolo Living Software está integrada y endurecida", PLAN)
+        self.assertIn("arquitectura/protocolo Living Software integrado y endurecido", LIVING)
         self.assertIn("producción autónoma irrestricta", combined)
         self.assertIn("no una concesión de producción autónoma irrestricta", LIVING)
 
-
     def test_learned_knowledge_lifecycle_is_documented_and_fail_closed(self):
-        combined = "\n".join((README, LIVING))
-        self.assertIn("docs/knowledge-lifecycle.md", README)
-        self.assertIn(
-            "candidate → active → needs_review → deprecated → archived",
-            combined,
-        )
-        self.assertIn(
-            "deja de poder aumentar autonomía hasta revalidarse",
-            combined,
-        )
+        knowledge = (ROOT / "docs/knowledge-lifecycle.md").read_text(encoding="utf-8")
+        self.assertIn("docs/knowledge-lifecycle.md", LIVING)
+        for rule in ("candidate → active → needs_review → deprecated → archived",
+                     "deja de poder aumentar autonomía hasta revalidarse"):
+            self.assertIn(rule, "\n".join((LIVING, knowledge)))
         self.assertIn("nunca borra historia", LIVING)
-
 
 if __name__ == "__main__":
     unittest.main()

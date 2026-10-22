@@ -65,21 +65,17 @@ class PlanArchiveTests(unittest.TestCase):
         self.assertIn("continúa fallando cerrado", PLAN)
 
     def test_bootstrap_prompts_and_dispatch_ranking_stay_frozen(self):
-        self.assertEqual(README.count(DIRECTED_PROMPT), 1)
-        self.assertEqual(README.count(DISPATCH_PROMPT), 1)
-        ordered = (
-            "HEALTH degradado",
-            "Issue abierto de incidente",
-            "reparación activa válida",
-            "decisión del dueño ya respondida",
-            "prioridad: crítica",
-            "prioridad: alta",
-            "media",
-        )
-        positions = [PLAN.index(value) for value in ordered]
+        self.assertIn("**Modo dirigido:**", PLAN)
+        self.assertIn("**Modo despachador:**", PLAN)
+        self.assertIn("PLAN-AGENTES.md", README)
+        self.assertNotIn(DIRECTED_PROMPT, README)
+        self.assertNotIn(DISPATCH_PROMPT, README)
+        ordered = ("HEALTH degradado", "Issue abierto de incidente",
+                   "reparación activa válida", "decisión del dueño ya respondida",
+                   "prioridad: crítica", "prioridad: alta", "media")
+        positions = [PLAN.index(x) for x in ordered]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("Despacho: elegí <repo>#<n> porque <regla N>", PLAN)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -305,25 +305,16 @@ class PlanContractTests(unittest.TestCase):
 
 
     def test_readme_explains_launch_modes(self):
-        required = (
-            "### Los dos modos de lanzar un agente",
-            "**Modo dirigido**",
-            "**Modo despachador:**",
-            "Trabajas en el repositorio pl0n3r/Condor.",
-            "en modo despachador.",
-            "**Cola automática de Factory:**",
-            "reparación activa válida",
-            "readiness, reservas, dependencias, PR equivalente y claims de paths",
-        )
-        for value in required:
+        for value in ("## 0. Dónde trabajar: modo dirigido o modo despachador",
+                      "**Modo dirigido:**", "**Modo despachador:**",
+                      "HEALTH degradado", "reparación activa válida",
+                      "Despacho: elegí <repo>#<n> porque <regla N>",
+                      "claims de paths son disjuntos"):
             with self.subTest(value=value):
-                self.assertIn(value, README)
-
-        self.assertNotIn(
-            "Abrir un agente en cada repositorio",
-            README,
-        )
-
+                self.assertIn(value, PLAN)
+        self.assertIn("[plan de agentes](PLAN-AGENTES.md)", README)
+        self.assertNotIn("### Los dos modos de lanzar un agente", README)
+        self.assertNotIn("Abrir un agente en cada repositorio", README)
 
 if __name__ == "__main__":
     unittest.main()

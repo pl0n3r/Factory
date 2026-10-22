@@ -124,8 +124,11 @@ class PlanEstadoTests(unittest.TestCase):
         )
 
         readme = README.read_text(encoding="utf-8")
-        self.assertEqual(readme.count(DIRECTED_PROMPT), 1)
-        self.assertEqual(readme.count(DISPATCH_PROMPT), 1)
+        self.assertIn("**Modo dirigido:**", plan)
+        self.assertIn("**Modo despachador:**", plan)
+        self.assertIn("PLAN-AGENTES.md", readme)
+        self.assertNotIn(DIRECTED_PROMPT, readme)
+        self.assertNotIn(DISPATCH_PROMPT, readme)
 
 
 if __name__ == "__main__":
