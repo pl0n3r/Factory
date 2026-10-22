@@ -220,11 +220,11 @@ print(json.dumps(records[n % len(records)]))
                     script = (
                         "set -euo pipefail\n"
                         + helper + "\n"
-                        + "search_calls=0\\ncomments_calls_min=0\\nmetadata_calls=0\n"
+                        + "search_calls=0\ncomments_calls_min=0\nmetadata_calls=0\n"
                         + "REPOSITORY=pl0n3r/Factory\n"
-                        + 'query="repo:$REPOSITORY is:issue factory-human-gate in:body"\\n'
+                        + 'query="repo:$REPOSITORY is:issue factory-human-gate in:body"\n'
                         + block.replace("/tmp/release-", str(path / "release-"))
-                        + "\\necho VERIFIED\n"
+                        + "\necho VERIFIED\n"
                     )
                     environment = dict(os.environ, FAKE_GH_COUNT=str(counter),
                                        FAKE_GH_SAMPLES=str(samples),
