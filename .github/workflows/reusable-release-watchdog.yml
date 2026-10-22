@@ -39,7 +39,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          gh api             "repos/$REPOSITORY/actions/workflows/release-bootstrap.yml/runs?status=completed&per_page=20"             > /tmp/release-runs.json
+          gh api             "repos/$REPOSITORY/actions/workflows/release-bootstrap.yml/runs?status=success&per_page=20"             > /tmp/release-runs.json
 
           release="$(
             jq -c '
