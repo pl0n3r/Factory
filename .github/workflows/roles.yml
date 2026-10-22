@@ -315,6 +315,13 @@ jobs:
           script = root / "scripts" / "generar_revision_juridica.py"
           if not script.is_file() or script.is_symlink():
               raise SystemExit("Canonical legal generator unavailable")
+          # Código generador auténtico #838 fijado a su blob Git,
+          # no al SHA de origen autodeclarado en los documentos.
+          generator_blob = subprocess.check_output(
+              ["git", "hash-object", str(script)], text=True, timeout=10,
+          ).strip()
+          if generator_blob != "11857d7f0e1399305495c2d8445a6a7e34f730f4":
+              raise SystemExit("Untrusted legal generator version")
           spec = importlib.util.spec_from_file_location("cb_legal_gen", script)
           if spec is None or spec.loader is None:
               raise SystemExit("Canonical legal generator could not load")
@@ -323,11 +330,13 @@ jobs:
           sys.path.insert(0, str(Path(".factory").resolve()))
           from scripts.roles_kit import (
               OFFLINE_LEGAL_DOC_ORIGIN_SHA, OFFLINE_LEGAL_DOC_STAMP,
+              map_offline_legal_generated_copies,
               verify_offline_legal_artifact_bytes,
           )
           canonical = generator.expected_files(
               root, OFFLINE_LEGAL_DOC_STAMP, OFFLINE_LEGAL_DOC_ORIGIN_SHA,
           )
+          canonical = map_offline_legal_generated_copies(canonical)
           verify_offline_legal_artifact_bytes(root, canonical)
           scope = {
               "source": "github-api-v3-and-exact-head-ci-docs-v1",
