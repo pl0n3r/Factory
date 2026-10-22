@@ -89,8 +89,8 @@ def _fake_gh_error(*, phase: str, message: str, partial_stdout: str = "",
         fake = Path(tmp) / "gh"
         fake.write_text(
             '#!/bin/sh\n'
-            'printf "called\\n" >> "$FAKE_GH_COUNT"\n'
-            'printf "%s\\n" "$FAKE_GH_MESSAGE" >&2\n'
+            'printf "called\n" >> "$FAKE_GH_COUNT"\n'
+            'printf "%s\n" "$FAKE_GH_MESSAGE" >&2\n'
             'printf "%s" "$FAKE_GH_PARTIAL"\n'
             'exit 1\n',
             encoding="utf-8",
@@ -148,6 +148,103 @@ def _active_gate_numbers(rows: list[dict], at: datetime) -> list[int]:
 
 
 class ReleaseApiQuotaTests(unittest.TestCase):
+    def test_release_search_bounded_snapshot_retry_keeps_fail_closed(self):
+        """Un par inestable se descarta; cuotas y fallos agotados nunca certifican."""
+        import shutil
+
+        workflow = _workflow()
+        start = "# RELEASE_SEARCH_BOUNDED_RETRY_START"
+        end = "# RELEASE_SEARCH_BOUNDED_RETRY_END"
+        self.assertEqual(workflow.count(start), 1)
+        self.assertEqual(workflow.count(end), 1)
+        block = textwrap.dedent(workflow.split(start, 1)[1].split(end, 1)[0])
+        self.assertEqual(block.count("for snapshot_attempt in 1 2 3; do"), 1)
+        self.assertEqual(block.count("for pass in 1 2; do"), 1)
+        self.assertEqual(block.count("release_gh_api search -X GET"), 2)
+        self.assertIn("if ! total_count=", block)
+        self.assertIn("if ! {", block)
+        self.assertIn("python3 - /tmp/release-search-p1-", block)
+        self.assertIn("if ! python3 -m scripts.release_gate_search", block)
+        self.assertIn("cmp -s /tmp/release-search-verified-1.json", block)
+        self.assertIn("snapshot_attempt == 3", block)
+        self.assertNotIn("|| true", block)
+        self.assertNotIn("factory-release-executed", block)
+        self.assertLess(block.index("release_gh_api search"), block.index("cmp -s"))
+        # El wrapper no atrapa el error de transporte para reintentarlo.
+        self.assertIn('release_gh_api search -X GET search/issues', block)
+        if not shutil.which("jq"):
+            self.skipTest("jq requerido para integración shell real")
+
+        sample = {
+            "total_count": 1, "incomplete_results": False,
+            "items": [{
+                "number": 900, "state": "closed", "title": "Gate sintético",
+                "body": "sin permiso", "updated_at": "2026-10-22T09:00:00Z",
+            }],
+        }
+        other = json.loads(json.dumps(sample))
+        other["items"][0]["body"] = "nuevo snapshot consistente"
+        partial = json.loads(json.dumps(sample))
+        partial["incomplete_results"] = True
+
+        fake_script = """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+counter = Path(os.environ["FAKE_GH_COUNT"])
+n = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(n + 1))
+if os.environ.get("FAKE_GH_QUOTA") == "1":
+    print("HTTP 429 secondary rate limit exceeded", file=sys.stderr)
+    sys.exit(1)
+records = json.loads(Path(os.environ["FAKE_GH_SAMPLES"]).read_text())
+print(json.dumps(records[n % len(records)]))
+"""
+        helper = _block(HELPER_START, HELPER_END)
+        for snapshots, expected_calls, passes, quota in (
+            ([sample, other, other, other], 4, True, False),
+            ([sample, other], 6, False, False),
+            ([partial, other, other], 3, True, False),
+            ([sample], 1, False, True),
+        ):
+            with self.subTest(calls=expected_calls, passes=passes, quota=quota):
+                with tempfile.TemporaryDirectory() as folder:
+                    path = Path(folder)
+                    fake = path / "gh"
+                    fake.write_text(fake_script, encoding="utf-8")
+                    fake.chmod(0o755)
+                    samples = path / "samples.json"
+                    samples.write_text(json.dumps(snapshots), encoding="utf-8")
+                    counter = path / "calls"
+                    script = (
+                        "set -euo pipefail\n"
+                        + helper + "\n"
+                        + "search_calls=0\ncomments_calls_min=0\nmetadata_calls=0\n"
+                        + "REPOSITORY=pl0n3r/Factory\n"
+                        + 'query="repo:$REPOSITORY is:issue factory-human-gate in:body"\n'
+                        + block.replace("/tmp/release-", str(path / "release-"))
+                        + "\necho VERIFIED\n"
+                    )
+                    environment = dict(os.environ, FAKE_GH_COUNT=str(counter),
+                                       FAKE_GH_SAMPLES=str(samples),
+                                       FAKE_GH_QUOTA="1" if quota else "0")
+                    environment["PATH"] = str(path) + os.pathsep + environment.get("PATH", "")
+                    result = subprocess.run(
+                        ["bash", "-c", script], cwd=ROOT, env=environment,
+                        capture_output=True, text=True, timeout=20, check=False,
+                    )
+                    self.assertEqual(int(counter.read_text()), expected_calls)
+                    if passes:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn("VERIFIED", result.stdout)
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertNotIn("VERIFIED", result.stdout)
+                    if quota:
+                        self.assertIn("release_api_quota_exhausted phase=search",
+                                      result.stderr)
+
     def test_primary_rate_limit_fails_closed_with_typed_evidence(self):
         result, calls = _fake_gh_error(
             phase="comments",
