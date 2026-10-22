@@ -77,6 +77,8 @@ El README es una portada y una guía humana. No reemplaza ninguna de estas fuent
 
 ## Desarrollo local
 
+La [plantilla de continuación de AutoFactory](template/docs/PROMPT-CONTINUACION.md) conserva las dos variantes canónicas del mensaje.
+
 Desde la raíz del repositorio, con Python 3:
 
 ```bash

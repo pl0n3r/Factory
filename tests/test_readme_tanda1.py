@@ -16,23 +16,16 @@ class ReadmeTanda1Tests(unittest.TestCase):
         cls.handoff = HANDOFF.read_text(encoding="utf-8")
 
     def test_tanda1_and_first_release_are_closed(self):
-        for value in (
-            "TANDA 1 está cerrada",
-            "Privacidad como código (#54) | ✅ Cerrado",
-            "Publicación `v1.0.0` | ✅ Publicado + self-test en verde",
-            "Adopción en Condor, GrindFlow, BRVTAL y FactoryRunner | 🚧 TANDA 2 en curso",
-        ):
-            self.assertIn(value, self.readme)
+        for value in ("Estado: **CERRADA**", "#54: privacidad como código cerrada",
+                      "`v1.0.0`: GitHub Release publicada", "TANDA 1 global: completada",
+                      "## TANDA 2 · EN CURSO"):
+            self.assertIn(value, self.handoff)
+        self.assertIn("PLAN-AGENTES.md", self.readme)
+        self.assertNotIn("TANDA 1 está cerrada", self.readme)
 
     def test_tanda2_includes_factoryrunner(self):
-        self.assertIn(
-            "Condor#192 · GrindFlow#129 · brvtal#630 · FactoryRunner#1",
-            self.readme,
-        )
-        self.assertIn(
-            "Condor#192, GrindFlow#129, brvtal#630 y FactoryRunner#1",
-            self.handoff,
-        )
+        self.assertIn("Condor#192, GrindFlow#129, brvtal#630 y FactoryRunner#1", self.handoff)
+        self.assertIn("PLAN-AGENTES.md", self.readme)
 
     def test_stale_pre_release_state_is_absent(self):
         for value in (
@@ -54,13 +47,11 @@ class ReadmeTanda1Tests(unittest.TestCase):
             self.assertIn(value, self.handoff)
 
     def test_release_maintenance_boundary_is_documented(self):
-        for value in (
-            "puerta `factory-release`",
-            "canal `v1` solo cambia",
-            "release protegido `v1.x`",
-        ):
-            self.assertIn(value, self.readme)
-        self.assertIn("no mover `v1` ni publicar un release nuevo sin la puerta correspondiente", self.handoff)
+        for value in ("puerta humana `factory-release`",
+                      "Un cambio en `main` no modifica por sí solo",
+                      "no mover `v1` ni publicar un release nuevo sin la puerta correspondiente"):
+            self.assertIn(value, self.handoff)
+        self.assertIn("docs/release-bootstrap.md", self.readme)
 
 if __name__ == "__main__":
     unittest.main()

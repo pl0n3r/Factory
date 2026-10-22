@@ -35,10 +35,12 @@ class PlanBootstrapCardTests(unittest.TestCase):
         return self.plan[start:end]
 
     def test_readme_dispatch_prompts_remain_exact(self) -> None:
-        self.assertIn(f"```\n{DIRECTED_PROMPT}\n```", self.readme)
-        self.assertIn(f"```\n{DISPATCH_PROMPT}\n```", self.readme)
-        self.assertEqual(self.readme.count(DIRECTED_PROMPT), 1)
-        self.assertEqual(self.readme.count(DISPATCH_PROMPT), 1)
+        self.assertIn("**Modo dirigido:**", self.plan)
+        self.assertIn("**Modo despachador:**", self.plan)
+        self.assertIn("## 0. Dónde trabajar: modo dirigido o modo despachador", self.plan)
+        self.assertIn("PLAN-AGENTES.md", self.readme)
+        self.assertNotIn(DIRECTED_PROMPT, self.readme)
+        self.assertNotIn(DISPATCH_PROMPT, self.readme)
 
     def test_bootstrap_card_precedes_existing_operational_sections_and_is_complete(self) -> None:
         card = self._card()

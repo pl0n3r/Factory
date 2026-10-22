@@ -25,24 +25,15 @@ class ReadmeContinuacionTests(unittest.TestCase):
                                .split("## Variante breve QA/seguridad", 1)[0])
         qa = self._block(source.split("## Variante breve QA/seguridad", 1)[1]
                          .split("## Cuándo usarlo", 1)[0])
-        heading = "### Mensaje de continuación (AutoFactory)"
-        self.assertEqual(readme.count(heading), 1)
-        start = readme.index(heading)
-        self.assertLess(readme.index("**Modo despachador:**"), start)
-        end = readme.index("### Cómo combinarlos", start)
-        section = readme[start:end]
-        copies = re.findall(r"(?ms)^~~~text\n(.*?)\n~~~[ \t]*$", section)
-        self.assertEqual(copies, [standard, qa])
-        self.assertEqual(readme.count(standard), 1)
-        self.assertEqual(readme.count(qa), 1)
-        self.assertIn("template/docs/PROMPT-CONTINUACION.md", section)
-        for required in ("prompt personalizado", "AutoFactory", "modo dirigido",
-                         "despachador", "una unidad de trabajo por turno",
-                         "reserva V3", "CI exact-SHA"):
-            with self.subTest(phrase=required):
-                self.assertIn(required, section)
-        self.assertIn("cada perfil de AutoFactory", readme)
-
+        self.assertNotEqual(standard, qa)
+        for block in (standard, qa):
+            for required in ("Factory #767", "reserva V3", "CI exact-SHA"):
+                self.assertIn(required, block)
+        self.assertIn("una unidad de trabajo completa", standard)
+        self.assertIn("QA o seguridad", qa)
+        self.assertIn("prompt personalizado de AutoFactory", source)
+        self.assertIn("template/docs/PROMPT-CONTINUACION.md", readme)
+        self.assertNotIn("### Mensaje de continuación (AutoFactory)", readme)
 
 if __name__ == "__main__":
     unittest.main()
