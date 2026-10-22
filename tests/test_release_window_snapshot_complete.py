@@ -203,16 +203,23 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
             }]
             # En el caso adverso, primera lectura mezcla páginas T0/T1:
             # cuenta 116 y no hay IDs repetidos, pero omite una fila.
+            # El workflow anterior usa un par; #1469 admite hasta tres pares
+            # independientes. Ante deriva persistente, todos deben fallar
+            # cerrados y ningún snapshot alcanza pr-check.
+            retries = 3 if "RELEASE_SEARCH_BOUNDED_RETRY_START" in WORKFLOW else 1
             if drifting:
-                pages = [
+                pair = [
                     page(initial[:100]), page(changed[100:]),
                     page(changed[:100]), page(changed[100:]),
                 ]
             else:
-                pages = [
+                pair = [
                     page(initial[:100]), page(initial[100:]),
                     page(initial[:100]), page(initial[100:]),
                 ]
+            # Solo la deriva del indice consume los tres intentos.
+            # Metadatos estructurales invalidos se rechazan tras 2 GET.
+            pages = pair * (retries if drifting else 1)
             (base / "pages.json").write_text(json.dumps(pages), encoding="utf-8")
             (base / "calls.json").write_text("[]", encoding="utf-8")
 
@@ -285,8 +292,14 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
         """Dos pasadas inconsistentes nunca alcanzan pr-check."""
         result, called, calls = self._run_real_release_window_shell(drifting=True)
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("Search Issues cambió entre dos lecturas completas", result.stdout)
-        self.assertEqual(calls, ["page=1", "page=2", "page=1", "page=2"])
+        retries = "RELEASE_SEARCH_BOUNDED_RETRY_START" in WORKFLOW
+        if retries:
+            self.assertIn("Release Search Issues inestable tras 3 pares completos", result.stdout)
+        else:
+            self.assertIn("Search Issues cambió entre dos lecturas completas", result.stdout)
+        self.assertEqual(
+            calls, ["page=1", "page=2", "page=1", "page=2"] * (3 if retries else 1),
+        )
         self.assertFalse(called, "El evaluador no puede recibir un snapshot mezclado")
 
     def test_release_window_shell_malformed_issue_metadata_never_reaches_evaluator(self) -> None:
@@ -298,6 +311,7 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("Search Issues incompleta", result.stderr)
+                # Metadata inválida no es deriva del índice; sin reintentos.
                 self.assertEqual(calls, ["page=1", "page=2"])
                 self.assertFalse(called, "Nunca evaluar freeze con metadata inválida")
 
