@@ -294,6 +294,41 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
             self.assertEqual(watchdog_main(), 2)
         self.assertIn("payload demasiado grande", stderr.getvalue())
 
+    def test_workflow_queries_only_successful_release_bootstrap_runs_fail_closed(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        # La API debe filtrar ANTES de limitar la página: 20 fallos más
+        # recientes no pueden ocultar el último bootstrap exitoso.
+        self.assertEqual(
+            workflow.count(
+                "release-bootstrap.yml/runs?status=success&per_page=20"
+            ),
+            1,
+        )
+        self.assertNotIn(
+            "release-bootstrap.yml/runs?status=completed",
+            workflow,
+        )
+        # Defensa en profundidad: nunca convertir un run fallido o de
+        # conclusion distinta en evidencia de publicación Factory@v1.
+        self.assertIn(
+            '[.workflow_runs[] | select(.conclusion == "success")]',
+            workflow,
+        )
+        self.assertIn("| sort_by(.created_at)", workflow)
+        self.assertIn("| reverse", workflow)
+        self.assertIn("| .[0] // empty", workflow)
+        self.assertIn('[[ -n "$release" ]] || {', workflow)
+        self.assertIn(
+            "No existe un release Factory v1.x exitoso para vigilar.",
+            workflow,
+        )
+        # API/JSON inválido y campos canónicos ambiguos siguen fallando.
+        self.assertIn("set -euo pipefail", workflow)
+        self.assertIn("gh api", workflow)
+        self.assertIn("SHA del release inválido.", workflow)
+        self.assertIn("Timestamp del release inválido.", workflow)
+
     def test_workflow_filters_startup_failure_before_bounded_actions_evidence(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
