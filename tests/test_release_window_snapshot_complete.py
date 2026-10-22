@@ -217,7 +217,9 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
                     page(initial[:100]), page(initial[100:]),
                     page(initial[:100]), page(initial[100:]),
                 ]
-            pages = pair * (retries if drifting or malformed is not None else 1)
+            # Solo la deriva del indice consume los tres intentos.
+            # Metadatos estructurales invalidos se rechazan tras 2 GET.
+            pages = pair * (retries if drifting else 1)
             (base / "pages.json").write_text(json.dumps(pages), encoding="utf-8")
             (base / "calls.json").write_text("[]", encoding="utf-8")
 
@@ -309,10 +311,8 @@ class ReleaseWindowSnapshotCompleteTests(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("Search Issues incompleta", result.stderr)
-                retries = "RELEASE_SEARCH_BOUNDED_RETRY_START" in WORKFLOW
-                self.assertEqual(
-                    calls, ["page=1", "page=2"] * (3 if retries else 1),
-                )
+                # Metadata inválida no es deriva del índice; sin reintentos.
+                self.assertEqual(calls, ["page=1", "page=2"])
                 self.assertFalse(called, "Nunca evaluar freeze con metadata inválida")
 
     def test_release_window_shell_stable_reaches_evaluator(self) -> None:
