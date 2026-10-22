@@ -157,7 +157,7 @@ jobs:
             printf 'null\n' > /tmp/release-search-p2-${pass}.json
           fi
           if ! {
-          python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json 2> /tmp/release-search-parser-error-${pass}.txt
+          python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json
           import json
           import sys
           from datetime import datetime
@@ -234,7 +234,7 @@ jobs:
               fail("conteo incompleto")
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
-          }; then
+          } 2> /tmp/release-search-parser-error-${pass}.txt; then
             # Metadata estructural inválida no es drift transitorio: rechazar
             # sin repetir GET. Nunca escribir campos de Issues en el log.
             if grep -Eq '^ERROR: Search Issues incompleta: (Issue no canónico o malformado|updated_at no es UTC ISO-8601 canónico)$' /tmp/release-search-parser-error-${pass}.txt; then
