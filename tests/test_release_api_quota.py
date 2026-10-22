@@ -89,8 +89,8 @@ def _fake_gh_error(*, phase: str, message: str, partial_stdout: str = "",
         fake = Path(tmp) / "gh"
         fake.write_text(
             '#!/bin/sh\n'
-            'printf "called\\n" >> "$FAKE_GH_COUNT"\n'
-            'printf "%s\\n" "$FAKE_GH_MESSAGE" >&2\n'
+            'printf "called\n" >> "$FAKE_GH_COUNT"\n'
+            'printf "%s\n" "$FAKE_GH_MESSAGE" >&2\n'
             'printf "%s" "$FAKE_GH_PARTIAL"\n'
             'exit 1\n',
             encoding="utf-8",
@@ -162,7 +162,8 @@ class ReleaseApiQuotaTests(unittest.TestCase):
         self.assertEqual(block.count("for pass in 1 2; do"), 1)
         self.assertEqual(block.count("release_gh_api search -X GET"), 2)
         self.assertIn("if ! total_count=", block)
-        self.assertIn("if ! python3 - /tmp/release-search-p1-", block)
+        self.assertIn("if ! {", block)
+        self.assertIn("python3 - /tmp/release-search-p1-", block)
         self.assertIn("if ! python3 -m scripts.release_gate_search", block)
         self.assertIn("cmp -s /tmp/release-search-verified-1.json", block)
         self.assertIn("snapshot_attempt == 3", block)
@@ -217,13 +218,13 @@ print(json.dumps(records[n % len(records)]))
                     samples.write_text(json.dumps(snapshots), encoding="utf-8")
                     counter = path / "calls"
                     script = (
-                        "set -euo pipefail\\n"
-                        + helper + "\\n"
-                        + "search_calls=0\\ncomments_calls_min=0\\nmetadata_calls=0\\n"
-                        + "REPOSITORY=pl0n3r/Factory\\n"
+                        "set -euo pipefail\n"
+                        + helper + "\n"
+                        + "search_calls=0\\ncomments_calls_min=0\\nmetadata_calls=0\n"
+                        + "REPOSITORY=pl0n3r/Factory\n"
                         + 'query="repo:$REPOSITORY is:issue factory-human-gate in:body"\\n'
                         + block.replace("/tmp/release-", str(path / "release-"))
-                        + "\\necho VERIFIED\\n"
+                        + "\\necho VERIFIED\n"
                     )
                     environment = dict(os.environ, FAKE_GH_COUNT=str(counter),
                                        FAKE_GH_SAMPLES=str(samples),
