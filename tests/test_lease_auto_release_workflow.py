@@ -35,6 +35,29 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("issues: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
 
+    def test_phase_a_evidence_retention_supports_qa_window(self):
+        """Retener manifiestos para QA no certifica ni activa liberaciones."""
+        factory = WORKFLOW.read_text(encoding="utf-8")
+        consumer = (
+            ROOT / ".github/workflows/observador-reservas-consumidor.yml"
+        ).read_text(encoding="utf-8")
+        docs = (
+            ROOT / "docs/liberacion-automatica-de-reservas.md"
+        ).read_text(encoding="utf-8")
+        for workflow in (factory, consumer):
+            with self.subTest(workflow=workflow.splitlines()[0]):
+                self.assertEqual(workflow.count("retention-days: 30"), 1)
+                self.assertNotIn("retention-days: 7", workflow)
+                self.assertIn("actions/upload-artifact@", workflow)
+                self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'",
+                              workflow)
+                self.assertNotIn("issues: write", workflow)
+                self.assertNotIn("pull-requests: write", workflow)
+        self.assertIn("conserva este manifiesto 30 días", docs)
+        self.assertIn("100 ciclos terminales válidos", docs)
+        self.assertIn("QA", docs)
+        self.assertIn("lock/CAS", docs)
+
     def test_scheduled_executor_kill_switch_quota_and_shared_lock(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("cron: '*/10 * * * *'", text)

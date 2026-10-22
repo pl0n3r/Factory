@@ -66,7 +66,11 @@ campos. Cuando hay `UNKNOWN`, persiste únicamente un registro mínimo sin
 cuerpo ni cabeceras REST. El filtro exige exactamente **un objeto JSON
 válido por Issue**; si el CLI emite dos registros, datos fuera de esquema
 o JSON inválido, conserva `UNKNOWN` y no acredita el ciclo. El resumen del job muestra una fila saneada por Issue con estado, decisión, minutos enteros acotados (o `UNKNOWN`), fuente autenticada (o `UNKNOWN`) y razón del veto, sin imprimir el stdout REST ni del CLI. Un artefacto de GitHub Actions vinculado al run
-programado conserva este manifiesto 7 días; no se envía a comentarios.
+programado conserva este manifiesto 30 días; no se envía a comentarios.
+La ventana ampliada permite revisar evidencia de más ejecuciones programadas,
+pero no garantiza obtener 100 ciclos terminales válidos ni reemplaza la
+revisión individual de QA, la prueba negativa de actividad, el lock/CAS
+compartido o la autorización independiente del release `Factory@v1`.
 El manifiesto sólo puede marcar `candidate_terminal` cuando existe al menos
 una observación válida, ninguna `UNKNOWN` y la cantidad, estados e IDs únicos
 coinciden exactamente con los contadores del ciclo. Un censo vacío se mantiene
