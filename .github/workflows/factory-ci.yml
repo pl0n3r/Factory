@@ -156,7 +156,8 @@ jobs:
           else
             printf 'null\n' > /tmp/release-search-p2-${pass}.json
           fi
-          if ! python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json; then
+          if ! {
+          python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json
           import json
           import sys
           from datetime import datetime
@@ -233,6 +234,7 @@ jobs:
               fail("conteo incompleto")
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
+          }; then
             snapshot_retry=true
             break
           fi
