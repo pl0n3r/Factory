@@ -36,6 +36,8 @@ class ReadmeTandasTests(unittest.TestCase):
         self.assertIn("PLAN-AGENTES.md", README)
         self.assertIn("Cola automática canónica:** Factory, Condor, GrindFlow", PLAN)
         self.assertIn("ControlBot, AutoFactory y FactoryRunner", PLAN)
+        self.assertNotIn("<!-- factory:status:", README)
+        self.assertNotIn("<!-- factory:progress-readiness:", README)
 
 
 if __name__ == "__main__":
