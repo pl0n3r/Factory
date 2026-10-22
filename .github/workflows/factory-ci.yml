@@ -127,13 +127,16 @@ jobs:
           # Search Issues entrega máximo 100 filas por página; jamás decidir un freeze
           # desde un snapshot truncado (incluidos duplicados sin su canónico).
           query="repo:$REPOSITORY is:issue \"factory-human-gate\" in:body"
-          # Dos consultas completas independientes evitan aceptar una mezcla
-          # de páginas por un desplazamiento del índice entre lecturas.
+          # RELEASE_SEARCH_BOUNDED_RETRY_START
+          # Hasta tres pares independientes; cada inconsistencia descarta
+          # completamente ambas lecturas. Transporte/cuota fallan de inmediato.
+          for snapshot_attempt in 1 2 3; do
+          snapshot_retry=false
           for pass in 1 2; do
           search_calls=$((search_calls + 1))
           release_gh_api search -X GET search/issues -f q="$query" -f per_page=100 -f page=1 \
             -f sort=created -f order=asc > /tmp/release-search-p1-${pass}.json
-          total_count="$(jq -er '
+          if ! total_count="$(jq -er '
             if (.incomplete_results == false)
                and ((.total_count | type) == "number")
                and ((.total_count | floor) == .total_count)
@@ -142,7 +145,10 @@ jobs:
             then .total_count
             else error("Search Issues parcial, inválida o >200")
             end
-          ' /tmp/release-search-p1-${pass}.json)"
+          ' /tmp/release-search-p1-${pass}.json)"; then
+            snapshot_retry=true
+            break
+          fi
           if (( total_count > 100 )); then
             search_calls=$((search_calls + 1))
             release_gh_api search -X GET search/issues -f q="$query" -f per_page=100 -f page=2 \
@@ -150,7 +156,7 @@ jobs:
           else
             printf 'null\n' > /tmp/release-search-p2-${pass}.json
           fi
-          python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json
+          if ! python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json; then
           import json
           import sys
           from datetime import datetime
@@ -227,12 +233,29 @@ jobs:
               fail("conteo incompleto")
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
+            snapshot_retry=true
+            break
+          fi
           # Contrastar la proyección usada por el freeze contra las páginas REST.
-          python3 -m scripts.release_gate_search \
+          if ! python3 -m scripts.release_gate_search \
             "/tmp/release-search-p1-${pass}.json" \
             "/tmp/release-search-p2-${pass}.json" \
-            "/tmp/release-search-verified-${pass}.json"
+            "/tmp/release-search-verified-${pass}.json"; then
+            snapshot_retry=true
+            break
+          fi
           done
+          if [[ "$snapshot_retry" == false ]] &&
+             cmp -s /tmp/release-search-verified-1.json /tmp/release-search-verified-2.json; then
+            break
+          fi
+          if (( snapshot_attempt == 3 )); then
+            echo "::error::Release Search Issues inestable tras 3 pares completos; fail_closed=true"
+            exit 1
+          fi
+          echo "::notice::Release Search Issues inconsistente; descartando par $snapshot_attempt"
+          done
+          # RELEASE_SEARCH_BOUNDED_RETRY_END
           # Comparar filas completas, no solo cardinalidad ni IDs.
           # Cualquier variación del índice, bodies o metadatos niega el freeze.
           cmp -s /tmp/release-search-verified-1.json /tmp/release-search-verified-2.json || {
