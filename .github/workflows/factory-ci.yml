@@ -157,7 +157,7 @@ jobs:
             printf 'null\n' > /tmp/release-search-p2-${pass}.json
           fi
           if ! {
-          python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json
+          python3 - /tmp/release-search-p1-${pass}.json /tmp/release-search-p2-${pass}.json <<'PY' > /tmp/release-search-verified-${pass}.json 2> /tmp/release-search-parser-error-${pass}.txt
           import json
           import sys
           from datetime import datetime
@@ -235,6 +235,428 @@ jobs:
           print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
           PY
           }; then
+            # Metadata estructural inválida no es drift transitorio: rechazar
+            # sin repetir GET. Nunca escribir campos de Issues en el log.
+            if grep -Eq '^ERROR: Search Issues incompleta: (Issue no canónico o malformado|updated_at no es UTC ISO-8601 canónico) usada por el freeze contra las páginas REST.
+          if ! python3 -m scripts.release_gate_search \
+            "/tmp/release-search-p1-${pass}.json" \
+            "/tmp/release-search-p2-${pass}.json" \
+            "/tmp/release-search-verified-${pass}.json"; then
+            snapshot_retry=true
+            break
+          fi
+          done
+          if [[ "$snapshot_retry" == false ]] &&
+             cmp -s /tmp/release-search-verified-1.json /tmp/release-search-verified-2.json; then
+            break
+          fi
+          if [[ "$snapshot_retry" == false ]]; then
+            # Diagnóstico histórico preservado: un par completo distinto
+            # jamás llega al evaluador; el siguiente intento empieza desde cero.
+            echo "::notice::Search Issues cambió entre dos lecturas completas; descartando par $snapshot_attempt"
+          fi
+          if (( snapshot_attempt == 3 )); then
+            echo "::error::Release Search Issues inestable tras 3 pares completos; fail_closed=true"
+            exit 1
+          fi
+          echo "::notice::Release Search Issues inconsistente; descartando par $snapshot_attempt"
+          done
+          # RELEASE_SEARCH_BOUNDED_RETRY_END
+          # Comparar filas completas, no solo cardinalidad ni IDs.
+          # Cualquier variación del índice, bodies o metadatos niega el freeze.
+          cmp -s /tmp/release-search-verified-1.json /tmp/release-search-verified-2.json || {
+            echo "::error::Search Issues cambió entre dos lecturas completas"
+            exit 1
+          }
+          # Proyectar TODAS las filas verificadas antes de seleccionar gates.
+          # El parser canónico decide qué Issues necesitan comentarios, incluso
+          # cuando "factory-release" está escapado en JSON (p. ej. \u0072).
+          # Nunca usar un filtro textual previo que descarte markers válidos.
+          jq '[
+                .[]
+                | {number, state, title, body, updated_at}
+              ]' /tmp/release-search-verified-2.json > /tmp/release-issues-projected.json
+          # RELEASE_INVALID_GATE_METADATA_BEGIN
+          # Metadata from the same TWO verified Search Issues reads. Never infer
+          # state_reason from "closed", or trust one page/version in isolation.
+          # Keep the legacy five-field projection for the independent verifier.
+          python3 - /tmp/release-search-p1-1.json /tmp/release-search-p2-1.json /tmp/release-search-p1-2.json /tmp/release-search-p2-2.json /tmp/release-issues-projected.json <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          def reasons(first, second):
+              seen = {}
+              for filename in (first, second):
+                  page = json.loads(Path(filename).read_text(encoding="utf-8"))
+                  if page is None:
+                      continue
+                  if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+                      raise SystemExit("ERROR: Evidence state_reason incompleta")
+                  for item in page["items"]:
+                      if not isinstance(item, dict) or type(item.get("number")) is not int:
+                          raise SystemExit("ERROR: Issue de procedencia inválido")
+                      number = item["number"]
+                      if number in seen:
+                          raise SystemExit("ERROR: Issue de procedencia duplicado")
+                      reason = item.get("state_reason")
+                      if "state_reason" in item and reason is not None and reason not in (
+                          "completed", "not_planned", "duplicate", "reopened"
+                      ):
+                          raise SystemExit("ERROR: state_reason no confiable")
+                      seen[number] = (
+                          item.get("number"), item.get("state"), item.get("updated_at"),
+                          item.get("body"), "state_reason" in item, reason,
+                      )
+              return seen
+
+          first = reasons(sys.argv[1], sys.argv[2])
+          second = reasons(sys.argv[3], sys.argv[4])
+          if first != second:
+              raise SystemExit("ERROR: state_reason cambió entre snapshots")
+          path = Path(sys.argv[5])
+          inventory = json.loads(path.read_text(encoding="utf-8"))
+          if not isinstance(inventory, list) or len(inventory) != len(first):
+              raise SystemExit("ERROR: Inventario de procedencia incompleto")
+          for issue in inventory:
+              raw = second.get(issue.get("number"))
+              if raw is None or (issue["number"], issue["state"], issue["updated_at"], issue["body"]) != raw[:4]:
+                  raise SystemExit("ERROR: La procedencia no corresponde al body actual")
+              if raw[4]:
+                  issue["state_reason"] = raw[5]
+          path.write_text(json.dumps(inventory, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+          PY
+          # RELEASE_INVALID_GATE_METADATA_END
+          # RELEASE_GATE_CANDIDATES_START
+          # Igual que gate_records: todo window-intent pasa al evaluador y
+          # falla cerrado si es inválido. Solo los gates legacy sin ventana
+          # que el evaluador mismo descarta se pueden omitir antes de leer
+          # páginas de comentarios. No cachear decisiones ni snapshots.
+          python3 - /tmp/release-issues-projected.json <<'PY' > /tmp/release-issues.json
+          import json
+          import sys
+          from pathlib import Path
+          from scripts.release_window import (
+              WINDOW_INTENT_RE, ReleaseWindowError, _gate_from_body,
+              _legacy_factory_release_intent,
+          )
+
+          rows = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if not isinstance(rows, list):
+              raise SystemExit("ERROR: Inventario verificado inválido")
+          selected = []
+          for item in rows:
+              if not isinstance(item, dict) or not isinstance(item.get("body"), str):
+                  raise SystemExit("ERROR: Issue verificado inválido")
+              body = item["body"]
+              if WINDOW_INTENT_RE.search(body):
+                  selected.append(item)
+              elif _legacy_factory_release_intent(body):
+                  try:
+                      gate_info = _gate_from_body(body)
+                  except ReleaseWindowError:
+                      # gate_records ignora el legacy inválido sin ventana.
+                      continue
+                  if gate_info is not None:
+                      selected.append(item)
+          print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
+          PY
+          # RELEASE_GATE_CANDIDATES_END
+          # RELEASE_ACTIVE_GATE_FILTER_START
+          # Todo window-intent se valida AUN si venció: un marker ambiguo falla
+          # cerrado. Solo ventanas no vencidas pueden bloquear pr-check. Las
+          # legacy sin ventana NUNCA congelan; no decidir desde filas parciales.
+          python3 - /tmp/release-issues.json "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PY' > /tmp/release-issues-active.json
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from scripts.release_window import (
+              WINDOW_INTENT_RE, ReleaseWindowError, _gate_from_body,
+              _window_from_body,
+          )
+
+          rows = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          now = datetime.strptime(sys.argv[2], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+          if not isinstance(rows, list):
+              raise SystemExit("ERROR: Inventario de gates inválido")
+          # Una ventana activa obliga a cargar TODOS los gates de esa
+          # versión: uno posterior, aunque caducado o legacy, puede
+          # reemplazar al canónico anterior según freeze_gate().
+          parsed = []
+          versions_with_live_window = set()
+          for issue in rows:
+              if not isinstance(issue, dict) or not isinstance(issue.get("body"), str):
+                  raise SystemExit("ERROR: Issue de gate inválido")
+              body = issue["body"]
+              try:
+                  gate = _gate_from_body(body)
+                  if gate is None:
+                      raise ReleaseWindowError("gate sin factory-release")
+                  parsed.append((issue, gate[1]))
+                  if WINDOW_INTENT_RE.search(body):
+                      window = _window_from_body(body, gate[2])
+                      if window is None:
+                          raise ReleaseWindowError("release-window sin ventana completa")
+                      if now <= window["expires_at"]:
+                          versions_with_live_window.add(gate[1])
+              except ReleaseWindowError as exc:
+                  raise SystemExit("ERROR: Ventana de gate inválida") from exc
+          selected = [
+              issue for issue, version in parsed
+              if version in versions_with_live_window
+          ]
+          print(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
+          PY
+          mv /tmp/release-issues-active.json /tmp/release-issues.json
+          # RELEASE_ACTIVE_GATE_FILTER_END
+          # Materializar antes del bucle: Bash no propaga fallos de jq dentro de <(...).
+          # -s exige una única raíz JSON array; [] es un inventario válido.
+          jq -s -c 'if length == 1 and (.[0] | type) == "array" then .[0][] else error("invalid_release_inventory") end' /tmp/release-issues.json > /tmp/release-issues.jsonl
+          printf '[]\n' > /tmp/release-gates.json
+          while IFS= read -r issue; do
+            number="$(jq -r '.number' <<<"$issue")"
+            [[ "$number" =~ ^[1-9][0-9]*$ ]] || {
+              echo "::error::Issue de release inválido"
+              exit 1
+            }
+            comments_calls_min=$((comments_calls_min + 1))
+            gh api --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" | jq -s -e '
+              def valid_comment:
+                if type != "object" then false
+                elif (.id | type) != "number" then false
+                elif (.user | type) != "object" then false
+                else (.id > 0 and (.id | floor) == .id
+                      and (.user.login | type) == "string"
+                      and (.body | type) == "string")
+                end;
+              if (length == 0 or length > 10 or any(.[]; type != "array")) then
+                error("invalid_comment_pages")
+              elif (any(.[]; length > 100) or
+                    (length > 1 and any(.[0:-1][]; length != 100)) or
+                    (.[-1] | length) == 100) then
+                error("incomplete_comment_pages")
+              else . end
+              | add
+              | if (length > 1000 or any(.[]; valid_comment | not)) then
+                  error("invalid_comment_shape")
+                else . end
+              | if ([.[].id] | unique | length) != length then
+                  error("duplicate_comment_id")
+                else . end
+              | map(
+                  select(.user.login == "github-actions[bot]")
+                  | select(
+                      (.body | contains("factory-human-decision"))
+                      or (.body | contains("factory-release-executed"))
+                      or (.body | contains("factory-human-gate-duplicate"))
+                      or (.body | contains("factory-invalid-gate"))
+                    )
+                  | if (.body | contains("factory-invalid-gate")) then
+                      if (.body == "<!-- factory-invalid-gate -->" or (.body | startswith("<!-- factory-invalid-gate -->\n")))
+                         and (.created_at | type) == "string"
+                         and (.updated_at | type) == "string"
+                      then {id, user: {login: .user.login}, body, created_at, updated_at}
+                      else error("invalid_gate_journal_not_authentic") end
+                    else
+                      . | {user: {login: .user.login}, body: (.body // "")}
+                    end
+                )
+            ' > /tmp/release-comments.json
+          # RELEASE_INVALID_GATE_JOURNAL_BEGIN
+          # A bot comment is provenance only, NEVER permission to skip a gate.
+          # Without trustworthy current issue state and canonical timestamps,
+          # reject the release snapshot rather than granting false authority.
+          python3 - "$issue" /tmp/release-comments.json <<'PY'
+          import json
+          import sys
+          from datetime import datetime
+          from pathlib import Path
+
+          def stamp(value):
+              if not isinstance(value, str):
+                  raise ValueError("missing timestamp")
+              date = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+              if date.strftime("%Y-%m-%dT%H:%M:%SZ") != value:
+                  raise ValueError("invalid UTC timestamp")
+              return date
+
+          issue = json.loads(sys.argv[1])
+          rows = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          if not isinstance(rows, list):
+              raise SystemExit("ERROR: Invalidación sin journal completo")
+          for row in rows:
+              if not isinstance(row, dict) or "id" not in row:
+                  continue  # Legacy markers preserve the original wire shape.
+              try:
+                  if (not isinstance(row.get("body"), str)
+                      or not (row["body"] == "<!-- factory-invalid-gate -->"
+                              or row["body"].startswith("<!-- factory-invalid-gate -->\n"))
+                          or row.get("user", {}).get("login") != "github-actions[bot]"
+                          or type(row.get("id")) is not int or row["id"] < 1
+                          or issue.get("state") != "closed"
+                          or issue.get("state_reason") not in ("completed", "not_planned", "duplicate")
+                          or "state_reason" not in issue
+                          or stamp(row.get("created_at")) > stamp(row.get("updated_at"))
+                          or stamp(row.get("updated_at")) > stamp(issue.get("updated_at"))):
+                      raise ValueError("unbound invalidation journal")
+              except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                  raise SystemExit("ERROR: Procedencia de invalidación UNKNOWN") from exc
+          PY
+          # RELEASE_INVALID_GATE_JOURNAL_END
+            jq --argjson issue "$issue"               --slurpfile comments /tmp/release-comments.json               '. + [{issue:$issue,comments:$comments[0]}]'               /tmp/release-gates.json > /tmp/release-gates.next
+            mv /tmp/release-gates.next /tmp/release-gates.json
+          done < /tmp/release-issues.jsonl
+
+          metadata_calls=$((metadata_calls + 1))
+          gh api "repos/$REPOSITORY/pulls/$PR" | jq '{number, body: (.body // "")}' > /tmp/release-pr.json
+          metadata_calls=$((metadata_calls + 1))
+          gh api "repos/$REPOSITORY/issues/$work_issue" | jq '{number, state, labels: [.labels[]? | {name}]}' > /tmp/release-work-item.json
+          echo "release_api_budget_min search=$search_calls comments=$comments_calls_min metadata=$metadata_calls note=minimum_attempts_paginate_may_expand"
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n             --arg now "$now"             --slurpfile gates /tmp/release-gates.json             --slurpfile pr /tmp/release-pr.json             --slurpfile work /tmp/release-work-item.json             '{now:$now,gates:$gates[0],pr:$pr[0],work_issue:$work[0]}'             > /tmp/release-window-input.json
+
+          python3 scripts/release_window.py pr-check             < /tmp/release-window-input.json             | tee /tmp/release-window-result.json
+
+  coordinacion:
+    name: Validar coordinación
+    needs: [release_window]
+    if: github.event_name == 'pull_request' && github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validar reserva, rama y colisiones
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          argumentos=()
+          if git cat-file -e "$BASE_SHA:.github/workflows/coordinacion-trabajo.yml" 2>/dev/null; then argumentos+=(--require-reservation); fi
+          state="$(gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state')"
+          case "$state" in
+            open) ;;
+            closed)
+              echo "::notice::PR #$PR ya está cerrado en estado live; se omite validación de lease terminal."
+              exit 0
+              ;;
+            *) echo "::error::Estado live inesperado para PR #$PR: $state"; exit 1 ;;
+          esac
+          python3 scripts/coordinar_trabajo.py validar-pr --repo "$REPOSITORIO" --pr "$PR" "${argumentos[@]}"
+
+  acceptance:
+    name: Criterios de aceptación
+    needs: [workflows, scripts, coordinacion]
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      checks: read
+      pull-requests: read
+    steps:
+      - name: Exigir gates base del mismo run
+        env:
+          RESULTADOS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for r in $RESULTADOS; do
+            [[ "$r" == "success" ]] || { echo "::error::Gate previo con resultado $r"; exit 1; }
+          done
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Construir evidencia del Issue y SHA
+        id: acceptance_evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          state="$(gh api "repos/$REPOSITORIO/pulls/$PR" --jq '.state')"
+          case "$state" in
+            open) echo "is_open=true" >> "$GITHUB_OUTPUT" ;;
+            closed)
+              echo "is_open=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::PR #$PR ya está cerrado en estado live; se omite evidencia de aceptación ligada a lease."
+              exit 0
+              ;;
+            *) echo "::error::Estado live inesperado para PR #$PR: $state"; exit 1 ;;
+          esac
+          [[ "$HEAD_REF" =~ ^trabajo/issue-([1-9][0-9]*)$ ]] || { echo "::error::Rama sin Issue canónico"; exit 1; }
+          issue="${BASH_REMATCH[1]}"
+          gh api "repos/$REPOSITORIO/issues/$issue" > /tmp/issue.json
+          gh api "repos/$REPOSITORIO/issues/$issue/comments?per_page=100" --paginate --slurp > /tmp/comments-pages.json
+          python3 - <<'PY' > /tmp/acceptance-pin.json
+          import json
+          from scripts.coordinar_trabajo import latest_reservation
+
+          pages = json.load(open("/tmp/comments-pages.json", encoding="utf-8"))
+          comments = [
+              comment
+              for page in pages
+              if isinstance(page, list)
+              for comment in page
+          ]
+          reservation = latest_reservation(comments)
+          pin = (
+              reservation.get("acceptance_sha256")
+              if isinstance(reservation, dict)
+              else None
+          )
+          print(json.dumps(pin))
+          PY
+          gh api "repos/$REPOSITORIO/commits/$SHA/check-runs?per_page=100" > /tmp/checks.json
+          jq -n \
+            --slurpfile issue /tmp/issue.json \
+            --slurpfile checks /tmp/checks.json \
+            --slurpfile pin /tmp/acceptance-pin.json \
+            '{issue:$issue[0], checks:$checks[0], acceptance_sha256:$pin[0], require_pin:true}' \
+            > /tmp/acceptance.json
+
+      - name: Verificar criterios específicos
+        if: steps.acceptance_evidence.outputs.is_open == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/aceptacion_kit.py < /tmp/acceptance.json             | tee /tmp/acceptance-result.json
+          {
+            printf '### Criterios de aceptación\n\n```json\n'
+            cat /tmp/acceptance-result.json
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  validar:
+    name: Validar
+    needs: [workflows, scripts, coordinacion, acceptance]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTADOS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for r in $RESULTADOS; do case "$r" in success|skipped) ;; *) echo "::error::Gate con resultado $r"; exit 1 ;; esac; done
+ /tmp/release-search-parser-error-${pass}.txt; then
+              cat /tmp/release-search-parser-error-${pass}.txt >&2
+              exit 1
+            fi
             snapshot_retry=true
             break
           fi
