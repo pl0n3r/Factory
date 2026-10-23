@@ -58,7 +58,7 @@ class FactoryRunnerPerformanceContractTests(unittest.TestCase):
         # Budget es objetivo propuesto de vigilancia; no baseline observado.
         self.assertEqual(metric["budget"], {"operator": "lte", "value": 120, "unit": "s"})
         self.assertNotIn("create_work_item", metric["allowed_actions"])
-        self.assertEqual(metric["window"], {"duration_seconds": 124, "min_samples": 1})
+        self.assertEqual(metric["window"], {"duration_seconds": 1, "min_samples": 1})
 
         extra = copy.deepcopy(raw)
         extra["surfaces"][0]["metrics"][0]["actual_product_memory"] = 0
@@ -97,11 +97,74 @@ class FactoryRunnerPerformanceContractTests(unittest.TestCase):
         self.test_workflow_elapsed_contract_is_valid()
         metric = load_contract()["surfaces"][0]["metrics"][0]
         self.assertEqual(metric["baseline"]["value"], 124)
-        self.assertEqual(metric["window"]["duration_seconds"], 124)
+        self.assertEqual(metric["window"]["duration_seconds"], 1)
         self.assertEqual(metric["evidence"]["ref"], RUN_WORKFLOW)
         # La línea base real supera el budget prospectivo de 120 s.
         self.assertGreater(metric["baseline"]["value"], metric["budget"]["value"])
         self.test_unmeasured_runtime_metrics_remain_unknown()
+
+
+    @staticmethod
+    def _ci_observation(value, **overrides):
+        """Fixture CI sintética: no atribuir sus duraciones al run histórico."""
+        observation = {
+            "version": 1, "project": PROJECT,
+            "surface": "ci.workflow", "metric": "workflow_elapsed",
+            "value": value, "unit": "s",
+            "observed_at": WORKFLOW_UPDATED,
+            "window_seconds": value, "sample_count": 1,
+            "severity": "medium", "operational_impact": False,
+            "bottleneck": "infrastructure",
+            "evidence_ref": "fixture:factoryrunner-ci-workflow",
+            "sha": "f" * 40, "release": None,
+        }
+        observation.update(overrides)
+        return observation
+
+    def test_fast_workflow_can_be_current_without_insufficient_window(self):
+        result = detect_performance(
+            load_contract(), self._ci_observation(100),
+            evaluated_at=WORKFLOW_UPDATED,
+        )
+        self.assertEqual(result["evidence_state"], "CURRENT")
+        self.assertEqual(result["classification"], "PERF_INFO")
+        self.assertEqual(result["reasons"], [])
+        self.assertFalse(result["breach"])
+        self.assertEqual(result["budget"]["value"], 120)
+        self.assertFalse(result["operational_impact"])
+
+    def test_slow_workflow_still_reports_material_budget_breach(self):
+        result = detect_performance(
+            load_contract(), self._ci_observation(172),
+            evaluated_at=WORKFLOW_UPDATED,
+        )
+        self.assertEqual(result["evidence_state"], "CURRENT")
+        self.assertEqual(result["classification"], "PERF_DEGRADATION")
+        self.assertEqual(result["reasons"], [])
+        self.assertTrue(result["breach"])
+        self.assertEqual(result["observed"]["value"], 172)
+        self.assertEqual(result["baseline"]["value"], 124)
+        self.assertEqual(result["delta"], 48)
+        self.assertEqual(result["allowed_actions"], ["benchmark", "diagnose", "observe"])
+
+    def test_stale_or_uncontracted_ci_remains_unknown_or_review(self):
+        stale = detect_performance(
+            load_contract(), self._ci_observation(100),
+            evaluated_at="2026-10-18T05:21:44Z",
+        )
+        self.assertEqual(stale["classification"], "PERF_REVIEW")
+        self.assertEqual(stale["evidence_state"], "STALE")
+        self.assertIn("stale", stale["reasons"])
+        unknown = detect_performance(
+            load_contract(), self._ci_observation(
+                100, surface="execution.runtime", metric="memory",
+            ),
+            evaluated_at=WORKFLOW_UPDATED,
+        )
+        self.assertEqual(unknown["classification"], "PERF_REVIEW")
+        self.assertEqual(unknown["evidence_state"], "UNKNOWN")
+        self.assertIsNone(unknown["breach"])
+        self.assertEqual(unknown["allowed_actions"], [])
 
 
 if __name__ == "__main__":
