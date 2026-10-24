@@ -19,6 +19,51 @@ class NoAccessPort:
 
 
 class LeaseAutoReleaseRunTests(unittest.TestCase):
+    def test_unknown_reason_is_whitelisted_and_fail_closed(self):
+        """Identidad, duplicados y secretos jamás acreditan observaciones."""
+        import json
+        from scripts.lease_auto_release_run import sanitized_unknown_observer_reason
+
+        fallback = "unverifiable_observation"
+        ok = {
+            "issue": 1495, "state": "UNKNOWN", "action": "unknown",
+            "reason": "collector_unknown", "activity_age_minutes": None,
+            "activity_source": None, "release_authorized": False,
+            "lock_verified": False, "cas_verified": False, "mutations": 0,
+        }
+        for reason in ("collector_unknown", "inconsistent_authenticated_sources",
+                       "review_evidence_unknown", "repository_identity_unknown"):
+            self.assertEqual(sanitized_unknown_observer_reason(
+                json.dumps({**ok, "reason": reason}), 1495), reason)
+        for change in (
+            {"issue": 1496}, {"issue": True}, {"state": "read_only"},
+            {"action": "release"}, {"reason": "private_token"},
+            {"reason": "collector_unknown\nsecret"},
+            {"release_authorized": True}, {"lock_verified": True},
+            {"cas_verified": True}, {"mutations": 1}, {"mutations": False},
+            {"activity_age_minutes": 1}, {"activity_source": "issue_comment"},
+            {"other": "private-token"},
+        ):
+            with self.subTest(change=change):
+                self.assertEqual(sanitized_unknown_observer_reason(
+                    json.dumps({**ok, **change}), 1495), fallback)
+        raw = json.dumps(ok)
+        for bad in (
+            raw + "\n" + raw, raw[:-1], raw + "private-token", raw * 100,
+            raw.replace('"reason":', '"reason": "private-token", "reason":', 1),
+            '{"issue":1495,"reason":"private-token"}',
+        ):
+            with self.subTest(bad=bad[:20]):
+                self.assertEqual(sanitized_unknown_observer_reason(
+                    bad, 1495), fallback)
+        for value in (None, [], 1495):
+            self.assertEqual(sanitized_unknown_observer_reason(
+                value, 1495), fallback)
+        for issue in (True, -1, 0, "1495"):
+            self.assertEqual(sanitized_unknown_observer_reason(
+                raw, issue), fallback)
+
+
     def test_read_only_report_types_cannot_be_constructed_with_release_authority(self):
         from dataclasses import FrozenInstanceError
         from scripts.lease_auto_release_run import (

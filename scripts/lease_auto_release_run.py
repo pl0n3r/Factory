@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 import re
 from typing import Any
 
@@ -19,6 +20,53 @@ from scripts.lease_release_executor import (
     Result, Snapshot, _eligible, _trusted, execute,
 )
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
+
+
+# Sólo motivos enumerados; los mensajes externos no se convierten en logs.
+_OBSERVER_UNKNOWN_REASONS = frozenset({
+    "collector_unknown", "future_activity", "inconsistent_authenticated_sources",
+    "review_evidence_unknown", "review_veto_inconsistent", "invalid_decision",
+    "inactivity_not_proven", "unverifiable_integration", "invalid_clock",
+    "repository_not_authorized", "repository_identity_unknown", "observer_failed",
+})
+
+
+def sanitized_unknown_observer_reason(raw: Any, issue: int) -> str:
+    """Preserva una causa UNKNOWN de whitelist sin conferir autoridad."""
+    fallback = "unverifiable_observation"
+    if type(raw) is not str or len(raw) > 4096 or type(issue) is not int or issue <= 0:
+        return fallback
+
+    def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate_json_key")
+            result[key] = value
+        return result
+
+    try:
+        record = json.loads(raw, object_pairs_hook=unique_keys)
+    except (TypeError, ValueError):
+        return fallback
+    if (type(record) is not dict
+            or set(record) != {
+                "issue", "state", "action", "reason", "activity_age_minutes",
+                "activity_source", "release_authorized", "lock_verified",
+                "cas_verified", "mutations",
+            }
+            or type(record["issue"]) is not int or record["issue"] != issue
+            or record["state"] != "UNKNOWN" or record["action"] != "unknown"
+            or type(record["reason"]) is not str
+            or record["reason"] not in _OBSERVER_UNKNOWN_REASONS
+            or record["activity_age_minutes"] is not None
+            or record["activity_source"] is not None
+            or record["release_authorized"] is not False
+            or record["lock_verified"] is not False
+            or record["cas_verified"] is not False
+            or type(record["mutations"]) is not int or record["mutations"] != 0):
+        return fallback
+    return record["reason"]
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,31 @@ class DenyTransport:
 
 
 class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
+    def test_unknown_observer_reason_is_sanitized_without_release_authority(self):
+        """UNKNOWN conserva veto aunque indique una causa saneada."""
+        body = WORKFLOW.read_text(encoding="utf-8")
+        anchor = "              unknown_observations=$((unknown_observations + 1))"
+        self.assertEqual(body.count(anchor), 1)
+        fallback = body.split(anchor, 1)[1].split(
+            '          done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"', 1)[0]
+        for needle in (
+            "sanitized_unknown_observer_reason", "lease-observer-raw.json",
+            'safe_reason="unverifiable_observation"', '"state":"UNKNOWN"',
+            '"action":"unknown"', '"reason":"%s"',
+            '"release_authorized":false', '"lock_verified":false',
+            '"cas_verified":false', '"mutations":0',
+            '"$issue_number" "$safe_reason"',
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, fallback)
+        self.assertIn("terminal_certified: false", body)
+        self.assertIn("if (( unknown_observations > 0 )); then", body)
+        self.assertIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'false'", body)
+        self.assertNotIn("FACTORY_LEASE_AUTO_RELEASE_ENABLED: 'true'", body)
+        self.assertNotIn("issues: write", body)
+        self.assertNotIn("pull-requests: write", body)
+
+
     def test_readme_reports_both_reservation_release_phases(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         docs = (ROOT / "docs/liberacion-automatica-de-reservas.md").read_text(encoding="utf-8")
@@ -266,8 +291,10 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
     def test_unknown_observation_marks_cycle_invalid_but_continues_inventory(self):
         """El cron no puede acreditar como verde un censo con UNKNOWN."""
         import os
+        import shlex
         import shutil
         import subprocess
+        import sys
         import tempfile
         import textwrap
 
@@ -287,6 +314,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             shim = root / "python3"
             shim.write_text(
                 "#!/bin/sh\n"
+                f"if [ \"$1\" = - ]; then exec {shlex.quote(sys.executable)} \"$@\"; fi\n"
                 "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
                 "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\n"
                 "printf '{\"issue\":%s,\"state\":\"read_only\",\"action\":\"wait\",\"reason\":\"protected_or_active_work\",\"activity_age_minutes\":5,\"activity_source\":\"reservation_marker\",\"release_authorized\":false,\"lock_verified\":false,\"cas_verified\":false,\"mutations\":0}\n' \"$3\"\n"

@@ -322,9 +322,23 @@ jobs:
               valid_observations=$((valid_observations + 1))
             else
               unknown_observations=$((unknown_observations + 1))
-              # Registro con datos mínimos, no repetir el JSON rechazado.
-              printf '{"issue":%s,"state":"UNKNOWN","action":"unknown","reason":"unverifiable_observation","release_authorized":false,"lock_verified":false,"cas_verified":false,"mutations":0}\n' \
-                "$issue_number" >> "$RUNNER_TEMP/lease-observer-results.jsonl"
+              # Causa tipada exclusivamente de JSON único, sanitizado y sin datos privados.
+              safe_reason="$(python3 - "$RUNNER_TEMP/lease-observer-raw.json" "$issue_number" <<'PY'
+          import sys
+          from pathlib import Path
+          from scripts.lease_auto_release_run import sanitized_unknown_observer_reason
+          try:
+              candidate = Path(sys.argv[1])
+              raw = (candidate.read_text(encoding="utf-8")
+                     if candidate.stat().st_size <= 4096 else "")
+              print(sanitized_unknown_observer_reason(raw, int(sys.argv[2])))
+          except (OSError, UnicodeError, TypeError, ValueError):
+              print("unverifiable_observation")
+          PY
+              )" || safe_reason="unverifiable_observation"
+              # No repetir respuestas REST, stdout del CLI ni identidades.
+              printf '{"issue":%s,"state":"UNKNOWN","action":"unknown","reason":"%s","release_authorized":false,"lock_verified":false,"cas_verified":false,"mutations":0}\n' \
+                "$issue_number" "$safe_reason" >> "$RUNNER_TEMP/lease-observer-results.jsonl"
               echo "::notice::Issue #${issue_number}: observación UNKNOWN o fallida (fail-closed, 0 mutaciones)."
             fi
           done < "$RUNNER_TEMP/lease-active-issue-numbers.txt"
