@@ -55,7 +55,7 @@ class BootstrapCoordinationWorkflowTests(unittest.TestCase):
     def test_artifact_handoff_is_sha_pinned_without_permission_expansion(self):
         text=WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",text)
-        self.assertIn("actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",text)
+        self.assertIn("actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",text)
         self.assertIn("include-hidden-files: true",text)
         self.assertIn("permissions:\n  contents: read",text)
         self.assertNotIn("contents: write",text)
