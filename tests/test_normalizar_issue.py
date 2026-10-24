@@ -386,6 +386,85 @@ No inventar.
             )
         )
 
+    @staticmethod
+    def _new_claims_body(paths):
+        """Fixture legacy: normaliza un marker nuevo, sin reserva existente."""
+        rows = "\n".join(f"- `{path}`" for path in paths)
+        return (
+            "## Problema\nUn contrato de issue nuevo.\n\n"
+            "## Trabajo\nPreparar solo archivos exactos.\n\n"
+            "## Límites\nNo cambiar authority ni activos existentes.\n\n"
+            "## Criterios\n"
+            "- [ ] [AC-01] `tests/test_normalizar_issue.py::NormalizarIssueTests::"
+            "test_new_claims_directory_and_globs_fail_closed`.\n\n"
+            "### Rutas reclamadas\n" + rows + "\n"
+        )
+
+    def test_new_claims_directory_and_globs_fail_closed(self):
+        for unsafe, code in (("src/", "directory_claim"), ("docs/", "directory_claim"),
+                             ("src/**", "glob_claim"), ("*.py", "glob_claim")):
+            with self.subTest(unsafe=unsafe):
+                body = self._new_claims_body(["src/safe.py", unsafe])
+                result = normalize_issue_body(body, task_metadata=TASK_METADATA)
+                self.assertFalse(result.complete)
+                self.assertIn(code, str(result.missing))
+                self.assertNotIn("<!-- factory-plan-task ", result.body)
+                plan = plan_issue_normalization(body, task_metadata=TASK_METADATA)
+                self.assertEqual(plan["action"], "comment_and_skip")
+                self.assertTrue(plan["continue_same_cycle"])
+                self.assertNotIn(unsafe, plan["comment"])
+
+    def test_new_claims_too_many_suggest_partition_and_no_marker(self):
+        paths = [f"src/module_{i:02d}.py" for i in range(7)]
+        for candidate in (paths, list(reversed(paths))):
+            result = normalize_issue_body(self._new_claims_body(candidate),
+                                          task_metadata=TASK_METADATA)
+            self.assertFalse(result.complete)
+            self.assertNotIn("<!-- factory-plan-task ", result.body)
+            self.assertIn("particionar en hojas de máximo 6 archivos",
+                          str(result.missing))
+            self.assertIn("serializar integraciones compartidas",
+                          str(result.missing))
+            self.assertIsNotNone(result.comment)
+            self.assertNotIn(paths[0], result.comment)
+
+    def test_new_claims_preserve_canonical_legacy_markers(self):
+        original = normalize_issue_body(
+            self._new_claims_body(["src/safe.py"]),
+            task_metadata=TASK_METADATA,
+        )
+        self.assertTrue(original.complete, original.missing)
+        self.assertIn('"paths":["src/safe.py"]', original.body)
+        legacy = original.body.replace('"paths":["src/safe.py"]',
+                                       '"paths":["src/"]')
+        self.assertEqual(parse_task_marker(legacy)["paths"], ["src/"])
+        result = normalize_issue_body(legacy, task_metadata=TASK_METADATA)
+        self.assertTrue(result.complete)
+        self.assertFalse(result.changed)
+        self.assertEqual(result.body, legacy)
+        self.assertEqual(plan_issue_normalization(
+            legacy, task_metadata=TASK_METADATA)["action"], "take")
+
+    def test_new_claims_mixed_unsafe_paths_do_not_partially_normalize(self):
+        private = "../../PRIVATE_ACCESS_TOKEN_42"
+        tests = (
+            (["src/safe.py", private], "invalid_path"),
+            (["src/safe.py", "src/safe.py"], "duplicate_path"),
+            (["src/safe.py", "README.md", "readme.md"], "duplicate_path"),
+            (["src/safe.py", "   "], "invalid_path"),
+        )
+        for claims, code in tests:
+            with self.subTest(claims=claims):
+                body = self._new_claims_body(claims)
+                result = normalize_issue_body(body, task_metadata=TASK_METADATA)
+                self.assertFalse(result.complete)
+                self.assertIn(code, str(result.missing))
+                self.assertNotIn("<!-- factory-plan-task ", result.body)
+                action = plan_issue_normalization(body, task_metadata=TASK_METADATA)
+                self.assertEqual(action["action"], "comment_and_skip")
+                self.assertNotIn(private, action["comment"])
+                self.assertNotIn("src/safe.py", action["comment"])
+
 
 if __name__ == "__main__":
     unittest.main()

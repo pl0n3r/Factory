@@ -16,6 +16,7 @@ from scripts.aceptacion_kit import (
     parse_contract,
 )
 from scripts.orquestador_kit import PlanError, parse_task_marker
+from scripts.validar_claims_issue import MAX_PATHS_PER_LEAF, inspect_claim_paths
 
 MAX_BODY = 200_000
 CANONICAL_HEADINGS = (
@@ -179,15 +180,9 @@ def _extract_claim_paths(body: str) -> tuple[str, ...]:
             break
         match = PATH_LINE.fullmatch(line)
         if match:
-            value = match.group(1).strip()
-            if (
-                value
-                and not value.startswith(("/", "./"))
-                and "\\" not in value
-                and ".." not in value.split("/")
-                and value not in paths
-            ):
-                paths.append(value)
+            # No filtrar ni deduplicar antes del lint: una entrada mala no
+            # puede convertirse silenciosamente en un marker parcial.
+            paths.append(match.group(1).strip())
     return tuple(paths)
 
 
@@ -200,6 +195,18 @@ def _task_marker(body: str, metadata: dict[str, object] | None) -> tuple[str | N
     paths = _extract_claim_paths(body)
     if not paths:
         return None, ("Rutas reclamadas",)
+    # Solo markers NUEVOS: los contratos canónicos legacy con V3 siguen
+    # siendo propiedad de Coordinación y no se reinterpretan aquí.
+    claim_report = inspect_claim_paths(list(paths))
+    if not claim_report["valid"]:
+        if claim_report["needs_partition"]:
+            return None, (
+                f"Rutas reclamadas: particionar en hojas de máximo {MAX_PATHS_PER_LEAF} archivos y serializar integraciones compartidas",
+            )
+        # Los códigos son un enum cerrado del lint; nunca reflejar texto
+        # hostil, nombres de archivos o PII en el comentario de reparación.
+        reason_codes = ", ".join(claim_report["reason_codes"])
+        return None, (f"Rutas reclamadas inválidas ({reason_codes}): usar archivos exactos, sin directorios, globs ni duplicados",)
     if metadata is None:
         return None, ("metadata factory-plan-task",)
 
