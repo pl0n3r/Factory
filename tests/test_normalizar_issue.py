@@ -453,6 +453,9 @@ No inventar.
             "- `src/` (módulo)",
             "- `src/safe.py` (duplicado)",
             "* `src/safe.py` # legacy",
+            "- ``",
+            "-",
+            "src/private.py",
         )
         for bullet in malformed:
             with self.subTest(bullet=bullet):
