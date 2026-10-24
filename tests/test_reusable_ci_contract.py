@@ -18,3 +18,9 @@ class T(unittest.TestCase):
   for text in (C,L):
    for a in re.findall(P,text,re.M):
     if not a.startswith("./"): self.assertRegex(a,r"@[0-9a-f]{40}$")
+
+ def test_setup_actions_minor_pins_are_exact(self):
+  self.assertIn("uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962",C)
+  self.assertIn("uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",C)
+  self.assertIn("cache-mode: read",C)
+  self.assertIn("persist-credentials: false",C)

@@ -41,5 +41,12 @@ class PreviewWorkflowContractTests(unittest.TestCase):
         self.assertIn("Nunca deben tocar recursos live en preview", DOC)
 
 
+    def test_minor_setup_action_pins_are_exact(self):
+        self.assertIn("uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962", REUSABLE)
+        self.assertIn("uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1", REUSABLE)
+        self.assertIn("cache-mode: read", REUSABLE)
+        self.assertIn("persist-credentials: false", REUSABLE)
+
+
 if __name__ == "__main__":
     unittest.main()
