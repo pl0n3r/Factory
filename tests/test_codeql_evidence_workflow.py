@@ -16,8 +16,8 @@ class CodeqlEvidenceWorkflowTests(unittest.TestCase):
             self.text,
         )
         self.assertNotIn("security-events: write", self.text)
-        self.assertIn("github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee", self.text)
-        self.assertIn("github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee", self.text)
+        self.assertIn("github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370", self.text)
+        self.assertIn("github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370", self.text)
         self.assertIn("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", self.text)
         self.assertIn("persist-credentials: false", self.text)
 
