@@ -184,10 +184,12 @@ def _extract_claim_paths(body: str) -> tuple[str, ...]:
             # No filtrar ni deduplicar antes del lint: una entrada mala no
             # puede convertirse silenciosamente en un marker parcial.
             paths.append(match.group(1).strip())
-        elif line.strip() and not line.lstrip().startswith("<!--"):
-            # Un bullet no canónico (sin backticks, anotado o con sufijo)
-            # también es un claim declarado. Señal genérica inválida al
-            # lint; nunca omitirlo ni reproducir su contenido en comentarios.
+        elif (
+            re.match(r"^\\s*[-*](?:\\s|$)", line)
+            or ("/" in line and len(line.strip().split()) == 1)
+        ):
+            # Detectar bullets malformados y paths sin viñeta, sin bloquear
+            # notas de prosa legacy que deben conservarse tal cual.
             paths.append("")
     return tuple(paths)
 
