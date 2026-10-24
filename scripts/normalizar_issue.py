@@ -166,6 +166,7 @@ def _acceptance_marker(section: str) -> tuple[str | None, tuple[str, ...]]:
 
 
 def _extract_claim_paths(body: str) -> tuple[str, ...]:
+    """Extrae rutas propuestas y señala toda línea inválida sin filtrar claims."""
     lines = body.splitlines()
     start = None
     for index, line in enumerate(lines):
@@ -183,7 +184,7 @@ def _extract_claim_paths(body: str) -> tuple[str, ...]:
             # No filtrar ni deduplicar antes del lint: una entrada mala no
             # puede convertirse silenciosamente en un marker parcial.
             paths.append(match.group(1).strip())
-        elif re.match(r"^\\s*[-*]\\s+", line):
+        elif line.strip() and not line.lstrip().startswith("<!--"):
             # Un bullet no canónico (sin backticks, anotado o con sufijo)
             # también es un claim declarado. Señal genérica inválida al
             # lint; nunca omitirlo ni reproducir su contenido en comentarios.
