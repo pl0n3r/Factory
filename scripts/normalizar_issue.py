@@ -185,7 +185,8 @@ def _extract_claim_paths(body: str) -> tuple[str, ...]:
             # puede convertirse silenciosamente en un marker parcial.
             paths.append(match.group(1).strip())
         elif (
-            re.match(r"^\\s*[-*](?:\\s|$)", line)
+            line.lstrip().startswith(("- ", "* ", "-\t", "*\t"))
+            or line.strip() in ("-", "*")
             or ("/" in line and len(line.strip().split()) == 1)
         ):
             # Detectar bullets malformados y paths sin viñeta, sin bloquear
