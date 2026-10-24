@@ -445,6 +445,38 @@ No inventar.
         self.assertEqual(plan_issue_normalization(
             legacy, task_metadata=TASK_METADATA)["action"], "take")
 
+    def test_new_claims_malformed_bullets_block_partial_markers(self):
+        """AC-04: ni bullets anotados ni rutas sin backticks desaparecen."""
+        malformed = (
+            "- `src/**` (revisar)",
+            "- src/**",
+            "- `src/` (módulo)",
+            "- `src/safe.py` (duplicado)",
+            "* `src/safe.py` # legacy",
+        )
+        for bullet in malformed:
+            with self.subTest(bullet=bullet):
+                body = self._new_claims_body(["src/safe.py"]) + bullet + "\n"
+                result = normalize_issue_body(body, task_metadata=TASK_METADATA)
+                self.assertFalse(result.complete)
+                self.assertIn("invalid_path", str(result.missing))
+                self.assertNotIn("<!-- factory-plan-task ", result.body)
+                plan = plan_issue_normalization(body, task_metadata=TASK_METADATA)
+                self.assertEqual(plan["action"], "comment_and_skip")
+                self.assertNotIn("src/safe.py", plan["comment"])
+                self.assertNotIn("src/**", plan["comment"])
+        many = self._new_claims_body(["src/safe.py"]) + (
+            "- ruta sin backticks\n" * 65
+        )
+        result = normalize_issue_body(many, task_metadata=TASK_METADATA)
+        self.assertFalse(result.complete)
+        self.assertIn("invalid_input_size", str(result.missing))
+        self.assertNotIn("<!-- factory-plan-task ", result.body)
+        plan = plan_issue_normalization(many, task_metadata=TASK_METADATA)
+        self.assertEqual(plan["action"], "comment_and_skip")
+        self.assertNotIn("ruta sin backticks", plan["comment"])
+
+
     def test_new_claims_mixed_unsafe_paths_do_not_partially_normalize(self):
         private = "../../PRIVATE_ACCESS_TOKEN_42"
         tests = (
