@@ -291,8 +291,10 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
     def test_unknown_observation_marks_cycle_invalid_but_continues_inventory(self):
         """El cron no puede acreditar como verde un censo con UNKNOWN."""
         import os
+        import shlex
         import shutil
         import subprocess
+        import sys
         import tempfile
         import textwrap
 
@@ -312,6 +314,7 @@ class LeaseAutoReleaseWorkflowTests(unittest.TestCase):
             shim = root / "python3"
             shim.write_text(
                 "#!/bin/sh\n"
+                f"if [ \"$1\" = - ]; then exec {shlex.quote(sys.executable)} \"$@\"; fi\n"
                 "printf '%s\\n' \"$3\" >> \"$SEEN_PATH\"\n"
                 "if [ \"$3\" = 1364 ] && [ \"$FAIL_FIRST\" = 1 ]; then exit 1; fi\n"
                 "printf '{\"issue\":%s,\"state\":\"read_only\",\"action\":\"wait\",\"reason\":\"protected_or_active_work\",\"activity_age_minutes\":5,\"activity_source\":\"reservation_marker\",\"release_authorized\":false,\"lock_verified\":false,\"cas_verified\":false,\"mutations\":0}\n' \"$3\"\n"
