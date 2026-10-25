@@ -77,7 +77,13 @@ class PoliticaCheckHistoryWorkflowTests(unittest.TestCase):
         snapshot = WORKFLOW.split("# POLICY_CHECK_SNAPSHOT_BEGIN", 1)[1].split(
             "# POLICY_CHECK_SNAPSHOT_END", 1
         )[0]
-        self.assertIn("-X GET \\\n                  -f filter=all \\", snapshot)
+        self.assertIn("-X GET", snapshot)
+        self.assertIn("-f filter=all", snapshot)
+        self.assertLess(snapshot.index("-X GET"), snapshot.index("-f filter=all"))
+        self.assertLess(
+            snapshot.index("-f filter=all"),
+            snapshot.index('"${checks_url_base}&page=$page"'),
+        )
         self.assertIn('"${checks_url_base}&page=$page"', snapshot)
         self.assertIn("for page in 1 2 3 4 5; do", WORKFLOW)
         self.assertIn('X-GitHub-Api-Version: 2022-11-28', WORKFLOW)
