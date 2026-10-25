@@ -91,9 +91,15 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
                 inspect_artifact(archive(payload(manifest)), metadata)
 
     def test_deep_json_metadata_maps_to_invalid_evidence(self):
+        from unittest.mock import patch
         from scripts.lease_phase_a_artifact_qa import _json
-        with self.assertRaises(ArtifactQAError):
-            _json(b"[" * 1500 + b"]" * 1500)
+        # Some CI suites raise sys recursionlimit. Force the parser failure
+        # deterministically so this regression cannot depend on that setting.
+        with patch("scripts.lease_phase_a_artifact_qa.json.loads",
+                   side_effect=RecursionError("synthetic parser depth")):
+            with self.assertRaises(ArtifactQAError) as caught:
+                _json(b"[]")
+        self.assertEqual(str(caught.exception), "invalid_json")
 
     def test_documented_manual_attestation_and_no_network_or_release(self):
         source = (Path(__file__).resolve().parents[1] / "scripts/lease_phase_a_artifact_qa.py").read_text()
