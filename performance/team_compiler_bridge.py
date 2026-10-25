@@ -109,7 +109,7 @@ def compile_performance_team(
 def _require_fresh_at(detection: Mapping[str, Any], evaluated_at: str) -> None:
     """Revalida la frescura en la evaluacion actual, nunca en un snapshot viejo."""
     if not isinstance(evaluated_at, str) or re.fullmatch(
-        r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z", evaluated_at
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", evaluated_at
     ) is None:
         raise PerformanceTeamCompilerBridgeError("evaluated_at debe ser UTC exacto.")
     observed = detection.get("observed")
