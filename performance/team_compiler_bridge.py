@@ -5,6 +5,8 @@ La autenticacion del snapshot corresponde al caller. No crea WorkItems.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timezone
+import re
 from typing import Any
 
 from performance.status import PerformanceStatusError, derive_performance_status
@@ -39,6 +41,7 @@ class PerformanceTeamCompilerBridgeError(ValueError):
 
 def compile_performance_team(
     detection: Mapping[str, Any], *,
+    evaluated_at: str,
     catalog: Mapping[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Produce una recomendacion auditada, nunca una asignacion ejecutada."""
@@ -49,6 +52,7 @@ def compile_performance_team(
         raise PerformanceTeamCompilerBridgeError("Evidencia de rendimiento invalida.") from exc
     if status["evidence_state"] != "CURRENT":
         raise PerformanceTeamCompilerBridgeError("Evidencia no CURRENT.")
+    _require_fresh_at(detection, evaluated_at)
     if status["classification"] not in {"PERF_DEGRADATION", "PERF_INCIDENT"}:
         return {
             "version": 1, "decision": "NO_ASSIGNMENT", "roles": [],
@@ -60,13 +64,15 @@ def compile_performance_team(
     if bottleneck not in _PRIMARY:
         raise PerformanceTeamCompilerBridgeError("Cuello no reconocido.")
     try:
-        valid_catalog = load_catalog() if catalog is None else catalog
+        canonical_catalog = load_catalog()
+        valid_catalog = canonical_catalog if catalog is None else catalog
     except RoleError as exc:
         raise PerformanceTeamCompilerBridgeError("Catalogo invalido.") from exc
     if (
         not isinstance(valid_catalog, Mapping)
         or not REQUIRED_ROLES.issubset(valid_catalog)
         or not set(triage["role_hints"]).issubset(valid_catalog)
+        or valid_catalog != canonical_catalog
     ):
         raise PerformanceTeamCompilerBridgeError("Catalogo incompleto.")
 
@@ -99,3 +105,31 @@ def compile_performance_team(
         "authority": "unchanged", "execute_actions": False,
         "create_work_item": False, "dispatch": False,
     }
+
+def _require_fresh_at(detection: Mapping[str, Any], evaluated_at: str) -> None:
+    """Revalida la frescura en la evaluacion actual, nunca en un snapshot viejo."""
+    if not isinstance(evaluated_at, str) or re.fullmatch(
+        r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z", evaluated_at
+    ) is None:
+        raise PerformanceTeamCompilerBridgeError("evaluated_at debe ser UTC exacto.")
+    observed = detection.get("observed")
+    freshness = detection.get("freshness")
+    if not isinstance(observed, Mapping) or not isinstance(freshness, Mapping):
+        raise PerformanceTeamCompilerBridgeError("Evidencia de frescura incompleta.")
+    observed_at = observed.get("observed_at")
+    age_before = freshness.get("age_seconds")
+    max_age = freshness.get("max_age_seconds")
+    if (
+        not isinstance(observed_at, str)
+        or type(age_before) is not int or age_before < 0
+        or type(max_age) is not int or max_age <= 0
+    ):
+        raise PerformanceTeamCompilerBridgeError("Evidencia de frescura invalida.")
+    try:
+        then = datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        now = datetime.strptime(evaluated_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise PerformanceTeamCompilerBridgeError("Timestamp de frescura invalido.") from exc
+    age_now = (now - then).total_seconds()
+    if age_now < age_before or age_now > max_age:
+        raise PerformanceTeamCompilerBridgeError("La evidencia ya no es CURRENT.")
