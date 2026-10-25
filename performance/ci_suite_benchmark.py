@@ -16,6 +16,7 @@ _SUMMARY = re.compile(
     _TIMESTAMP + r"Ran ([1-9][0-9]{0,5}) tests? in ([0-9]{1,5}(?:\.[0-9]{1,3})?)s",
     re.ASCII,
 )
+_SUMMARY_CANDIDATE = re.compile(_TIMESTAMP + r"Ran\b.*\btests?\s+in\s+.*", re.ASCII)
 _OK = re.compile(_TIMESTAMP + r"OK", re.ASCII)
 _FAILED = re.compile(_TIMESTAMP + r"FAILED(?:\s|$).*", re.ASCII)
 _SHA = re.compile(r"[0-9a-f]{40}", re.ASCII)
@@ -29,6 +30,8 @@ def parse_unittest_summary(log: str) -> dict[str, Any]:
     """Extrae una observación numérica, sin revelar texto ni darle autoridad."""
     if not isinstance(log, str) or "\x00" in log or "\r" in log:
         raise SuiteBenchmarkError("Log ilegible o inválido.")
+    if len(log) > MAX_LOG_BYTES:
+        raise SuiteBenchmarkError("Log ausente o excesivo.")
     try:
         size = len(log.encode("utf-8"))
     except UnicodeEncodeError as exc:
@@ -38,8 +41,14 @@ def parse_unittest_summary(log: str) -> dict[str, Any]:
     lines = log.splitlines()
     if len(lines) > MAX_LOG_LINES:
         raise SuiteBenchmarkError("Demasiadas líneas.")
-    found = [(index, match) for index, line in enumerate(lines)
-             if (match := _SUMMARY.fullmatch(line)) is not None]
+    # Dos resúmenes (incluso uno no canónico) son ambiguos: fail closed.
+    found = []
+    for index, line in enumerate(lines):
+        if _SUMMARY_CANDIDATE.fullmatch(line) is not None:
+            match = _SUMMARY.fullmatch(line)
+            if match is None:
+                raise SuiteBenchmarkError("Resumen no canónico o ambiguo.")
+            found.append((index, match))
     if len(found) != 1:
         raise SuiteBenchmarkError("Resumen ausente o ambiguo.")
     index, match = found[0]

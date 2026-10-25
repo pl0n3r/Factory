@@ -56,6 +56,8 @@ class CiSuiteBenchmarkTests(unittest.TestCase):
             valid + "\x00",
             valid + " " * 256001,
             "Ran 616 tests in 104.376s\nOK\nRan 616 tests in 104.376s\nOK",
+            valid + "Ran 999 tests in 1.000s \nOK\n",
+            "Ran 616 tests in 104.376s \nOK\n",
             "\ud800",
         ]
         for raw in invalid:
