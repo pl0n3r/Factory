@@ -24,7 +24,7 @@ class ReleaseCandidate1042Tests(unittest.TestCase):
         self.assertEqual(set(version_data), {"version"})
         version = version_data["version"]
         self.assertIsInstance(version, str)
-        self.assertRegex(version, r"^[0-9]+\\.[0-9]+\\.[0-9]+$")
+        self.assertRegex(version, r"^[0-9]+\.[0-9]+\.[0-9]+$")
         self.assertGreaterEqual(
             tuple(int(part) for part in version.split(".")), (1, 0, 42)
         )
