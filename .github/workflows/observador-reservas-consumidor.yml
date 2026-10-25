@@ -137,7 +137,8 @@ jobs:
               if (not isinstance(raw, dict)
                       or raw.get("issue") != number
                       or raw.get("state") != "read_only"
-                      or raw.get("action") != "wait"
+                      or raw.get("action") not in (
+                          "wait", "mark_recovery", "release")
                       or raw.get("release_authorized") is not False
                       or raw.get("lock_verified") is not False
                       or raw.get("cas_verified") is not False
@@ -151,6 +152,22 @@ jobs:
                           (type(raw["activity_age_minutes"]) is not int or
                            not 0 <= raw["activity_age_minutes"] <= 525600))):
                   raise ValueError("invalid_evidence")
+              # Las acciones que pudieran tocar V3 sólo se conservan
+              # como hipótesis read-only con razón/edad/fuente coherentes.
+              # No representan comprobación de ausencia de pushes, lock o CAS.
+              action = raw["action"]
+              age = raw.get("activity_age_minutes")
+              source = raw.get("activity_source")
+              if action in ("mark_recovery", "release"):
+                  if (type(age) is not int
+                          or source is None
+                          or (action == "mark_recovery" and (
+                              raw["reason"] != "inactive_30_minutes"
+                              or age < 30))
+                          or (action == "release" and (
+                              raw["reason"] != "inactive_after_recovery_grace"
+                              or age < 40))):
+                      raise ValueError("invalid_hypothetical_candidate")
               out = {key: raw.get(key) for key in (
                   "issue", "state", "action", "reason",
                   "activity_source", "activity_age_minutes",

@@ -553,19 +553,37 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         # datos positivos, nunca expone una acción que pueda liberar V3.
         if type(decision) is not Decision:
             return _unknown(issue, "invalid_decision")
-        if decision.action not in ("unknown", "wait"):
+        if decision.action not in (
+                "unknown", "wait", "mark_recovery", "release"):
             return _unknown(issue, "inactivity_not_proven")
         age = int((now.astimezone(timezone.utc) - last).total_seconds() // 60)
         if age < 0:
             return _unknown(issue, "future_activity")
+        if age > 525600:
+            return _unknown(issue, "unverifiable_activity_age")
+        # Sólo mostrar candidatos hipotéticos tipados, nunca conceder
+        # autorización de ejecución. Un veto o una razón/edad incoherente
+        # impide publicar siquiera el candidato read-only.
+        thresholds = {
+            "mark_recovery": ("inactive_30_minutes", 30),
+            "release": ("inactive_after_recovery_grace", 40),
+        }
+        if decision.action in thresholds:
+            expected_reason, minimum_age = thresholds[decision.action]
+            if (decision.reason != expected_reason or age < minimum_age
+                    or report["ci_veto_only"] or report["review_veto_only"]
+                    or snapshot.ci_running or snapshot.changes_requested):
+                return _unknown(issue, "inactivity_not_proven")
+        # La fuente de actividad es evidencia POSITIVA, no una auditoría
+        # negativa de pushes. QA individual de release es obligatoria.
+        attributable = (
+            decision.action in ("wait", "mark_recovery", "release")
+            and not (report["ci_veto_only"] or report["review_veto_only"])
+        )
         return IntegrationPreview(
             issue, "read_only", decision.action, decision.reason,
-            # No atribuir inactividad a un marker antiguo cuando solo
-            # tenemos un veto CI autenticado, no una auditoría de pushes.
-            age if decision.action == "wait"
-            and not (report["ci_veto_only"] or report["review_veto_only"])
-            else None,
-            report["activity_source"] if decision.action == "wait" else None,
+            age if attributable else None,
+            report["activity_source"] if attributable else None,
         )
     except Exception:
         # Sin nombres de usuario, payloads, headers ni tokens en errores.
