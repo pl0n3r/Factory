@@ -69,12 +69,16 @@ class PoliticaCheckHistoryWorkflowTests(unittest.TestCase):
     def test_authenticated_query_preserves_all_attempts_across_pages(self) -> None:
         self.assertIn(
             'checks_url_base="repos/$REPOSITORY/commits/$PR_HEAD_SHA/'
-            'check-runs?filter=all&per_page=100"',
+            'check-runs?per_page=100"',
             WORKFLOW,
         )
         # GitHub usa filter=latest por defecto y omite el check anterior.
-        self.assertNotIn("check-runs?per_page=100", WORKFLOW)
-        self.assertIn('"${checks_url_base}&page=$page"', WORKFLOW)
+        # GitHub CLI agrega -f al query string solo con -X GET explícito.
+        snapshot = WORKFLOW.split("# POLICY_CHECK_SNAPSHOT_BEGIN", 1)[1].split(
+            "# POLICY_CHECK_SNAPSHOT_END", 1
+        )[0]
+        self.assertIn("-X GET \\\n                  -f filter=all \\", snapshot)
+        self.assertIn('"${checks_url_base}&page=$page"', snapshot)
         self.assertIn("for page in 1 2 3 4 5; do", WORKFLOW)
         self.assertIn('X-GitHub-Api-Version: 2022-11-28', WORKFLOW)
 
