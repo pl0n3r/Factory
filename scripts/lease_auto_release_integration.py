@@ -583,7 +583,8 @@ def preview_integrated_activity(api: Any, port: Any, issue: Any,
         return IntegrationPreview(
             issue, "read_only", decision.action, decision.reason,
             age if attributable else None,
-            report["activity_source"] if attributable else None,
+            report["activity_source"] if (
+                decision.action == "wait" or attributable) else None,
         )
     except Exception:
         # Sin nombres de usuario, payloads, headers ni tokens en errores.

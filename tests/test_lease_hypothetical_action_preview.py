@@ -122,7 +122,7 @@ class LeaseHypotheticalPreviewTests(unittest.TestCase):
         self.assertEqual(workflow.count(anchor), 1)
         script = textwrap.dedent(workflow.split(anchor, 1)[1]
                                  .split("<<'PY'\n", 1)[1]
-                                 .split("\n            PY", 1)[0])
+                                 .split("\n          PY", 1)[0])
         self.assertIn('raw.get("action") not in (', script)
         for action in ("wait", "mark_recovery", "release"):
             self.assertIn('"' + action + '"', script)
