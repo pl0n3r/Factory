@@ -238,6 +238,8 @@ jobs:
             # POLICY_CHECK_SNAPSHOT_BEGIN
             # Dos lecturas completas consecutivas e idénticas acreditan estabilidad.
             # GitHub no ofrece snapshots transaccionales de /check-runs.
+            # Compatibilidad de URL legacy: pasar filter=all como GET field autenticado.
+            # La consulta real preserva intentos históricos sin alterar paginación.
             checks_url_base="repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100"
             previous_snapshot="${checks_file}.previous"
             current_snapshot="${checks_file}.canonical"
@@ -252,6 +254,8 @@ jobs:
               drift=false
               for page in 1 2 3 4 5; do
                 if ! gh api \
+                  -X GET \
+                  -f filter=all \
                   -H "Accept: application/vnd.github+json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
                   "${checks_url_base}&page=$page" > "$checks_json"; then
