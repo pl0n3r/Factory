@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import stat
 import zipfile
+import zlib
 from typing import Any
 
 MAX_ZIP = 65536
@@ -45,7 +46,7 @@ def _json(data: bytes) -> Any:
     try:
         return json.loads(data.decode("utf-8"), object_pairs_hook=_pairs_unique,
                           parse_constant=lambda _: (_ for _ in ()).throw(ArtifactQAError("nonfinite_number")))
-    except (UnicodeError, ValueError, TypeError) as exc:
+    except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
         if isinstance(exc, ArtifactQAError):
             raise
         raise ArtifactQAError("invalid_json") from None
@@ -82,6 +83,7 @@ def _validate_rows(rows: Any) -> int:
                 or row["lock_verified"] is not False or row["cas_verified"] is not False
                 or type(row["mutations"]) is not int or row["mutations"] != 0
                 or (age is not None and (type(age) is not int or not 0 <= age <= 525600))
+                or (source is not None and type(source) is not str)
                 or source not in _SOURCES):
             raise ArtifactQAError("row_not_readonly")
         if action == "mark_recovery" and (reason != "inactive_30_minutes" or type(age) is not int or age < 30 or source is None):
@@ -120,7 +122,7 @@ def inspect_artifact(zip_bytes: Any, metadata: Any) -> dict[str, Any]:
                 data = stream.read(MAX_JSON + 1)
             if len(data) != item.file_size or len(data) > MAX_JSON:
                 raise ArtifactQAError("zip_expansion")
-    except (OSError, RuntimeError, zipfile.BadZipFile, EOFError, NotImplementedError):
+    except (OSError, RuntimeError, zipfile.BadZipFile, EOFError, NotImplementedError, zlib.error):
         raise ArtifactQAError("corrupt_zip") from None
     manifest = _json(data)
     if type(manifest) is not dict or set(manifest) != {
@@ -133,7 +135,7 @@ def inspect_artifact(zip_bytes: Any, metadata: Any) -> dict[str, Any]:
     if (type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
             or manifest["repository"] != repo or manifest["head_sha"] != sha
             or type(manifest["run_id"]) is not str or not _RUN.fullmatch(manifest["run_id"])
-            or int(manifest["run_id"]) != run
+            or manifest["run_id"] != str(run)
             or manifest["status"] != "candidate_terminal"
             or manifest["terminal_certified"] is not False or manifest["release_authorized"] is not False
             or type(manifest["mutations"]) is not int or manifest["mutations"] != 0

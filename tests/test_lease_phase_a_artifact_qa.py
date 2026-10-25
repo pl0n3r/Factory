@@ -57,6 +57,16 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
                    archive(payload(), twice=True), archive(payload(), symlink=True),
                    archive(b"x" * 32000),
                    archive(b'{"schema_version":1,"schema_version":1}')]
+        # A deeply nested JSON payload fits the configured byte cap but exceeds
+        # Python's parser depth. It must fail closed without leaking a traceback.
+        invalid.append(archive(b"[" * 1500 + b"]" * 1500, compression=zipfile.ZIP_STORED))
+        # Corrupt the first DEFLATE block while leaving its ZIP directory intact.
+        corrupted = bytearray(archive(payload()))
+        with zipfile.ZipFile(io.BytesIO(corrupted)) as z:
+            info = z.infolist()[0]
+            start = info.header_offset + 30 + len(info.filename.encode("utf-8")) + len(info.extra)
+        corrupted[start] = 0x07  # reserved DEFLATE block type, raises zlib.error
+        invalid.append(bytes(corrupted))
         for blob in invalid:
             with self.subTest(n=len(blob)), self.assertRaises(ArtifactQAError):
                 inspect_artifact(blob, META)
@@ -72,10 +82,18 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
                         (META, {**MANIFEST, "token": "not-exported"}),
                         (META, {**MANIFEST, "issues": [{**ROW, "action": "release", "reason": "activity_window"}]}),
                         (META, {**MANIFEST, "issues": [{**ROW, "api_key": "not-exported"}]}),
-                        (META, {**MANIFEST, "issues": [{**ROW, "mutations": True}]})]
+                        (META, {**MANIFEST, "issues": [{**ROW, "mutations": True}]}),
+                        (META, {**MANIFEST, "issues": [{**ROW, "activity_source": []}]}),
+                        (META, {**MANIFEST, "issues": [{**ROW, "activity_source": {}}]}),
+                        (META, {**MANIFEST, "run_id": "9" * 5000})]
         for metadata, manifest in replacements:
             with self.subTest(type=str(manifest)[:80]), self.assertRaises(ArtifactQAError):
                 inspect_artifact(archive(payload(manifest)), metadata)
+
+    def test_deep_json_metadata_maps_to_invalid_evidence(self):
+        from scripts.lease_phase_a_artifact_qa import _json
+        with self.assertRaises(ArtifactQAError):
+            _json(b"[" * 1500 + b"]" * 1500)
 
     def test_documented_manual_attestation_and_no_network_or_release(self):
         source = (Path(__file__).resolve().parents[1] / "scripts/lease_phase_a_artifact_qa.py").read_text()
