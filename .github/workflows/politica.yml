@@ -238,7 +238,7 @@ jobs:
             # POLICY_CHECK_SNAPSHOT_BEGIN
             # Dos lecturas completas consecutivas e idénticas acreditan estabilidad.
             # GitHub no ofrece snapshots transaccionales de /check-runs.
-            checks_url_base="repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?per_page=100"
+            checks_url_base="repos/$REPOSITORY/commits/$PR_HEAD_SHA/check-runs?filter=all&per_page=100"
             previous_snapshot="${checks_file}.previous"
             current_snapshot="${checks_file}.canonical"
             previous_complete=false
