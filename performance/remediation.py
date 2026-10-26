@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
+import math
 import re
 from typing import Any
 
-from performance.contract import ESCALATION_CONDITIONS
+from performance.contract import ESCALATION_CONDITIONS, OPERATORS, UNITS
 from performance.detector import CLASSIFICATIONS
 from scripts.work_origin import validate_work_item
 
@@ -225,11 +226,42 @@ def _detection(raw: Any) -> dict[str, Any]:
         raise PerformanceRemediationError("classification fuera de catálogo.")
     if raw["evidence_state"] not in {"CURRENT", "STALE", "INSUFFICIENT", "UNKNOWN"}:
         raise PerformanceRemediationError("evidence_state fuera de catálogo.")
-    if not isinstance(raw["observed"], Mapping) or set(raw["observed"]) != {
+    observed = raw["observed"]
+    if not isinstance(observed, Mapping) or set(observed) != {
         "value", "unit", "observed_at", "sample_count", "window_seconds"
     }:
         raise PerformanceRemediationError("observed fuera de contrato.")
+    if (
+        not _finite_measurement(observed["value"])
+        or observed["unit"] not in UNITS
+        or any(
+            type(observed[name]) is not int
+            or not 1 <= observed[name] <= 31_536_000
+            for name in ("sample_count", "window_seconds")
+        )
+    ):
+        raise PerformanceRemediationError("observed contiene una medición inválida.")
+
+    budget = raw["budget"]
+    if budget is not None:
+        if (
+            not isinstance(budget, Mapping)
+            or set(budget) != {"operator", "value", "unit"}
+            or budget["operator"] not in OPERATORS
+            or not _finite_measurement(budget["value"])
+            or budget["unit"] != observed["unit"]
+        ):
+            raise PerformanceRemediationError("budget fuera de contrato.")
     return dict(raw)
+
+
+def _finite_measurement(value: Any) -> bool:
+    """Mirror the detector's bounded finite-number contract for public Mappings."""
+    return (
+        type(value) in (int, float)
+        and abs(value) <= 10**15
+        and (type(value) is int or math.isfinite(value))
+    )
 
 
 def _triage(raw: Any, finding: Mapping[str, Any]) -> dict[str, Any]:
