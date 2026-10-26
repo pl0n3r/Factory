@@ -223,6 +223,71 @@ class PerformanceRemediationTests(unittest.TestCase):
                 with self.assertRaises(PerformanceRemediationError):
                     evaluate_before_after(old, changed)
 
+    def test_before_after_rejects_impossible_sample_count_and_window(self):
+        original = finding()
+        newer = finding(
+            classification="PERF_INFO", breach=False,
+            observed={**original["observed"], "value": 220,
+                      "observed_at": "2026-09-28T20:06:00Z"},
+            evidence_ref="run:3",
+            identity={"sha": "b" * 40, "release": "v1.2.4"},
+        )
+        for side in ("before", "after"):
+            for field in ("sample_count", "window_seconds"):
+                for invalid in (0, -1, True, 1.5, 31_536_001, None):
+                    with self.subTest(side=side, field=field, invalid=invalid):
+                        before, after = copy.deepcopy(original), copy.deepcopy(newer)
+                        value = before if side == "before" else after
+                        value["observed"][field] = invalid
+                        with self.assertRaises(PerformanceRemediationError):
+                            evaluate_before_after(before, after)
+
+    def test_before_after_rejects_invalid_measurement_values(self):
+        original = finding()
+        newer = finding(
+            classification="PERF_INFO", breach=False,
+            observed={**original["observed"], "value": 220,
+                      "observed_at": "2026-09-28T20:06:00Z"},
+            evidence_ref="run:3",
+            identity={"sha": "b" * 40, "release": "v1.2.4"},
+        )
+        for side in ("before", "after"):
+            for invalid in (None, "220", True, float("nan"), float("inf"),
+                            float("-inf"), 10**16):
+                with self.subTest(side=side, invalid=str(invalid)):
+                    before, after = copy.deepcopy(original), copy.deepcopy(newer)
+                    value = before if side == "before" else after
+                    value["observed"]["value"] = invalid
+                    with self.assertRaises(PerformanceRemediationError):
+                        evaluate_before_after(before, after)
+        for invalid_budget in (
+            {"operator": "lte", "value": float("nan"), "unit": "ms"},
+            {"operator": "wrong", "value": 250, "unit": "ms"},
+            {"operator": "lte", "value": 250, "unit": "bytes"},
+        ):
+            with self.subTest(budget=invalid_budget):
+                before, after = copy.deepcopy(original), copy.deepcopy(newer)
+                before["budget"] = dict(invalid_budget)
+                after["budget"] = dict(invalid_budget)
+                with self.assertRaises(PerformanceRemediationError):
+                    evaluate_before_after(before, after)
+
+    def test_before_after_valid_sampled_measurement_still_adopts(self):
+        original = finding()
+        newer = finding(
+            classification="PERF_INFO", breach=False,
+            observed={**original["observed"], "value": 220,
+                      "observed_at": "2026-09-28T20:06:00Z",
+                      "sample_count": 31_536_000, "window_seconds": 31_536_000},
+            evidence_ref="run:3",
+            identity={"sha": "b" * 40, "release": "v1.2.4"},
+        )
+        comparison = evaluate_before_after(original, newer)
+        self.assertEqual(comparison["decision"], "ADOPT")
+        self.assertTrue(comparison["improved"])
+        self.assertEqual(comparison["delta"], -80)
+        self.assertFalse(comparison["execute_actions"])
+
     def test_non_improving_or_stale_after_is_never_adopted(self):
         before = finding()
         worse = finding(observed={**before["observed"], "value": 340}, evidence_ref="run:4")
