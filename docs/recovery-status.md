@@ -17,3 +17,5 @@ El payload incluye razones explicables y solo estas clases canónicas de #269: `
 `project_recovery_readiness()` copia el mismo `recovery_health`; no recalcula. Para recovery crítico, `UNKNOWN` o `BLOCKED` fuerza `ready=false`. `DEGRADED` permanece visible pero no se transforma artificialmente en otro estado.
 
 Todo es declarativo: `authority=unchanged`, `execute=false`. #332 consume esta salida en el escenario E2E.
+
+**Unicode inválido en recibos.** Si la serialización de evidencia de backup o drill contiene un surrogate Unicode sin parear, el control de tamaño UTF-8 lo trata como entrada inválida y devuelve `BLOCKED` (`BACKUP_SENSITIVE`/`DRILL_SENSITIVE`) en lugar de propagar una excepción. Un fixture válido mantiene la evaluación `HEALTHY` solo declarativa; no acredita backup real ni restore y conserva las prohibiciones D-066/Factory #683.

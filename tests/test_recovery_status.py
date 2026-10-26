@@ -244,6 +244,46 @@ class RecoveryStatusTests(unittest.TestCase):
         )
         self.assertEqual(blocked["state"], "BLOCKED")
 
+    def test_backup_unpaired_surrogate_is_blocked_not_exception(self):
+        malformed = copy.deepcopy(backup())
+        malformed["evidence_refs"] = ["receipt:\ud800"]
+        health = derive_recovery_health(
+            manifest(), malformed, drill(),
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(health["state"], "BLOCKED")
+        self.assertEqual(health["reasons"], ["BACKUP_SENSITIVE"])
+        self.assertEqual(health["work_item_classes"], ["backup_missing"])
+        self.assertIsNone(health["backup_ref"])
+        self.assertFalse(health["execute"])
+
+    def test_drill_unpaired_surrogate_is_blocked_not_exception(self):
+        malformed = copy.deepcopy(drill())
+        malformed["evidence_refs"] = ["drill:\ud800"]
+        health = derive_recovery_health(
+            manifest(), backup(), malformed,
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(health["state"], "BLOCKED")
+        self.assertEqual(health["reasons"], ["DRILL_SENSITIVE"])
+        self.assertEqual(health["work_item_classes"], ["restore_drill_failed"])
+        self.assertIsNone(health["drill_status"])
+        self.assertFalse(project_recovery_readiness(health, critical=True)["ready"])
+
+    def test_unicode_rejection_preserves_valid_recovery_readiness(self):
+        health = derive_recovery_health(
+            manifest(), backup(), drill(),
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(health["state"], "HEALTHY")
+        self.assertEqual(health["reasons"], ["RECOVERY_EVIDENCE_CURRENT"])
+        self.assertEqual(health["authority"], "unchanged")
+        self.assertFalse(health["execute"])
+        self.assertTrue(project_recovery_readiness(health, critical=True)["ready"])
+
 
 if __name__ == "__main__":
     unittest.main()

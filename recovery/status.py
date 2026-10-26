@@ -390,7 +390,9 @@ def _time(value: Any, label: str) -> datetime:
 def _safe(value, reason, work_class):
     try:
         encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise _Problem(reason, work_class) from exc
-    if len(encoded.encode()) > 100_000 or _SENSITIVE.search(encoded):
+        encoded_size = len(encoded.encode("utf-8"))
+    except (TypeError, ValueError):
+        # A malformed Unicode surrogate must not escape the evidence boundary.
+        raise _Problem(reason, work_class) from None
+    if encoded_size > 100_000 or _SENSITIVE.search(encoded):
         raise _Problem(reason, work_class)
