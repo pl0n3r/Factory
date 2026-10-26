@@ -78,9 +78,16 @@ class SaludColaObservadorTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("issues: read", workflow)
         self.assertIn("contents: read", workflow)
-        self.assertNotIn("issues: write", workflow)
+        # El job observador y el permiso global permanecen GET-only.
+        # Una hoja distinta autorizada puede añadir publicador opt-in.
+        observer, marker, publisher = workflow.partition("\n  publicar:\n")
+        self.assertNotIn("issues: write", observer)
         self.assertNotIn("pull-requests: write", workflow)
         self.assertNotIn("GITHUB_TOKEN: ${{ secrets.", workflow)
+        if marker:
+            self.assertIn("issues: write", publisher)
+            self.assertIn("default: false", observer)
+            self.assertIn("inputs.publicar == true", publisher)
         self.assertIn('method="GET"', source)
         self.assertNotIn('method="POST"', source)
         self.assertNotIn('method="PATCH"', source)
