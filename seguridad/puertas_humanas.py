@@ -104,6 +104,66 @@ def _line_list(value: Any, field: str) -> list[str]:
     return [_line(item, field, 180) for item in value]
 
 
+# La redacción simple de puertas NUEVAS es más estricta que la compatibilidad
+# histórica del marker. Los campos de autoridad nunca se reescriben.
+PLAIN_LANGUAGE_JARGON = re.compile(
+    r"(?i)(?<!\w)(?:exact[-\s]?main|exact[-\s]?head|fail[-\s]?closed|"
+    r"v3|d-0\d*|journal|sha|idempot\w*)(?!\w)|"
+    r"(?<!\w)main@[a-f0-9]{8,40}(?!\w)|#\d+"
+)
+PLAIN_LANGUAGE_WORD_RE = re.compile(r"\w+(?:[-'’]\w+)*", re.UNICODE)
+PLAIN_LANGUAGE_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _validate_plain_language(text: str, field: str) -> None:
+    """Valida solo copia explicativa; nunca incluye texto del usuario en errores."""
+    if PLAIN_LANGUAGE_JARGON.search(text):
+        raise GateValidationError(f"{field} contiene jerga técnica prohibida.")
+    for sentence in PLAIN_LANGUAGE_SENTENCE_RE.split(text):
+        if len(PLAIN_LANGUAGE_WORD_RE.findall(sentence)) > 25:
+            raise GateValidationError(
+                f"{field} contiene una oración de más de 25 palabras."
+            )
+
+
+def _validate_new_gate_plain_language(
+    raw: dict[str, Any],
+    normalized: dict[str, Any],
+) -> None:
+    """Exige lenguaje simple al formato completo sin invalidar puertas legacy.
+
+    El formato completo añade explain_simple en raíz y TODAS las opciones.
+    Puertas ya publicadas sin ese contrato conservan su identidad histórica,
+    incluso si contienen identificadores técnicos en campos opcionales.
+    """
+    options = raw.get("options")
+    if (
+        not isinstance(raw.get("explain_simple"), str)
+        or not isinstance(options, list)
+        or not options
+        or any(
+            not isinstance(option, dict)
+            or not isinstance(option.get("explain_simple"), str)
+            for option in options
+        )
+    ):
+        return
+
+    for field in (
+        "title_simple", "summary_simple", "explain_simple", "why_recommended"
+    ):
+        if field in normalized:
+            _validate_plain_language(normalized[field], field)
+
+    for index, option in enumerate(normalized["options"]):
+        for field in ("label", "effect", "explain_simple", "cost"):
+            if field in option:
+                _validate_plain_language(option[field], f"options[{index}].{field}")
+        for field in ("pros", "cons"):
+            for value in option.get(field, []):
+                _validate_plain_language(value, f"options[{index}].{field}")
+
+
 def _validate_simple_root(raw: dict[str, Any], normalized: dict[str, Any]) -> None:
     if "title_simple" in raw:
         normalized["title_simple"] = _line(
@@ -218,6 +278,7 @@ def validate_gate(raw: Any) -> dict[str, Any]:
         "safe_default": safe_default,
     }
     _validate_simple_root(raw, normalized)
+    _validate_new_gate_plain_language(raw, normalized)
     return normalized
 
 
