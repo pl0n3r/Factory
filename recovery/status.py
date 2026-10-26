@@ -110,6 +110,11 @@ def _validated_drill_or_blocked(
         drill_seen = _time(drill_observed_at, "drill_observed_at")
         if drill_seen > now:
             raise _Problem("DRILL_EVIDENCE_FUTURE", "restore_drill_failed")
+        # A restore cannot predate the backup it claims to have recovered.
+        # Check the linked backup's validated UTC creation time; never infer
+        # drill success from a fresh but causally impossible timestamp.
+        if drill_seen < backup["created_at"]:
+            raise _Problem("DRILL_BEFORE_BACKUP", "restore_drill_failed")
         return _drill(recovery, backup, value), drill_seen, None
     except _Problem as problem:
         return None, None, _health(
