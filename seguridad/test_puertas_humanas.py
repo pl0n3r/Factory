@@ -719,6 +719,39 @@ class GateDedupTests(unittest.TestCase):
         add(lambda row: row.update(body=row["body"] +
             row["body"][row["body"].index("<!-- factory-human-gate"):],
         ))
+        # Repro de CodeRabbit #1534: las modalidades híbridas se rechazan.
+        strict_text = (
+            "`documented_not_legally_approved`. Esta puerta es bloqueante: "
+            "D-063 no aplica y se exige revisión jurídica antes de "
+            "continuar hacia live."
+        )
+        lenient_text = (
+            "`documented_not_legally_approved` hasta una decisión humana."
+        )
+        add(lambda row: row.update(body=row["body"].replace(
+            lenient_text, strict_text,
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            " que requieren decisión jurídica humana.",
+            " fuera de las condiciones de D-063; requieren revisión jurídica "
+            "antes de continuar hacia live.",
+        )))
+        strict_case = privacy_material_issue(
+            611, "pl0n3r/GrindFlow", strict=True,
+        )
+        strict_case["body"] = strict_case["body"].replace(
+            strict_text, lenient_text,
+        )
+        cases.append(strict_case)
+        strict_context = privacy_material_issue(
+            611, "pl0n3r/GrindFlow", strict=True,
+        )
+        strict_context["body"] = strict_context["body"].replace(
+            " fuera de las condiciones de D-063; requieren revisión jurídica "
+            "antes de continuar hacia live.",
+            " que requieren decisión jurídica humana.",
+        )
+        cases.append(strict_context)
         for row in cases:
             with self.subTest(body=row["body"][:80]):
                 api = MultiGateAPI([row])

@@ -247,38 +247,41 @@ def _trusted_bot_privacy_gate(
     )
     if (
         not separator
-        or statement not in {
-            "`documented_not_legally_approved` hasta una decisión humana.",
-            ("`documented_not_legally_approved`. Esta puerta es bloqueante: "
-             "D-063 no aplica y se exige revisión jurídica antes de "
-             "continuar hacia live."),
-        }
-        or not (
-            raw_gate.endswith(" -->")
-            or raw_gate.endswith(" -->\n")
-        )
+        or not (raw_gate.endswith(" -->") or raw_gate.endswith(" -->\n"))
         or raw_gate.count("<!--") != 0
         or raw_gate.count("-->") != 1
     ):
         return False
 
-    context = (
-        f"{repository}: la auditoría detectó {len(reasons)} "
-        "cambio(s) material(es) de privacidad"
-    )
-    if gate["context"] not in {
-        context + " que requieren decisión jurídica humana.",
-        (context + " fuera de las condiciones de D-063; requieren "
-         "revisión jurídica antes de continuar hacia live."),
-    }:
-        return False
     options = gate["options"]
     if len(options) != 2 or gate.get("recommendation") != "A":
         return False
     option_ids = {item["id"] for item in options}
     if option_ids not in ({"A", "B"}, {"A", "C"}):
         return False
-    if gate.get("safe_default") != ("B" if "B" in option_ids else "A"):
+    # Una sola modalidad gobierna texto, contexto, opciones y safe_default.
+    strict = option_ids == {"A", "C"}
+    expected_statement = (
+        ("`documented_not_legally_approved`. Esta puerta es bloqueante: "
+         "D-063 no aplica y se exige revisión jurídica antes de "
+         "continuar hacia live.")
+        if strict else
+        "`documented_not_legally_approved` hasta una decisión humana."
+    )
+    context = (
+        f"{repository}: la auditoría detectó {len(reasons)} "
+        "cambio(s) material(es) de privacidad"
+    )
+    expected_context = context + (
+        " fuera de las condiciones de D-063; requieren "
+        "revisión jurídica antes de continuar hacia live."
+        if strict else " que requieren decisión jurídica humana."
+    )
+    if (
+        statement != expected_statement
+        or gate["context"] != expected_context
+        or gate.get("safe_default") != ("A" if strict else "B")
+    ):
         return False
     return all(
         set(item) <= {"id", "label", "explain_simple"}
