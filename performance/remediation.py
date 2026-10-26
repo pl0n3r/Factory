@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -103,6 +104,10 @@ def evaluate_before_after(
     if old["evidence_state"] != "CURRENT" or new["evidence_state"] != "CURRENT":
         return _comparison(old, new, False, "REVERT_OR_REPLAN", ["evidence_not_current"])
 
+    provenance_issue = _comparison_provenance_issue(old, new)
+    if provenance_issue is not None:
+        return _comparison(old, new, False, "REVERT_OR_REPLAN", [provenance_issue])
+
     operator = old["budget"]["operator"]
     old_value, new_value = old["observed"]["value"], new["observed"]["value"]
     improved = new_value < old_value if operator == "lte" else new_value > old_value
@@ -114,6 +119,72 @@ def evaluate_before_after(
     else:
         decision, reasons = "REVERT_OR_REPLAN", ["no_measured_improvement"]
     return _comparison(old, new, improved, decision, reasons)
+
+
+def _utc_observed_at(evidence: Mapping[str, Any]) -> datetime:
+    """Parse exact UTC observations without normalizing invalid dates."""
+    observed = evidence.get("observed")
+    value = observed.get("observed_at") if isinstance(observed, Mapping) else None
+    if not isinstance(value, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value
+    ) is None:
+        raise PerformanceRemediationError(
+            "before/after requiere observed_at UTC exacto."
+        )
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError as exc:
+        raise PerformanceRemediationError(
+            "before/after tiene observed_at inválido."
+        ) from exc
+
+
+def _validated_build_identity(evidence: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Reject ambiguous, missing or malformed SHA/release identity."""
+    identity = evidence.get("identity")
+    if not isinstance(identity, Mapping) or set(identity) != {"sha", "release"}:
+        raise PerformanceRemediationError(
+            "before/after requiere identidad de build completa."
+        )
+    sha, release = identity["sha"], identity["release"]
+    if sha is not None and (
+        not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None
+    ):
+        raise PerformanceRemediationError(
+            "before/after tiene identidad de build inválida."
+        )
+    if release is not None and (
+        not isinstance(release, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", release) is None
+    ):
+        raise PerformanceRemediationError(
+            "before/after tiene identidad de build inválida."
+        )
+    return sha, release
+
+
+def _comparison_provenance_issue(
+    before: Mapping[str, Any], after: Mapping[str, Any],
+) -> str | None:
+    """Fail closed when an AFTER is not distinguishable from its BEFORE."""
+    old_time, new_time = _utc_observed_at(before), _utc_observed_at(after)
+    if after["evidence_ref"] == before["evidence_ref"]:
+        return "reused_evidence_ref"
+    if new_time <= old_time:
+        return "after_not_later"
+
+    old_sha, old_release = _validated_build_identity(before)
+    new_sha, new_release = _validated_build_identity(after)
+    sha_changed = old_sha is not None and new_sha is not None and old_sha != new_sha
+    release_changed = (
+        old_release is not None and new_release is not None
+        and old_release != new_release
+    )
+    if not (sha_changed or release_changed):
+        return "unchanged_build_identity"
+    return None
 
 
 def _comparison(

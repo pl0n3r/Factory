@@ -117,7 +117,9 @@ class PerformanceLoopE2ETests(unittest.TestCase):
         before = detected(300)
         triage = triage_performance(before)
         plan = plan_remediation(before, triage, proposal())
-        after = detected(220, evidence_ref="run:3")
+        after = detected(220, evidence_ref="run:3",
+                         observed_at="2026-09-28T20:05:30Z",
+                         sha="b" * 40, release="v1.2.4")
         comparison = evaluate_before_after(before, after)
         status = derive_performance_status(after, remediation=plan, comparison=comparison)
         self.assertEqual(plan["decision"], "AUTO_REPAIR")
