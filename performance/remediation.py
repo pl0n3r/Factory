@@ -233,7 +233,7 @@ def _detection(raw: Any) -> dict[str, Any]:
         raise PerformanceRemediationError("observed fuera de contrato.")
     if (
         not _finite_measurement(observed["value"])
-        or observed["unit"] not in UNITS
+        or not isinstance(observed["unit"], str) or observed["unit"] not in UNITS
         or any(
             type(observed[name]) is not int
             or not 1 <= observed[name] <= 31_536_000
@@ -243,15 +243,15 @@ def _detection(raw: Any) -> dict[str, Any]:
         raise PerformanceRemediationError("observed contiene una medición inválida.")
 
     budget = raw["budget"]
-    if budget is not None:
-        if (
-            not isinstance(budget, Mapping)
-            or set(budget) != {"operator", "value", "unit"}
-            or budget["operator"] not in OPERATORS
-            or not _finite_measurement(budget["value"])
-            or budget["unit"] != observed["unit"]
-        ):
-            raise PerformanceRemediationError("budget fuera de contrato.")
+    if budget is not None and (
+        not isinstance(budget, Mapping)
+        or set(budget) != {"operator", "value", "unit"}
+        or not isinstance(budget["operator"], str)
+        or budget["operator"] not in OPERATORS
+        or not _finite_measurement(budget["value"])
+        or budget["unit"] != observed["unit"]
+    ):
+        raise PerformanceRemediationError("budget fuera de contrato.")
     return dict(raw)
 
 
