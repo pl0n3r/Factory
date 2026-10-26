@@ -113,6 +113,10 @@ def _existing(api):
             body = item.get("body")
             if not isinstance(body, str) or not body.startswith(BOT_MARKER):
                 continue
+            author = item.get("user")
+            if (type(author) is not dict or author.get("login") != "github-actions[bot]"
+                    or author.get("type") != "Bot"):
+                raise AlertError("untrusted_alert_author")
             if (not ALERT_MARKER.match(body) or type(item.get("number")) is not int
                     or item.get("state") not in ("open", "closed")):
                 raise AlertError("alert_marker_invalid")
