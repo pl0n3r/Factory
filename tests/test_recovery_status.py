@@ -155,6 +155,44 @@ class RecoveryStatusTests(unittest.TestCase):
         self.assertTrue(projected["ready"])
         self.assertFalse(projected["critical_blocker"])
 
+    def test_drill_before_backup_creation_never_marks_recovery_healthy(self):
+        # Backup was created at 01:20; a drill cannot verify it at 01:19.
+        for drill_seen in ("2026-09-29T01:19:59Z", "2026-09-29T01:00:00Z"):
+            with self.subTest(drill_observed_at=drill_seen):
+                result = derive_recovery_health(
+                    manifest(), backup(), drill(),
+                    observed_at="2026-09-29T01:34:00Z",
+                    drill_observed_at=drill_seen,
+                )
+                self.assertEqual(result["state"], "BLOCKED")
+                self.assertEqual(result["reasons"], ["DRILL_BEFORE_BACKUP"])
+                self.assertEqual(result["work_item_classes"], ["restore_drill_failed"])
+                self.assertFalse(result["execute"])
+
+    def test_drill_at_or_after_backup_creation_keeps_valid_recovery_health(self):
+        for drill_seen in ("2026-09-29T01:20:00Z", "2026-09-29T01:32:00Z"):
+            with self.subTest(drill_observed_at=drill_seen):
+                result = derive_recovery_health(
+                    manifest(), backup(), drill(),
+                    observed_at="2026-09-29T01:34:00Z",
+                    drill_observed_at=drill_seen,
+                )
+                self.assertEqual(result["state"], "HEALTHY")
+                self.assertEqual(result["reasons"], ["RECOVERY_EVIDENCE_CURRENT"])
+
+    def test_readiness_rejects_prebackup_drill_evidence(self):
+        invalid = derive_recovery_health(
+            manifest(), backup(), drill(),
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:19:59Z",
+        )
+        readiness = project_recovery_readiness(invalid, critical=True)
+        self.assertEqual(readiness["recovery_health"], "BLOCKED")
+        self.assertFalse(readiness["ready"])
+        self.assertTrue(readiness["critical_blocker"])
+        self.assertEqual(readiness["work_item_classes"], ["restore_drill_failed"])
+        self.assertFalse(readiness["recalculated"])
+
     def test_recovery_status_rejects_sensitive_future_or_authority_expanding_evidence(self):
         recovery = manifest()
         sensitive = copy.deepcopy(backup())
