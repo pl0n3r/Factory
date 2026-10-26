@@ -20,7 +20,9 @@ La decisión es fail-closed:
 
 La comparación exige la misma identidad `project + surface + metric`, el mismo budget/unidad y evidencia `CURRENT`. La dirección de mejora depende del operador: menor para `lte`, mayor para `gte`.
 
-Solo una mejora medida sin empeorar clasificación produce `ADOPT`. Evidencia stale/unknown, ausencia de mejora o clasificación peor produce `REVERT_OR_REPLAN`.
+`ADOPT` requiere **una secuencia before → after distinguible** además de mejora de valor y clasificación: `after.observed.observed_at` debe ser estrictamente posterior al `before`, con timestamps UTC exactos; los `evidence_ref` deben ser diferentes y el cambio debe tener al menos un SHA o identificador de release **válido, presente en ambas muestras y distinto**. La comparación con la misma marca de tiempo, la misma referencia o el mismo par SHA/release devuelve `REVERT_OR_REPLAN` con `after_not_later`, `reused_evidence_ref` o `unchanged_build_identity`. Los timestamps o identidades malformados fallan cerrado con `PerformanceRemediationError`.
+
+Solo una mejora medida con esa procedencia mínima, estados `CURRENT` y clasificación no empeorada puede producir `ADOPT` **como decisión pura**. Evidencia stale/unknown, ausencia de mejora o clasificación peor produce `REVERT_OR_REPLAN`. Los fixtures sintéticos con timestamps y SHA distintos prueban el algoritmo, **no** acreditan que existiera un PR, intervención causal, benchmark productivo o adopción operativa de Factory #304 AC-11. El caller conserva responsabilidad de verificar la autenticidad de cada muestra y el cambio realmente aplicado.
 
 ## Boundary
 
