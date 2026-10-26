@@ -30,7 +30,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          python3 scripts/salud_cola_observar.py | tee "${RUNNER_TEMP}/factory-salud-cola-local.json"
-      - name: Simular aviso sin permisos de escritura
-        run: python3 -m scripts.salud_cola_publicar --observacion "${RUNNER_TEMP}/factory-salud-cola-local.json"
+        run: python3 scripts/salud_cola_observar.py | python3 -m scripts.salud_cola_publicar
