@@ -71,6 +71,7 @@ class FakeAPI:
         if method == "POST" and path == "/repos/pl0n3r/Factory/issues":
             number = 20000
             new = {"number": number, "state": "open", "body": payload["body"],
+                   "user": {"login": "github-actions[bot]", "type": "Bot"},
                    "labels": [{"name": "estado: bloqueado"}]}
             self.history.append(copy.deepcopy(new))
             self.repos[FACTORY].append(copy.deepcopy(new))
@@ -127,6 +128,10 @@ class SaludColaAlertarTests(unittest.TestCase):
         self.assertEqual(ejecutar(api, enabled=True)["reason"], "owner_closed_alert")
         self.assertEqual(len(api.writes), 2)
         api.history.append(copy.deepcopy(api.history[0]))
+        self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+        self.assertEqual(len(api.writes), 2)
+        api.history = [api.history[0]]
+        api.history[0]["user"] = {"login": "untrusted", "type": "User"}
         self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
         self.assertEqual(len(api.writes), 2)
 
