@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -104,9 +107,31 @@ class SaludColaPublicarTests(unittest.TestCase):
             self.assertNotIn(forbidden, workflow + publisher)
         self.assertEqual(workflow.count("cron:"), 1)
         self.assertIn("salud_cola_observar.py", workflow)
-        self.assertIn("salud_cola_publicar.py --observacion", workflow)
+        self.assertIn("python3 -m scripts.salud_cola_publicar --observacion", workflow)
         self.assertNotIn("from urllib", publisher)
         self.assertNotIn("import requests", publisher)
+        # La invocación -m conserva una prueba real de import-safe bajo cron;
+        # no modifica la allowlist de entrypoints directos históricos.
+        with tempfile.TemporaryDirectory() as dirname:
+            observation = Path(dirname) / "report.json"
+            observation.write_text(
+                json.dumps({"status": "OBSERVED_LOCAL_ONLY",
+                            "scope": "pl0n3r/Factory", "writes": 0}),
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            for key in ("PYTHONPATH", "GH_TOKEN", "GITHUB_TOKEN",
+                        "SONAR_TOKEN", "GITHUB_STEP_SUMMARY"):
+                environment.pop(key, None)
+            result = subprocess.run(
+                [sys.executable, "-m", "scripts.salud_cola_publicar",
+                 "--observacion", str(observation)],
+                cwd=ROOT, env=environment, text=True,
+                capture_output=True, timeout=15, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("ModuleNotFoundError", result.stderr)
+            self.assertEqual(json.loads(result.stdout)["status"], "SKIPPED")
 
 
 if __name__ == "__main__":
