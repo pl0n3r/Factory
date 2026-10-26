@@ -133,6 +133,33 @@ class ReleaseWindowTests(unittest.TestCase):
         ) + " -->"
         body = body.replace(match.group(0), canonical, 1)
         self.assertIsNotNone(rw._gate_from_body(body))
+
+        # Guardas de estructura y autoridad antiguas siguen obligatorias
+        # incluso cuando la copia explicativa de un release es histórica.
+        invalid_structures = [None, {}, {"category": "factory-release"}]
+        extra_field = dict(raw)
+        extra_field["unexpected"] = "untrusted"
+        invalid_structures.append(extra_field)
+        no_options = dict(raw)
+        no_options["options"] = []
+        invalid_structures.append(no_options)
+        string_options = dict(raw)
+        string_options["options"] = "A y B"
+        invalid_structures.append(string_options)
+        missing_default = dict(raw)
+        del missing_default["safe_default"]
+        invalid_structures.append(missing_default)
+        unexpected_recommendation = dict(raw)
+        unexpected_recommendation["recommendation"] = "D"
+        invalid_structures.append(unexpected_recommendation)
+        bad_context = dict(raw)
+        bad_context["context"] = None
+        invalid_structures.append(bad_context)
+        for invalid in invalid_structures:
+            with self.subTest(schema=str(invalid)[:70]):
+                with self.assertRaises(rw.GateValidationError):
+                    rw._historical_release_gate(invalid)
+
         invalids = []
         invalids.append(body.replace(
             '"category":', '"category":"factory-release","category":', 1,
