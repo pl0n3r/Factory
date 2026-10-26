@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-from pathlib import Path
 import re
 import sys
 
@@ -79,44 +77,43 @@ def preparar_publicacion(snapshot: object, provenance: object,
             "publish_allowed": False, "writes": 0}
 
 
-def _read_local_observation(path: str) -> dict:
-    """La observación local Factory NO acredita siete repositorios."""
+def _read_local_observation(raw: object) -> dict:
+    """JSON desde stdin acotado. No acepta ni abre rutas de archivos."""
+    if type(raw) is not bytes or not 1 <= len(raw) <= MAX_OBSERVATION_BYTES:
+        return _skip("observation_unreadable")
     try:
-        target = Path(path)
-        if target.is_symlink() or not target.is_file():
-            return _skip("observation_unreadable")
-        with target.open("rb") as stream:
-            raw = stream.read(MAX_OBSERVATION_BYTES + 1)
-        if len(raw) > MAX_OBSERVATION_BYTES:
-            return _skip("observation_oversized")
-        observation = json.loads(raw)
-    except (OSError, ValueError, UnicodeError, TypeError):
+        observation = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError, TypeError):
         return _skip("observation_unreadable")
     if type(observation) is not dict:
         return _skip("observation_invalid")
     if observation.get("status") == "DEFERRED_LOW_QUOTA":
         return _skip("low_quota")
     if (observation.get("scope") != "pl0n3r/Factory"
-            or observation.get("writes") != 0
+            or type(observation.get("writes")) is not int
+            or observation["writes"] != 0
             or observation.get("status") not in ("OBSERVED_LOCAL_ONLY", "UNKNOWN")):
         return _skip("observation_invalid")
     return _skip("local_observation_not_global_proof")
 
 
-def main() -> int:
-    if len(sys.argv) != 3 or sys.argv[1] != "--observacion":
-        print("Uso: salud_cola_publicar.py --observacion ARCHIVO", file=sys.stderr)
+def main(argv: list[str] | None = None, *, stream=None, output=None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    out = sys.stdout if output is None else output
+    if args == ["--help"]:
+        out.write("Uso: python3 -m scripts.salud_cola_publicar < observacion.json\n")
+        return 0
+    if args:
+        print("Argumentos no reconocidos", file=sys.stderr)
         return 2
-    report = _read_local_observation(sys.argv[2])
-    print(json.dumps(report, sort_keys=True))
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        try:
-            with Path(summary).open("a", encoding="utf-8") as stream:
-                stream.write("### Salud de cola: simulación únicamente\n"
-                             "Sin publicaciones ni mutaciones de Issues.\n")
-        except OSError:
-            return 2
+    reader = sys.stdin.buffer if stream is None else stream
+    try:
+        raw = reader.read(MAX_OBSERVATION_BYTES + 1)
+    except (OSError, ValueError):
+        report = _skip("observation_unreadable")
+    else:
+        report = _read_local_observation(raw)
+    out.write(json.dumps(report, sort_keys=True) + "\n")
     return 0
 
 
