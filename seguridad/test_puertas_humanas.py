@@ -608,7 +608,145 @@ class GateTests(unittest.TestCase):
         self.assertIn("issues/$ISSUE/assignees", workflow)
 
 
+def privacy_material_issue(number, repository, *, strict=False):
+    """Fixtures inertes de Condor y GrindFlow, sin datos personales."""
+    rows = (
+        ["workflow_definitions:purpose", "workflow_executions:purpose"]
+        if strict else
+        ["diagnostic_incidents:purpose", "instagram_reels_publication:new_provider",
+         "instagram_reels_publication:purpose"]
+    )
+    opts = [
+        {"id": "A", "label":
+         "Solicitar revisión jurídica antes de aprobar la documentación"},
+        ({"id": "C", "label":
+          "Mantener el cambio bloqueado hasta completar la revisión jurídica"}
+         if strict else {"id": "B", "label":
+         "Continuar en construcción manteniendo documented_not_legally_approved"}),
+    ]
+    gate = {
+        "category": "legal",
+        "context": (
+            f"{repository}: la auditoría detectó {len(rows)} "
+            "cambio(s) material(es) de privacidad"
+            + (" fuera de las condiciones de D-063; requieren revisión jurídica "
+               "antes de continuar hacia live." if strict else
+               " que requieren decisión jurídica humana.")
+        ),
+        "options": opts, "recommendation": "A",
+        "safe_default": "A" if strict else "B",
+    }
+    statement = (
+        "`documented_not_legally_approved`. Esta puerta es bloqueante: "
+        "D-063 no aplica y se exige revisión jurídica antes de continuar hacia live."
+        if strict else
+        "`documented_not_legally_approved` hasta una decisión humana."
+    )
+    issue_body = (
+        "<!-- factory-privacy-material -->\n"
+        "## Cambio material de privacidad\n\n"
+        f"Producto: `{repository}`\n\nMotivos estructurados:\n"
+        + "\n".join(f"- `{row}`" for row in rows)
+        + "\n\nLa documentación permanece en estado " + statement
+        + "\n\n<!-- factory-human-gate "
+        + json.dumps(gate, separators=(",", ":"), ensure_ascii=False)
+        + " -->\n"
+    )
+    issue = gate_issue(
+        number, body_value=issue_body, author_association="CONTRIBUTOR",
+    )
+    issue["user"] = {"login": BOT, "type": "Bot"}
+    return issue
+
+
 class GateDedupTests(unittest.TestCase):
+
+    def test_bot_privacy_gate_canonical_with_exact_provenance(self):
+        for repository, strict in (
+            ("pl0n3r/GrindFlow", False), ("pl0n3r/Condor", True),
+        ):
+            with self.subTest(repo=repository):
+                api = MultiGateAPI([
+                    privacy_material_issue(611, repository, strict=strict),
+                ])
+                self.assertTrue(reconcile_gate(api, repository, 611))
+                self.assertEqual(api.open_numbers(), [611])
+                self.assertFalse(any(call[0] != "GET" for call in api.calls))
+
+    def test_bot_privacy_gate_untrusted_variants_fail_closed(self):
+        base = privacy_material_issue(611, "pl0n3r/GrindFlow")
+        cases = []
+        def add(change):
+            row = json.loads(json.dumps(base))
+            change(row)
+            cases.append(row)
+        add(lambda row: row["user"].update(login="impostor[bot]"))
+        add(lambda row: row["user"].update(type="User"))
+        add(lambda row: row.update(author_association="NONE"))
+        add(lambda row: row.update(author_association="OWNER"))
+        add(lambda row: row.update(body=row["body"].replace(
+            "<!-- factory-privacy-material -->", "", 1,
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            "<!-- factory-privacy-material -->",
+            "<!-- factory-privacy-material -->\n<!-- factory-privacy-material -->",
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            '"category":"legal"', '"category":"money"',
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            "Producto: `pl0n3r/GrindFlow`", "Producto: `pl0n3r/Condor`",
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            "detectó 3 cambio(s)", "detectó 2 cambio(s)",
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            "- `instagram_reels_publication:purpose`\n", "",
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            "Continuar en construcción manteniendo documented_not_legally_approved",
+            "Aprobar directamente todos los datos personales",
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            '"recommendation":"A"', '"recommendation":"B"',
+        )))
+        add(lambda row: row.update(body=row["body"].replace(
+            '"safe_default":"B"', '"safe_default":"A"',
+        )))
+        add(lambda row: row.update(body=row["body"] +
+            "<!-- factory-release-rearm {} -->",
+        ))
+        add(lambda row: row.update(body=row["body"] +
+            row["body"][row["body"].index("<!-- factory-human-gate"):],
+        ))
+        for row in cases:
+            with self.subTest(body=row["body"][:80]):
+                api = MultiGateAPI([row])
+                self.assertFalse(reconcile_gate(
+                    api, "pl0n3r/GrindFlow", 611,
+                ))
+                self.assertEqual(api.open_numbers(), [611])
+                self.assertFalse(any(call[0] != "GET" for call in api.calls))
+
+    def test_bot_privacy_gate_preserves_release_and_human_authority(self):
+        human = MultiGateAPI([
+            gate_issue(575, body_value=release_gate_body()),
+        ])
+        self.assertTrue(reconcile_gate(human, "pl0n3r/Factory", 575))
+        bot = gate_issue(
+            581, body_value=release_gate_body()
+            + '\n<!-- factory-release-rearm '
+            + json.dumps({
+                "version": 1, "source_issue": 92,
+                "sha": "e8ac89801449669436cb3f30e4ccd102898a9d71",
+            }, separators=(",", ":")) + ' -->',
+            author_association="CONTRIBUTOR",
+        )
+        bot["user"] = {"login": BOT, "type": "Bot"}
+        api = MultiGateAPI([bot])
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 581))
+        self.assertFalse(any(call[0] != "GET" for call in api.calls))
+
     def test_factory_release_authority_ignores_explanatory_copy(self):
         first = rich_release_gate_body(
             publish_label="Publicar Factory 1.0.17",

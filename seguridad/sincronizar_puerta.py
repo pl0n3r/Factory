@@ -187,12 +187,111 @@ def _decision_evidence(api, base: str) -> tuple[str, str] | None:
     return next(iter(found), None)
 
 
-def _trusted_gate_candidate(candidate: dict) -> bool:
-    """Acepta humanos confiables o el release-rearm exacto creado por Actions."""
-    if candidate.get("author_association") in TRUSTED_ISSUE_ASSOCIATIONS:
-        return True
+# La cuenta github-actions[bot] no es por sí sola una prueba de autoridad.
+# Para privacidad, solo se reconocen dos formatos documentales no aprobatorios.
+PRIVACY_MATERIAL_MARKER = "<!-- factory-privacy-material -->"
+PRIVACY_REPOSITORIES = frozenset({
+    "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+    "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+    "pl0n3r/FactoryRunner",
+})
+PRIVACY_REASON_RE = re.compile(
+    r"^- `([a-z][a-z0-9_]{0,99}:(?:new_provider|purpose))`$"
+)
+PRIVACY_OPTIONS = {
+    "A": "Solicitar revisión jurídica antes de aprobar la documentación",
+    "B": "Continuar en construcción manteniendo documented_not_legally_approved",
+    "C": "Mantener el cambio bloqueado hasta completar la revisión jurídica",
+}
 
+
+def _trusted_bot_privacy_gate(
+    candidate: dict, repository: str, issue_body: str, gate: dict,
+) -> bool:
+    """Contrato legal de auditoría: sin autoridad de tratamiento o release."""
+    if (
+        repository not in PRIVACY_REPOSITORIES
+        or candidate.get("author_association") != "CONTRIBUTOR"
+        or issue_body.count(PRIVACY_MATERIAL_MARKER) != 1
+        or issue_body.count("<!--") != 2
+        or issue_body.count("-->") != 2
+        or gate.get("category") != "legal"
+        or set(gate) - {
+            "category", "context", "options", "recommendation",
+            "safe_default", "explain_simple",
+        }
+    ):
+        return False
+
+    prefix = (
+        f"{PRIVACY_MATERIAL_MARKER}\n"
+        "## Cambio material de privacidad\n\n"
+        f"Producto: `{repository}`\n\n"
+        "Motivos estructurados:\n"
+    )
+    if not issue_body.startswith(prefix):
+        return False
+    rest = issue_body[len(prefix):]
+    rows, separator, remaining = rest.partition(
+        "\n\nLa documentación permanece en estado "
+    )
+    reasons = rows.split("\n")
+    if (
+        not separator or not 1 <= len(reasons) <= 20
+        or not all(PRIVACY_REASON_RE.fullmatch(row) for row in reasons)
+        or len(reasons) != len(set(reasons))
+    ):
+        return False
+    statement, separator, raw_gate = remaining.partition(
+        "\n\n<!-- factory-human-gate "
+    )
+    if (
+        not separator
+        or statement not in {
+            "`documented_not_legally_approved` hasta una decisión humana.",
+            ("`documented_not_legally_approved`. Esta puerta es bloqueante: "
+             "D-063 no aplica y se exige revisión jurídica antes de "
+             "continuar hacia live."),
+        }
+        or not (
+            raw_gate.endswith(" -->")
+            or raw_gate.endswith(" -->\n")
+        )
+        or raw_gate.count("<!--") != 0
+        or raw_gate.count("-->") != 1
+    ):
+        return False
+
+    context = (
+        f"{repository}: la auditoría detectó {len(reasons)} "
+        "cambio(s) material(es) de privacidad"
+    )
+    if gate["context"] not in {
+        context + " que requieren decisión jurídica humana.",
+        (context + " fuera de las condiciones de D-063; requieren "
+         "revisión jurídica antes de continuar hacia live."),
+    }:
+        return False
+    options = gate["options"]
+    if len(options) != 2 or gate.get("recommendation") != "A":
+        return False
+    option_ids = {item["id"] for item in options}
+    if option_ids not in ({"A", "B"}, {"A", "C"}):
+        return False
+    if gate.get("safe_default") != ("B" if "B" in option_ids else "A"):
+        return False
+    return all(
+        set(item) <= {"id", "label", "explain_simple"}
+        and item["label"] == PRIVACY_OPTIONS[item["id"]]
+        for item in options
+    )
+
+
+def _trusted_gate_candidate(candidate: dict, repository: str) -> bool:
+    """Solo humanos no bot, release firmado o privacidad legal acotada."""
     user = candidate.get("user")
+    if candidate.get("author_association") in TRUSTED_ISSUE_ASSOCIATIONS:
+        return not isinstance(user, dict) or user.get("type") != "Bot"
     body = candidate.get("body")
     if (
         not isinstance(user, dict)
@@ -201,24 +300,26 @@ def _trusted_gate_candidate(candidate: dict) -> bool:
         or not isinstance(body, str)
     ):
         return False
-
     gate_markers = MARKER_RE.findall(body)
-    rearm_markers = RELEASE_REARM_RE.findall(body)
-    if len(gate_markers) != 1 or len(rearm_markers) != 1:
+    if len(gate_markers) != 1:
         return False
-
     try:
         gate = validate_gate(json.loads(gate_markers[0]))
-        rearm = json.loads(rearm_markers[0])
     except (GateValidationError, json.JSONDecodeError, TypeError):
         return False
+    if PRIVACY_MATERIAL_MARKER in body:
+        return _trusted_bot_privacy_gate(candidate, repository, body, gate)
 
-    if gate.get("category") != "factory-release":
+    rearm_markers = RELEASE_REARM_RE.findall(body)
+    if len(rearm_markers) != 1 or gate.get("category") != "factory-release":
+        return False
+    try:
+        rearm = json.loads(rearm_markers[0])
+    except (json.JSONDecodeError, TypeError):
         return False
     target = FACTORY_RELEASE_TARGET_RE.search(gate.get("context", ""))
     if target is None:
         return False
-
     if (
         not isinstance(rearm, dict)
         or set(rearm) != {"version", "source_issue", "sha"}
@@ -231,7 +332,6 @@ def _trusted_gate_candidate(candidate: dict) -> bool:
         or rearm["sha"] != target.group(2).lower()
     ):
         return False
-
     return True
 
 
@@ -243,7 +343,7 @@ def _target_issues(api, repository: str, target_identity: str) -> list[dict]:
     for candidate in candidates:
         if not isinstance(candidate, dict) or "pull_request" in candidate:
             continue
-        if not _trusted_gate_candidate(candidate):
+        if not _trusted_gate_candidate(candidate, repository):
             continue
         body = candidate.get("body")
         if not isinstance(body, str):
