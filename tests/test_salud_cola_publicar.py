@@ -145,11 +145,14 @@ class SaludColaPublicarTests(unittest.TestCase):
     def test_workflow_preserves_read_only_permissions_and_zero_mutations(self):
         workflow = (ROOT / ".github/workflows/salud-cola.yml").read_text(encoding="utf-8")
         publisher = (ROOT / "scripts/salud_cola_publicar.py").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("issues: read"), 2)
-        self.assertEqual(workflow.count("contents: read"), 2)
+        # La aprobación #1532/A autoriza un job separado; el observador antiguo
+        # y su simulador conservan exactamente los permisos GET-only originales.
+        observer = workflow.split("\n  publicar:\n", 1)[0]
+        self.assertEqual(observer.count("issues: read"), 2)
+        self.assertEqual(observer.count("contents: read"), 2)
         for forbidden in ("issues: write", "pull-requests: write", "secrets.",
                           'method="POST"', 'method="PATCH"'):
-            self.assertNotIn(forbidden, workflow + publisher)
+            self.assertNotIn(forbidden, observer + publisher)
         self.assertEqual(workflow.count("cron:"), 1)
         self.assertIn(
             "python3 scripts/salud_cola_observar.py | python3 -m scripts.salud_cola_publicar",
