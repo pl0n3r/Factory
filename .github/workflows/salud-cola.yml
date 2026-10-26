@@ -1,9 +1,15 @@
-name: Salud de cola local (GET-only)
+name: Salud de cola Factory (GET-only + aviso autorizado)
 
 on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
+    inputs:
+      publicar:
+        description: 'Habilitar un aviso Factory solo con siete fuentes verificadas'
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -31,3 +37,24 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 scripts/salud_cola_observar.py | python3 -m scripts.salud_cola_publicar
+
+  publicar:
+    name: Publicar solo aviso Factory (OWNER #1532/A)
+    if: github.event_name == 'workflow_dispatch' && inputs.publicar == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Revalidar siete fuentes y publicar como máximo un aviso
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          FACTORY_QUEUE_ALERT_ENABLED: 'true'
+        run: python3 -m scripts.salud_cola_alertar
