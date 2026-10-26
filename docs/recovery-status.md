@@ -10,6 +10,8 @@ Estados:
 
 Freshness no inventa umbrales: backup usa el RPO del Recovery Manifest y restore drill usa `restore_drill.cadence_days`.
 
+**Orden causal obligatorio del drill.** Aunque una observación esté fresca, `drill_observed_at` debe ser mayor o igual a `verified_backup.created_at` (instante UTC validado del backup cuya referencia/huella el drill afirma haber recuperado), y nunca posterior a `observed_at`. Un drill anterior a la creación del backup devuelve `BLOCKED` con razón `DRILL_BEFORE_BACKUP` y clase `restore_drill_failed`; para Recovery crítico, Readiness conserva `ready=false`. La comprobación es determinista y declarativa: no verifica por sí sola que se ejecutó un restore, que el proveedor remoto contiene datos auténticos ni que existe evidencia operativa de RPO/RTO. Esos recibos siguen pendientes en Factory #305 y requieren autorización real de live (D-066/Factory #683).
+
 El payload incluye razones explicables y solo estas clases canónicas de #269: `backup_missing`, `backup_stale`, `offsite_missing`, `checksum_failed`, `restore_drill_failed`, `rpo_breached`, `rto_breached`, `retention_drift`. `recovery_work_item_classes()` únicamente clasifica; no crea ni despacha trabajo.
 
 `project_recovery_readiness()` copia el mismo `recovery_health`; no recalcula. Para recovery crítico, `UNKNOWN` o `BLOCKED` fuerza `ready=false`. `DEGRADED` permanece visible pero no se transforma artificialmente en otro estado.
