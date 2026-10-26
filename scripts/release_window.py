@@ -125,9 +125,48 @@ def _semver(value: Any) -> str:
     return value
 
 
+# Lectura de fuentes históricas: el editor de puertas NUEVAS impone estilo,
+# pero una puerta publicada conserva para siempre sus opciones y fingerprint.
+# Repetir la regla editorial al auditar el histórico invalidaría aprobaciones
+# reales y bloquearía hasta las ventanas caducadas. El esquema estructural,
+# tipos, longitudes y todas las garantías de autoridad siguen intactos.
+def _historical_release_gate(raw: Any) -> dict[str, Any]:
+    from seguridad import puertas_humanas as schema
+
+    if not isinstance(raw, dict) or raw.get("category") != "factory-release":
+        return validate_gate(raw)
+    if not schema.REQUIRED.issubset(raw) or not set(raw).issubset(
+        schema.REQUIRED | schema.OPTIONAL_SIMPLE
+    ):
+        raise GateValidationError("Puerta histórica con campos inválidos.")
+
+    category = schema._line(raw["category"], "category", 80)
+    context = schema._line(raw["context"], "context", 500)
+    options = raw["options"]
+    if not isinstance(options, list) or not 2 <= len(options) <= 4:
+        raise GateValidationError("Opciones históricas inválidas.")
+
+    seen: set[str] = set()
+    normalized_options = [schema._validate_option(option, seen) for option in options]
+    recommendation = schema._line(raw["recommendation"], "recommendation", 1)
+    safe_default = schema._line(raw["safe_default"], "safe_default", 1)
+    if recommendation not in seen or safe_default not in seen:
+        raise GateValidationError("Autoridad de opciones histórica inválida.")
+
+    normalized: dict[str, Any] = {
+        "category": category,
+        "context": context,
+        "options": normalized_options,
+        "recommendation": recommendation,
+        "safe_default": safe_default,
+    }
+    schema._validate_simple_root(raw, normalized)
+    return normalized
+
+
 def _gate_fingerprint(gate: dict[str, Any]) -> str:
     canonical = json.dumps(
-        validate_gate(gate),
+        _historical_release_gate(gate),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -194,7 +233,7 @@ def _gate_from_body(body: Any) -> tuple[dict[str, Any], str, str] | None:
         raise AmbiguousReleaseMarker("Puerta humana ambigua o incompleta.")
     try:
         raw = _strict_json_loads(matches[0])
-        gate = validate_gate(raw)
+        gate = _historical_release_gate(raw)
     except AmbiguousReleaseJSON:
         raise
     except (json.JSONDecodeError, GateValidationError) as exc:

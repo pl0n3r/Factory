@@ -82,6 +82,105 @@ def executed_comment(body: str, actor: str = "github-actions[bot]") -> dict[str,
 
 
 class ReleaseWindowTests(unittest.TestCase):
+    def test_legacy_full_copy_with_jargon_preserves_canonical_release_authority(self) -> None:
+        # Pre-#1516 records may contain the modern optional fields AND old
+        # technical text. They must not be rewritten or silently re-fingerprinted.
+        body = rw._render_gate("1.0.24", OLD_SHA, NOW, source_issue=900)["body"]
+        match = rw.MARKER_RE.search(body)
+        self.assertIsNotNone(match)
+        raw = json.loads(match.group(1))
+        raw["explain_simple"] = "Se verifica el SHA antes de continuar."
+        raw["why_recommended"] = "Este paso requiere exact-main."
+        for option in raw["options"]:
+            option["explain_simple"] = "Comprobar fail-closed sin cambiar permisos."
+            option["effect"] = "Una prueba con V3 decide si se continúa."
+        rewritten = "<!-- factory-human-gate " + json.dumps(
+            raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ) + " -->"
+        historical = body.replace(match.group(0), rewritten, 1)
+
+        normalized, version, sha = rw._gate_from_body(historical)
+        self.assertEqual(("1.0.24", OLD_SHA), (version, sha))
+        self.assertEqual(normalized["explain_simple"], raw["explain_simple"])
+        self.assertEqual(
+            normalized["options"][0]["explain_simple"],
+            raw["options"][0]["explain_simple"],
+        )
+        expected = __import__("hashlib").sha256(json.dumps(
+            normalized, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        self.assertEqual(expected, rw._gate_fingerprint(normalized))
+        history = gate_row(number=969, body=historical, state="closed")
+        records = rw.gate_records([history])
+        self.assertEqual(records[0]["fingerprint"], expected)
+        self.assertFalse(records[0]["approved_a"])
+        self.assertIsNone(records[0]["executed"])
+        self.assertIsNone(rw.freeze_gate(records, NOW))
+        # Even after expiration, malformed history must NOT become an ALLOW.
+        self.assertIsNone(rw.freeze_gate(records, NOW + timedelta(hours=3)))
+
+    def test_legacy_full_copy_invalid_json_or_schema_still_fails_closed(self) -> None:
+        body = rw._render_gate("1.0.24", OLD_SHA, NOW, source_issue=900)["body"]
+        match = rw.MARKER_RE.search(body)
+        self.assertIsNotNone(match)
+        raw = json.loads(match.group(1))
+        raw["explain_simple"] = "La copia histórica contiene SHA."
+        for option in raw["options"]:
+            option["explain_simple"] = "Validar exact-main."
+        canonical = "<!-- factory-human-gate " + json.dumps(
+            raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ) + " -->"
+        body = body.replace(match.group(0), canonical, 1)
+        self.assertIsNotNone(rw._gate_from_body(body))
+
+        # Guardas de estructura y autoridad antiguas siguen obligatorias
+        # incluso cuando la copia explicativa de un release es histórica.
+        invalid_structures = [None, {}, {"category": "factory-release"}]
+        extra_field = dict(raw)
+        extra_field["unexpected"] = "untrusted"
+        invalid_structures.append(extra_field)
+        no_options = dict(raw)
+        no_options["options"] = []
+        invalid_structures.append(no_options)
+        string_options = dict(raw)
+        string_options["options"] = "A y B"
+        invalid_structures.append(string_options)
+        missing_default = dict(raw)
+        del missing_default["safe_default"]
+        invalid_structures.append(missing_default)
+        unexpected_recommendation = dict(raw)
+        unexpected_recommendation["recommendation"] = "D"
+        invalid_structures.append(unexpected_recommendation)
+        bad_context = dict(raw)
+        bad_context["context"] = None
+        invalid_structures.append(bad_context)
+        for invalid in invalid_structures:
+            with self.subTest(schema=str(invalid)[:70]):
+                with self.assertRaises(rw.GateValidationError):
+                    rw._historical_release_gate(invalid)
+
+        invalids = []
+        invalids.append(body.replace(
+            '"category":', '"category":"factory-release","category":', 1,
+        ))
+        malformed = dict(raw)
+        malformed["options"] = [dict(option) for option in raw["options"]]
+        malformed["options"][0]["id"] = "Z"
+        invalids.append(body.replace(
+            canonical,
+            "<!-- factory-human-gate " + json.dumps(
+                malformed, sort_keys=True, separators=(",", ":")
+            ) + " -->", 1,
+        ))
+        invalids.append(body.replace(
+            '"sha":"' + OLD_SHA + '"', '"sha":"' + NEW_SHA + '"', 1,
+        ))
+        for candidate in invalids:
+            with self.subTest(candidate=candidate[:65]):
+                with self.assertRaises(rw.ReleaseWindowError):
+                    rw.gate_records([gate_row(number=990, body=candidate)])
+
     def test_valid_window_plus_malformed_second_header_fails_closed(self) -> None:
         valid = rw._render_gate("1.0.23", OLD_SHA, NOW, source_issue=900)["body"]
         malformed = (
