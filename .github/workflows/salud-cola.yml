@@ -30,4 +30,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 scripts/salud_cola_observar.py
+        run: python3 scripts/salud_cola_observar.py | python3 -m scripts.salud_cola_publicar
