@@ -110,10 +110,25 @@ class ContrasteTests(unittest.TestCase):
                     self.assertIn(f"/pull/{COVERED[key][2]}", found[0])
         self.assertIn("## Contraste de comportamientos #1562", self.matrix)
         self.assertEqual(self.matrix.count("## Filas de cobertura"), 1)
-        self.assertIn("| TOTAL | 2118 |", self.matrix)
-        self.assertIn("| CUBIERTO | 13 |", self.matrix)
-        self.assertIn("| NO_VERIFICABLE | 2105 |", self.matrix)
-        self.assertIn("**Porcentaje CUBIERTO:** 0.61%", self.matrix)
+        current = self.matrix.split("## Filas de cobertura", 1)[1].split(
+            "## Producción y mejoras pendientes", 1
+        )[0]
+        # #1562 fija sus propios 17 comportamientos, no el número global
+        # de otros contrastes que migran fragmentos a comportamientos.
+        live_rows = [line for line in current.splitlines() if line.startswith("| `")]
+        by_state = Counter(
+            status for line in live_rows
+            for status in ("CUBIERTO", "NO_VERIFICABLE",
+                           "SIN_COBERTURA", "EN_CURSO", "DESCARTADO", "NO_APLICA")
+            if f"| {status} |" in line
+        )
+        total = len(live_rows)
+        self.assertGreater(total, len(self.rows))
+        self.assertIn(f"| TOTAL | {total} |", self.matrix)
+        self.assertIn(f"| CUBIERTO | {by_state['CUBIERTO']} |", self.matrix)
+        self.assertIn(f"| NO_VERIFICABLE | {by_state['NO_VERIFICABLE']} |", self.matrix)
+        percent = f"{100 * by_state['CUBIERTO'] / total:.2f}%"
+        self.assertIn(f"**Porcentaje CUBIERTO:** {percent}", self.matrix)
 
 
 if __name__ == "__main__":
