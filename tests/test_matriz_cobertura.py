@@ -61,6 +61,21 @@ VERIFIED = {
     "docs/readme-contract.md:B02":
         (1025, "2dc5a8d0b2a6", "readme/validate_readme.py",
          "tests/test_readme_contract_v2.py"),
+    "docs/unattended-safe-mode.md:B01": (747, "073b46e8e0a0bd81b081f0b6a678e2681a088d68", "scripts/unattended_guards.py", "tests/test_unattended_guards.py"),
+    "docs/unattended-safe-mode.md:B02": (754, "e1509bfe9d133d0dda58ecb3f898201d5ccdc53e", "scripts/unattended_watchdog.py", "tests/test_unattended_watchdog.py"),
+    "docs/unattended-runtime-guards.md:B01": (747, "073b46e8e0a0bd81b081f0b6a678e2681a088d68", "scripts/unattended_guards.py", "tests/test_unattended_guards.py"),
+    "docs/unattended-runtime-guards.md:B02": (747, "073b46e8e0a0bd81b081f0b6a678e2681a088d68", "scripts/unattended_guards.py", "tests/test_unattended_guards.py"),
+    "docs/unattended-runtime-guards.md:B03": (747, "073b46e8e0a0bd81b081f0b6a678e2681a088d68", "scripts/unattended_guards.py", "tests/test_unattended_guards.py"),
+    "docs/unattended-runtime-guards.md:B04": (747, "073b46e8e0a0bd81b081f0b6a678e2681a088d68", "scripts/unattended_guards.py", "tests/test_unattended_guards.py"),
+    "docs/unattended-daily-summary.md:B01": (789, "6c69a6cfd594ce5ba7617e2b0c22257045b2e477", "scripts/unattended_daily_summary.py", "tests/test_unattended_daily_summary.py"),
+    "docs/unattended-daily-summary.md:B02": (789, "6c69a6cfd594ce5ba7617e2b0c22257045b2e477", "scripts/unattended_daily_summary.py", "tests/test_unattended_daily_summary.py"),
+    "docs/unattended-daily-summary.md:B03": (789, "6c69a6cfd594ce5ba7617e2b0c22257045b2e477", "scripts/unattended_daily_summary.py", "tests/test_unattended_daily_summary.py"),
+    "docs/unattended-watchdog.md:B01": (754, "e1509bfe9d133d0dda58ecb3f898201d5ccdc53e", "scripts/unattended_watchdog.py", "tests/test_unattended_watchdog.py"),
+    "docs/unattended-watchdog.md:B02": (754, "e1509bfe9d133d0dda58ecb3f898201d5ccdc53e", "scripts/unattended_watchdog.py", "tests/test_unattended_watchdog.py"),
+    "docs/unattended-watchdog.md:B03": (754, "e1509bfe9d133d0dda58ecb3f898201d5ccdc53e", "scripts/unattended_watchdog.py", "tests/test_unattended_watchdog.py"),
+    "docs/unattended-watchdog.md:B04": (754, "e1509bfe9d133d0dda58ecb3f898201d5ccdc53e", "scripts/unattended_watchdog.py", "tests/test_unattended_watchdog.py"),
+    "docs/unattended-watchdog-runtime.md:B01": (786, "2964992a8833e10627e353132c24358ecce99de9", "scripts/unattended_watchdog_runtime.py", "tests/test_unattended_watchdog_runtime.py"),
+    "docs/unattended-watchdog-runtime.md:B02": (786, "2964992a8833e10627e353132c24358ecce99de9", "scripts/unattended_watchdog_runtime.py", "tests/test_unattended_watchdog_runtime.py"),
 }
 
 
@@ -220,6 +235,11 @@ class MatrizCoberturaTests(unittest.TestCase):
             "docs/release-bootstrap.md",
             "docs/readme-progress-readiness.md",
             "docs/readme-contract.md",
+            "docs/unattended-safe-mode.md",
+            "docs/unattended-runtime-guards.md",
+            "docs/unattended-daily-summary.md",
+            "docs/unattended-watchdog.md",
+            "docs/unattended-watchdog-runtime.md",
         )
         expected = {key: value for key, value in expected.items()
                     if not any(key.startswith(source + ":L") for source in migrated)}
@@ -233,6 +253,12 @@ class MatrizCoberturaTests(unittest.TestCase):
                            if line.startswith("| `docs/") and ":B" in line.split("`", 2)[1]]
         self.assertEqual(len(behaviors_prev1), 17)
         expected.update({key: "Comportamiento contrastado" for key in behaviors_prev1})
+        unattended = (ROOT / "docs/contraste-matriz-unattended.md").read_text(encoding="utf-8")
+        unattended_ids = [line.split(chr(96), 2)[1] for line in unattended.splitlines()
+                          if line.startswith("| " + chr(96) + "docs/unattended-")
+                          and ":B" in line.split(chr(96), 2)[1]]
+        self.assertEqual(len(unattended_ids), 20)
+        expected.update({key: "Comportamiento contrastado" for key in unattended_ids})
         actual = {row["id"] for row in self.rows}
         self.assertEqual(actual, set(expected))
         self.assertIn("AGENTES.md:L34-U2", expected)

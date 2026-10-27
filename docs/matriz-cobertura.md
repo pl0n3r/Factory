@@ -16,6 +16,10 @@ Las cláusulas de `docs/inventario-tecnico-datos-productos.md`, `docs/arquitectu
 
 Las 305 cláusulas fragmentarias del censo histórico de `docs/auditoria-pre-v1.md`, `docs/release-bootstrap.md`, `docs/readme-progress-readiness.md`, `docs/readme-contract.md` se reemplazan en las filas operativas por 17 comportamientos con IDs `Bnn`, contrastados en [pre-v1, release y README](contraste-matriz-prev1_release.md). El inventario #1550 y sus conteos por fuente siguen históricos, no se reescriben. Cinco comportamientos de biblioteca/validadores README tienen código + prueba + PR MERGED verificados; ninguno implica release actual, protección administrativa de `v1`, validación de consumidores ni go-live. Ante evidencia incompleta se conserva `NO_VERIFICABLE`, sin crear hojas ficticias.
 
+## Contraste de comportamientos #1565
+
+Se sustituyen 201 fragmentos de cinco fuentes unattended por **20 comportamientos** en [contraste unattended](contraste-matriz-unattended.md): 15 CUBIERTO y 5 NO_VERIFICABLE. F1G retiró cron/job diario; el motor offline no implica entrega activa. El inventario original #1550 y las otras fuentes permanecen intactos.
+
 ## Inventario de fuentes
 
 | Fuente | Unidades |
@@ -1833,44 +1837,10 @@ Las 305 cláusulas fragmentarias del censo histórico de `docs/auditoria-pre-v1.
 | `docs/tanda1-handoff.md:L29-U1` | TANDA 1 global: completada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/tanda1-handoff.md:L33-U1` | El cierre de TANDA 1 anterior permanece histórico y no se reescribe. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/tanda1-handoff.md:L35-U1` | Un cambio en `main` no modifica por sí solo el canal publicado `@v1`: debe pasar el proceso de mantenimiento descrito en **release-bootstrap.md**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L3-U1` | Estado: **entrega GitHub-native, idempotente y fail-closed**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L9-U1` | destino: un comentario en Factory#768; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L10-U1` | hora: **08:00 America/Bogota**, equivalente a **13:00 UTC**; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L11-U1` | cron: `0 13 * * *`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L12-U1` | no usa correo, mensajería externa, credenciales nuevas ni servicios de pago. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L14-U1` | el evento `*/15` sigue ejecutando únicamente el watchdog. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L20-U1` | carga la configuración versionada del watchdog; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L21-U1` | recoge evidencia GitHub mediante `collect_github_input()`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L22-U1` | evalúa 4C mediante `evaluate_runtime()`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L23-U1` | añade contexto read-only de Issues abiertos/cerrados para decisiones, bloqueos y avances; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L24-U1` | renderiza un resumen corto en español. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L26-U1` | Si un dato no puede demostrarse, queda como **UNKNOWN** | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L26-U2` | No se usan timestamps de GitHub como heartbeat de agente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L32-U1` | Antes de renderizar “Decisiones pendientes”, el resumen consulta únicamente la API | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L35-U1` | método `GET`, sin header `Authorization`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L36-U1` | `User-Agent` explícito y timeout de 3 segundos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L37-U1` | máximo 3 páginas de 100 comentarios y cero retries internos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L38-U1` | solo se confían comentarios de `github-actions[bot]` con el marker exacto | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L39-U1` | `condor-d043-validation-card`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L40-U1` | la versión visible, SHA de 40 hex y el comando | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L41-U1` | `gh workflow run observar-release.yml` deben describir la misma identidad; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L42-U1` | una evidencia automática `VALIDATED_IN_PRODUCTION` elimina únicamente la | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L43-U1` | una release posterior nunca cubre otra | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L45-U1` | si quedan varias tarjetas pendientes, se muestra la versión más reciente y el | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L53-U1` | Esta lectura no reutiliza `GH_TOKEN`, PAT, GitHub App ni ninguna credencial de | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L55-U1` | Condor ni declara producción validada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L61-U1` | decisiones pendientes; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L65-U1` | próximas acciones; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L67-U1` | fuente principal. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L69-U1` | Solo incidentes **S1/S2** califican como interrupción inmediata aparte. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L69-U2` | S3 y UNKNOWN permanecen en el resumen/flujo normal del watchdog y no se promocionan. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L79-U1` | Un comentario de otro autor no puede simular una entrega canónica. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L87-U1` | no reserva trabajo; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L88-U1` | no abre/cierra PRs; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L89-U1` | no despliega; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L90-U1` | no publica releases; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L92-U1` | no cambia severidades; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-daily-summary.md:L93-U1` | no concede autoridad nueva. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
+| `docs/unattended-daily-summary.md:B01` | El motor de resumen estructura decisiones, bloqueos, avances, alertas, acciones y cuotas sin inventar datos. | CUBIERTO | Código `scripts/unattended_daily_summary.py`; prueba `tests/test_unattended_daily_summary.py`; PR MERGED [#789](https://github.com/pl0n3r/Factory/pull/789) `6c69a6cfd594ce5ba7617e2b0c22257045b2e477` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-daily-summary.md:B02` | La publicación diaria manual autorizada usa marker idempotente y relee kill switch. | CUBIERTO | Código `scripts/unattended_daily_summary.py`; prueba `tests/test_unattended_daily_summary.py`; PR MERGED [#789](https://github.com/pl0n3r/Factory/pull/789) `6c69a6cfd594ce5ba7617e2b0c22257045b2e477` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-daily-summary.md:B03` | La tarjeta pública Condor D-043 verifica versión y SHA sin credenciales de Factory. | CUBIERTO | Código `scripts/unattended_daily_summary.py`; prueba `tests/test_unattended_daily_summary.py`; PR MERGED [#789](https://github.com/pl0n3r/Factory/pull/789) `6c69a6cfd594ce5ba7617e2b0c22257045b2e477` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-daily-summary.md:B04` | La entrega automática a las 08:00 Bogotá depende de un cron y job vigentes. | NO_VERIFICABLE | Evidencia insuficiente: F1G retiró daily-summary y cron 0 13: el motor offline no equivale a entrega programada. · [contraste](contraste-matriz-unattended.md) | — |
 | `docs/unattended-handoff-consumer-pack.md:L5-U1` | Este pack permite que ControlBot y FactoryRunner **interpreten** el handoff v1 ya | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-handoff-consumer-pack.md:L9-U1` | `config/unattended-handoff-v1.schema.json`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-handoff-consumer-pack.md:L10-U1` | `tests/fixtures/unattended_handoff_v1/allow.json`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -1915,50 +1885,10 @@ Las 305 cláusulas fragmentarias del censo histórico de `docs/auditoria-pre-v1.
 | `docs/unattended-kill-switch.md:L46-U1` | nunca se toma el primer `RUNNING` como permiso. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-kill-switch.md:L48-U1` | La regla “solo el dueño cambia el marker” sigue siendo una frontera de gobernanza y no debe presentarse como provenance técnica del último editor. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-kill-switch.md:L52-U1` | Por eso cada ciclo debe comprobarlo **antes de la primera mutación** y volver a comprobarlo al iniciar el siguiente ciclo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L14-U1` | `fail_closed` siempre produce `BLOCKED`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L15-U1` | `replan` nunca se degrada a `ALLOW`: produce `PAUSE` si fencing permite la pausa y `BLOCKED` en caso contrario; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L16-U1` | `PAUSE` solo existe si fencing ya trae `pause_allowed=true`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L17-U1` | si una guarda necesita pausa sin safe-point/preemptibility válido, produce | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L19-U1` | la salida conserva `authority=unchanged`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L25-U1` | `ALLOW` exige configuración cerrada y explícita de: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L27-U1` | `global_pause`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L28-U1` | al menos un breaker con `scope=agent\\|repo`, `subject` explícito y `threshold=N` positivo: `agent` usa identidad sin `/` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L28-U2` | `repo` usa exactamente `owner/repo`, con componentes acotados; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L29-U1` | evidencia por breaker con `consecutive_failures`, `fresh` y `consistent`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L30-U1` | techos no negativos de `usage`, `cost` y `parallelism`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L31-U1` | mediciones correspondientes; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L32-U1` | riesgo y evidencia de segunda pasada; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L33-U1` | flags sensibles y requisito/evidencia de backup. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L39-U1` | Nunca se infiere N, presupuesto, cuota, paralelismo ni freshness. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L43-U1` | `ALLOW`: todas las guardas explícitas están satisfechas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L44-U1` | `PAUSE`: pausa global, breaker derivado abierto, techo superado o `replan` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L45-U1` | pendiente, solo cuando fencing ya permite pausa segura | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L45-U2` | un `replan` nunca se | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L47-U1` | `BLOCKED`: falta configuración/evidencia/autoridad o la pausa necesaria no | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L55-U1` | `risk=high` requiere `second_pass=true` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L55-U2` | `risk=UNKNOWN` bloquea. `go_live`, | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L57-U1` | de producción exige backup, solo continúa con `backup_verified=true`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L59-U1` | Satisfacer 4B nunca salta D-055/D-059/D-063/D-066/D-067 ni otra puerta humana. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L78-U1` | un `GuardDecision` canónico de 4B; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L79-U1` | un `WatchdogDecision` canónico de 4C; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L80-U1` | `authority=unchanged` en ambos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L81-U1` | acciones cerradas `ALLOW\\|PAUSE\\|BLOCKED`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L82-U1` | evidencia/fingerprints con forma canónica y razones secret-free. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L87-U1` | `ALLOW → ALLOW`: conserva exactamente el pipeline adaptativo y el ranking; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L88-U1` | `ALLOW → BLOCKED`: 4C endurece por evidencia UNKNOWN/stale/inválida; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L89-U1` | `PAUSE → PAUSE`: conserva la pausa autorizada por 4B; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L90-U1` | `PAUSE → BLOCKED`: 4C endurece una pausa a bloqueo; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L91-U1` | `BLOCKED → BLOCKED`: conserva el bloqueo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L94-U1` | `pause_allowed=false`, por lo que 4C no puede fabricar autoridad de pausa. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L96-U1` | autoridad distinta de `unchanged` falla cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L104-U1` | `work_ladder()` retorna inmediatamente | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L106-U1` | la salida es status-only, `mutates=false` y `authority=unchanged`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L107-U1` | `dispatch_record()` no invoca `select_next()` y conserva | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L109-U1` | no se ejecuta reconciliación stale, no se selecciona quality/filler y no se | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L111-U1` | las razones conservan causas canónicas secret-free como | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L113-U1` | no se crea WorkItem ni una jerarquía paralela de supresión. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L120-U1` | `unattended_mode=false` mantiene compatibilidad legacy y no exige decisiones | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-runtime-guards.md:L125-U1` | Dispatcher V2 solo aplica esa decisión antes de iniciar trabajo nuevo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
+| `docs/unattended-runtime-guards.md:B01` | 4B respeta fencing fail_closed y replan y no inventa autoridad para pausar. | CUBIERTO | Código `scripts/unattended_guards.py`; prueba `tests/test_unattended_guards.py`; PR MERGED [#747](https://github.com/pl0n3r/Factory/pull/747) `073b46e8e0a0bd81b081f0b6a678e2681a088d68` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-runtime-guards.md:B02` | Breakers derivan su apertura de threshold, scope, subject y evidencia fresh explícitos. | CUBIERTO | Código `scripts/unattended_guards.py`; prueba `tests/test_unattended_guards.py`; PR MERGED [#747](https://github.com/pl0n3r/Factory/pull/747) `073b46e8e0a0bd81b081f0b6a678e2681a088d68` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-runtime-guards.md:B03` | Techos de uso, coste y paralelismo requieren presupuestos declarados y medidas válidas. | CUBIERTO | Código `scripts/unattended_guards.py`; prueba `tests/test_unattended_guards.py`; PR MERGED [#747](https://github.com/pl0n3r/Factory/pull/747) `073b46e8e0a0bd81b081f0b6a678e2681a088d68` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-runtime-guards.md:B04` | Segunda pasada de riesgo alto y backup verificado nunca amplían autoridad sensible. | CUBIERTO | Código `scripts/unattended_guards.py`; prueba `tests/test_unattended_guards.py`; PR MERGED [#747](https://github.com/pl0n3r/Factory/pull/747) `073b46e8e0a0bd81b081f0b6a678e2681a088d68` · [contraste](contraste-matriz-unattended.md) | — |
 | `docs/unattended-safe-mode-drill.md:L5-U1` | Este tramo valida la composición de los contratos ya integrados de 4B | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-safe-mode-drill.md:L16-U1` | No se utilizan credenciales, secretos, datos reales, proveedores, producción | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-safe-mode-drill.md:L23-U1` | 4B produce `ALLOW`, `pause_allowed=false`, `authority=unchanged`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -1987,59 +1917,10 @@ Las 305 cláusulas fragmentarias del censo histórico de `docs/auditoria-pre-v1.
 | `docs/unattended-safe-mode-drill.md:L95-U1` | deploy, backup o rollback real. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-safe-mode-drill.md:L97-U1` | Cualquier fallo del simulacro debe corregirse en 4B o 4C si corresponde | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-safe-mode-drill.md:L98-U1` | no puede debilitar esos contratos para pasar. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L5-U1` | Este documento define la semántica que deben respetar los slices posteriores del | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L12-U1` | El modo desatendido seguro **no amplía autoridad**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L13-U1` | Ninguna clasificación, SLO, watchdog, resumen o señal automática transforma | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L14-U1` | una acción prohibida o gated en una acción autorizada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L15-U1` | UNKNOWN, stale, evidencia contradictoria o configuración ausente **fallan | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L16-U1` | nunca equivalen a GREEN. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L17-U1` | Go-live, gasto/pagos, borrado irreversible, cambios destructivos, secretos, | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L18-U1` | credenciales, datos reales/personales y cualquier producción que requiera | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L20-U1` | Un rollback automático futuro solo podrá actuar sobre artefactos/configuración | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L21-U1` | Nunca hará rollback destructivo | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L41-U1` | **S1 — crítico inmediato:** pérdida/corrupción de datos real o inminente, | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L43-U1` | irreversible en curso. **Interrumpe al dueño** y exige pausar el alcance | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L44-U1` | una futura pausa global solo podrá activarse dentro de su contrato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L45-U1` | **S2 — grave:** degradación significativa, incidente con usuarios/servicios o | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L46-U1` | riesgo operativo serio que requiere decisión rápida pero no cumple S1. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L48-U1` | **S3 — contenido:** defecto acotado sin daño material activo ni necesidad de | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L52-U1` | Si la severidad no puede determinarse con evidencia suficiente, usa | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L53-U1` | `UNKNOWN`, falla cerrado para acciones sensibles y sigue recopilando evidencia. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L57-U1` | Todo handoff entre agentes o ciclos desatendidos usa un bloque `STATE` mínimo: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L79-U1` | no incluir secretos, tokens, passwords, credenciales, PII, datos personales ni | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L81-U1` | no inventar SHA, reserva, HEALTH, smoke o decisión; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L82-U1` | un campo desconocido se escribe como `UNKNOWN`/`null`, no se rellena por | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L84-U1` | el handoff resume evidencia, no reemplaza GitHub ni los contratos de salud. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L91-U1` | latencia de detección de HEALTH/incidente; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L92-U1` | freshness máxima de evidencia y `STATE`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L93-U1` | latencia entre trabajo terminado y siguiente despacho; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L94-U1` | tiempo hasta checkpoint/pausa segura; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L95-U1` | tiempo hasta decisión de rollback cuando un smoke permanece rojo; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L96-U1` | entrega del resumen diario. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L101-U1` | Incumplir o desconocer un SLO puede degradar health/abrir reparación, pero nunca | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L106-U1` | Los slices runtime posteriores deben respetar estas reglas: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L108-U1` | **pausa global:** impide iniciar trabajo autónomo nuevo y lleva trabajo activo a | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L111-U1` | **circuit breaker:** abre ante la condición configurada y verificable para su | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L113-U1` | **techos de uso/gasto/paralelismo:** solo usan límites declarados por la fuente | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L114-U1` | Nunca se infiere presupuesto ni se compra/renueva; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L115-U1` | **blast radius:** la acción automática más amplia permitida es la mínima | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L116-U1` | Si no puede demostrarse, pausa; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L117-U1` | **smoke rojo sostenido:** habilita un futuro rollback solo cuando el rollback | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L120-U1` | **backup:** cuando el contrato vigente exige backup previo, el modo desatendido | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L121-U1` | no puede ejecutar la acción sin evidencia verificable del backup. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L130-U1` | El resumen diario debe ser compacto y contener como mínimo: frentes activos, | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L132-U1` | Nunca incluye secretos o datos sensibles. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L136-U1` | El simulacro E2E solo se ejecuta después de integrar las guardas runtime y el | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L137-U1` | Debe usar alcance controlado, reversible y sin datos reales ni | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L138-U1` | gasto no autorizado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L138-U2` | Debe demostrar al menos: pausa, circuit breaker, techo, | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L139-U1` | handoff STATE, stale/UNKNOWN fail-closed, smoke rojo y rollback/stop seguro. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L143-U1` | **4A — contrato** (este documento): riesgo, S1–S3, STATE, SLOs, autoridad y | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L145-U1` | **4B — guardas runtime:** pausa global, circuit breakers y techos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L146-U1` | **4C — watchdog + resumen diario:** freshness, actividad y handoffs. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L147-U1` | **4D — simulacro E2E controlado:** prueba integrada y reversible. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L149-U1` | Cada slice debe existir como leaf materializado con criterios ejecutables, | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-safe-mode.md:L150-U1` | Un slice posterior no se ejecuta por | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
+| `docs/unattended-safe-mode.md:B01` | Autoridad sensible, riesgo alto, backup y segunda pasada nunca habilitan gasto, live ni datos reales sin permiso. | CUBIERTO | Código `scripts/unattended_guards.py`; prueba `tests/test_unattended_guards.py`; PR MERGED [#747](https://github.com/pl0n3r/Factory/pull/747) `073b46e8e0a0bd81b081f0b6a678e2681a088d68` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-safe-mode.md:B02` | Handoff STATE usa identidad, freshness y severidad; UNKNOWN y stale no son progreso sano. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-safe-mode.md:B03` | SLO de cada producto requiere objetivos configurados y evidencia de medición vigente. | NO_VERIFICABLE | Evidencia insuficiente: Sin mediciones autenticadas de consumidores ni objetivos aprobados, no se acredita su SLO real. · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-safe-mode.md:B04` | Rollback operativo y simulacro integrado necesitan autoridad previa y evidencia E2E de reversibilidad. | NO_VERIFICABLE | Evidencia insuficiente: No hay demostración operativa exact-SHA de rollback productivo ni backup restaurable para los consumidores. · [contraste](contraste-matriz-unattended.md) | — |
 | `docs/unattended-state-source.md:L11-U1` | El objeto `state` usa exactamente el contrato de `scripts/unattended_watchdog.validate_state()`: identidad, repo, branch/SHA/reserva, riesgo, severidad, ev | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-state-source.md:L13-U1` | Con una reserva activa, esta fuente exige binding de `work_identity`, `repository`, `reservation_id` y `branch` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-state-source.md:L13-U2` | si el caller aporta el SHA real de la rama, un SHA distinto bloquea. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -2058,72 +1939,14 @@ Las 305 cláusulas fragmentarias del censo histórico de `docs/auditoria-pre-v1.
 | `docs/unattended-state-source.md:L45-U1` | #769 lee GitHub, entrega snapshots a este parser y luego llama 4B/4C. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-state-source.md:L46-U1` | #768 consume STATE/resumen una vez exista su runtime. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/unattended-state-source.md:L47-U1` | Ningún consumidor puede reinterpretar UNKNOWN como ALLOW ni ampliar `authority=unchanged`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L7-U1` | `.github/workflows/unattended-watchdog.yml` conserva la cadencia periódica existente de **cada 15 minutos** (`*/15`), admite `workflow_dispatch` y ejecuta  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L9-U1` | El job `watchdog` valida `repository`, `refs/heads/main` y un evento allowlisted (`push`, `schedule` o `workflow_dispatch`) antes del primer checkout. **F1 | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L12-U1` | `contents: read`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L13-U1` | `issues: write` únicamente para abrir/cerrar alertas propias; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L14-U1` | sin secretos nuevos, deploy, releases, producción ni datos reales; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L15-U1` | `concurrency` no cancela un run en progreso. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L19-U1` | ready sin despacho: **10 min**; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L20-U1` | reserva sin avance: **15 min**; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L21-U1` | STATE stale: **20 min**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L31-U1` | La configuración no acepta rutas CLI: el runtime lee únicamente `config/unattended-watchdog.json` desde una ruta fija derivada del propio módulo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L31-U2` | Para pruebas/ejecución offline existe `--input-stdin`, que acepta JSON acotado por tamaño desde la entrada estándar y nunca abre una ruta suministrada por  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L31-U3` | si el STATE declara rama, resuelve además su HEAD real y exige binding exacto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L31-U4` | Nunca se transforma ausencia de evidencia en ALLOW. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L33-U1` | timestamps GitHub no se reinterpretan como heartbeat ni capacidad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L41-U1` | El runtime solo considera propia una Issue abierta con título `[AUTO][WATCHDOG]`, autor `github-actions[bot]` y exactamente un marker válido. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L41-U2` | Un fingerprint activo ya abierto no se duplica | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L41-U3` | markers ambiguos, claves JSON duplicadas o `version=true` se ignoran y nunca autorizan cerrar una Issue. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L43-U1` | Por seguridad, una alerta previa solo se reconcilia como resuelta cuando 4C logró validar un STATE y `daily_summary.state_freshness` es exactamente `fresh` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L43-U2` | `stale` o `unknown` nunca demuestran resolución y no cierran alertas históricas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L45-U1` | El runtime no edita/cierra Issues ajenos, PRs, releases ni reservas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L47-U1` | el HEAD solo se consulta como `trabajo/issue-N` derivado de un número validado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L55-U1` | No se ha desactivado el job | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L57-U1` | y `workflow_dispatch` siguen permitidos bajo sus guardas fail-closed. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L61-U1` | permanezca disponible **no autoriza** a un cron o agente a publicar por otro | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L72-U1` | la entrega antigua: revalidar condiciones humanas y CI antes de fusionarlo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L76-U1` | Para revertir únicamente el repair de **Factory#815**, se revierten sus tres paths reclamados: `.github/workflows/unattended-watchdog.yml`, `tests/test_una | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L80-U1` | deshabilitar o revertir `.github/workflows/unattended-watchdog.yml`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L81-U1` | conservar las alertas abiertas como evidencia; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L82-U1` | revertir los cinco paths originales de Factory#769. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L84-U1` | No es necesario tocar 4B/4C para ninguna de las dos reversiones. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L89-U1` | Si existe al menos un Issue | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog-runtime.md:L92-U1` | y conserva `BLOCKED`/alerta fail-closed. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L11-U1` | `scripts/unattended_watchdog.py` exige configuración explícita, sin defaults: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L13-U1` | minutos máximos para trabajo ready sin siguiente despacho; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L14-U1` | minutos máximos de una reserva sin avance; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L15-U1` | freshness máxima de `STATE`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L27-U1` | presencia `unknown`, sesión stale, heartbeat ausente o capacidad no fresca | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L28-U1` | producen evidencia insuficiente y nunca cuentan como progreso sano; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L29-U1` | degradación conocida se reporta como S3; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L30-U1` | trabajo ready sin siguiente despacho solo abre incidencia cuando existe un | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L36-U1` | que no coincide con `STATE.work_identity` falla cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L37-U1` | por encima del umbral nunca se presenta como progreso. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L38-U1` | STATE solo interrumpe mientras ese STATE sea fresh | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L39-U1` | UNKNOWN y conserva fail-closed. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L44-U1` | valida timestamps, SHA, repo, listas y contenido secret-free. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L49-U1` | La decisión 4B se recibe como `GuardDecision` y no se recalcula: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L51-U1` | `BLOCKED` permanece `BLOCKED`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L52-U1` | `PAUSE` permanece `PAUSE`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L53-U1` | `ALLOW` solo permanece `ALLOW` con evidencia 4C suficiente y sin | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L55-U1` | UNKNOWN en 4C falla cerrado; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L56-U1` | 4C acepta solo el shape canónico de 4B: `ALLOW\\|BLOCKED` llevan | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L58-U1` | incoherente falla cerrado; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L59-U1` | como un `ALLOW` canónico no concede autoridad de pausa, una incidencia 4C | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L62-U1` | 4C nunca convierte una decisión canónica en más autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L64-U1` | La autoridad de salida siempre es `unchanged`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L76-U1` | Solo una incidencia S1/S2 nueva activa `interrupt_owner=true`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L77-U1` | UNKNOWN conserva fail-closed sin inventar severidad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L83-U1` | frentes activos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L84-U1` | freshness de STATE; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L85-U1` | incidentes S1/S2/S3/UNKNOWN; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L87-U1` | gates humanos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L88-U1` | cambios integrados; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L89-U1` | cambios revertidos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L90-U1` | próximas acciones. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L96-U1` | 4C solo produce evidencia/decisiones. 4D debe reutilizar este módulo y las | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/unattended-watchdog.md:L97-U1` | no puede copiar lógica ni cambiar contratos para | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
+| `docs/unattended-watchdog-runtime.md:B01` | Runtime usa configuración fija y stdin acotado, sin rutas CLI ni cambios de política 4C. | CUBIERTO | Código `scripts/unattended_watchdog_runtime.py`; prueba `tests/test_unattended_watchdog_runtime.py`; PR MERGED [#786](https://github.com/pl0n3r/Factory/pull/786) `2964992a8833e10627e353132c24358ecce99de9` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-watchdog-runtime.md:B02` | Alertas propias exigen provenance/marker/fingerprint; stale no permite resolver ni escribir con #767 pausado. | CUBIERTO | Código `scripts/unattended_watchdog_runtime.py`; prueba `tests/test_unattended_watchdog_runtime.py`; PR MERGED [#786](https://github.com/pl0n3r/Factory/pull/786) `2964992a8833e10627e353132c24358ecce99de9` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-watchdog-runtime.md:B03` | La continuidad operativa real de la cadencia de quince minutos requiere runs y HEALTH observados. | NO_VERIFICABLE | Evidencia insuficiente: El workflow describe cadencia, pero este contraste no acredita runs continuos, disponibilidad ni HEARTBEAT real. · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-watchdog-runtime.md:B04` | Reactivar resumen diario suspendido por F1G exige autorización humana separada. | NO_VERIFICABLE | Evidencia insuficiente: No reponer automáticamente el cron; watchdog periódico no reemplaza la entrega diaria retirada. · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-watchdog.md:B01` | 4C exige umbrales explícitos para ready sin despacho, reservas sin progreso y STATE stale. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-watchdog.md:B02` | Identidad de reserva, STATE y Presence deben corresponder con freshness y timestamps válidos. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-watchdog.md:B03` | 4C consume GuardDecision sin elevar BLOCKED, PAUSE o ALLOW ni crear nueva pausa. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
+| `docs/unattended-watchdog.md:B04` | Las incidencias poseen fingerprints idempotentes y solo S1/S2 nuevas interrumpen al dueño. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
 | `AGENTES.md:L13-U1` | Comenta `/tomar` en el Issue y espera la reserva del bot (UUID). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `AGENTES.md:L14-U1` | Trabaja solo en la rama `trabajo/issue-N`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `AGENTES.md:L15-U1` | Abre el PR con la plantilla, `Closes #N` y la reserva declarada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -2266,15 +2089,15 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 
 | Estado | Filas |
 | --- | ---: |
-| CUBIERTO | 13 |
+| CUBIERTO | 28 |
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
 | NO_APLICA | 0 |
-| NO_VERIFICABLE | 2105 |
-| TOTAL | 2118 |
+| NO_VERIFICABLE | 1909 |
+| TOTAL | 1937 |
 
-**Porcentaje CUBIERTO:** 0.61% (13/2118).
+**Porcentaje CUBIERTO:** 1.45% (28/1937).
 
 **Hojas nuevas creadas:** 0. **Fuentes Markdown:** 103+AGENTES.md. **Criterios de los seis épicos:** 39.
 
