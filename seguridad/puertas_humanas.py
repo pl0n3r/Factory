@@ -329,12 +329,23 @@ _PRIVACY_PRODUCT_RE = re.compile(
     r"^Producto: \x60([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\x60$"
 )
 
+_PRIVACY_PRODUCTS = frozenset({
+    "pl0n3r/Factory", "pl0n3r/Condor", "pl0n3r/GrindFlow",
+    "pl0n3r/brvtal", "pl0n3r/ControlBot", "pl0n3r/AutoFactory",
+    "pl0n3r/FactoryRunner",
+})
+_PRIVACY_LABELS = {
+    "A": "Solicitar revisión jurídica antes de aprobar la documentación",
+    "B": "Continuar en construcción manteniendo documented_not_legally_approved",
+    "C": "Mantener el cambio bloqueado hasta completar la revisión jurídica",
+}
+
 
 def _privacy_target_from_body(
     body: str, gate: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Desambigua motivos estructurados sin alterar opciones ni autoridad."""
-    if _PRIVACY_MATERIAL_MARKER not in body:
+    if "factory-privacy-material" not in body:
         return None
     prefix = (
         _PRIVACY_MATERIAL_MARKER
@@ -352,7 +363,7 @@ def _privacy_target_from_body(
         "\n\nMotivos estructurados:\n"
     )
     product_match = _PRIVACY_PRODUCT_RE.fullmatch(product_line)
-    if not separator or product_match is None:
+    if not separator or product_match is None or product_match.group(1) not in _PRIVACY_PRODUCTS:
         raise GateValidationError("Producto legal no verificable.")
     product = product_match.group(1)
     reason_text, separator, end = tail.partition(
@@ -369,12 +380,51 @@ def _privacy_target_from_body(
     ):
         raise GateValidationError("Motivos jurídicos inválidos.")
     reason_values = sorted(match.group(1) for match in match_reasons)
+    statement, separator, raw_marker = end.partition(
+        "\n\n<!-- factory-human-gate "
+    )
+    if not separator or " -->" not in raw_marker:
+        raise GateValidationError("Estructura legal incompleta.")
+    options = gate["options"]
+    identifiers = {option["id"] for option in options}
+    if (
+        len(options) != 2
+        or identifiers not in ({"A", "B"}, {"A", "C"})
+        or gate["recommendation"] != "A"
+        or set(gate) - {
+            "category", "context", "options", "recommendation",
+            "safe_default", "explain_simple",
+        }
+        or any(
+            set(option) - {"id", "label", "explain_simple"}
+            or option["label"] != _PRIVACY_LABELS[option["id"]]
+            for option in options
+        )
+    ):
+        raise GateValidationError("Contrato jurídico de privacidad inválido.")
+    strict = identifiers == {"A", "C"}
     expected_context = (
         f"{product}: la auditoría detectó {len(reasons)} "
         "cambio(s) material(es) de privacidad"
+        + (
+            " fuera de las condiciones de D-063; requieren revisión jurídica "
+            "antes de continuar hacia live."
+            if strict else " que requieren decisión jurídica humana."
+        )
     )
-    if not gate["context"].startswith(expected_context):
-        raise GateValidationError("Producto o cantidad de motivos incongruente.")
+    expected_statement = (
+        ("`documented_not_legally_approved`. Esta puerta es bloqueante: "
+         "D-063 no aplica y se exige revisión jurídica antes de "
+         "continuar hacia live.")
+        if strict else
+        "`documented_not_legally_approved` hasta una decisión humana."
+    )
+    if (
+        gate["context"] != expected_context
+        or statement != expected_statement
+        or gate["safe_default"] != ("A" if strict else "B")
+    ):
+        raise GateValidationError("Alcance de privacidad incongruente.")
     return {
         "category": "legal",
         "target": {

@@ -381,6 +381,26 @@ class GateTests(unittest.TestCase):
                 "\n\nLa documentación permanece en estado ",
                 "\n\nTexto diferente: ",
             ),
+            original.replace(
+                "<!-- factory-privacy-material -->",
+                "<!-- factory-privacy-material-v2 -->",
+            ),
+            original.replace(
+                "Producto: `pl0n3r/GrindFlow`",
+                "Producto: `pl0n3r/Untrusted`",
+            ),
+            original.replace(
+                " que requieren decisión jurídica humana.",
+                " que requieren decisión jurídica humana. Extra",
+            ),
+            original.replace(
+                "documented_not_legally_approved` hasta una decisión humana.",
+                "documented_not_legally_approved` sin decisión humana.",
+            ),
+            original.replace(
+                "Continuar en construcción manteniendo documented_not_legally_approved",
+                "Aprobar datos sin control jurídico",
+            ),
         )
         for value in variants:
             with self.subTest(body=value[:100]):
