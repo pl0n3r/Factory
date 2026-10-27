@@ -128,13 +128,15 @@ class F1082AuditarColaTests(unittest.TestCase):
         ambiguous = fixture(issue(1, status="bloqueado", blocker="unknown"))
         self.assertEqual(auditor.audit(ambiguous)["state"], "UNKNOWN")
         self.assertEqual(auditor.parse_fixture("not-json")["state"], "UNKNOWN")
-        with patch("sys.stdin", StringIO("not-json")), (
-            patch("sys.stdout", new_callable=StringIO) as capture
+        with (
+            patch("sys.stdin", StringIO("not-json")),
+            patch("sys.stdout", new_callable=StringIO) as capture,
         ):
             self.assertEqual(auditor.main(), 2)
         self.assertEqual(json.loads(capture.getvalue())["state"], "UNKNOWN")
-        with patch("sys.stdin", StringIO(json.dumps(pending))), (
-            patch("sys.stdout", new_callable=StringIO) as capture
+        with (
+            patch("sys.stdin", StringIO(json.dumps(pending))),
+            patch("sys.stdout", new_callable=StringIO) as capture,
         ):
             self.assertEqual(auditor.main(), 0)
         self.assertEqual(json.loads(capture.getvalue())["state"],
