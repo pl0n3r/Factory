@@ -12,6 +12,10 @@ Las cláusulas de `docs/inventario-tecnico-datos-productos.md`, `docs/arquitectu
 
 `CUBIERTO` requiere código + prueba + PR MERGED pertinente; `EN_CURSO` exige issue con `factory-plan-task` ejecutable y claims o PR abierto, **no** un épico/roadmap; `SIN_COBERTURA` obliga a hoja nueva real en el registro y evidencia de ausencia; `DESCARTADO` requiere decisión del OWNER; `NO_VERIFICABLE` significa insuficiencia de prueba, sin inferir que falte funcionalidad. El enlace al epic es referencia documental, no ejecutabilidad. Nadie ha autorizado backup B2/live, go-live, seguridad jurídica ni eliminar puertas de release.
 
+## Contraste de comportamientos #1562
+
+Las 305 cláusulas fragmentarias del censo histórico de `docs/auditoria-pre-v1.md`, `docs/release-bootstrap.md`, `docs/readme-progress-readiness.md`, `docs/readme-contract.md` se reemplazan en las filas operativas por 17 comportamientos con IDs `Bnn`, contrastados en [pre-v1, release y README](contraste-matriz-prev1_release.md). El inventario #1550 y sus conteos por fuente siguen históricos, no se reescriben. Cinco comportamientos de biblioteca/validadores README tienen código + prueba + PR MERGED verificados; ninguno implica release actual, protección administrativa de `v1`, validación de consumidores ni go-live. Ante evidencia incompleta se conserva `NO_VERIFICABLE`, sin crear hojas ficticias.
+
 ## Inventario de fuentes
 
 | Fuente | Unidades |
@@ -176,102 +180,6 @@ Las cláusulas de `docs/inventario-tecnico-datos-productos.md`, `docs/arquitectu
 | `docs/arquitectura-tecnica.md:B02` | Reusable workflows deben rechazar eventos privilegiados antes del checkout y mantener mínimos permisos. | NO_VERIFICABLE | Hay prueba parcial, pero no se acreditó el set completo de reusables y un PR común pertinente. | — |
 | `docs/arquitectura-tecnica.md:B03` | Releases y deploys deben respetar rollback, gates y autorización de tag `v1`. | NO_VERIFICABLE | No se confirma cadena end-to-end de publicación/rollback; no mover `@v1`. | — |
 | `docs/arquitectura-tecnica.md:B04` | Separar ControlBot, FactoryRunner y productos en planos con autoridad limitada y sin credenciales compartidas. | NO_VERIFICABLE | Una descripción de arquitectura no demuestra las autorizaciones vigentes de los consumidores. | — |
-| `docs/auditoria-pre-v1.md:L12-U1` | Sí encontró **2 hallazgos ALTOS que bloquean la publicación inicial de v1.0.0**, **3 MEDIOS** y **1 BAJO**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L12-U2` | Además, Factory ya tiene un bloqueo canónico independiente: #13 continúa abierto porque #54 todavía exige la revalidación de privacidad de los tres product | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L14-U1` | Antes deben cerrarse #54 → #13, #82 y #83, resolverse la puerta humana `release-1.0.0` y revalidarse el SHA exacto final. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L18-U1` | Arquitectura de software | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L19-U1` | Ingeniería de software | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L20-U1` | Seguridad / supply chain | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L21-U1` | Infraestructura / GitHub Actions | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L22-U1` | SRE / resiliencia | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L24-U1` | Release Engineering | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L25-U1` | Performance / costo de CI | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L27-U1` | Technical Writing / DX | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L28-U1` | Legal-privacidad cuando el alcance lo requirió | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L34-U1` | Se congeló la revisión contra el SHA indicado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L35-U1` | Se revisaron Issues #1–#14, #35, #41, #54 y trabajo activo para evitar duplicados. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L36-U1` | Se inventariaron workflows raíz y del template, scripts, tests, seguridad, privacidad, métricas, memoria y documentación de release. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L37-U1` | Se contrastó implementación con contratos ejecutables y con el estado real de GitHub Actions. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L38-U1` | Cada candidato fue sometido a una segunda pasada: evidencia, duplicado existente, severidad, probabilidad y frontera pre/post-v1. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L39-U1` | Los hallazgos ALTOS se materializaron como Issues separados | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L39-U2` | MEDIOS/BAJOS quedan en este informe. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L49-U1` | **Bloquea v1.0.0:** SÍ | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L54-U1` | `docs/release-bootstrap.md:20-28` define las puertas previas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L55-U1` | `docs/release-bootstrap.md:38` indica ejecutar “el caller normal de release”. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L56-U1` | `docs/release-bootstrap.md:44` confirma que Factory no añade ese caller. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L57-U1` | `.github/workflows/release.yml` solo expone `workflow_call`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L58-U1` | #41 registró explícitamente que no añadió caller de publicación ni archivo de versión raíz. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L62-U1` | **Solución:** #82 define un caller manual/fail-closed con SHA esperado, fuente de versión canónica, verificación de #1–#14, puerta humana, coincidencia de  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L62-U2` | La solución debe además ser compatible con el contrato de eventos del reusable: conservar `push` como camino normal y, si se usa `workflow_dispatch` para e | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L62-U3` | los consumidores no deben ganar un despacho manual privilegiado por accidente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L72-U1` | **Bloquea v1.0.0:** SÍ hasta demostrar control equivalente | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L77-U1` | Los consumidores llaman Factory por `@v1`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L78-U1` | Workflows privilegiados vuelven a cargar componentes desde `ref: v1`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L79-U1` | `docs/release-bootstrap.md:42` dice que solo el proceso humano/autorizado debe actualizar el canal mayor. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L80-U1` | La API de Rulesets del repositorio devuelve una lista vacía en la auditoría. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L80-U2` | No existe un ruleset moderno que haga cumplir esa restricción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L81-U1` | La integración actual no puede certificar una eventual protección legacy administrativa, así que esa protección no está demostrada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L85-U1` | **Solución:** #83 exige proteger el tag antes de crearlo y demostrar que actores/tokens no autorizados no pueden moverlo o borrarlo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L95-U1` | **Bloquea v1.0.0:** NO por sí solo | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L100-U1` | `.github/workflows/factory-ci.yml:24-27` descarga `actionlint 1.7.7` por HTTPS y lo ejecuta, pero no valida SHA256/firma del artefacto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L101-U1` | `.github/workflows/cabina.yml:31-34` instala `sentry-sdk==2.70.0` en runtime desde PyPI. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L101-U2` | La versión directa está fijada, pero no existe lock/hash de artefactos/transitivas para esa instalación. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L122-U1` | Mantener además el paso de instalación sin secretos y entregar secretos únicamente al proceso que realmente los necesita. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L132-U1` | **Bloquea v1.0.0:** NO, pero reduce la promesa “proyecto nuevo ya listo” | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L137-U1` | `template/README.md:5` solo indica que deploy/observación se habilitan “cuando el proyecto configura su entorno”. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L138-U1` | `template/.github/workflows/deploy.yml:8-21` consume `DEPLOY_ENABLED`, `DOMAIN`, `HEALTH_PATH`, `PRODUCTION_STAGE`, `MIGRATION_MODE`, `LIVE_MIGRATION_APPRO | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L139-U1` | `template/.github/workflows/observar.yml:14-22` depende de `DOMAIN` y opciones de health. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L141-U1` | **Riesgo:** un consumidor puede copiar el template correctamente pero no saber qué variables son obligatorias, cuáles son opcionales, qué formato aceptan y | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L143-U1` | **Solución:** documentar una tabla cerrada de variables/secrets, defaults, fase en que aplican y comportamiento fail-closed | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L153-U1` | **Bloquea v1.0.0:** NO si se define la política antes de adopción | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L158-U1` | `template/.github/workflows/release.yml:3-4` se dispara en todo `push` a `main`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L159-U1` | El reusable `.github/workflows/release.yml` falla si el tag de la versión ya existe y apunta a un SHA distinto del push actual. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L160-U1` | `agentes/NUCLEO.md:54-56` define el canal major, pero no establece que todo merge a main deba incrementar versión. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L161-U1` | `template/README.md` tampoco documenta el requisito. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L166-U1` | **cada merge releasable incrementa versión** → añadir gate pre-merge que exija el bump | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L167-U1` | **no todo merge crea release** → limitar el caller a cambios de versión / un evento explícito. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L179-U1` | **Bloquea v1.0.0:** NO | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L190-U1` | No sacrificar la coordinación fail-closed por ahorrar runs mínimos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L197-U1` | Auditor `seguridad/resiliencia.py` prohíbe acciones no pinneadas, `pull_request_target`, `write-all` y permisos globales de escritura. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L198-U1` | `seguridad/test_resiliencia.py` audita todos los workflows del repositorio. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L199-U1` | `factory-ci.yml` ejecuta la suite de seguridad en cada PR. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L200-U1` | Checkouts usan `persist-credentials: false`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L201-U1` | Runtime health fija DNS a IP pública validada, mantiene TLS sobre hostname original, limita tamaño y no sigue redirects. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L207-U1` | No se encontró una dependencia circular nueva | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L213-U1` | No se abrió hallazgo por tamaño de scripts: aunque `coordinar_trabajo.py` es grande, existe una suite de regresión extensa y no se obtuvo evidencia de defe | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L219-U1` | El candidato “el template nunca se ejecuta” fue descartado: `.github/workflows/reusable-selftest.yml:14-22` sí invoca el reusable CI con `working_directory | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L221-U1` | No se usa porcentaje de cobertura como criterio de calidad porque no hay evidencia de que una cifra arbitraria mejore el contrato actual. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L225-U1` | No se encontró evidencia de cuello de botella algorítmico relevante. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L229-U1` | Main exacto `4b2be9fc...`: `CI factory` run `36035673042` = success. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L230-U1` | Actionlint cubre workflows raíz y template. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L231-U1` | `concurrency` y timeouts están presentes en los workflows principales. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L232-U1` | El deploy limita contexto a default branch y usa pipeline reversible. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L233-U1` | Preview no recibe credenciales productivas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L241-U1` | AUD-REL-005 debe aclararse antes de escalar adopción del template. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L245-U1` | `observe_kit.py` exige health 200 JSON, versión/SHA exactos y opcionalmente schema actualizado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L245-U2` | El observer abre/cierra incidentes automáticos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L247-U1` | No se encontró un falso “deploy=producción sana”: el núcleo distingue implementado, validado, desplegado y validado en producción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L251-U1` | Factory genera seis documentos canónicos, mantiene placeholders del responsable y separa revisión jurídica de evidencia técnica. #54 sigue abierto por dos  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L253-U1` | no se abrió un Issue duplicado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L261-U1` | AUD-COST-006 es optimización de ruido, no señal de gasto grave demostrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L265-U1` | Los contratos de aceptación están fingerprinted en reservas v2 y las ediciones posteriores pueden invalidar evidencia stale. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L302-U1` | Documentar variables/secrets del template (AUD-DX-004). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L303-U1` | Añadir checksum de actionlint y requirements con hashes para la dependencia runtime de cabina (AUD-SC-003). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L304-U1` | Declarar y probar la política de bump de versión del template (AUD-REL-005). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L305-U1` | Medir cuántos runner-minutes reales consume el fan-out antes de optimizarlo (AUD-COST-006). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L309-U1` | Optimización del fan-out de eventos si los runner-minutes demuestran costo bajo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L310-U1` | Refactors por tamaño de scripts sin evidencia de defecto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L311-U1` | Mejoras cosméticas de documentación que no afecten onboarding, seguridad o operación. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L313-U1` | AUD-SC-003, AUD-DX-004 y AUD-REL-005 son recomendables antes de la adopción amplia del kit, aunque no bloquean por sí solos el primer tag. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L323-U1` | `cabina.yml` exige `FACTORY_CABINA_PUBLICA == 'true'` para configure/upload/deploy Pages. #35 conserva el default B. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L331-U1` | `validar_template.py` sí es estático, pero existe `reusable-selftest.yml` que ejecuta el reusable CI con `working_directory: template`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L331-U2` | Por tanto no se registra como ALTO. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L339-U1` | Resolver #83 antes de crear el tag `v1`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L340-U1` | Resolver #82 y probar el bootstrap del primer release sin publicar hasta la puerta humana final. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L341-U1` | Completar #54 y cerrar #13 con evidencia. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L342-U1` | Integrar #80 para que la documentación refleje el estado canónico. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L343-U1` | Aplicar los quick wins MEDIOS y ejecutar la auditoría final de release sobre el SHA que vaya a recibir `v1`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/auditoria-pre-v1.md:L347-U1` | El trabajo de auditoría se considera entregado cuando los hallazgos ALTOS estén rastreados, este informe pase sus regresiones y su PR quede validado. **Eso | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/automerge-construccion.md:L5-U1` | Factory #1295 reduce las señales de calidad que bloquearían un merge durante `construccion` sin autorizar cambios a `main`, al workflow real de CI ni al ca | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/automerge-construccion.md:L9-U1` | Fuente: evidencia de GitHub API autenticada y completa, con repositorio, número de PR, HEAD, base y main exactos | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/automerge-construccion.md:L9-U2` | se vuelve a leer antes del informe. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -1719,132 +1627,6 @@ Las cláusulas de `docs/inventario-tecnico-datos-productos.md`, `docs/arquitectu
 | `docs/quality-sonar.md:L32-U3` | De forma equivalente, `organization_line_usage` es `NOT_APPLICABLE` solo cuando el contrato declara visibilidad pública | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-sonar.md:L34-U1` | Los `evidence_ref` item-level se validan pero no se propagan al agregado | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-sonar.md:L34-U2` | la autoridad del lote queda en `snapshot.evidence_refs`, evitando que un snapshot válido falle solo por cantidad de hallazgos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L7-U1` | Contract v1 reservaba bloques para `Operational Cockpit` y `Progress + Readiness`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L9-U1` | Contract v2 elimina esos bloques de los README migrados: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L11-U1` | no renderiza tablas de estado con placeholders; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L12-U1` | no renderiza `Progress + Readiness`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L13-U1` | no calcula progreso ni readiness; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L14-U1` | no crea commits periódicos para refrescar una portada; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L15-U1` | conserva narrativa humana estable y enlaza las fuentes que ya son autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L21-U1` | Un README v2 presenta solo señales que pueden actualizarse sin modificar `main`: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L23-U1` | **GitHub Actions:** insignia del workflow principal sobre `main` y enlace a Actions. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L24-U1` | **GitHub Releases:** insignia de la última release y enlace a Releases. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L25-U1` | **`/health` público:** opcional. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L25-U2` | Se añade únicamente si el producto ya expone un endpoint público real. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L25-U3` | Puede presentarse con una insignia dinámica de Shields que consulte ese endpoint | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L25-U4` | nunca se inventa un valor alternativo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L26-U1` | **Orquestador de ControlBot:** enlace al detalle operativo global cuando se necesita más contexto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L28-U1` | Si una fuente opcional no existe, no tiene acceso público seguro o no puede demostrarse, **la señal se omite**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L28-U2` | El README no tiene autoridad para inferir ninguna de esas cosas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L40-U1` | Hero / Project Card. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L41-U1` | Operational Cockpit. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L43-U1` | Qué hace el producto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L44-U1` | Arquitectura en 60 segundos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L45-U1` | Stack e infraestructura. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L46-U1` | Ciclo de entrega. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L47-U1` | Calidad y seguridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L48-U1` | Roadmap y fuentes de verdad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L49-U1` | Desarrollo local. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L50-U1` | Mapa de la fábrica. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L52-U1` | En v2 deben ser breves. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L58-U1` | `contract.json.version` es `2`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L59-U1` | el contrato conserva internamente la definición de los markers v1 como `legacy_v1_only`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L60-U1` | `readme/validate_readme.py` acepta un README v1 mientras todavía contenga sus markers legados y lo valida con el generador v1 existente; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L61-U1` | un README sin esos markers se trata como v2 y debe usar fuentes vivas; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L62-U1` | no se retira la compatibilidad v1 hasta que todos los consumidores hayan migrado con sus propios PR. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L64-U1` | Así, actualizar Factory no invalida de golpe Condor, GrindFlow, BRVTAL, FactoryRunner, ControlBot o AutoFactory. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L68-U1` | Un README v2 falla cerrado si: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L70-U1` | conserva markers o tablas legadas de estado/progreso; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L71-U1` | intenta volver a renderizar `Progress + Readiness`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L72-U1` | el contrato permite commits de refresco; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L73-U1` | no enlaza GitHub Actions o GitHub Releases; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L74-U1` | no conserva el enlace al Orquestador para el detalle operativo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L76-U1` | Cuando exista, su URL debe ser pública, no contener secretos y representar el estado real del propio producto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L82-U1` | `github_actions`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L83-U1` | `github_releases`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L84-U1` | `public_health` (opcional); | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L85-U1` | `controlbot_orchestrator` (opcional para detalle). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L91-U1` | Los consumidores que todavía estén en v1 siguen validados durante toda la transición. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-contract.md:L91-U2` | Un README nunca se convierte en fuente canónica de estado, por lo que revertir su presentación no modifica la realidad operativa. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L5-U1` | **Progress**: cuánto del alcance objetivo se ha construido o verificado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L6-U1` | **Readiness**: cuánto de lo necesario para el siguiente objetivo operativo/comercial está demostrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L19-U1` | cambiar únicamente SATISFIED/UNSATISFIED/UNKNOWN/STALE no lo hace. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L21-U1` | No se presenta como mejora o deterioro comparable. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L27-U1` | `progress_state`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L28-U1` | `readiness_state`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L30-U1` | `evidence_refs[]`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L42-U1` | `NOT_APPLICABLE` requiere `evidence_refs`: no puede usarse como truco para eliminar trabajo del denominador sin justificación. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L44-U1` | `UNKNOWN` puede no tener refs porque representa precisamente ausencia de evidencia. `STALE`, `SATISFIED`, `UNSATISFIED` y `NOT_APPLICABLE` requieren eviden | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L46-U1` | Nunca se convierte automáticamente en CURRENT o GREEN. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L70-U1` | `basis_points`: entero 0..10000; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L71-U1` | `percent`: string decimal de dos posiciones, por ejemplo `"63.25"`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L72-U1` | `contributions[]`: score, peso, evidence refs y unknown/stale por dimensión. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L78-U1` | Dos hitos pueden tener pesos 90/10 y producir 90% aunque solo uno de dos esté satisfecho. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L86-U1` | construido pero todavía no listo para operar; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L87-U1` | listo en términos operativos aunque otra capacidad de producto siga incompleta; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L88-U1` | N/A para una métrica y aplicable para la otra. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L101-U1` | `state: OPEN\\|RESOLVED\\|UNKNOWN\\|STALE`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L102-U1` | `evidence_refs[]`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L112-U1` | Un blocker crítico UNKNOWN/STALE también bloquea fail-closed. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L112-U2` | Un promedio alto nunca convierte ausencia de evidencia crítica en autorización. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L116-U1` | `READY`: 100% demostrado y cero blockers críticos no resueltos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L117-U1` | `BUILDING`: medición disponible pero incompleta; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L118-U1` | `BLOCKED`: existe blocker crítico no resuelto/conocido; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L119-U1` | `UNKNOWN`: no existe base aplicable para medir. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L133-U1` | delta de progress en basis points; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L134-U1` | delta de readiness en basis points; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L135-U1` | `causes[]` para milestones y blockers que cambiaron; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L136-U1` | evidence refs nuevas en cambios de milestones. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L144-U1` | `comparable: false`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L145-U1` | deltas `null`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L146-U1` | causa `target_change`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L147-U1` | target anterior y nuevo explícitos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L149-U1` | Así un cambio del denominador nunca se vende como “+12 puntos” de progreso real. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L155-U1` | dimensiones se ordenan por `id`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L156-U1` | hitos se ordenan por `id`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L157-U1` | blockers se ordenan de forma estable; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L158-U1` | evidence refs se deduplican y ordenan; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L159-U1` | timestamps se normalizan a UTC; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L160-U1` | aritmética usa `Fraction`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L161-U1` | JSON canónico usa keys ordenadas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L169-U1` | target y `target_fingerprint`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L170-U1` | `observed_at`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L173-U1` | evidence freshness; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L174-U1` | dimensiones con milestones normalizados; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L175-U1` | blockers y critical blockers; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L176-U1` | trend/rebaseline. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L178-U1` | README y ControlBot deben consumir este mismo payload. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L178-U2` | Ningún consumidor debe recalcular porcentajes con otra fórmula. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L184-U1` | modifica el generador o validador del README; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L185-U1` | escribe porcentajes manuales; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L186-U1` | consulta GitHub, producción o proveedores; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L187-U1` | decide pesos automáticamente; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L188-U1` | crea rankings entre proyectos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L189-U1` | mide productividad individual; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L190-U1` | autoriza deploy, dinero, legal o go-live. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L192-U1` | La integración al bloque README, targets de los siete repos y E2E/consumer contract se entregan en los slices dependientes #295, #296 y #297. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L209-U1` | el archivo no fabrica progreso inicial. `NOT_APPLICABLE` solo se usa cuando una dimensión queda explícitamente fuera del target y siempre conserva una `evi | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L213-U1` | Cambia evidencia/estado de milestones cuando el objetivo y denominador siguen siendo los mismos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L214-U1` | Cambia `target.version`, scope, pesos o aplicabilidad cuando cambia el baseline. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L215-U1` | El segundo caso debe producir `REBASELINE` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L215-U2` | nunca se conserva un porcentaje del scope anterior como si fuera tendencia comparable. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L216-U1` | Los valores derivados se calculan con `calculate_progress_readiness()` y se serializan con `canonical_payload()` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L216-U2` | README y ControlBot no implementan otra fórmula. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L217-U1` | Las fuentes de verdad permanecen en roadmap, WorkItems, acceptance, CI, health, seguridad, legal, infraestructura y demás evidencia canónica. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L217-U2` | Los fixtures solo describen qué dimensiones pertenecen al objetivo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L226-U1` | toma un fixture canónico de `readme/projects/progress-readiness/`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L227-U1` | representa la evidencia cambiando únicamente estados/evidence refs del mismo target; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L228-U1` | calcula con `calculate_progress_readiness()`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L229-U1` | valida/serializa con `canonical_payload()`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L230-U1` | entrega **ese mismo snapshot** a `generate_readme()`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L231-U1` | proyecta el mismo payload canónico al consumer contract compatible con ControlBot. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L239-U1` | `readiness`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L240-U1` | `evidence_freshness`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L241-U1` | `critical_blockers`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L244-U1` | Si necesita drill-down, debe conservar referencias al snapshot/evidencia canónica y ampliar el contrato de forma versionada, no recomputar el agregado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L246-U1` | Un blocker crítico continúa visible y mantiene `readiness.status = BLOCKED` aunque otros hitos estén satisfechos. `UNKNOWN` y `STALE` siguen fail-closed se | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L252-U1` | Por tanto el flujo E2E nunca presenta un cambio de denominador como mejora real. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/readme-progress-readiness.md:L256-U1` | La integración de UI/backend de ControlBot debe consumir este contrato sin ampliar autoridad ni introducir porcentajes manuales. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/reconciliacion-issues-20261024.md:L5-U1` | El contrato de un Issue no se declara cumplido por un PR parcial ni por un test offline. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/reconciliacion-issues-20261024.md:L20-U1` | **8 Issues abiertos | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/reconciliacion-issues-20261024.md:L20-U2` | 0 cierres automáticos** justificables por aceptación integral. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -1889,89 +1671,6 @@ Las cláusulas de `docs/inventario-tecnico-datos-productos.md`, `docs/arquitectu
 | `docs/recovery-status.md:L17-U1` | Para recovery crítico, `UNKNOWN` o `BLOCKED` fuerza `ready=false`. `DEGRADED` permanece visible pero no se transforma artificialmente en otro estado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/recovery-status.md:L21-U1` | Un fixture válido mantiene la evaluación `HEALTHY` solo declarativa | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/recovery-status.md:L21-U2` | no acredita backup real ni restore y conserva las prohibiciones D-066/Factory #683. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L3-U1` | Los workflows con capacidad de escritura ejecutan únicamente el kit ya publicado y no aceptan una referencia dinámica del candidato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L7-U1` | un caller con escritura no puede seleccionar una rama o commit alternativo del kit. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L11-U1` | `release-1.0.0`: únicamente para el primer release, cuando `v1.0.0` todavía no existe. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L12-U1` | `factory-release`: obligatoria para cualquier mantenimiento posterior de la major `v1`, cuando `v1.0.0` ya existe. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L14-U1` | El preflight detecta la existencia real de `v1.0.0` y falla cerrado si se usa la categoría equivocada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L24-U1` | `/decidir A` solo materializa la elección | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L24-U2` | Seguridad escribe un único journal `factory-human-decision` v2 ligado al fingerprint del gate normalizado y cierra el Issue mediante `github-actions[bot]`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L24-U3` | El preflight de release recalcula ese fingerprint, exige que el contexto del gate contenga un único `main@<SHA>` igual a `expected_sha`, conserva `safe_def | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L24-U4` | Labels negados como `No publicar` o frases que solo contienen la palabra `publicar` fallan cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L30-U1` | Ese marker autoriza únicamente ese SHA y se mantiene solo para compatibilidad histórica. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L30-U2` | No debe usarse para puertas nuevas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L34-U1` | Se conserva compatibilidad con la puerta `release-1.0.0` para que la historia y las regresiones del bootstrap inicial sigan verificables. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L36-U1` | Antes del primer release se exigieron #1–#14, #54 y #83 cerrados, CI del template, ruleset activo del canal mayor, SHA exacto de `main` y aprobación humana | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L42-U1` | Integrar el cambio en `main` con la versión semántica nueva en `config/version.json`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L43-U1` | Revalidar `main` y confirmar la versión semántica candidata. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L44-U1` | El OWNER ejecuta manualmente **Factory Release Window** sobre `main`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L44-U2` | El workflow revalida exact-main y compatibilidad de consumidores antes de crear una única puerta `factory-release` para el HEAD vigente | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L44-U3` | el default seguro es **no publicar**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L45-U1` | El OWNER responde explícitamente `/decidir A` para publicar o `/decidir B` para no publicar. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L45-U2` | Texto libre o `sigue` no cuentan como decisión. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L46-U1` | Con A materializada y la puerta cerrada, ejecutar una **primera pasada** de **Release Factory v1.x** (`.github/workflows/release-bootstrap.yml`) desde `mai | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L47-U1` | El preflight resuelve y registra el SHA candidato, ejecuta CI reusable sobre `template/`, verifica #1–#14/#54/#83, versión, evidencia exact-main, deriva de | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L47-U2` | En mantenimiento, el SHA estable previo de `v1` es válido durante esta fase y no expone el candidato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L48-U1` | Solo si esos gates pasan, `release.yml@v1` —el trust root ya publicado— crea o verifica de forma idempotente el **release semántico** (tag anotado + GitHub | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L48-U2` | El workflow nunca crea ni mueve `v1`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L49-U1` | El job read-only `channel-ready` relee `refs/tags/v1`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L49-U2` | Si el canal aún apunta al SHA estable anterior, falla cerrado y la validación final del canal no se ejecuta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L50-U1` | Después de la publicación semántica, el dueño mueve manualmente el tag mayor `v1` al SHA exacto aprobado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L50-U2` | Esta sigue siendo una acción administrativa/humana. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L51-U1` | El dueño reejecuta de forma **idempotente** el mismo bootstrap con el mismo `expected_sha` y la misma puerta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L51-U2` | La release semántica ya existente se verifica, `channel-ready` confirma que `v1` coincide y entonces `ci.yml@v1` ejecuta el self-test sobre `template/`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L52-U1` | La publicación se considera completa únicamente cuando ese self-test del canal publicado termina correctamente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L54-U1` | El ruleset debe estar activo, incluir `refs/tags/v1` y proteger `creation`, `update` y `deletion`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L54-U2` | La comprobación runtime es **solo estructural** | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L56-U1` | nunca equivale a publicar el candidato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L61-U1` | La opción A de la puerta debe identificar la versión de forma | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L64-U1` | validaciones. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L69-U1` | un SHA diferente, aunque solo figure en | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L70-U1` | mayúsculas, o ninguna referencia válida hacen fallar cerrado la puerta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L71-U1` | Esta deduplicación solo afecta la extracción del baseline: mantiene intactos la | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L73-U1` | revalidación exact-main. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L77-U1` | un SHA de 40 hex: conserva el contrato histórico exact-SHA; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L78-U1` | `latest`: resuelve una sola vez el HEAD de la rama por defecto al iniciar el | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L81-U1` | `latest` falla cerrado salvo que se cumpla todo lo siguiente: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L83-U1` | `github.sha`, el HEAD de la rama por defecto y el SHA resuelto sean idénticos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L85-U1` | `config/version.json` contenga exactamente la versión autorizada por la puerta; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L86-U1` | existan ejecuciones `success` sobre ese SHA exacto de **CI factory**, | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L88-U1` | el job **Compatibilidad de consumidores** y el CI reusable del candidato | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L90-U1` | al comparar el SHA baseline de la puerta con el HEAD resuelto no haya cambios | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L96-U1` | el validador del ruleset y el workflow de release del template. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L97-U1` | esas rutas cambió desde la puerta, se exige **una puerta nueva**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L98-U1` | de producto/documentación que hayan pasado los gates exact-main no invalidan por sí | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L99-U1` | solos la aprobación de la versión. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L105-U1` | journal `factory-human-decision` continúan siendo obligatorios. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L125-U1` | Si el TTL vence, **solo termina el freeze de merges** | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L125-U2` | Si `main` cambió, la autorización exact-SHA no se transporta y **no se abre ni rearma ninguna puerta automáticamente**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L125-U3` | El OWNER debe ejecutar de nuevo `Factory Release Window` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L125-U4` | la nueva solicitud se liga al HEAD vigente, revalida exact-main + compatibilidad, retira silenciosamente las puertas stale de la misma versión y vuelve a e | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L129-U1` | Una puerta creada por `github-actions[bot]` **no se vuelve confiable por el nombre del actor**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L129-U2` | El bootstrap solo admite esa excepción estrecha cuando la evidencia read-only demuestra simultáneamente que: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L131-U1` | el gate actual contiene exactamente un `factory-release-rearm` y un `factory-release-window` válidos, ambos ligados al mismo `expected_sha`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L132-U1` | el Issue fue creado dentro de esa ventana | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L132-U2` | después del vencimiento, el bootstrap solo conserva la autoridad si existe una decisión A v2 válida y el SHA/maquinaria siguen compatibles; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L133-U1` | la cadena `source_issue` es acíclica, tiene como máximo dieciséis saltos y cada salto intermedio creado por el bot conserva markers canónicos coherentes co | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L134-U1` | la cadena termina en una puerta `factory-release` creada por el OWNER del repositorio con `author_association=OWNER`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L136-U1` | El workflow obtiene esa cadena únicamente mediante `issues: read` dentro del mismo repositorio y la entrega al parser puro | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L138-U1` | Una release solo se considera ejecutada cuando el workflow `Release Factory v1.x` termina con éxito y la puerta exact-SHA recibe un marker `factory-release | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L138-U2` | Hasta entonces el resumen diario/nocturno debe mantener visible “release aprobada sin ejecutar”. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L142-U1` | Si una publicación de `Factory@v1` provoca `startup_failure` en consumidores, aplica el runbook fail-closed `docs/reusable-release-rollback.md`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L142-U2` | Detectar o recomendar rollback no autoriza a mover `v1` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L142-U3` | la acción sigue siendo humana/administrativa y exige evidencia nueva de recuperación en un consumidor real. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L146-U1` | `v1.0.0`: publicado y validado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L147-U1` | `v1`: canal mayor protegido. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L148-U1` | Los cambios posteriores solo llegan a consumidores de `@v1` después de una puerta `factory-release` y una publicación protegida. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L152-U1` | Desde #1016, un `push` a `main` **nunca** abre ni rearma una puerta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L156-U1` | **Pídele a Factory que publique**: el OWNER ejecuta manualmente `Factory Release Window` sobre `main` (`workflow_dispatch`) (versión vacía = `config/versio | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L157-U1` | Factory exige sobre el HEAD vigente **CI factory, Sonar CI-based, Evidencia CodeQL, Unattended Watchdog** y la **Compatibilidad de consumidores** | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L157-U2` | si falta evidencia, falla cerrado y no crea puerta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L158-U1` | **Decide A** o B con `/decidir A` o `/decidir B`. `sigue` y texto libre no autorizan publicar. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L159-U1` | Con A materializada, **lanza el workflow** `Release Factory v1.x`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L160-U1` | Tras crear/verificar el release semántico, el dueño **mueve `v1`** al SHA exacto aprobado y reejecuta el bootstrap idempotente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L162-U1` | Una solicitud nueva cierra silenciosamente las puertas stale de la misma versión y retira su etiqueta `decisión: dueño` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/release-bootstrap.md:L162-U2` | nunca hereda una A anterior. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/release-runbook.md:L5-U1` | El kill switch Factory #767 y las condiciones de protección no se sustituyen por este documento. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/release-runbook.md:L9-U1` | Si la generación modifica otras copias, incluirlas también en los claims legítimos, nunca ampliarlos silenciosamente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/release-runbook.md:L18-U1` | Verificar la prueba concreta del nuevo número y todas las fuentes | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -2533,6 +2232,24 @@ Las cláusulas de `docs/inventario-tecnico-datos-productos.md`, `docs/arquitectu
 | `docs/lista-salida-produccion.md:L88-U1` | **Costo / accesos:** no provisionar B2, contratar proveedores ni rotar credenciales reales sin autorización del OWNER y recibos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
 | `docs/lista-salida-produccion.md:L90-U1` | La lista no constituye una declaración de `VALIDATED_IN_PRODUCTION` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
 
+| `docs/auditoria-pre-v1.md:B01` | La auditoría de v1.0.0 se limita al SHA histórico auditado y no certifica el estado actual de Factory. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/auditoria-pre-v1.md:B02` | Los hallazgos altos del caller de bootstrap y trust-root de v1 exigen verificación de mitigación y puerta humana antes de publicar. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/auditoria-pre-v1.md:B03` | Las dependencias externas ejecutadas en CI deben acreditar integridad criptográfica y no solo fijación por versión. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/auditoria-pre-v1.md:B04` | Los eventos de coordinación y el costo de Actions deben medirse antes de recortar disparadores de seguridad. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/release-bootstrap.md:B01` | El release protegido debe ejecutar kit desde el trust root v1 y no aceptar ref dinámica privilegiada. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/release-bootstrap.md:B02` | La publicación requiere ventana factory-release y decisión OWNER A v2 ligada a fingerprint, versión y SHA, sin heredar aprobaciones stale. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/release-bootstrap.md:B03` | La primera pasada publica release semántica sin mover v1 y la segunda exige coincidencia del canal movido por el OWNER. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/release-bootstrap.md:B04` | Un cambio de maquinaria de release frente al baseline invalida una puerta previa incluso al usar expected_sha=latest. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/release-bootstrap.md:B05` | Freeze, TTL, reglas de excepción y provenance de puertas bot impiden publicar si faltan pruebas de identidad y compatibilidad. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-progress-readiness.md:B01` | El motor calcula scores ponderados con aritmética determinista por target, normaliza evidencia y produce payload canónico. | CUBIERTO | `readme/progress_readiness.py`, `tests/test_readme_progress.py`, [PR #298](https://github.com/pl0n3r/Factory/pull/298) · `73e63d68af7ced46ee1444a4cf4c7fe9b32d131a` | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-progress-readiness.md:B02` | Un blocker crítico no resuelto fuerza readiness BLOCKED aunque el score alcance 100%. | CUBIERTO | `readme/progress_readiness.py`, `tests/test_readme_progress.py`, [PR #298](https://github.com/pl0n3r/Factory/pull/298) · `73e63d68af7ced46ee1444a4cf4c7fe9b32d131a` | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-progress-readiness.md:B03` | El E2E reutiliza el mismo snapshot para generador README y consumer contract de ControlBot sin recalcular porcentajes. | CUBIERTO | `readme/progress_readiness.py`, `tests/test_readme_progress_e2e.py`, [PR #301](https://github.com/pl0n3r/Factory/pull/301) · `3e47a229c2a1c0495b871177b3884b02a818441c` | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-progress-readiness.md:B04` | Los targets de siete proyectos requieren evidencia fresca real; UNKNOWN/STALE no equivalen a GREEN. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-contract.md:B01` | El README v2 usa enlaces y señales vivas, omitiendo tablas de estado UNKNOWN y progreso calculado dentro de la portada. | CUBIERTO | `readme/validate_readme.py`, `tests/test_readme_contract_v2.py`, [PR #1025](https://github.com/pl0n3r/Factory/pull/1025) · `2dc5a8d0b2a6670ff5b87c96844c05ffcb0ebf53` | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-contract.md:B02` | La migración acepta marcadores v1 legacy hasta que el consumidor actualice a v2 sin romper compatibilidad. | CUBIERTO | `readme/validate_readme.py`, `tests/test_readme_contract_v2.py`, [PR #1025](https://github.com/pl0n3r/Factory/pull/1025) · `2dc5a8d0b2a6670ff5b87c96844c05ffcb0ebf53` | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-contract.md:B03` | La insignia de health solo aparece si el producto expone una fuente pública real y segura. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+| `docs/readme-contract.md:B04` | Ningún proceso de refresco automático debe mover main solo para actualizar métricas del README. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
+
 ## Producción y mejoras pendientes
 
 Los épicos #304, #305, #1080, #1082, #1296 y #1382 tienen autoridad y criterios propios, pero ninguno constituye por sí solo una hoja ejecutable. Los AC de esos épicos se inventarían como fuente en `NO_VERIFICABLE` cuando no hay evidencia suficiente para acreditarlos. Se han comprobado cuatro capacidades offline específicas con PR MERGED y pruebas, sin atribuirles aceptación productiva ni cierre del épico.
@@ -2549,15 +2266,15 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 
 | Estado | Filas |
 | --- | ---: |
-| CUBIERTO | 8 |
+| CUBIERTO | 13 |
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
 | NO_APLICA | 0 |
-| NO_VERIFICABLE | 2398 |
-| TOTAL | 2406 |
+| NO_VERIFICABLE | 2105 |
+| TOTAL | 2118 |
 
-**Porcentaje CUBIERTO:** 0.33% (8/2406).
+**Porcentaje CUBIERTO:** 0.61% (13/2118).
 
 **Hojas nuevas creadas:** 0. **Fuentes Markdown:** 103+AGENTES.md. **Criterios de los seis épicos:** 39.
 

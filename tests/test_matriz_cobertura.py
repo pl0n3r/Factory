@@ -46,6 +46,21 @@ VERIFIED = {
     "docs/admin-staff-api.md:B03":
         (186, "64f1901e456a", "template/ops/admin-staff-api.json",
          "tests/test_admin_staff_contract.py"),
+    "docs/readme-progress-readiness.md:B01":
+        (298, "73e63d68af7c", "readme/progress_readiness.py",
+         "tests/test_readme_progress.py"),
+    "docs/readme-progress-readiness.md:B02":
+        (298, "73e63d68af7c", "readme/progress_readiness.py",
+         "tests/test_readme_progress.py"),
+    "docs/readme-progress-readiness.md:B03":
+        (301, "3e47a229c2a1", "readme/progress_readiness.py",
+         "tests/test_readme_progress_e2e.py"),
+    "docs/readme-contract.md:B01":
+        (1025, "2dc5a8d0b2a6", "readme/validate_readme.py",
+         "tests/test_readme_contract_v2.py"),
+    "docs/readme-contract.md:B02":
+        (1025, "2dc5a8d0b2a6", "readme/validate_readme.py",
+         "tests/test_readme_contract_v2.py"),
 }
 
 
@@ -195,12 +210,16 @@ class MatrizCoberturaTests(unittest.TestCase):
         for epic, count in EPIC_AC.items():
             for n in range(1, count + 1):
                 expected[f"ISSUE-{epic}:AC-{n:02d}"] = "Epic AC"
-        # #1561 migra solo tres fuentes del censo antiguo a comportamientos;
-        # el inventario anclado a #1550 y las 101 fuentes restantes no se alteran.
+        # #1561 y #1562 migran solo siete fuentes del censo antiguo a comportamientos;
+        # el inventario anclado a #1550 y las 97 fuentes restantes no se alteran.
         migrated = (
             "docs/inventario-tecnico-datos-productos.md",
             "docs/arquitectura-tecnica.md",
             "docs/admin-staff-api.md",
+            "docs/auditoria-pre-v1.md",
+            "docs/release-bootstrap.md",
+            "docs/readme-progress-readiness.md",
+            "docs/readme-contract.md",
         )
         expected = {key: value for key, value in expected.items()
                     if not any(key.startswith(source + ":L") for source in migrated)}
@@ -209,6 +228,11 @@ class MatrizCoberturaTests(unittest.TestCase):
                      if line.startswith("| `docs/") and ":B" in line.split("`", 2)[1]]
         self.assertEqual(len(behaviors), 11)
         expected.update({key: "Comportamiento contrastado" for key in behaviors})
+        contract_prev1 = (ROOT / "docs/contraste-matriz-prev1_release.md").read_text(encoding="utf-8")
+        behaviors_prev1 = [line.split("`", 2)[1] for line in contract_prev1.splitlines()
+                           if line.startswith("| `docs/") and ":B" in line.split("`", 2)[1]]
+        self.assertEqual(len(behaviors_prev1), 17)
+        expected.update({key: "Comportamiento contrastado" for key in behaviors_prev1})
         actual = {row["id"] for row in self.rows}
         self.assertEqual(actual, set(expected))
         self.assertIn("AGENTES.md:L34-U2", expected)
