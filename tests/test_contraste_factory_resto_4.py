@@ -99,8 +99,9 @@ class ContrasteTests(unittest.TestCase):
         for key, row in self.actual.items():
             original = self.expected[key]
             self.assertEqual(original["state"], row["state"], key)
-            if key == "docs/performance-remediation.md:L25-U3":
-                self.assertIn("PR #1548", original["line"])
+            if row["state"] == "CUBIERTO":
+                self.assertRegex(original["line"], r"PR #\d+")
+                self.assertRegex(original["line"], r"github\.com/pl0n3r/Factory/pull/\d+")
             else:
                 self.assertIn("contraste-factory_resto_4.md", original["line"], key)
         self.assertIn("## Contraste Factory, bloque 4 (#1572)", self.matrix)
