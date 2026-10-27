@@ -205,7 +205,8 @@ class MatrizCoberturaTests(unittest.TestCase):
         expected = {key: value for key, value in expected.items()
                     if not any(key.startswith(source + ":L") for source in migrated)}
         contract = (ROOT / "docs/contraste-matriz-datos_arq.md").read_text(encoding="utf-8")
-        behaviors = re.findall(r"(?m)^\\| \\x60(docs/[^\\x60]+:B\\d{2})\\x60 \\|", contract)
+        behaviors = [line.split("`", 2)[1] for line in contract.splitlines()
+                     if line.startswith("| `docs/") and ":B" in line.split("`", 2)[1]]
         self.assertEqual(len(behaviors), 11)
         expected.update({key: "Comportamiento contrastado" for key in behaviors})
         actual = {row["id"] for row in self.rows}
