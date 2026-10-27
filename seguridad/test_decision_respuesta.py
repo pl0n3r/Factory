@@ -495,10 +495,71 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(api.issue["state"], "closed")
         self.assertEqual(len(api.comments), 1)
         self.assertEqual(api.comments[0]["user"]["login"], BOT)
-        self.assertFalse(any(
+        self.assertTrue(any(
             path == "repos/pl0n3r/Factory/issues/518/comments?per_page=100"
             for method, path, _ in api.calls if method == "GET"
         ))
+        self.assertFalse(any(
+            method != "GET" and "/issues/518" in path
+            for method, path, _ in api.calls
+        ))
+
+    def test_untrusted_bot_gate_with_historical_journal_still_blocks(self):
+        # Added prose invalidates the strict bot gate, not its genuine journal.
+        bot_gate = {
+            "number": 518,
+            "state": "open",
+            "body": gate_body() + "\\n\\nNota posterior a la decisión.",
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        journal = {
+            "id": 77,
+            "body": (
+                '<!-- factory-human-decision '
+                '{"gate_sha256":"' + ("a" * 64)
+                + '","option":"B","version":2} -->'
+            ),
+            "user": {"login": BOT, "type": "Bot"},
+        }
+        api = FakeAPI(
+            equivalent_open=[bot_gate],
+            comments_by_issue={518: [journal]},
+        )
+
+        self.assertFalse(materialize_decision(event(), api, "pl0n3r/Factory"))
+        self.assertEqual(api.issue["state"], "open")
+        self.assertEqual(api.comments, [])
+        self.assertFalse(any(method != "GET" for method, _, _ in api.calls))
+        self.assertTrue(any(
+            path == "repos/pl0n3r/Factory/issues/518/comments?per_page=100"
+            for method, path, _ in api.calls if method == "GET"
+        ))
+
+    def test_untrusted_bot_gate_with_invalid_journal_fails_closed(self):
+        bot_gate = {
+            "number": 518,
+            "state": "open",
+            "body": gate_body() + "\\n\\nTexto posterior.",
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        invalid_journal = {
+            "id": 77,
+            "body": '<!-- factory-human-decision {"option":"B","version":1} -->',
+            "user": {"login": BOT, "type": "Bot"},
+        }
+        api = FakeAPI(
+            equivalent_open=[bot_gate],
+            comments_by_issue={518: [invalid_journal]},
+        )
+
+        self.assertFalse(materialize_decision(event(), api, "pl0n3r/Factory"))
+        self.assertEqual(api.issue["state"], "open")
+        self.assertEqual(api.comments, [])
+        self.assertFalse(any(method != "GET" for method, _, _ in api.calls))
 
     def test_decision_rejects_ambiguous_equivalent_open_gates(self):
         duplicate = {

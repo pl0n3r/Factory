@@ -167,9 +167,6 @@ def _open_target_gate_numbers(
     ):
         if not isinstance(candidate, dict) or "pull_request" in candidate:
             continue
-        # Reuse canonicalizer provenance before evaluating an equivalent gate.
-        if not _trusted_gate_candidate(candidate, repository):
-            continue
         number = candidate.get("number")
         body = candidate.get("body")
         if (
@@ -183,6 +180,25 @@ def _open_target_gate_numbers(
         except ValueError:
             continue
         if candidate_target != target_identity:
+            continue
+        if not _trusted_gate_candidate(candidate, repository):
+            # An authentic historical bot journal remains a veto even if
+            # later prose edits invalidate the bot gate's strict provenance.
+            # Without a journal, an untrusted gate must never veto an OWNER.
+            user = candidate.get("user")
+            if (
+                number != issue_number
+                and isinstance(user, dict)
+                and user.get("login") == BOT
+                and user.get("type") == "Bot"
+            ):
+                try:
+                    if _existing_evidence(
+                        api, f"repos/{repository}/issues/{number}"
+                    ) is not None:
+                        return None
+                except DecisionError:
+                    return None
             continue
         try:
             candidate_contract = gate_authority_contract_from_body(body)
