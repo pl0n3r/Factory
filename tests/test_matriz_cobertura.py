@@ -11,7 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "docs/matriz-cobertura.md"
 BASE_SHA = "8088e66c2366f2483d5229fc6fda8718f1ab46a0"
-STATES = {"CUBIERTO", "EN_CURSO", "SIN_COBERTURA", "DESCARTADO", "NO_VERIFICABLE"}
+STATES = {"CUBIERTO", "EN_CURSO", "SIN_COBERTURA", "DESCARTADO", "NO_VERIFICABLE", "NO_APLICA"}
 EPIC_AC = {304: 12, 305: 12, 1080: 4, 1082: 4, 1296: 0, 1382: 7}
 ISSUE = re.compile(r"https://github\.com/pl0n3r/Factory/issues/(\d+)")
 MODAL = re.compile(
@@ -34,6 +34,18 @@ VERIFIED = {
     "docs/recovery-status.md:L13-U1":
         (1528, "465bc1e711ea", "recovery/status.py",
          "tests/test_recovery_status.py"),
+    "docs/arquitectura-tecnica.md:B01":
+        (1414, "67994aafbb5d", "scripts/coordinar_trabajo.py",
+         "tests/test_coordinar_trabajo.py"),
+    "docs/admin-staff-api.md:B01":
+        (186, "64f1901e456a", "template/ops/admin-staff-api.json",
+         "tests/test_admin_staff_contract.py"),
+    "docs/admin-staff-api.md:B02":
+        (186, "64f1901e456a", "template/ops/admin-staff-api.json",
+         "tests/test_admin_staff_contract.py"),
+    "docs/admin-staff-api.md:B03":
+        (186, "64f1901e456a", "template/ops/admin-staff-api.json",
+         "tests/test_admin_staff_contract.py"),
 }
 
 
@@ -183,6 +195,19 @@ class MatrizCoberturaTests(unittest.TestCase):
         for epic, count in EPIC_AC.items():
             for n in range(1, count + 1):
                 expected[f"ISSUE-{epic}:AC-{n:02d}"] = "Epic AC"
+        # #1561 migra solo tres fuentes del censo antiguo a comportamientos;
+        # el inventario anclado a #1550 y las 101 fuentes restantes no se alteran.
+        migrated = (
+            "docs/inventario-tecnico-datos-productos.md",
+            "docs/arquitectura-tecnica.md",
+            "docs/admin-staff-api.md",
+        )
+        expected = {key: value for key, value in expected.items()
+                    if not any(key.startswith(source + ":L") for source in migrated)}
+        contract = (ROOT / "docs/contraste-matriz-datos_arq.md").read_text(encoding="utf-8")
+        behaviors = re.findall(r"(?m)^\\| \\x60(docs/[^\\x60]+:B\\d{2})\\x60 \\|", contract)
+        self.assertEqual(len(behaviors), 11)
+        expected.update({key: "Comportamiento contrastado" for key in behaviors})
         actual = {row["id"] for row in self.rows}
         self.assertEqual(actual, set(expected))
         self.assertIn("AGENTES.md:L34-U2", expected)
