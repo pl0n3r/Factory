@@ -1,6 +1,6 @@
 # Matriz de cobertura de requisitos de Factory
 
-> Corte 27-oct-2026 · SHA auditado: `main@9c12107bd64ef4bbc45b3baf4f961a6ce6f14664` · [#1550](https://github.com/pl0n3r/Factory/issues/1550) · V3 `999577a6-9986-4495-8049-bb120d0583e1`.
+> Corte 27-oct-2026 · SHA auditado: `main@8088e66c2366f2483d5229fc6fda8718f1ab46a0` · [#1550](https://github.com/pl0n3r/Factory/issues/1550) · V3 `999577a6-9986-4495-8049-bb120d0583e1`.
 
 ## Método y semántica
 
@@ -114,6 +114,7 @@ La extracción usa **unidades identificables de comportamiento, contrato o lími
 | `docs/unattended-state-source.md` | 18 |
 | `docs/unattended-watchdog-runtime.md` | 32 |
 | `docs/unattended-watchdog.md` | 34 |
+| `docs/lista-salida-produccion.md` | 16 |
 | `AGENTES.md` | 51 |
 
 ## Filas de cobertura
@@ -2821,6 +2822,23 @@ La extracción usa **unidades identificables de comportamiento, contrato o lími
 | `ISSUE-1382:AC-06` | La activación autorizada se limita a 3 liberaciones por ciclo, conserva ramas y PRs, registra evidencia auditada y permite revertir el feature flag. Test:  | NO_VERIFICABLE | Épico #1382 no es hoja ejecutable ni evidencia operativa | [Fuente #1382](https://github.com/pl0n3r/Factory/issues/1382) |
 | `ISSUE-1382:AC-07` | El README de coordinación indica el estado verificable de Fase A/Fase B sin confundir observación con autoridad de release. Test: `tests/test_lease_auto_re | NO_VERIFICABLE | Épico #1382 no es hoja ejecutable ni evidencia operativa | [Fuente #1382](https://github.com/pl0n3r/Factory/issues/1382) |
 
+| `docs/lista-salida-produccion.md:L7-U1` | Una fila por requisito verificable, no por encabezado. `LISTO` se reserva a **implementación documental o de código + prueba citada** presente en el árbol  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L7-U2` | nunca basta épico/roadmap. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L8-U1` | `SIN_COBERTURA` identifica ausencia de implementación completa y contiene **hoja canónica creada** y su Issue. `DEL_DUEÑO` expresa autoridad externa, cuent | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L9-U1` | Fuentes: `decisiones.yml` (D-054–D-070), `docs/resiliencia-fabrica.md`, `docs/release-runbook.md`, `docs/release-bootstrap.md`, `docs/reusable-release-roll | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L9-U2` | El observador real de cada consumidor sigue siendo la autoridad para su despliegue. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L79-U1` | No se crearon hojas de soporte o backup ficticias: las puertas reales ya corresponden a #305/#304/#1082 y al OWNER. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L83-U1` | **3-2-1-1-0 auténtico / RPO/RTO:** falta offsite/cuenta aprobada por D-066 y restore real comprobable (#305) | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L83-U2` | el contrato offline no los acredita. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L84-U1` | **Autoridad de publicación:** OWNER debe abrir ventana protegida, aprobar SHA/versión y mover conscientemente Factory@v1 conforme a `docs/release-runbook.m | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L84-U2` | un PR verde no publica. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L85-U1` | **Operación real:** falta acreditar recepción efectiva de alertas, guardia/SLA, cargas de agentes, smoke pospublicación y restauración con evidencia extern | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L86-U1` | **Gobierno y legal:** cada consumidor debe acreditar HTTPS, accesibilidad, privacidad, manejo de datos, backups y autorización go-live según sus contratos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L87-U1` | **Continuidad técnica:** hoja #1553 cubre el procedimiento fail-closed ante GitHub o ChatGPT no disponibles | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L87-U2` | hasta integrarse, las filas de ese alcance permanecen `SIN_COBERTURA`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L88-U1` | **Costo / accesos:** no provisionar B2, contratar proveedores ni rotar credenciales reales sin autorización del OWNER y recibos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+| `docs/lista-salida-produccion.md:L90-U1` | La lista no constituye una declaración de `VALIDATED_IN_PRODUCTION` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `8088e66c` | — |
+
 ## Producción y mejoras pendientes
 
 Los épicos #304, #305, #1080, #1082, #1296 y #1382 tienen autoridad y criterios propios, pero ninguno constituye por sí solo una hoja ejecutable. Los AC de esos épicos se inventarían como fuente en `NO_VERIFICABLE` cuando no hay evidencia suficiente para acreditarlos. Se han comprobado cuatro capacidades offline específicas con PR MERGED y pruebas, sin atribuirles aceptación productiva ni cierre del épico.
@@ -2841,11 +2859,11 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
-| NO_VERIFICABLE | 2696 |
-| TOTAL | 2700 |
+| NO_VERIFICABLE | 2712 |
+| TOTAL | 2716 |
 
-**Porcentaje CUBIERTO:** 0.15% (4/2700).
+**Porcentaje CUBIERTO:** 0.15% (4/2716).
 
-**Hojas nuevas creadas:** 0. **Fuentes Markdown:** 102+AGENTES.md. **Criterios de los seis épicos:** 39.
+**Hojas nuevas creadas:** 0. **Fuentes Markdown:** 103+AGENTES.md. **Criterios de los seis épicos:** 39.
 
 > La proporción mide acreditación positiva por cláusula en este corte, no progreso real del producto. Los requisitos no observados no son backlog autorizado y no deben expresarse como GREEN.
