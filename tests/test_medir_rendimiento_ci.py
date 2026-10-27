@@ -1,10 +1,13 @@
 """Contrato #1578, F304: latencia por workflow con fixtures sintéticos."""
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[1] / "scripts" / "medir_rendimiento_ci.py"
 SPEC = importlib.util.spec_from_file_location("medir_rendimiento_ci", SOURCE)
@@ -135,3 +138,22 @@ class F304MedirCiTests(unittest.TestCase):
                 self.assertEqual(run.returncode, 2)
                 self.assertIn('"status": "UNKNOWN"', run.stderr)
                 self.assertEqual(run.stdout, "")
+
+    def test_main_cubre_rutas_del_proceso_sin_subprocess(self):
+        cases = [
+            (json.dumps(self.fixture()), 0, '"synthetic_offline"'),
+            ('{"version":1,"version":1,"workflows":[]}', 2, '"UNKNOWN"'),
+            ('{"version":1,"workflows":[],"value":NaN}', 2, '"UNKNOWN"'),
+            ('x' * (module.MAX_FILE_BYTES + 1), 2, '"UNKNOWN"'),
+            ('invalid-json', 2, '"UNKNOWN"'),
+        ]
+        for payload, expected_code, marker in cases:
+            with self.subTest(case=len(payload)):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with (mock.patch("sys.stdin", io.StringIO(payload)),
+                      contextlib.redirect_stdout(stdout),
+                      contextlib.redirect_stderr(stderr)):
+                    rc = module.main(["--input", "-"])
+                self.assertEqual(rc, expected_code)
+                self.assertIn(marker, stdout.getvalue() if rc == 0 else stderr.getvalue())
+                self.assertFalse((stdout.getvalue() if rc else stderr.getvalue()))
