@@ -41,6 +41,8 @@ class FakeAPI:
                 "limit": self.limit, "remaining": self.remaining}}}
         if path == "/repos/pl0n3r/Factory/issues/767":
             return {"number": 767, "state": "closed", "user": {"login": "pl0n3r"},
+                    "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
+                    "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
                     "body": '<!-- factory-unattended-kill-switch '
                             + json.dumps({"version": 1, "state": self.kill_state,
                                           "owner": "pl0n3r"}) + ' -->'}
@@ -53,7 +55,13 @@ class FakeAPI:
             repo, qs = path[len("/repos/"):].split("/issues?", 1)
             page = int(qs.rsplit("page=", 1)[-1])
             if "state=all" in qs:
-                return copy.deepcopy(self.history) if page == 1 else []
+                labels = set((ALERT_LABELS[0], ALERT_LABELS[-1]))
+                matching = [row for row in self.history if labels.issubset({
+                    item.get("name") for item in row.get("labels", [])
+                    if type(item) is dict
+                })]
+                start = (page - 1) * alert.PAGE_SIZE
+                return copy.deepcopy(matching[start:start + alert.PAGE_SIZE])
             if repo not in self.repos:
                 raise AlertError("fake_missing_repo")
             if self.stale and repo == FACTORY:
@@ -73,7 +81,7 @@ class FakeAPI:
             number = 20000
             new = {"number": number, "state": "open", "body": payload["body"],
                    "user": {"login": "github-actions[bot]", "type": "Bot"},
-                   "labels": [{"name": "estado: bloqueado"}]}
+                   "labels": [{"name": name} for name in payload["labels"]]}
             self.history.append(copy.deepcopy(new))
             self.repos[FACTORY].append(copy.deepcopy(new))
             return {"number": number}
@@ -182,6 +190,58 @@ class SaludColaAlertarTests(unittest.TestCase):
         self.assertNotIn("secrets.", content)
 
 
+
+    def test_canonical_kill_switch_rejects_duplicate_keys_and_extra_starts(self):
+        """Un check de strings no sustituye la autoridad canónica."""
+        good = '<!-- factory-unattended-kill-switch {"version":1,"state":"RUNNING","owner":"pl0n3r"} -->'
+        hostile = (
+            '<!-- factory-unattended-kill-switch {"version":1,"state":"PAUSED","state":"RUNNING","owner":"pl0n3r"} -->',
+            good + '\n<!-- factory-unattended-kill-switch broken-json -->',
+            '<!-- factory-unattended-kill-switch {"version":true,"state":"RUNNING","owner":"pl0n3r"} -->',
+        )
+        for body in hostile:
+            with self.subTest(body=body):
+                api = FakeAPI()
+                original = api.get
+
+                def changed(path):
+                    item = original(path)
+                    if path == "/repos/pl0n3r/Factory/issues/767":
+                        return {**item, "body": body}
+                    return item
+
+                with patch.object(api, "get", side_effect=changed):
+                    self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+                self.assertEqual(api.writes, [])
+
+        api = FakeAPI()
+        original = api.get
+
+        def wrong_origin(path):
+            item = original(path)
+            if path == "/repos/pl0n3r/Factory/issues/767":
+                return {**item, "url": "https://api.github.com/repos/pl0n3r/Factory/issues/1"}
+            return item
+
+        with patch.object(api, "get", side_effect=wrong_origin):
+            self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+        self.assertEqual(api.writes, [])
+
+    def test_bounded_filtered_alert_history_survives_unrelated_factory_issues(self):
+        """La deduplicación no debe recorrer todos los Issues históricos."""
+        api = FakeAPI()
+        api.history = [
+            {"number": number, "state": "closed", "labels": [{"name": "tipo: error"}],
+             "user": {"login": "pl0n3r", "type": "User"}, "body": "unrelated"}
+            for number in range(1, 2601)
+        ]
+        self.assertEqual(ejecutar(api, enabled=True)["status"], "CREATED")
+        expected = ("/repos/pl0n3r/Factory/issues?state=all&labels="
+                    + alert.ALERT_LOOKUP_LABELS + "&per_page=100&page=1")
+        self.assertIn(("GET", expected), api.calls)
+        self.assertFalse(any("state=all&per_page=" in path for _, path in api.calls))
+        self.assertEqual([method for method, _, _ in api.writes], ["POST"])
+
     def test_transport_allowlist_http_and_bounded_json(self):
         class Response:
             status = 200
@@ -229,6 +289,7 @@ class SaludColaAlertarTests(unittest.TestCase):
             ("GET", "/repos/pl0n3r/Condor/issues?state=all&per_page=100&page=1", None),
             ("GET", "/repos/pl0n3r/Factory/issues?state=all&per_page=100&page=25", None),
             ("GET", "/repos/pl0n3r/Factory/issues/767", {"x": 1}),
+            ("GET", "/repos/pl0n3r/Factory/issues?state=all&per_page=100&page=1", None),
         ):
             with self.subTest(method=method, path=path):
                 with self.assertRaises(AlertError):

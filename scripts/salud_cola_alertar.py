@@ -6,21 +6,23 @@ import json
 import os
 import re
 import sys
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from scripts.salud_cola import REPOSITORIES
 from scripts.salud_cola_observar import STATE_LABELS
 from scripts.salud_cola_publicar import preparar_publicacion
+from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
 
 FACTORY = "pl0n3r/Factory"
 BOT_MARKER = "<!-- factory-queue-alert "
-KILL_MARKER = re.compile(r"<!--\s*factory-unattended-kill-switch\s+(\{[^\n]*\})\s*-->")
 ALERT_MARKER = re.compile(r'^<!-- factory-queue-alert \{"fingerprint":"([0-9a-f]{64})","version":1\} -->\n')
 PAGE_SIZE = 100
 MAX_PAGES = 24
 MAX_RESPONSE_BYTES = 1048576
 ALERT_TITLE = "[AUTO] Aviso de cola sin hojas disponibles (Factory)"
 ALERT_LABELS = ["tipo: mejora", "prioridad: media", "estado: bloqueado", "rol: infraestructura"]
+ALERT_LOOKUP_LABELS = quote(",".join((ALERT_LABELS[0], ALERT_LABELS[-1])), safe="")
 
 
 class AlertError(ValueError):
@@ -46,11 +48,14 @@ def _quota(api):
     return {"limit": limit, "remaining": remaining}
 
 
-def _pages(api, repo, *, state="open"):
+def _pages(api, repo, *, state="open", only_alerts=False):
     if repo != FACTORY and state != "open":
         raise AlertError("foreign_history_forbidden")
+    if only_alerts != (repo == FACTORY and state == "all"):
+        raise AlertError("unfiltered_alert_history_forbidden")
+    label_query = f"&labels={ALERT_LOOKUP_LABELS}" if only_alerts else ""
     for page in range(1, MAX_PAGES + 1):
-        path = (f"/repos/{repo}/issues?state={state}&per_page={PAGE_SIZE}"
+        path = (f"/repos/{repo}/issues?state={state}{label_query}&per_page={PAGE_SIZE}"
                 f"&page={page}")
         items = api.get(path)
         if type(items) is not list or len(items) > PAGE_SIZE:
@@ -132,7 +137,7 @@ def _parse_alert(item):
 
 def _existing(api):
     alerts = []
-    for page in _pages(api, FACTORY, state="all"):
+    for page in _pages(api, FACTORY, state="all", only_alerts=True):
         for item in page:
             found = _parse_alert(item)
             if found is not None:
@@ -143,23 +148,12 @@ def _existing(api):
 
 
 def _kill_is_running(api):
-    issue = api.get("/repos/pl0n3r/Factory/issues/767")
-    if (type(issue) is not dict or issue.get("number") != 767
-            or issue.get("state") != "closed"
-            or type(issue.get("user")) is not dict
-            or issue["user"].get("login") != "pl0n3r"
-            or type(issue.get("body")) is not str):
+    """Reutilizar el parser canónico: origen exacto, claves únicas y un marker."""
+    decision = evaluate_unattended_kill_switch(
+        api.get("/repos/pl0n3r/Factory/issues/767")
+    )
+    if decision.global_pause is not False or decision.state != "RUNNING":
         raise AlertError("global_switch_unknown")
-    matches = KILL_MARKER.findall(issue["body"])
-    if len(matches) != 1:
-        raise AlertError("global_switch_unknown")
-    try:
-        marker = json.loads(matches[0])
-    except ValueError as exc:
-        raise AlertError("global_switch_unknown") from exc
-    if (type(marker) is not dict
-            or marker != {"version": 1, "state": "RUNNING", "owner": "pl0n3r"}):
-        raise AlertError("global_switch_paused")
 
 
 def _body(fingerprint, proposal):
@@ -239,7 +233,7 @@ class GitHubAPI:
         allowed_read = (path == "/rate_limit"
                         or re.fullmatch(r"/repos/pl0n3r/(Factory|Condor|GrindFlow|brvtal|ControlBot|AutoFactory|FactoryRunner)", path)
                         or re.fullmatch(r"/repos/pl0n3r/(Factory|Condor|GrindFlow|brvtal|ControlBot|AutoFactory|FactoryRunner)/issues\?state=open&per_page=100&page=([1-9]|1\d|2[0-4])", path)
-                        or re.fullmatch(r"/repos/pl0n3r/Factory/issues\?state=all&per_page=100&page=([1-9]|1\d|2[0-4])", path)
+                        or re.fullmatch(rf"/repos/pl0n3r/Factory/issues\?state=all&labels={ALERT_LOOKUP_LABELS}&per_page=100&page=([1-9]|1\d|2[0-4])", path)
                         or re.fullmatch(r"/repos/pl0n3r/Factory/issues/[1-9]\d*", path))
         allowed_write = ((method == "POST" and path == "/repos/pl0n3r/Factory/issues")
                          or (method == "PATCH" and bool(re.fullmatch(
