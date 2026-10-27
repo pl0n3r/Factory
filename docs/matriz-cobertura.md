@@ -2553,6 +2553,7 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
+| NO_APLICA | 0 |
 | NO_VERIFICABLE | 2398 |
 | TOTAL | 2406 |
 
