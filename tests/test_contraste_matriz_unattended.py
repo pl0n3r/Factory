@@ -22,6 +22,16 @@ MERGED = {747: "073b46e8e0a0bd81b081f0b6a678e2681a088d68",
 ALLOWED = {"CUBIERTO", "SIN_COBERTURA", "DESCARTADO", "NO_APLICA", "NO_VERIFICABLE"}
 TICK = chr(96)
 
+PR_LINK = re.compile(
+    r"https://github\.com/pl0n3r/Factory/pull/([1-9][0-9]*)(?=[)#?\s]|$)"
+)
+
+
+def pr_numbers(text: str) -> list[int]:
+    """Read complete PR numbers from canonical links, never numeric prefixes."""
+    return [int(value) for value in PR_LINK.findall(text)]
+
+
 def rows():
     found = {}
     for line in DOC.read_text(encoding="utf-8").splitlines():
@@ -71,9 +81,9 @@ class ContrasteTests(unittest.TestCase):
                 self.assertTrue(proof.startswith(TICK + "tests/"))
                 self.assertTrue((ROOT / code.strip(TICK)).is_file())
                 self.assertTrue((ROOT / proof.strip(TICK)).is_file())
-                match = re.search(r"/pull/(\d+)", ref)
-                self.assertIsNotNone(match)
-                number = int(match.group(1))
+                matches = pr_numbers(ref)
+                self.assertEqual(len(matches), 1)
+                number = matches[0]
                 self.assertIn(number, MERGED)
                 self.assertIn(MERGED[number], ref)
 
@@ -99,17 +109,31 @@ class ContrasteTests(unittest.TestCase):
             with self.subTest(row=key):
                 row = rows()[key]
                 self.assertEqual(row[3], "CUBIERTO")
-                self.assertIn(f"/pull/{number}", row[6])
+                self.assertEqual(pr_numbers(row[6]), [number])
                 self.assertIn(sha, row[6])
-                self.assertNotIn(f"/pull/{old_number}", row[6])
+                self.assertNotIn(old_number, pr_numbers(row[6]))
                 self.assertNotIn(old_sha, row[6])
                 matching = [line for line in matrix_lines
                             if line.startswith("| " + TICK + key + TICK + " |")]
                 self.assertEqual(len(matching), 1)
-                self.assertIn(f"/pull/{number}", matching[0])
+                self.assertEqual(pr_numbers(matching[0]), [number])
                 self.assertIn(sha, matching[0])
-                self.assertNotIn(f"/pull/{old_number}", matching[0])
+                self.assertNotIn(old_number, pr_numbers(matching[0]))
                 self.assertNotIn(old_sha, matching[0])
+
+    def test_rechaza_pr_con_sufijo(self):
+        """Ni 7500 ni 9110 se confunden con el único PR permitido."""
+        for expected in (750, 911):
+            with self.subTest(expected=expected):
+                original = f"https://github.com/pl0n3r/Factory/pull/{expected}"
+                false_match = f"https://github.com/pl0n3r/Factory/pull/{expected}0"
+                self.assertEqual(pr_numbers(f"[PR]({original})"), [expected])
+                self.assertEqual(pr_numbers(f"[PR]({false_match})"), [expected * 10])
+                self.assertNotEqual(pr_numbers(f"[PR]({false_match})"), [expected])
+                self.assertNotEqual(
+                    pr_numbers(f"[PR]({original}), [otro]({false_match})"),
+                    [expected],
+                )
 
     def test_matriz_actualizada(self):
         text = MATRIX.read_text(encoding="utf-8")
@@ -124,9 +148,9 @@ class ContrasteTests(unittest.TestCase):
                 self.assertIn("| " + row[3] + " |", matches[0])
                 self.assertIn("contraste-matriz-unattended.md", matches[0])
                 if row[3] == "CUBIERTO":
-                    ref = re.search(r"/pull/(\d+)", row[6])
-                    self.assertIsNotNone(ref)
-                    self.assertIn("/pull/" + ref.group(1), matches[0])
+                    ref = pr_numbers(row[6])
+                    self.assertEqual(len(ref), 1)
+                    self.assertEqual(pr_numbers(matches[0]), ref)
         self.assertIn("## Contraste de comportamientos #1565", text)
 
 if __name__ == "__main__":
