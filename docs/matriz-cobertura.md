@@ -119,7 +119,8 @@ La extracción usa **unidades identificables de comportamiento, contrato o lími
 ## Filas de cobertura
 
 | ID de requisito | Requisito verificable | Estado | Evidencia / condición no acreditada | Hoja |
-| --- | --- | --- | --- | --- || `docs/aceptacion-ejecutable.md:L5-U1` | **gates genéricos**, como lint, tests globales, coordinación, CodeQL y Sonar; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
+| --- | --- | --- | --- | --- |
+| `docs/aceptacion-ejecutable.md:L5-U1` | **gates genéricos**, como lint, tests globales, coordinación, CodeQL y Sonar; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/aceptacion-ejecutable.md:L6-U1` | **criterios específicos del Issue**, definidos como `AC-NN` y verificados por el job `Criterios de aceptación`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/aceptacion-ejecutable.md:L8-U1` | Un PR no está “hecho” si solo pasa la primera capa. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/aceptacion-ejecutable.md:L12-U1` | El Issue debe contener exactamente una sección no vacía para: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
