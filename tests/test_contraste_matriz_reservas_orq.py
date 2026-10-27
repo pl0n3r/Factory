@@ -8,7 +8,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRAST = ROOT / "docs/contraste-matriz-datos_arq.md"
+CONTRAST = ROOT / "docs/contraste-matriz-reservas_orq.md"
 MATRIX = ROOT / "docs/matriz-cobertura.md"
 SOURCES = (
     "docs/liberacion-automatica-de-reservas.md",
