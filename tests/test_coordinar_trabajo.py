@@ -1605,7 +1605,7 @@ class CoordinacionTests(unittest.TestCase):
             return trusted_large(number)
         with patch.object(large, "issue_comments", side_effect=counted_comments):
             with self.assertRaisesRegex(
-                CoordinationError, r"presupuesto seguro de 64 Issues"
+                CoordinationError, r"presupuesto seguro de 100 Issues"
             ):
                 reserve_work(large, 12, "pl0n3r", "OWNER")
         # El presupuesto se comprueba antes de leer cualquier lease,
@@ -6191,6 +6191,82 @@ class V3ClaimScopePRTests(unittest.TestCase):
                         "Diff exact-HEAD|cambió durante validación",
                     ):
                         coordinator.validate_pr_claims(api, 15)
+
+
+class TestIssueInventoryBudget(unittest.TestCase):
+    """Factory #1583: inventario completo de 76-100 Issues sin salto de leases."""
+
+    @staticmethod
+    def _issues(api, count):
+        api.open_issue_data = [api.issue_data] + [
+            {"number": number, "state": "open",
+             "labels": [{"name": STATUS_AVAILABLE}],
+             "body": VALID_ACCEPTANCE_BODY}
+            for number in range(100, 99 + count)
+        ]
+        assert len(api.open_issue_data) == count
+
+    def test_76_open_issues_allowed(self):
+        api = FakeGitHub()
+        self._issues(api, 76)
+        self.assertEqual(76, len(api.open_issues()))
+        self.assertIsNotNone(reserve_work(api, 12, "pl0n3r", "OWNER"))
+        self.assertTrue(active_reservation(api, 12)["active"])
+        self.assertIn("trabajo/issue-12", api.branches)
+
+    def test_limit_plus_one_denied(self):
+        api = FakeGitHub()
+        self._issues(api, coordinator.MAX_OPEN_ISSUES_V3 + 1)
+        comment_reads = []
+        original = api.issue_comments
+
+        def measured(number):
+            comment_reads.append(number)
+            return original(number)
+
+        with patch.object(api, "issue_comments", side_effect=measured):
+            with self.assertRaisesRegex(CoordinationError, "presupuesto seguro de 100 Issues"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertEqual([], comment_reads)
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual([], api.comments)
+
+    def test_late_active_lease_not_ignored(self):
+        # La última fila tiene una V3 válida sobre el MISMO archivo del candidato.
+        api, comments = CoordinacionTests()._hidden_v3_fixture(STATUS_AVAILABLE)
+        late = api.open_issue_data[-1]
+        self._issues(api, 75)
+        api.open_issue_data.append(late)
+        self.assertEqual(76, len(api.open_issue_data))
+        self.assertEqual(late["number"], api.open_issue_data[-1]["number"])
+        with patch.object(api, "issue_comments", side_effect=comments):
+            with self.assertRaisesRegex(CoordinationError, "colisión con tarea activa #50"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual([], api.comments)
+
+    def test_budget_used_consistently(self):
+        # Conceder 76 en la lectura inicial no sirve si la SEGUNDA ya ve 101.
+        api = FakeGitHub()
+        self._issues(api, 76)
+        create = api.create_branch
+
+        def mutate_after_branch(name, sha):
+            result = create(name, sha)
+            if name == "trabajo/issue-12":
+                api.open_issue_data.extend(
+                    {"number": number, "state": "open",
+                     "labels": [{"name": STATUS_AVAILABLE}],
+                     "body": VALID_ACCEPTANCE_BODY}
+                    for number in range(175, 200)
+                )
+            return result
+
+        with patch.object(api, "create_branch", side_effect=mutate_after_branch):
+            with self.assertRaisesRegex(CoordinationError, "presupuesto seguro de 100 Issues"):
+                reserve_work(api, 12, "pl0n3r", "OWNER")
+        self.assertNotIn("trabajo/issue-12", api.branches)
+        self.assertEqual([], api.comments)
 
 
 class StrictGithubPaginationTests(unittest.TestCase):

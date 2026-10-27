@@ -68,6 +68,8 @@ except ValueError:
     RESERVATION_STALE_MINUTES = 30
 
 COMMIT_CLOCK_SKEW_SECONDS = 300
+# Upper bound for full, fail-closed V3 inventories (all active claims checked).
+MAX_OPEN_ISSUES_V3 = 100
 
 ALLOWED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 PUBLIC_WORKFLOW_RUN_REPOS = frozenset(
@@ -2982,7 +2984,7 @@ def plan_atomic_compose_v3(
     # Una cuarta lease con claim superpuesto anula el plan aun si su label
     # visible fue cambiado a available/blocked. Nunca mover sus derechos.
     all_issues = api.open_issues()
-    if not isinstance(all_issues, list) or len(all_issues) > 64:
+    if not isinstance(all_issues, list) or len(all_issues) > MAX_OPEN_ISSUES_V3:
         raise CoordinationError("Composición V3: inventario de Issues inválido.")
     for candidate in all_issues:
         other = candidate.get("number")
@@ -3592,9 +3594,9 @@ def reserve_work(
     # Comprobar el presupuesto antes de la primera lectura de comentarios,
     # incluida la lease del candidato. Un prefijo no concede autoridad.
     open_issues = api.open_issues()
-    if len(open_issues) > 64:
+    if len(open_issues) > MAX_OPEN_ISSUES_V3:
         raise CoordinationError(
-            "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
+            f"Inventario V3 supera el presupuesto seguro de {MAX_OPEN_ISSUES_V3} Issues abiertos."
         )
 
     branch = branch_for_issue(issue_number)
@@ -3763,9 +3765,9 @@ def reserve_work(
         # Segunda lectura sin prefiltrado de estados: carrera de activación
         # o rotación bajo label AVAILABLE/BLOCKED también niega el nuevo grant.
         fresh_issues = api.open_issues()
-        if len(fresh_issues) > 64:
+        if len(fresh_issues) > MAX_OPEN_ISSUES_V3:
             raise CoordinationError(
-                "Inventario V3 supera el presupuesto seguro de 64 Issues abiertos."
+                f"Inventario V3 supera el presupuesto seguro de {MAX_OPEN_ISSUES_V3} Issues abiertos."
             )
         # Un único barrido conserva el snapshot completo de identidad de las
         # reservas sin multiplicar GET de comentarios de leases activas.
