@@ -554,10 +554,10 @@ class DecisionTests(unittest.TestCase):
             "safe_default": "B",
         }
         valid_body = (
-            "<!-- factory-privacy-material -->\\n"
+            "<!-- factory-privacy-material -->\n"
             "## Cambio material de privacidad\n\n"
             "Producto: `pl0n3r/Factory`\n\n"
-            "Motivos estructurados:\\n"
+            "Motivos estructurados:\n"
             "- `notes:new_provider`\n\n"
             "La documentación permanece en estado "
             "`documented_not_legally_approved` hasta una decisión humana.\n\n"
