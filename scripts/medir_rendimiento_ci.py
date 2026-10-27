@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 import sys
 
@@ -96,13 +95,13 @@ def evaluate(data: object) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Medidor offline de CI (JSON sintético)")
-    parser.add_argument("--input", required=True, help="Ruta local del fixture JSON")
+    parser.add_argument("--input", required=True, choices=("-",),
+                        help="Fixture JSON sintético por stdin; no leer rutas externas")
     args = parser.parse_args(argv)
     try:
-        path = Path(args.input)
-        if not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
-            raise CiMeasurementError("invalid_input_file")
-        text = path.read_text(encoding="utf-8")
+        text = sys.stdin.read(MAX_FILE_BYTES + 1)
+        if len(text.encode("utf-8")) > MAX_FILE_BYTES:
+            raise CiMeasurementError("input_too_large")
         def reject_duplicates(pairs):
             result = {}
             for key, val in pairs:
