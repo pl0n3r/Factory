@@ -168,6 +168,12 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
             '        if name == ".github/dependabot.yml":\n'
             '            if slug != "dependabot" or type(app_id) is not int or app_id != 29110:\n'
             '                raise PolicyError(f"Check con emisor desconocido: {name}.")\n'
+            '        # CodeRabbit is an auxiliary check, never evidence of a final\n'
+            '        # reviewer-bot report. Trust only the exact official App and name.\n'
+            '        # The independent exact-HEAD review check remains mandatory.\n'
+            '        elif name == "CodeRabbit":\n'
+            '            if slug != "coderabbitai" or type(app_id) is not int or app_id != 347564:\n'
+            '                raise PolicyError(f"Check con emisor desconocido: {name}.")\n'
             '        elif (\n'
         )
         self.assertEqual(source.count(auxiliary_guard), 1)
