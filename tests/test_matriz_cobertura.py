@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "docs/matriz-cobertura.md"
-BASE_SHA = "9c12107bd64ef4bbc45b3baf4f961a6ce6f14664"
+BASE_SHA = "8088e66c2366f2483d5229fc6fda8718f1ab46a0"
 STATES = {"CUBIERTO", "EN_CURSO", "SIN_COBERTURA", "DESCARTADO", "NO_VERIFICABLE"}
 EPIC_AC = {304: 12, 305: 12, 1080: 4, 1082: 4, 1296: 0, 1382: 7}
 ISSUE = re.compile(r"https://github\.com/pl0n3r/Factory/issues/(\d+)")
@@ -157,7 +157,7 @@ class MatrizCoberturaTests(unittest.TestCase):
     def test_cubre_todas_las_fuentes(self) -> None:
         expected, census = {}, {}
         docs = sorted(p for p in (ROOT / "docs").glob("*.md") if p != MATRIX)
-        self.assertEqual(len(docs), 102)
+        self.assertEqual(len(docs), 103)
         for path in [*docs, ROOT / "AGENTES.md"]:
             items = normative_units(path)
             census[path.relative_to(ROOT).as_posix()] = len(items)
