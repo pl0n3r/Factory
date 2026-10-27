@@ -18,6 +18,7 @@ from puertas_humanas import (
     gate_authority_contract,
     gate_identity,
     gate_identity_from_body,
+    gate_target_identity_from_body,
     validate_gate,
 )
 
@@ -307,6 +308,105 @@ def gate_issue(
 
 
 class GateTests(unittest.TestCase):
+
+    def test_privacy_material_reasons_disambiguate_legal_target(self):
+        first = privacy_material_issue(339, "pl0n3r/GrindFlow")["body"]
+        second = first.replace(
+            "diagnostic_incidents:purpose", "staff_access_metadata:purpose"
+        ).replace(
+            "instagram_reels_publication:new_provider", "staff_contact:purpose"
+        ).replace(
+            "instagram_reels_publication:purpose", "staff_identity:purpose"
+        )
+        self.assertNotEqual(
+            gate_target_identity_from_body(first),
+            gate_target_identity_from_body(second),
+        )
+        self.assertNotEqual(
+            gate_identity_from_body(first), gate_identity_from_body(second),
+        )
+        api = MultiGateAPI([
+            privacy_material_issue(339, "pl0n3r/GrindFlow"),
+            dict(
+                privacy_material_issue(611, "pl0n3r/GrindFlow"),
+                body=second,
+            ),
+        ])
+        self.assertTrue(reconcile_gate(api, "pl0n3r/GrindFlow", 339))
+        self.assertTrue(reconcile_gate(api, "pl0n3r/GrindFlow", 611))
+        self.assertEqual(api.open_numbers(), [339, 611])
+        self.assertFalse(any(method != "GET" for method, _, _ in api.calls))
+
+    def test_privacy_material_reasons_canonical_and_legacy_identity_stable(self):
+        original = privacy_material_issue(611, "pl0n3r/GrindFlow")["body"]
+        rows = (
+            "- \x60diagnostic_incidents:purpose\x60\n"
+            "- \x60instagram_reels_publication:new_provider\x60\n"
+            "- \x60instagram_reels_publication:purpose\x60"
+        )
+        reordered = (
+            "- \x60instagram_reels_publication:purpose\x60\n"
+            "- \x60diagnostic_incidents:purpose\x60\n"
+            "- \x60instagram_reels_publication:new_provider\x60"
+        )
+        self.assertIn(rows, original)
+        self.assertEqual(
+            gate_target_identity_from_body(original),
+            gate_target_identity_from_body(original.replace(rows, reordered)),
+        )
+        legacy = body(gate())
+        self.assertEqual(
+            gate_identity_from_body(legacy), gate_identity(gate()),
+        )
+        release = release_gate_body(suffix="explicación no autoritativa")
+        self.assertEqual(
+            gate_identity_from_body(release),
+            gate_identity_from_body(release_gate_body(suffix="otra frase")),
+        )
+
+    def test_privacy_material_reasons_invalid_body_fails_closed(self):
+        original = privacy_material_issue(611, "pl0n3r/GrindFlow")["body"]
+        variants = (
+            original.replace("Producto: \x60pl0n3r/GrindFlow\x60", "Producto: no-verificable"),
+            original.replace("detectó 3 cambio(s)", "detectó 4 cambio(s)"),
+            original.replace("- \x60diagnostic_incidents:purpose\x60",
+                             "- \x60bad@example.com:purpose\x60"),
+            original.replace("- \x60diagnostic_incidents:purpose\x60",
+                             "- \x60instagram_reels_publication:purpose\x60"),
+            original.replace(
+                "<!-- factory-privacy-material -->",
+                "<!-- factory-privacy-material --><!-- factory-privacy-material -->",
+            ),
+            original.replace(
+                "\n\nLa documentación permanece en estado ",
+                "\n\nTexto diferente: ",
+            ),
+            original.replace(
+                "<!-- factory-privacy-material -->",
+                "<!-- factory-privacy-material-v2 -->",
+            ),
+            original.replace(
+                "Producto: `pl0n3r/GrindFlow`",
+                "Producto: `pl0n3r/Untrusted`",
+            ),
+            original.replace(
+                " que requieren decisión jurídica humana.",
+                " que requieren decisión jurídica humana. Extra",
+            ),
+            original.replace(
+                "documented_not_legally_approved` hasta una decisión humana.",
+                "documented_not_legally_approved` sin decisión humana.",
+            ),
+            original.replace(
+                "Continuar en construcción manteniendo documented_not_legally_approved",
+                "Aprobar datos sin control jurídico",
+            ),
+        )
+        for value in variants:
+            with self.subTest(body=value[:100]):
+                with self.assertRaises(GateValidationError):
+                    gate_target_identity_from_body(value)
+
     def test_no_marker_is_not_a_human_gate(self):
         self.assertEqual(
             classify_body("Issue técnico ordinario"),
