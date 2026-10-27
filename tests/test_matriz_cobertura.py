@@ -32,13 +32,13 @@ VERIFIED = {
     "docs/factory-lab.md:B02": (210, "be8c5776e716d5115f2e9040e73ab1ecfd464851", "lab/factory_lab.py", "tests/test_factory_lab_contract.py"),
     "docs/factory-lab.md:B03": (291, "3e6b1640a780b94fd21ab99d4f17be18f3ca1d44", "lab/experiment_evidence.py", "tests/test_experiment_evidence.py"),
     "docs/factory-lab.md:B04": (219, "5f22c659288bd2013213a234f61eae285d7f8ed3", "lab/factory_lab.py", "tests/test_factory_lab_contract.py"),
-    "docs/orquestador.md:L121-U1":
+    "docs/orquestador.md:B03":
         (1414, "67994aafbb5d", "scripts/coordinar_trabajo.py",
          "tests/test_coordinar_trabajo.py"),
     "docs/performance-remediation.md:L25-U3":
         (1548, "9c12107bd64e", "performance/remediation.py",
          "tests/test_performance_remediation.py"),
-    "docs/liberacion-automatica-de-reservas.md:L181-U1":
+    "docs/liberacion-automatica-de-reservas.md:B03":
         (1515, "1072b8b26582", "scripts/lease_auto_release_integration.py",
          "tests/test_lease_hypothetical_action_preview.py"),
     "docs/recovery-status.md:L13-U1":
@@ -283,6 +283,10 @@ class MatrizCoberturaTests(unittest.TestCase):
             "docs/factoryrunner-execution-plane.md",
             "docs/dieta-factory.md",
             "docs/factory-lab.md",
+            "docs/liberacion-automatica-de-reservas.md",
+            "docs/orquestador.md",
+            "docs/automerge-construccion.md",
+            "docs/no-work-dedup.md",
         )
         expected = {key: value for key, value in expected.items()
                     if not any(key.startswith(source + ":L") for source in migrated)}
@@ -308,6 +312,12 @@ class MatrizCoberturaTests(unittest.TestCase):
                       ":B" in line.split(chr(96), 2)[1]]
         self.assertEqual(len(living_ids), 23)
         expected.update({key: "Comportamiento contrastado" for key in living_ids})
+        reserva = (ROOT / "docs/contraste-matriz-reservas_orq.md").read_text(encoding="utf-8")
+        reserva_ids = [line.split(chr(96), 2)[1] for line in reserva.splitlines()
+                       if line.startswith("| " + chr(96) + "docs/") and
+                       ":B" in line.split(chr(96), 2)[1]]
+        self.assertEqual(len(reserva_ids), 14)
+        expected.update({key: "Comportamiento contrastado" for key in reserva_ids})
         actual = {row["id"] for row in self.rows}
         self.assertEqual(actual, set(expected))
         self.assertIn("AGENTES.md:L34-U2", expected)
