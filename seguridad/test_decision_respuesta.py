@@ -3,7 +3,9 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from sincronizar_puerta import _trusted_gate_candidate
 from decision_respuesta import (
+    _gate_snapshot,
     BOT,
     COMPLETED,
     DECISION_LABEL,
@@ -67,6 +69,8 @@ class FakeAPI:
         self.issue = {
             "number": 519,
             "state": state,
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
             "body": gate_body() if body is None else body,
             "labels": [
                 {"name": name}
@@ -475,9 +479,157 @@ class DecisionPaginationTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
+    def test_untrusted_equivalent_gate_cannot_block_owner_vote(self):
+        # A bot-created gate without canonical provenance must not veto OWNER.
+        untrusted = {
+            "number": 518,
+            "state": "open",
+            "body": gate_body(),
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        api = FakeAPI(equivalent_open=[untrusted])
+
+        self.assertTrue(
+            materialize_decision(event(), api, "pl0n3r/Factory")
+        )
+        self.assertEqual(api.issue["state"], "closed")
+        self.assertEqual(len(api.comments), 1)
+        self.assertEqual(api.comments[0]["user"]["login"], BOT)
+        self.assertTrue(any(
+            path == "repos/pl0n3r/Factory/issues/518/comments?per_page=100"
+            for method, path, _ in api.calls if method == "GET"
+        ))
+        self.assertFalse(any(
+            method != "GET" and "/issues/518" in path
+            for method, path, _ in api.calls
+        ))
+
+    def test_untrusted_bot_gate_with_historical_journal_still_blocks(self):
+        # Added prose invalidates the strict bot gate, not its genuine journal.
+        bot_gate = {
+            "number": 518,
+            "state": "open",
+            "body": gate_body() + "\n\nNota posterior a la decisión.",
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        journal = {
+            "id": 77,
+            "body": (
+                '<!-- factory-human-decision '
+                '{"gate_sha256":"' + ("a" * 64)
+                + '","option":"B","version":2} -->'
+            ),
+            "user": {"login": BOT, "type": "Bot"},
+        }
+        api = FakeAPI(
+            equivalent_open=[bot_gate],
+            comments_by_issue={518: [journal]},
+        )
+
+        self.assertFalse(materialize_decision(event(), api, "pl0n3r/Factory"))
+        self.assertEqual(api.issue["state"], "open")
+        self.assertEqual(api.comments, [])
+        self.assertFalse(any(method != "GET" for method, _, _ in api.calls))
+        self.assertTrue(any(
+            path == "repos/pl0n3r/Factory/issues/518/comments?per_page=100"
+            for method, path, _ in api.calls if method == "GET"
+        ))
+
+    def test_edited_historical_privacy_bot_gate_retains_journal_veto(self):
+        gate = {
+            "category": "legal",
+            "context": (
+                "pl0n3r/Factory: la auditoría detectó 1 cambio(s) material(es) "
+                "de privacidad que requieren decisión jurídica humana."
+            ),
+            "options": [
+                {"id": "A", "label": "Solicitar revisión jurídica antes de aprobar la documentación"},
+                {"id": "B", "label": "Continuar en construcción manteniendo documented_not_legally_approved"},
+            ],
+            "recommendation": "A",
+            "safe_default": "B",
+        }
+        valid_body = (
+            "<!-- factory-privacy-material -->\n"
+            "## Cambio material de privacidad\n\n"
+            "Producto: `pl0n3r/Factory`\n\n"
+            "Motivos estructurados:\n"
+            "- `notes:new_provider`\n\n"
+            "La documentación permanece en estado "
+            "`documented_not_legally_approved` hasta una decisión humana.\n\n"
+            "<!-- factory-human-gate "
+            + json.dumps(gate, ensure_ascii=False, separators=(",", ":"))
+            + " -->"
+        )
+        _, gate_sha = _gate_snapshot(valid_body)
+        bot_gate = {
+            "number": 518,
+            "state": "open",
+            "body": valid_body,
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        self.assertTrue(_trusted_gate_candidate(bot_gate, "pl0n3r/Factory"))
+        bot_gate["body"] = valid_body + "\n\nNota agregada tras la decisión."
+        self.assertFalse(_trusted_gate_candidate(bot_gate, "pl0n3r/Factory"))
+        journal = {
+            "id": 77,
+            "body": (
+                "<!-- factory-human-decision "
+                + json.dumps(
+                    {"gate_sha256": gate_sha, "option": "A", "version": 2},
+                    separators=(",", ":"),
+                )
+                + " -->"
+            ),
+            "user": {"login": BOT, "type": "Bot"},
+        }
+        api = FakeAPI(
+            body=valid_body,
+            equivalent_open=[bot_gate],
+            comments_by_issue={518: [journal]},
+        )
+        self.assertFalse(materialize_decision(
+            event(issue_body=valid_body), api, "pl0n3r/Factory"
+        ))
+        self.assertEqual(api.issue["state"], "open")
+        self.assertEqual(api.comments, [])
+        self.assertFalse(any(method != "GET" for method, _, _ in api.calls))
+
+    def test_untrusted_bot_gate_with_invalid_journal_fails_closed(self):
+        bot_gate = {
+            "number": 518,
+            "state": "open",
+            "body": gate_body() + "\n\nTexto posterior.",
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        invalid_journal = {
+            "id": 77,
+            "body": '<!-- factory-human-decision {"option":"B","version":1} -->',
+            "user": {"login": BOT, "type": "Bot"},
+        }
+        api = FakeAPI(
+            equivalent_open=[bot_gate],
+            comments_by_issue={518: [invalid_journal]},
+        )
+
+        self.assertFalse(materialize_decision(event(), api, "pl0n3r/Factory"))
+        self.assertEqual(api.issue["state"], "open")
+        self.assertEqual(api.comments, [])
+        self.assertFalse(any(method != "GET" for method, _, _ in api.calls))
+
     def test_decision_rejects_ambiguous_equivalent_open_gates(self):
         duplicate = {
             "number": 520,
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
             "state": "open",
             "body": gate_body(),
             "labels": [{"name": DECISION_LABEL}],
@@ -496,6 +648,8 @@ class DecisionTests(unittest.TestCase):
     def test_decision_rejects_historical_equivalent_journal(self):
         historical = {
             "number": 520,
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
             "state": "closed",
             "body": gate_body(),
             "labels": [{"name": COMPLETED}],
