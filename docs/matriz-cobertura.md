@@ -20,6 +20,10 @@ Las 305 cláusulas fragmentarias del censo histórico de `docs/auditoria-pre-v1.
 
 Se sustituyen 201 fragmentos de cinco fuentes unattended por **20 comportamientos** en [contraste unattended](contraste-matriz-unattended.md): 15 CUBIERTO y 5 NO_VERIFICABLE. F1G retiró cron/job diario; el motor offline no implica entrega activa. El inventario original #1550 y las otras fuentes permanecen intactos.
 
+## Contraste de comportamientos #1564
+
+241 cláusulas de Living (84), Runner (63), dieta (59), Lab (35) agregadas como 23 contratos. Véase [contraste Living Runner](contraste-matriz-living_runner.md). El censo original permanece anclado, los demás contrastes están intactos, y no se autoriza go-live.
+
 ## Inventario de fuentes
 
 | Fuente | Unidades |
@@ -351,65 +355,6 @@ Se sustituyen 201 fragmentos de cinco fuentes unattended por **20 comportamiento
 | `docs/derived-views.md:L40-U2` | de lo contrario use `regression`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/derived-views.md:L41-U1` | Añada un drift check determinista. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/derived-views.md:L42-U1` | Documente el límite y la reversión. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L7-U1` | El árbol Git exacto contiene **38 archivos `.github/workflows/*.yml`** y ningún `.yaml` adicional | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L7-U2` | la estimación de 40 de la épica es orientativa y no debe sustituir este conteo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L7-U3` | Ningún cambio de runtime/CI forma parte de esta hoja. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L9-U1` | La futura política de severidades pertenece a #1295 y requiere su propia reserva, regresiones y gates. **Excepciones justificadas frente a la poda tentativ | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L9-U2` | Ninguno se sustituye por una frase genérica sobre gasto ni por el kill switch de Factory#767. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L51-U1` | La tabla anterior enumera los workflows actuales: la línea base histórica y los blobs previos quedan registrados en este ledger, no se reemplazan por recue | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L53-U1` | ningún workflow hace `uses` de los dos YAML retirados. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L53-U2` | la publicación de nuevos consumers requiere revisar de nuevo estos contratos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L60-U1` | **Compensaciones conservadas en CI común:** compilación offline de todos los `lab/*.py`, suites shadow/experimentos, `producto/feedback.py` y `producto/tes | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L60-U2` | No se tocan seguridad, presupuesto, privacidad, coordinación V3, release ni despliegue. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L65-U1` | Después de retirar **solo** `metricas.yml`, quedan **35 workflows activos**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L71-U1` | no se inventa otro cron. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L73-U1` | El check requerido observable de `main` es `Validar` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L73-U2` | Revalidar callers externos si se añaden referencias nuevas a ese trigger local. **Reversión:** squash-revert solo del PR F1B restaura cron, YAML, fila y pr | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L77-U1` | Tras retirar **solo** `.github/workflows/sonar-watch.yml` quedan **34 workflows activos**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L77-U2` | las cuatro bajas acumuladas son distintas y verificables. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L83-U1` | La ficha `GET /repos/pl0n3r/Factory/branches/main` confirma `protected=true` y check requerido `Validar` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L83-U2` | No se elimina un reusable `workflow_call`: su entrada era solo `schedule` cada seis horas y `workflow_dispatch`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L85-U1` | El motor offline `scripts/sonar-watch.py`, `quality/sonar-watch-config.json`, `tests/test_sonar_watch.py` y sus escenarios de API/fail-closed siguen preser | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L87-U1` | **Seguridad:** sin cambios en `factory-ci.yml`, `sonar.yml`, `codeql-evidence.yml`, `costos.yml`, `unattended-watchdog.yml`, coordinación V3, release/boots | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L87-U2` | No se publica ni despliega. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L93-U1` | **Rutas exactas:** ninguna de fase 1 permanece activa tras F1E | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L95-U1` | **Orden:** eliminar primero consumidores directos por workflow, ejecutar pruebas y decidir con evidencia si los scripts/test restantes tienen otro consumid | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L96-U1` | `.github/workflows/costos.yml`: el job `presupuesto-pr` evalúa `metricas/costos.py pr` contra la **base confiable** y publica artifacts de presupuesto | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L96-U2` | `tendencia-ci` sí es telemetría programada y solo podría simplificarse mediante otra hoja con reserva, pruebas y evidencia de preservación de `presupuesto- | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L97-U1` | `.github/workflows/unattended-watchdog.yml`: el job `watchdog` comprueba actividad y degrada la salud operativa cuando corresponde | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L97-U2` | `daily-summary` envía reporte al dueño. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L97-U3` | El interruptor #767 únicamente pausa nuevas mutaciones | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L97-U4` | no reemplaza estas funciones ni `reusable-release-watchdog.yml`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L99-U1` | Hasta demostrar replacements con contratos equivalentes, ambos workflows quedan **quedarse / fase 0**. **Reversión:** revertir únicamente el PR de fase 1 | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L99-U2` | Ninguna publicación/live. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L103-U1` | Antes de retirar `roles.yml`, buscar en **los siete repositorios consumidores** sus referencias `uses: .../roles.yml@v1` y sus required checks (p. ej., `Va | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L105-U1` | verificar los repos consumidores antes de volver a exigirlos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L111-U1` | **Reversión:** squash-revert solo de fase 3 | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L115-U1` | **Rutas exactas:** `.github/workflows/coordinacion-trabajo.yml`, `scripts/coordinar_trabajo.py`, `tests/test_coordinar_trabajo.py`, `tests/test_coordinar_t | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L117-U1` | **Reversión:** squash-revert solo de fase 4 y restaurar protocolo, coordinación y prevención de colisiones. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L121-U1` | **Fase 1 primero:** menor impacto en ruta de código y gasto | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L121-U2` | riesgo: consumidores de resúmenes silenciosamente rotos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L121-U3` | Mitigar con búsqueda literal y tests de rutas antes de borrar. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L122-U1` | **Fase 2 después:** reduce fricción de forma, pero las etiquetas aún se usan como estado de coordinación | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L122-U2` | mantener intactas las exigencias de seguridad hasta fase 4. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L123-U1` | **Fase 3:** máxima mejora potencial del tiempo de entrega | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L123-U2` | riesgo alto de falsa autorización. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L123-U3` | No modificar privilegios, secretos, freezes ni puertas duras. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L124-U1` | **Fase 4 al final:** cambiar primero Coordinación crearía colisiones/duplicados | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L124-U2` | exigir preflight de lease y simulaciones de carreras. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L125-U1` | **Alternativa descartada:** borrar los 38 workflows o quitar tests de contrato sin reemplazo, porque no preserva compatibilidad ni una reversión verificabl | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L129-U1` | `python3 -m unittest tests.test_factory_diet_inventory -v` verifica cobertura del árbol, disparadores, scripts/test a revisar, preservación de puertas dura | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L133-U1` | ninguna exposición nueva. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L139-U1` | Reversión: squash-revert solo del PR F1D, sin tocar F1A/F1B/F1C ni modificar publicación, secretos o producción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L143-U1` | No se modifican colores ni etiquetas reales, y se conserva `scripts/sync_label_colors.py` con su QA offline. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L149-U1` | **Reversión:** squash-revert solo del PR F2A, independiente de las fases F1A/B/C/D. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L153-U1` | Las pruebas de identidad fail-closed y deduplicación sobreviven mediante una copia histórica del gate en `tests/test_captura_leccion_workflow.py`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L159-U1` | esa lectura no garantiza ausencia de automatizaciones externas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L159-U2` | El check requerido de Factory es `Validar`, no Captura. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L159-U3` | Sin cambios de permisos, secretos, datos, etiquetas reales, release, despliegue ni go-live. **Reversión:** squash-revert solo del PR F1E restaura el dispar | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L163-U1` | F1F **mantiene 31 workflows** (31 → 31): elimina únicamente los disparadores `schedule` y `workflow_dispatch` y el job accesorio `tendencia-ci` dentro de ` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L169-U1` | `Validar candidato de costos` conserva sus tests. `metricas/costos.py trend` y `metricas/test_costos.py` siguen disponibles offline, sin jobs que los publi | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/dieta-factory.md:L171-U1` | La poda no modifica dinero, presupuestos, límites, releases, Sonar, CodeQL, CodeRabbit, seguridad o go-live. **Reversión:** squash-revert solo del PR F1F r | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/dod-compiler.md:L3-U1` | Definition-of-Done Compiler deriva el contrato de evidencia que debe existir | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/dod-compiler.md:L5-U1` | solo produce requisitos verificables por máquina a partir de la tarea y de un | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/dod-compiler.md:L6-U1` | Project DNA validado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -491,125 +436,6 @@ Se sustituyen 201 fragmentos de cinco fuentes unattended por **20 comportamiento
 | `docs/f2-caller-migration.md:L16-U2` | Ni el preflight ni su `SAFE` autorizan mover un tag o saltar una puerta humana. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/f2-caller-migration.md:L17-U1` | Un reporte `BLOCKED` no debe resolverse suprimiendo la referencia en una rama ajena | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/f2-caller-migration.md:L17-U2` | la migración corresponde a los repos consumidores mediante sus propias reservas V3. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L13-U1` | `mode=shadow`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L14-U1` | `mutation_allowed=false`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L15-U1` | `external_writes=[]`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L16-U1` | baseline llamado exactamente `stable`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L17-U1` | candidate identificado por SHA exacto; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L18-U1` | comparación Fitness completa; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L19-U1` | validación Constitution del candidato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L23-U1` | `evaluate_shadow()` exige dos SHAs distintos y dos vectores de métricas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L24-U1` | Fitness siempre recibe: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L26-U1` | baseline = métricas de stable; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L27-U1` | candidate = métricas del candidato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L37-U1` | exige una declaración cerrada con: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L39-U1` | baseline y treatment explícitos, cada uno ligado a su SHA exacto; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L40-U1` | métricas protegidas; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L41-U1` | clase de evidencia: `observational`, `quasi_experimental` o | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L43-U1` | impacto `low\\|medium\\|high`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L44-U1` | tamaño de muestra de baseline y treatment; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L45-U1` | confounders conocidos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L46-U1` | cambios simultáneos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L49-U1` | La fuerza causal requerida también aumenta: observational solo alcanza | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L60-U1` | Factory Lab solo marca `promotion.ready=true` cuando: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L62-U1` | Constitution valida el candidato; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L63-U1` | Fitness declara `improved`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L64-U1` | no hay regresiones protegidas; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L65-U1` | no faltan dimensiones de Fitness. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L68-U1` | `causal_promotion_contract()` revalida primero el contrato de promoción | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L69-U1` | existente y después exige evidencia causal reproducible con | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L70-U1` | `promotion_allowed=true`, verificando que los SHA declarados para baseline y | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L77-U1` | El laboratorio nunca ejecuta la promoción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L89-U1` | deploy productivo; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L90-U1` | mutación de stable; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L91-U1` | modificación de Constitution; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L92-U1` | creación de releases; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L93-U1` | escritura en servicios externos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-lab.md:L94-U1` | ampliación de autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L3-U1` | Esta Constitución separa la **capa estable** de la **capa evolutiva** y define el límite que los motores posteriores del DAG #143 deben consumir. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L13-U1` | `evolution/constitution.json`: contrato máquina versionado; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L14-U1` | `evolution/constitution.py`: validador fail-closed de Constitución y candidatos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L20-U1` | La autoridad estable no es estado evolutivo y su mutación autónoma está prohibida. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L22-U1` | PLAN-AGENTES.md | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L24-U1` | decisiones.yml | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L25-U1` | seguridad/puertas-humanas.json | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L26-U1` | docs/puertas-humanas.md | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L27-U1` | docs/resiliencia-fabrica.md | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L29-U1` | Una evolución no puede reinterpretar estas fuentes para concederse permisos, eliminar una puerta humana o rebajar una decisión vigente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L37-U1` | traceability | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L38-U1` | reversibility | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L41-U1` | Cada uno usa la política `must_not_weaken` y `autonomous_mutation = forbidden`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L41-U2` | cambiar ese binding exige una nueva versión del contrato, no una mutación evolutiva. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L45-U1` | Un candidato autónomo solo puede cambiar paths bajo estos prefixes: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L47-U1` | evolution_state.observations | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L48-U1` | evolution_state.hypotheses | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L49-U1` | evolution_state.experiments | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L50-U1` | evolution_state.heuristics | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L51-U1` | evolution_state.thresholds | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L52-U1` | evolution_state.metrics | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L53-U1` | evolution_state.autonomy_scores | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L55-U1` | Todo path fuera de esos namespaces falla cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L57-U1` | Cada candidato debe declarar: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L59-U1` | `version = 1`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L60-U1` | entre 1 y 32 cambios; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L61-U1` | evidencia explícita; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L62-U1` | rollback reversible; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L63-U1` | estrategia de rollback `revert` o `restore_baseline`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L65-U1` | El validador devuelve una huella SHA-256 del candidato serializado canónicamente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L71-U1` | observe → remember → learn → propose → shadow → experiment → validate → promote_or_reject → measure → prune → rollback | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L75-U1` | Recoger señales verificables de operación, calidad, costo, seguridad, producto o ingeniería. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L87-U1` | El candidato debe pasar la Constitución antes de cualquier experimento. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L91-U1` | Ejecutar o evaluar el candidato sin afectar la ruta estable cuando el riesgo lo requiera. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L95-U1` | esta Constitución solo fija el límite de autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L99-U1` | Un weakening constitucional se rechaza aunque otras métricas mejoren. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L103-U1` | Promover únicamente con evidencia reproducible y dentro de la autoridad ya existente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L103-U2` | Si la propuesta requiere dinero, legal, datos reales, publicación/live u otra puerta humana vigente, se usa el registro canónico de puertas | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L119-U1` | `validate_constitution()` falla cerrado ante versión desconocida, campos extra/faltantes, fuentes no canónicas, weakening de invariantes, prefixes evolutiv | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L121-U1` | `validate_candidate()` acepta únicamente cambios en el estado evolutivo permitido. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L121-U2` | También exige evidencia y rollback reversible. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L127-U1` | cualquier motor posterior puede importar un único validador reutilizable; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L128-U1` | un candidato legítimo dentro de `evolution_state.*` obtiene una huella determinista; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L129-U1` | intentos de modificar seguridad, privacidad, trazabilidad, reversibilidad o autoridad fallan antes de experimentar; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L130-U1` | documentación y contrato máquina divergen de forma detectable por CI. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L136-U1` | Los nodos posteriores #145–#157 deben consumir esta Constitución y extender capacidades alrededor de ella | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L136-U2` | no deben copiarla ni crear una política paralela. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L145-U1` | **Project DNA** → huella verificable del software y unknowns explícitos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L146-U1` | **Context Compiler** → briefing mínimo, trazable y privado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L147-U1` | **Definition-of-Done Compiler** → evidencia dinámica y verificable. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L148-U1` | **Risk Compiler** → dimensiones de riesgo, blast radius y controles monotónicos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L149-U1` | **Fitness Engine** → comparación multidimensional candidate vs baseline. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L150-U1` | **Evolution Engine** → lifecycle append-only. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L151-U1` | **Autonomy Engine** → escalera de supervisión solo para authority class `operational`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L152-U1` | **Factory Lab** → shadow candidate vs `stable`, sin mutación. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L153-U1` | **Experience Guardrails** → patrones repetidos convertidos en candidatos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L154-U1` | **Growth/Pruning** → capacidad faltante o entropía convertidas en candidatos con linaje. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L155-U1` | **Immune/Repair** → incidentes convertidos en reparación reversible e inmunización candidata. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L163-U1` | `observe → remember → learn → propose → shadow → experiment → validate → promote_or_reject → measure → prune → rollback`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L169-U1` | La evidencia derivada no se autocertifica cuando existe un productor canónico. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L169-U2` | Autonomy, por ejemplo, revalida Fitness y Risk desde inputs fuente antes de ganar nivel. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L169-U3` | Una evolución solo puede operar dentro de la autoridad estable ya existente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L178-U1` | Una regla cuya revisión vence deja de poder aumentar autonomía hasta revalidarse con evidencia nueva. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L178-U2` | Pruning solo genera candidatos de consolidación/retiro | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L178-U3` | nunca borra historia ni amplía autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L184-U1` | **#209 — Autonomy authority + canonical evidence:** cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L184-U2` | Autonomy separa capability/authority class y revalida Fitness/Risk desde inputs fuente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L185-U1` | **#211 — Factory Lab promotion provenance:** cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L185-U2` | Factory Lab revalida provenance antes de considerar una decisión de promoción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L186-U1` | **#213 — Growth/Pruning source evidence:** cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L186-U2` | Growth/Pruning recompone evidencia fuente antes de producir candidatos confiables. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L187-U1` | **#215 — Repair human authority + immunity provenance:** cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L187-U2` | Repair/Immune validan scope, integridad e historia. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L188-U1` | **#221 — deterministic renewal retry:** cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L188-U2` | La renovación v2 deriva un successor estable y revalida acceptance/task/HEAD. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L189-U1` | **#223 — trusted Repair/Immune provenance:** cerrado en integridad/append-only | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L189-U2` | #227 endurece la procedencia para que stores caller-built no puedan autocertificarse. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L190-U1` | **#227 — read-only authenticated provenance:** cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L190-U2` | Repair/Immune aceptan únicamente readers autenticados/read-only del composition root y rechazan stores mutables locales como autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L198-U1` | Living Software sigue sin concederse autoridad nueva; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L199-U1` | Promotion no publica ni despliega por sí sola; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L200-U1` | Repair conserva `automatic_execution_allowed=false` y `execution=not-performed`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L201-U1` | dinero, legal, datos reales/personales, borrado irreversible y publicación/live conservan sus puertas humanas vigentes; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factory-living-software.md:L202-U1` | cualquier fuente no confiable, evidencia inconsistente o conflicto de autoridad continúa fallando cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/factory-queue.md:L3-U1` | Este documento describe únicamente el contrato de origen introducido por Factory #269/#270. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/factory-queue.md:L35-U1` | El validador falla cerrado ante campos desconocidos, listas fuera de límites, identificadores inválidos, referencias sobredimensionadas y valores con forma | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/factory-queue.md:L39-U1` | `canonical_payload()` serializa el WorkItem validado de forma determinista. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -630,69 +456,6 @@ Se sustituyen 201 fragmentos de cinco fuentes unattended por **20 comportamiento
 | `docs/factory-queue.md:L80-U1` | Factory Queue v1 queda validada de extremo a extremo con el siguiente flujo canónico: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/factory-queue.md:L84-U1` | Ambas comparten `idempotency_scope`, por lo que no se materializan como dos unidades ejecutables. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/factory-queue.md:L88-U1` | únicamente demuestra la composición coherente de los contratos entregados por #270, #271 y #272. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L9-U1` | **Factory gobierna**: políticas, contratos, roles, reusable workflows y límites de autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L10-U1` | **ControlBot decide**: WorkItems, prioridad, dependencias, elegibilidad, scheduler, reservas, retry, presupuesto, puertas humanas y estado durable. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L11-U1` | **FactoryRunner ejecuta**: recibe una orden tipada, publica capabilities, ejecuta mediante adapters y devuelve eventos/evidencia saneada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L12-U1` | **AutoFactory permanece independiente** como herramienta local/manual del dueño. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L12-U2` | No es dependencia, backend ni fallback de FactoryRunner. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L14-U1` | FactoryRunner no puede crear trabajo, cambiar prioridades, resolver puertas humanas ni ampliar permissions/capabilities recibidas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L20-U1` | El core debe funcionar sin presuponer: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L22-U1` | acceso root; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L23-U1` | Docker o un daemon arbitrario del sistema; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L24-U1` | Chrome/Chromium instalado localmente; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L25-U1` | puertos propios; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L26-U1` | WebSocket entrante; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L27-U1` | procesos persistentes ilimitados. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L29-U1` | Las tareas largas deben ser reanudables e idempotentes. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L31-U1` | Las capabilities que requieran sistema operativo, navegador persistente, shell avanzado o sandbox se satisfacen mediante **adapters/backends remotos** cone | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L31-U2` | La ausencia de una capability se publica como ausencia, nunca se simula. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L40-U1` | `attempt_id` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L41-U1` | `generation` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L42-U1` | `project_id` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L43-U1` | `work_item_id` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L44-U1` | `source_ref` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L45-U1` | `executor_kind` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L47-U1` | `profile_alias` / `account_alias` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L48-U1` | `agent_config` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L50-U1` | `instructions_ref` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L51-U1` | `required_capabilities` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L53-U1` | `resource_budget` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L54-U1` | `workspace_policy` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L56-U1` | Solo contienen aliases y referencias opacas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L56-U2` | No aceptan passwords, tokens, cookies, API keys, claves privadas ni autoridad implícita. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L56-U3` | Los secretos permanecen en un vault/secret store del execution plane y solo se resuelven dentro del adapter autorizado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L64-U1` | Redis, memoria local, colas efímeras o locks pueden acelerar presencia y coordinación, pero nunca son la única copia de un WorkItem ni deciden su identidad | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L66-U1` | La transferencia de ownership es atómica: solo el attempt vigente puede producir eventos con efecto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L68-U1` | Cuando un adapter puede producir side effects externos, recibe la generation o un `fencing_token` equivalente y debe rechazar writes de attempts stale. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L70-U1` | Los estados terminales tienen precedencia durable: una ejecución `completed`, `failed` o `cancelled` no puede ser reabierta por eventos tardíos de una gene | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L70-U2` | Retries del mismo evento son idempotentes y requeue/recovery nunca permiten dos owners efectivos simultáneos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L74-U1` | vuelve a publicar identidad/capabilities y heartbeat; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L75-U1` | consulta o recibe el estado durable desde ControlBot; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L76-U1` | reanuda solo si la policy y el estado permiten continuar; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L77-U1` | no crea una segunda ejecución para el mismo intento sin autorización explícita del control plane. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L79-U1` | La pérdida de heartbeat habilita requeue/handoff desde ControlBot, pero no concede autoridad al Runner anterior: el nuevo attempt/generation invalida su ow | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L79-U2` | El Runner no se autoasigna trabajo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L85-U1` | La vista interactiva se expone únicamente a través de ControlBot autenticado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L85-U2` | VNC, CDP u otros canales de control no se publican directamente a Internet. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L87-U1` | El navegador comprometido debe quedar aislado del control plane: perfiles separados, capabilities mínimas, timeouts, evidencia saneada y sin credenciales e | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L93-U1` | Solo puede activarse cuando exista evidencia técnica concreta de que una capability necesaria es inviable o operacionalmente desproporcionada en Shared Hos | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L97-U1` | usa exactamente el mismo protocolo ControlBot ↔ FactoryRunner; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L98-U1` | registra capabilities dinámicas, sin semántica especial por ubicación; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L99-U1` | no se convierte en fuente de verdad; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L100-U1` | puede aparecer/desaparecer sin perder WorkItems; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L101-U1` | no reutiliza ni transforma AutoFactory. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L103-U1` | ControlBot no debe necesitar saber si una ejecución ocurrió en Shared Hosting, un backend remoto o macOS para conservar su modelo de WorkItem. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L107-U1` | Debe respetar este documento, pero #167 no duplica ese runtime ni fija proveedores concretos de browser remoto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L113-U1` | Factory gobierna, ControlBot decide, FactoryRunner ejecuta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L114-U1` | AutoFactory permanece local/manual e independiente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L115-U1` | Shared Hosting es primary | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L115-U2` | root/Docker/Chromium local no son requisitos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L116-U1` | Capabilities no disponibles localmente se ofrecen mediante adapters remotos o se declaran ausentes. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L117-U1` | Órdenes secret-free y sin autoridad implícita. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L118-U1` | ControlBot conserva el estado durable. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L119-U1` | Runner reconstructible, heartbeat-driven e idempotente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L120-U1` | Ownership por `attempt_id` + `generation` monotónica y fencing contra eventos/side effects stale. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/factoryrunner-execution-plane.md:L121-U1` | Mac fallback solo con evidencia y con protocolo idéntico. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/feedback-mesh-e2e.md:L3-U1` | Este slice cierra la demostración operativa de Factory #161: **no crear un motor nuevo** es una restricción explícita. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/feedback-mesh-e2e.md:L9-U1` | Factory PR #253, merge `34409905f874b118b973ec316041467534fe2cd6`, aporta una cohorte real de revisión. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/feedback-mesh-e2e.md:L10-U1` | GrindFlow PR #181 aporta evidencia real de review en HEAD `4a85df7dffb667a476afc3103c268e5f46f0e79a`. **Permanece open** y nunca se presenta como merge. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -2073,6 +1836,30 @@ Se sustituyen 201 fragmentos de cinco fuentes unattended por **20 comportamiento
 | `docs/readme-contract.md:B03` | La insignia de health solo aparece si el producto expone una fuente pública real y segura. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
 | `docs/readme-contract.md:B04` | Ningún proceso de refresco automático debe mover main solo para actualizar métricas del README. | NO_VERIFICABLE | Contrastado por comportamiento; falta verificación exact-SHA del alcance mencionado | [#1562](https://github.com/pl0n3r/Factory/issues/1562) |
 
+| `docs/factory-living-software.md:B01` | Constitution v1 separa autoridad estable del estado evolutivo. | CUBIERTO | `evolution/constitution.py`, `tests/test_living_constitution.py`, [PR #199](https://github.com/pl0n3r/Factory/pull/199) · `445f41ca3858ba1726d6013d996763a68f5c05a4` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-living-software.md:B02` | El candidato no puede debilitar las cinco invariantes protegidas. | CUBIERTO | `evolution/constitution.py`, `tests/test_living_constitution.py`, [PR #199](https://github.com/pl0n3r/Factory/pull/199) · `445f41ca3858ba1726d6013d996763a68f5c05a4` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-living-software.md:B03` | Los cambios permitidos exigen namespaces evolution_state, evidencia y rollback reversible. | CUBIERTO | `evolution/constitution.py`, `tests/test_living_constitution.py`, [PR #199](https://github.com/pl0n3r/Factory/pull/199) · `445f41ca3858ba1726d6013d996763a68f5c05a4` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-living-software.md:B04` | La validación genera huella determinista y rechaza candidatos JSON inválidos. | CUBIERTO | `evolution/constitution.py`, `tests/test_living_constitution.py`, [PR #199](https://github.com/pl0n3r/Factory/pull/199) · `445f41ca3858ba1726d6013d996763a68f5c05a4` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-living-software.md:B05` | El DAG Living ejecuta el lifecycle completo desde observe hasta rollback. | NO_VERIFICABLE | Contrastado: No se acreditó ejecución integral de once fases con los motores integrados. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-living-software.md:B06` | Las promociones y reglas aprendidas respetan puertas humanas en operaciones reales. | NO_VERIFICABLE | Contrastado: La prohibición estructural no prueba el flujo productivo de autorización. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factoryrunner-execution-plane.md:B01` | Factory gobierna, ControlBot decide y FactoryRunner ejecuta sin ampliar autoridad. | NO_VERIFICABLE | Contrastado: Test de arquitectura documental, no ejecución del runtime externo. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factoryrunner-execution-plane.md:B02` | El execution plane funciona en hosting compartido sin root, Docker ni procesos ilimitados. | NO_VERIFICABLE | Contrastado: No hay smoke actual del runtime desplegado en Shared Hosting. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factoryrunner-execution-plane.md:B03` | Las órdenes son secret-free y los adapters resuelven aliases con permisos mínimos. | NO_VERIFICABLE | Contrastado: No se acreditó filtrado completo en todos los adapters reales. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factoryrunner-execution-plane.md:B04` | Orden y evento mantienen idempotencia y fencing por attempt_id y generation. | NO_VERIFICABLE | Contrastado: No se validaron side effects remotos con fencing real end-to-end. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factoryrunner-execution-plane.md:B05` | ControlBot preserva estado durable y rechaza eventos stale o doble ownership. | NO_VERIFICABLE | Contrastado: Un contrato textual no verifica transacciones reales de MariaDB. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factoryrunner-execution-plane.md:B06` | El fallback macOS solo se usa con evidencia de inviabilidad y protocolo idéntico. | NO_VERIFICABLE | Contrastado: El handoff físico no ha sido ensayado en este contraste. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/dieta-factory.md:B01` | El inventario de workflows mantiene baselines históricas separadas del estado vivo. | NO_VERIFICABLE | Contrastado: No se reprodujo aquí todo snapshot histórico de todas las fases. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/dieta-factory.md:B02` | La poda F1A preserva calidad, presupuesto y watchdog sin saltar gates. | CUBIERTO | `.github/workflows/factory-ci.yml`, `tests/test_dieta_fase1a.py`, [PR #1304](https://github.com/pl0n3r/Factory/pull/1304) · `2e20aef7fd8b019c677acec37e18d711341662cc` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/dieta-factory.md:B03` | La retirada del trigger Lab conserva las suites offline del laboratorio. | CUBIERTO | `.github/workflows/factory-ci.yml`, `tests/test_factory_lab_contract.py`, [PR #1304](https://github.com/pl0n3r/Factory/pull/1304) · `2e20aef7fd8b019c677acec37e18d711341662cc` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/dieta-factory.md:B04` | Cada siguiente poda dispone de preflight vigente en todos los consumidores. | NO_VERIFICABLE | Contrastado: El ledger anterior no acredita un preflight exact-main actual. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/dieta-factory.md:B05` | Una reversión acumulada de fases restaura todas las puertas sin pérdida de estado. | NO_VERIFICABLE | Contrastado: Existe plan de reversión por etapa, no simulacro integrado. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-lab.md:B01` | El laboratorio opera shadow y prohíbe escrituras externas. | CUBIERTO | `lab/factory_lab.py`, `tests/test_factory_lab_contract.py`, [PR #210](https://github.com/pl0n3r/Factory/pull/210) · `be8c5776e716d5115f2e9040e73ab1ecfd464851` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-lab.md:B02` | La comparación de candidato frente a stable usa SHAs distintos y evidencia Fitness. | CUBIERTO | `lab/factory_lab.py`, `tests/test_factory_lab_contract.py`, [PR #210](https://github.com/pl0n3r/Factory/pull/210) · `be8c5776e716d5115f2e9040e73ab1ecfd464851` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-lab.md:B03` | La evidencia causal exige muestras por impacto y rechaza observaciones insuficientes. | CUBIERTO | `lab/experiment_evidence.py`, `tests/test_experiment_evidence.py`, [PR #291](https://github.com/pl0n3r/Factory/pull/291) · `3e6b1640a780b94fd21ab99d4f17be18f3ca1d44` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-lab.md:B04` | La promoción revalida provenance y preserva execution=not-performed. | CUBIERTO | `lab/factory_lab.py`, `tests/test_factory_lab_contract.py`, [PR #219](https://github.com/pl0n3r/Factory/pull/219) · `5f22c659288bd2013213a234f61eae285d7f8ed3` | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-lab.md:B05` | El workflow evolution-lab.yml permanece habilitado para ejecutar shadow. | NO_APLICA | Contrastado: El trigger fue retirado expresamente por F1A, PR #1304; las pruebas viven en CI. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+| `docs/factory-lab.md:B06` | El laboratorio autoriza por sí solo despliegue productivo tras mejorar Fitness. | NO_VERIFICABLE | Contrastado: La promoción no publica ni cruza puerta humana sin autorización. | [#1564](https://github.com/pl0n3r/Factory/issues/1564) |
+
 ## Producción y mejoras pendientes
 
 Los épicos #304, #305, #1080, #1082, #1296 y #1382 tienen autoridad y criterios propios, pero ninguno constituye por sí solo una hoja ejecutable. Los AC de esos épicos se inventarían como fuente en `NO_VERIFICABLE` cuando no hay evidencia suficiente para acreditarlos. Se han comprobado cuatro capacidades offline específicas con PR MERGED y pruebas, sin atribuirles aceptación productiva ni cierre del épico.
@@ -2089,15 +1876,15 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 
 | Estado | Filas |
 | --- | ---: |
-| CUBIERTO | 28 |
+| CUBIERTO | 38 |
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
-| NO_APLICA | 0 |
-| NO_VERIFICABLE | 1909 |
-| TOTAL | 1937 |
+| NO_APLICA | 1 |
+| NO_VERIFICABLE | 1680 |
+| TOTAL | 1719 |
 
-**Porcentaje CUBIERTO:** 1.45% (28/1937).
+**Porcentaje CUBIERTO:** 2.21% (38/1719).
 
 **Hojas nuevas creadas:** 0. **Fuentes Markdown:** 103+AGENTES.md. **Criterios de los seis épicos:** 39.
 
