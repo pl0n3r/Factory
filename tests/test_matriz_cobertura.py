@@ -101,6 +101,20 @@ VERIFIED = {
     "docs/context-compiler.md:L23-U1": (203, "e6949df35b7f13dda5fdf2b34a427a8d6f352936", "intelligence/context_compiler.py", "tests/test_context_compiler.py"),
     "docs/conversacion-agentes.md:L7-U1": (303, "4952bac3b22cb17934c507663cf0b8e7c4d8963e", "agentes/NUCLEO.md", "tests/test_conversacion_agentes.py"),
     "docs/coordinacion-pr-validation.md:L14-U1": (788, "a1726510557dd398ec2b15dff5739439e67e606e", ".github/workflows/coordinacion-trabajo.yml", "tests/test_coordinacion_reusable_contract.py"),
+    "docs/organizational-complexity.md:L44-U1": (338, "7b129a43915959ab206afa089eb5f380383e0c3a", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py"),
+    "docs/organizational-complexity.md:L55-U1": (338, "7b129a43915959ab206afa089eb5f380383e0c3a", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py"),
+    "docs/performance-ci-suite-benchmark.md:L7-U3": (1502, "5d89679ff6498fd5f61867ef7c71891e7a26e262", "performance/ci_suite_benchmark.py", "tests/test_performance_ci_suite_benchmark.py"),
+    "docs/performance-ci-suite-benchmark.md:L16-U1": (1502, "5d89679ff6498fd5f61867ef7c71891e7a26e262", "performance/ci_suite_benchmark.py", "tests/test_performance_ci_suite_benchmark.py"),
+    "docs/performance-classification.md:L9-U1": (650, "32be91dc654ff2318c0b342168e7e50b9a298258", "performance/classifier.py", "tests/test_performance_classifier.py"),
+    "docs/performance-contract.md:L17-U1": (314, "756c7a613681b9c91417981e397ec46e56ae414d", "performance/contract.py", "tests/test_performance_contract.py"),
+    "docs/performance-contract.md:L14-U1": (314, "756c7a613681b9c91417981e397ec46e56ae414d", "performance/contract.py", "tests/test_performance_contract.py"),
+    "docs/performance-detection.md:L10-U1": (316, "ebfb56d7164eb337e7519c2209785572ddd2dffb", "performance/detector.py", "tests/test_performance_detector.py"),
+    "docs/performance-detection.md:L14-U1": (316, "ebfb56d7164eb337e7519c2209785572ddd2dffb", "performance/detector.py", "tests/test_performance_detector.py"),
+    "docs/performance-github-actions-ci.md:L9-U2": (1498, "0b910998cba15c6e93a2b636c9ad59ccc6d4017d", "performance/github_actions_ci.py", "tests/test_performance_github_actions_ci.py"),
+    "docs/performance-remediation.md:L15-U1": (1531, "669b1ef512ba5f080831bf01d703d01fb2bd34e6", "performance/remediation.py", "tests/test_performance_remediation.py"),
+    "docs/performance-remediation.md:L23-U1": (1531, "669b1ef512ba5f080831bf01d703d01fb2bd34e6", "performance/remediation.py", "tests/test_performance_remediation.py"),
+    "docs/portfolio-signals.md:L40-U1": (339, "7e9062203f3faae85a6dfc6fc9cb446d4faaf71e", "portfolio/signals.py", "tests/test_portfolio_signals.py"),
+    "docs/portfolio-signals.md:L33-U1": (339, "7e9062203f3faae85a6dfc6fc9cb446d4faaf71e", "portfolio/signals.py", "tests/test_portfolio_signals.py"),
 }
 
 
