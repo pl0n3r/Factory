@@ -14,6 +14,16 @@ BASE_SHA = "8088e66c2366f2483d5229fc6fda8718f1ab46a0"
 STATES = {"CUBIERTO", "EN_CURSO", "SIN_COBERTURA", "DESCARTADO", "NO_VERIFICABLE", "NO_APLICA"}
 EPIC_AC = {304: 12, 305: 12, 1080: 4, 1082: 4, 1296: 0, 1382: 7}
 ISSUE = re.compile(r"https://github\.com/pl0n3r/Factory/issues/(\d+)")
+PR_LINK = re.compile(
+    r"https://github\.com/pl0n3r/Factory/pull/([1-9][0-9]*)(?=[)#?\s]|$)"
+)
+
+
+def pr_numbers(text: str) -> list[int]:
+    """Require one exact canonical PR URL in each covered row."""
+    return [int(value) for value in PR_LINK.findall(text)]
+
+
 MODAL = re.compile(
     r"(debe|deben|deberá|requier|exig|obligat|prohib|nunca|solo|únicamente|"
     r"siempre|must|shall|fail.closed|falla cerr|no se|no puede|no acepta|"
@@ -208,7 +218,7 @@ def check_statuses(rows: list[dict[str, str]], registry: set[int]) -> None:
             if info is None:
                 raise ValueError("Cobertura sin verificación externa")
             pr, merge_sha, code, test = info
-            if (f"/pull/{pr}" not in evidence or merge_sha not in evidence or
+            if (pr_numbers(evidence) != [pr] or merge_sha not in evidence or
                     code not in evidence or test not in evidence or
                     not (ROOT / code).is_file() or not (ROOT / test).is_file()):
                 raise ValueError("CUBIERTO sin código, test o PR fusionado pertinente")
@@ -345,6 +355,26 @@ class MatrizCoberturaTests(unittest.TestCase):
                      issue="[Épico #304](https://github.com/pl0n3r/Factory/issues/304)")]
         with self.assertRaises(ValueError):
             check_statuses(fake, registry)
+
+    def test_pr_evidencia_rechaza_sufijo_numerico(self) -> None:
+        """#750/#911 no deben pasar si sus URLs se convierten en #7500/#9110."""
+        for key, number in (
+            ("docs/unattended-runtime-guards.md:B02", 750),
+            ("docs/unattended-daily-summary.md:B03", 911),
+        ):
+            with self.subTest(key=key):
+                original = next(r for r in self.rows if r["id"] == key)
+                self.assertEqual(pr_numbers(original["evidence"]), [number])
+                false_evidence = re.sub(
+                    rf"/pull/{number}(?=[)#?\s]|$)",
+                    f"/pull/{number}0",
+                    original["evidence"],
+                )
+                self.assertNotEqual(false_evidence, original["evidence"])
+                fake = dict(original, evidence=false_evidence)
+                self.assertEqual(pr_numbers(fake["evidence"]), [number * 10])
+                with self.assertRaisesRegex(ValueError, "CUBIERTO sin código"):
+                    check_statuses([fake], new_leaf_registry(self.doc))
 
     def test_formato_y_estados(self) -> None:
         self.assertGreater(len(self.rows), 100)
