@@ -330,6 +330,46 @@ class SaludColaAlertarTests(unittest.TestCase):
             self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
             self.assertFalse(api.writes)
 
+    def test_switch_canonical_authority_rejects_duplicate_and_partial_markers(self):
+        """El publicador falla cerrado ante markers ambiguos y origen falso."""
+        valid = ('<!-- factory-unattended-kill-switch '
+                 '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->')
+        invalid_bodies = (
+            '<!-- factory-unattended-kill-switch '
+            '{"version":1,"state":"PAUSED","state":"RUNNING","owner":"pl0n3r"} -->',
+            valid + '\n<!-- factory-unattended-kill-switch broken-json -->',
+            '<!-- factory-unattended-kill-switch '
+            '{"version":true,"state":"RUNNING","owner":"pl0n3r"} -->',
+            '<!-- factory-unattended-kill-switch '
+            '{"version":1,"state":"PAUSED","owner":"pl0n3r"} -->',
+        )
+        for body in invalid_bodies:
+            api = FakeAPI()
+            original = api.get
+            def forged(path):
+                result = original(path)
+                if path == "/repos/pl0n3r/Factory/issues/767":
+                    return {**result, "body": body}
+                return result
+            with self.subTest(body=body[:90]), patch.object(api, "get", side_effect=forged):
+                self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+            self.assertFalse(api.writes)
+        for override in (
+            {"url": "https://api.github.com/repos/pl0n3r/Factory/issues/768"},
+            {"repository_url": "https://api.github.com/repos/pl0n3r/Condor"},
+            {"user": {"login": "github-actions[bot]"}},
+        ):
+            api = FakeAPI()
+            original = api.get
+            def forged(path):
+                result = original(path)
+                if path == "/repos/pl0n3r/Factory/issues/767":
+                    return {**result, **override}
+                return result
+            with self.subTest(override=override), patch.object(api, "get", side_effect=forged):
+                self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+            self.assertFalse(api.writes)
+
     def test_switch_duplicate_alert_and_recheck_fail_closed(self):
         api = FakeAPI()
         original_get = api.get

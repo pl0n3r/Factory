@@ -421,6 +421,12 @@ def _latest_checks_by_name(
         if name == ".github/dependabot.yml":
             if slug != "dependabot" or type(app_id) is not int or app_id != 29110:
                 raise PolicyError(f"Check con emisor desconocido: {name}.")
+        # CodeRabbit is an auxiliary check, never evidence of a final
+        # reviewer-bot report. Trust only the exact official App and name.
+        # The independent exact-HEAD review check remains mandatory.
+        elif name == "CodeRabbit":
+            if slug != "coderabbitai" or type(app_id) is not int or app_id != 347564:
+                raise PolicyError(f"Check con emisor desconocido: {name}.")
         elif (
             not isinstance(slug, str)
             or type(app_id) is not int
