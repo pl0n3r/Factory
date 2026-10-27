@@ -22,6 +22,16 @@ MODAL = re.compile(
 )
 # Autenticación de estos PR MERGED y paths comprobada en GitHub al crear el corte.
 VERIFIED = {
+    "docs/factory-living-software.md:B01": (199, "445f41ca3858ba1726d6013d996763a68f5c05a4", "evolution/constitution.py", "tests/test_living_constitution.py"),
+    "docs/factory-living-software.md:B02": (199, "445f41ca3858ba1726d6013d996763a68f5c05a4", "evolution/constitution.py", "tests/test_living_constitution.py"),
+    "docs/factory-living-software.md:B03": (199, "445f41ca3858ba1726d6013d996763a68f5c05a4", "evolution/constitution.py", "tests/test_living_constitution.py"),
+    "docs/factory-living-software.md:B04": (199, "445f41ca3858ba1726d6013d996763a68f5c05a4", "evolution/constitution.py", "tests/test_living_constitution.py"),
+    "docs/dieta-factory.md:B02": (1304, "2e20aef7fd8b019c677acec37e18d711341662cc", ".github/workflows/factory-ci.yml", "tests/test_dieta_fase1a.py"),
+    "docs/dieta-factory.md:B03": (1304, "2e20aef7fd8b019c677acec37e18d711341662cc", ".github/workflows/factory-ci.yml", "tests/test_factory_lab_contract.py"),
+    "docs/factory-lab.md:B01": (210, "be8c5776e716d5115f2e9040e73ab1ecfd464851", "lab/factory_lab.py", "tests/test_factory_lab_contract.py"),
+    "docs/factory-lab.md:B02": (210, "be8c5776e716d5115f2e9040e73ab1ecfd464851", "lab/factory_lab.py", "tests/test_factory_lab_contract.py"),
+    "docs/factory-lab.md:B03": (291, "3e6b1640a780b94fd21ab99d4f17be18f3ca1d44", "lab/experiment_evidence.py", "tests/test_experiment_evidence.py"),
+    "docs/factory-lab.md:B04": (219, "5f22c659288bd2013213a234f61eae285d7f8ed3", "lab/factory_lab.py", "tests/test_factory_lab_contract.py"),
     "docs/orquestador.md:L121-U1":
         (1414, "67994aafbb5d", "scripts/coordinar_trabajo.py",
          "tests/test_coordinar_trabajo.py"),
@@ -240,6 +250,10 @@ class MatrizCoberturaTests(unittest.TestCase):
             "docs/unattended-daily-summary.md",
             "docs/unattended-watchdog.md",
             "docs/unattended-watchdog-runtime.md",
+            "docs/factory-living-software.md",
+            "docs/factoryrunner-execution-plane.md",
+            "docs/dieta-factory.md",
+            "docs/factory-lab.md",
         )
         expected = {key: value for key, value in expected.items()
                     if not any(key.startswith(source + ":L") for source in migrated)}
@@ -259,6 +273,12 @@ class MatrizCoberturaTests(unittest.TestCase):
                           and ":B" in line.split(chr(96), 2)[1]]
         self.assertEqual(len(unattended_ids), 20)
         expected.update({key: "Comportamiento contrastado" for key in unattended_ids})
+        living = (ROOT / "docs/contraste-matriz-living_runner.md").read_text(encoding="utf-8")
+        living_ids = [line.split(chr(96), 2)[1] for line in living.splitlines()
+                      if line.startswith("| " + chr(96) + "docs/") and
+                      ":B" in line.split(chr(96), 2)[1]]
+        self.assertEqual(len(living_ids), 23)
+        expected.update({key: "Comportamiento contrastado" for key in living_ids})
         actual = {row["id"] for row in self.rows}
         self.assertEqual(actual, set(expected))
         self.assertIn("AGENTES.md:L34-U2", expected)
