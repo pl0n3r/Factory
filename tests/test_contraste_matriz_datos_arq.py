@@ -16,6 +16,11 @@ SOURCES = (
     "docs/admin-staff-api.md",
 )
 COUNTS = dict(zip(SOURCES, (183, 87, 51)))
+BEHAVIORS = {
+    "docs/inventario-tecnico-datos-productos.md": 3,
+    "docs/arquitectura-tecnica.md": 4,
+    "docs/admin-staff-api.md": 4,
+}
 ALLOWED = {"CUBIERTO", "SIN_COBERTURA", "DESCARTADO", "NO_APLICA", "NO_VERIFICABLE"}
 # La cobertura acreditada es solo contrato/plantilla: PRs ya MERGED autenticados.
 MERGED = {
@@ -74,14 +79,16 @@ class ContrasteTests(unittest.TestCase):
         cls.rows = contrast_rows(cls.doc)
 
     def test_cada_documento_tiene_veredicto(self) -> None:
-        self.assertEqual(len(self.rows), 11)
-        for source in SOURCES:
+        self.assertEqual(len(self.rows), sum(BEHAVIORS.values()))
+        actual_sources = {key.rsplit(":B", 1)[0] for key in self.rows}
+        self.assertEqual(actual_sources, set(SOURCES), "Fuente no declarada")
+        for source, expected_count in BEHAVIORS.items():
             keys = [key for key in self.rows if key.startswith(source + ":B")]
             with self.subTest(source=source):
-                self.assertGreaterEqual(len(keys), 1)
+                self.assertEqual(len(keys), expected_count)
                 self.assertEqual(
                     sorted(int(ID.fullmatch(key).group(2)) for key in keys),
-                    list(range(1, len(keys) + 1)),
+                    list(range(1, expected_count + 1)),
                 )
                 self.assertTrue((ROOT / source).is_file())
         self.assertEqual(

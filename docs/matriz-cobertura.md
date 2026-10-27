@@ -4,7 +4,7 @@
 
 ## Método y semántica
 
-La extracción usa **unidades identificables de comportamiento, contrato o límite**, no encabezados: listas operativas y cláusulas con predicados normativos. Los IDs `ruta:LNN-UM` señalan línea y unidad separada por punto o punto y coma bajo el SHA inmutable. La tabla de fuentes enumera 102 Markdown vigentes de `docs/` y `AGENTES.md` sin inventar filas «documento presente». Los títulos, índices y snippets en bloques de código no son requisitos. Este extractor no reemplaza una revisión humana completa de cláusulas complejas o de contexto.
+La extracción usa **unidades identificables de comportamiento, contrato o límite**, no encabezados: listas operativas y cláusulas con predicados normativos. Los IDs `ruta:LNN-UM` señalan línea y unidad separada por punto o punto y coma bajo el SHA inmutable. La tabla de fuentes enumera 103 archivos Markdown vigentes de `docs/` más `AGENTES.md`, sin inventar filas «documento presente». Los títulos, índices y snippets en bloques de código no son requisitos. Este extractor no reemplaza una revisión humana completa de cláusulas complejas o de contexto.
 
 ## Contraste de comportamientos #1561
 
