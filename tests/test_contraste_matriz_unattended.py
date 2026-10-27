@@ -16,7 +16,9 @@ EXPECTED = {f"{path}:B{i:02d}" for path in SOURCES for i in range(1, 5)}
 MERGED = {747: "073b46e8e0a0bd81b081f0b6a678e2681a088d68",
           754: "e1509bfe9d133d0dda58ecb3f898201d5ccdc53e",
           786: "2964992a8833e10627e353132c24358ecce99de9",
-          789: "6c69a6cfd594ce5ba7617e2b0c22257045b2e477"}
+          789: "6c69a6cfd594ce5ba7617e2b0c22257045b2e477",
+          750: "a06303d528c9c2065b9f14829c6a7489a6c96529",
+          911: "b233504ec6c03449a37677353bac59a24e88efac"}
 ALLOWED = {"CUBIERTO", "SIN_COBERTURA", "DESCARTADO", "NO_APLICA", "NO_VERIFICABLE"}
 TICK = chr(96)
 
@@ -81,6 +83,33 @@ class ContrasteTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "hoja canónica"):
             assert_gap_has_issue(["", "", "", "SIN_COBERTURA", "—", "—", "—", "#1082"])
         self.assertIn("No se abrió ninguna hoja", DOC.read_text(encoding="utf-8"))
+
+    def test_procedencia_b02_b03_exact_sha(self):
+        """Una prueba documental nunca debe atribuir evidencia a un PR anterior."""
+        matrix_lines = MATRIX.read_text(encoding="utf-8").splitlines()
+        provenances = {
+            "docs/unattended-runtime-guards.md:B02":
+                (750, "a06303d528c9c2065b9f14829c6a7489a6c96529",
+                 747, "073b46e8e0a0bd81b081f0b6a678e2681a088d68"),
+            "docs/unattended-daily-summary.md:B03":
+                (911, "b233504ec6c03449a37677353bac59a24e88efac",
+                 789, "6c69a6cfd594ce5ba7617e2b0c22257045b2e477"),
+        }
+        for key, (number, sha, old_number, old_sha) in provenances.items():
+            with self.subTest(row=key):
+                row = rows()[key]
+                self.assertEqual(row[3], "CUBIERTO")
+                self.assertIn(f"/pull/{number}", row[6])
+                self.assertIn(sha, row[6])
+                self.assertNotIn(f"/pull/{old_number}", row[6])
+                self.assertNotIn(old_sha, row[6])
+                matching = [line for line in matrix_lines
+                            if line.startswith("| " + TICK + key + TICK + " |")]
+                self.assertEqual(len(matching), 1)
+                self.assertIn(f"/pull/{number}", matching[0])
+                self.assertIn(sha, matching[0])
+                self.assertNotIn(f"/pull/{old_number}", matching[0])
+                self.assertNotIn(old_sha, matching[0])
 
     def test_matriz_actualizada(self):
         text = MATRIX.read_text(encoding="utf-8")
