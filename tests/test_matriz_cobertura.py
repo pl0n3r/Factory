@@ -86,6 +86,21 @@ VERIFIED = {
     "docs/unattended-watchdog.md:B04": (754, "e1509bfe9d133d0dda58ecb3f898201d5ccdc53e", "scripts/unattended_watchdog.py", "tests/test_unattended_watchdog.py"),
     "docs/unattended-watchdog-runtime.md:B01": (786, "2964992a8833e10627e353132c24358ecce99de9", "scripts/unattended_watchdog_runtime.py", "tests/test_unattended_watchdog_runtime.py"),
     "docs/unattended-watchdog-runtime.md:B02": (786, "2964992a8833e10627e353132c24358ecce99de9", "scripts/unattended_watchdog_runtime.py", "tests/test_unattended_watchdog_runtime.py"),
+    "docs/aceptacion-ejecutable.md:L49-U1": (926, "2644eb1be4e8d9106fe00e026a5b7c17eb94079a", "scripts/aceptacion_kit.py", "tests/test_aceptacion_kit.py"),
+    "docs/adaptive-orchestration.md:L15-U1": (287, "49703d7138e6da759f911a625239c270164b777d", "scripts/presence_contract.py", "tests/test_presence_contract.py"),
+    "docs/ai-gateway.md:L3-U1": (288, "e58a6c68bf8e2490db31b1495a80e3cf7d702d71", "intelligence/ai_gateway.py", "tests/test_ai_gateway.py"),
+    "docs/ai-gateway.md:L9-U1": (288, "e58a6c68bf8e2490db31b1495a80e3cf7d702d71", "intelligence/ai_gateway.py", "tests/test_ai_gateway.py"),
+    "docs/ai-gateway.md:L11-U1": (288, "e58a6c68bf8e2490db31b1495a80e3cf7d702d71", "intelligence/ai_gateway.py", "tests/test_ai_gateway.py"),
+    "docs/ai-gateway.md:L11-U2": (288, "e58a6c68bf8e2490db31b1495a80e3cf7d702d71", "intelligence/ai_gateway.py", "tests/test_ai_gateway.py"),
+    "docs/ai-gateway.md:L15-U1": (288, "e58a6c68bf8e2490db31b1495a80e3cf7d702d71", "intelligence/ai_gateway.py", "tests/test_ai_gateway.py"),
+    "docs/autonomy-engine.md:L8-U1": (207, "729f4de7a7fc68fa679c4ef7b59728a65243974b", "evolution/autonomy.py", "tests/test_autonomy_engine.py"),
+    "docs/autonomy-engine.md:L30-U1": (207, "729f4de7a7fc68fa679c4ef7b59728a65243974b", "evolution/autonomy.py", "tests/test_autonomy_engine.py"),
+    "docs/capability-authority.md:L5-U1": (289, "f0f16e1d8e3e8d943da0998468551379df70cd9f", "evolution/capability_authority.py", "tests/test_capability_authority.py"),
+    "docs/capability-authority.md:L19-U1": (289, "f0f16e1d8e3e8d943da0998468551379df70cd9f", "evolution/capability_authority.py", "tests/test_capability_authority.py"),
+    "docs/context-compiler.md:L17-U1": (203, "e6949df35b7f13dda5fdf2b34a427a8d6f352936", "intelligence/context_compiler.py", "tests/test_context_compiler.py"),
+    "docs/context-compiler.md:L23-U1": (203, "e6949df35b7f13dda5fdf2b34a427a8d6f352936", "intelligence/context_compiler.py", "tests/test_context_compiler.py"),
+    "docs/conversacion-agentes.md:L7-U1": (303, "4952bac3b22cb17934c507663cf0b8e7c4d8963e", "agentes/NUCLEO.md", "tests/test_conversacion_agentes.py"),
+    "docs/coordinacion-pr-validation.md:L14-U1": (788, "a1726510557dd398ec2b15dff5739439e67e606e", ".github/workflows/coordinacion-trabajo.yml", "tests/test_coordinacion_reusable_contract.py"),
 }
 
 
