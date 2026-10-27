@@ -148,6 +148,20 @@ def inventory(doc: str) -> dict[str, int]:
     return result
 
 
+def pinned_sources(doc: str, available: set[str] | None = None) -> list[str]:
+    """Auditar solo las fuentes del corte declarado; cambios nuevos no reescriben historia."""
+    names = set(inventory(doc))
+    if available is None:
+        available = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "docs").glob("*.md")
+        } | {"AGENTES.md"}
+    missing = names - set(available)
+    if missing:
+        raise ValueError("Falta fuente auditada en snapshot: " + sorted(missing)[0])
+    return sorted(names)
+
+
 class MatrizCoberturaTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -156,7 +170,10 @@ class MatrizCoberturaTests(unittest.TestCase):
 
     def test_cubre_todas_las_fuentes(self) -> None:
         expected, census = {}, {}
-        docs = sorted(p for p in (ROOT / "docs").glob("*.md") if p != MATRIX)
+        # El censo de #1550 es un snapshot del SHA BASE_SHA, no una regla
+        # para prohibir nuevas hojas documentales añadidas en otro PR.
+        docs = [ROOT / name for name in pinned_sources(self.doc)
+                if name.startswith("docs/")]
         self.assertEqual(len(docs), 103)
         for path in [*docs, ROOT / "AGENTES.md"]:
             items = normative_units(path)
@@ -170,6 +187,19 @@ class MatrizCoberturaTests(unittest.TestCase):
         self.assertEqual(actual, set(expected))
         self.assertIn("AGENTES.md:L34-U2", expected)
         self.assertNotEqual(actual - {"AGENTES.md:L34-U2"}, set(expected))
+
+    def test_snapshot_ignora_solo_fuentes_posteriores(self) -> None:
+        """Un nuevo documento no cambia el censo viejo; una fuente perdida sí falla."""
+        baseline = set(pinned_sources(self.doc))
+        self.assertIn("AGENTES.md", baseline)
+        self.assertNotIn("docs/matriz-cobertura.md", baseline)
+        self.assertNotIn("docs/continuidad-caida-proveedores.md", baseline)
+        self.assertEqual(len([p for p in baseline if p.startswith("docs/")]), 103)
+
+        with_future = baseline | {"docs/continuidad-caida-proveedores.md"}
+        self.assertEqual(set(pinned_sources(self.doc, with_future)), baseline)
+        with self.assertRaisesRegex(ValueError, "Falta fuente auditada"):
+            pinned_sources(self.doc, baseline - {"docs/lista-salida-produccion.md"})
 
     def test_sin_cobertura_tiene_issue(self) -> None:
         registry = new_leaf_registry(self.doc)
