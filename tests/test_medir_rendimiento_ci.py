@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1] / "scripts" / "medir_rendimiento_ci.py"
@@ -62,14 +61,12 @@ class F304MedirCiTests(unittest.TestCase):
             with self.subTest(case=str(bad)[:90]):
                 with self.assertRaises(module.CiMeasurementError):
                     module.evaluate(bad)
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "bad.json"
-            p.write_text('{"version":1,"version":1,"workflows":[]}', encoding="utf-8")
-            run = subprocess.run([sys.executable, str(SOURCE), "--input", str(p)],
-                                 capture_output=True, text=True, check=False)
-            self.assertEqual(run.returncode, 2)
-            self.assertIn('"status": "UNKNOWN"', run.stderr)
-            self.assertEqual(run.stdout, "")
+        bad_input = '{"version":1,"version":1,"workflows":[]}'
+        run = subprocess.run([sys.executable, str(SOURCE), "--input", "-"],
+                             input=bad_input, capture_output=True, text=True, check=False)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn('"status": "UNKNOWN"', run.stderr)
+        self.assertEqual(run.stdout, "")
 
     def test_sin_datos_reales(self):
         data = self.fixture()
@@ -80,18 +77,20 @@ class F304MedirCiTests(unittest.TestCase):
         data["workflows"][0]["workflow"] = "contact@example.org"
         with self.assertRaises(module.CiMeasurementError):
             module.evaluate(data)
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "synthetic.json"
-            path.write_text(json.dumps(self.fixture()), encoding="utf-8")
-            run = subprocess.run([sys.executable, str(SOURCE), "--input", str(path)],
-                                 capture_output=True, text=True, check=False)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            out = json.loads(run.stdout)
-            self.assertEqual(out["mode"], "synthetic_offline")
-            self.assertFalse(out["execute_actions"])
-            self.assertNotIn("secret", run.stdout.lower())
-            self.assertNotIn("repository", run.stdout.lower())
-            self.assertFalse(out["baseline_mutated"])
+        run = subprocess.run([sys.executable, str(SOURCE), "--input", "-"],
+                             input=json.dumps(self.fixture()), capture_output=True,
+                             text=True, check=False)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        out = json.loads(run.stdout)
+        self.assertEqual(out["mode"], "synthetic_offline")
+        self.assertFalse(out["execute_actions"])
+        self.assertNotIn("secret", run.stdout.lower())
+        self.assertNotIn("repository", run.stdout.lower())
+        self.assertFalse(out["baseline_mutated"])
+        rejected = subprocess.run([sys.executable, str(SOURCE), "--input", "../sensitive.json"],
+                                  input="{}", capture_output=True, text=True, check=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertEqual(rejected.stdout, "")
 
     def test_estados_unknown_explicitos(self):
         data = {"version": 1, "workflows": [
@@ -107,3 +106,32 @@ class F304MedirCiTests(unittest.TestCase):
             self.assertIsNone(item["regression_p95"])
         self.assertEqual(out[0]["samples"], 0)
         self.assertIsNone(out[0]["p95_ms"])
+
+    def test_bordes_validacion_y_cli(self):
+        bad_root = [
+            {"version": 1, "workflows": ["not a dict"]},
+            {"version": 1, "workflows": [{"workflow": "bad/path", "durations_ms": [10]}]},
+            {"version": 1, "workflows": [{"workflow": "wf", "durations_ms": "10"}]},
+            {"version": 1, "workflows": [{"workflow": "wf", "durations_ms": [10] * 1001}]},
+            {"version": 1, "workflows": [{"workflow": "wf", "durations_ms": [86400001]}]},
+            {"version": 1, "workflows": [{"workflow": "wf", "durations_ms": [10], "baseline": []}]},
+            {"version": 1, "workflows": [{"workflow": "wf", "durations_ms": [10],
+                                         "baseline": {"p50_ms": True, "p95_ms": 10, "threshold_pct": 0}}]},
+            {"version": 1, "workflows": [{"workflow": "wf", "durations_ms": [10],
+                                         "baseline": {"p50_ms": 10, "p95_ms": 10, "threshold_pct": True}}]},
+        ]
+        for payload in bad_root:
+            with self.subTest(payload=str(payload)[:40]), self.assertRaises(module.CiMeasurementError):
+                module.evaluate(payload)
+        # Umbral exacto no es regresión; una muestra corta no infiere p95 interpolado.
+        exact = {"version": 1, "workflows": [{"workflow": "wf", "durations_ms": [110],
+                 "baseline": {"p50_ms": 100, "p95_ms": 100, "threshold_pct": 10}}]}
+        self.assertEqual(module.evaluate(exact)["workflows"][0]["status"], "WITHIN_BASELINE")
+        for payload in ["", "garbage", "{", '{"version": 1, "workflows": [], "x": NaN}',
+                        "x" * (module.MAX_FILE_BYTES + 1)]:
+            with self.subTest(length=len(payload)):
+                run = subprocess.run([sys.executable, str(SOURCE), "--input", "-"],
+                                     input=payload, capture_output=True, text=True, check=False)
+                self.assertEqual(run.returncode, 2)
+                self.assertIn('"status": "UNKNOWN"', run.stderr)
+                self.assertEqual(run.stdout, "")
