@@ -8,6 +8,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from scripts import salud_cola_alertar as alert
 from scripts.salud_cola import REPOSITORIES
 from scripts.salud_cola_alertar import (
     ALERT_LABELS, ALERT_TITLE, AlertError, FACTORY, GitHubAPI, ejecutar, main,
@@ -142,10 +143,11 @@ class SaludColaAlertarTests(unittest.TestCase):
         api.kill_state = "PAUSED"
         self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
         self.assertFalse(api.writes)
+        client = GitHubAPI("fake")
         for path in ("/repos/pl0n3r/Condor/issues",
                      "/repos/pl0n3r/ControlBot/issues/21"):
             with self.assertRaises(AlertError):
-                GitHubAPI("fake").request("POST", path, {"body": "x"})
+                client.request("POST", path, {"body": "x"})
         with patch("scripts.salud_cola_alertar.os.environ", {}), \
              patch("scripts.salud_cola_alertar.sys.stdout", new_callable=io.StringIO) as out:
             self.assertEqual(main(), 0)
@@ -178,6 +180,125 @@ class SaludColaAlertarTests(unittest.TestCase):
         self.assertIn("FACTORY_QUEUE_ALERT_ENABLED: 'true'", content)
         self.assertEqual(content.count("cron:"), 1)
         self.assertNotIn("secrets.", content)
+
+
+    def test_transport_allowlist_http_and_bounded_json(self):
+        class Response:
+            status = 200
+            def __init__(self, raw, status=200):
+                self.raw = raw
+                self.status = status
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, size):
+                return self.raw[:size]
+
+        with self.assertRaises(AlertError):
+            GitHubAPI("")
+        api = GitHubAPI("synthetic-token")
+        quota = {"resources": {"core": {"limit": 5000, "remaining": 4500}}}
+        with patch.object(alert, "urlopen", return_value=Response(json.dumps(quota).encode())) as send:
+            self.assertEqual(api.get("/rate_limit"), quota)
+            request = send.call_args.args[0]
+            self.assertEqual(request.get_method(), "GET")
+            self.assertIn("/rate_limit", request.full_url)
+        with patch.object(alert, "urlopen", return_value=Response(b'{"number":3}', 201)):
+            result = api.write("POST", "/repos/pl0n3r/Factory/issues",
+                               {"title": "synthetic", "body": "safe"})
+            self.assertEqual(result["number"], 3)
+        for status, raw in ((500, b'{}'), (200, b'x' * (alert.MAX_RESPONSE_BYTES + 1))):
+            with self.subTest(http_status=status, bytes=len(raw)):
+                with patch.object(alert, "urlopen", return_value=Response(raw, status)):
+                    with self.assertRaises(AlertError):
+                        api.get("/rate_limit")
+        with patch.object(alert, "urlopen", return_value=Response(b'not-json')):
+            with self.assertRaises(ValueError):
+                api.get("/rate_limit")
+        with patch.object(alert, "urlopen", side_effect=OSError("network synthetic")):
+            with self.assertRaises(OSError):
+                api.get("/rate_limit")
+        for method, path, payload in (
+            ("DELETE", "/repos/pl0n3r/Factory/issues/12", None),
+            ("POST", "/repos/pl0n3r/Condor/issues", {"body": "x"}),
+            ("PATCH", "/repos/pl0n3r/Factory/issues/0", {"body": "x"}),
+            ("GET", "/repos/pl0n3r/Condor/issues?state=all&per_page=100&page=1", None),
+            ("GET", "/repos/pl0n3r/Factory/issues?state=all&per_page=100&page=25", None),
+            ("GET", "/repos/pl0n3r/Factory/issues/767", {"x": 1}),
+        ):
+            with self.subTest(method=method, path=path):
+                with self.assertRaises(AlertError):
+                    api.request(method, path, payload)
+
+    def test_inventory_and_pagination_reject_malformed_sources(self):
+        api = FakeAPI()
+        self.assertEqual(alert._quota(api)["remaining"], 4500)
+        for malformed in (None, [], {}, {"resources": None},
+                          {"resources": {"core": None}},
+                          {"resources": {"core": {"limit": True, "remaining": 1}}},
+                          {"resources": {"core": {"limit": 0, "remaining": 0}}}):
+            with patch.object(api, "get", return_value=malformed):
+                with self.assertRaises(AlertError):
+                    alert._quota(api)
+        api.limit = 5000
+        api.remaining = 1199
+        with self.assertRaises(AlertError):
+            alert._quota(api)
+        api.remaining = 4500
+        self.assertEqual(len(list(alert._pages(api, FACTORY))), 1)
+        with self.assertRaises(AlertError):
+            list(alert._pages(api, "pl0n3r/Condor", state="all"))
+        for invalid in (None, {}, [None] * (alert.PAGE_SIZE + 1)):
+            with patch.object(api, "get", return_value=invalid):
+                with self.assertRaises(AlertError):
+                    list(alert._pages(api, FACTORY))
+        with patch.object(api, "get", return_value=[{}] * alert.PAGE_SIZE):
+            with self.assertRaises(AlertError):
+                list(alert._pages(api, FACTORY))
+        for issues in (({"number": 2, "labels": [{"name": "estado: bloqueado"}]},) * 2,
+                       ({"number": True, "labels": []},),
+                       ({"number": 10, "labels": [{"name": "estado: sin-etiqueta"}]},),
+                       ({"number": 10, "labels": [{"name": "estado: bloqueado"},
+                                                  {"name": "estado: disponible"}]},)):
+            api = FakeAPI()
+            api.repos[FACTORY] = list(issues)
+            self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+            self.assertFalse(api.writes)
+
+    def test_switch_duplicate_alert_and_recheck_fail_closed(self):
+        api = FakeAPI()
+        original_get = api.get
+        def fake_kill(path):
+            if path == "/repos/pl0n3r/Factory/issues/767":
+                return {"number": 767, "state": "closed", "user": {"login": "pl0n3r"},
+                        "body": "<!-- factory-unattended-kill-switch broken-json -->"}
+            return original_get(path)
+        with patch.object(api, "get", side_effect=fake_kill):
+            self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+        self.assertFalse(api.writes)
+        api = FakeAPI()
+        result = ejecutar(api, enabled=True)
+        self.assertEqual(result["status"], "CREATED")
+        api.history[0]["body"] = "<!-- factory-queue-alert \nnot-a-marker"
+        self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+        api = FakeAPI()
+        self.assertEqual(ejecutar(api, enabled=True)["status"], "CREATED")
+        original_get = api.get
+        def stale_get(path):
+            value = original_get(path)
+            if path == "/repos/pl0n3r/Factory/issues/20000":
+                return {**value, "body": "changed by owner"}
+            return value
+        with patch.object(api, "get", side_effect=stale_get):
+            api.history[0]["body"] = "<!-- factory-queue-alert " + json.dumps(
+                {"fingerprint": "0" * 64, "version": 1},
+                sort_keys=True, separators=(",", ":")) + " -->\nchanged"
+            self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+        self.assertEqual(len(api.writes), 1)
 
 
 if __name__ == "__main__":

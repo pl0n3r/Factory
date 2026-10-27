@@ -29,8 +29,13 @@ class AlertError(ValueError):
 
 def _quota(api):
     value = api.get("/rate_limit")
-    core = value.get("resources", {}).get("core") if type(value) is dict else None
-    if type(core) is not dict:
+    if not isinstance(value, dict):
+        raise AlertError("quota_unknown")
+    resources = value.get("resources")
+    if not isinstance(resources, dict):
+        raise AlertError("quota_unknown")
+    core = resources.get("core")
+    if not isinstance(core, dict):
         raise AlertError("quota_unknown")
     limit, remaining = core.get("limit"), core.get("remaining")
     if (type(limit) is not int or type(remaining) is not int or limit <= 0
@@ -56,6 +61,30 @@ def _pages(api, repo, *, state="open"):
     raise AlertError("pagination_incomplete")
 
 
+def _count_issue(item, seen, counts, blockers):
+    """Clasificar exclusivamente un Issue con exactamente un estado canónico."""
+    if type(item) is not dict:
+        raise AlertError("invalid_issue")
+    if "pull_request" in item:
+        return
+    number, labels = item.get("number"), item.get("labels")
+    if (type(number) is not int or number <= 0 or number in seen
+            or type(labels) is not list
+            or any(type(x) is not dict or type(x.get("name")) is not str
+                   for x in labels)):
+        raise AlertError("invalid_issue")
+    statuses = [STATE_LABELS[x["name"]] for x in labels
+                if x["name"] in STATE_LABELS]
+    if len(statuses) != 1:
+        raise AlertError("unclassified_issue")
+    seen.add(number)
+    status = statuses[0]
+    counts[status] += 1
+    if status == "blocked":
+        # Jamás inferir dependencias ejecutables desde texto libre.
+        blockers.append({"number": number, "cause": "unknown", "roadmap": False})
+
+
 def _inventory(api):
     budget = _quota(api)
     rows = []
@@ -70,27 +99,7 @@ def _inventory(api):
         blockers = []
         for items in _pages(api, repo):
             for item in items:
-                if type(item) is not dict:
-                    raise AlertError("invalid_issue")
-                if "pull_request" in item:
-                    continue
-                number, labels = item.get("number"), item.get("labels")
-                if (type(number) is not int or number <= 0 or number in seen
-                        or type(labels) is not list
-                        or any(type(x) is not dict or type(x.get("name")) is not str
-                               for x in labels)):
-                    raise AlertError("invalid_issue")
-                seen.add(number)
-                statuses = [STATE_LABELS[x["name"]] for x in labels
-                            if x["name"] in STATE_LABELS]
-                if len(statuses) != 1:
-                    raise AlertError("unclassified_issue")
-                status = statuses[0]
-                counts[status] += 1
-                if status == "blocked":
-                    # Jamás inferir dependencias ejecutables desde texto libre.
-                    blockers.append({"number": number, "cause": "unknown",
-                                     "roadmap": False})
+                _count_issue(item, seen, counts, blockers)
         rows.append({"name": name, "complete": True,
                      "open_issues": len(seen), "counts": counts,
                      "blockers": sorted(blockers, key=lambda x: x["number"])})
@@ -102,28 +111,34 @@ def _inventory(api):
              "checks_complete": True})
 
 
+def _parse_alert(item):
+    """Solo reutilizar avisos con marcador válido y autor bot auténtico."""
+    if type(item) is not dict:
+        raise AlertError("invalid_alert_page")
+    if "pull_request" in item:
+        return None
+    body = item.get("body")
+    if not isinstance(body, str) or not body.startswith(BOT_MARKER):
+        return None
+    author = item.get("user")
+    if (type(author) is not dict or author.get("login") != "github-actions[bot]"
+            or author.get("type") != "Bot"):
+        raise AlertError("untrusted_alert_author")
+    if (not ALERT_MARKER.match(body) or type(item.get("number")) is not int
+            or item.get("state") not in ("open", "closed")):
+        raise AlertError("alert_marker_invalid")
+    return {"number": item["number"], "state": item["state"], "body": body}
+
+
 def _existing(api):
     alerts = []
     for page in _pages(api, FACTORY, state="all"):
         for item in page:
-            if type(item) is not dict:
-                raise AlertError("invalid_alert_page")
-            if "pull_request" in item:
-                continue
-            body = item.get("body")
-            if not isinstance(body, str) or not body.startswith(BOT_MARKER):
-                continue
-            author = item.get("user")
-            if (type(author) is not dict or author.get("login") != "github-actions[bot]"
-                    or author.get("type") != "Bot"):
-                raise AlertError("untrusted_alert_author")
-            if (not ALERT_MARKER.match(body) or type(item.get("number")) is not int
-                    or item.get("state") not in ("open", "closed")):
-                raise AlertError("alert_marker_invalid")
-            alerts.append({"number": item["number"], "state": item["state"],
-                           "body": body})
-            if len(alerts) > 1:
-                raise AlertError("duplicate_alerts")
+            found = _parse_alert(item)
+            if found is not None:
+                alerts.append(found)
+                if len(alerts) > 1:
+                    raise AlertError("duplicate_alerts")
     return alerts
 
 
@@ -169,6 +184,28 @@ def _skip(reason):
     return {"status": "SKIPPED", "reason": reason, "writes": 0}
 
 
+def _publish_notice(api, candidates, body):
+    if candidates:
+        found = candidates[0]
+        if found["state"] != "open":
+            return _skip("owner_closed_alert")
+        if found["body"] == body:
+            return _skip("unchanged_alert")
+        live = api.get(f"/repos/{FACTORY}/issues/{found['number']}")
+        if (type(live) is not dict or live.get("state") != "open"
+                or live.get("body") != found["body"]):
+            raise AlertError("stale_existing_alert")
+        api.write("PATCH", f"/repos/{FACTORY}/issues/{found['number']}",
+                  {"body": body})
+        return {"status": "UPDATED", "writes": 1, "number": found["number"]}
+    created = api.write("POST", f"/repos/{FACTORY}/issues",
+                        {"title": ALERT_TITLE, "body": body,
+                         "labels": list(ALERT_LABELS)})
+    if (type(created) is not dict or type(created.get("number")) is not int):
+        raise AlertError("write_receipt_missing")
+    return {"status": "CREATED", "writes": 1, "number": created["number"]}
+
+
 def ejecutar(api, *, enabled=False):
     """Único efecto máximo, Factory-only; pruebas inyectan cliente sin red."""
     if enabled is not True:
@@ -186,26 +223,8 @@ def ejecutar(api, *, enabled=False):
             raise AlertError("stale_alert_index")
         _kill_is_running(api)
         body = _body(second["fingerprint"], second["proposal"])
-        if candidates:
-            found = candidates[0]
-            if found["state"] != "open":
-                return _skip("owner_closed_alert")
-            if found["body"] == body:
-                return _skip("unchanged_alert")
-            live = api.get(f"/repos/{FACTORY}/issues/{found['number']}")
-            if (type(live) is not dict or live.get("state") != "open"
-                    or live.get("body") != found["body"]):
-                raise AlertError("stale_existing_alert")
-            api.write("PATCH", f"/repos/{FACTORY}/issues/{found['number']}",
-                      {"body": body})
-            return {"status": "UPDATED", "writes": 1, "number": found["number"]}
-        created = api.write("POST", f"/repos/{FACTORY}/issues",
-                            {"title": ALERT_TITLE, "body": body,
-                             "labels": list(ALERT_LABELS)})
-        if (type(created) is not dict or type(created.get("number")) is not int):
-            raise AlertError("write_receipt_missing")
-        return {"status": "CREATED", "writes": 1, "number": created["number"]}
-    except (AlertError, ValueError, TypeError, KeyError, OSError):
+        return _publish_notice(api, candidates, body)
+    except (ValueError, TypeError, KeyError, OSError):
         return _skip("unverified_or_stale_evidence")
 
 
@@ -219,12 +238,12 @@ class GitHubAPI:
     def request(self, method, path, payload=None):
         allowed_read = (path == "/rate_limit"
                         or re.fullmatch(r"/repos/pl0n3r/(Factory|Condor|GrindFlow|brvtal|ControlBot|AutoFactory|FactoryRunner)", path)
-                        or re.fullmatch(r"/repos/pl0n3r/(Factory|Condor|GrindFlow|brvtal|ControlBot|AutoFactory|FactoryRunner)/issues\?state=open&per_page=100&page=([1-9]|1[0-9]|2[0-4])", path)
-                        or re.fullmatch(r"/repos/pl0n3r/Factory/issues\?state=all&per_page=100&page=([1-9]|1[0-9]|2[0-4])", path)
-                        or re.fullmatch(r"/repos/pl0n3r/Factory/issues/(767|[1-9][0-9]*)", path))
+                        or re.fullmatch(r"/repos/pl0n3r/(Factory|Condor|GrindFlow|brvtal|ControlBot|AutoFactory|FactoryRunner)/issues\?state=open&per_page=100&page=([1-9]|1\d|2[0-4])", path)
+                        or re.fullmatch(r"/repos/pl0n3r/Factory/issues\?state=all&per_page=100&page=([1-9]|1\d|2[0-4])", path)
+                        or re.fullmatch(r"/repos/pl0n3r/Factory/issues/[1-9]\d*", path))
         allowed_write = ((method == "POST" and path == "/repos/pl0n3r/Factory/issues")
                          or (method == "PATCH" and bool(re.fullmatch(
-                             r"/repos/pl0n3r/Factory/issues/[1-9][0-9]*", path))))
+                             r"/repos/pl0n3r/Factory/issues/[1-9]\d*", path))))
         if not ((method == "GET" and allowed_read and payload is None)
                 or (allowed_write and type(payload) is dict)):
             raise AlertError("endpoint_forbidden")
@@ -260,7 +279,7 @@ def main():
         try:
             result = ejecutar(GitHubAPI(os.environ.get("GITHUB_TOKEN")),
                               enabled=True)
-        except (AlertError, OSError, ValueError):
+        except (OSError, ValueError):
             result = _skip("unverified_or_stale_evidence")
     print(json.dumps(result, sort_keys=True))
     return 0
