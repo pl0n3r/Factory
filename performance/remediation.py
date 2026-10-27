@@ -292,8 +292,11 @@ def _proposal(raw: Any) -> dict[str, Any]:
     conditions = raw["triggered_conditions"]
     if (
         not isinstance(conditions, list)
+        or any(
+            type(item) is not str or item not in ESCALATION_CONDITIONS
+            for item in conditions
+        )
         or len(conditions) != len(set(conditions))
-        or any(item not in ESCALATION_CONDITIONS for item in conditions)
     ):
         raise PerformanceRemediationError("triggered_conditions fuera de catálogo.")
     return {

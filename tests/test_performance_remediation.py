@@ -96,6 +96,43 @@ class PerformanceRemediationTests(unittest.TestCase):
             "BLOCKED",
         )
 
+    def test_plan_rejects_unhashable_or_wrong_typed_triggered_conditions(self):
+        invalid_cases = (
+            [["cost_change"]],
+            [{"condition": "cost_change"}],
+            [None],
+            [True],
+            [1],
+            ["not_in_catalog"],
+            "cost_change",
+        )
+        for conditions in invalid_cases:
+            with self.subTest(conditions=conditions):
+                with self.assertRaisesRegex(
+                    PerformanceRemediationError,
+                    "triggered_conditions fuera de catálogo",
+                ):
+                    plan_remediation(
+                        finding(), triage(),
+                        proposal(triggered_conditions=conditions),
+                    )
+
+    def test_plan_preserves_valid_triggered_conditions_and_rejects_duplicates(self):
+        escalated = plan_remediation(
+            finding(), triage(), proposal(triggered_conditions=["cost_change"]),
+        )
+        self.assertEqual(escalated["decision"], "ESCALATE")
+        self.assertEqual(escalated["reasons"], ["cost_change"])
+        self.assertTrue(escalated["human_gate_required"])
+        self.assertFalse(escalated["execute_actions"])
+        with self.assertRaisesRegex(
+            PerformanceRemediationError, "triggered_conditions fuera de catálogo",
+        ):
+            plan_remediation(
+                finding(), triage(),
+                proposal(triggered_conditions=["cost_change", "cost_change"]),
+            )
+
     def test_escalation_conditions_force_human_gate(self):
         for condition in (
             "cost_change", "architecture_change", "consistency_risk",
