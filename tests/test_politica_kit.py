@@ -250,6 +250,96 @@ class T(unittest.TestCase):
                 review_lines=[], comment_lines=comments, check_lines=checks,
                 thread_lines=[], run_attempt=1)
 
+    def test_coderabbit_app_is_only_auxiliary_authenticated_check(self):
+        """AC-01: solo el emisor oficial exacto es auxiliar, no un gate."""
+        base = green_gate_checks()
+        official = check(
+            check_id=940, name="CodeRabbit",
+            app_slug="coderabbitai", app_id=347564,
+        )
+        policy.validate_other_gates_green(base + [official], head_sha=HEAD)
+        self.assertNotIn("coderabbitai", policy.TRUSTED_CHECK_APPS)
+
+    def test_coderabbit_spoofed_or_wrong_head_rejected(self):
+        """AC-02: rechazar nombre, slug, id y SHA fuera de contrato."""
+        base = green_gate_checks()
+        for name, slug, app_id in (
+            ("CodeRabbit", "github-actions", 15368),
+            ("CodeRabbit", "coderabbitai", 347565),
+            ("CodeRabbit", "coderabbitai", 347564.0),
+            ("CodeRabbit-copy", "coderabbitai", 347564),
+            ("CodeQL", "coderabbitai", 347564),
+        ):
+            forged = check(
+                check_id=941, name=name, app_slug=slug, app_id=app_id,
+            )
+            with self.subTest(name=name, slug=slug, app_id=app_id):
+                with self.assertRaisesRegex(
+                    PolicyError, "Check con emisor desconocido"
+                ):
+                    policy.validate_other_gates_green(
+                        base + [forged], head_sha=HEAD,
+                    )
+        other_head = check(
+            check_id=942, name="CodeRabbit", head_sha="b" * 40,
+            app_slug="coderabbitai", app_id=347564,
+        )
+        with self.assertRaisesRegex(PolicyError, "HEAD distinto"):
+            policy.validate_other_gates_green(
+                base + [other_head], head_sha=HEAD,
+            )
+
+    def test_coderabbit_pending_failed_or_missing_review_does_not_pass(self):
+        """AC-03: check verde no es review y pendiente/fallido no es verde."""
+        base = green_gate_checks()
+        for status, conclusion, expected_error in (
+            ("in_progress", None, "Check pendiente"),
+            ("completed", "failure", "Check no verde"),
+        ):
+            auxiliary = check(
+                check_id=943, name="CodeRabbit", status=status,
+                conclusion=conclusion,
+                app_slug="coderabbitai", app_id=347564,
+            )
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(PolicyError, expected_error):
+                    policy.validate_other_gates_green(
+                        base + [auxiliary], head_sha=HEAD,
+                    )
+        official = check(
+            check_id=944, name="CodeRabbit",
+            app_slug="coderabbitai", app_id=347564,
+        )
+        policy.validate_other_gates_green(base + [official], head_sha=HEAD)
+        with self.assertRaisesRegex(PolicyError, "Falta review"):
+            validate_required_bot_review(
+                [], required_review_bot="coderabbitai[bot]", head_sha=HEAD,
+            )
+
+    def test_coderabbit_check_cannot_replace_required_categories(self):
+        """AC-04: el auxiliar no cubre ni omite CI, tests y seguridad."""
+        base = green_gate_checks()
+        official = check(
+            check_id=945, name="CodeRabbit",
+            app_slug="coderabbitai", app_id=347564,
+        )
+        for required in (
+            "validate", "SonarCloud Code Analysis", "CodeQL",
+            "tests", "validar-pr / Validar coordinación",
+            "privacidad / Privacidad como código",
+        ):
+            remaining = [
+                row for row in base
+                if json.loads(row)["name"] != required
+            ]
+            with self.subTest(required=required):
+                with self.assertRaisesRegex(
+                    PolicyError, "Faltan gates obligatorios verdes"
+                ):
+                    policy.validate_other_gates_green(
+                        remaining + [official], head_sha=HEAD,
+                    )
+
     def test_gates_require_expected_app_identity_for_each_category(self):
         """AC-01: un nombre de check no suple identidad de la app."""
         base = green_gate_checks()
