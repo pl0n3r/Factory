@@ -15,10 +15,10 @@ STATES = {"CUBIERTO", "NO_VERIFICABLE", "SIN_COBERTURA", "DESCARTADO", "NO_APLIC
 def rows(document: str) -> dict[str, dict[str, str]]:
     result = {}
     for line in document.splitlines():
-        match = re.match(r"^\\| \\x60([^\\x60]+)\\x60 \\| ", line)
+        match = re.match(r"^\| \x60([^\x60]+)\x60 \| ", line)
         if not match or not any(match[1].startswith(src + ":") for src in SOURCES):
             continue
-        columns = [c.strip() for c in re.split(r"(?<!\\\\)\\|", line)]
+        columns = [c.strip() for c in re.split(r"(?<!\\)\|", line)]
         if match[1] in result or len(columns) < 7:
             raise ValueError("Fila duplicada o incompleta")
         status = next((c for c in columns if c in STATES), None)
@@ -48,23 +48,23 @@ class ContrasteTests(unittest.TestCase):
         for key, info in self.verdicts.items():
             if info["state"] != "CUBIERTO":
                 continue
-            self.assertRegex(info["line"], r"tests/[^\\x60]+\\.py::[A-Za-z_]+::test_[A-Za-z_]+")
-            test = re.search(r"(tests/[^\\x60]+\\.py)::([A-Za-z_]+)::(test_[A-Za-z_]+)", info["line"])
+            self.assertRegex(info["line"], r"tests/[^\x60]+\.py::[A-Za-z_]+::test_[A-Za-z_]+")
+            test = re.search(r"(tests/[^\x60]+\.py)::([A-Za-z_]+)::(test_[A-Za-z_]+)", info["line"])
             self.assertIsNotNone(test, key)
             path = ROOT / test[1]
             self.assertTrue(path.is_file(), key)
-            self.assertRegex(path.read_text(encoding="utf-8"), r"def\\s+" + test[3] + r"\\(")
-            self.assertRegex(info["line"], r"github\\.com/pl0n3r/Factory/pull/\\d+")
+            self.assertRegex(path.read_text(encoding="utf-8"), r"def\s+" + test[3] + r"\(")
+            self.assertRegex(info["line"], r"github\.com/pl0n3r/Factory/pull/\d+")
         self.assertIn("NO_VERIFICABLE", self.doc)
 
     def test_faltante_tiene_issue(self):
         for key, info in self.verdicts.items():
             if info["state"] == "SIN_COBERTURA":
-                self.assertRegex(info["line"], r"github\\.com/pl0n3r/Factory/issues/\\d+")
+                self.assertRegex(info["line"], r"github\.com/pl0n3r/Factory/issues/\d+")
                 self.assertNotIn("issues/1569", info["line"])
         # Regresión negativa: no se acepta un estado arbitrario.
         with self.assertRaises(ValueError):
-            rows("| \\x60ISSUE-304:AC-01\\x60 | Ficticio | SIN_PRUEBA | --- | --- | --- |")
+            rows("| \x60ISSUE-304:AC-01\x60 | Ficticio | SIN_PRUEBA | --- | --- | --- |")
 
     def test_matriz_actualizada(self):
         self.assertEqual(set(self.verdicts), set(self.source_rows))
