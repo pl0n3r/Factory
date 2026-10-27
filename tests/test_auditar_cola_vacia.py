@@ -128,6 +128,16 @@ class F1082AuditarColaTests(unittest.TestCase):
         ambiguous = fixture(issue(1, status="bloqueado", blocker="unknown"))
         self.assertEqual(auditor.audit(ambiguous)["state"], "UNKNOWN")
         self.assertEqual(auditor.parse_fixture("not-json")["state"], "UNKNOWN")
+        self.assertEqual(auditor.parse_fixture("\udcff")["state"], "UNKNOWN")
+        with (
+            patch("sys.stdin") as broken_stdin,
+            patch("sys.stdout", new_callable=StringIO) as captured,
+        ):
+            broken_stdin.read.side_effect = UnicodeDecodeError(
+                "utf-8", b"\xff", 0, 1, "invalid byte"
+            )
+            self.assertEqual(auditor.main(), 2)
+        self.assertEqual(json.loads(captured.getvalue())["state"], "UNKNOWN")
         with (
             patch("sys.stdin", StringIO("not-json")),
             patch("sys.stdout", new_callable=StringIO) as capture,

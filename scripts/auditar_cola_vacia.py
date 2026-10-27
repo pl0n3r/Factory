@@ -181,9 +181,9 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def parse_fixture(raw: str) -> dict[str, object]:
     """Rechaza JSON no finito, keys duplicadas y payloads con PII no prevista."""
-    if len(raw.encode("utf-8")) > MAX_BYTES:
-        return dict(UNKNOWN)
     try:
+        if len(raw.encode("utf-8")) > MAX_BYTES:
+            return dict(UNKNOWN)
         snapshot = json.loads(
             raw, object_pairs_hook=_unique_object,
             parse_constant=lambda _: (_ for _ in ()).throw(
@@ -196,7 +196,10 @@ def parse_fixture(raw: str) -> dict[str, object]:
 
 
 def main() -> int:
-    raw = sys.stdin.read(MAX_BYTES + 1)
+    try:
+        raw = sys.stdin.read(MAX_BYTES + 1)
+    except UnicodeError:
+        raw = ""  # fuerce a sanitized UNKNOWN report for undecodable stdin
     report = parse_fixture(raw)
     print(json.dumps(report, sort_keys=True, ensure_ascii=False))
     # UNKNOWN no es veredicto exitoso para callers de CI/automatización.
