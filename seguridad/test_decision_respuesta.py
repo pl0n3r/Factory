@@ -160,6 +160,93 @@ class FakeAPI:
 
 
 class DecisionRespuestaTests(unittest.TestCase):
+
+    def test_privacy_distinct_reason_gate_does_not_block_owner(self):
+        gate = {
+            "category": "legal",
+            "context": (
+                "pl0n3r/Factory: la auditoría detectó 3 cambio(s) "
+                "material(es) de privacidad que requieren decisión jurídica humana."
+            ),
+            "options": [
+                {"id": "A", "label": "Solicitar revisión jurídica antes de aprobar la documentación"},
+                {"id": "B", "label": "Continuar en construcción manteniendo documented_not_legally_approved"},
+            ],
+            "recommendation": "A",
+            "safe_default": "B",
+        }
+
+        def privacy_body(rows):
+            return (
+                "<!-- factory-privacy-material -->\n"
+                "## Cambio material de privacidad\n\n"
+                "Producto: \x60pl0n3r/Factory\x60\n\n"
+                "Motivos estructurados:\n"
+                + "\n".join("- \x60" + row + "\x60" for row in rows)
+                + "\n\nLa documentación permanece en estado "
+                  "\x60documented_not_legally_approved\x60 hasta una decisión humana."
+                + "\n\n<!-- factory-human-gate "
+                + json.dumps(gate, separators=(",", ":"), ensure_ascii=False)
+                + " -->\n"
+            )
+
+        pending = privacy_body([
+            "diagnostic_incidents:purpose",
+            "instagram_reels_publication:new_provider",
+            "instagram_reels_publication:purpose",
+        ])
+        historical = privacy_body([
+            "staff_access_metadata:purpose",
+            "staff_contact:purpose",
+            "staff_identity:purpose",
+        ])
+        old_gate = {
+            "number": 518,
+            "state": "closed",
+            "body": historical,
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": COMPLETED}],
+        }
+        _, old_sha = _gate_snapshot(historical)
+        journal = {
+            "id": 77,
+            "body": (
+                '<!-- factory-human-decision '
+                + json.dumps(
+                    {"version": 2, "option": "A", "gate_sha256": old_sha},
+                    separators=(",", ":"),
+                ) + ' -->'
+            ),
+            "user": {"login": BOT, "type": "Bot"},
+        }
+        api = FakeAPI(
+            body=pending, equivalent_all=[old_gate],
+            comments_by_issue={518: [journal]},
+        )
+        self.assertTrue(materialize_decision(
+            event(command="/decidir A", issue_body=pending),
+            api,
+            "pl0n3r/Factory",
+        ))
+        self.assertEqual(api.issue["state"], "closed")
+        self.assertEqual(len(api.comments), 1)
+        self.assertEqual(api.comments[0]["user"]["login"], BOT)
+        self.assertFalse(any(
+            method != "GET" and "/issues/518" in path
+            for method, path, _ in api.calls
+        ))
+        changed = FakeAPI(
+            body=pending, mutate_body_on_issue_get=2,
+            replacement_body=historical,
+        )
+        self.assertFalse(materialize_decision(
+            event(command="/decidir A", issue_body=pending),
+            changed, "pl0n3r/Factory",
+        ))
+        self.assertEqual(changed.comments, [])
+        self.assertFalse(any(method != "GET" for method, _, _ in changed.calls))
+
     def test_authorized_exact_command_completes_valid_gate(self):
         api = FakeAPI()
         changed = materialize_decision(event(), api, "pl0n3r/Factory")

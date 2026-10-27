@@ -318,6 +318,73 @@ def _gate_target(gate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+# Los motivos no son autoridad legal: solo distinguen objetivos de puertas
+# canónicas del auditor de privacidad. Nada aquí aprueba el tratamiento.
+_PRIVACY_MATERIAL_MARKER = "<!-- factory-privacy-material -->"
+_PRIVACY_REASON_RE = re.compile(
+    r"^- \x60([a-z][a-z0-9_]{0,99}:(?:new_provider|purpose))\x60$"
+)
+_PRIVACY_PRODUCT_RE = re.compile(
+    r"^Producto: \x60([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\x60$"
+)
+
+
+def _privacy_target_from_body(
+    body: str, gate: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Desambigua motivos estructurados sin alterar opciones ni autoridad."""
+    if _PRIVACY_MATERIAL_MARKER not in body:
+        return None
+    prefix = (
+        _PRIVACY_MATERIAL_MARKER
+        + "\n## Cambio material de privacidad\n\n"
+    )
+    if (
+        gate["category"] != "legal"
+        or body.count(_PRIVACY_MATERIAL_MARKER) != 1
+        or body.count("<!--") != 2
+        or body.count("-->") != 2
+        or not body.startswith(prefix)
+    ):
+        raise GateValidationError("Puerta de privacidad material inválida.")
+    product_line, separator, tail = body[len(prefix):].partition(
+        "\n\nMotivos estructurados:\n"
+    )
+    product_match = _PRIVACY_PRODUCT_RE.fullmatch(product_line)
+    if not separator or product_match is None:
+        raise GateValidationError("Producto legal no verificable.")
+    product = product_match.group(1)
+    reason_text, separator, end = tail.partition(
+        "\n\nLa documentación permanece en estado "
+    )
+    reasons = reason_text.split("\n")
+    match_reasons = [_PRIVACY_REASON_RE.fullmatch(row) for row in reasons]
+    if (
+        not separator
+        or not 1 <= len(reasons) <= 20
+        or any(match is None for match in match_reasons)
+        or len(set(reasons)) != len(reasons)
+        or "\n\n<!-- factory-human-gate " not in end
+    ):
+        raise GateValidationError("Motivos jurídicos inválidos.")
+    reason_values = sorted(match.group(1) for match in match_reasons)
+    expected_context = (
+        f"{product}: la auditoría detectó {len(reasons)} "
+        "cambio(s) material(es) de privacidad"
+    )
+    if not gate["context"].startswith(expected_context):
+        raise GateValidationError("Producto o cantidad de motivos incongruente.")
+    return {
+        "category": "legal",
+        "target": {
+            "context": " ".join(gate["context"].split()),
+            "product": product,
+            "privacy_reasons": reason_values,
+        },
+    }
+
+
 def gate_target_identity(raw: Any) -> str:
     """Identidad del objeto decidido, independiente del copy explicativo."""
     return _digest(_gate_target(validate_gate(raw)))
@@ -388,7 +455,9 @@ def _gate_raw_from_body(body: str) -> dict[str, Any]:
 
 
 def gate_target_identity_from_body(body: str) -> str:
-    return gate_target_identity(_gate_raw_from_body(body))
+    gate = validate_gate(_gate_raw_from_body(body))
+    material = _privacy_target_from_body(body, gate)
+    return _digest(material if material is not None else _gate_target(gate))
 
 
 def gate_authority_contract_from_body(body: str) -> str:
@@ -396,8 +465,12 @@ def gate_authority_contract_from_body(body: str) -> str:
 
 
 def gate_identity_from_body(body: str) -> str:
-    """Extrae la identidad completa desde un marker válido e inequívoco."""
-    return gate_identity(_gate_raw_from_body(body))
+    """Extrae target por motivos y contrato de autoridad del marker."""
+    raw = _gate_raw_from_body(body)
+    return _digest({
+        "target": gate_target_identity_from_body(body),
+        "authority": gate_authority_contract(raw),
+    })
 
 
 def classify_body(body: str, *, include_reason: bool = False) -> dict[str, Any]:
