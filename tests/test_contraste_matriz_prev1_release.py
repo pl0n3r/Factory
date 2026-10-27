@@ -25,7 +25,7 @@ COVERED = {
     "docs/readme-contract.md:B01": ("readme/validate_readme.py", "tests/test_readme_contract_v2.py", 1025, "2dc5a8d0b2a6670ff5b87c96844c05ffcb0ebf53"),
     "docs/readme-contract.md:B02": ("readme/validate_readme.py", "tests/test_readme_contract_v2.py", 1025, "2dc5a8d0b2a6670ff5b87c96844c05ffcb0ebf53"),
 }
-ROW = re.compile(r"^\\| `(docs/[^\\x60]+:B\\d{2})` \\|")
+ROW = re.compile(r"^\| `(docs/[^`]+:B\d{2})` \|")
 
 
 def rows_of(text: str) -> dict[str, list[str]]:
