@@ -67,6 +67,8 @@ class FakeAPI:
         self.issue = {
             "number": 519,
             "state": state,
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
             "body": gate_body() if body is None else body,
             "labels": [
                 {"name": name}
@@ -475,9 +477,34 @@ class DecisionPaginationTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
+    def test_untrusted_equivalent_gate_cannot_block_owner_vote(self):
+        # A bot-created gate without canonical provenance must not veto OWNER.
+        untrusted = {
+            "number": 518,
+            "state": "open",
+            "body": gate_body(),
+            "author_association": "CONTRIBUTOR",
+            "user": {"login": BOT, "type": "Bot"},
+            "labels": [{"name": DECISION_LABEL}],
+        }
+        api = FakeAPI(equivalent_open=[untrusted])
+
+        self.assertTrue(
+            materialize_decision(event(), api, "pl0n3r/Factory")
+        )
+        self.assertEqual(api.issue["state"], "closed")
+        self.assertEqual(len(api.comments), 1)
+        self.assertEqual(api.comments[0]["user"]["login"], BOT)
+        self.assertFalse(any(
+            path == "repos/pl0n3r/Factory/issues/518/comments?per_page=100"
+            for method, path, _ in api.calls if method == "GET"
+        ))
+
     def test_decision_rejects_ambiguous_equivalent_open_gates(self):
         duplicate = {
             "number": 520,
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
             "state": "open",
             "body": gate_body(),
             "labels": [{"name": DECISION_LABEL}],
@@ -496,6 +523,8 @@ class DecisionTests(unittest.TestCase):
     def test_decision_rejects_historical_equivalent_journal(self):
         historical = {
             "number": 520,
+            "author_association": "OWNER",
+            "user": {"login": "pl0n3r", "type": "User"},
             "state": "closed",
             "body": gate_body(),
             "labels": [{"name": COMPLETED}],

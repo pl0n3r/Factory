@@ -16,6 +16,7 @@ from puertas_humanas import (
     gate_target_identity_from_body,
     validate_gate,
 )
+from sincronizar_puerta import _trusted_gate_candidate
 
 AUTHORIZED = {"OWNER"}
 COMMAND_RE = re.compile(r"^/decidir ([A-D])$")
@@ -165,6 +166,9 @@ def _open_target_gate_numbers(
         "GET", f"repos/{repository}/issues?state=all&per_page=100"
     ):
         if not isinstance(candidate, dict) or "pull_request" in candidate:
+            continue
+        # Reuse canonicalizer provenance before evaluating an equivalent gate.
+        if not _trusted_gate_candidate(candidate, repository):
             continue
         number = candidate.get("number")
         body = candidate.get("body")
