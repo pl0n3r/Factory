@@ -285,5 +285,57 @@ class RecoveryStatusTests(unittest.TestCase):
         self.assertTrue(project_recovery_readiness(health, critical=True)["ready"])
 
 
+    def test_drill_nested_reason_dict_is_blocked_without_exception(self):
+        malformed = copy.deepcopy(drill())
+        malformed["reasons"] = [{"unexpected": "object"}]
+        health = derive_recovery_health(
+            manifest(), backup(), malformed,
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(health["state"], "BLOCKED")
+        self.assertEqual(health["reasons"], ["DRILL_STATUS_INCOHERENT"])
+        self.assertEqual(health["work_item_classes"], ["restore_drill_failed"])
+        self.assertNotIn("unexpected", str(health))
+        self.assertEqual(health["authority"], "unchanged")
+        self.assertFalse(health["execute"])
+        self.assertFalse(project_recovery_readiness(health, critical=True)["ready"])
+
+    def test_drill_nested_reason_list_is_blocked_without_exception(self):
+        malformed = copy.deepcopy(drill())
+        malformed["reasons"] = ["RPO_EXCEEDED", ["nested"]]
+        health = derive_recovery_health(
+            manifest(), backup(), malformed,
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(health["state"], "BLOCKED")
+        self.assertEqual(health["reasons"], ["DRILL_STATUS_INCOHERENT"])
+        self.assertEqual(health["work_item_classes"], ["restore_drill_failed"])
+        self.assertNotIn("nested", str(health))
+        self.assertFalse(project_recovery_readiness(health, critical=True)["ready"])
+
+    def test_invalid_drill_reasons_preserve_valid_recovery_health(self):
+        healthy = derive_recovery_health(
+            manifest(), backup(), drill(),
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(healthy["state"], "HEALTHY")
+        self.assertEqual(healthy["reasons"], ["RECOVERY_EVIDENCE_CURRENT"])
+        self.assertEqual(healthy["authority"], "unchanged")
+        self.assertFalse(healthy["execute"])
+        duplicate = copy.deepcopy(drill())
+        duplicate["reasons"] = ["RPO_EXCEEDED", "RPO_EXCEEDED"]
+        blocked = derive_recovery_health(
+            manifest(), backup(), duplicate,
+            observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(blocked["state"], "BLOCKED")
+        self.assertEqual(blocked["reasons"], ["DRILL_STATUS_INCOHERENT"])
+        self.assertFalse(project_recovery_readiness(blocked, critical=True)["ready"])
+
+
 if __name__ == "__main__":
     unittest.main()
