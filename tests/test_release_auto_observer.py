@@ -121,5 +121,119 @@ class ReleaseAutoObserverTests(unittest.TestCase):
                          evaluate_bundle(case)["reason"])
 
 
+    def test_marker_parser_is_strict_about_duplicates_and_json(self):
+        from scripts.release_auto_observer import _marker
+
+        name = "factory-human-decision"
+        valid = '<!-- factory-human-decision {"version":2,"option":"A"} -->'
+        self.assertEqual({"version": 2, "option": "A"}, _marker(valid, name))
+        for invalid in (
+            None, "", 5, valid + "\n" + valid,
+            "<!-- factory-human-decision {invalid json} -->",
+            '<!-- factory-human-decision {"option":"A"} -->\n<!-- factory-human-decision {} -->',
+            '<!-- wrong-marker {"version":2} -->',
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(_marker(invalid, name))
+
+    def test_strict_check_evidence_rejects_incomplete_and_wrong_types(self):
+        from scripts.release_auto_observer import _latest_checks
+
+        self.assertEqual(3, len(_latest_checks(fixture(), SHA)))
+        for pages in (
+            None, [], {}, [None], [{"total_count": "3", "check_runs": []}],
+            [{"total_count": 4, "check_runs": []}],
+            [{"total_count": -1, "check_runs": []}],
+            [{"total_count": 3, "check_runs": None}],
+            [{"total_count": 3, "check_runs": [False] * 3}],
+            [{"total_count": 3, "check_runs": [{"name": 4}] * 3}],
+            [{"total_count": 0, "check_runs": []}] * 5,
+            [{"total_count": 3, "check_runs": fixture()["checks"][0]["check_runs"][:-1]}],
+        ):
+            with self.subTest(pages=repr(pages)[:90]):
+                case = fixture()
+                case["checks"] = pages
+                self.assertIsNone(_latest_checks(case, SHA))
+                self.assertEqual("BLOCKED", evaluate_bundle(case)["state"])
+
+        for key, value in (("id", "invalid"), ("head_sha", "not-sha")):
+            case = fixture()
+            case["checks"][0]["check_runs"][0][key] = value
+            self.assertIsNone(_latest_checks(case, SHA))
+
+    def test_paginated_check_evidence_and_latest_identity(self):
+        from scripts.release_auto_observer import _latest_checks
+
+        data = fixture()
+        rows = data["checks"][0]["check_runs"]
+        newer = {**rows[0], "id": 100, "status": "completed", "conclusion": "failure"}
+        data["checks"] = [
+            {"total_count": 4, "check_runs": rows[:2]},
+            {"total_count": 4, "check_runs": [rows[2], newer]},
+        ]
+        normalized = _latest_checks(data, SHA)
+        self.assertEqual(3, len(normalized))
+        self.assertEqual("failure", next(v for v in normalized if v["name"] == "Validar")["conclusion"])
+        self.assertEqual("BLOCKED", evaluate_bundle(data)["state"])
+        data["checks"][1]["total_count"] = 5
+        self.assertIsNone(_latest_checks(data, SHA))
+
+    def test_collector_rejects_bad_inputs_and_handles_check_pagination(self):
+        from scripts.release_auto_observer import collect
+
+        for issue, sha in (("", SHA), ("0", SHA), ("../secrets", SHA), ("1595", "bad")):
+            with self.subTest(issue=issue):
+                with self.assertRaises(ValueError):
+                    collect(issue, sha)
+
+        values = [
+            fixture()["main"], fixture()["tag"], fixture()["gate"],
+            fixture()["comments"], fixture()["switch"], fixture()["rate"],
+            {"total_count": 4, "check_runs": [{"id": 1}, {"id": 2}]},
+            {"total_count": 4, "check_runs": [{"id": 3}, {"id": 4}]},
+        ]
+        with patch("scripts.release_auto_observer._get", side_effect=values) as get:
+            result = collect("1595", SHA)
+            self.assertEqual(2, len(result["checks"]))
+            self.assertEqual(8, get.call_count)
+            self.assertEqual("/rate_limit", get.call_args_list[5].args[0])
+            self.assertTrue(get.call_args_list[-1].args[0].endswith("&page=2"))
+
+    def test_cli_stays_blocked_when_sources_are_missing_or_fail(self):
+        import contextlib
+        import io
+
+        from scripts.release_auto_observer import main
+
+        good_env = {
+            "GITHUB_REPOSITORY": "pl0n3r/Factory",
+            "GITHUB_SHA": SHA,
+            "RELEASE_GATE_ISSUE": "1595",
+        }
+        for changes, error in (
+            ({"GITHUB_REPOSITORY": "other/repo"}, None),
+            ({}, OSError("offline")),
+        ):
+            with self.subTest(changes=changes):
+                with patch.dict("os.environ", {**good_env, **changes}, clear=True):
+                    with patch("scripts.release_auto_observer.collect", side_effect=error):
+                        stdout = io.StringIO()
+                        with contextlib.redirect_stdout(stdout):
+                            self.assertEqual(0, main())
+                        result = json.loads(stdout.getvalue())
+                        self.assertEqual("BLOCKED", result["state"])
+                        self.assertEqual(0, result["mutations"])
+                        self.assertFalse(result["authorizes_release"])
+
+        with patch.dict("os.environ", good_env, clear=True):
+            with patch("scripts.release_auto_observer.collect", return_value=fixture()):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(0, main())
+                report = json.loads(stdout.getvalue())
+                self.assertEqual("security_freeze_or_protected_tag_not_attested", report["reason"])
+                self.assertNotIn("comments", report)
+
+
 if __name__ == "__main__":
     unittest.main()
