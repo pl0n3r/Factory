@@ -29,7 +29,49 @@ class CoordinationReusableStartupTests(unittest.TestCase):
     def test_concurrency_uses_only_supported_keys(self) -> None:
         keys = [line.strip().split(":", 1)[0] for line in self._concurrency_lines()]
         self.assertEqual(["group", "cancel-in-progress"], keys)
-        self.assertIn("group: factory-coordination-${{ github.repository_id }}", self.text)
+        self.assertIn(
+            "group: ${{ inputs.operation == 'validate' && "
+            "format('factory-coordination-{0}-validate-{1}', "
+            "github.repository_id, inputs.pr_number) || "
+            "format('factory-coordination-{0}', github.repository_id) }}",
+            self.text,
+        )
+        self.assertIn("cancel-in-progress: false", self.text)
+
+    def test_readonly_pr_validation_has_independent_concurrency_group(self) -> None:
+        group = self._concurrency_lines()[0].strip()
+        self.assertIn("inputs.operation == 'validate'", group)
+        self.assertIn(
+            "format('factory-coordination-{0}-validate-{1}', "
+            "github.repository_id, inputs.pr_number)",
+            group,
+        )
+        self.assertIn(
+            "|| format('factory-coordination-{0}', github.repository_id)",
+            group,
+        )
+        self.assertNotIn("queue:", group)
+
+    def test_all_mutating_operations_share_serialized_group(self) -> None:
+        group = self._concurrency_lines()[0].strip()
+        self.assertIn(
+            "|| format('factory-coordination-{0}', github.repository_id)",
+            group,
+        )
+        self.assertEqual(group.count("inputs.operation == 'validate'"), 1)
+        self.assertEqual(
+            group.count(
+                "format('factory-coordination-{0}', github.repository_id)"
+            ),
+            1,
+        )
+        internal = (ROOT / ".github/workflows/coordinacion-trabajo.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "group: factory-coordination-${{ github.repository_id }}",
+            internal,
+        )
         self.assertIn("cancel-in-progress: false", self.text)
 
     def test_queue_key_regression_is_rejected(self) -> None:
