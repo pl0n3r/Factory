@@ -337,5 +337,31 @@ class RecoveryStatusTests(unittest.TestCase):
         self.assertFalse(project_recovery_readiness(blocked, critical=True)["ready"])
 
 
+    def _check_excessive_nesting(self, kind):
+        receipt = []
+        node = receipt
+        for _ in range(10_000):
+            child = []
+            node.append(child)
+            node = child
+        b, d = backup(), drill()
+        (b if kind == "backup" else d)["evidence_refs"] = receipt
+        result = derive_recovery_health(
+            manifest(), b, d, observed_at="2026-09-29T01:34:00Z",
+            drill_observed_at="2026-09-29T01:32:00Z",
+        )
+        self.assertEqual(result["state"], "BLOCKED")
+        self.assertEqual(result["reasons"], [
+            "BACKUP_SENSITIVE" if kind == "backup" else "DRILL_SENSITIVE"
+        ])
+        self.assertFalse(project_recovery_readiness(result)["ready"])
+
+    def test_backup_excessive_nesting_blocks_instead_of_recursion_error(self):
+        self._check_excessive_nesting("backup")
+
+    def test_drill_excessive_nesting_blocks_instead_of_recursion_error(self):
+        self._check_excessive_nesting("drill")
+
+
 if __name__ == "__main__":
     unittest.main()
