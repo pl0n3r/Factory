@@ -6,7 +6,9 @@ directo/forzado a main), fusionar sin `Validar` verde y pedir CodeRabbit antes
 de tiempo o por segunda vez. Todo lo demás pasa. Python 3 stdlib, sin red salvo
 `gh` para leer checks del PR.
 """
+import datetime
 import json
+import os
 import re
 import subprocess
 import sys
@@ -83,6 +85,19 @@ def evaluate(command, fetch_state=gh_pr_state):
     return ALLOW
 
 
+def log_decision(decision, reason, command):
+    """Registra cada bloqueo con marca de tiempo (sin el comando completo: puede traer secretos)."""
+    try:
+        root = os.environ.get("CLAUDE_PROJECT_DIR") or "."
+        path = os.path.join(root, ".claude", "factory-claude", "decisiones.jsonl")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                                 "decision": decision, "reason": reason, "cmd": command.split()[:3]}) + "\n")
+    except OSError:
+        pass
+
+
 def main():
     try:
         event = json.load(sys.stdin)
@@ -92,6 +107,7 @@ def main():
         return 0
     decision, reason = evaluate((event.get("tool_input") or {}).get("command", ""))
     if decision == "deny":
+        log_decision(decision, reason, (event.get("tool_input") or {}).get("command", ""))
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",

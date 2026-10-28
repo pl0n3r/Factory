@@ -50,3 +50,10 @@ Es idempotente y fusiona sin pisar permisos existentes. Actualizar = subir `vers
 | `serena` | — | Descartado: solapa con LSP, requiere `uv` y consume contexto |
 
 Los plugins globales se instalan por usuario (no se versionan en repos). Claude Code no permite instalarlos desde un script del repo: se hace con `/plugin install` en una sesión.
+
+## Principios (alineados con el playbook AI-native SDLC de Anthropic)
+
+- Las skills son **orientativas**; toda regla que deba cumplirse tiene un hook o un check de CI (`factory_guard.py`, `reservation_guard.py`, `Validar`).
+- Los bloqueos devuelven razón y ruta de resolución y quedan registrados con marca de tiempo en `.claude/factory-claude/decisiones.jsonl` (ignorado por git).
+- El agente que escribe el código no lo aprueba: la protección de rama y `Validar` siguen siendo la autoridad; la salida del agente llega solo como PR.
+- Cambios a skills/hooks se versionan y se publican por el marketplace; verifica que cada skill se activa con tareas formuladas de varias maneras antes de subir la versión.
