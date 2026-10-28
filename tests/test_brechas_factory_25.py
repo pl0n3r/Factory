@@ -145,7 +145,7 @@ def evidence() -> dict[str, bool]:
           patch.object(preflight, "parse_task_marker", wraps=preflight.parse_task_marker) as t,
           patch.object(preflight, "task_marker_fingerprint", wraps=preflight.task_marker_fingerprint) as tf):
         reused = preflight.evaluate_issue_body(BODY)
-        uses_parsers = (reused == result and a.call_count == 2
+        uses_parsers = (reused == result and a.call_count == 1
                         and f.call_count == t.call_count == tf.call_count == 1)
     sink = io.StringIO()
     exit_code = preflight.main([], stdin=io.StringIO(BODY), stdout=sink)
