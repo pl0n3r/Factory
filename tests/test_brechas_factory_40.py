@@ -268,7 +268,7 @@ class BrechasFactory40Tests(unittest.TestCase):
         bad_env = fixture_envelope()
         bad_env["classification"] = "PERF_INFO"
         with self.assertRaises(PerformanceClassifierError):
-            classify(item if False else fixture_contract(), bad_env)
+            classify(fixture_contract(), bad_env)
         unsafe_env = fixture_envelope()
         unsafe_env["release_contract"] = {"design": "synthetic_v1", "minimum_release": "9.0.0"}
         with self.assertRaises(PerformanceClassifierError):
