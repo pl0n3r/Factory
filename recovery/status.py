@@ -322,7 +322,8 @@ def _drill(recovery, backup, value):
     if observed["rto_seconds"] > observed["rto_target_seconds"]:
         expected.append("RTO_EXCEEDED")
     if (
-        not isinstance(reasons, list) or len(reasons) != len(set(reasons))
+        not isinstance(reasons, list) or any(type(item) is not str for item in reasons)
+        or len(reasons) != len(set(reasons))
         or any(item not in allowed for item in reasons)
         or sorted(reasons) != sorted(expected)
         or data["status"] != ("BREACHED" if expected else "PASSED")
