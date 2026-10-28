@@ -49,6 +49,10 @@ Se contrastan **187 unidades** de 14 documentos: 1 `CUBIERTO` ya acreditado y 18
 
 Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contraste-factory_resto_7.md). Conservan `NO_VERIFICABLE` porque aún no se han acreditado individualmente en el registro VERIFIED; no se inventaron Issues de ausencia, autorizaciones de producción ni go-live.
 
+## Contraste de comportamientos #1566
+
+Se agruparon 227 cláusulas del corte histórico de `AGENTES.md`, puertas humanas, revisor externo, Immune + Repair y Quality Health en **20 comportamientos** (6 CUBIERTO, 14 NO_VERIFICABLE) contrastados en [#1566](contraste-matriz-puertas_revisor.md). El inventario de fuentes de #1550 conserva sus conteos originales; no se atribuye cumplimiento live a pruebas offline. La cadena de PR fusionados se limita a #214, #496 y #891.
+
 ## Inventario de fuentes
 
 | Fuente | Unidades |
@@ -496,40 +500,6 @@ Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contras
 | `docs/growth-pruning.md:L65-U1` | retirar Constitution o controles protegidos; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | [contraste #1570](contraste-factory_resto_2.md) |
 | `docs/growth-pruning.md:L66-U1` | mutar stable; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | [contraste #1570](contraste-factory_resto_2.md) |
 | `docs/growth-pruning.md:L67-U1` | promover candidatos automáticamente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | [contraste #1570](contraste-factory_resto_2.md) |
-| `docs/immune-repair.md:L3-U1` | Immune + Repair convierte incidentes en una secuencia verificable de recuperación | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L8-U1` | Cada incidente empieza en `detect` y solo puede avanzar un paso: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L12-U1` | El historial es append-only y `snapshot()` conserva siempre | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L18-U1` | Toda reparación declara obligatoriamente: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L20-U1` | diagnóstico; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L21-U1` | acciones propuestas; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L22-U1` | verificación posterior; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L23-U1` | rollback reversible (`revert` o `restore_baseline`). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L25-U1` | Repair Engine nunca ejecuta el plan: `automatic_execution_allowed=false` y | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L34-U1` | La autoridad no se acepta desde un dict del caller, aunque incluya | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L36-U1` | solo aporta un **handle** `decision_ref` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L38-U1` | conserva el fingerprint como integridad del registro resuelto, nunca como prueba | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L39-U1` | Revalidar un plan destructivo aprobado exige consultar otra vez | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L42-U1` | Incluso con una referencia de decisión aprobada, el motor solo marca el plan | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L43-U1` | **nunca** habilita ejecución automática. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L47-U1` | La etapa `verify` exige un resultado booleano. `immunize` solo es posible si | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L48-U1` | la verificación anterior fue exitosa. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L49-U1` | en `verify` y no puede convertirse en inmunidad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L53-U1` | Dos o más incidentes distintos pueden producir un candidato de inmunidad solo | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L57-U1` | su `source_id` y los handles que se vuelven a resolver al validar el candidato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L61-U1` | firma canónica del fallo; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L62-U1` | todos los incidentes/fuentes origen; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L63-U1` | prevención esperada; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L64-U1` | estado `candidate`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L65-U1` | rollback `revert`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L66-U1` | fingerprint validado por Factory Constitution. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L68-U1` | Se escribe únicamente como candidato en | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L74-U1` | ejecutar reparaciones; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L75-U1` | acciones destructivas automáticas; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L76-U1` | ocultar o eliminar incidentes; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L77-U1` | promover guardrails directamente; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L78-U1` | ampliar autoridad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L84-U1` | Sus registros son append-only: un handle existente no se puede reemplazar. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/immune-repair.md:L86-U1` | GitHub/ControlBot u otro almacén durable vive fuera de estos motores y debe | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/inventario-tecnico-datos-productos.md:B01` | Inventario anclado a SHA por producto; cambios de fuente invalidan cualquier inferencia de estado actual. | NO_VERIFICABLE | Histórico/read-only: ninguna prueba de los tres HEAD actuales se atribuye a Factory. | — |
 | `docs/inventario-tecnico-datos-productos.md:B02` | Clasificar proveedores observados y no convertir un gateway nulo o tags externos en proveedor/contrato activo. | NO_VERIFICABLE | Los adaptadores de terceros y los contratos operativos no se certifican desde este corte. | — |
 | `docs/inventario-tecnico-datos-productos.md:B03` | Distinguir TTL técnicos observables (invitation/dedupe/CAPTCHA) de calendarios generales de retención no probados. | NO_VERIFICABLE | No existe recibo de pruebas cross-repo exact-SHA para políticas generales de borrado. | — |
@@ -834,59 +804,6 @@ Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contras
 | `docs/performance-remediation.md:L25-U5` | El caller conserva responsabilidad de verificar la autenticidad de cada muestra y el cambio realmente aplicado. | NO_VERIFICABLE | [Contraste #1572](contraste-factory_resto_4.md): `performance/remediation.py` + `tests/test_performance_remediation.py` candidatos; sin prueba exacta + PR fusionado para la unidad | — |
 | `docs/performance-remediation.md:L29-U1` | solo valida/deriva artefactos. #313 consume el resultado para Readiness/E2E. | NO_VERIFICABLE | [Contraste #1572](contraste-factory_resto_4.md): `performance/remediation.py` + `tests/test_performance_remediation.py` candidatos; sin prueba exacta + PR fusionado para la unidad | — |
 | `docs/performance-team-compiler-bridge.md:L3-U1` | El adaptador performance.team_compiler_bridge.compile_performance_team consume una deteccion validada de Performance Contract v1 con **evaluated_at UTC obl | NO_VERIFICABLE | [Contraste #1572](contraste-factory_resto_4.md): `performance/team_compiler_bridge.py` + `tests/test_performance_team_compiler_bridge.py` candidatos; sin prueba exacta + PR fusionado para la unidad | — |
-| `docs/politica-revisor-externo.md:L3-U1` | Este fallback existe únicamente para evitar que una limitación de capacidad del reviewer detenga indefinidamente trabajo ya validado durante la fase `const | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L7-U1` | La policy solo acepta el fallback cuando se cumplen **todas** estas condiciones: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L9-U1` | La fase canónica leída desde `datos.yml` de la **BASE exacta** del PR es `construccion`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L10-U1` | Existe evidencia de rate limit del reviewer requerido asociada al **HEAD exacto**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L11-U1` | Sobre ese mismo HEAD existe un fallo de `Factory policy / Validar decisiones y límite de revisión`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L12-U1` | Existe un reintento posterior verificable. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L13-U1` | Los demás gates obligatorios observados sobre ese HEAD están terminales y verdes: CI, pruebas/aceptación, Sonar, CodeQL, Coordinación y Privacidad. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L14-U1` | No existe ningún thread abierto/no resuelto del reviewer requerido ni un `CHANGES_REQUESTED` sobre el HEAD exacto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L16-U1` | Un único rate limit sin reintento verificable nunca basta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L22-U1` | comentario `Review rate limited` posterior al commit HEAD; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L23-U1` | Policy falla sobre ese HEAD; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L24-U1` | un segundo comentario rate-limited del reviewer aparece después del fallo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L26-U1` | Para ese caso, la policy exige una cadena más explícita: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L28-U1` | Policy falla sobre el HEAD exacto; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L29-U1` | el `OWNER` del repositorio publica exactamente `@coderabbitai review` después de ese fallo; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L30-U1` | el comentario del reviewer requerido se actualiza después de ese trigger y contiene una señal terminal de capacidad (`Review rate limited` o `Review limit  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L31-U1` | el body actualizado contiene el SHA completo del HEAD exacto; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L32-U1` | `updated_at` es posterior al trigger y no puede ser anterior a `created_at`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L34-U1` | Sin el trigger OWNER posterior al fallo de Policy, el fallback permanece bloqueado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L40-U1` | Ese texto, por sí solo, **no constituye revisión ni permite fallback**. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L44-U1` | una sexta página solo puede estar vacía. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L45-U1` | Ningún contenido del PR candidato determina esa | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L48-U1` | La alternativa requiere **toda** esta correlación adicional: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L50-U1` | La timeline está completa, contiene un último evento `committed` cuyo SHA | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L54-U1` | Existe un primer comentario de **`coderabbitai[bot]` real**, con | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L57-U1` | Más tarde, un comentario **`OWNER`** con el cuerpo literal | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L60-U1` | Una **segunda respuesta distinta** del bot, posterior a ese comando y | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L64-U1` | No hay `committed`, `head_ref_force_pushed` ni `synchronize` que | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L71-U1` | intactos. `live` nunca admite esta excepción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L71-U2` | No se modifica `Factory@v1` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L76-U1` | No permite cambiar el HEAD para provocar otra ronda. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L77-U1` | No permite ignorar findings abiertos ni un `CHANGES_REQUESTED` del reviewer sobre el HEAD exacto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L78-U1` | No permite pasar con CI, pruebas, Sonar, CodeQL, Coordinación o Privacidad en rojo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L79-U1` | No permite activar el fallback cuando la fase es `live`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L80-U1` | No cambia el límite de rondas de reviewers ni elimina la obligación de revisión externa antes de live. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L81-U1` | No permite convertir cualquier edición de comentario en evidencia: el retry OWNER, el orden temporal y el HEAD exacto siguen siendo obligatorios. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L83-U1` | Si la fase no puede leerse de forma canónica desde la BASE, el fallback queda deshabilitado y la policy conserva el comportamiento estricto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L89-U1` | el SHA exacto; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L90-U1` | la hora del reintento rate-limited o de la actualización terminal del comentario canónico; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L91-U1` | el enlace al comentario del reviewer; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L92-U1` | una advertencia explícita de que la revisión externa sigue siendo obligatoria para `live`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L98-U1` | Así un PR no puede habilitar su propio fallback cambiando `datos.yml`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L100-U1` | La lectura está paginada y acotada a un máximo de **5 páginas / 500 check-runs**: `total_count` debe ser entero, permanecer idéntico en todas las páginas,  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L100-U2` | El propio check de policy y el agregado circular `Validar` no se usan para decidir si los demás controles están verdes. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L102-U1` | La lectura de reviews, comentarios, BASE exacta y reviewThreads continúa usando únicamente permisos read-only. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L104-U1` | Cualquier ambigüedad —fase ausente, demasiados check-runs/threads para evaluar de forma acotada, evidencia malformada, HEAD distinto, trigger no OWNER, sec | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L117-U1` | El bridge acepta únicamente: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L119-U1` | `v1`, para conservar el canal estable histórico; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L120-U1` | un SHA lowercase exacto de 40 caracteres hexadecimales. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L124-U1` | El input solo selecciona el `ref` del checkout interno en `.factory` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L124-U2` | únicamente permite validar un repair inmutable mientras la decisión de promoción del canal estable permanece separada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L129-U1` | El retry SHA-less exige timeline REST completa, único comando OWNER, ausencia de comandos competidores, respuesta bot inmutable y fallo Policy exact-HEAD p | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/politica-revisor-externo.md:L129-U2` | Una revisión `COMMENTED` que solo indica rate-limit no es revisión sustantiva | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/portfolio-signals.md:L7-U1` | **#6 Product Feedback:** impacto técnico/producto declarado u observado. | NO_VERIFICABLE | [Contraste #1572](contraste-factory_resto_4.md): `portfolio/signals.py` + `tests/test_portfolio_signals.py` candidatos; sin prueba exacta + PR fusionado para la unidad | — |
 | `docs/portfolio-signals.md:L8-U1` | **#7 Cost Control:** tiempo/tokens/CI observados o estimados con confidence. | NO_VERIFICABLE | [Contraste #1572](contraste-factory_resto_4.md): `portfolio/signals.py` + `tests/test_portfolio_signals.py` candidatos; sin prueba exacta + PR fusionado para la unidad | — |
 | `docs/portfolio-signals.md:L9-U1` | **#161 Feedback Mesh:** outcomes, bloqueos, evidencia y provenance. | NO_VERIFICABLE | [Contraste #1572](contraste-factory_resto_4.md): `portfolio/signals.py` + `tests/test_portfolio_signals.py` candidatos; sin prueba exacta + PR fusionado para la unidad | — |
@@ -1013,63 +930,6 @@ Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contras
 | `docs/puertas-humanas-lenguaje-simple.md:L30-U1` | **A: Preparar prueba.** Solo se crea una prueba con datos inventados. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/puertas-humanas-lenguaje-simple.md:L35-U1` | **Recomendación:** Preparar la prueba permite revisar el resultado sin riesgos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/puertas-humanas-lenguaje-simple.md:L47-U1` | validación histórica: no se alteran sus opciones, autoridad, identificadores | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L3-U1` | La fábrica solo interrumpe al dueño por categorías cerradas: dirección de producto, marca, dinero, legal, datos reales de clientes, publicar 1.0.0, manteni | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L18-U1` | `title_simple`: pregunta breve, una línea; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L19-U1` | `summary_simple`: resumen de hasta 3 líneas; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L20-U1` | `why_recommended`: una frase; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L21-U1` | `blocks`: qué trabajo queda bloqueado; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L23-U1` | `effect`: qué pasa si se elige; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L24-U1` | `pros[]` y `cons[]`: entre 1 y 5 elementos, texto corto; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L25-U1` | `risk`: `low`, `medium` o `high`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L26-U1` | `cost`: texto corto o vacío; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L27-U1` | `reversible`: booleano; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L28-U1` | `explain_simple`: qué significa elegir esa opción, explicado como a alguien de 12 años, hasta 3 líneas y 400 caracteres. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L30-U1` | `explain_simple`: la pregunta explicada sin jerga, hasta 4 líneas y 600 caracteres. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L40-U1` | Por opción, `effect` y `cost` son cadenas, `reversible` es booleano JSON (`true`/`false`), `risk` acepta únicamente `low`, `medium` o `high`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L40-U2` | Solo `pros` y `cons` admiten listas de 1 a 5 cadenas cortas. `blocks` nunca es una lista ni `risk` admite una explicación libre. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L48-U1` | Si el parser clasifica una puerta confiable como `invalid-gate`, el workflow publica una explicación **idempotente** con el campo y la regla incumplida, si | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L48-U2` | La corrección posterior del marker válido restaura `estado: disponible` cuando el bloqueo fue gestionado por este flujo | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L52-U1` | La compatibilidad existe para no romper Issues históricos. **Toda puerta nueva escrita por un agente debe incluir `explain_simple` en la raíz y en cada opc | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L56-U1` | El contexto y las opciones son acotados. `recommendation` y `safe_default` deben referir opciones existentes. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L60-U1` | Solo Issues creados por actores con asociación `OWNER`, `MEMBER` o `COLLABORATOR` pueden activar la cola. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L60-U2` | Un Issue externo, aunque contenga un marker sintácticamente válido, nunca etiqueta, asigna ni menciona al dueño. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L66-U1` | La cola trata una puerta como una decisión activa identificable, no solo como un número de Issue. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L68-U1` | Las demás se cierran como `duplicate`, se retiran de `decisión: dueño` y reciben un marker idempotente que referencia la canónica | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L68-U2` | este paso **nunca** materializa una opción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L70-U1` | Si una puerta equivalente no canónica ya contiene un journal de decisión, o aparecen evidencias incompatibles entre equivalentes, la reconciliación falla c | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L74-U1` | Una puerta válida se resuelve de forma máquina únicamente con un comentario exacto de un actor con asociación `OWNER`. `MEMBER\\|COLLABORATOR` pueden segui | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L78-U1` | La opción debe existir realmente en el marker `factory-human-gate`, el Issue debe seguir abierto y conservar `decisión: dueño`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L80-U1` | Aceptar `/decidir X` **solo materializa la elección**: publica una evidencia idempotente y controlada, retira `decisión: dueño`, sustituye únicamente la et | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L80-U2` | Los flujos dependientes deben reconciliarse por su propio contrato. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L82-U1` | La evidencia `factory-human-decision` usa journal **v2** y contiene únicamente la opción elegida y `gate_sha256`: un SHA-256 de la representación normaliza | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L82-U2` | El comando queda además ligado al snapshot `event.issue.body`: su fingerprint debe coincidir con el primer GET vivo y con cada revalidación posterior. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L82-U3` | Si la puerta se edita después del comentario, ese comentario antiguo no autoriza la puerta nueva | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L82-U4` | Un retry solo puede reanudar la misma opción cuando ese fingerprint sigue coincidiendo con la puerta vigente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L82-U5` | Si cambia cualquier parte semántica del gate —aunque conserve la misma letra de opción—, o aparece evidencia legacy/incompatible, el flujo falla cerrado y  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L84-U1` | no se infieren retroactivamente como comandos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L88-U1` | Los repositorios consumidores deben incluir `template/.github/workflows/seguridad.yml` (o un caller funcionalmente equivalente) para que las puertas humana | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L90-U1` | procesa `issues: opened\\|edited\\|reopened` para clasificar y enrutar `factory-human-gate`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L91-U1` | procesa únicamente comentarios exactos `/decidir A` .. `/decidir D` de un actor `OWNER`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L92-U1` | hace checkout **solo** de `pl0n3r/factory@v1` en `.factory`, nunca del código del consumidor; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L93-U1` | ejecuta `.factory/seguridad/puertas_humanas.py`, `sincronizar_puerta.py` y `decision_respuesta.py` con permisos mínimos `contents: read` + `issues: write`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L94-U1` | conserva el journal v2, deduplicación de puertas, fingerprint exacto del gate y fail-closed implementados por Factory. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L96-U1` | Tener únicamente `decisión: dueño` o un workflow de Coordinación **no** materializa `/decidir X`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L96-U2` | Los repositorios existentes deben adoptar el caller en un PR propio | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L96-U3` | comentarios humanos anteriores a la adopción no se reproducen ni se convierten retroactivamente en journal. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L96-U4` | Tras adoptar el workflow, el dueño debe emitir un comentario nuevo sobre la puerta vigente si todavía desea la misma opción. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L100-U1` | Si no hay respuesta, el agente puede seguir únicamente con la opción declarada como `safe_default` cuando esa opción sea realmente segura y reversible | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L100-U2` | acciones que por política requieren autorización explícita continúan bloqueadas. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L104-U1` | El clasificador no acepta rutas de archivos por CLI. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L104-U2` | Python limita el tamaño del evento y del cuerpo del Issue, valida esquema cerrado y solo emite `status` + `category`, nunca contexto, resúmenes, opciones,  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L108-U1` | En eventos `opened\\|edited\\|reopened`, el workflow procesa la cola únicamente mientras el Issue siga **abierto** y verifica primero la asociación del aut | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L108-U2` | Un Issue cerrado/completado no puede reingresar a `decisión: dueño` por una edición posterior. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L108-U3` | Un error estructural del marker no puede degradarse silenciosamente a trabajo autónomo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L112-U1` | El reusable workflow `.github/workflows/auditoria-privacidad.yml` puede crear una puerta de categoría `legal` únicamente cuando el mapa `datos.yml` introdu | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L112-U2` | La puerta es **informativa (D-063)** solo cuando `phase=construccion` y `datos.yml` atestigua explícitamente `d063_attestation.nothing_live=true` y `d063_a | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L112-U3` | Si la atestación falta, contiene `false`/`null`, es inválida o el proyecto está `live`, la puerta permanece bloqueante y requiere revisión jurídica. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L114-U1` | La auditoría nunca copia valores observados del código a Issues: publica únicamente identificadores controlados de señales/proveedores y rutas del reposito | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L114-U2` | El Issue técnico de auditoría es idempotente y se cierra automáticamente cuando deja de haber drift. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/puertas-humanas.md:L114-U3` | Una puerta legal, en cambio, **no se cierra automáticamente**: requiere la decisión humana correspondiente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-contract.md:L7-U1` | Performance (#304) y Recovery (#305) son dimensiones externas: el contrato guarda `required` + `source_ref` y nunca copia budgets, estado o lógica de esos  | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-contract.md:L15-U1` | `expected_visibility`: `public\\|private`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-contract.md:L16-U1` | `analysis_method`: `automatic\\|ci`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -1089,38 +949,6 @@ Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contras
 | `docs/quality-gates.md:L7-U2` | Falta, mismatch o superficie desconocida falla cerrado. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-gates.md:L11-U1` | La criticidad Quality solo puede elevar riesgo: `low→low`, `medium→medium`, `high\\|critical→high`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-gates.md:L11-U2` | Nunca reduce señales, blast radius ni controles. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L7-U1` | La matriz esperada `surface × required_gate` se deriva **únicamente** de Quality Contract v1. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L11-U1` | `status=PASS\\|FAIL\\|UNKNOWN\\|STALE`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L12-U1` | timestamp observado; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L13-U1` | referencia de evidencia. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L15-U1` | Evidencia ausente, stale o unknown nunca equivale a PASS. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L19-U1` | VERIFIED no degrada por sí sola; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L20-U1` | FLAKY y OBSERVED nunca habilitan PASS; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L21-U1` | REPRODUCED no resuelta bloquea una superficie crítica y degrada una no crítica. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L31-U1` | PASS no degrada por sí solo; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L32-U1` | UNKNOWN y STALE proyectan Quality Health a UNKNOWN y nunca habilitan PASS; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L33-U1` | NOT_APPLICABLE se conserva visible con razón/provenance, es neutral para el agregado, no crea clase correctiva y nunca se reetiqueta como PASS; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L34-U1` | un FAIL con evidencia CURRENT afecta la salud, pero conserva freshness global CURRENT; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L35-U1` | snapshot STALE exige señales requeridas STALE | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L35-U2` | una señal contractualmente NOT_APPLICABLE conserva N/A. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L35-U3` | PASS/FAIL solo son válidos con freshness CURRENT y cualquier combinación incoherente falla cerrado; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L36-U1` | FAIL de Quality Gate o CE task es bloqueante; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L37-U1` | FAIL de line usage, configuración/cobertura o deuda degrada y emite una clase correctiva cerrada; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L38-U1` | razones y `evidence_refs` del normalizador se preservan con validación fail-closed; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L39-U1` | ausencia de evidencia Sonar cuando el contrato la exige produce UNKNOWN; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L40-U1` | contratos legacy sin bloque `sonar` conservan exactamente el comportamiento anterior. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L44-U1` | no se vuelven a ejecutar detectores; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L45-U1` | no se copian budgets; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L46-U1` | no se recalculan RPO/RTO; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L47-U1` | ausencia de una dimensión requerida produce UNKNOWN. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L53-U1` | fallo o regresión reproducida en superficie crítica → BLOCKED; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L54-U1` | evidencia ausente/stale/unknown, incluida Sonar requerida, → UNKNOWN; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L55-U1` | fallo conocido no crítico o dimensión externa degraded → DEGRADED; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L56-U1` | solo evidencia current sin degradaciones → PASS. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L62-U1` | PASS y DEGRADED pueden continuar; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L63-U1` | UNKNOWN y BLOCKED nunca son ready; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L64-U1` | `recalculated=false`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `docs/quality-health.md:L79-U1` | por eso `derive_quality_health()` exige `project_ref` explícito y valida cada regresión contra ese valor. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-project-dna.md:L9-U1` | La extensión contiene únicamente: | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-project-dna.md:L12-U1` | `source_ref`; | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `docs/quality-project-dna.md:L13-U1` | `fingerprint` SHA-256 del Quality Contract canónico validado por #343. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
@@ -1512,57 +1340,6 @@ Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contras
 | `docs/unattended-watchdog.md:B02` | Identidad de reserva, STATE y Presence deben corresponder con freshness y timestamps válidos. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
 | `docs/unattended-watchdog.md:B03` | 4C consume GuardDecision sin elevar BLOCKED, PAUSE o ALLOW ni crear nueva pausa. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
 | `docs/unattended-watchdog.md:B04` | Las incidencias poseen fingerprints idempotentes y solo S1/S2 nuevas interrumpen al dueño. | CUBIERTO | Código `scripts/unattended_watchdog.py`; prueba `tests/test_unattended_watchdog.py`; PR MERGED [#754](https://github.com/pl0n3r/Factory/pull/754) `e1509bfe9d133d0dda58ecb3f898201d5ccdc53e` · [contraste](contraste-matriz-unattended.md) | — |
-| `AGENTES.md:L13-U1` | Comenta `/tomar` en el Issue y espera la reserva del bot (UUID). | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L14-U1` | Trabaja solo en la rama `trabajo/issue-N`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L15-U1` | Abre el PR con la plantilla, `Closes #N` y la reserva declarada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L16-U1` | El check agregado **`Validar`** debe pasar | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L16-U2` | `main` está protegido y solo acepta PRs. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L17-U1` | Libera con `/liberar <UUID>` si abandonas el trabajo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L33-U1` | **Reusable workflows** configurables por `inputs` (stack `symfony\|laravel\|php\|node`, dominio, fuente de versión, idioma de etiquetas, fase `construccion | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L33-U2` | nada específico de un proyecto dentro del kit. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L34-U1` | Acciones de terceros **fijadas a SHA** | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L34-U2` | `permissions` mínimos por job | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L34-U3` | `timeout-minutes` explícito | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L34-U4` | `concurrency` y filtros `if:` a nivel de job para no cargar GitHub. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L35-U1` | Scripts en Python 3 de biblioteca estándar, con tests `unittest` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L35-U2` | nada de secretos en logs. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L36-U1` | **Versionado:** tags `vN.M.P` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L36-U2` | los proyectos consumen `@vN`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L36-U3` | Un cambio incompatible sube la versión mayor. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L37-U1` | Todo cambio se prueba primero aquí antes de publicarse a los proyectos. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L47-U1` | Cada tarea planificada tiene owner, roles derivados, orden, dependencias y paths reclamados. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L48-U1` | /tomar falla si hay dependencias abiertas o claims solapados con otra tarea activa. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L49-U1` | Si dos tareas necesitan tocar la misma ruta, el DAG debe serializarlas mediante depends_on. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L50-U1` | No edites owner/paths/dependencias de una tarea ya reservada o en revisión | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L50-U2` | replantea el épico antes de iniciar trabajo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L56-U1` | Antes de `/tomar`, el Issue debe contener Contexto, Alcance, Fuera de alcance, criterios humanos `AC-NN` y un marker `factory-acceptance` consistente. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L58-U1` | Cada `AC-NN` apunta a un test `unittest` exacto o a un check GitHub exacto. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L59-U1` | No se permiten comandos shell provenientes del Issue. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L60-U1` | `Criterios de aceptación` debe pasar en el PR | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L60-U2` | `Validar` depende de ese job. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L61-U1` | Gates genéricos verdes son necesarios, pero no suficientes para declarar el trabajo hecho. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L62-U1` | Si cambia el comportamiento esperado, actualiza primero el Issue y su evidencia ejecutable antes de modificar código. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L70-U1` | Declara en el PR los roles asumidos y completa el checklist de cada perfil. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L71-U1` | Si el clasificador exige un rol adicional por los archivos modificados, inclúyelo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L72-U1` | Cambios de esquema, seguridad, deploy o UX pública requieren **revisión cruzada** por un rol distinto al implementador. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L73-U1` | Los perfiles de rol complementan este contrato | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L73-U2` | no sustituyen `PLAN-AGENTES.md`, `decisiones.yml` ni las lecciones vigentes. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L79-U1` | Prioriza GitHub/API y usa Remote Desktop Commander solo para trabajo que realmente requiera el Mac del dueño. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L80-U1` | Agrupa varios pasos locales en una sola llamada o script | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L80-U2` | cuando leas archivos, combina lecturas relacionadas en vez de una llamada por archivo. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L81-U1` | No sondees procesos ni releas archivos/directorios sin cambios. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L81-U2` | Ejecuta con espera acotada y lee el resultado una sola vez. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L82-U1` | Limita la salida con filtros como `grep`, `head` o `--jq` | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L82-U2` | evita volcados completos cuando basta evidencia acotada. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L83-U1` | Si una tarea previsiblemente requiere más de ~20 llamadas remotas, avisa antes y propone una ejecución más corta. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L84-U1` | No hagas revisiones periódicas ni revalidaciones globales no solicitadas mediante este canal. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L85-U1` | No está autorizado comprar plan Pro, recargar saldo ni asumir gasto para ampliar límites de Remote Desktop Commander. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L88-U1` | Los reusables que hacen checkout o ejecutan código del repositorio consumidor deben fallar cerrado antes del checkout cuando el caller proviene de un event | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L88-U2` | Además, esos reusables declaran `cache-mode: read`: pueden restaurar cachés, pero el código del consumidor no puede guardar ni sobrescribir caché de GitHub | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L88-U3` | El CI base admite `pull_request`, `push` y `merge_group` para su contrato/preflight, pero los jobs que ejecutan PHP/Node del consumidor solo corren en `pul | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L88-U4` | Preview y aceptación solo admiten `pull_request`. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L88-U5` | No se permite ejecutar código del consumidor desde `pull_request_target`, `workflow_run`, `issue_comment`, `check_run`, `issues`, `schedule` ni `repository | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
-| `AGENTES.md:L88-U6` | Los workflows operativos que necesiten otros eventos deben validar explícitamente evento y rama principal antes del primer checkout. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b` | — |
 | `ISSUE-304:AC-01` | Los proyectos pueden declarar Performance Contracts específicos. | NO_VERIFICABLE | [Contraste #1569](contraste-factory_resto_1.md): No prueba completa de ciclo operativo con BEFORE/AFTER autenticado. | [Fuente #304](https://github.com/pl0n3r/Factory/issues/304) |
 | `ISSUE-304:AC-02` | Factory detecta regresiones comparando contra baseline verificable. | NO_VERIFICABLE | [Contraste #1569](contraste-factory_resto_1.md): No prueba completa de ciclo operativo con BEFORE/AFTER autenticado. | [Fuente #304](https://github.com/pl0n3r/Factory/issues/304) |
 | `ISSUE-304:AC-03` | Team Compiler asigna roles adecuados según el cuello. | NO_VERIFICABLE | [Contraste #1569](contraste-factory_resto_1.md): No prueba completa de ciclo operativo con BEFORE/AFTER autenticado. | [Fuente #304](https://github.com/pl0n3r/Factory/issues/304) |
@@ -1677,6 +1454,27 @@ Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contras
 | `docs/no-work-dedup.md:B02` | NO_WORK usa el sink único Factory 904 y decide create update omit | NO_VERIFICABLE | Sin código + prueba + PR MERGED acreditados para el contrato entero | [#1563](https://github.com/pl0n3r/Factory/issues/1563) |
 | `docs/no-work-dedup.md:B03` | Revalidacion previa impide sobrescribir observaciones publicadas más nuevas | NO_VERIFICABLE | Sin código + prueba + PR MERGED acreditados para el contrato entero | [#1563](https://github.com/pl0n3r/Factory/issues/1563) |
 
+| `docs/puertas-humanas.md:B01` | Validar categorías humanas cerradas, formatos de marker y procedencia confiable del autor. | NO_VERIFICABLE | Candidato `seguridad/puertas_humanas.py` y `seguridad/test_puertas_humanas.py`; La prueba local del esquema no acredita por sí sola las puertas OWNER de todos los consumidores. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/puertas-humanas.md:B02` | Materializar /decidir X como journal v2 idempotente, sin ejecutar la acción autorizada. | NO_VERIFICABLE | Candidato `seguridad/decision_respuesta.py` y `seguridad/test_decision_respuesta.py`; La existencia del handler no confirma materialización efectiva en todos los repositorios. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/puertas-humanas.md:B03` | Deduplicar puertas equivalentes y serializar respuestas con estado exacto del Issue. | NO_VERIFICABLE | Candidato `seguridad/sincronizar_puerta.py` y `seguridad/test_puertas_humanas.py`; No se acreditó el ciclo completo de carreras y eventos en consumidores. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/puertas-humanas.md:B04` | El template instala el caller de puertas confiables sin checkout del código del consumidor. | CUBIERTO | `template/.github/workflows/seguridad.yml` · `tests/test_template_security_workflow_contract.py` · [#891](https://github.com/pl0n3r/Factory/pull/891) · `4f042ae0044444f46d926543d86008258c977264` · Prueba solo el template versionado, no su adopción universal ni una decisión humana real. | — |
+| `docs/politica-revisor-externo.md:B01` | Fallback del revisor restringido a construcción con BASE exacta y otros gates completos. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; D-070 y fallback histórico no son equivalentes; falta probar el contrato completo de la policy. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/politica-revisor-externo.md:B02` | Distinguir rate-limit de review real mediante orden de HEAD, fallo de Policy y retry OWNER. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; No se demostró una secuencia auténtica de revisión e identidad del bot sobre HEAD final. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/politica-revisor-externo.md:B03` | Rechazar respuestas CodeRabbit sin SHA y reintentos owner no autenticados. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; La señal SHA-less exige timeline íntegro y correlación genuina, no texto libre. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/politica-revisor-externo.md:B04` | Bridge exact-SHA y cache de evidencia no confieren permiso para mover Factory@v1. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; Falta la integración completa en consumers y la puerta de release vigente. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/immune-repair.md:B01` | Los incidentes avanzan por lifecycle cerrado y mantienen historia append-only. | CUBIERTO | `evolution/immune.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · Regresión test_incident_follows_closed_recovery_lifecycle; solo core offline. | — |
+| `docs/immune-repair.md:B02` | El Repair Plan requiere verificación, rollback y nunca ejecuta automáticamente. | CUBIERTO | `evolution/repair.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · test_repair_plan_requires_verification_and_rollback y non_execution. | — |
+| `docs/immune-repair.md:B03` | La autorización destructiva exige provenance de TrustedDecisionSource, no dict del caller. | CUBIERTO | `evolution/repair.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · Casos negativos de authority forjada y trusted source acotada. | — |
+| `docs/immune-repair.md:B04` | La inmunidad requiere fallas repetidas auténticas y verificación positiva previa. | CUBIERTO | `evolution/immune.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · Regresiones de incident registry auténtico y repeated failure; sin executor live. | — |
+| `docs/quality-health.md:B01` | Freshness y estados incompletos de Quality Contract no se convierten en PASS. | NO_VERIFICABLE | Candidato `quality/status.py` y `tests/test_quality_status.py`; Falta acreditar la cadena exacta de fuentes reales; tests de core son parciales. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/quality-health.md:B02` | Proyección de Sonar normalizado conserva FAIL UNKNOWN STALE y N/A sin recalcular QG. | CUBIERTO | `quality/status.py` · `tests/test_quality_status.py` · [#496](https://github.com/pl0n3r/Factory/pull/496) · `195cf4deca246791f3d18788c89a82006abd5b8c` · PR integra señal Sonar; tests verifican estados FAIL UNKNOWN STALE y N/A. | — |
+| `docs/quality-health.md:B03` | Performance y Recovery son dimensiones externas, sin recomputar budgets o restore. | NO_VERIFICABLE | Candidato `quality/status.py` y `tests/test_quality_status.py`; Un modelo de proyección no acredita métricas productivas ni restores medidos. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/quality-health.md:B04` | Readiness y Quality Queue no promueven UNKNOWN ni BLOCKED a ready. | NO_VERIFICABLE | Candidato `quality/status.py` y `tests/test_quality_status.py`; Falta verificar continuidad del dispatcher y datos CURRENT reales en consumidores. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `AGENTES.md:B01` | Reserva V3 propia, branch trabajo/issue-N y PR con Validar son obligatorios. | NO_VERIFICABLE | Candidato `scripts/coordinar_trabajo.py` y `tests/test_coordinar_trabajo.py`; La prueba parcial del orquestador no sustituye recibos vivos y permisos por repo. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `AGENTES.md:B02` | Reusables niegan eventos privilegiados y cache writes antes del checkout del consumidor. | NO_VERIFICABLE | Candidato `.github/workflows/ci.yml` y `tests/test_aceptacion_event_guard.py`; No se probó aquí el conjunto íntegro de callers portables y su adopción. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `AGENTES.md:B03` | Versionar tags vN.M.P y exigir autoridad específica para publicación o movimiento de v1. | NO_VERIFICABLE | Candidato `scripts/release_bootstrap.py` y `tests/test_release_bootstrap.py`; La presencia de bootstrap no acredita release, tag protegido ni permiso OWNER. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `AGENTES.md:B04` | Cargar roles, aceptación ejecutable y uso remoto mínimo sin elevar autoridad. | NO_VERIFICABLE | Candidato `scripts/aceptacion_kit.py` y `tests/test_agentes_remote_desktop_policy.py`; Checklists y tests locales no prueban auditoría cruzada ni controles de todos los PR. (NO_VERIFICABLE sin PR pertinente completo) | — |
+
 ## Producción y mejoras pendientes
 
 Los épicos #304, #305, #1080, #1082, #1296 y #1382 tienen autoridad y criterios propios, pero ninguno constituye por sí solo una hoja ejecutable. Los AC de esos épicos se inventarían como fuente en `NO_VERIFICABLE` cuando no hay evidencia suficiente para acreditarlos. Se han comprobado cuatro capacidades offline específicas con PR MERGED y pruebas, sin atribuirles aceptación productiva ni cierre del épico.
@@ -1693,15 +1491,15 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 
 | Estado | Filas |
 | --- | ---: |
-| CUBIERTO | 67 |
+| CUBIERTO | 73 |
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
 | NO_APLICA | 1 |
-| NO_VERIFICABLE | 1442 |
-| TOTAL | 1510 |
+| NO_VERIFICABLE | 1229 |
+| TOTAL | 1303 |
 
-**Porcentaje CUBIERTO:** 4.44% (67/1510).
+**Porcentaje CUBIERTO:** 5.60% (73/1303).
 
 **Hojas nuevas creadas:** 0. **Fuentes Markdown:** 103+AGENTES.md. **Criterios de los seis épicos:** 39.
 
