@@ -564,6 +564,50 @@ def classify_body(
     return _result("gate", gate["category"])
 
 
+# La política editorial estricta alcanzó Factory@v1 con la release 1.0.44.
+# No retrovalidar el copy de puertas OWNER creadas antes de esa publicación.
+# El sello temporal y las etiquetas provienen del evento inmutable de GitHub.
+_LEGACY_GATE_CUTOFF_UTC = "2026-10-27T21:39:29Z"
+
+
+def _historic_existing_gate_event(event: dict[str, Any], issue: dict[str, Any]) -> bool:
+    """Solo reabrir/editar una puerta anterior ya enrutada por GitHub.
+
+    Nunca aceptar una puerta introducida en el editor de un Issue antiguo:
+    al editar el marker, la identidad debe permanecer idéntica.
+    """
+    if event.get("action") not in {"edited", "reopened"}:
+        return False
+    if issue.get("state") != "open" or issue.get("author_association") not in {
+        "OWNER", "MEMBER", "COLLABORATOR",
+    }:
+        return False
+    created = issue.get("created_at")
+    if (
+        not isinstance(created, str)
+        or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", created) is None
+        or created >= _LEGACY_GATE_CUTOFF_UTC
+    ):
+        return False
+    labels = issue.get("labels")
+    if not isinstance(labels, list) or not any(
+        (isinstance(label, dict) and label.get("name") == "decisión: dueño")
+        or label == "decisión: dueño"
+        for label in labels
+    ):
+        return False
+    body = issue.get("body")
+    if not isinstance(body, str) or len(MARKER_RE.findall(body)) != 1:
+        return False
+    changes = event.get("changes", {})
+    if event["action"] == "edited" and isinstance(changes, dict) and "body" in changes:
+        before = changes["body"]
+        previous = before.get("from") if isinstance(before, dict) else None
+        if not isinstance(previous, str) or MARKER_RE.findall(previous) != MARKER_RE.findall(body):
+            return False
+    return True
+
+
 def classify_event_text(
     payload: str, *, include_reason: bool = False
 ) -> dict[str, Any]:
@@ -588,6 +632,7 @@ def classify_event_text(
     return classify_body(
         body if isinstance(body, str) else "",
         include_reason=include_reason,
+        historical=_historic_existing_gate_event(event, issue) if isinstance(event, dict) else False,
     )
 
 def main() -> int:

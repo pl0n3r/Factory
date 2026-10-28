@@ -717,6 +717,49 @@ class GateTests(unittest.TestCase):
             {"status": "invalid-gate", "category": None},
         )
 
+    def test_historical_event_classification_keeps_prior_gate_authority(self):
+        historic = simple_gate()
+        historic["summary_simple"] = "La referencia original #946 no concede permisos."
+        historic["explain_simple"] = "La puerta #946 permanece histórica."
+        prior = body(historic)
+        issue = {
+            "state": "open",
+            "created_at": "2026-10-27T02:11:51Z",
+            "author_association": "OWNER",
+            "labels": [{"name": "decisión: dueño"}],
+            "body": prior,
+        }
+        def classify(action, row=issue, changes=None):
+            payload = {"action": action, "issue": row}
+            if changes is not None:
+                payload["changes"] = changes
+            return classify_event_text(json.dumps(payload, ensure_ascii=False))["status"]
+
+        self.assertEqual("gate", classify("reopened"))
+        self.assertEqual("gate", classify("edited", changes={"body": {"from": prior}}))
+        self.assertEqual("invalid-gate", classify("opened"))
+        self.assertEqual("invalid-gate", classify(
+            "edited", {**issue, "created_at": "2026-10-27T21:39:29Z"},
+            changes={"body": {"from": prior}},
+        ))
+        self.assertEqual("invalid-gate", classify(
+            "edited", {**issue, "labels": []},
+            changes={"body": {"from": prior}},
+        ))
+        self.assertEqual("invalid-gate", classify(
+            "edited", changes={"body": {"from": "Issue sin puerta"}},
+        ))
+        edited = prior.replace('"context":"', '"context":"Cambiado: ', 1)
+        self.assertEqual("invalid-gate", classify(
+            "edited", {**issue, "body": edited},
+            changes={"body": {"from": prior}},
+        ))
+        self.assertEqual("invalid-gate", classify(
+            "reopened", {**issue, "author_association": "NONE"},
+        ))
+        unknown = {**issue, "created_at": "ayer"}
+        self.assertEqual("invalid-gate", classify("reopened", unknown))
+
     def test_event_classifier_reads_issue_only(self):
         payload = json.dumps(
             {
