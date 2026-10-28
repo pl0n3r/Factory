@@ -721,6 +721,8 @@ class GateTests(unittest.TestCase):
         historic = simple_gate()
         historic["summary_simple"] = "La referencia original #946 no concede permisos."
         historic["explain_simple"] = "La puerta #946 permanece histórica."
+        historic["options"][0]["explain_simple"] = "Solicitamos revisión."
+        historic["options"][1]["explain_simple"] = "Conservamos el bloqueo."
         prior = body(historic)
         issue = {
             "state": "open",
