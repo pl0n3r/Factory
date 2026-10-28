@@ -89,7 +89,9 @@ def log_decision(decision, reason, command):
     """Registra cada bloqueo con marca de tiempo (sin el comando completo: puede traer secretos)."""
     try:
         root = os.environ.get("CLAUDE_PROJECT_DIR") or "."
-        path = os.path.join(root, ".claude", "factory-claude", "decisiones.jsonl")
+        git = os.path.join(root, ".git")
+        base = git if os.path.isdir(git) else os.path.join(root, ".claude")
+        path = os.path.join(base, "factory-claude", "decisiones.jsonl")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),

@@ -139,6 +139,17 @@ class LogAndTriageTest(unittest.TestCase):
             self.assertFalse(log_failure.append(path, rec))
             self.assertEqual(len(open(path).read().splitlines()), 1)
 
+    def test_log_dir_prefers_git(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(log_failure.log_dir(d), os.path.join(d, ".claude", "factory-claude"))
+            os.mkdir(os.path.join(d, ".git"))
+            path = log_failure.log_dir(d)
+            self.assertEqual(path, os.path.join(d, ".git", "factory-claude"))
+            rec = log_failure.record({"tool_use_id": "t9", "tool_name": "Bash", "error": "x"})
+            self.assertTrue(log_failure.append(os.path.join(path, "errores.jsonl"), rec))
+            self.assertFalse(log_failure.append(os.path.join(path, "errores.jsonl"), rec))
+            self.assertFalse(os.path.exists(os.path.join(d, ".claude")))
+
     def test_hook_cli_never_blocks(self):
         for script in ("factory_guard.py", "reservation_guard.py", "log_failure.py"):
             r = subprocess.run([sys.executable, os.path.join(PLUGIN, "scripts", script)],
