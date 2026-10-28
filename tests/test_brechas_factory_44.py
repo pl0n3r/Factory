@@ -315,7 +315,7 @@ class BrechasFactory44Tests(unittest.TestCase):
         generated = compile_performance_team(detection(), evaluated_at=EVALUATED)
         self.assertEqual([x["work_id"] for x in projection["items"]],
                          ["pl0n3r/Factory#1662-a", "pl0n3r/Factory#1662-b"])
-        for forbidden in ("secret", "password", "credential", "token", "access_key",
+        for forbidden in ("secret", "password", "credential", "access_token", "auth_token", "access_key",
                           "email", "owner_email", "api_key", "winner", "score"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, json.dumps(projection).lower())
