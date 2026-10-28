@@ -140,7 +140,7 @@ def matrix_rows(text: str) -> dict[str, str]:
                 and " | NO_VERIFICABLE | " in matches[0]
                 and "Contraste #1571" in matches[0]
                 and key.split(":")[0] in CLAUSES[key][1]
-                and matches[0].count(" | ") >= 5):
+                and matches[0].count(" | ") >= 4):
             result[key] = "NO_VERIFICABLE"
         else:
             result[key] = UNKNOWN
