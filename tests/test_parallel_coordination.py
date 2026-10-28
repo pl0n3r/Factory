@@ -268,11 +268,21 @@ class ParallelCoordinationTests(unittest.TestCase):
             ".github/workflows/coordinacion.yml"
         ).read_text(encoding="utf-8")
 
+        self.assertIn(
+            "group: factory-coordination-${{ github.repository_id }}",
+            internal,
+        )
+        self.assertIn(
+            "format('factory-coordination-{0}', github.repository_id)",
+            reusable,
+        )
+        self.assertIn(
+            "inputs.operation == 'validate' && "
+            "format('factory-coordination-{0}-validate-{1}', "
+            "github.repository_id, inputs.pr_number)",
+            reusable,
+        )
         for workflow in (internal, reusable):
-            self.assertIn(
-                "group: factory-coordination-${{ github.repository_id }}",
-                workflow,
-            )
             self.assertIn("cancel-in-progress: false", workflow)
 
         self.assertIn("queue: max", internal)
