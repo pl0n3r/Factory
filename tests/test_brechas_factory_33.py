@@ -16,6 +16,10 @@ UNKNOWN = "UNKNOWN"
 LINES = (22, 23, 24, 26, 28, 42, 43, 44, 45, 55, 59, 60, 61, 62, 63, 64)
 UNITS = tuple(f"{SOURCE}:L{n}-U1" for n in LINES)
 GAPS = {
+    22: "UNKNOWN: invariantes sin mediciones observadas",
+    24: "UNKNOWN: intentos before/after no medidos en el manifiesto",
+    28: "UNKNOWN: declaración de fixture no acredita diff del coordinador",
+    45: "UNKNOWN: protected metrics sin valores before/after verificables",
     55: "UNKNOWN: falta evidencia para generalización futura",
     59: "UNKNOWN: manifiesto no audita todos los Engines y servicios",
     61: "UNKNOWN: shadow no certifica legal, gasto o PII global",
@@ -51,7 +55,7 @@ def candidate(data):
 
 
 def vectors(data):
-    protected = {key: {"value": 1.0, "direction": "higher"}
+    protected = {key: {"value": None, "direction": "higher"}
                  for key in PROTECTED_INVARIANTS}
     before, after = dict(protected), dict(protected)
     before["coordination_seconds"] = {
@@ -60,8 +64,8 @@ def vectors(data):
     after["coordination_seconds"] = {
         "value": data["complexity"]["after_coordination_seconds"],
         "direction": "lower"}
-    before["reservation_attempts"] = {"value": 3, "direction": "lower"}
-    after["reservation_attempts"] = {"value": 1, "direction": "lower"}
+    before["reservation_attempts"] = {"value": None, "direction": "lower"}
+    after["reservation_attempts"] = {"value": None, "direction": "lower"}
     return before, after
 
 
@@ -75,6 +79,10 @@ def assess(data, doc):
         if not isinstance(rows, list) or len(rows) != 4:
             return unknown
         if [r["run_id"] for r in rows] != list(RUNS):
+            return unknown
+        if [r["conclusion"] for r in rows] != [
+            "failure", "success", "failure", "success"
+        ]:
             return unknown
         if [r["duration_seconds"] for r in rows] != [duration(r) for r in rows]:
             return unknown
@@ -98,22 +106,16 @@ def assess(data, doc):
         complexity = data["complexity"]
         posterior = data["posterior_execution"]
         checks = {
-            22: set(PROTECTED_INVARIANTS) == {
-                "security", "privacy", "traceability", "reversibility", "authority"
-            } and shadow["fitness"]["protected_regressions"] == [],
+            22: False,  # Invariantes enumerados, pero aún no medidos.
             23: before["coordination_seconds"]["value"] >
                 after["coordination_seconds"]["value"],
-            24: before["reservation_attempts"]["value"] == 3
-                and after["reservation_attempts"]["value"] == 1
-                and rows[-1]["effect"] == "reservation_created",
+            24: False,  # El fixture registra ejecuciones, no before/after de intentos.
             26: shadow["mode"] == "shadow"
                 and shadow["mutation_allowed"] is False
                 and shadow["external_writes"] == []
                 and shadow_data["external_writes"] == []
                 and shadow_data["rollback"] == "restore_baseline",
-            28: decision["stable_mutation"] is False
-                and decision["status"] == "adopted_bounded_scenario"
-                and "No se modifica automáticamente" in doc,
+            28: False,  # No existe diff independiente de coordinar_trabajo.py.
             42: [r["duration_seconds"] for r in rows[:3]] == [7, 20, 8]
                 and complexity["before_coordination_seconds"] == 35,
             43: rows[-1]["duration_seconds"] == 27
@@ -121,8 +123,7 @@ def assess(data, doc):
             44: posterior["pr_ci_run"] == 36507555400
                 and posterior["pr_ci_duration_seconds"] == 29
                 and complexity["useful_execution_seconds"] == 29,
-            45: all(before[key] == after[key] for key in PROTECTED_INVARIANTS)
-                and shadow["fitness"]["protected_regressions"] == [],
+            45: False,  # La ausencia de regresión no equivale a valores conocidos.
             55: False,
             59: False,
             60: decision["authority_expanded"] is False
@@ -148,7 +149,7 @@ class BrechasFactory33Tests(unittest.TestCase):
         self.assertEqual(len(UNITS), 16)
         self.assertEqual(set(verdicts), set(UNITS))
         self.assertEqual(set(GAPS), set(LINES) - {
-            22, 23, 24, 26, 28, 42, 43, 44, 45, 60, 64})
+            23, 26, 42, 43, 44, 60, 64})
         for line in LINES:
             unit = f"{SOURCE}:L{line}-U1"
             with self.subTest(unit=unit):
@@ -167,6 +168,7 @@ class BrechasFactory33Tests(unittest.TestCase):
         for path, value in (
             (("coordination_attempts", 0, "duration_seconds"), 999),
             (("coordination_attempts", 3, "effect"), "reservation_missing"),
+            (("coordination_attempts", 3, "conclusion"), "failure"),
             (("shadow_candidate", "external_writes"), ["synthetic-write"]),
             (("shadow_candidate", "stable_sha"), "invalid"),
             (("origin", "provenance"), []),
@@ -177,7 +179,11 @@ class BrechasFactory33Tests(unittest.TestCase):
                 cursor = cursor[key]
             cursor[path[-1]] = value
             with self.subTest(path=path):
-                self.assertIn(UNKNOWN, assess(changed, doc).values())
+                verdicts = assess(changed, doc)
+                if path == ("shadow_candidate", "external_writes"):
+                    self.assertEqual(verdicts[f"{SOURCE}:L26-U1"], UNKNOWN)
+                else:
+                    self.assertEqual(set(verdicts.values()), {UNKNOWN})
 
     def test_sin_datos_reales(self):
         data = load()
