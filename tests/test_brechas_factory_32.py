@@ -97,6 +97,8 @@ def historical_runs(data: object) -> bool:
             return False
         if [(a["conclusion"], a["effect"]) for a in attempts] != list(RUN_EFFECTS):
             return False
+        if any(a["head_sha"] != data["shadow_candidate"]["stable_sha"] for a in attempts):
+            return False
         if data["origin"]["provenance"] != [f"run:{n}" for n in RUN_IDS]:
             return False
         if data["origin"]["issue"] != 247 or data["origin"]["owner_request"] is not False:
@@ -113,6 +115,12 @@ def historical_runs(data: object) -> bool:
         return data["shadow_candidate"]["external_writes"] == []
     except (KeyError, TypeError, ValueError, AttributeError, IndexError):
         return False
+
+
+def documented_run(document: str, run_id: int, phrase: str) -> bool:
+    """Asocia ID, conclusión y efecto en la misma entrada documentada."""
+    marker = f"run `{run_id}`: {phrase}"
+    return sum(marker in line for line in document.splitlines()) == 1
 
 
 def assess(matrix: object, checklist: object, living: object, data: object) -> dict[str, object]:
@@ -134,11 +142,11 @@ def assess(matrix: object, checklist: object, living: object, data: object) -> d
         output[f"{CHECKLIST}:L9-U1"] = True  # Inventario, no ejecución.
     if "no constituye una declaración de " + chr(96) + "VALIDATED_IN_PRODUCTION" + chr(96) in checklist:
         output[f"{CHECKLIST}:L90-U1"] = True  # Límite documental.
-    if "workflow success, pero sin reserva efectiva" in living:
+    if documented_run(living, 36507097760, "workflow success, pero sin reserva efectiva"):
         output[f"{LIVING}:L10-U1"] = True
-    if "no podía coexistir con #330" in living:
+    if documented_run(living, 36507219161, "failure porque el trabajo no planificado no podía coexistir con #330"):
         output[f"{LIVING}:L11-U1"] = True
-    if "reserva V3 concedida" in living:
+    if documented_run(living, 36507269422, "success y reserva V3 concedida"):
         output[f"{LIVING}:L12-U1"] = True
     hypothesis = data["origin"].get("hypothesis", "")
     if (isinstance(hypothesis, str)
@@ -206,6 +214,7 @@ class BrechasFactory32Tests(unittest.TestCase):
                 {UNKNOWN},
             )
         for index, field, value in (
+            (0, "head_sha", "f" * 40),
             (1, "effect", "reservation_created"),
             (2, "conclusion", "success"),
             (3, "run_id", 12345),
@@ -219,6 +228,13 @@ class BrechasFactory32Tests(unittest.TestCase):
                     {UNKNOWN},
                 )
         self.assertEqual(set(assess("", self.checklist, self.living, self.data).values()), {UNKNOWN})
+        for run_id, unit in (
+            (36507097760, f"{LIVING}:L10-U1"),
+            (36507219161, f"{LIVING}:L11-U1"),
+            (36507269422, f"{LIVING}:L12-U1"),
+        ):
+            mutated = self.living.replace(f"run `{run_id}`:", f"run `{run_id + 1}`:")
+            self.assertEqual(assess(self.matrix, self.checklist, mutated, self.data)[unit], UNKNOWN)
         row = next(x for x in self.matrix.splitlines() if
                    chr(96) + f"{CHECKLIST}:L83-U1" + chr(96) in x)
         with self.assertRaises(ValueError):
