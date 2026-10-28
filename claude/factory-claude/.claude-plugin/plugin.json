@@ -1,0 +1,9 @@
+{
+  "name": "factory-claude",
+  "version": "1.0.0",
+  "description": "Skills y hooks de la fábrica pl0n3r. PLAN-AGENTES.md sigue siendo la autoridad de la operativa multiagente.",
+  "author": {"name": "pl0n3r"},
+  "homepage": "https://github.com/pl0n3r/factory/tree/main/claude/factory-claude",
+  "repository": "https://github.com/pl0n3r/factory",
+  "license": "UNLICENSED"
+}

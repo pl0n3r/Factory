@@ -1,0 +1,13 @@
+{
+  "name": "factory",
+  "owner": {"name": "pl0n3r"},
+  "metadata": {"description": "Marketplace de la fábrica pl0n3r: skills y hooks compartidos para Claude Code."},
+  "plugins": [
+    {
+      "name": "factory-claude",
+      "source": "./claude/factory-claude",
+      "description": "Skills y hooks de la fábrica: issue→merge, CI, coordinación, pruebas, deploy, seguridad, contratos y documentación.",
+      "version": "1.0.0"
+    }
+  ]
+}
