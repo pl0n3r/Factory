@@ -16,6 +16,7 @@ from puertas_humanas import (
     classify_body,
     classify_event_text,
     gate_authority_contract,
+    gate_authority_contract_from_body,
     gate_identity,
     gate_identity_from_body,
     gate_target_identity_from_body,
@@ -308,6 +309,49 @@ def gate_issue(
 
 
 class GateTests(unittest.TestCase):
+    def test_legacy_owner_gate_explanatory_reference_remains_canonical(self):
+        historical = simple_gate()
+        historical["summary_simple"] = (
+            "La solicitud anterior #946 sigue registrada. "
+            "Esta puerta mantiene su decisión jurídica."
+        )
+        historical["explain_simple"] = (
+            "Se solicita revisión externa. La puerta #946 conserva historial."
+        )
+        historical["options"][0]["explain_simple"] = "Solicitamos revisión."
+        historical["options"][1]["explain_simple"] = "Conservamos el bloqueo."
+        old_body = body(historical)
+        clean = json.loads(json.dumps(historical))
+        clean["summary_simple"] = "La solicitud anterior sigue registrada."
+        clean["explain_simple"] = "Se solicita revisión externa."
+        clean_body = body(clean)
+        self.assertEqual(classify_body(old_body)["status"], "invalid-gate")
+        self.assertEqual(
+            gate_target_identity_from_body(old_body),
+            gate_target_identity_from_body(clean_body),
+        )
+        self.assertEqual(
+            gate_authority_contract_from_body(old_body),
+            gate_authority_contract_from_body(clean_body),
+        )
+        api = MultiGateAPI([gate_issue(974, body_value=old_body)])
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 974))
+        self.assertEqual(api.open_numbers(), [974])
+
+    def test_new_gate_with_issue_reference_is_rejected(self):
+        fresh = simple_gate()
+        fresh["summary_simple"] = "La decisión anterior #946 debe revisarse."
+        fresh["explain_simple"] = "La revisión corresponde a #946."
+        for option in fresh["options"]:
+            option["explain_simple"] = "Se explica sin datos reales."
+        with self.assertRaises(GateValidationError):
+            validate_gate(fresh)
+        self.assertEqual(classify_body(body(fresh))["status"], "invalid-gate")
+        malformed = json.loads(json.dumps(fresh))
+        malformed["secret_extra"] = "secreto"
+        with self.assertRaises(GateValidationError):
+            gate_target_identity_from_body(body(malformed))
+
 
     def test_privacy_material_reasons_disambiguate_legal_target(self):
         first = privacy_material_issue(339, "pl0n3r/GrindFlow")["body"]

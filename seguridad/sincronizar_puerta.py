@@ -307,7 +307,7 @@ def _trusted_gate_candidate(candidate: dict, repository: str) -> bool:
     if len(gate_markers) != 1:
         return False
     try:
-        gate = validate_gate(json.loads(gate_markers[0]))
+        gate = validate_gate(json.loads(gate_markers[0]), historical=True)
     except (GateValidationError, json.JSONDecodeError, TypeError):
         return False
     if PRIVACY_MATERIAL_MARKER in body:
