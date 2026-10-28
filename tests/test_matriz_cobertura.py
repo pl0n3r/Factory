@@ -35,9 +35,6 @@ VERIFIED = {
     "docs/puertas-humanas.md:B04": (891, "4f042ae0044444f46d926543d86008258c977264", "template/.github/workflows/seguridad.yml", "tests/test_template_security_workflow_contract.py"),
     "docs/immune-repair.md:B01": (214, "35c65b3c8553b7f7fb62361b8fc189971bdb0681", "evolution/immune.py", "tests/test_immune_repair.py"),
     "docs/immune-repair.md:B02": (214, "35c65b3c8553b7f7fb62361b8fc189971bdb0681", "evolution/repair.py", "tests/test_immune_repair.py"),
-    "docs/immune-repair.md:B03": (214, "35c65b3c8553b7f7fb62361b8fc189971bdb0681", "evolution/repair.py", "tests/test_immune_repair.py"),
-    "docs/immune-repair.md:B04": (214, "35c65b3c8553b7f7fb62361b8fc189971bdb0681", "evolution/immune.py", "tests/test_immune_repair.py"),
-    "docs/quality-health.md:B02": (496, "195cf4deca246791f3d18788c89a82006abd5b8c", "quality/status.py", "tests/test_quality_status.py"),
     "docs/factory-living-software.md:B01": (199, "445f41ca3858ba1726d6013d996763a68f5c05a4", "evolution/constitution.py", "tests/test_living_constitution.py"),
     "docs/factory-living-software.md:B02": (199, "445f41ca3858ba1726d6013d996763a68f5c05a4", "evolution/constitution.py", "tests/test_living_constitution.py"),
     "docs/factory-living-software.md:B03": (199, "445f41ca3858ba1726d6013d996763a68f5c05a4", "evolution/constitution.py", "tests/test_living_constitution.py"),
@@ -343,7 +340,7 @@ class MatrizCoberturaTests(unittest.TestCase):
         puertas_ids = [line.split(chr(96), 2)[1] for line in puertas.splitlines()
                        if line.startswith("| " + chr(96)) and ":B" in line.split(chr(96), 2)[1]
                        and any(line.startswith("| " + chr(96) + src + ":B") for src in ["docs/puertas-humanas.md","docs/politica-revisor-externo.md","docs/immune-repair.md","docs/quality-health.md","AGENTES.md"])]
-        self.assertEqual(len(puertas_ids), 20)
+        self.assertEqual(len(puertas_ids), 22)
         expected.update({key: "Comportamiento contrastado" for key in puertas_ids})
         actual = {row["id"] for row in self.rows}
         self.assertEqual(actual, set(expected))

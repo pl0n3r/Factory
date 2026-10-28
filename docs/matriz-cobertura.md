@@ -51,7 +51,7 @@ Se contrastaron **109 unidades** de seis documentos con [tabla por fila](contras
 
 ## Contraste de comportamientos #1566
 
-Se agruparon 227 cláusulas del corte histórico de `AGENTES.md`, puertas humanas, revisor externo, Immune + Repair y Quality Health en **20 comportamientos** (6 CUBIERTO, 14 NO_VERIFICABLE) contrastados en [#1566](contraste-matriz-puertas_revisor.md). El inventario de fuentes de #1550 conserva sus conteos originales; no se atribuye cumplimiento live a pruebas offline. La cadena de PR fusionados se limita a #214, #496 y #891.
+Se agruparon 227 cláusulas del corte histórico de `AGENTES.md`, puertas humanas, revisor externo, Immune + Repair y Quality Health en **22 comportamientos** (3 CUBIERTO, 19 NO_VERIFICABLE) contrastados en [#1566](contraste-matriz-puertas_revisor.md). El inventario de fuentes de #1550 conserva sus conteos originales; no se atribuye cumplimiento live a pruebas offline. La cadena de PR fusionados se limita a #214, #496 y #891.
 
 ## Contraste Factory, bloque 3 (#1571)
 
@@ -1466,16 +1466,18 @@ Se agruparon 227 cláusulas del corte histórico de `AGENTES.md`, puertas humana
 | `docs/puertas-humanas.md:B02` | Materializar /decidir X como journal v2 idempotente, sin ejecutar la acción autorizada. | NO_VERIFICABLE | Candidato `seguridad/decision_respuesta.py` y `seguridad/test_decision_respuesta.py`; La existencia del handler no confirma materialización efectiva en todos los repositorios. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/puertas-humanas.md:B03` | Deduplicar puertas equivalentes y serializar respuestas con estado exacto del Issue. | NO_VERIFICABLE | Candidato `seguridad/sincronizar_puerta.py` y `seguridad/test_puertas_humanas.py`; No se acreditó el ciclo completo de carreras y eventos en consumidores. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/puertas-humanas.md:B04` | El template instala el caller de puertas confiables sin checkout del código del consumidor. | CUBIERTO | `template/.github/workflows/seguridad.yml` · `tests/test_template_security_workflow_contract.py` · [#891](https://github.com/pl0n3r/Factory/pull/891) · `4f042ae0044444f46d926543d86008258c977264` · Prueba solo el template versionado, no su adopción universal ni una decisión humana real. | — |
+| `docs/puertas-humanas.md:B05` | Si no hay decisión, `safe_default` solo permite una opción verdaderamente segura y reversible; nunca sustituye una puerta humana obligatoria. | NO_VERIFICABLE | Candidato `seguridad/puertas_humanas.py` y `seguridad/test_puertas_humanas.py`; La regla escrita no acredita autorización OWNER ni una ejecución segura en los siete repositorios. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/puertas-humanas.md:B06` | La puerta automática de privacidad D-063 solo es informativa en `construccion` con `nothing_live=true` y `no_real_customer_data=true`; de otro modo bloquea. | NO_VERIFICABLE | Candidato `.github/workflows/auditoria-privacidad.yml` y `seguridad/test_puertas_humanas.py`; Sin ambas atestaciones explícitas no puede atribuirse excepción legal ni activar trabajo real. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/politica-revisor-externo.md:B01` | Fallback del revisor restringido a construcción con BASE exacta y otros gates completos. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; D-070 y fallback histórico no son equivalentes; falta probar el contrato completo de la policy. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/politica-revisor-externo.md:B02` | Distinguir rate-limit de review real mediante orden de HEAD, fallo de Policy y retry OWNER. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; No se demostró una secuencia auténtica de revisión e identidad del bot sobre HEAD final. (NO_VERIFICABLE sin PR pertinente completo) | — |
-| `docs/politica-revisor-externo.md:B03` | Rechazar respuestas CodeRabbit sin SHA y reintentos owner no autenticados. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; La señal SHA-less exige timeline íntegro y correlación genuina, no texto libre. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/politica-revisor-externo.md:B03` | Rechazar respuestas CodeRabbit SHA-less aisladas; en rerun solo aceptar correlación de HEAD exacto, comando OWNER y timeline REST autenticada e íntegra. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; La señal SHA-less exige timeline íntegro y correlación genuina, no texto libre. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/politica-revisor-externo.md:B04` | Bridge exact-SHA y cache de evidencia no confieren permiso para mover Factory@v1. | NO_VERIFICABLE | Candidato `template/.github/factory-policy.json` y `tests/test_construction_merge_policy.py`; Falta la integración completa en consumers y la puerta de release vigente. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/immune-repair.md:B01` | Los incidentes avanzan por lifecycle cerrado y mantienen historia append-only. | CUBIERTO | `evolution/immune.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · Regresión test_incident_follows_closed_recovery_lifecycle; solo core offline. | — |
 | `docs/immune-repair.md:B02` | El Repair Plan requiere verificación, rollback y nunca ejecuta automáticamente. | CUBIERTO | `evolution/repair.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · test_repair_plan_requires_verification_and_rollback y non_execution. | — |
-| `docs/immune-repair.md:B03` | La autorización destructiva exige provenance de TrustedDecisionSource, no dict del caller. | CUBIERTO | `evolution/repair.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · Casos negativos de authority forjada y trusted source acotada. | — |
-| `docs/immune-repair.md:B04` | La inmunidad requiere fallas repetidas auténticas y verificación positiva previa. | CUBIERTO | `evolution/immune.py` · `tests/test_immune_repair.py` · [#214](https://github.com/pl0n3r/Factory/pull/214) · `35c65b3c8553b7f7fb62361b8fc189971bdb0681` · Regresiones de incident registry auténtico y repeated failure; sin executor live. | — |
+| `docs/immune-repair.md:B03` | La autorización destructiva exige provenance de TrustedDecisionSource, no dict del caller. | NO_VERIFICABLE | Candidato `evolution/repair.py` y `tests/test_immune_repair.py`; El PR #214 no acredita provenance de TrustedDecisionSource: aceptar un dict del caller no demuestra autoridad destructiva. (NO_VERIFICABLE sin PR pertinente completo) | — |
+| `docs/immune-repair.md:B04` | La inmunidad requiere fallas repetidas auténticas y verificación positiva previa. | NO_VERIFICABLE | Candidato `evolution/immune.py` y `tests/test_immune_repair.py`; El PR #214 no acredita TrustedIncidentRegistry autenticado; fallas repetidas proporcionadas por el caller no demuestran provenance. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/quality-health.md:B01` | Freshness y estados incompletos de Quality Contract no se convierten en PASS. | NO_VERIFICABLE | Candidato `quality/status.py` y `tests/test_quality_status.py`; Falta acreditar la cadena exacta de fuentes reales; tests de core son parciales. (NO_VERIFICABLE sin PR pertinente completo) | — |
-| `docs/quality-health.md:B02` | Proyección de Sonar normalizado conserva FAIL UNKNOWN STALE y N/A sin recalcular QG. | CUBIERTO | `quality/status.py` · `tests/test_quality_status.py` · [#496](https://github.com/pl0n3r/Factory/pull/496) · `195cf4deca246791f3d18788c89a82006abd5b8c` · PR integra señal Sonar; tests verifican estados FAIL UNKNOWN STALE y N/A. | — |
+| `docs/quality-health.md:B02` | Proyección de Sonar normalizado conserva FAIL UNKNOWN STALE y N/A sin recalcular QG. | NO_VERIFICABLE | Candidato `quality/status.py` y `tests/test_quality_status.py`; El PR #496 no acredita NOT_APPLICABLE con razón y provenance; FAIL, UNKNOWN y STALE no justifican cubrir todo B02. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/quality-health.md:B03` | Performance y Recovery son dimensiones externas, sin recomputar budgets o restore. | NO_VERIFICABLE | Candidato `quality/status.py` y `tests/test_quality_status.py`; Un modelo de proyección no acredita métricas productivas ni restores medidos. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `docs/quality-health.md:B04` | Readiness y Quality Queue no promueven UNKNOWN ni BLOCKED a ready. | NO_VERIFICABLE | Candidato `quality/status.py` y `tests/test_quality_status.py`; Falta verificar continuidad del dispatcher y datos CURRENT reales en consumidores. (NO_VERIFICABLE sin PR pertinente completo) | — |
 | `AGENTES.md:B01` | Reserva V3 propia, branch trabajo/issue-N y PR con Validar son obligatorios. | NO_VERIFICABLE | Candidato `scripts/coordinar_trabajo.py` y `tests/test_coordinar_trabajo.py`; La prueba parcial del orquestador no sustituye recibos vivos y permisos por repo. (NO_VERIFICABLE sin PR pertinente completo) | — |
@@ -1499,15 +1501,15 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 
 | Estado | Filas |
 | --- | ---: |
-| CUBIERTO | 73 |
+| CUBIERTO | 70 |
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
 | NO_APLICA | 1 |
-| NO_VERIFICABLE | 1229 |
-| TOTAL | 1303 |
+| NO_VERIFICABLE | 1234 |
+| TOTAL | 1305 |
 
-**Porcentaje CUBIERTO:** 5.60% (73/1303).
+**Porcentaje CUBIERTO:** 5.36% (70/1305).
 
 **Hojas nuevas creadas:** 0. **Fuentes Markdown:** 103+AGENTES.md. **Criterios de los seis épicos:** 39.
 
