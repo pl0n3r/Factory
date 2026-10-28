@@ -31,15 +31,17 @@ jobs:
       - name: Verificar intención humana antes de checkout
         env:
           ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           OWNER: ${{ github.repository_owner }}
           EVENT: ${{ github.event_name }}
-          BRANCH: ${{ github.ref_name }}
+          REF: ${{ github.ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           test "$EVENT" = workflow_dispatch
           test "$ACTOR" = "$OWNER"
-          test "$BRANCH" = "$DEFAULT_BRANCH"
+          test "$TRIGGERING_ACTOR" = "$OWNER"
+          test "$REF" = refs/heads/main
           test "$DEFAULT_BRANCH" = main
 
       - name: Checkout de lectura (sin credenciales persistidas)

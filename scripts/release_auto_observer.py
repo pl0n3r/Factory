@@ -20,6 +20,12 @@ REPO = "pl0n3r/Factory"
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 NUMBER_RE = re.compile(r"[1-9][0-9]{0,7}\Z")
 REQUIRED = ("Validar", "SonarCloud Code Analysis", "CodeQL")
+# Identidades GitHub App observadas en checks reales del repo; cambios = UNKNOWN.
+TRUSTED_CHECK_APPS = {
+    "Validar": ("github-actions", 15368),
+    "SonarCloud Code Analysis": ("sonarqubecloud", 12526),
+    "CodeQL": ("github-advanced-security", 57789),
+}
 
 
 def _denied(reason: str) -> dict[str, Any]:
@@ -65,17 +71,26 @@ def _latest_checks(bundle: dict, sha: str) -> list[dict] | None:
     if total is None or total > len(rows) or total < 0:
         return None
     latest: dict[str, dict] = {}
+    seen_ids: set[int] = set()
     for row in rows:
-        if type(row) is not dict or type(row.get("name")) is not str:
+        if (type(row) is not dict or type(row.get("name")) is not str
+                or type(row.get("id")) is not int or row["id"] <= 0):
             return None
+        if row["id"] in seen_ids:
+            return None
+        seen_ids.add(row["id"])
         name = row["name"]
-        canonical = "CodeQL" if name.startswith("CodeQL") else name
-        if canonical not in REQUIRED:
+        # No agrupar checks distintos como `CodeQL Actions SARIF` y `CodeQL`.
+        if name not in REQUIRED:
             continue
-        if type(row.get("id")) is not int or not _sha(row.get("head_sha")):
+        app = row.get("app")
+        if (not _sha(row.get("head_sha")) or type(app) is not dict
+                or (app.get("slug"), app.get("id")) != TRUSTED_CHECK_APPS[name]
+                or type(app.get("slug")) is not str
+                or type(app.get("id")) is not int):
             return None
-        if canonical not in latest or row["id"] > latest[canonical]["id"]:
-            latest[canonical] = row
+        if name not in latest or row["id"] > latest[name]["id"]:
+            latest[name] = row
     if set(latest) != set(REQUIRED):
         return None
     return [

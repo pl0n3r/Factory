@@ -17,10 +17,15 @@ WINDOW_MARKER = '{"version":1,"sha":"' + SHA + '"}'
 
 
 def fixture() -> dict:
+    trusted = {
+        "Validar": {"slug": "github-actions", "id": 15368},
+        "SonarCloud Code Analysis": {"slug": "sonarqubecloud", "id": 12526},
+        "CodeQL": {"slug": "github-advanced-security", "id": 57789},
+    }
     checks = [
         {"name": n, "id": idx + 1, "head_sha": SHA, "status": "completed",
-         "conclusion": "success"}
-        for idx, n in enumerate(("Validar", "SonarCloud Code Analysis", "CodeQL Actions SARIF"))
+         "conclusion": "success", "app": trusted[n].copy()}
+        for idx, n in enumerate(("Validar", "SonarCloud Code Analysis", "CodeQL"))
     ]
     return {
         "repository": "pl0n3r/Factory", "checkout_sha": SHA,
@@ -100,6 +105,11 @@ class ReleaseAutoObserverTests(unittest.TestCase):
         self.assertIn('ACTOR', wf)
         self.assertIn('OWNER', wf)
         self.assertIn('DEFAULT_BRANCH', wf)
+        self.assertIn('TRIGGERING_ACTOR: ${{ github.triggering_actor }}', wf)
+        self.assertIn('test "$TRIGGERING_ACTOR" = "$OWNER"', wf)
+        self.assertIn('REF: ${{ github.ref }}', wf)
+        self.assertIn('test "$REF" = refs/heads/main', wf)
+        self.assertNotIn('github.ref_name', wf)
         for case in (fixture(), {"bad": True}):
             out = evaluate_bundle(case)
             self.assertFalse(out["authorizes_release"])
@@ -156,7 +166,10 @@ class ReleaseAutoObserverTests(unittest.TestCase):
                 self.assertIsNone(_latest_checks(case, SHA))
                 self.assertEqual("BLOCKED", evaluate_bundle(case)["state"])
 
-        for key, value in (("id", "invalid"), ("head_sha", "not-sha")):
+        for key, value in (("id", "invalid"), ("head_sha", "not-sha"),
+                           ("app", None), ("app", {"slug": "github-actions", "id": 0}),
+                           ("app", {"slug": "untrusted", "id": 15368}),
+                           ("app", {"slug": "github-actions", "id": True})):
             case = fixture()
             case["checks"][0]["check_runs"][0][key] = value
             self.assertIsNone(_latest_checks(case, SHA))
@@ -177,6 +190,28 @@ class ReleaseAutoObserverTests(unittest.TestCase):
         self.assertEqual("BLOCKED", evaluate_bundle(data)["state"])
         data["checks"][1]["total_count"] = 5
         self.assertIsNone(_latest_checks(data, SHA))
+
+        # Un ID repetido, incluso entre páginas, nunca es una reejecución válida.
+        repeated = fixture()
+        original = repeated["checks"][0]["check_runs"]
+        repeated["checks"] = [
+            {"total_count": 4, "check_runs": original},
+            {"total_count": 4, "check_runs": [{**original[0], "conclusion": "failure"}]},
+        ]
+        self.assertIsNone(_latest_checks(repeated, SHA))
+        self.assertEqual("BLOCKED", evaluate_bundle(repeated)["state"])
+
+        # La evidencia SARIF auxiliar no sustituye el check CodeQL real.
+        different = fixture()
+        real = different["checks"][0]["check_runs"]
+        other = {**real[2], "id": 99, "name": "CodeQL Actions SARIF",
+                 "app": {"slug": "github-actions", "id": 15368},
+                 "conclusion": "failure"}
+        different["checks"] = [{"total_count": 4, "check_runs": real + [other]}]
+        checks = _latest_checks(different, SHA)
+        self.assertEqual("success", next(c for c in checks if c["name"] == "CodeQL")["conclusion"])
+        real[2]["name"] = "CodeQL Actions SARIF"
+        self.assertIsNone(_latest_checks(different, SHA))
 
     def test_collector_rejects_bad_inputs_and_handles_check_pagination(self):
         from scripts.release_auto_observer import collect
