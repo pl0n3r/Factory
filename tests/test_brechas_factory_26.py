@@ -187,7 +187,7 @@ def offline_contrast() -> dict[str, bool]:
         "what": "Repeated synthetic contract drift",
         "why": "Lifecycle revalidation was not checked",
         "prevention": "Require verification of evidence identity",
-        "source": f"pl0n3r/Factory#{321+n}",
+        "source": f"pl0n3r/factory#{321+n}",
     } for n in (1, 2)]
     guardrails = compile_guardrail_candidates(lessons)
     pending = guardrails[0] if len(guardrails) == 1 else {}
@@ -201,8 +201,9 @@ def offline_contrast() -> dict[str, bool]:
             len(value["history"]) >= 1 and value["state"] == "active"
             for value in (simple, sha, event)),
         f"{LIFECYCLE}:L30-U3": (
-            refreshed["provenance"] ==
-            [f"{same_ref}@rev:old", f"{same_ref}@rev:new"]),
+            set(refreshed["provenance"]) ==
+            {f"{same_ref}@rev:old", f"{same_ref}@rev:new"} and
+            len(refreshed["provenance"]) == 2),
         f"{LIFECYCLE}:L30-U4": (
             replay_rejected and old == original and
             old["last_validated_at"] == "2026-01-01T00:00:00Z"),
