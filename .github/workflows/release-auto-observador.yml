@@ -1,0 +1,62 @@
+name: Observador manual de evidencias release (sin publicar)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_issue:
+        description: 'Número de puerta factory-release existente (no publica)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+  issues: read
+
+concurrency:
+  group: factory-release-observer-manual
+  cancel-in-progress: false
+
+jobs:
+  observar:
+    name: Informe read-only con NO-GO por defecto
+    if: github.repository == 'pl0n3r/Factory' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      checks: read
+      issues: read
+    steps:
+      - name: Verificar intención humana antes de checkout
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          OWNER: ${{ github.repository_owner }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          test "$EVENT" = workflow_dispatch
+          test "$ACTOR" = "$OWNER"
+          test "$TRIGGERING_ACTOR" = "$OWNER"
+          test "$REF" = refs/heads/main
+          test "$DEFAULT_BRANCH" = main
+
+      - name: Checkout de lectura (sin credenciales persistidas)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Obtener fuentes REST autenticadas y evaluar sin mutaciones
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_GATE_ISSUE: ${{ inputs.release_issue }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.release_auto_observer
+
+      - name: Declarar límite del informe
+        run: |
+          echo 'Reporte de consulta únicamente. No autoriza release, tags, deploy ni movimiento de v1.' >> "$GITHUB_STEP_SUMMARY"

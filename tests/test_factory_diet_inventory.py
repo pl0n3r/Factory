@@ -38,6 +38,11 @@ CONSUMER_OBSERVER_WORKFLOW = ".github/workflows/observador-reservas-consumidor.y
 CONSUMER_OBSERVER_FILE = ROOT / CONSUMER_OBSERVER_WORKFLOW
 if CONSUMER_OBSERVER_FILE.is_file() and not CONSUMER_OBSERVER_FILE.is_symlink():
     POST_BASELINE_WORKFLOWS[CONSUMER_OBSERVER_WORKFLOW] = frozenset({"workflow_call"})
+# Factory #1616: adición de consulta manual, conserva el inventario histórico.
+RELEASE_OBSERVER_WORKFLOW = ".github/workflows/release-auto-observador.yml"
+RELEASE_OBSERVER_FILE = ROOT / RELEASE_OBSERVER_WORKFLOW
+if RELEASE_OBSERVER_FILE.is_file() and not RELEASE_OBSERVER_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[RELEASE_OBSERVER_WORKFLOW] = frozenset({"workflow_dispatch"})
 
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)

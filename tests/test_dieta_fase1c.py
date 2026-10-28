@@ -58,6 +58,10 @@ if QUEUE_OBSERVER.is_file() and not QUEUE_OBSERVER.is_symlink():
 CONSUMER_OBSERVER = WF / "observador-reservas-consumidor.yml"
 if CONSUMER_OBSERVER.is_file() and not CONSUMER_OBSERVER.is_symlink():
     EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"observador-reservas-consumidor.yml"})
+# Factory #1616: observador manual GET-only, añadido tras el ledger F1C.
+RELEASE_OBSERVER = WF / "release-auto-observador.yml"
+if RELEASE_OBSERVER.is_file() and not RELEASE_OBSERVER.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"release-auto-observador.yml"})
 HARD_GATES = (
     "factory-ci.yml", "sonar.yml", "codeql-evidence.yml",
     "seguridad.yml", "costos.yml", "unattended-watchdog.yml",
