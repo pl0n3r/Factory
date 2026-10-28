@@ -75,7 +75,7 @@ def matrix_state(raw: object, identifier: str) -> str:
     if len(rows) != 1:
         return UNKNOWN
     cells = [part.strip() for part in rows[0].strip("|").split("|")]
-    if len(cells) != 6 or cells[0] != chr(96) + identifier + chr(96):
+    if len(cells) != 5 or cells[0] != chr(96) + identifier + chr(96):
         return UNKNOWN
     if cells[2] != "NO_VERIFICABLE" or "Contraste #1572" not in cells[3]:
         return UNKNOWN
