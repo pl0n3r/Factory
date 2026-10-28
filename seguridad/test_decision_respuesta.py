@@ -566,6 +566,41 @@ class DecisionPaginationTests(unittest.TestCase):
 
 
 class DecisionTests(unittest.TestCase):
+    def test_legacy_owner_gate_materializes_without_revote(self):
+        raw = {
+            "category": "legal",
+            "context": "Solicitar evaluación jurídica antes de usar workflows.",
+            "options": [
+                {"id": "A", "label": "Pedir revisión profesional",
+                 "explain_simple": "Pedimos un dictamen, sin activar datos."},
+                {"id": "C", "label": "Mantener bloqueado",
+                 "explain_simple": "Conservamos la decisión sin usar datos."},
+            ],
+            "recommendation": "A",
+            "safe_default": "A",
+            "summary_simple": "La puerta original #946 es evidencia histórica.",
+            "explain_simple": "El voto original #946 no se importa aquí.",
+        }
+        historical = (
+            "Contexto\n<!-- factory-human-gate "
+            + json.dumps(raw, separators=(",", ":"))
+            + " -->"
+        )
+        api = FakeAPI(body=historical)
+        self.assertTrue(materialize_decision(
+            event(command="/decidir A", issue_body=historical),
+            api, "pl0n3r/Factory",
+        ))
+        self.assertEqual(api.issue["state"], "closed")
+        self.assertEqual(api.issue["state_reason"], "completed")
+        self.assertEqual(len(api.comments), 1)
+        self.assertIn('"option":"A"', api.comments[0]["body"])
+        self.assertFalse(materialize_decision(
+            event(command="/decidir A", issue_body=historical),
+            api, "pl0n3r/Factory",
+        ))
+        self.assertEqual(len(api.comments), 1)
+
     def test_untrusted_equivalent_gate_cannot_block_owner_vote(self):
         # A bot-created gate without canonical provenance must not veto OWNER.
         untrusted = {

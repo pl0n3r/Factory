@@ -78,7 +78,7 @@ def _comment_command(event: dict[str, Any]) -> str | None:
 
 
 def _gate_snapshot(body: str) -> tuple[set[str], str]:
-    classified = classify_body(body)
+    classified = classify_body(body, historical=True)
     if classified.get("status") != "gate":
         raise DecisionError("El Issue no contiene una puerta humana válida.")
     matches = MARKER_RE.findall(body)
@@ -88,7 +88,7 @@ def _gate_snapshot(body: str) -> tuple[set[str], str]:
         raw = json.loads(matches[0])
     except json.JSONDecodeError as exc:
         raise DecisionError("El marker de puerta es inválido.") from exc
-    gate = validate_gate(raw)
+    gate = validate_gate(raw, historical=True)
     canonical = json.dumps(
         gate,
         ensure_ascii=False,

@@ -16,6 +16,7 @@ from puertas_humanas import (
     classify_body,
     classify_event_text,
     gate_authority_contract,
+    gate_authority_contract_from_body,
     gate_identity,
     gate_identity_from_body,
     gate_target_identity_from_body,
@@ -308,6 +309,49 @@ def gate_issue(
 
 
 class GateTests(unittest.TestCase):
+    def test_legacy_owner_gate_explanatory_reference_remains_canonical(self):
+        historical = simple_gate()
+        historical["summary_simple"] = (
+            "La solicitud anterior #946 sigue registrada. "
+            "Esta puerta mantiene su decisión jurídica."
+        )
+        historical["explain_simple"] = (
+            "Se solicita revisión externa. La puerta #946 conserva historial."
+        )
+        historical["options"][0]["explain_simple"] = "Solicitamos revisión."
+        historical["options"][1]["explain_simple"] = "Conservamos el bloqueo."
+        old_body = body(historical)
+        clean = json.loads(json.dumps(historical))
+        clean["summary_simple"] = "La solicitud anterior sigue registrada."
+        clean["explain_simple"] = "Se solicita revisión externa."
+        clean_body = body(clean)
+        self.assertEqual(classify_body(old_body)["status"], "invalid-gate")
+        self.assertEqual(
+            gate_target_identity_from_body(old_body),
+            gate_target_identity_from_body(clean_body),
+        )
+        self.assertEqual(
+            gate_authority_contract_from_body(old_body),
+            gate_authority_contract_from_body(clean_body),
+        )
+        api = MultiGateAPI([gate_issue(974, body_value=old_body)])
+        self.assertTrue(reconcile_gate(api, "pl0n3r/Factory", 974))
+        self.assertEqual(api.open_numbers(), [974])
+
+    def test_new_gate_with_issue_reference_is_rejected(self):
+        fresh = simple_gate()
+        fresh["summary_simple"] = "La decisión anterior #946 debe revisarse."
+        fresh["explain_simple"] = "La revisión corresponde a #946."
+        for option in fresh["options"]:
+            option["explain_simple"] = "Se explica sin datos reales."
+        with self.assertRaises(GateValidationError):
+            validate_gate(fresh)
+        self.assertEqual(classify_body(body(fresh))["status"], "invalid-gate")
+        malformed = json.loads(json.dumps(fresh))
+        malformed["secret_extra"] = "secreto"
+        with self.assertRaises(GateValidationError):
+            gate_target_identity_from_body(body(malformed))
+
 
     def test_privacy_material_reasons_disambiguate_legal_target(self):
         first = privacy_material_issue(339, "pl0n3r/GrindFlow")["body"]
@@ -672,6 +716,51 @@ class GateTests(unittest.TestCase):
             classify_body(value + "\n" + value),
             {"status": "invalid-gate", "category": None},
         )
+
+    def test_historical_event_classification_keeps_prior_gate_authority(self):
+        historic = simple_gate()
+        historic["summary_simple"] = "La referencia original #946 no concede permisos."
+        historic["explain_simple"] = "La puerta #946 permanece histórica."
+        historic["options"][0]["explain_simple"] = "Solicitamos revisión."
+        historic["options"][1]["explain_simple"] = "Conservamos el bloqueo."
+        prior = body(historic)
+        issue = {
+            "state": "open",
+            "created_at": "2026-10-27T02:11:51Z",
+            "author_association": "OWNER",
+            "labels": [{"name": "decisión: dueño"}],
+            "body": prior,
+        }
+        def classify(action, row=issue, changes=None):
+            payload = {"action": action, "issue": row}
+            if changes is not None:
+                payload["changes"] = changes
+            return classify_event_text(json.dumps(payload, ensure_ascii=False))["status"]
+
+        self.assertEqual("gate", classify("reopened"))
+        self.assertEqual("gate", classify("edited", changes={"body": {"from": prior}}))
+        self.assertEqual("invalid-gate", classify("opened"))
+        self.assertEqual("invalid-gate", classify(
+            "edited", {**issue, "created_at": "2026-10-27T21:39:29Z"},
+            changes={"body": {"from": prior}},
+        ))
+        self.assertEqual("invalid-gate", classify(
+            "edited", {**issue, "labels": []},
+            changes={"body": {"from": prior}},
+        ))
+        self.assertEqual("invalid-gate", classify(
+            "edited", changes={"body": {"from": "Issue sin puerta"}},
+        ))
+        edited = prior.replace('"context":"', '"context":"Cambiado: ', 1)
+        self.assertEqual("invalid-gate", classify(
+            "edited", {**issue, "body": edited},
+            changes={"body": {"from": prior}},
+        ))
+        self.assertEqual("invalid-gate", classify(
+            "reopened", {**issue, "author_association": "NONE"},
+        ))
+        unknown = {**issue, "created_at": "ayer"}
+        self.assertEqual("invalid-gate", classify("reopened", unknown))
 
     def test_event_classifier_reads_issue_only(self):
         payload = json.dumps(

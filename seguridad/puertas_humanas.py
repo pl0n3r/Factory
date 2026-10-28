@@ -235,7 +235,7 @@ def _validate_option(item: Any, seen: set[str]) -> dict[str, Any]:
     return normalized
 
 
-def validate_gate(raw: Any) -> dict[str, Any]:
+def validate_gate(raw: Any, *, historical: bool = False) -> dict[str, Any]:
     allowed = REQUIRED | OPTIONAL_SIMPLE
     if (
         not isinstance(raw, dict)
@@ -278,7 +278,10 @@ def validate_gate(raw: Any) -> dict[str, Any]:
         "safe_default": safe_default,
     }
     _validate_simple_root(raw, normalized)
-    _validate_new_gate_plain_language(raw, normalized)
+    # La regla editorial rige para entradas NUEVAS. Lecturas históricas conservan
+    # estructura, opciones y autoridad aun cuando su copia anterior use jerga.
+    if not historical:
+        _validate_new_gate_plain_language(raw, normalized)
     return normalized
 
 
@@ -440,9 +443,9 @@ def gate_target_identity(raw: Any) -> str:
     return _digest(_gate_target(validate_gate(raw)))
 
 
-def gate_authority_contract(raw: Any) -> str:
+def gate_authority_contract(raw: Any, *, historical: bool = False) -> str:
     """Fingerprint de las opciones que realmente conceden autoridad."""
-    gate = validate_gate(raw)
+    gate = validate_gate(raw, historical=historical)
     target = _gate_target(gate)["target"]
     if (
         gate["category"] == "factory-release"
@@ -489,7 +492,9 @@ def gate_identity(raw: Any) -> str:
 
 
 def _gate_raw_from_body(body: str) -> dict[str, Any]:
-    classified = classify_body(body)
+    # El body ya publicado se lee como evidencia histórica; su copy no modifica
+    # el contrato. Se conservan tamaño, cantidad de markers y schema estrictos.
+    classified = classify_body(body, historical=True)
     if classified.get("status") != "gate":
         raise GateValidationError("El Issue no contiene una puerta humana válida.")
     matches = MARKER_RE.findall(body)
@@ -505,13 +510,13 @@ def _gate_raw_from_body(body: str) -> dict[str, Any]:
 
 
 def gate_target_identity_from_body(body: str) -> str:
-    gate = validate_gate(_gate_raw_from_body(body))
+    gate = validate_gate(_gate_raw_from_body(body), historical=True)
     material = _privacy_target_from_body(body, gate)
     return _digest(material if material is not None else _gate_target(gate))
 
 
 def gate_authority_contract_from_body(body: str) -> str:
-    return gate_authority_contract(_gate_raw_from_body(body))
+    return gate_authority_contract(_gate_raw_from_body(body), historical=True)
 
 
 def gate_identity_from_body(body: str) -> str:
@@ -519,11 +524,13 @@ def gate_identity_from_body(body: str) -> str:
     raw = _gate_raw_from_body(body)
     return _digest({
         "target": gate_target_identity_from_body(body),
-        "authority": gate_authority_contract(raw),
+        "authority": gate_authority_contract(raw, historical=True),
     })
 
 
-def classify_body(body: str, *, include_reason: bool = False) -> dict[str, Any]:
+def classify_body(
+    body: str, *, include_reason: bool = False, historical: bool = False,
+) -> dict[str, Any]:
     if not isinstance(body, str):
         raise GateValidationError("El cuerpo del Issue debe ser texto.")
 
@@ -550,11 +557,55 @@ def classify_body(body: str, *, include_reason: bool = False) -> dict[str, Any]:
     except json.JSONDecodeError:
         return invalid("El JSON del marker es inválido.")
     try:
-        gate = validate_gate(raw)
+        gate = validate_gate(raw, historical=historical)
     except GateValidationError as exc:
         return invalid(str(exc))
 
     return _result("gate", gate["category"])
+
+
+# La política editorial estricta alcanzó Factory@v1 con la release 1.0.44.
+# No retrovalidar el copy de puertas OWNER creadas antes de esa publicación.
+# El sello temporal y las etiquetas provienen del evento inmutable de GitHub.
+_LEGACY_GATE_CUTOFF_UTC = "2026-10-27T21:39:29Z"
+
+
+def _historic_existing_gate_event(event: dict[str, Any], issue: dict[str, Any]) -> bool:
+    """Solo reabrir/editar una puerta anterior ya enrutada por GitHub.
+
+    Nunca aceptar una puerta introducida en el editor de un Issue antiguo:
+    al editar el marker, la identidad debe permanecer idéntica.
+    """
+    if event.get("action") not in {"edited", "reopened"}:
+        return False
+    if issue.get("state") != "open" or issue.get("author_association") not in {
+        "OWNER", "MEMBER", "COLLABORATOR",
+    }:
+        return False
+    created = issue.get("created_at")
+    if (
+        not isinstance(created, str)
+        or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", created) is None
+        or created >= _LEGACY_GATE_CUTOFF_UTC
+    ):
+        return False
+    labels = issue.get("labels")
+    if not isinstance(labels, list) or not any(
+        (isinstance(label, dict) and label.get("name") == "decisión: dueño")
+        or label == "decisión: dueño"
+        for label in labels
+    ):
+        return False
+    body = issue.get("body")
+    if not isinstance(body, str) or len(MARKER_RE.findall(body)) != 1:
+        return False
+    changes = event.get("changes", {})
+    if event["action"] == "edited" and isinstance(changes, dict) and "body" in changes:
+        before = changes["body"]
+        previous = before.get("from") if isinstance(before, dict) else None
+        if not isinstance(previous, str) or MARKER_RE.findall(previous) != MARKER_RE.findall(body):
+            return False
+    return True
 
 
 def classify_event_text(
@@ -581,6 +632,7 @@ def classify_event_text(
     return classify_body(
         body if isinstance(body, str) else "",
         include_reason=include_reason,
+        historical=_historic_existing_gate_event(event, issue) if isinstance(event, dict) else False,
     )
 
 def main() -> int:
