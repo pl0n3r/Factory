@@ -12,6 +12,12 @@ import sys
 MAX_LINES = 500
 
 
+def log_dir(root):
+    """`.git/` nunca se rastrea; `.claude/` solo si el repo no tiene directorio .git."""
+    git = os.path.join(root, ".git")
+    return os.path.join(git if os.path.isdir(git) else os.path.join(root, ".claude"), "factory-claude")
+
+
 def record(event):
     return {
         "id": event.get("tool_use_id", ""),
@@ -39,7 +45,7 @@ def main():
     try:
         event = json.load(sys.stdin)
         root = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "."
-        append(os.path.join(root, ".claude", "factory-claude", "errores.jsonl"), record(event))
+        append(os.path.join(log_dir(root), "errores.jsonl"), record(event))
     except (ValueError, OSError):
         pass
     return 0

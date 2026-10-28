@@ -22,7 +22,7 @@ Plugin propio, versionado en este repo (`claude/factory-claude/`) y publicado po
 | SessionStart | `kill_switch.py` | Informa el estado de Factory#767; `UNKNOWN`/`PAUSED` ⇒ aviso `PAUSADO:`. Nunca edita el marker |
 | PreToolUse Bash | `factory_guard.py` | Deniega `gh pr merge --admin`, merge sin `Validar` verde (o con estado UNKNOWN), CodeRabbit prematuro o repetido, push directo/forzado a `main` |
 | PreToolUse Edit/Write | `reservation_guard.py` | En `trabajo/issue-N` deniega si el Issue está cerrado o sin reserva; avisa en `main` o si no puede verificar |
-| PostToolUseFailure | `log_failure.py` | Registra errores en `.claude/factory-claude/errores.jsonl` (idempotente, acotado, sin salida) |
+| PostToolUseFailure | `log_failure.py` | Registra errores en `.git/factory-claude/errores.jsonl` (idempotente, acotado, sin salida) |
 
 Los hooks ignoran entradas ilegibles y no producen salida salvo para denegar/avisar, así que no bloquean operaciones legítimas ni crean bucles.
 
@@ -54,6 +54,6 @@ Los plugins globales se instalan por usuario (no se versionan en repos). Claude 
 ## Principios (alineados con el playbook AI-native SDLC de Anthropic)
 
 - Las skills son **orientativas**; toda regla que deba cumplirse tiene un hook o un check de CI (`factory_guard.py`, `reservation_guard.py`, `Validar`).
-- Los bloqueos devuelven razón y ruta de resolución y quedan registrados con marca de tiempo en `.claude/factory-claude/decisiones.jsonl` (ignorado por git).
+- Los bloqueos devuelven razón y ruta de resolución y quedan registrados con marca de tiempo en `.git/factory-claude/decisiones.jsonl` (nunca rastreado).
 - El agente que escribe el código no lo aprueba: la protección de rama y `Validar` siguen siendo la autoridad; la salida del agente llega solo como PR.
 - Cambios a skills/hooks se versionan y se publican por el marketplace; verifica que cada skill se activa con tareas formuladas de varias maneras antes de subir la versión.
