@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(ROOT, "claude"))
 
 import ci_triage  # noqa: E402
 import detect_stack  # noqa: E402
+import eval_activation  # noqa: E402
 import factory_guard  # noqa: E402
 import install_factory_claude  # noqa: E402
 import kill_switch  # noqa: E402
@@ -205,6 +206,30 @@ class StackAndInstallTest(unittest.TestCase):
     def test_every_canonical_repo_has_profile(self):
         self.assertEqual(sorted(install_factory_claude.REPO_PROFILE),
                          ["autofactory", "brvtal", "condor", "controlbot", "factory", "factoryrunner", "grindflow"])
+
+
+class ActivationEvalTest(unittest.TestCase):
+    def test_suite_passes_on_current_descriptions(self):
+        failures, total = eval_activation.evaluate()
+        self.assertEqual(failures, [])
+        self.assertGreaterEqual(total, 20)
+
+    def test_every_skill_has_a_case(self):
+        cases = json.load(open(os.path.join(PLUGIN, "evals", "activation.json"), encoding="utf-8"))
+        self.assertEqual({c["skill"] for c in cases} - {None}, set(SKILLS))
+        self.assertTrue(any(c["skill"] is None for c in cases))
+
+    def test_eval_detects_a_broken_description(self):
+        descriptions = eval_activation.load_descriptions()
+        descriptions["factory-ci-unblock"] = eval_activation.tokens("sin relación")
+        failures, _ = eval_activation.evaluate(descriptions=descriptions)
+        self.assertTrue(any("factory-ci-unblock" in why for _, why in failures))
+
+    def test_eval_detects_overlapping_descriptions(self):
+        descriptions = eval_activation.load_descriptions()
+        descriptions["factory-test-matrix"] = descriptions["factory-ci-unblock"]
+        failures, _ = eval_activation.evaluate(descriptions=descriptions)
+        self.assertTrue(failures)
 
 
 class IssueCycleIntegrationTest(unittest.TestCase):

@@ -1,0 +1,22 @@
+[
+  {"prompt": "toma el issue 120 de Condor y llévalo hasta el merge", "skill": "factory-issue-to-merge"},
+  {"prompt": "implementa este Issue, abre el PR y fusiónalo cuando pase el CI", "skill": "factory-issue-to-merge"},
+  {"prompt": "reserva con /tomar el issue y entrega el pull request", "skill": "factory-issue-to-merge"},
+  {"prompt": "el PR no pasa Validar, arregla el CI", "skill": "factory-ci-unblock"},
+  {"prompt": "hay un conflicto de merge y la rama está desactualizada", "skill": "factory-ci-unblock"},
+  {"prompt": "un check falló, diagnostica si es un fallo transitorio", "skill": "factory-ci-unblock"},
+  {"prompt": "reparte el trabajo entre varios agentes sin que choquen sus reservas", "skill": "factory-agent-coordination"},
+  {"prompt": "transfiere la reserva y revisa el TTL de la lease", "skill": "factory-agent-coordination"},
+  {"prompt": "cuántos agentes en paralelo puedo usar con worktrees y merges serializados", "skill": "factory-agent-coordination"},
+  {"prompt": "qué pruebas debo correr antes de empujar este cambio", "skill": "factory-test-matrix"},
+  {"prompt": "detecta el stack del repo y aplica pruebas unitarias, e2e y análisis estático", "skill": "factory-test-matrix"},
+  {"prompt": "prepara el despliegue con health check y plan de rollback", "skill": "factory-deploy-rollback"},
+  {"prompt": "valida la migración antes del deploy y cómo revertir si falla", "skill": "factory-deploy-rollback"},
+  {"prompt": "audita la seguridad de este PR: inyección SQL, XSS, CSRF y secretos", "skill": "factory-security-audit"},
+  {"prompt": "revisa el aislamiento multiempresa y los permisos de roles", "skill": "factory-security-audit"},
+  {"prompt": "voy a cambiar un contrato de API que consumen otros repos", "skill": "factory-cross-repo-contracts"},
+  {"prompt": "este cambio rompe la compatibilidad de un workflow reusable de Factory@v1", "skill": "factory-cross-repo-contracts"},
+  {"prompt": "actualiza el README y el CLAUDE.md con el nuevo procedimiento", "skill": "factory-documentation"},
+  {"prompt": "documenta la decisión técnica y el runbook sin duplicar docs", "skill": "factory-documentation"},
+  {"prompt": "escribe una receta de cocina", "skill": null}
+]

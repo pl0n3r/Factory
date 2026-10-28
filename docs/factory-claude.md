@@ -57,3 +57,7 @@ Los plugins globales se instalan por usuario (no se versionan en repos). Claude 
 - Los bloqueos devuelven razón y ruta de resolución y quedan registrados con marca de tiempo en `.git/factory-claude/decisiones.jsonl` (nunca rastreado).
 - El agente que escribe el código no lo aprueba: la protección de rama y `Validar` siguen siendo la autoridad; la salida del agente llega solo como PR.
 - Cambios a skills/hooks se versionan y se publican por el marketplace; verifica que cada skill se activa con tareas formuladas de varias maneras antes de subir la versión.
+
+## Evals de activación
+
+`claude/factory-claude/evals/activation.json` lista prompts (20 casos, uno negativo) con la skill esperada; `scripts/eval_activation.py` los puntúa contra las `description` de las skills y exige que gane la esperada con margen. Es un **proxy léxico determinista**: no mide la activación real del modelo, pero detecta descripciones rotas o solapadas al editarlas (corre en `tests/test_factory_claude.py`). Al añadir o editar una skill, añade un caso nuevo.
