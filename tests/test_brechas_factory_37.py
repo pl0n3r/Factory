@@ -9,6 +9,7 @@ import copy
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from evolution.constitution import PROTECTED_INVARIANTS
 from metricas.organizational_complexity import (
@@ -20,6 +21,7 @@ from metricas.organizational_complexity import (
     normalize_observation,
 )
 from scripts.orquestador_kit import PlanError, parse_plan, topological_order
+from scripts.orquestar_fabrica import sync_plan
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +94,22 @@ def task(key, path, dependencies=()):
 
 
 class BrechasFactory37Tests(unittest.TestCase):
+    @staticmethod
+    def _rejects_before_writing_issue(bad_plan):
+        """Prueba el límite de sincronización sin llamadas reales a GitHub."""
+        class OfflineGitHub:
+            repo = "pl0n3r/Factory"
+
+            def issue(self, number):
+                return {"number": number, "state": "open", "body": bad_plan}
+
+        with patch("scripts.orquestar_fabrica._upsert_issue") as upsert:
+            try:
+                sync_plan(OfflineGitHub(), 1082)
+            except PlanError:
+                return not upsert.called
+            return False
+
     def test_contrato_principal(self):
         """AC-01: correspondencia exacta de cada unidad con aserción funcional."""
         before = observation()
@@ -213,6 +231,12 @@ class BrechasFactory37Tests(unittest.TestCase):
                 and ordered[1].depends_on == ("A",)
                 and all(t.owner == "pl0n3r" for t in ordered)
                 and all(t.paths for t in ordered)
+                and self._rejects_before_writing_issue(
+                    plan(task("A", "src/shared.py"), task("B", "src/shared.py"))
+                )
+                and self._rejects_before_writing_issue(
+                    plan(task("A", "src/a.py", ("B",)), task("B", "src/b.py", ("A",)))
+                )
             ),
         }
         self.assertEqual(len(UNITS), 16)
@@ -227,8 +251,12 @@ class BrechasFactory37Tests(unittest.TestCase):
         del missing["context_tokens"]
         invalid_budget = copy.deepcopy(BUDGETS)
         del invalid_budget["task_type_multipliers"]["default"]
-        other_cohort = observation(
-            "synthetic-other", comparison_scope="unrelated-synthetic-scope"
+        baseline = observation()
+        cohort_changes = (
+            ("comparison_scope", "unrelated-synthetic-scope"),
+            ("task_type", "documentacion"),
+            ("task_size", "medium"),
+            ("risk", "high"),
         )
         for data in (missing, observation(context_tokens=-1),
                      observation(protected_metrics={"security": 1})):
@@ -236,9 +264,12 @@ class BrechasFactory37Tests(unittest.TestCase):
                 with self.assertRaises(OrganizationalComplexityError):
                     normalize_observation(data)
         with self.assertRaises(OrganizationalComplexityError):
-            contextual_budget(observation(), invalid_budget)
-        with self.assertRaises(OrganizationalComplexityError):
-            compare_simplification(observation(), other_cohort)
+            contextual_budget(baseline, invalid_budget)
+        for field, value in cohort_changes:
+            incompatible = observation("synthetic-other", **{field: value})
+            with self.subTest(cohort_field=field):
+                with self.assertRaises(OrganizationalComplexityError):
+                    compare_simplification(baseline, incompatible)
         bad_plans = (
             plan(task("A", "src/a.py", ("B",)), task("B", "src/b.py", ("A",))),
             plan(task("A", "src/a.py", ("MISSING",))),
