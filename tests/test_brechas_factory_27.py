@@ -302,7 +302,8 @@ class BrechasFactory27Tests(unittest.TestCase):
             self.assertEqual(set(assess(matrix, invalid).values()), {UNKNOWN})
         for invalid in (
             item(tags=["duplicate", "duplicate"]), item(owner_ref=""),
-            item(item_id="x"), item(supersedes=["runbook-1645"]),
+            item(item_id="runbook-other", lifecycle=lifecycle()),
+            item(supersedes=["runbook-1645"]),
             item(supersedes=["item-old"], superseded_by=["item-old"]),
         ):
             with self.subTest(invalid=list(invalid)):
