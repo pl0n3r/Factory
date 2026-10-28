@@ -10,7 +10,7 @@ DOC = ROOT / "docs/contraste-matriz-puertas_revisor.md"
 MATRIX = ROOT / "docs/matriz-cobertura.md"
 SOURCES = ["docs/puertas-humanas.md","docs/politica-revisor-externo.md","docs/immune-repair.md","docs/quality-health.md","AGENTES.md"]
 COUNTS = {"docs/puertas-humanas.md":57,"docs/politica-revisor-externo.md":53,"docs/immune-repair.md":34,"docs/quality-health.md":32,"AGENTES.md":51}
-COVERED = {"docs/puertas-humanas.md:B04":{"code":"template/.github/workflows/seguridad.yml","test":"tests/test_template_security_workflow_contract.py","pr":891,"sha":"4f042ae0044444f46d926543d86008258c977264"},"docs/immune-repair.md:B01":{"code":"evolution/immune.py","test":"tests/test_immune_repair.py","pr":214,"sha":"35c65b3c8553b7f7fb62361b8fc189971bdb0681"},"docs/immune-repair.md:B02":{"code":"evolution/repair.py","test":"tests/test_immune_repair.py","pr":214,"sha":"35c65b3c8553b7f7fb62361b8fc189971bdb0681"},"docs/immune-repair.md:B03":{"code":"evolution/repair.py","test":"tests/test_immune_repair.py","pr":214,"sha":"35c65b3c8553b7f7fb62361b8fc189971bdb0681"},"docs/immune-repair.md:B04":{"code":"evolution/immune.py","test":"tests/test_immune_repair.py","pr":214,"sha":"35c65b3c8553b7f7fb62361b8fc189971bdb0681"},"docs/quality-health.md:B02":{"code":"quality/status.py","test":"tests/test_quality_status.py","pr":496,"sha":"195cf4deca246791f3d18788c89a82006abd5b8c"}}
+COVERED = {"docs/puertas-humanas.md:B04":{"code":"template/.github/workflows/seguridad.yml","test":"tests/test_template_security_workflow_contract.py","pr":891,"sha":"4f042ae0044444f46d926543d86008258c977264"},"docs/immune-repair.md:B01":{"code":"evolution/immune.py","test":"tests/test_immune_repair.py","pr":214,"sha":"35c65b3c8553b7f7fb62361b8fc189971bdb0681"},"docs/immune-repair.md:B02":{"code":"evolution/repair.py","test":"tests/test_immune_repair.py","pr":214,"sha":"35c65b3c8553b7f7fb62361b8fc189971bdb0681"}}
 ALLOWED = {"CUBIERTO", "NO_VERIFICABLE", "SIN_COBERTURA", "NO_APLICA", "DESCARTADO"}
 
 
@@ -44,13 +44,13 @@ class ContrasteTests(unittest.TestCase):
         cls.rows = rows_from(cls.doc)
 
     def test_cada_documento_tiene_veredicto(self) -> None:
-        self.assertEqual(len(self.rows), 20)
+        self.assertEqual(len(self.rows), 22)
         for source in SOURCES:
             with self.subTest(source=source):
                 actual = [k for k in self.rows if k.startswith(source + ":B")]
-                self.assertEqual(sorted(actual), [f"{source}:B{x:02}" for x in range(1, 5)])
+                self.assertEqual(sorted(actual), [f"{source}:B{x:02}" for x in range(1, 7 if source == "docs/puertas-humanas.md" else 5)])
                 self.assertTrue((ROOT / source).is_file())
-        self.assertEqual(Counter(row[3] for row in self.rows.values()), Counter({"CUBIERTO": 6, "NO_VERIFICABLE": 14}))
+        self.assertEqual(Counter(row[3] for row in self.rows.values()), Counter({"CUBIERTO": 3, "NO_VERIFICABLE": 19}))
 
     def test_cubierto_enlaza_prueba_existente(self) -> None:
         actual = {key for key, row in self.rows.items() if row[3] == "CUBIERTO"}
@@ -76,6 +76,29 @@ class ContrasteTests(unittest.TestCase):
             require_canonical_leaf(["", "", "", "SIN_COBERTURA", "—", "—", "—", "#1082"])
         self.assertIn("Ninguna ausencia fue demostrada", self.doc)
         self.assertNotIn("Sin cobertura verificada en producción", self.doc)
+
+    def test_puertas_y_revisor_no_omiten_excepciones(self) -> None:
+        safe = self.rows["docs/puertas-humanas.md:B05"][2]
+        privacy = self.rows["docs/puertas-humanas.md:B06"][2]
+        rerun = self.rows["docs/politica-revisor-externo.md:B03"][2]
+        for fragment in ("safe_default", "segura", "reversible"):
+            self.assertIn(fragment, safe)
+        for fragment in ("D-063", "nothing_live=true",
+                         "no_real_customer_data=true", "bloquea"):
+            self.assertIn(fragment, privacy)
+        for fragment in ("SHA-less", "rerun", "OWNER",
+                         "timeline REST autenticada"):
+            self.assertIn(fragment, rerun)
+
+    def test_credenciales_historicas_no_se_sobreatribuyen(self) -> None:
+        for key in ("docs/immune-repair.md:B03",
+                    "docs/immune-repair.md:B04",
+                    "docs/quality-health.md:B02"):
+            with self.subTest(key=key):
+                self.assertEqual(self.rows[key][3], "NO_VERIFICABLE")
+                self.assertEqual(self.rows[key][6], "—")
+                self.assertNotIn(key, COVERED)
+                self.assertIn("no acredita", self.rows[key][7])
 
     def test_matriz_actualizada(self) -> None:
         for source in SOURCES:
