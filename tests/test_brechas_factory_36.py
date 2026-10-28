@@ -92,7 +92,7 @@ class BrechasFactory36Tests(unittest.TestCase):
         cls.matrix = read("docs/matriz-cobertura.md")
         cls.units = matrix_rows(cls.matrix)
         cls.budgets = load_budgets(
-            ROOT / "metricas/presupuestos.json", root=ROOT,
+            "metricas/presupuestos.json", root=ROOT,
         )
 
     def test_contrato_principal(self) -> None:
