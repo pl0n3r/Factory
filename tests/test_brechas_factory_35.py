@@ -185,7 +185,7 @@ class BrechasFactory35Tests(unittest.TestCase):
         ):
             broken = dict(local)
             self.assertIn(token, broken[path])
-            broken[path] = broken[path].replace(token, "UNVERIFIED", 1)
+            broken[path] = broken[path].replace(token, "UNVERIFIED")
             self.assertEqual(classify(UNITS[0], broken), UNKNOWN)
         self.assertIsNone(local_active_issue_ids([], "pl0n3r/ControlBot"))
         self.assertIsNone(local_active_issue_ids(
