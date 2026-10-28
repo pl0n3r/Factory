@@ -392,8 +392,9 @@ def _safe(value, reason, work_class):
     try:
         encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
         encoded_size = len(encoded.encode("utf-8"))
-    except (TypeError, ValueError):
-        # A malformed Unicode surrogate must not escape the evidence boundary.
+    except (TypeError, ValueError, RecursionError):
+        # Invalid Unicode and excessively nested receipts cannot escape the
+        # untrusted evidence boundary.
         raise _Problem(reason, work_class) from None
     if encoded_size > 100_000 or _SENSITIVE.search(encoded):
         raise _Problem(reason, work_class)
