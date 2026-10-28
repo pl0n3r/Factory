@@ -41,14 +41,16 @@ UNITS = (
 )
 
 
-def improved():
+def improved(**changes):
     before = finding()
-    return finding(
+    result = finding(
         classification="PERF_INFO", breach=False, evidence_ref="synthetic:after",
         identity={"sha": "b" * 40, "release": "v1.2.4"},
         observed={**before["observed"], "value": 220,
                   "observed_at": "2026-09-28T20:06:00Z"},
     )
+    result.update(changes)
+    return result
 
 
 class BrechasFactory43Tests(unittest.TestCase):
