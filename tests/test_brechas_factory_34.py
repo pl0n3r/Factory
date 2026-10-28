@@ -259,10 +259,12 @@ class BrechasFactory34Tests(unittest.TestCase):
         paused["kill_switch"]["state"] = "PAUSED"
         with self.assertRaises(NoWorkInventoryError):
             decide_no_work(paused, None, now=1)
+        without_prevention = lesson(prevention="")
         with self.assertRaises(LessonValidationError):
-            validate_lesson(lesson(prevention=""), "synthetic")
+            validate_lesson(without_prevention, "synthetic")
+        without_source = lesson(source="no-trace")
         with self.assertRaises(LessonValidationError):
-            validate_lesson(lesson(source="no-trace"), "synthetic")
+            validate_lesson(without_source, "synthetic")
         ambiguous = metric_rows()
         ambiguous[0]["task_id"] = "ambiguous#123"
         with self.assertRaises(LessonValidationError):
@@ -275,15 +277,24 @@ class BrechasFactory34Tests(unittest.TestCase):
 
     def test_sin_datos_reales(self):
         """Fixturas deterministas y temporales; no hay secretos ni I/O de red."""
+        initial = inventory()
+        same_snapshot = inventory()
         self.assertEqual(
-            inventory_fingerprint(inventory()), inventory_fingerprint(inventory())
+            inventory_fingerprint(initial), inventory_fingerprint(same_snapshot)
         )
-        self.assertEqual(lesson(), lesson())
+        same_snapshot["repositories"]["Factory"]["available"].append(1653)
+        self.assertNotEqual(
+            inventory_fingerprint(initial), inventory_fingerprint(same_snapshot)
+        )
+        synthetic_lesson = lesson()
+        self.assertEqual(synthetic_lesson["project"], "pl0n3r/Factory")
+        self.assertEqual(synthetic_lesson["source"], "pl0n3r/Factory#1652")
         self.assertTrue(all(
             x["task_id"].startswith("pl0n3r/Factory#") for x in metric_rows()
         ))
+        unexpected_field = lesson(email="test@example.invalid")
         with self.assertRaises(LessonValidationError):
-            validate_lesson(lesson(email="test@example.invalid"), "synthetic")
+            validate_lesson(unexpected_field, "synthetic")
 
     def test_estados_unknown_explicitos(self):
         """No inferir éxito de ausencia de métricas o evidencia externa."""
