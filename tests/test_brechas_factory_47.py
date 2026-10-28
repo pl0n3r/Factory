@@ -257,7 +257,7 @@ class BrechasFactory47Tests(unittest.TestCase):
         for identifier in UNITS:
             with self.subTest(unit=identifier):
                 self.assertEqual(len(rows[identifier]), 1)
-                self.assertTrue(rows[identifier][3])
+                self.assertTrue(rows[identifier][0][3])
         gaps = (
             "global_seven_repo_inventory_not_observed",
             "blocked_exit_condition_not_verified",
