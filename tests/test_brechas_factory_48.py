@@ -5,7 +5,6 @@ The source matrix remains NO_VERIFICABLE until its own reconciliation issue.
 """
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 import unittest
@@ -40,7 +39,7 @@ CLAUSES = {
     "L39-U1": "Nunca fabricar APPROVED, HEALTH, actividad, throughput o readiness.",
     "L43-U1": "Reportar por repositorio y global conteos separados de disponible",
     "L43-U2": "identificar causa y fuente de cada bloqueo.",
-    "L43-U3": "El \`estado: requiere recuperación\` / \`status: recovery required\`",
+    "L43-U3": "El `estado: requiere recuperación` / `status: recovery required`",
     "L43-U4": "Contarlo por separado solo tras integrar el contrato de Factory #1102",
     "L43-U5": "antes, rechazar snapshots que no puedan representar recovery",
 }
