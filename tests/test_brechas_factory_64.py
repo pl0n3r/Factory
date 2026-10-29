@@ -151,7 +151,7 @@ def behavior():
                        "github-token:ephemeral"
                        and not accepts_manifest(invalid_ci)
                        and auditor_rejects
-                       and "permisos mínimos por job" in doc)
+                       and "permissions" in doc and "mínimos por job" in doc)
     result[IDS[11]] = (accepts_record(record(), catalog)
                        and rejects_record(catalog, epic="other/factory#123")
                        and rejects_record(catalog, epic="sample/factory#0")
