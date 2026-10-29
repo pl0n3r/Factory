@@ -100,6 +100,11 @@ def mesh_validator():
     return module.validate_manifest
 
 
+# Acceptance loader removes its temporary import paths before running each test.
+# Import the existing validator while the root is still on sys.path.
+_MESH_VALIDATOR = mesh_validator()
+
+
 def rejects(fn, *args, **kwargs):
     try:
         fn(*args, **kwargs)
@@ -110,7 +115,7 @@ def rejects(fn, *args, **kwargs):
 
 def evidence() -> dict[str, bool]:
     """Exercise real fitness implementation and existing mesh manifest validator."""
-    validate = mesh_validator()
+    validate = _MESH_VALIDATOR
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     validate(manifest)
     refs = {(r["repo"], r["pr"]): r for r in manifest["evidence"]}
