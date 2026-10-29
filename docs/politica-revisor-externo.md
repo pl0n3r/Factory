@@ -106,38 +106,15 @@ Cualquier ambigüedad —fase ausente, demasiados check-runs/threads para evalua
 
 ## Espera acotada de gates lentos (Factory #1859)
 
-El workflow reusable `.github/workflows/politica.yml` acepta el input
-`gate_wait_seconds` (número; valor por defecto **420 segundos**, rango
-permitido **300–540**). El job tiene `timeout-minutes: 15` para que un gate
-típico de cinco minutos, como un E2E de Chromium, alcance su conclusión
-sin que Policy agote su ventana anterior de unos 40–48 segundos.
-
-- El presupuesto empieza **antes de la primera lectura de gates**. Si un gate
-  sigue pendiente/ausente, Policy vuelve a leer los checks autenticados y
-  hace pausas de máximo ocho segundos, ajustando la última al tiempo restante.
-  El límite se calcula con el reloj de shell `SECONDS`, no mediante un
-  número fijo de intentos ni un contador manipulable por el PR.
-- La comprobación de dos snapshots completos y estables, HEAD/BASE,
-  firmas/app de checks, paginación, bytes, IDs, seguridad, privacidad y
-  CODEOWNERS/revisor no cambia. Un gate rojo, un resultado falsificado,
-  una respuesta GitHub fallida o un HEAD distinto **no** obtiene más
-  permisos por esperar: falla cerrado de inmediato. Un gate que permanezca
-  `UNKNOWN` al agotarse el presupuesto también falla cerrado.
-- Los valores no enteros, cero, negativos o fuera del rango autorizado
-  fallan antes de sondear; el PR no puede elevar unilateralmente el input
-  desde el checkout de Factory.
-- Un `rerun --failed` por una espera agotada **no es** un reintento OWNER
-  de CodeRabbit. Solo se consulta la timeline de reintento si el
-  comentario autenticado del **reviewer requerido** ya contiene una
-  señal de rate limit. Esto no concede fallback: las reglas de
-  identidad/timeline/OWNER/SHA de este documento se conservan intactas.
-
-Se prueban los caminos a 305 y 345 segundos con el bucle Bash real y
-una pausa simulada (sin gastar minutos de runner); los escenarios de
-gate rojo/ausente, identidad desactualizada y presupuesto inválido
-deben fallar cerrado. La validación CI sobre el HEAD del PR sigue
-obligatoria antes de merge. El cambio **no mueve `Factory@v1`** ni
-reconfigura consumidores o publicaciones.
+| Tema | Contrato |
+| --- | --- |
+| Presupuesto | Input `gate_wait_seconds` de `workflow_call`: 420 segundos por defecto, solo enteros decimales 300–540; timeout del job 15 minutos |
+| Evidencia | Check-runs autenticados exact-HEAD en dos snapshots completos/estables; validación de identidad HEAD/BASE, firmas, tamaños, paginación, IDs, seguridad y privacidad sin cambios |
+| Espera | Presupuesto desde el primer sondeo con reloj `SECONDS`; pausas de máximo ocho segundos y última pausa truncada; no requiere cinco minutos reales en tests |
+| Fallo cerrado | Un gate rojo, fuente malformada, HEAD stale o presupuesto inválido falla de inmediato; un gate pendiente/ausente al agotarse los segundos también falla |
+| Reruns | `rerun --failed` por espera agotada no constituye reintento OWNER; solo se consulta timeline en intentos posteriores con señal de rate-limit del bot requerido, según prioridad BASE sobre caller; `politica_kit` conserva todas sus verificaciones de identidad y reintento |
+| Pruebas | `test_la_espera_cubre_un_gate_lento` simula 305/345 segundos; `test_un_gate_rojo_o_ausente_falla_cerrado` rechaza gates rojos/ausentes y entradas inválidas |
+| Alcance | Solo pre-live, sin mover `Factory@v1`, cambiar consumidores, conceder revisión externa ni autorizar deploy/go-live |
 
 ## Bridge inmutable exact-SHA
 
