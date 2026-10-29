@@ -206,6 +206,7 @@ class CoberturaFactory09Tests(unittest.TestCase):
         self.assertEqual(validate_privacy(record, now=NOW), "pl0n3r/GrindFlow")
 
         # Cumplimiento L17-U1: la excepción es anotación, nunca permiso.
+        record["reviewed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with patch.object(sys, "argv", ["cumplimiento.py", "--stdlib-only"]), \
              patch.object(sys, "stdin", StringIO(json.dumps(record))), \
              redirect_stdout(StringIO()) as captured:
