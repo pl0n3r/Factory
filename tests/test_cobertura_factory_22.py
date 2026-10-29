@@ -56,7 +56,7 @@ def _rows(text):
     found = {}
     for line in text.splitlines():
         fields = tuple(x.strip() for x in line.strip().strip("|").split("|"))
-        if len(fields) != 6 or not fields[0].startswith(chr(96)):
+        if len(fields) != 5 or not fields[0].startswith(chr(96)):
             continue
         key = fields[0].strip(chr(96))
         if key not in expected:
