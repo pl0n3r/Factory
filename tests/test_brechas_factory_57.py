@@ -86,7 +86,7 @@ def doc_matches(key: object, data: object) -> bool:
     if number > len(lines):
         return False
     try:
-        phrase = rows(data)[key][1].replace(r"\|", "|")
+        phrase = re.sub(r"\\+\|", "|", rows(data)[key][1])
     except (ValueError, KeyError):
         return False
     return phrase.casefold() in lines[number - 1].casefold()
