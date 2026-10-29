@@ -410,11 +410,22 @@ jobs:
           # OWNER de CodeRabbit. La timeline solo hace falta ante un
           # rate-limit verificable de la identidad del bot requerido.
           reviewer_rate_limited=false
-          if [[ -n "$REQUIRED_REVIEW_BOT" ]] &&
-             jq -s -e --arg bot "$REQUIRED_REVIEW_BOT" '
+          # BASE puede exigir reviewer aunque el caller no envíe el input.
+          # El detector de necesidad de timeline usa la misma prioridad
+          # BASE -> caller que valida politica_kit, sin conceder el fallback.
+          effective_review_bot="$REQUIRED_REVIEW_BOT"
+          if [[ -n "${BASE_POLICY_FILE:-}" ]]; then
+            base_review_bot="$(jq -r '.required_review_bot // empty' "$BASE_POLICY_FILE")"
+            if [[ -n "$base_review_bot" ]]; then
+              effective_review_bot="$base_review_bot"
+            fi
+          fi
+          if [[ -n "$effective_review_bot" ]] &&
+             jq -s -e --arg bot "$effective_review_bot" '
                any(.[]; (.user.login // "") == $bot
+                 and .user.type == "Bot"
                  and (.body | type == "string")
-                 and (.body | test("Review rate limited|Review limit reached|Rate Limit Exceeded"; "i")))
+                 and (.body | test("Review rate limited|Review limit reached"; "i")))
              ' "$comments_file" >/dev/null; then
             reviewer_rate_limited=true
           fi
