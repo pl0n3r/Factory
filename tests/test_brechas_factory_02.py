@@ -204,7 +204,7 @@ def evidence():
             before["classification"] in {"PERF_DEGRADATION", "PERF_INCIDENT"}
             and before["evidence_ref"] == "run:2"),
         "ISSUE-304:AC-03": (
-            "dba" in triage["roles"] and "qa" in triage["roles"]),
+            "dba" in triage["role_hints"] and "qa" in triage["role_hints"]),
         "ISSUE-304:AC-04": (
             compare["decision"] == "ADOPT"
             and after["evidence_ref"] != before["evidence_ref"]),
@@ -293,7 +293,7 @@ class BrechasFactory02Tests(unittest.TestCase):
         with self.assertRaises(PerformanceContractError):
             validate_performance_contract(invalid_contract)
         self.assertEqual(
-            derive_performance_status(detected(220, sample_count=0))["status"],
+            derive_performance_status(detected(220, sample_count=2))["status"],
             UNKNOWN)
 
     def test_sin_datos_reales(self):
