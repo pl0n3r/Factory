@@ -74,6 +74,11 @@ def valid_sources(sources: object) -> bool:
 
 
 def run_local_witnesses() -> dict[str, bool]:
+    # Acceptance imports this module with temporary sys.path entries that
+    # it removes before executing the AC method. Restore fixture import paths.
+    for path in (str(ROOT), str(TESTS)):
+        if path not in sys.path:
+            sys.path.insert(0, path)
     names = sorted({method for _, _, method in SPEC.values() if method})
     result = {}
     for name in names:
