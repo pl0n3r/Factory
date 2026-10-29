@@ -161,7 +161,7 @@ def sonar_evidence(row, raw):
         return (old in canonical and newer in canonical
                 and len(old) == 40 and len(newer) == 40
                 and ce_is_fail(invalid_reports[row]))
-TH + "L13-U1":
+    if row == SONAR_PATH + "L13-U1":
         return ce_is_fail("prefix " + canonical) and ce_is_fail(canonical + " suffix")
     if row == SONAR_PATH + "L15-U1":
         issues = sonar_examples.FakeIssues()
