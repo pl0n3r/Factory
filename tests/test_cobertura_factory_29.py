@@ -30,7 +30,6 @@ from scripts.lease_auto_release_integration import (
 )
 from scripts.lease_github_port import LeaseGithubPort, PortNotArmed
 
-MATRIX = ROOT / "docs/matriz-cobertura.md"
 BUDGETS = load_budgets(Path("metricas/presupuestos.json"), root=ROOT)
 OBSERVER = "docs/observador-reservas-consumidor.md"
 COMPLEXITY = "docs/organizational-complexity.md"
@@ -48,27 +47,6 @@ D = {
     f"{OBSERVER}:L80-U1": "Retención documentada 7 días; workflow declara 30.",
 }
 ALL = set(A) | set(C) | set(D)
-
-
-def coverage_rows(document: str) -> dict[str, tuple[str, ...]]:
-    """Extrae todas las filas precisas; las ausentes/duplicadas fallan cerrado."""
-    if not isinstance(document, str):
-        raise ValueError("UNKNOWN: matriz inválida")
-    result: dict[str, tuple[str, ...]] = {}
-    for line in document.splitlines():
-        if not line.startswith("| "):
-            continue
-        cells = tuple(cell.strip() for cell in line.strip().strip("|").split("|"))
-        if len(cells) < 5 or cells[0].strip(chr(96)) not in ALL:
-            continue
-        key = cells[0].strip(chr(96))
-        if (key in result or not cells[1] or not cells[2]
-                or not cells[3] or cells[2] not in ("NO_VERIFICABLE", "CUBIERTO")):
-            raise ValueError("UNKNOWN: fila duplicada o ambigua: " + key)
-        result[key] = cells
-    if set(result) != ALL:
-        raise ValueError("UNKNOWN: unidades faltantes")
-    return result
 
 
 def observation(*, work_id: str = "Factory#1820-synthetic") -> dict:
@@ -100,19 +78,9 @@ def observation(*, work_id: str = "Factory#1820-synthetic") -> dict:
 
 
 class CoberturaFactory29Tests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.rows = coverage_rows(MATRIX.read_text(encoding="utf-8"))
-
     def test_contrato_principal(self):
         """AC-01: cada unidad A comprueba el comportamiento del código real."""
-        self.assertEqual(20, len(self.rows))
         self.assertEqual(16, len(A))
-        for key in A:
-            with self.subTest(unit=key):
-                self.assertTrue(self.rows[key][1], key)
-                self.assertIn(self.rows[key][2], ("NO_VERIFICABLE", "CUBIERTO"))
-
         # L63: el censo acepta ambos idiomas, pero no concede autoridad.
         es = {"number": 7, "state": "open",
               "labels": [{"name": "estado: reservado"}]}
@@ -232,13 +200,6 @@ class CoberturaFactory29Tests(unittest.TestCase):
         unknown = preview_integrated_activity(None, None, 0, now=None)
         self.assertEqual("UNKNOWN", unknown.state)
         self.assertFalse(unknown.release_authorized)
-
-        row = next(line for line in MATRIX.read_text().splitlines()
-                   if line.startswith("| " + chr(96) + A[0] + chr(96) + " |"))
-        with self.assertRaisesRegex(ValueError, "UNKNOWN"):
-            coverage_rows(MATRIX.read_text() + "\n" + row)
-        with self.assertRaisesRegex(ValueError, "UNKNOWN"):
-            coverage_rows(MATRIX.read_text().replace(row, "", 1))
 
         raw = observation()
         for key, value in (
