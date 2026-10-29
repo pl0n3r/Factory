@@ -373,6 +373,8 @@ class CoberturaFactory30Tests(unittest.TestCase):
 
         # Este WorkItem es un fixture, no dato real ni acceso a red.
         sample = observation("synthetic:offline:work", useful=30)
+        # Sustituir la referencia histórica heredada; no es evidencia sintética.
+        sample["evidence_refs"] = ["synthetic:offline:evidence"]
         encoded = json.dumps(sample)
         self.assertNotIn("@", encoded)
         self.assertNotIn("https://", encoded)
