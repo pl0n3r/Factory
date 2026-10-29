@@ -202,7 +202,6 @@ class BrechasFactory14Tests(unittest.TestCase):
                 self.assertEqual(outcomes[row_id], expected)
 
     def test_falla_cerrado(self):
-        self.assertFalse(derived_stable_id.__name__ == "no-test")
         for invalid in (
             DerivedViewSpec("", "src", "view", "regression", None, "guard"),
             DerivedViewSpec("id", "view", "view", "regression", None, "guard"),
@@ -225,7 +224,6 @@ class BrechasFactory14Tests(unittest.TestCase):
         with self.assertRaises(ProjectDnaError):
             validate_project_dna(bad_dna)
         self.assertEqual(diet_status("sin-evidencia", supplied={"trusted": True}), UNKNOWN)
-        self.assertEqual(matrix_rows.__name__, "matrix_rows")
         with self.assertRaises(ValueError):
             matrix_rows(None)
         # Mutación causal: quitar una invariante debe romper una fila.
@@ -252,24 +250,20 @@ class BrechasFactory14Tests(unittest.TestCase):
         matrix = (ROOT / "docs/matriz-cobertura.md").read_text(encoding="utf-8")
         found = matrix_rows(matrix)
         self.assertEqual(set(found), set(IDS))
+        outcomes = proof()
         for row_id in DIET:
             with self.subTest(row=row_id):
-                self.assertEqual(proof()[row_id], UNKNOWN)
+                self.assertEqual(outcomes[row_id], UNKNOWN)
                 self.assertIn("Contrastado:", found[row_id][3])
                 self.assertEqual(found[row_id][2], "NO_VERIFICABLE")
         for row_id in DOD + (DERIVED,):
             with self.subTest(row=row_id):
                 self.assertEqual(found[row_id][2], "NO_VERIFICABLE")
                 self.assertIn("No se confirmó test + PR fusionado", found[row_id][3])
-        tampered = matrix.replace(
-            "| NO_VERIFICABLE |", "| VERIFICADO |", 1)
-        # La sustitución puede afectar otra fila: probar una de nuestras filas.
-        changed = matrix.replace(
-            "| " + chr(96) + DERIVED + chr(96) + " |",
-            "| " + chr(96) + DERIVED + chr(96) + " |", 1)
-        line = next(s for s in changed.splitlines()
+        # La mutación debe afectar específicamente una fila reclamada.
+        line = next(s for s in matrix.splitlines()
                     if s.startswith("| " + chr(96) + DERIVED + chr(96) + " |"))
-        corrupt = changed.replace(line, line.replace("NO_VERIFICABLE", "VERIFICADO"))
+        corrupt = matrix.replace(line, line.replace("NO_VERIFICABLE", "VERIFICADO"))
         with self.assertRaises(ValueError):
             matrix_rows(corrupt)
 
