@@ -144,7 +144,7 @@ def risk_cases() -> dict[str, dict]:
             task=task("docs", "docs", production=True)),
         "sparse": risk.compile_risk(
             project_dna=dna(sparse=True),
-            task=task("release", "api", production=UNKNOWN)),
+            task=task("release", "api", production="unknown")),
     }
 
 
