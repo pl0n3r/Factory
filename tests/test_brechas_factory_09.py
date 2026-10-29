@@ -119,7 +119,7 @@ def contract_evidence(identifier: str, sources: dict, matrix: dict,
         return result
     if kind == "coordinacion":
         if (not all(token in sources.get(CALLER, "") for token in
-                    ("pull_request:", "closed", "validar-pr-evento", "pr-event"))
+                    ("pull_request:", "closed", "pr-event", "github.event.action == 'closed'"))
                 or "test_merged_pr_validation_is_neutral" not in
                 sources.get(COORDINATION_TEST, "")
                 or "test_coordinacion_reusable_contract.py" not in candidate[4]):
