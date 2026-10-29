@@ -6,18 +6,21 @@ Las filas de política y operativa externa se clasifican en el Issue y PR.
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stdout
+from io import StringIO
 import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from evolution.constitution import ConstitutionError, validate_candidate
 from evolution.experience_guardrails import (
     ExperienceGuardrailError, compile_guardrail_candidates,
 )
 from lab.factory_lab import FactoryLabError, evaluate_shadow, promotion_contract
-from scripts.f2_caller_preflight import CONSUMERS, audit
+from scripts.f2_caller_preflight import CONSUMERS, audit, main as f2_main
 from scripts.work_origin import (
     WorkOriginError, canonical_payload, validate_work_item, work_fingerprint,
 )
@@ -108,10 +111,15 @@ class CoberturaFactory15Tests(unittest.TestCase):
             self.assertEqual(safe["references"], [])
             self.assertIn("no autoriza", safe["scope"])
             self.assertTrue((other / "reader.yml").exists())
+            with patch("sys.argv", ["preflight", "--root", str(root),
+                                    "--target", "readme.yml"]), (
+                    redirect_stdout(StringIO()) as output):
+                self.assertEqual(f2_main(), 0)
+            self.assertEqual(json.loads(output.getvalue())["status"], "SAFE")
 
         # factory-lab B06: Fitness improved produce evaluación read-only,
         # no despliegue, incluso cuando la promoción queda ready.
-        stable, improved, draft = fitness(0.80), fitness(0.92), candidate()
+        stable, improved, draft = fitness(0.80), fitness(0.92), record["candidate"]
         shadow = evaluate_shadow(
             stable_sha="a" * 40, candidate_sha="b" * 40,
             stable_metrics=stable, candidate_metrics=improved,
@@ -173,6 +181,11 @@ class CoberturaFactory15Tests(unittest.TestCase):
             self.assertEqual(blocked["status"], "BLOCKED")
             self.assertEqual(blocked["references"][0]["consumer"], "Condor")
             self.assertEqual(caller.read_text(encoding="utf-8"), contents)
+            with patch("sys.argv", ["preflight", "--root", str(root),
+                                    "--target", "readme.yml"]), (
+                    redirect_stdout(StringIO()) as output):
+                self.assertEqual(f2_main(), 2)
+            self.assertEqual(json.loads(output.getvalue())["status"], "BLOCKED")
             with self.assertRaises(ValueError):
                 audit(root, ["../invalid.yml"])
             (root / "ControlBot" / ".github" / "workflows").rmdir()
