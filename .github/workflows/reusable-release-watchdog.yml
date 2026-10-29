@@ -215,7 +215,7 @@ jobs:
             printf 'Repositorios afectados: **%s**\n\n' "$count"
             jq -r '
               .observations[]
-              | "- \`\(.repository_ref)\` · \`\(.workflow)\` · run \`\(.run_id)\` · \(.observed_at)"
+              | "- `\(.repository_ref)` · `\(.workflow)` · run `\(.run_id)` · \(.observed_at)"
             ' /tmp/reusable-release-result.json
             printf '\n'
             if [[ "$rollback" == "true" ]]; then
