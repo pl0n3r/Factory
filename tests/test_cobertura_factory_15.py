@@ -112,8 +112,8 @@ class CoberturaFactory15Tests(unittest.TestCase):
             self.assertIn("no autoriza", safe["scope"])
             self.assertTrue((other / "reader.yml").exists())
             with patch("sys.argv", ["preflight", "--root", str(root),
-                                    "--target", "readme.yml"]), (
-                    redirect_stdout(StringIO()) as output):
+                                    "--target", "readme.yml"]), redirect_stdout(
+                    StringIO()) as output:
                 self.assertEqual(f2_main(), 0)
             self.assertEqual(json.loads(output.getvalue())["status"], "SAFE")
 
@@ -182,8 +182,8 @@ class CoberturaFactory15Tests(unittest.TestCase):
             self.assertEqual(blocked["references"][0]["consumer"], "Condor")
             self.assertEqual(caller.read_text(encoding="utf-8"), contents)
             with patch("sys.argv", ["preflight", "--root", str(root),
-                                    "--target", "readme.yml"]), (
-                    redirect_stdout(StringIO()) as output):
+                                    "--target", "readme.yml"]), redirect_stdout(
+                    StringIO()) as output:
                 self.assertEqual(f2_main(), 2)
             self.assertEqual(json.loads(output.getvalue())["status"], "BLOCKED")
             with self.assertRaises(ValueError):
