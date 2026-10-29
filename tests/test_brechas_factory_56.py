@@ -276,7 +276,7 @@ def behavior(data):
             and rejects(watch._auto_issue_labels,
                         {"labels": ["tipo: unexpected"]}, state="open")
             and rejects(watch._auto_issue_labels,
-                        {"labels": ["estado: completado", "estado: bloqueado"]},
+                        {"labels": ["estado: disponible", "audit: synthetic"]},
                         state="open")
         )
 
