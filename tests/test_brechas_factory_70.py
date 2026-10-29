@@ -162,18 +162,39 @@ def role_evidence(row, ctx, catalog, assigned, workflow):
     }
     return checks[row]()
 
+def sonar_sync_mock(raw, issues):
+    """Reconciliar solo contra un fake; no hay token ni cliente remoto."""
+    return sonar_examples.sonar_watch.sync_project(
+        contract=sonar_examples.contract(), snapshot=copy.deepcopy(raw),
+        observed_at=sonar_examples.NOW, project_ref="pl0n3r/Condor",
+        origin_ref="sonar:condor",
+        origin_url="https://sonarcloud.io/project/overview?id=pl0n3r_Condor",
+        issues=issues,
+    )
+
+
+def sonar_issue_closed(raw):
+    issues = sonar_examples.FakeIssues()
+    operations = sonar_sync_mock(raw, issues)
+    return ({"action": "closed", "signal": "ce_task"} in operations
+            and issues.rows[0]["state"] == "closed"
+            and all(call[0] == "update" for call in issues.calls)
+            and sonar_examples.ce_signal(raw)["freshness"]["state"] == "CURRENT")
+
+
+def sonar_no_external_effects(raw):
+    issues = sonar_examples.FakeIssues()
+    with patch("socket.socket", side_effect=AssertionError("no network")), \
+         patch("urllib.request.urlopen", side_effect=AssertionError("no Sonar writes")):
+        operations = sonar_sync_mock(raw, issues)
+    return (len(operations) == 1 and operations[0]["action"] == "closed"
+            and issues.calls == [("update", 1039, "closed")])
+
+
 def sonar_evidence(row, raw):
     canonical = sonar_examples.SUPERSEDED
     old = sonar_examples.OLD_SHA
     newer = sonar_examples.NEW_SHA
-    if row == SONAR_PATH + "L3-U1":
-        signal = sonar_examples.ce_signal(raw)
-        return (signal["status"] == "PASS"
-                and signal["reason"] == "ce_task_superseded_by_newer_report"
-                and ce_is_fail("Compute Engine failure unrelated to superseded report"))
-    if row == SONAR_PATH + "L7-U1":
-        return (sonar_examples.ce_signal(raw)["status"] == "PASS"
-                and ce_is_fail(canonical + " extra information"))
     invalid_reports = {
         SONAR_PATH + "L9-U1": canonical.replace(old, "bad-old-sha", 1),
         SONAR_PATH + "L10-U1": canonical.replace(
@@ -190,36 +211,25 @@ def sonar_evidence(row, raw):
         return (old in canonical and newer in canonical
                 and len(old) == 40 and len(newer) == 40
                 and ce_is_fail(invalid_reports[row]))
-    if row == SONAR_PATH + "L13-U1":
-        return ce_is_fail("prefix " + canonical) and ce_is_fail(canonical + " suffix")
-    if row == SONAR_PATH + "L15-U1":
-        issues = sonar_examples.FakeIssues()
-        operations = sonar_examples.sonar_watch.sync_project(
-            contract=sonar_examples.contract(), snapshot=copy.deepcopy(raw),
-            observed_at=sonar_examples.NOW, project_ref="pl0n3r/Condor",
-            origin_ref="sonar:condor",
-            origin_url="https://sonarcloud.io/project/overview?id=pl0n3r_Condor",
-            issues=issues,
-        )
-        return ({"action": "closed", "signal": "ce_task"} in operations
-                and issues.rows[0]["state"] == "closed"
-                and all(call[0] == "update" for call in issues.calls)
-                and sonar_examples.ce_signal(raw)["freshness"]["state"] == "CURRENT")
-    if row == SONAR_PATH + "L21-U1":
-        issues = sonar_examples.FakeIssues()
-        with patch("socket.socket", side_effect=AssertionError("no network")), \
-             patch("urllib.request.urlopen", side_effect=AssertionError("no Sonar writes")):
-            ops = sonar_examples.sonar_watch.sync_project(
-                contract=sonar_examples.contract(), snapshot=copy.deepcopy(raw),
-                observed_at=sonar_examples.NOW, project_ref="pl0n3r/Condor",
-                origin_ref="sonar:condor",
-                origin_url="https://sonarcloud.io/project/overview?id=pl0n3r_Condor",
-                issues=issues,
-            )
-        return (len(ops) == 1 and ops[0]["action"] == "closed"
-                and issues.calls == [("update", 1039, "closed")])
-    return False
-
+    checks = {
+        SONAR_PATH + "L3-U1": lambda: (
+            sonar_examples.ce_signal(raw)["status"] == "PASS"
+            and sonar_examples.ce_signal(raw)["reason"] ==
+            "ce_task_superseded_by_newer_report"
+            and ce_is_fail("Compute Engine failure unrelated to superseded report")
+        ),
+        SONAR_PATH + "L7-U1": lambda: (
+            sonar_examples.ce_signal(raw)["status"] == "PASS"
+            and ce_is_fail(canonical + " extra information")
+        ),
+        SONAR_PATH + "L13-U1": lambda: (
+            ce_is_fail("prefix " + canonical)
+            and ce_is_fail(canonical + " suffix")
+        ),
+        SONAR_PATH + "L15-U1": lambda: sonar_issue_closed(raw),
+        SONAR_PATH + "L21-U1": lambda: sonar_no_external_effects(raw),
+    }
+    return checks[row]()
 
 def evidence(row, fixtures):
     """No inferir éxito para ID fuera de alcance ni datos ausentes/ambiguos."""
