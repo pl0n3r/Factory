@@ -213,7 +213,7 @@ def evidence(catalog: dict, doc: str, source: str) -> dict[str, bool]:
         proposal["impact_score"] ==
         round(proposal["regression_pct"] * min(
             4.0, round(math.log10(proposal["post_deploy_samples"] + 1), 4)), 2)
-        and "solo ordenar evidencia comparable" in doc
+        and "ordenar evidencia comparable" in doc
         and not any(k in proposal for k in ("revenue", "legal_severity"))
     )
     full = compare(catalog)
