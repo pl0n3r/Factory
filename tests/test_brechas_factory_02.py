@@ -33,6 +33,7 @@ UNKNOWN = "UNKNOWN"
 OPERATIONAL_GAPS = {
     "ISSUE-1382:AC-05": "24h_100_terminal_cycles_per_repository_not_observed",
     "ISSUE-1382:AC-06": "phase_b_authority_and_qa_not_observed",
+    "ISSUE-304:AC-02": "authenticated_baseline_regression_not_demonstrated",
     "ISSUE-1382:AC-07": "consumer_runtime_and_flag_not_observed",
     "ISSUE-304:AC-11": "live_before_after_e2e_not_observed",
     "ISSUE-305:AC-01": "restore_rpo_rto_not_observed",
@@ -49,6 +50,7 @@ def rows(raw):
         raise ValueError("Matriz ilegible")
     found = {}
     for line in raw.splitlines():
+        line = line.lstrip()
         if not line.startswith("|"):
             continue
         cells = tuple(x.strip() for x in line.strip().strip("|").split("|"))
@@ -179,6 +181,8 @@ def evidence():
     escalation = plan_remediation(
         before, triage, proposal(triggered_conditions=["cost_change"]))
     compare = evaluate_before_after(before, after)
+    insufficient_compare = evaluate_before_after(
+        before, detected(220, observed_at="2026-09-28T19:00:00Z"))
     stale = derive_performance_status(
         detected(220, observed_at="2026-09-28T19:00:00Z"))
     bad = copy.deepcopy(manifest())
@@ -207,7 +211,9 @@ def evidence():
             "dba" in triage["role_hints"] and "qa" in triage["role_hints"]),
         "ISSUE-304:AC-04": (
             compare["decision"] == "ADOPT"
-            and after["evidence_ref"] != before["evidence_ref"]),
+            and after["evidence_ref"] != before["evidence_ref"]
+            and insufficient_compare["decision"] == "REVERT_OR_REPLAN"
+            and "evidence_not_current" in insufficient_compare["reasons"]),
         "ISSUE-304:AC-05": (
             plan["decision"] == "AUTO_REPAIR"
             and bool(proposal()["hypothesis_ref"])),
@@ -270,6 +276,7 @@ class BrechasFactory02Tests(unittest.TestCase):
         for invalid in (
             None, "", original.replace(line, "", 1),
             original + "\n" + line,
+            original + "\n    " + line,
             original.replace(line, line.replace("NO_VERIFICABLE", "CUBIERTO")),
         ):
             with self.subTest(invalid=str(invalid)[:25]):
