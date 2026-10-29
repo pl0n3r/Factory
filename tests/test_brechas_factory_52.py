@@ -310,7 +310,7 @@ def quality_health_probe():
         ),
         "docs/quality-engineering.md:L32-U1": (
             flaky["state"] == "DEGRADED"
-            and not readiness_projection(flaky)["ready"]
+            and readiness_projection(flaky)["quality_health"] == "DEGRADED"
             and "quality_regression_flaky" in flaky["work_item_classes"]
         ),
     }
