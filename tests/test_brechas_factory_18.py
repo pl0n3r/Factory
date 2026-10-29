@@ -11,6 +11,7 @@ from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from evolution.constitution import validate_candidate
 from evolution.experience_guardrails import (
@@ -52,6 +53,11 @@ LOCAL_KEYS = set(CLAUSES) - {
     "docs/f2-caller-migration.md:L15-U2",
 }
 
+# This acceptance inventory is independent of the implementation under audit.
+REQUIRED_F2_CONSUMERS = (
+    "Condor", "GrindFlow", "brvtal", "ControlBot", "AutoFactory", "FactoryRunner",
+)
+
 
 def original_sources() -> dict[str, str]:
     """Read only the three original checkout documents, never remote state."""
@@ -60,25 +66,31 @@ def original_sources() -> dict[str, str]:
 
 
 def matrix_rows(raw: object) -> dict[str, str]:
-    """Reject duplicates, missing provenance, altered states and malformed rows."""
+    """Reject known IDs with malformed shape, including spaced duplicates."""
     if type(raw) is not str or not raw:
         raise ValueError("UNKNOWN: matrix missing")
     found: dict[str, str] = {}
     for line in raw.splitlines():
         normalized = line.lstrip()
-        for key, (_, phrase) in CLAUSES.items():
-            if not normalized.startswith("| `" + key + "` |"):
-                continue
-            if key in found:
-                raise ValueError("UNKNOWN: duplicate row " + key)
-            parts = [piece.strip() for piece in normalized.strip().strip("|").split("|")]
-            if (len(parts) < 5 or parts[0] != "`" + key + "`"
-                    or parts[2] != "NO_VERIFICABLE"
-                    or phrase.casefold() not in parts[1].casefold()
-                    or not parts[3] or not parts[4]
-                    or "No se confirmó test + PR fusionado" not in parts[3]):
-                raise ValueError("UNKNOWN: changed or ambiguous row " + key)
-            found[key] = parts[1]
+        if not normalized.startswith("|"):
+            continue
+        parts = [piece.strip() for piece in normalized.strip().strip("|").split("|")]
+        if not parts or not (parts[0].startswith("`") and parts[0].endswith("`")):
+            continue
+        key = parts[0][1:-1]
+        if key not in CLAUSES:
+            continue
+        if key in found:
+            raise ValueError("UNKNOWN: duplicate row " + key)
+        _, phrase = CLAUSES[key]
+        if (not normalized.startswith("| `" + key + "` |")
+                or len(parts) != 5 or parts[0] != "`" + key + "`"
+                or parts[2] != "NO_VERIFICABLE"
+                or phrase.casefold() not in parts[1].casefold()
+                or not parts[3] or not parts[4]
+                or "No se confirmó test + PR fusionado" not in parts[3]):
+            raise ValueError("UNKNOWN: changed or ambiguous row " + key)
+        found[key] = parts[1]
     if set(found) != set(CLAUSES):
         raise ValueError("UNKNOWN: missing coverage IDs")
     return found
@@ -98,6 +110,24 @@ def source_matches(key: str, docs: dict[str, str]) -> bool:
         return False
     lines = original.splitlines()
     return 1 <= line_no <= len(lines) and phrase.casefold() in lines[line_no - 1].casefold()
+
+
+def matrix_description_matches(key: str, description: str, docs: dict[str, str]) -> bool:
+    """Compare each entire matrix assertion to its original source line."""
+    if key not in CLAUSES or not isinstance(description, str):
+        return False
+    path, phrase = CLAUSES[key]
+    original = docs.get(path)
+    if not isinstance(original, str):
+        return False
+    try:
+        line_no = int(key.split(":L", 1)[1].split("-", 1)[0])
+    except (IndexError, ValueError):
+        return False
+    lines = original.splitlines()
+    return (1 <= line_no <= len(lines)
+            and len(description) >= len(phrase)
+            and description.casefold() in lines[line_no - 1].casefold())
 
 
 def synthetic_lesson(number: int, *, source: str | None = None) -> dict[str, str]:
@@ -185,25 +215,27 @@ def guardrail_proof() -> dict[str, bool]:
 
 
 def f2_proof() -> bool:
-    """A SAFE inventory is scoped to six checkouts; missing and used fail closed."""
+    """A SAFE inventory must cover independently specified six checkouts."""
+    if tuple(f2.CONSUMERS) != REQUIRED_F2_CONSUMERS:
+        return False
     with TemporaryDirectory(prefix="factory-1636-") as directory:
         root = Path(directory)
-        for name in f2.CONSUMERS:
+        for name in REQUIRED_F2_CONSUMERS:
             (root / name / ".github/workflows").mkdir(parents=True)
         safe = f2.audit(root, ["readme.yml"])
-        workflow = root / f2.CONSUMERS[0] / ".github/workflows" / "caller.yml"
+        workflow = root / REQUIRED_F2_CONSUMERS[0] / ".github/workflows" / "caller.yml"
         workflow.write_text("jobs:\n  audit:\n    uses: pl0n3r/factory/.github/workflows/readme.yml@v1\n", encoding="utf-8")
         called = f2.audit(root, ["readme.yml"])
         workflow.unlink()
-        missing = root / f2.CONSUMERS[-1] / ".github/workflows"
+        missing = root / REQUIRED_F2_CONSUMERS[-1] / ".github/workflows"
         missing.rmdir()
         incomplete = f2.audit(root, ["readme.yml"])
     return (safe["status"] == "SAFE" and safe["references"] == []
-            and safe["scanned_consumers"] == list(f2.CONSUMERS)
+            and safe["scanned_consumers"] == list(REQUIRED_F2_CONSUMERS)
             and "no autoriza" in safe["scope"]
             and called["status"] == "BLOCKED" and len(called["references"]) == 1
             and incomplete["status"] == "BLOCKED"
-            and f2.CONSUMERS[-1] in incomplete["missing_consumers"])
+            and REQUIRED_F2_CONSUMERS[-1] in incomplete["missing_consumers"])
 
 
 def proof() -> dict[str, bool]:
@@ -222,12 +254,14 @@ def assess(docs: object, checks: object) -> dict[str, str]:
            for path in (MATRIX, GUARDRAILS, MIGRATION)):
         return result
     try:
-        matrix_rows(docs[MATRIX])
+        rows = matrix_rows(docs[MATRIX])
     except ValueError:
         return result
     if (set(checks) != LOCAL_KEYS
             or any(type(value) is not bool for value in checks.values())
-            or not all(source_matches(key, docs) for key in CLAUSES)):
+            or not all(source_matches(key, docs) for key in CLAUSES)
+            or not all(matrix_description_matches(key, rows[key], docs)
+                       for key in CLAUSES)):
         return result
     for key in LOCAL_KEYS:
         if checks[key]:
@@ -255,11 +289,24 @@ class BrechasFactory18Tests(unittest.TestCase):
                             if line.startswith("| `" + key + "` |"))
             for invalid in (docs[MATRIX].replace(original, "", 1),
                             docs[MATRIX] + "\n  " + original,
+                            docs[MATRIX] + "\n  " + original.replace("| `", "|  `", 1),
                             docs[MATRIX].replace(original, original.replace(
                                 "NO_VERIFICABLE", "CUBIERTO", 1), 1)):
                 with self.subTest(key=key), self.assertRaisesRegex(ValueError, UNKNOWN):
                     matrix_rows(invalid)
                 self.assertEqual({UNKNOWN}, set(assess({**docs, MATRIX: invalid}, checks).values()))
+        # An unchanged prefix cannot disguise false numeric thresholds.
+        threshold = "docs/experience-guardrails.md:L32-U1"
+        row = next(line for line in docs[MATRIX].splitlines()
+                   if line.startswith("| `" + threshold + "` |"))
+        altered = row.replace("**2 lecciones**", "**1 lección**").replace(
+            "**2 fuentes distintas**", "**1 fuente distinta**")
+        self.assertNotEqual(row, altered)
+        poisoned = docs[MATRIX].replace(row, altered, 1)
+        self.assertEqual({UNKNOWN}, set(assess({**docs, MATRIX: poisoned}, checks).values()))
+        # The audited module cannot shrink the six required checkouts.
+        with patch.object(f2, "CONSUMERS", f2.CONSUMERS[:-1]):
+            self.assertFalse(f2_proof())
         self.assertEqual({UNKNOWN}, set(assess({}, checks).values()))
         self.assertEqual({UNKNOWN}, set(assess(docs, {}).values()))
         for key in LOCAL_KEYS:
