@@ -262,5 +262,15 @@ class CoberturaFactory35Tests(unittest.TestCase):
         self.assertFalse(names & dangerous)
 
 
+    def test_validar_exact_head(self) -> None:
+        """Exercise the CI contract without a circular acceptance/check dependency."""
+        from scripts.aceptacion_kit import FORBIDDEN_CHECKS
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("Validar", FORBIDDEN_CHECKS)
+        self.assertIn("name: Validar", workflow)
+        self.assertIn("github.event.pull_request.head.sha", workflow)
+        self.assertIn("needs: [event_guard, preflight, php, node]", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
