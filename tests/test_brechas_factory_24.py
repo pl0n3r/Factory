@@ -53,7 +53,7 @@ CLAUSES = {
          "Si cualquiera cambia, este inventario debe considerarse histórico"),
     "docs/inventario-tecnico-datos-productos.md:B02":
         ("docs/inventario-tecnico-datos-productos.md",
-         "no identificado; el gateway actual es nulo"),
+         "gateway actual es nulo"),
     "docs/issue-contract-preflight.md:L19-U1":
         ("docs/issue-contract-preflight.md", "valida primero las secciones y criterios"),
     "docs/issue-contract-preflight.md:L20-U1":
