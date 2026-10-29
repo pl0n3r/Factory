@@ -199,7 +199,12 @@ def evidence(row, fixtures):
             ctx, catalog, assigned = fixtures["roles"]
             ok = role_evidence(row, ctx, catalog, assigned, fixtures["workflow"])
         else:
-            ok = sonar_evidence(row, fixtures["sonar"])
+            snapshot = fixtures["sonar"]
+            if not isinstance(snapshot, dict) or not isinstance(
+                snapshot.get("ce_task"), dict
+            ):
+                return UNKNOWN
+            ok = sonar_evidence(row, snapshot)
     except (KeyError, ValueError, TypeError, AttributeError, IndexError):
         return UNKNOWN
     return VERIFIED if ok is True else UNKNOWN
