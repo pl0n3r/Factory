@@ -464,5 +464,39 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
         self.assertNotIn("refs/tags/v1", workflow)
 
 
+    def test_alert_jq_filter_renders_synthetic_markdown(self):
+        """Ejecutar el filtro del workflow real con jq y evidencia sintética."""
+        import re
+        import subprocess
+
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        sections = workflow.split(
+            "      - name: Mantener una alerta por release\n", 1
+        )
+        self.assertEqual(len(sections), 2)
+        match = re.search(
+            r"jq -r '\n(?P<filter>.*?)\n\s+' /tmp/reusable-release-result\.json",
+            sections[1],
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "filtro jq de observaciones no localizado")
+        self.assertEqual(sections[1].count("jq -r '\n"), 1)
+        example = {"observations": [observation()]}
+        result = subprocess.run(
+            ["jq", "-r", match.group("filter")],
+            input=json.dumps(example),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=8,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            "- `pl0n3r/ControlBot` · `Coordinación` · run `37037895618`"
+            " · 2026-10-02T17:01:00Z",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
