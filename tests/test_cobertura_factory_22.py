@@ -202,8 +202,10 @@ class CoberturaFactory22Tests(unittest.TestCase):
             {"title": "X" * 161}, {"related_refs": ["invalid@example.invalid"]},
         ):
             with self.subTest(changes=patch_values):
+                malformed = CONTRACT["item"]()
+                malformed.update(patch_values)
                 with self.assertRaises(KnowledgeContractError):
-                    validate_knowledge_item(CONTRACT["item"](**patch_values))
+                    validate_knowledge_item(malformed)
 
         wrong = E2E["postmortem"]("postmortem-bad", "pl0n3r/Factory#320")
         wrong["root_cause"]["evidence_refs"] = []
