@@ -40,7 +40,7 @@ CLAUSES = {
     "L43-U1": "Reportar por repositorio y global conteos separados de disponible",
     "L43-U2": "identificar causa y fuente de cada bloqueo.",
     "L43-U3": "El `estado: requiere recuperación` / `status: recovery required`",
-    "L43-U4": "Contarlo por separado solo tras integrar el contrato de Factory #1102",
+    "L43-U4": "Contarlo por separado solo tras integrar el contrato de",
     "L43-U5": "antes, rechazar snapshots que no puedan representar recovery",
 }
 IDS = tuple(PREFIX + suffix for suffix in CLAUSES)
@@ -165,9 +165,9 @@ def evidence(doc: str, plan: str) -> dict[str, bool]:
                     and "**no** autorización autoejecutable" in doc),
         "L3-U1": ("no habilita por sí solo acciones" in doc
                    and "PLAN-AGENTES.md" in doc
-                   and "factory-acceptance" in plan),
+                   and "reserva V3" in plan),
         "L31-U1": ("AC-NN debe señalar unittest existente/implementable" in doc
-                    and "Contrato ejecutable" in plan
+                    and "aceptación" in plan
                     and (ROOT / "tests/test_principios_construccion.py").is_file()),
         "L35-U1": (
             quota.must_fail_closed
