@@ -142,20 +142,24 @@ sleep() { SECONDS=$(( SECONDS + $1 )); }
         self.assertNotIn("elapsed=", terminal_red.stdout)
         missing = self.run_wait(999, mode="missing")
         self.assertNotEqual(missing.returncode, 0)
-        self.assertIn("Gates requeridos sin evidencia terminal verde", missing.stderr)
+        self.assertIn("Gates requeridos sin evidencia terminal verde", missing.stdout)
         for budget in (0, -1, 299, 541, 9999):
             with self.subTest(budget=budget):
                 invalid = self.run_wait(10, budget=budget)
                 self.assertNotEqual(invalid.returncode, 0)
-                self.assertIn("gate_wait_seconds inválido", invalid.stderr)
+                self.assertIn("gate_wait_seconds inválido", invalid.stdout)
         stale = self.run_wait(999, mode="stale")
         self.assertNotEqual(stale.returncode, 0)
-        self.assertIn("Identidad HEAD/BASE cambió", stale.stderr)
+        self.assertIn("Identidad HEAD/BASE cambió", stale.stdout)
 
     def test_rerun_por_gate_lento_no_es_reintento_owner(self):
         """Rerun without verified reviewer rate-limit must not use timeline."""
         self.assertIn(
-            'if (( GITHUB_RUN_ATTEMPT > 1 )) && [[ "$reviewer_rate_limited" == true ]]; then',
+            'if (( GITHUB_RUN_ATTEMPT > 1 )); then',
+            self.workflow,
+        )
+        self.assertIn(
+            'if [[ "$reviewer_rate_limited" == true ]]; then',
             self.workflow,
         )
         self.assertIn('(.user.login // "") == $bot', self.workflow)
