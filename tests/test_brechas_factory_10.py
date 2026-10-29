@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 import runpy
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,15 +101,22 @@ def source_matches(key: object, sources: object) -> bool:
 def local_proof() -> dict[str, bool]:
     """Ejercita las regresiones existentes usando solo fixtures offline."""
     passed = {}
-    for name, (path, cls_name, method) in WITNESSES.items():
-        module = runpy.run_path(str(ROOT / path))
-        case = module[cls_name](method)
-        case.setUp()
-        try:
-            getattr(case, method)()
-        finally:
-            case.tearDown()
-        passed[name] = True
+    initial_path = sys.path[:]
+    try:
+        for import_root in (ROOT, ROOT / "tests"):
+            if str(import_root) not in sys.path:
+                sys.path.insert(0, str(import_root))
+        for name, (path, cls_name, method) in WITNESSES.items():
+            module = runpy.run_path(str(ROOT / path))
+            case = module[cls_name](method)
+            case.setUp()
+            try:
+                getattr(case, method)()
+            finally:
+                case.tearDown()
+            passed[name] = True
+    finally:
+        sys.path[:] = initial_path
     return {
         f"{DOC}:L{line}-U1": passed[WITNESS_FOR[line]] for line in LINES
     }
@@ -183,7 +191,7 @@ class BrechasFactory10Tests(unittest.TestCase):
                 imports.update(x.name.split(".")[0] for x in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imports.add(node.module.split(".")[0])
-        self.assertEqual(imports, {"__future__", "ast", "pathlib", "runpy", "unittest"})
+        self.assertEqual(imports, {"__future__", "ast", "pathlib", "runpy", "sys", "unittest"})
         self.assertTrue(all((ROOT / path).is_file()
                             for path, _, _ in WITNESSES.values()))
         self.assertEqual(set(WITNESS_FOR), set(LINES))
