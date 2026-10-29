@@ -160,7 +160,10 @@ sleep() { SECONDS=$(( SECONDS + $1 )); }
         )
         self.assertIn('(.user.login // "") == $bot', self.workflow)
         self.assertIn('reviewer_rate_limited=false', self.workflow)
-        self.assertIn('[[ -n "$REQUIRED_REVIEW_BOT" ]]', self.workflow)
+        self.assertIn('[[ -n "$effective_review_bot" ]]', self.workflow)
+        self.assertIn('base_review_bot="$(jq -r', self.workflow)
+        self.assertIn('effective_review_bot="$base_review_bot"', self.workflow)
+        self.assertIn('and .user.type == "Bot"', self.workflow)
         self.assertIn('--timeline-file "$timeline_file"', self.workflow)
 
     def test_pending_required_checks_are_not_misclassified_as_final_failure(self):
