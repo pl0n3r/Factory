@@ -204,7 +204,7 @@ class BrechasFactory09Tests(unittest.TestCase):
         """AC-03: sólo lectura local, fixtures falsos y biblioteca estándar."""
         body = Path(__file__).read_text(encoding="utf-8")
         self.assertNotRegex(body, r"(?m)^(?:import|from)\s+(?:requests|httpx|urllib|socket|subprocess)\b")
-        self.assertNotIn("-----BEGIN PRIVATE KEY-----", body)
+        self.assertNotIn("-----BEGIN " + "PRIVATE KEY-----", body)
         self.assertNotRegex(body, r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
         for path in PATHS:
             with self.subTest(path=path):
