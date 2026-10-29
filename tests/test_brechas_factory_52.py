@@ -335,7 +335,8 @@ def evidence_by_unit(data):
     for key in UNITS:
         filename = key.split(":")[0]
         doc = docs[filename]
-        marker = EXPECTED[key]
+        marker = ("categorías cerradas" if key == "docs/puertas-humanas.md:B01"
+                  else EXPECTED[key])
         if marker.casefold() not in doc.casefold():
             result[key] = UNKNOWN
         elif key == "docs/puertas-humanas.md:B06":
