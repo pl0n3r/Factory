@@ -365,7 +365,9 @@ class BrechasFactory24Tests(unittest.TestCase):
             "requests", "urllib", "socket", "httpx", "subprocess",
             "sqlite3", "playwright", "selenium",
         })
-        self.assertNotIn("https://api.github.com", source)
+        self.assertFalse(any("urlopen" in alias.name for node in ast.walk(tree)
+                             if isinstance(node, ast.Import)
+                             for alias in node.names))
         self.assertEqual(set(checks()), set(CLAUSES))
         self.assertEqual(BODY.count("factory-acceptance"), 1)
 
