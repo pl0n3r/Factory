@@ -196,8 +196,10 @@ class CoberturaFactory39Tests(unittest.TestCase):
             self.assertEqual(empty[field], "unknown", field)
         self.assertNotIn("credentials", synthetic_dna())
         self.assertNotIn("health", synthetic_dna())
-        self.assertEqual(evaluate_issue_body(synthetic_body()),
-                         evaluate_issue_body(synthetic_body()))
+        body = synthetic_body()
+        baseline = evaluate_issue_body(body)
+        with_unrelated_whitespace = evaluate_issue_body(body + "\n")
+        self.assertEqual(baseline, with_unrelated_whitespace)
 
     def test_gate_validar_presente(self):
         # No suplanta el check terminal exact-HEAD que publica GitHub.
