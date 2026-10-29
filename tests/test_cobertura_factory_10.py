@@ -107,7 +107,7 @@ class CoberturaFactory10Tests(unittest.TestCase):
         exercised.add(PRIV + "L21-U2")
 
         # L36: ejecutar la suite real, no buscar una cadena en documentación.
-        suite = unittest.defaultTestLoader.discover(
+        suite = unittest.TestLoader().discover(
             str(ROOT / "seguridad"), pattern="test_cumplimiento.py")
         result = unittest.TestResult()
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
@@ -167,7 +167,7 @@ class CoberturaFactory10Tests(unittest.TestCase):
         exercised.add(VIEWS + "L24-U1")
 
         # L28: regresión real de claims README/ESTADO sobre sus fuentes.
-        suite = unittest.defaultTestLoader.discover(
+        suite = unittest.TestLoader().discover(
             str(ROOT / "tests"), pattern="test_readme_tandas.py")
         result = unittest.TestResult()
         suite.run(result)
