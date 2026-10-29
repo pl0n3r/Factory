@@ -63,7 +63,7 @@ def matrix_rows(raw: object) -> dict[str, tuple[str, ...]]:
         if not cells or cells[0].strip(chr(96)) not in IDS:
             continue
         unit = cells[0].strip(chr(96))
-        if unit in found or len(cells) != 5 or not all(cells[:4]):
+        if unit in found or len(cells) != 5 or not all(cells):
             raise ValueError(f"fila ambigua: {unit}")
         if cells[2] != "NO_VERIFICABLE":
             raise ValueError(f"promoción sin evidencia: {unit}")
@@ -187,6 +187,7 @@ class BrechasFactory01Tests(unittest.TestCase):
         for broken in (
             None, "", matrix.replace(row, "", 1), matrix + "\n" + row,
             matrix.replace(row, row.replace("NO_VERIFICABLE", "CUBIERTO", 1)),
+            matrix.replace(row, row.rpartition(" | ")[0] + " |  |", 1),
         ):
             with self.subTest(sample=str(broken)[:35]):
                 with self.assertRaises(ValueError):
