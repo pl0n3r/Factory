@@ -276,7 +276,7 @@ class BrechasFactory18Tests(unittest.TestCase):
         imports |= {node.module.split(".")[0] for node in ast.walk(syntax)
                     if isinstance(node, ast.ImportFrom) and node.module}
         self.assertFalse(imports & {"requests", "httpx", "socket", "subprocess", "urllib"})
-        self.assertNotIn("BEGIN PRIVATE KEY", text)
+        self.assertNotIn("BEGIN " + "PRIVATE KEY", text)
         self.assertEqual({MATRIX, GUARDRAILS, MIGRATION}, set(original_sources()))
         self.assertTrue(all(not Path(path).is_absolute() for path in original_sources()))
 
