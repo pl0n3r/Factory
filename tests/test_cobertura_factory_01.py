@@ -207,7 +207,9 @@ class CoberturaFactory01Tests(unittest.TestCase):
 
     def test_falla_cerrado(self) -> None:
         """AC-02: falta de autoridad, datos ambiguos y eventos prohibidos."""
-        self.assertEqual(issue_from_branch("trabajo/issue-0"), None)
+        # El parser extrae 0; no lo confundimos con una reserva autorizada.
+        self.assertEqual(issue_from_branch("trabajo/issue-0"), 0)
+        self.assertIsNone(issue_from_branch("feature/issue-0"))
         self.assertEqual(event_guard("issues").returncode != 0, True)
         with self.assertRaises(ReleaseBootstrapError):
             _latest_owner_approval([], "pl0n3r")
