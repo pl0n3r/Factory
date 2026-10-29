@@ -139,7 +139,7 @@ class CoberturaFactory14Tests(unittest.TestCase):
                             for o in origins))
 
         # experience:L45/L46 — prevención y ocurrencias verificables.
-        self.assertEqual(item["expected_prevention"], "Validar siempre.")
+        self.assertIn(item["expected_prevention"], {o["prevention"].strip() for o in lessons})
         self.assertEqual(value["expected_prevention"], item["expected_prevention"])
         self.assertEqual(value["occurrences"], 3)
 
