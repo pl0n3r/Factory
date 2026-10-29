@@ -146,10 +146,15 @@ def recovery_evidence():
     secret_request = dict(req, backup_id="ghp_" + "Z" * 24)
     missing_immutable = dict(proof)
     del missing_immutable["immutable_version_ref"]
+    secret_rejected_without_echo = False
+    try:
+        build_backup_pipeline(m, secret_request)
+    except RecoveryPipelineError as exc:
+        secret_rejected_without_echo = "ghp_" not in str(exc)
     ac03 = all((
         rejected(lambda: validate_recovery_manifest(extra), RecoveryContractError),
         rejected(lambda: validate_recovery_manifest(wrong_destination), RecoveryContractError),
-        rejected(lambda: build_backup_pipeline(m, secret_request), RecoveryPipelineError),
+        secret_rejected_without_echo,
         rejected(lambda: verify_backup_evidence(m, plan, missing_immutable), RecoveryPipelineError),
     ))
     descriptor_req = {
@@ -177,7 +182,13 @@ def recovery_evidence():
     ac06 = (backup["status"] == "VERIFIED" and backup["encrypted"] is True
             and bool(backup["evidence_refs"])
             and rejected(lambda: verify_backup_evidence(
-                m, plan, dict(proof, encrypted=False)), RecoveryPipelineError))
+                m, plan, dict(proof, encrypted=False)), RecoveryPipelineError)
+            and rejected(lambda: verify_backup_evidence(
+                m, plan, dict(proof, immutable_version_ref="")), RecoveryPipelineError)
+            and rejected(lambda: verify_backup_evidence(
+                m, plan, dict(proof, cold_copy_verified=False)), RecoveryPipelineError)
+            and rejected(lambda: verify_backup_evidence(
+                m, plan, dict(proof, evidence_refs=[])), RecoveryPipelineError))
     ac07 = (restore["target"]["kind"] == "disposable"
             and {"validate_checksum", "decrypt", "restore", "health",
                  "smoke", "integrity"}.issubset(x["kind"] for x in restore["steps"])
