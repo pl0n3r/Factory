@@ -83,12 +83,14 @@ def matrix_rows(raw: object) -> dict[str, str]:
             # La propia descripción podría contener barras; delimitamos por
             # el estado de matriz y preservamos texto de la cláusula.
             left, separator, right = line.partition(" | NO_VERIFICABLE | ")
-            if not separator or not right.strip().endswith("|"):
-                raise ValueError(f"UNKNOWN: fila alterada: {clause}")
+            evidence, source_separator, source = right.rpartition(" | ")
+            if (not separator or not right.strip().endswith("|")
+                    or not source_separator or not evidence.strip()
+                    or not source.strip(" |")):
+                raise ValueError(f"UNKNOWN: fila sin evidencia o fuente: {clause}")
             description = left[len(prefix):].strip()
             if (clause in found or not description
-                    or expected.casefold() not in description.casefold()
-                    or not right.strip(" |")):
+                    or expected.casefold() not in description.casefold()):
                 raise ValueError(f"UNKNOWN: fila incompleta o duplicada: {clause}")
             found[clause] = description
             break
@@ -296,9 +298,14 @@ class BrechasFactory20Tests(unittest.TestCase):
         first = next(line for line in matrix.splitlines()
                      if line.startswith(f"| `{next(iter(CLAUSES))}` |"))
         proof = evidence()
+        prefix, delimiter, right = first.partition(" | NO_VERIFICABLE | ")
+        _evidence, final_delimiter, source = right.rpartition(" | ")
+        self.assertTrue(delimiter and final_delimiter)
+        missing_evidence = prefix + " | NO_VERIFICABLE |  | " + source
         for bad in (
             None, "", matrix.replace(first, "", 1),
             matrix + "\n" + first,
+            matrix.replace(first, missing_evidence, 1),
             matrix.replace(first, first.replace(
                 "NO_VERIFICABLE", "CUBIERTO", 1), 1),
         ):
