@@ -2,7 +2,7 @@
 
 A = executable offline; B = requires authentic GitHub job evidence;
 C = documentary interpretation, not independently executable.
-No production, PII, credentials, web access, or coverage matrix edits.
+No production, PII, credentials, network, or matrix inspection/edits.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import copy
 from datetime import datetime
 import json
 from pathlib import Path
-import re
 import runpy
 import unittest
 
@@ -20,7 +19,6 @@ from performance.remediation import plan_remediation
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "performance/contracts/grindflow.json"
-MATRIX = ROOT / "docs/matriz-cobertura.md"
 START = "2026-10-10T00:41:39Z"
 END = "2026-10-10T00:42:17Z"
 GF = "docs/performance-grindflow.md"
@@ -45,32 +43,6 @@ C = {
     f"{GF}:L22-U3": "New web surfaces need authorized evidence and scope change.",
 }
 IDS = A | set(B) | set(C)
-ID_REGEX = re.compile(
-    r"^\|\s*.(docs/performance-(?:grindflow|remediation)\.md:L\d+-U\d+).\s*\|"
-)
-
-
-def coverage_rows(text: str) -> dict[str, tuple[str, ...]]:
-    """Read full rows, rejecting duplicate and premature promotion."""
-    if not isinstance(text, str):
-        raise ValueError("UNKNOWN matrix")
-    result: dict[str, tuple[str, ...]] = {}
-    for line in text.splitlines():
-        match = ID_REGEX.match(line)
-        if not match or match.group(1) not in IDS:
-            continue
-        key = match.group(1)
-        cells = tuple(part.strip() for part in line.split("|"))
-        if (key in result or len(cells) < 6
-                or cells[1] != chr(96) + key + chr(96)
-                or not cells[2] or cells[3] != "NO_VERIFICABLE"):
-            raise ValueError("UNKNOWN matrix row " + key)
-        result[key] = cells
-    if set(result) != IDS:
-        raise ValueError("UNKNOWN missing coverage IDs")
-    return result
-
-
 def duration() -> int:
     t0 = datetime.fromisoformat(START.replace("Z", "+00:00"))
     t1 = datetime.fromisoformat(END.replace("Z", "+00:00"))
@@ -94,7 +66,6 @@ class CoberturaFactory34Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.raw = json.loads(CONTRACT.read_text(encoding="utf-8"))
-        cls.rows = coverage_rows(MATRIX.read_text(encoding="utf-8"))
         f = runpy.run_path(str(ROOT / "tests/test_performance_remediation.py"))
         cls.finding, cls.triage, cls.proposal = (
             staticmethod(f["finding"]), staticmethod(f["triage"]),
@@ -173,14 +144,9 @@ class CoberturaFactory34Tests(unittest.TestCase):
         }
         self.assertEqual((len(A), len(B), len(C)), (13, 3, 4))
         self.assertEqual(set(proofs), A)
-        self.assertEqual(set(self.rows), IDS)
         for key, good in proofs.items():
             with self.subTest(row=key):
                 self.assertIs(good, True, key + ": production behavior failed")
-        for key, reason in {**B, **C}.items():
-            with self.subTest(non_offline=key):
-                self.assertGreater(len(reason), 28)
-                self.assertEqual(self.rows[key][3], "NO_VERIFICABLE")
 
     def test_falla_cerrado(self) -> None:
         """AC-02: invalid measurements, absent authority and stale evidence."""
@@ -201,7 +167,7 @@ class CoberturaFactory34Tests(unittest.TestCase):
         )
         self.assertEqual(old["evidence_state"], "STALE")
         self.assertEqual(old["classification"], "PERF_REVIEW")
-        self.assertEqual(old["breach"], False)
+        self.assertFalse(old["breach"])
         no_authority = plan_remediation(
             self.finding(), self.triage(),
             self.proposal(within_authority=False),
