@@ -73,65 +73,94 @@ def ce_is_fail(message):
     return signal["status"] == "FAIL" and signal["reason"] == "ce_task_failed"
 
 
-def role_evidence(row, ctx, catalog, assigned, workflow):
-    if row == ROLE_PATH + "L3-U1":
-        es = json.loads((ROOT / "labels/es.json").read_text(encoding="utf-8"))
-        en = json.loads((ROOT / "labels/en.json").read_text(encoding="utf-8"))
-        names = [item["name"] for item in es + en]
-        return (
-            set(roles.REQUIRED_ROLES) <= set(catalog)
-            and len(roles.labels_for(catalog, "es")) == len(catalog)
-            and len(roles.labels_for(catalog, "en")) == len(catalog)
-            and not any(value.startswith(("rol: ", "role: ")) for value in names)
-            and "python3 .factory/scripts/roles_kit.py labels" in workflow
-        )
-    if row == ROLE_PATH + "L9-U1":
-        declared = roles.declared_roles(ctx["body"])
-        result = roles.validate_pr(ctx, catalog, roles.ROLES_DIR, "es")
-        return (set(declared) == set(assigned)
-                and set(result["declared"]) == set(assigned)
-                and len(declared) >= 2)
-    if row == ROLE_PATH + "L28-U1":
-        write = workflow.split("\n  mutate:\n", 1)[-1]
-        return all(fragment in write for fragment in (
-            'case "$EVENT_NAME" in',
-            'issues) [[ "$EVENT_ISSUE" == "$NUMBER" && "$NUMBER" != "0" ]]',
-            'pull_request) [[ "$EVENT_PR" == "$NUMBER" && "$NUMBER" != "0" ]]',
-            'workflow_dispatch) [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH"'
-            ' && "$NUMBER" != "0" ]]',
-            '*) false ;;',
-            'suggest requiere la entidad del evento o dispatch en main',
-        )) and "if: inputs.mode == 'sync' || inputs.mode == 'suggest'" in write
-    if row == ROLE_PATH + "L29-U1":
-        payload = json.dumps(ctx, sort_keys=True)
-        with patch.object(sys, "stdin", io.StringIO(payload)), \
-             patch.object(sys, "argv", ["roles_kit.py", "validate-pr"]), \
-             contextlib.redirect_stdout(io.StringIO()) as output, \
-             contextlib.redirect_stderr(io.StringIO()):
-            rc = roles.main()
-        return (rc == 0 and "declared" in json.loads(output.getvalue())
-                and len(payload) < roles.MAX_CONTEXT)
-    if row == ROLE_PATH + "L29-U2":
-        with patch.object(sys, "argv", [
-            "roles_kit.py", "suggest", "--catalog", "/tmp/foreign.json",
-        ]), contextlib.redirect_stderr(io.StringIO()):
-            try:
-                roles.main()
-            except SystemExit as exc:
-                return exc.code != 0
-        return False
-    if row == ROLE_PATH + "L30-U1":
-        a = roles.classify(ctx, catalog)
-        b = roles.classify(copy.deepcopy(ctx), catalog)
-        return a == b and a[0] == sorted(set(a[0])) and a[0] == assigned
-    if row == ROLE_PATH + "L30-U2":
-        malicious = dict(ctx, title="$(echo FORBIDDEN) ; $(id)")
-        with patch("os.system", side_effect=AssertionError("shell forbidden")) as sh, \
-             patch("subprocess.run", side_effect=AssertionError("exec forbidden")) as exe:
-            derived = roles.classify(malicious, catalog)
-        return bool(derived[0]) and not sh.called and not exe.called
+def role_catalog_evidence(catalog, workflow):
+    es = json.loads((ROOT / "labels/es.json").read_text(encoding="utf-8"))
+    en = json.loads((ROOT / "labels/en.json").read_text(encoding="utf-8"))
+    names = [item["name"] for item in es + en]
+    return (
+        set(roles.REQUIRED_ROLES) <= set(catalog)
+        and len(roles.labels_for(catalog, "es")) == len(catalog)
+        and len(roles.labels_for(catalog, "en")) == len(catalog)
+        and not any(value.startswith(("rol: ", "role: ")) for value in names)
+        and "python3 .factory/scripts/roles_kit.py labels" in workflow
+    )
+
+
+def role_declaration_evidence(ctx, catalog, assigned):
+    declared = roles.declared_roles(ctx["body"])
+    result = roles.validate_pr(ctx, catalog, roles.ROLES_DIR, "es")
+    return (set(declared) == set(assigned)
+            and set(result["declared"]) == set(assigned)
+            and len(declared) >= 2)
+
+
+def role_event_scope_evidence(workflow):
+    write = workflow.split("\n  mutate:\n", 1)[-1]
+    required = (
+        'case "$EVENT_NAME" in',
+        'issues) [[ "$EVENT_ISSUE" == "$NUMBER" && "$NUMBER" != "0" ]]',
+        'pull_request) [[ "$EVENT_PR" == "$NUMBER" && "$NUMBER" != "0" ]]',
+        'workflow_dispatch) [[ "$REF_NAME" == "refs/heads/$DEFAULT_BRANCH"'
+        ' && "$NUMBER" != "0" ]]',
+        '*) false ;;',
+        'suggest requiere la entidad del evento o dispatch en main',
+    )
+    return (all(fragment in write for fragment in required)
+            and "if: inputs.mode == 'sync' || inputs.mode == 'suggest'" in write)
+
+
+def role_stdin_evidence(ctx):
+    payload = json.dumps(ctx, sort_keys=True)
+    with patch.object(sys, "stdin", io.StringIO(payload)), \
+         patch.object(sys, "argv", ["roles_kit.py", "validate-pr"]), \
+         contextlib.redirect_stdout(io.StringIO()) as output, \
+         contextlib.redirect_stderr(io.StringIO()):
+        rc = roles.main()
+    return (rc == 0 and "declared" in json.loads(output.getvalue())
+            and len(payload) < roles.MAX_CONTEXT)
+
+
+def role_cli_rejects_foreign_catalog():
+    with patch.object(sys, "argv", [
+        "roles_kit.py", "suggest", "--catalog", "/tmp/foreign.json",
+    ]), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            roles.main()
+        except SystemExit as exc:
+            return exc.code != 0
     return False
 
+
+def role_determinism_evidence(ctx, catalog, assigned):
+    first = roles.classify(ctx, catalog)
+    second = roles.classify(copy.deepcopy(ctx), catalog)
+    return (first == second and first[0] == sorted(set(first[0]))
+            and first[0] == assigned)
+
+
+def role_shell_safety_evidence(ctx, catalog):
+    malicious = dict(ctx, title="$(echo FORBIDDEN) ; $(id)")
+    with patch("os.system", side_effect=AssertionError("shell forbidden")) as sh, \
+         patch("subprocess.run", side_effect=AssertionError("exec forbidden")) as exe:
+        derived = roles.classify(malicious, catalog)
+    return bool(derived[0]) and not sh.called and not exe.called
+
+
+def role_evidence(row, ctx, catalog, assigned, workflow):
+    checks = {
+        ROLE_PATH + "L3-U1": lambda: role_catalog_evidence(catalog, workflow),
+        ROLE_PATH + "L9-U1": lambda: role_declaration_evidence(
+            ctx, catalog, assigned,
+        ),
+        ROLE_PATH + "L28-U1": lambda: role_event_scope_evidence(workflow),
+        ROLE_PATH + "L29-U1": lambda: role_stdin_evidence(ctx),
+        ROLE_PATH + "L29-U2": role_cli_rejects_foreign_catalog,
+        ROLE_PATH + "L30-U1": lambda: role_determinism_evidence(
+            ctx, catalog, assigned,
+        ),
+        ROLE_PATH + "L30-U2": lambda: role_shell_safety_evidence(ctx, catalog),
+    }
+    return checks[row]()
 
 def sonar_evidence(row, raw):
     canonical = sonar_examples.SUPERSEDED
