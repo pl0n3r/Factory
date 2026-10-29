@@ -104,18 +104,6 @@ La lectura de reviews, comentarios, BASE exacta y reviewThreads continúa usando
 Cualquier ambigüedad —fase ausente, demasiados check-runs/threads para evaluar de forma acotada, evidencia malformada, HEAD distinto, trigger no OWNER, secuencia temporal incoherente o finding abierto— falla cerrado.
 
 
-## Espera acotada de gates lentos (Factory #1859)
-
-| Tema | Contrato |
-| --- | --- |
-| Presupuesto | Input `gate_wait_seconds` de `workflow_call`: 420 segundos por defecto, solo enteros decimales 300–540; timeout del job 15 minutos |
-| Evidencia | Check-runs autenticados exact-HEAD en dos snapshots completos/estables; validación de identidad HEAD/BASE, firmas, tamaños, paginación, IDs, seguridad y privacidad sin cambios |
-| Espera | Presupuesto desde el primer sondeo con reloj `SECONDS`; pausas de máximo ocho segundos y última pausa truncada; no requiere cinco minutos reales en tests |
-| Fallo cerrado | Un gate rojo, fuente malformada, HEAD stale o presupuesto inválido falla de inmediato; un gate pendiente/ausente al agotarse los segundos también falla |
-| Reruns | `rerun --failed` por espera agotada no constituye reintento OWNER; solo se consulta timeline en intentos posteriores con señal de rate-limit del bot requerido, según prioridad BASE sobre caller; `politica_kit` conserva todas sus verificaciones de identidad y reintento |
-| Pruebas | `test_la_espera_cubre_un_gate_lento` simula 305/345 segundos; `test_un_gate_rojo_o_ausente_falla_cerrado` rechaza gates rojos/ausentes y entradas inválidas |
-| Alcance | Solo pre-live, sin mover `Factory@v1`, cambiar consumidores, conceder revisión externa ni autorizar deploy/go-live |
-
 ## Bridge inmutable exact-SHA
 
 El reusable `politica.yml` mantiene compatibilidad histórica con `factory_ref: v1` como valor por defecto. Un consumidor build-ahead puede fijar temporalmente la implementación interna de Factory a un commit inmutable sin mover `Factory@v1`:
@@ -139,3 +127,16 @@ El input solo selecciona el `ref` del checkout interno en `.factory`; no cambia 
 ### Bloqueo seguro de fallback SHA-less (Factory #1072)
 
 Dos respuestas `Review rate limited` sin SHA ni prueba del disparador del dueño **no** acreditan un HEAD, aunque exista un check Policy fallido entre ambas. El retry SHA-less exige timeline REST completa, único comando OWNER, ausencia de comandos competidores, respuesta bot inmutable y fallo Policy exact-HEAD previo. Una revisión `COMMENTED` que solo indica rate-limit no es revisión sustantiva; cualquier `CHANGES_REQUESTED` vigente del bot requerido veta el éxito.
+
+## Espera acotada de gates lentos (Factory #1859)
+
+| Tema | Contrato |
+| --- | --- |
+| Presupuesto | Input `gate_wait_seconds` de `workflow_call`: 420 segundos por defecto, solo enteros decimales 300–540; timeout del job 15 minutos |
+| Evidencia | Check-runs autenticados exact-HEAD en dos snapshots completos/estables; validación de identidad HEAD/BASE, firmas, tamaños, paginación, IDs, seguridad y privacidad sin cambios |
+| Espera | Presupuesto desde el primer sondeo con reloj `SECONDS`; pausas de máximo ocho segundos y última pausa truncada; no requiere cinco minutos reales en tests |
+| Fallo cerrado | Un gate rojo, fuente malformada, HEAD stale o presupuesto inválido falla de inmediato; un gate pendiente/ausente al agotarse los segundos también falla |
+| Reruns | `rerun --failed` por espera agotada no constituye reintento OWNER; solo se consulta timeline en intentos posteriores con señal de rate-limit del bot requerido, según prioridad BASE sobre caller; `politica_kit` conserva todas sus verificaciones de identidad y reintento |
+| Pruebas | `test_la_espera_cubre_un_gate_lento` simula 305/345 segundos; `test_un_gate_rojo_o_ausente_falla_cerrado` rechaza gates rojos/ausentes y entradas inválidas |
+| Alcance | Solo pre-live, sin mover `Factory@v1`, cambiar consumidores, conceder revisión externa ni autorizar deploy/go-live |
+
