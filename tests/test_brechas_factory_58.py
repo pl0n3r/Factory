@@ -293,7 +293,7 @@ class BrechasFactory58Tests(unittest.TestCase):
         """AC-03: sin secretos, PII, peticiones externas ni mutaciones."""
         own = Path(__file__).read_text(encoding="utf-8")
         self.assertNotRegex(own, r"(?m)^(?:from|import)\s+(?:requests|httpx|socket|subprocess|urllib)\b")
-        self.assertNotIn("-----BEGIN PRIVATE KEY-----", own)
+        self.assertNotIn("-----BEGIN " + "PRIVATE KEY-----", own)
         self.assertNotRegex(own, r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
         self.assertEqual(set(PATHS), set(self.data))
         for path in PATHS:
