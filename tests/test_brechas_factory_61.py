@@ -42,10 +42,10 @@ CLAUSES = {
     REC + "8-U1": (RECOVERY, "UNKNOWN", 8),
     REC + "8-U2": (RECOVERY, "Nunca cuenta como sano.", 8),
     REC + "9-U1": (RECOVERY, "BLOCKED", 9),
-    BOOT + "01": (BOOTSTRAP, "trust root v1", None),
+    BOOT + "01": (BOOTSTRAP, "trust root", None),
     BOOT + "02": (BOOTSTRAP, "factory-release", None),
     BOOT + "03": (BOOTSTRAP, "La primera pasada", None),
-    BOOT + "04": (BOOTSTRAP, "deriva", None),
+    BOOT + "04": (BOOTSTRAP, "maquinaria de release", None),
     BOOT + "05": (BOOTSTRAP, "compatibilidad", None),
     REL + "100-U1": (RUNBOOK, "Workflow de ventana y evaluador.", 100),
     REL + "101-U1": (RUNBOOK, "Bootstrap, reusable release y guía de release.", 101),
@@ -107,7 +107,18 @@ def anchor(key, docs):
     if number is None:
         return phrase.casefold() in docs[path].casefold()
     lines = docs[path].splitlines()
-    return 1 <= number <= len(lines) and phrase.casefold() in lines[number - 1].casefold()
+    if not 1 <= number <= len(lines):
+        return False
+    # Source-list entries use Markdown links rather than plain prose.
+    source_links = {
+        REL + "100-U1": ("release-window.yml", "release_window.py"),
+        REL + "101-U1": ("release-bootstrap.yml", "release.yml", "release-bootstrap.md"),
+        REL + "102-U1": ("factory-ci.yml", "sonar.yml", "codeql-evidence.yml"),
+        REL + "103-U1": ("puertas-humanas.md", "PLAN-AGENTES.md", "#1436"),
+    }
+    if key in source_links:
+        return all(token in lines[number - 1] for token in source_links[key])
+    return phrase.casefold() in lines[number - 1].casefold()
 
 
 def manifest():
