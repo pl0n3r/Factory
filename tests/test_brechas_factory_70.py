@@ -43,7 +43,8 @@ def role_fixture():
         "files": ["tests/test_brechas_factory_70.py"],
     }
     assigned, risks = roles.classify(ctx, catalog)
-    assert not risks, "Una prueba aislada no introduce riesgo profesional."
+    if risks:
+        raise ValueError("Una prueba aislada no debe reclamar riesgo profesional.")
     primary = "ingenieria-software" if "ingenieria-software" in assigned else assigned[0]
     lines = ["Rol(es): " + ", ".join(assigned), "Rol primario: " + primary]
     for name in assigned:
@@ -144,22 +145,23 @@ def sonar_evidence(row, raw):
     if row == SONAR_PATH + "L7-U1":
         return (sonar_examples.ce_signal(raw)["status"] == "PASS"
                 and ce_is_fail(canonical + " extra information"))
-    if row == SONAR_PATH + "L9-U1":
-        return (old in canonical and len(old) == 40
-                and ce_is_fail(canonical.replace(old, "bad-old-sha", 1)))
-    if row == SONAR_PATH + "L10-U1":
-        return ce_is_fail(canonical.replace(
-            "a newer report has already been processed", "a newer report may exist", 1
-        ))
-    if row == SONAR_PATH + "L11-U1":
-        return ce_is_fail(canonical.replace(
+    invalid_reports = {
+        SONAR_PATH + "L9-U1": canonical.replace(old, "bad-old-sha", 1),
+        SONAR_PATH + "L10-U1": canonical.replace(
+            "a newer report has already been processed",
+            "a newer report may exist", 1,
+        ),
+        SONAR_PATH + "L11-U1": canonical.replace(
             "processing older reports is not supported",
-            "older reports were deferred", 1
-        ))
-    if row == SONAR_PATH + "L12-U1":
-        return (newer in canonical and len(newer) == 40
-                and ce_is_fail(canonical.replace(newer, "not-hex", 1)))
-    if row == SONAR_PATH + "L13-U1":
+            "older reports were deferred", 1,
+        ),
+        SONAR_PATH + "L12-U1": canonical.replace(newer, "not-hex", 1),
+    }
+    if row in invalid_reports:
+        return (old in canonical and newer in canonical
+                and len(old) == 40 and len(newer) == 40
+                and ce_is_fail(invalid_reports[row]))
+TH + "L13-U1":
         return ce_is_fail("prefix " + canonical) and ce_is_fail(canonical + " suffix")
     if row == SONAR_PATH + "L15-U1":
         issues = sonar_examples.FakeIssues()
