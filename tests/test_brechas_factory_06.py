@@ -202,7 +202,7 @@ class BrechasFactory06Tests(unittest.TestCase):
                                      UNKNOWN)
             doc = key.rsplit(":", 1)[0]
             if key in ANCHORS:
-                changed = data[doc].replace(ANCHORS[key][0], "UNKNOWN", 1)
+                changed = data[doc].replace(ANCHORS[key][0], "UNKNOWN")
             else:
                 lines = data[doc].splitlines(keepends=True)
                 n = int(key.rsplit(":L", 1)[-1].split("-", 1)[0])
