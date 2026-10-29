@@ -239,7 +239,8 @@ def coverage(files):
 
     # Re-enable only by a separate authorized change, NEVER through this test.
     if ("F1G" in files[WATCH_DOC]
-            and "autorización" in files[WATCH_DOC]
+            and "decisión del dueño" in files[WATCH_DOC]
+            and "sin autoridad nueva" in files[WATCH_DOC]
             and "daily-summary:" not in files[WORKFLOW]
             and "0 13 * * *" not in files[WORKFLOW]
             and "def publish_once(" in files["scripts/unattended_daily_summary.py"]):
