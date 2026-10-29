@@ -7,7 +7,6 @@ no se atribuyen a los fixtures locales. Sin red, secretos ni datos reales.
 """
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -210,7 +209,7 @@ class CoberturaFactory01Tests(unittest.TestCase):
         # El parser extrae 0; no lo confundimos con una reserva autorizada.
         self.assertEqual(issue_from_branch("trabajo/issue-0"), 0)
         self.assertIsNone(issue_from_branch("feature/issue-0"))
-        self.assertEqual(event_guard("issues").returncode != 0, True)
+        self.assertNotEqual(event_guard("issues").returncode, 0)
         with self.assertRaises(ReleaseBootstrapError):
             _latest_owner_approval([], "pl0n3r")
         with self.assertRaises(ReleaseBootstrapError):
