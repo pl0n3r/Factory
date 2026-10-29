@@ -429,8 +429,9 @@ jobs:
              ' "$comments_file" >/dev/null; then
             reviewer_rate_limited=true
           fi
-          if (( GITHUB_RUN_ATTEMPT > 1 )) && [[ "$reviewer_rate_limited" == true ]]; then
-            : > "$timeline_file"
+          if (( GITHUB_RUN_ATTEMPT > 1 )); then
+            if [[ "$reviewer_rate_limited" == true ]]; then
+              : > "$timeline_file"
             timeline_complete=false
             for page in 1 2 3 4 5 6; do
               if ! gh api -H "Accept: application/vnd.github+json" \
@@ -477,6 +478,7 @@ jobs:
               exit 1
             }
             timeline_args=(--timeline-file "$timeline_file")
+            fi
           fi
 
           args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --head-committed-at "$HEAD_COMMITTED_AT")
