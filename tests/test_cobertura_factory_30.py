@@ -3,10 +3,18 @@ B: performance-brvtal L20-U1 (artifact remoto). C: L20-U3 (provenance documental
 """
 
 import copy
+import json
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from evolution.constitution import PROTECTED_INVARIANTS
+from performance.contract import validate_performance_contract
+from performance.detector import detect_performance
+from scripts.orquestador_kit import (
+    PlanError, claims_overlap, parse_plan, parse_task_marker,
+    reservation_blockers, verified_changed_file_overlap,
+)
 from metricas.costos import load_budgets
 from metricas.organizational_complexity import (
     build_complexity_report,
@@ -82,6 +90,82 @@ class CoberturaFactory30Tests(unittest.TestCase):
             28,
         )
         self.assertEqual(left["measurements"]["useful_execution_minutes"], 40)
+
+        # Orquestador B01: contratos DAG y exclusividad, código puro real.
+        def task(key, paths, depends_on=()):
+            return {"key": key, "title": "Synthetic " + key, "owner": "pl0n3r",
+                    "paths": list(paths), "depends_on": list(depends_on)}
+        def plan(tasks):
+            return "<!-- factory-plan " + json.dumps(
+                {"version": 1, "tasks": tasks}, separators=(",", ":")
+            ) + " -->"
+        planned = parse_plan(plan([
+            task("FIRST", ("docs/synthetic.txt",)),
+            task("SECOND", ("docs/synthetic.txt",), ("FIRST",)),
+        ]))
+        self.assertEqual([item.key for item in planned], ["FIRST", "SECOND"])
+
+        # Orquestador B02: identidad, completitud de dependencias y owner.
+        def issue(number, dependencies=()):
+            payload = {"version": 1, "epic": 1082, "task_key": "SYNTHETIC",
+                       "order": 1, "owner": "pl0n3r", "roles": ["qa"],
+                       "depends_on": list(dependencies), "paths": ["tests/synthetic.py"]}
+            return {"number": number, "state": "open", "labels": [],
+                    "body": "<!-- factory-plan-task " + json.dumps(payload) + " -->"}
+        current = issue(101, (99,))
+        complete = {99: {"state": "closed", "state_reason": "completed"}}
+        self.assertEqual(reservation_blockers(current, [current], "pl0n3r", complete), [])
+        self.assertEqual(parse_task_marker(current["body"])["owner"], "pl0n3r")
+
+        # Orquestador B04: aliases Unicode y SHAs exactos rechazan colisiones.
+        self.assertTrue(claims_overlap("Docs/Caf\u00e9.md", "docs/Cafe\u0301.md"))
+        self.assertFalse(claims_overlap("docs/a.py", "docs/b.py"))
+        result = verified_changed_file_overlap(
+            ("docs/",), ("docs/",),
+            left_files=["docs/Caf\u00e9.md"], right_files=["docs/cafe\u0301.md"],
+            left_head="a" * 40, right_head="b" * 40,
+            left_evidence_head="a" * 40, right_evidence_head="b" * 40,
+            left_complete=True, right_complete=True,
+            other_issue=102, other_lease="synthetic-lease",
+        )
+        self.assertFalse(result["safe"])
+        self.assertEqual(result["reason"], "shared_changed_files")
+
+        # Performance L17/L18/L20-U2: validar contrato y clasificar probes sintéticos.
+        contract = validate_performance_contract(json.loads(
+            (ROOT / "performance/contracts/brvtal.json").read_text(encoding="utf-8")
+        ))
+        baseline = {
+            "public.home.mobile": {"fcp": 380, "lcp": 1624, "cls": 0},
+            "public.home.desktop": {"fcp": 456, "lcp": 1772, "cls": 0.005},
+        }
+        self.assertEqual({row["id"] for row in contract["surfaces"]}, set(baseline))
+        for surface in contract["surfaces"]:
+            for metric in surface["metrics"]:
+                with self.subTest(surface=surface["id"], metric=metric["id"]):
+                    metric_id = metric["id"]
+                    expected = baseline[surface["id"]][metric_id]
+                    self.assertEqual(metric["baseline"]["value"], expected)
+                    self.assertEqual(metric["baseline"]["observed_at"], "2026-10-01T11:47:49Z")
+                    self.assertEqual(metric["evidence"]["observed_at"],
+                                     metric["baseline"]["observed_at"])
+                    sample = {
+                        "version": 1, "project": "brvtal", "surface": surface["id"],
+                        "metric": metric_id, "value": expected,
+                        "unit": "ratio" if metric_id == "cls" else "ms",
+                        "observed_at": "2026-10-01T11:47:49Z",
+                        "window_seconds": 1, "sample_count": 1,
+                        "severity": "info", "operational_impact": False,
+                        "bottleneck": "frontend",
+                        "evidence_ref": "synthetic:offline:probe",
+                        "sha": "a" * 40, "release": "synthetic-0.0.0",
+                    }
+                    verdict = detect_performance(
+                        contract, sample, evaluated_at="2026-10-01T12:00:00Z"
+                    )
+                    self.assertEqual(verdict["classification"], "PERF_INFO")
+                    self.assertEqual(verdict["evidence_state"], "CURRENT")
+                    self.assertFalse(verdict["breach"])
 
     def test_budget_is_contextual_and_preserves_constitution(self):
         documentation = observation(
@@ -185,6 +269,80 @@ class CoberturaFactory30Tests(unittest.TestCase):
         self.assertEqual(improved["authority"], "unchanged")
         self.assertFalse(improved["execute"])
 
+        # Organizational L48: una cohorte diferente prohíbe reclamar mejora.
+        for field, val in (("comparison_scope", "another"), ("task_type", "seguridad"),
+                           ("task_size", "large"), ("risk", "critical")):
+            changed = copy.deepcopy(after)
+            changed[field] = val
+            with self.subTest(cohort=field):
+                with self.assertRaises(ValueError):
+                    compare_simplification(before, changed)
+
+        # B01: ciclos, referencias faltantes y colisión paralela fallan cerrado.
+        def tk(key, paths, dependencies=()):
+            return {"key": key, "title": "Synthetic", "owner": "pl0n3r",
+                    "paths": list(paths), "depends_on": list(dependencies)}
+        for tasks in (
+            [tk("ONE", ["docs/a"], ["MISSING"])],
+            [tk("ONE", ["docs/a"], ["TWO"]), tk("TWO", ["docs/b"], ["ONE"])],
+            [tk("ONE", ["docs/a"]), tk("TWO", ["docs/a"])],
+        ):
+            body = "<!-- factory-plan " + json.dumps(
+                {"version": 1, "tasks": tasks}
+            ) + " -->"
+            with self.subTest(tasks=tasks):
+                with self.assertRaises(PlanError):
+                    parse_plan(body)
+
+        # B02: owner incorrecto, dependencia abierta y lease solapada bloquean.
+        marker = {"version": 1, "epic": 1082, "task_key": "SYNTHETIC",
+                  "order": 1, "owner": "pl0n3r", "roles": ["qa"],
+                  "depends_on": [99], "paths": ["tests/synthetic.py"]}
+        current = {"number": 101, "state": "open", "labels": [],
+                   "body": "<!-- factory-plan-task " + json.dumps(marker) + " -->"}
+        denied = reservation_blockers(current, [current], "wrong-owner",
+                                      {99: {"state": "open"}})
+        self.assertTrue(any("planificada" in msg for msg in denied))
+        self.assertTrue(any("dependencias" in msg for msg in denied))
+        rival = {"number": 102, "state": "open",
+                 "labels": [{"name": "estado: reservado"}],
+                 "body": current["body"]}
+        conflicts = reservation_blockers(
+            current, [current, rival], "pl0n3r",
+            {99: {"state": "closed", "state_reason": "completed"}},
+        )
+        self.assertTrue(any("colisión" in msg for msg in conflicts))
+
+        # B04: evidencia stale/incompleta no concede compatibilidad por diff.
+        stale = verified_changed_file_overlap(
+            ("docs/",), ("docs/",),
+            left_files=["docs/a"], right_files=["docs/b"],
+            left_head="a" * 40, right_head="b" * 40,
+            left_evidence_head="c" * 40, right_evidence_head="b" * 40,
+            left_complete=True, right_complete=True,
+            other_issue=102, other_lease="synthetic-lease",
+        )
+        self.assertFalse(stale["safe"])
+        self.assertEqual(stale["reason"], "diff_stale_or_incomplete")
+
+        # Performance: métrica fuera del budget no obtiene permiso ni umbral.
+        contract = json.loads((ROOT / "performance/contracts/brvtal.json").read_text())
+        sample = {
+            "version": 1, "project": "brvtal", "surface": "public.home.mobile",
+            "metric": "metric_unknown", "value": 1, "unit": "ms",
+            "observed_at": "2026-10-01T11:47:49Z",
+            "window_seconds": 1, "sample_count": 1, "severity": "info",
+            "operational_impact": False, "bottleneck": "frontend",
+            "evidence_ref": "synthetic:offline:unknown", "sha": "a" * 40,
+            "release": "synthetic",
+        }
+        unknown = detect_performance(
+            contract, sample, evaluated_at="2026-10-01T12:00:00Z"
+        )
+        self.assertEqual(unknown["classification"], "PERF_REVIEW")
+        self.assertEqual(unknown["evidence_state"], "UNKNOWN")
+        self.assertIsNone(unknown["breach"])
+
     def test_sin_datos_reales(self):
         first = observation(
             "pl0n3r/Factory#245-a",
@@ -212,6 +370,24 @@ class CoberturaFactory30Tests(unittest.TestCase):
             set(PROTECTED_INVARIANTS),
         )
         self.assertRegex(report["fingerprint"], r"^[0-9a-f]{64}$")
+
+        # Este WorkItem es un fixture, no dato real ni acceso a red.
+        sample = observation("synthetic:offline:work", useful=30)
+        encoded = json.dumps(sample)
+        self.assertNotIn("@", encoded)
+        self.assertNotIn("https://", encoded)
+        with patch("urllib.request.urlopen", side_effect=AssertionError("No red")):
+            evaluated = evaluate_workitem_complexity(sample, BUDGETS)
+            self.assertEqual(evaluated["work_id"], "synthetic:offline:work")
+
+    def test_validar_exact_head(self):
+        """Valida el contrato real de CI sin crear una dependencia circular."""
+        from scripts.aceptacion_kit import FORBIDDEN_CHECKS
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("Validar", FORBIDDEN_CHECKS)
+        self.assertIn("name: Validar", workflow)
+        self.assertIn("github.event.pull_request.head.sha", workflow)
+        self.assertIn("needs: [event_guard, preflight, php, node]", workflow)
 
 
 if __name__ == "__main__":
