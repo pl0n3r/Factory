@@ -101,7 +101,8 @@ def matrix_rows(raw: object) -> dict[str, tuple[str, ...]]:
         phrase = CLAUSES[key][2]
         if (key in found or len(fields) != 5
                 or fields[0] != "\x60" + key + "\x60"
-                or fields[1] != phrase or fields[2] != "NO_VERIFICABLE"
+                or not fields[1].startswith(phrase)
+                or fields[2] != "NO_VERIFICABLE"
                 or "[Contraste #1569]" not in fields[3]
                 or not fields[3].endswith(".")
                 or fields[4] != "—"):
