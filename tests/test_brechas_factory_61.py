@@ -44,7 +44,7 @@ CLAUSES = {
     REC + "9-U1": (RECOVERY, "BLOCKED", 9),
     BOOT + "01": (BOOTSTRAP, "trust root v1", None),
     BOOT + "02": (BOOTSTRAP, "factory-release", None),
-    BOOT + "03": (BOOTSTRAP, "channel-ready", None),
+    BOOT + "03": (BOOTSTRAP, "La primera pasada", None),
     BOOT + "04": (BOOTSTRAP, "deriva", None),
     BOOT + "05": (BOOTSTRAP, "compatibilidad", None),
     REL + "100-U1": (RUNBOOK, "Workflow de ventana y evaluador.", 100),
