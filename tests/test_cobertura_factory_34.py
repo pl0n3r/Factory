@@ -219,7 +219,7 @@ class CoberturaFactory34Tests(unittest.TestCase):
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertNotRegex(source, r"(?m)^import (requests|httpx|urllib|socket)\b")
         self.assertNotRegex(source, r"(?m)^from (requests|httpx|urllib|socket) ")
-        self.assertNotIn("api.hostinger.com", source)
+        self.assertNotIn("api." + "hostinger.com", source)
         self.assertEqual(
             plan_remediation(self.finding(), self.triage(),
                              self.proposal())["authority"], "unchanged",
