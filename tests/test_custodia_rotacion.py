@@ -51,6 +51,7 @@ class CustodiaRotacionTests(unittest.TestCase):
         self.assertEqual(self.find_sensitive_values(self.doc), [])
         self.assertTrue(self.find_sensitive_values("password = " + "X" * 22))
         self.assertTrue(self.find_sensitive_values("AKIA" + "Q" * 16))
+        self.assertTrue(self.find_sensitive_values("github_pat_" + "Z" * 40))
         self.assertTrue(self.find_sensitive_values("-----BEGIN PRIVATE KEY-----"))
 
     def test_rotacion_ficticia_revoca_primero(self) -> None:
