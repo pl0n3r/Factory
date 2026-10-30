@@ -171,7 +171,7 @@ class CoberturaFactory57Tests(unittest.TestCase):
         self.assertEqual(len(IDS), 20)
         self.assertEqual((len(A), len(B), len(C), len(D)), (8, 8, 3, 1))
 
-                raw = snapshot()
+        raw = snapshot()
         raw["ce_task"] = {"status": "FAILED", "error_message": SUPERSEDED}
         signal = ce_signal(raw)  # quality.sonar real
         self.assertEqual(signal["status"], "PASS")
@@ -224,7 +224,7 @@ class CoberturaFactory57Tests(unittest.TestCase):
                     self.assertNotEqual(projected["action"], "ALLOW")
 
     def test_falla_cerrado(self) -> None:
-                raw = snapshot()
+        raw = snapshot()
         raw["ce_task"] = {
             "status": "FAILED",
             "error_message": SUPERSEDED.replace(
