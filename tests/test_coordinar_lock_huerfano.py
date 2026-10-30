@@ -37,7 +37,13 @@ class FakeApi:
                 "email": "41898282+github-actions[bot]@users.noreply.github.com",
                 "date": "2026-10-30T14:27:10Z",
             },
-            "committer": {"date": "2026-10-30T14:27:10Z"},
+            "committer": {
+                "name": "GitHub",
+                "email": "noreply@github.com",
+                "date": "2026-10-30T14:27:10Z",
+            },
+            "verification": {"verified": True, "reason": "valid"},
+            "tree": {"sha": "c" * 40},
             "parents": [{"sha": PARENT}],
         }
         self.issue_data = {
@@ -63,6 +69,8 @@ class FakeApi:
             raise AssertionError("No direct mutation allowed")
         if path.endswith("/git/commits/" + LOCK):
             return deepcopy(self.record)
+        if path.endswith("/git/commits/" + PARENT):
+            return {"sha": PARENT, "tree": {"sha": "c" * 40}}
         if "/compare/" in path:
             matched = (path.endswith("/compare/" + PARENT + "...main")
                        and self.refs["main"] == PARENT)
@@ -100,6 +108,16 @@ class RecoveryLockTests(unittest.TestCase):
             ("estado", lambda a: a.issue_data.update(state="closed")),
             ("nonce", lambda a: a.record.update(message="another lock")),
             ("autor", lambda a: a.record["author"].update(name="other")),
+            ("committer", lambda a: a.record["committer"].update(name="fake")),
+            ("correo committer", lambda a: a.record["committer"].update(
+                email="fake@example.test")),
+            ("sin firma", lambda a: a.record.update(verification=None)),
+            ("firma no válida", lambda a: a.record["verification"].update(
+                verified=False)),
+            ("razón firma", lambda a: a.record["verification"].update(
+                reason="unsigned")),
+            ("árbol alterado", lambda a: a.record["tree"].update(sha="d" * 40)),
+            ("árbol ausente", lambda a: a.record.update(tree=None)),
             ("fecha", lambda a: a.record["author"].update(
                 date="2026-10-30T15:30:00Z")),
             ("parent", lambda a: a.record["parents"][0].update(sha="0"*40)),
