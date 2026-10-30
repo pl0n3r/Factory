@@ -253,7 +253,7 @@ jobs:
               title:$title,
               body:$body,
               state:"open",
-              labels:["tipo: incidente", $priority]
+              labels:["tipo: incidente", "estado: bloqueado", $priority]
             }' > /tmp/issue-payload.json
 
           if (( alert_count == 0 )); then
