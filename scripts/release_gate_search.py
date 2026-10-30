@@ -8,6 +8,8 @@ No API calls or writes to the repository are performed by this module.
 from __future__ import annotations
 
 import json
+import os
+import stat
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -87,15 +89,54 @@ def verified_inventory(first: Any, second: Any, published: Any) -> list[dict[str
     return result
 
 
+
+# CLI evidence is produced by the protected release workflow. Never turn an
+# arbitrary command-line path into a filesystem read: the three arguments must
+# match one complete, fixed snapshot from the same pass.
+_TRUSTED_SNAPSHOTS = {
+    ("/tmp/release-search-p1-1.json",
+     "/tmp/release-search-p2-1.json",
+     "/tmp/release-search-verified-1.json"): (
+        Path("/tmp/release-search-p1-1.json"),
+        Path("/tmp/release-search-p2-1.json"),
+        Path("/tmp/release-search-verified-1.json")),
+    ("/tmp/release-search-p1-2.json",
+     "/tmp/release-search-p2-2.json",
+     "/tmp/release-search-verified-2.json"): (
+        Path("/tmp/release-search-p1-2.json"),
+        Path("/tmp/release-search-p2-2.json"),
+        Path("/tmp/release-search-verified-2.json")),
+}
+_MAX_EVIDENCE_BYTES = 2_000_000
+
+
+def _read_trusted_evidence(path: Path) -> Any:
+    """Only a regular, non-symlink snapshot; bounded even if it grows during IO."""
+    # O_NONBLOCK stops a replaced FIFO from hanging before its type is checked.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_EVIDENCE_BYTES:
+            raise SearchEvidenceError("untrusted evidence file")
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            raw = stream.read(_MAX_EVIDENCE_BYTES + 1)
+        if len(raw) > _MAX_EVIDENCE_BYTES:
+            raise SearchEvidenceError("oversized evidence file")
+        return json.loads(raw, object_pairs_hook=_unique_object)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _main(paths: list[str]) -> int:
     if len(paths) != 3:
         raise SearchEvidenceError("expected page-one, page-two and verified-inventory files")
-    if any(not path or len(path) > 300 for path in paths):
+    trusted = _TRUSTED_SNAPSHOTS.get(tuple(paths))
+    if trusted is None:
         raise SearchEvidenceError("invalid evidence file path")
     try:
-        p1, p2, inventory = (json.loads(Path(path).read_text(encoding="utf-8"),
-                                      object_pairs_hook=_unique_object)
-                             for path in paths)
+        p1, p2, inventory = (_read_trusted_evidence(path) for path in trusted)
     except (OSError, ValueError, UnicodeError) as exc:
         raise SearchEvidenceError("unreadable search evidence") from exc
     verified_inventory(p1, p2, inventory)
