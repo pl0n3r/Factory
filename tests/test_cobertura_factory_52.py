@@ -126,7 +126,8 @@ class CoberturaFactory52Tests(unittest.TestCase):
             markers = data / "epic-markers.json"
             markers.write_text(json.dumps(bodies), encoding="utf-8")
             artifacts = root / "artifacts"
-            with patch.object(fb, "DATA_DIR", data), \
+            with patch.object(socket, "socket", side_effect=AssertionError("red prohibida")), \
+                 patch.object(fb, "DATA_DIR", data), \
                  patch.object(fb, "EPIC_MARKERS_PATH", markers), \
                  patch.object(fb, "OUTPUT_DIR", artifacts), \
                  patch.object(sys, "argv", ["feedback"]):
@@ -134,8 +135,12 @@ class CoberturaFactory52Tests(unittest.TestCase):
             machine = json.loads((artifacts / "reporte-producto.json").read_text())
             human = (artifacts / "reporte-producto.md").read_text()
             self.assertEqual(machine["proposals"][0]["epic"], EPIC)
+            self.assertEqual(machine["proposals"][0]["target_improvement_pct"], 10.0)
+            self.assertEqual(machine["proposals"][0]["regression_pct"], 20.0)
             self.assertIn("Resultados por épico", human)
             self.assertIn("checkout", human)
+            self.assertIn("Objetivo declarado: 10.00%", human)
+            self.assertIn("Regresión: 20.00%", human)
 
     def test_falla_cerrado(self):
         catalog = fb.load_catalog()
@@ -207,6 +212,33 @@ class CoberturaFactory52Tests(unittest.TestCase):
             output = report(incomplete)
             self.assertEqual(output["proposals"], [])
             self.assertIsNone(output["results"][0]["delta_pct"])
+        # AC-02: permisos insuficientes para markers deben fallar cerrado
+        # en el CLI real, sin crear artefactos ni usar red.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "datos"
+            data.mkdir()
+            (data / "synthetic.jsonl").write_text(
+                json.dumps(record()) + "\n", encoding="utf-8")
+            marker_file = data / "epic-markers.json"
+            marker_file.write_text(json.dumps({EPIC: "fixture"}), encoding="utf-8")
+            denied_artifacts = root / "denied"
+            original_read_text = Path.read_text
+
+            def denied_read(path, *args, **kwargs):
+                if path == marker_file:
+                    raise PermissionError("lectura de marker denegada")
+                return original_read_text(path, *args, **kwargs)
+
+            with patch.object(Path, "read_text", autospec=True, side_effect=denied_read), \
+                 patch.object(socket, "socket", side_effect=AssertionError("red prohibida")), \
+                 patch.object(fb, "DATA_DIR", data), \
+                 patch.object(fb, "EPIC_MARKERS_PATH", marker_file), \
+                 patch.object(fb, "OUTPUT_DIR", denied_artifacts), \
+                 patch.object(sys, "argv", ["feedback"]):
+                self.assertEqual(fb.main(), 2)
+            self.assertFalse(denied_artifacts.exists())
+
         # L36: 4% adverso es estable, no cruza umbral 5%.
         mild = fb.validate_record(record(
             phase="post-deploy", period_start=POST_START,
