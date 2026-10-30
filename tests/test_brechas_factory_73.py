@@ -121,9 +121,12 @@ def contract_deny(schema: object, fixtures: object) -> bool:
 
 
 def guard_still_applies(global_pause: bool) -> bool:
-    fencing = FencingDecision("replan", True, 7, 1, "a" * 64,
+    """RUNNING quita solo la pausa global, no las demás guardas 4B."""
+    if global_pause is not False:
+        return False
+    fencing = FencingDecision("keep", True, 7, 1, "a" * 64,
                               "b" * 64, 1, ("synthetic",))
-    config = {"global_pause": global_pause,
+    config = {"global_pause": False,
               "breakers": {"health": {"scope": "repo",
                                       "subject": "pl0n3r/Factory",
                                       "threshold": 3}},
@@ -137,10 +140,18 @@ def guard_still_applies(global_pause: bool) -> bool:
         "production_change": False, "backup_required": False,
         "backup_verified": None,
     }
-    decision = evaluate_unattended_guards(
-        fencing, config, evidence,
-        {"usage": 10, "cost": 5.0, "parallelism": 1})
-    return decision.action == "PAUSE"
+    def verdict(pause: bool, failures: int) -> tuple[str, tuple[str, ...], str]:
+        config["global_pause"] = pause
+        evidence["breakers"]["health"]["consecutive_failures"] = failures
+        decision = evaluate_unattended_guards(
+            fencing, config, evidence,
+            {"usage": 10, "cost": 5.0, "parallelism": 1})
+        return decision.action, decision.reasons, decision.authority
+    return (
+        verdict(False, 0) == ("ALLOW", ("guards_satisfied",), "unchanged")
+        and verdict(False, 3) == ("PAUSE", ("circuit_breaker_open",), "unchanged")
+        and verdict(True, 0) == ("PAUSE", ("global_pause_active",), "unchanged")
+    )
 
 
 def assess(
@@ -238,6 +249,22 @@ class BrechasFactory73Tests(unittest.TestCase):
         self.assertTrue(all(value == UNKNOWN for value in
                             assess(altered, schema, fixtures, issue()).values()))
         self.assertEqual(baseline[K + "L19-U1"], LOCAL)
+        self.assertTrue(guard_still_applies(False))
+        self.assertFalse(guard_still_applies(True))
+        # Si se elimina la rama circuit_breaker_open, esta cobertura falla.
+        real_evaluator = evaluate_unattended_guards
+
+        def without_breaker(fencing, config, evidence, measurements):
+            sanitized = dict(evidence)
+            sanitized["breakers"] = {
+                "health": {**evidence["breakers"]["health"],
+                           "consecutive_failures": 0},
+            }
+            return real_evaluator(fencing, config, sanitized, measurements)
+
+        with patch(__name__ + ".evaluate_unattended_guards",
+                   side_effect=without_breaker):
+            self.assertFalse(guard_still_applies(False))
 
     def test_sin_datos_reales(self):
         with patch("socket.socket", side_effect=AssertionError("red prohibida")):
