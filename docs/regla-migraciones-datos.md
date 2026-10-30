@@ -14,7 +14,7 @@
 La descripción JSON declara `schema_version: 1`, `project`, `migration_id` y tres componentes críticos. El verificador no ejecuta SQL ni backups:
 
 - `verified_backup`: `receipt_id` no vacío, `sha256` de 64 hexadecimales minúsculos, `verified: true` y `verified_at_utc` no vacío.
-- `local_rehearsal`: `environment: isolated_local_copy`, `copy_id` no vacío, `rows_before` y `rows_after` enteros no negativos, `passed: true`.
+- `local_rehearsal`: `environment: isolated_local_copy`, `copy_id` no vacío, `rows_before` y `rows_after` enteros no negativos, `passed: true`; si `rows_before` y `rows_after` difieren, `row_count_justification` es obligatorio y no vacío.
 - `rollback_plan`: `backup_receipt_id` igual al recibo, `trigger` y `restore_method` no vacíos, lista no vacía `steps`, `verification.expected_rows` igual a `rows_before` y `verification.method` no vacío.
 
 Ejemplo **ficticio**, no apto como evidencia de recuperación real:
@@ -35,6 +35,7 @@ Ejemplo **ficticio**, no apto como evidencia de recuperación real:
     "copy_id": "fixture-copy-001",
     "rows_before": 12,
     "rows_after": 14,
+    "row_count_justification": "dos registros de ejemplo generados en el ensayo",
     "passed": true
   },
   "rollback_plan": {
