@@ -5592,7 +5592,7 @@ def recover_orphaned_issue_lock(
     if api.branch_sha(lock_name) != expected_sha:
         raise CoordinationError("Lock ausente o cambiado: no hay propiedad del token.")
     issue = api.issue(issue_number)
-    if (issue.get("state") != "open" or issue.get("pull_request")
+    if (issue.get("state") != "open" or "pull_request" in issue
             or STATUS_BLOCKED not in label_names(issue)
             or active_reservation(api, issue_number) is not None):
         raise CoordinationError("Issue con autoridad activa o estado incompatible.")
