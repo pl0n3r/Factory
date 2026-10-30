@@ -116,11 +116,18 @@ class CoberturaFactory54Tests(unittest.TestCase):
         reorder["stable_consumer_runs"].reverse()
         self.assertEqual(plan_rollback(reorder), result)
 
+        # Un único consumidor afectado sigue siendo evidencia válida si
+        # conserva historia correlacionada; NO autoriza mover la etiqueta.
+        subset = incident()
+        subset["affected_consumer_runs"].pop()
+        self.assertEqual(plan_rollback(subset)["decision"], "HUMAN_GATE_REQUIRED")
+        self.assert_no_authority(plan_rollback(subset))
+
     def test_falla_cerrado(self):
         # L25-U1/L26-U1: falla si falta cualquier run, no coincide repo,
         # workflow, SHA, evidencia de jobs o la historia no es previa.
         variations = [
-            ("sin_consumer", lambda s: s["affected_consumer_runs"].pop()),
+            ("sin_consumidores", lambda s: s["affected_consumer_runs"].clear()),
             ("sin_historia", lambda s: s["stable_consumer_runs"].pop()),
             ("repo_distinto", lambda s: s["stable_consumer_runs"][1].update(
                 repository="fixture/unknown")),
