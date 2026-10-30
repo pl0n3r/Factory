@@ -1,5 +1,7 @@
 """Regresiones reproducibles del reporte antes/después (sin GitHub ni red)."""
 import json
+import io
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import subprocess
 import sys
@@ -98,6 +100,71 @@ class ReporteAntesDespuesTests(unittest.TestCase):
         value["pull_requests"][0]["merged"] = True
         with self.assertRaises(report.ReportError):
             report.evaluate(value)
+
+    def test_rechazar_registros_invalidos_y_cronologia(self):
+        bad = [None, [], {"version": True}, {"version": 2}]
+        for value in bad:
+            with self.subTest(value=value), self.assertRaises(report.ReportError):
+                report.evaluate(value)
+        value = fixture()
+        value["periods"]["antes"]["complete"] = "true"
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+        value = fixture()
+        value["periods"]["antes"]["start"] = value["periods"]["antes"]["end"]
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+        value = fixture()
+        value["issues"][0]["created_at"] = "2026-10-03T00:00:00Z"
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+        value = fixture()
+        value["pull_requests"][0]["number"] = False
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+        value = fixture()
+        value["issues"] = ["invalid"]
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+        value = fixture()
+        value["pull_requests"] = "invalid"
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+
+    def test_cli_stdin_y_errores_no_revelan_entrada(self):
+        command = [sys.executable, "scripts/reporte_antes_despues.py", "--input", "-"]
+        good = subprocess.run(command, cwd=ROOT, input=json.dumps(fixture()),
+                              capture_output=True, text=True, timeout=20)
+        self.assertEqual(good.returncode, 0, good.stderr)
+        for input_text in ('{bad-json NEVER_PRINT', 'X' * (report.MAX_INPUT_BYTES + 1)):
+            bad = subprocess.run(command, cwd=ROOT, input=input_text,
+                                 capture_output=True, text=True, timeout=20)
+            self.assertEqual(bad.returncode, 2)
+            self.assertEqual(bad.stdout, '')
+            self.assertNotIn('NEVER_PRINT', bad.stderr)
+        with tempfile.TemporaryDirectory() as folder:
+            missing = Path(folder) / 'missing-private-value.txt'
+            bad = subprocess.run(command[:-1] + [str(missing)], cwd=ROOT,
+                                 capture_output=True, text=True, timeout=20)
+            self.assertEqual(bad.returncode, 2)
+            self.assertNotIn('missing-private-value', bad.stderr)
+
+    def test_main_inprocess_con_cobertura_de_lectura_y_errores(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "snapshot.json"
+            path.write_text(json.dumps(fixture()), encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(report.main(["--input", str(path)]), 0)
+            self.assertEqual(json.loads(out.getvalue())["antes"]["issues_cerrados"], 1)
+            path.write_text('not-json-private-secret', encoding="utf-8")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(report.main(["--input", str(path)]), 2)
+            self.assertNotIn('private-secret', err.getvalue())
+            path.write_bytes(b'X' * (report.MAX_INPUT_BYTES + 1))
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(report.main(["--input", str(path)]), 2)
 
     def test_cli_sin_red_y_salida_solo_metricas(self):
         value = fixture()
