@@ -1,5 +1,6 @@
 """Regresiones reproducibles del reporte antes/después (sin GitHub ni red)."""
 import json
+import os
 import io
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
@@ -154,26 +155,37 @@ class ReporteAntesDespuesTests(unittest.TestCase):
             path = Path(folder) / "snapshot.json"
             path.write_text(json.dumps(fixture()), encoding="utf-8")
             out = io.StringIO()
-            with redirect_stdout(out):
-                self.assertEqual(report.main(["--input", str(path)]), 0)
-            self.assertEqual(json.loads(out.getvalue())["antes"]["issues_cerrados"], 1)
-            path.write_text('not-json-private-secret', encoding="utf-8")
-            err = io.StringIO()
-            with redirect_stderr(err):
-                self.assertEqual(report.main(["--input", str(path)]), 2)
-            self.assertNotIn('private-secret', err.getvalue())
-            path.write_bytes(b'X' * (report.MAX_INPUT_BYTES + 1))
-            with redirect_stderr(io.StringIO()):
-                self.assertEqual(report.main(["--input", str(path)]), 2)
+            original = Path.cwd()
+            try:
+                os.chdir(folder)
+                with redirect_stdout(out):
+                    self.assertEqual(report.main(["--input", path.name]), 0)
+                self.assertEqual(json.loads(out.getvalue())["antes"]["issues_cerrados"], 1)
+                path.write_text('not-json-private-secret', encoding="utf-8")
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    self.assertEqual(report.main(["--input", path.name]), 2)
+                self.assertNotIn('private-secret', err.getvalue())
+                path.write_bytes(b'X' * (report.MAX_INPUT_BYTES + 1))
+                with redirect_stderr(io.StringIO()):
+                    self.assertEqual(report.main(["--input", path.name]), 2)
+                with redirect_stderr(io.StringIO()):
+                    self.assertEqual(report.main(["--input", "../private.json"]), 2)
+                path.unlink()
+                target = Path(folder) / "real.json"
+                target.write_text(json.dumps(fixture()), encoding="utf-8")
+                path.symlink_to(target)
+                with redirect_stderr(io.StringIO()):
+                    self.assertEqual(report.main(["--input", path.name]), 2)
+            finally:
+                os.chdir(original)
 
     def test_cli_sin_red_y_salida_solo_metricas(self):
         value = fixture()
         value["issues"][0]["secret_note"] = "NEVER_EMIT_PII"
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "export.json"
-            path.write_text(json.dumps(value), encoding="utf-8")
-            run = subprocess.run([sys.executable, "scripts/reporte_antes_despues.py", "--input", str(path)],
-                                 cwd=ROOT, capture_output=True, text=True, timeout=20)
+        run = subprocess.run([sys.executable, "scripts/reporte_antes_despues.py", "--input", "-"],
+                             input=json.dumps(value), cwd=ROOT, capture_output=True,
+                             text=True, timeout=20)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertNotIn("NEVER_EMIT_PII", run.stdout)
         self.assertEqual(json.loads(run.stdout)["despues"]["prs_fusionados"], 2)

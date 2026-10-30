@@ -11,7 +11,8 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
-from pathlib import Path
+import os
+import stat
 import re
 import sys
 from zoneinfo import ZoneInfo
@@ -21,6 +22,7 @@ MAX_RECORDS = 5000
 UNKNOWN = "UNKNOWN"
 UTC_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z", re.ASCII)
 BOGOTA = ZoneInfo("America/Bogota")
+INPUT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,100}\.json\Z", re.ASCII)
 
 
 class ReportError(ValueError):
@@ -134,7 +136,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.input == "-":
             raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         else:
-            with Path(args.input).open("rb") as file:
+            if not INPUT_NAME.fullmatch(args.input):
+                raise ReportError("invalid_input_name")
+            directory_fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                fd = os.open(args.input, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=directory_fd)
+            finally:
+                os.close(directory_fd)
+            with os.fdopen(fd, "rb") as file:
+                if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+                    raise ReportError("invalid_input_type")
                 raw = file.read(MAX_INPUT_BYTES + 1)
         if len(raw) > MAX_INPUT_BYTES:
             raise ReportError("input_too_large")
