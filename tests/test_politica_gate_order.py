@@ -89,7 +89,7 @@ class PolicyGateOrderTests(unittest.TestCase):
         stubbed, count = re.subn(
             r"(?ms)^            # POLICY_CHECK_SNAPSHOT_BEGIN\n"
             r".*?^            # POLICY_CHECK_SNAPSHOT_END\n",
-            "            : # snapshot validated by independent test\n",
+            "            if [[ \"${MODE:-}\" == \"slow_snapshot\" ]]; then SECONDS=$(( SECONDS + GATE_WAIT_SECONDS + 1 )); fi\n",
             self.wait_script,
             count=1,
         )
@@ -140,6 +140,11 @@ sleep() { SECONDS=$(( SECONDS + $1 )); }
         terminal_red = self.run_wait(999, mode="red")
         self.assertNotEqual(terminal_red.returncode, 0)
         self.assertNotIn("elapsed=", terminal_red.stdout)
+        # Aunque el snapshot empiece dentro del presupuesto, una lectura
+        # que termina tarde no puede aceptar un verde posterior al deadline.
+        late_green = self.run_wait(0, mode="slow_snapshot")
+        self.assertNotEqual(late_green.returncode, 0)
+        self.assertIn("Gates requeridos sin evidencia terminal verde", late_green.stdout)
         missing = self.run_wait(999, mode="missing")
         self.assertNotEqual(missing.returncode, 0)
         self.assertIn("Gates requeridos sin evidencia terminal verde", missing.stdout)

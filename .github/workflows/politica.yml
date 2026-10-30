@@ -358,6 +358,13 @@ jobs:
             }
             # POLICY_CHECK_SNAPSHOT_END
             if gate_readiness; then
+              # La lectura del snapshot puede consumir el último segundo del
+              # presupuesto; un verde tardío NO debe autorizarse después del plazo.
+              gate_wait_elapsed=$(( SECONDS - gate_wait_started ))
+              if (( gate_wait_elapsed >= GATE_WAIT_SECONDS )); then
+                echo "::error::Gates requeridos sin evidencia terminal verde tras espera acotada"
+                exit 1
+              fi
               break
             else
               gate_exit=$?

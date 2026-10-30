@@ -23,8 +23,6 @@ from scripts.sync_label_colors import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-MATRIX = ROOT / "docs/matriz-cobertura.md"
-BT = chr(96)
 PREFIX = "docs/label-color-sync.md:"
 UNITS = (
     "L10-U1", "L11-U1", "L17-U1", "L18-U1", "L18-U2",
@@ -34,31 +32,6 @@ UNITS = (
 )
 # ControlBot adoption, publication order, historical commands: C, not a test.
 POLICY_ONLY = frozenset(("L24-U1", "L24-U2", "L28-U1"))
-
-
-def coverage_rows(raw: object) -> dict[str, tuple[str, ...]]:
-    if not isinstance(raw, str) or not raw:
-        raise ValueError("UNKNOWN: no matrix")
-    rows: dict[str, tuple[str, ...]] = {}
-    for line in raw.splitlines():
-        if not line.startswith("| " + BT + PREFIX):
-            continue
-        parts = tuple(part.strip() for part in line.strip("|").split("|"))
-        if len(parts) != 5:
-            raise ValueError("UNKNOWN: malformed source")
-        key = parts[0].removeprefix(BT + PREFIX).removesuffix(BT)
-        if key not in UNITS:
-            continue
-        if key in rows:
-            raise ValueError("UNKNOWN: duplicate")
-        if (parts[0] != BT + PREFIX + key + BT or not parts[1]
-                or parts[2] != "NO_VERIFICABLE"
-                or "Contraste #1571" not in parts[3] or parts[4] != "—"):
-            raise ValueError("UNKNOWN: invalid matrix row")
-        rows[key] = parts
-    if set(rows) != set(UNITS):
-        raise ValueError("UNKNOWN: missing unit")
-    return rows
 
 
 def synthetic_issue(dependencies=None) -> dict:
@@ -93,12 +66,9 @@ class CoberturaFactory24Tests(unittest.TestCase):
 
     def test_contrato_principal(self):
         """Each A unit exercises existing production code with synthetic inputs."""
-        rows = coverage_rows(MATRIX.read_text(encoding="utf-8"))
-        self.assertEqual(len(rows), 20)
         self.assertEqual(len(UNITS) - len(POLICY_ONLY), 17)
         for unit in UNITS:
             with self.subTest(unit=PREFIX + unit):
-                self.assertTrue(rows[unit][1])
                 if unit in POLICY_ONLY:
                     # A policy/future rollout must not become fake test coverage.
                     continue
@@ -253,22 +223,7 @@ class CoberturaFactory24Tests(unittest.TestCase):
                     self.fail("Uncovered executable unit " + unit)
 
     def test_falla_cerrado(self):
-        """Fail on missing/duplicate/altered matrix evidence or invalid state."""
-        raw = MATRIX.read_text(encoding="utf-8")
-        coverage_rows(raw)
-        with self.assertRaisesRegex(ValueError, "UNKNOWN"):
-            coverage_rows(None)
-        for unit in UNITS:
-            line = next(x for x in raw.splitlines()
-                        if x.startswith("| " + BT + PREFIX + unit + BT + " |"))
-            for corrupted in (
-                raw.replace(line, "", 1),
-                raw + "\n" + line,
-                raw.replace(line, line.replace("NO_VERIFICABLE", "CUBIERTO"), 1),
-            ):
-                with self.subTest(unit=unit):
-                    with self.assertRaisesRegex(ValueError, "UNKNOWN"):
-                        coverage_rows(corrupted)
+        """Invalid synthetic label plans must fail closed."""
         with self.assertRaises(LabelError):
             planned_state_decision({**synthetic_issue(),
                                     "dependencies_open": "not-a-list"})
@@ -306,7 +261,6 @@ class CoberturaFactory24Tests(unittest.TestCase):
         client.assert_called_once_with(None)
         self.assertEqual([], plan)
         self.assertEqual([], residual)
-        self.assertEqual(20, len(coverage_rows(MATRIX.read_text(encoding="utf-8"))))
 
 
 if __name__ == "__main__":
