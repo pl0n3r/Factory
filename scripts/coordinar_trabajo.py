@@ -5603,11 +5603,20 @@ def recover_orphaned_issue_lock(
     committer = commit.get("committer")
     parents = commit.get("parents")
     message = commit.get("message")
+    tree = commit.get("tree")
+    verification = commit.get("verification")
     if (not isinstance(author, dict)
             or author.get("name") != "github-actions[bot]"
             or author.get("email") !=
                "41898282+github-actions[bot]@users.noreply.github.com"
             or not isinstance(committer, dict)
+            or committer.get("name") != "GitHub"
+            or committer.get("email") != "noreply@github.com"
+            or not isinstance(verification, dict)
+            or verification.get("verified") is not True
+            or verification.get("reason") != "valid"
+            or not isinstance(tree, dict)
+            or re.fullmatch(r"[a-f0-9]{40}", str(tree.get("sha", ""))) is None
             or not isinstance(parents, list) or len(parents) != 1
             or not isinstance(parents[0], dict)
             or re.fullmatch(r"[a-f0-9]{40}",
@@ -5634,6 +5643,11 @@ def recover_orphaned_issue_lock(
                 or clock - created < timedelta(minutes=60)):
             raise CoordinationError("Lock reciente, futuro o no verificable.")
     parent = parents[0]["sha"]
+    parent_commit = api.request("GET", f"/repos/{api.repo}/git/commits/{parent}")
+    parent_tree = parent_commit.get("tree") if isinstance(parent_commit, dict) else None
+    if (not isinstance(parent_tree, dict)
+            or parent_tree.get("sha") != tree["sha"]):
+        raise CoordinationError("Lock con árbol distinto al parent.")
     work_sha = api.branch_sha(branch_for_issue(issue_number))
     if work_sha is not None:
         if work_sha != parent:
