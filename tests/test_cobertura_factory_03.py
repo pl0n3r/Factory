@@ -133,7 +133,8 @@ class CoberturaFactory03Tests(unittest.TestCase):
         for state in ("UNKNOWN", "BLOCKED"):
             with self.subTest(row="ISSUE-305:AC-11", state=state):
                 source = {
-                    "state": state, "reasons": ["NO_VERIFIED_BACKUP"],
+                    "version": 1, "state": state, "authority": "unchanged",
+                    "execute": False, "reasons": ["NO_VERIFIED_BACKUP"],
                     "work_item_classes": ["backup_missing"],
                 }
                 result = project_recovery_readiness(source, critical=True)
@@ -294,7 +295,8 @@ class CoberturaFactory03Tests(unittest.TestCase):
             body = make_body()
             self.assertEqual(parse_contract(body)[0].target, TARGET)
             health = project_recovery_readiness({
-                "state": "BLOCKED", "reasons": ["MISSING_EVIDENCE"],
+                "version": 1, "state": "BLOCKED", "authority": "unchanged",
+                "execute": False, "reasons": ["MISSING_EVIDENCE"],
                 "work_item_classes": ["backup_missing"],
             }, critical=True)
             self.assertFalse(health["ready"])
