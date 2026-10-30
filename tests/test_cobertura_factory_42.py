@@ -21,7 +21,7 @@ CASES = [
     [
         "docs/puertas-humanas.md:B06",
         "test_puertas_humanas",
-        "GateTests",
+        "GateDedupTests",
         "test_bot_privacy_gate_preserves_release_and_human_authority"
     ],
     [

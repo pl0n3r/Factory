@@ -2074,6 +2074,39 @@ def open_pull_records_for_branch(
     ]
 
 
+def orphan_adoption_pull_snapshot(
+    pulls: list[dict[str, Any]],
+) -> tuple[tuple[Any, ...], ...]:
+    """Compare only authoritative PR contract fields while the V3 CAS lock is held.
+
+    GitHub can change mergeability, timestamps and other derived REST metadata
+    during a read. Such drift does not change the source branch or PR contract.
+    """
+    records: list[tuple[Any, ...]] = []
+    seen: set[int] = set()
+    for pull in pulls:
+        if not isinstance(pull, dict):
+            raise CoordinationError("Snapshot de PR huérfano inválido.")
+        number = pull.get("number")
+        head = pull.get("head")
+        base = pull.get("base")
+        source = head.get("repo") if isinstance(head, dict) else None
+        if (
+            type(number) is not int or number < 1 or number in seen
+            or pull.get("state") != "open"
+            or not isinstance(head, dict) or not isinstance(base, dict)
+            or not isinstance(source, dict)
+            or not isinstance(source.get("full_name"), str)
+        ):
+            raise CoordinationError("Identidad de PR huérfano inválida.")
+        seen.add(number)
+        records.append((
+            number, pull["state"], pull.get("body"), head.get("ref"),
+            head.get("sha"), source["full_name"], base.get("ref"),
+        ))
+    return tuple(sorted(records, key=lambda record: record[0]))
+
+
 def open_pulls_for_branch(api: GitHub, branch: str) -> list[int]:
     """Lista PR abiertos que usan una rama concreta como head."""
     result: list[int] = []
@@ -4438,6 +4471,7 @@ def adopt_orphaned_contract(
     fingerprint = contract_fingerprint(body_at_start)
     task_marker = parse_task_marker(body_at_start)
     open_pulls = open_pull_records_for_branch(api, branch)
+    initial_pull_snapshot = orphan_adoption_pull_snapshot(open_pulls)
     # No conservar referencias mutables del transporte como comparadores:
     # algunas API de prueba retornan el mismo objeto; el PR ajeno puede
     # cambiar en el intervalo previo a nuestra escritura.
@@ -4466,7 +4500,9 @@ def adopt_orphaned_contract(
                 or canonical_adoption_state(refreshed) != initial_state
                 or str(refreshed.get("body") or "") != body_at_start
                 or api.branch_sha(branch) != branch_sha
-                or open_pull_records_for_branch(api, branch) != open_pulls):
+                or orphan_adoption_pull_snapshot(
+                    open_pull_records_for_branch(api, branch)
+                ) != initial_pull_snapshot):
             raise CoordinationError(
                 "Issue, rama o PR cambió durante adopción huérfana."
             )
