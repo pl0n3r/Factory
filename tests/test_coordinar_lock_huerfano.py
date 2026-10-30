@@ -174,5 +174,60 @@ class RecoveryLockTests(unittest.TestCase):
         self.assertEqual([], self.api.releases)
 
 
+    def test_negativos_de_fecha_origen_y_relectura(self):
+        cases = [
+            ("sin committer", lambda a: a.record.update(committer=None)),
+            ("sin fecha", lambda a: a.record["committer"].update(date=None)),
+            ("fecha inválida", lambda a: a.record["author"].update(date="bad")),
+            ("fecha sin zona", lambda a: a.record["author"].update(
+                date="2026-10-30T14:27:10")),
+            ("fecha futura", lambda a: a.record["committer"].update(
+                date="2026-10-30T17:27:10Z")),
+            ("sin parent", lambda a: a.record.update(parents=[])),
+            ("issue PR", lambda a: a.issue_data.update(pull_request={})),
+            ("ref sustituida", lambda a: a.refs.update({
+                "coordinacion/lock-issue-1946": "c"*40})),
+            ("rama ajena", lambda a: a.refs.update({
+                "trabajo/issue-1946": "c"*40})),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                api = FakeApi()
+                mutate(api)
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.check(api)
+                self.assertEqual([], api.releases)
+        api = FakeApi()
+        api.refs["trabajo/issue-1946"] = PARENT
+        self.assertTrue(self.check(api))
+        self.assertEqual(PARENT, api.refs["trabajo/issue-1946"])
+
+    def test_entorno_ci_y_races_fallan_cerrado(self):
+        for key, replacement in (
+            ("GITHUB_REPOSITORY", "evil/fork"),
+            ("GITHUB_EVENT_NAME", "workflow_dispatch"),
+            ("GITHUB_WORKFLOW_REF", RUNNER["GITHUB_WORKFLOW_REF"] + "-fake"),
+            ("GITHUB_RUN_ID", "not-an-id"),
+        ):
+            with self.subTest(env=key):
+                env = dict(RUNNER)
+                env[key] = replacement
+                with patch.dict(os.environ, env, clear=True):
+                    with patch.object(coordinator, "require_global_running"):
+                        with self.assertRaises(coordinator.CoordinationError):
+                            coordinator.recover_orphaned_issue_lock(
+                                FakeApi(), ISSUE, "pl0n3r", "OWNER",
+                                LOCK, now=DATE,
+                            )
+        api = FakeApi()
+        before = deepcopy(api.issue_data)
+        after = deepcopy(before)
+        after["body"] = "cambio concurrente"
+        with patch.object(api, "issue", side_effect=[before, after]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.check(api)
+        self.assertEqual([], api.releases)
+
+
 if __name__ == "__main__":
     unittest.main()

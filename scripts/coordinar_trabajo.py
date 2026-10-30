@@ -5581,7 +5581,7 @@ def recover_orphaned_issue_lock(
     # group is required: another coordinator job cannot still own this lock.
     if (os.getenv("GITHUB_REPOSITORY") != "pl0n3r/Factory"
             or os.getenv("GITHUB_EVENT_NAME") != "issue_comment"
-            or not os.getenv("GITHUB_WORKFLOW_REF", "").startswith(
+            or os.getenv("GITHUB_WORKFLOW_REF", "") != (
                 "pl0n3r/Factory/.github/workflows/coordinacion-trabajo.yml@refs/heads/main"
             )
             or re.fullmatch(r"[1-9][0-9]*",
