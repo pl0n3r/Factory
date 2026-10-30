@@ -74,6 +74,18 @@ class SmokeProductosTests(unittest.TestCase):
             raise RuntimeError("unreachable")
         self.assertEqual(evaluate(inventory, fetch=fake_fetch, health=down)["decision"], "NO-GO")
 
+    def test_malformed_main_ref_fails_closed(self):
+        count = {}
+        def malformed(path):
+            count[path] = count.get(path, 0) + 1
+            value = fake_fetch(path)
+            if path.endswith("git/ref/heads/main") and count[path] == 2:
+                value["object"] = None
+            return value
+        report = evaluate(valid_inventory(), fetch=malformed, health=lambda *a, **kw: {})
+        self.assertEqual(report["decision"], "NO-GO")
+        self.assertEqual(report["products"][0]["reason"], "evidence_unverified")
+
     def test_partial_check_pages_are_no_go(self):
         def partial(path):
             value = fake_fetch(path)

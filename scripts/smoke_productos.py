@@ -112,7 +112,8 @@ def evaluate(
                 result["health"] = "success"
             # Detectar movimiento de main durante la observación; no usar evidencia vieja.
             final_ref = fetch(prefix + "/git/ref/heads/main")
-            if final_ref.get("object", {}).get("sha") != sha:
+            observed = final_ref.get("object")
+            if not isinstance(observed, dict) or observed.get("sha") != sha:
                 raise ValueError("main_moved")
             result["status"] = "GO"
         except (ValueError, KeyError, TypeError, OSError, RuntimeError):
