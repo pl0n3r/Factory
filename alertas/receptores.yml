@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "receptores": [
+    {
+      "id": "owner",
+      "nombre": "pl0n3r",
+      "canal": "github",
+      "secreto_ref": "FACTORY_ALERT_OWNER_DESTINATION",
+      "repos": [
+        "*"
+      ],
+      "gravedades": [
+        "info",
+        "warning",
+        "critical"
+      ],
+      "activo": true,
+      "desde": "2026-10-30T00:00:00Z",
+      "hasta": null
+    }
+  ]
+}
