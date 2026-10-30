@@ -23,7 +23,7 @@ from evolution.knowledge_lifecycle import (
 from intelligence.context_compiler import compile_mission_context
 from intelligence.project_dna import discover_project_dna
 from knowledge.postmortem import guardrail_lesson_input
-from knowledge.selection import select_knowledge_for_context
+from knowledge.selection import KnowledgeSelectionError, select_knowledge_for_context
 
 ROOT = Path(__file__).resolve().parents[1]
 LIFE = runpy.run_path(str(ROOT / "tests/test_knowledge_lifecycle.py"))
@@ -201,6 +201,13 @@ class CoberturaFactory21Tests(unittest.TestCase):
             _record(last_validated_at="2026-09-28T00:00:00Z",
                     last_useful_at="2026-09-28T00:00:00Z", state="candidate"), NOW,
         ))
+        # CodeRabbit FINAL: reject restricted Knowledge Items before compiling context.
+        sensitive = E2E["knowledge_item"]()
+        sensitive["sensitivity"] = "sensitive_data"
+        with self.assertRaisesRegex(KnowledgeSelectionError, "sensible no permitido"):
+            select_knowledge_for_context(
+                mission=E2E["mission"](), knowledge_items=[sensitive]
+            )
         self.assertEqual(_stale()["history"], [])
 
     def test_sin_datos_reales(self):
