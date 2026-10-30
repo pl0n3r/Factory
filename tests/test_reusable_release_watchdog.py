@@ -498,5 +498,29 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
         )
 
 
+    def test_advisory_alert_stays_blocked_on_create_or_update(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        payload = workflow.split(
+            'jq -n             --arg title "$title"', 1
+        )[1].split('> /tmp/issue-payload.json', 1)[0]
+        self.assertIn('state:"open"', payload)
+        self.assertEqual(
+            payload.count('labels:["tipo: incidente", "estado: bloqueado", $priority]'),
+            1,
+        )
+        self.assertIn('gh api --method POST "repos/$REPOSITORY/issues"', workflow)
+        self.assertIn('gh api --method PATCH', workflow)
+        self.assertIn('"repos/$REPOSITORY/issues/$issue_number"', workflow)
+
+    def test_advisory_alert_does_not_expand_authority(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("authority=unchanged", workflow)
+        self.assertIn("execute_rollback=false", workflow)
+        self.assertIn('state:"open"', workflow)
+        self.assertNotIn('git push', workflow)
+        self.assertNotIn('git/refs/tags', workflow)
+        self.assertNotIn('contents: write', workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
