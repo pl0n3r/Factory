@@ -19,6 +19,11 @@ from zoneinfo import ZoneInfo
 
 REPO = "pl0n3r/Factory"
 CHECKS = ("Validar", "SonarCloud Code Analysis", "CodeQL")
+ISSUERS = {
+    "Validar": ("github-actions", 15368),
+    "SonarCloud Code Analysis": ("sonarqubecloud", 12526),
+    "CodeQL": ("github-advanced-security", 57789),
+}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 API = "https://api.github.com"
 PAGE_SIZE = 100
@@ -132,6 +137,12 @@ def evaluate(sha: str, runs: Any, checked_at: str | None = None) -> dict[str, An
         if type(name) is not str or type(row.get("head_sha")) is not str or row["head_sha"] != sha:
             result["reason"] = "check_sin_SHA_exacto"
             return result
+        if name in CHECKS:
+            app = row.get("app")
+            if (type(app) is not dict
+                    or (app.get("slug"), app.get("id")) != ISSUERS[name]):
+                result["reason"] = "check_emisor_no_confiable"
+                return result
         if name in CHECKS and (name not in latest or row["id"] > latest[name]["id"]):
             latest[name] = row
     for name in CHECKS:

@@ -8,14 +8,16 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from scripts.dictamen_gates import CHECKS, EvidenceError, collect, evaluate, main, verdict
+from scripts.dictamen_gates import CHECKS, ISSUERS, EvidenceError, collect, evaluate, main, verdict
 
 SHA = "a" * 40
 OTHER = "b" * 40
 
 
 def run(name: str, *, id: int, status: str = "completed", conclusion: str = "success", sha: str = SHA):
-    return {"id": id, "name": name, "status": status, "conclusion": conclusion, "head_sha": sha}
+    slug, app_id = ISSUERS.get(name, ("github-actions", 15368))
+    return {"id": id, "name": name, "status": status, "conclusion": conclusion, "head_sha": sha,
+            "app": {"slug": slug, "id": app_id}}
 
 
 def green():
@@ -56,6 +58,14 @@ class DictamenGatesTests(unittest.TestCase):
         self.assertEqual(evaluate("not-a-sha", green())["status"], "NO-GO")
         self.assertEqual(evaluate(SHA, {"fake": "list"})["status"], "NO-GO")
         self.assertEqual(evaluate(SHA, green() + [run("unrelated check", id=9, conclusion="skipped")])["status"], "GO")
+
+    def test_spoofed_check_issuer_never_authorizes_release(self):
+        for gate in CHECKS:
+            with self.subTest(gate=gate):
+                rows = green()
+                target = next(item for item in rows if item["name"] == gate)
+                target["app"] = {"slug": "attacker-app", "id": 999}
+                self.assertEqual(evaluate(SHA, rows)["status"], "NO-GO")
 
     def test_pagination_exact_inventory(self):
         rows = [run("test-" + str(i), id=i + 1) for i in range(105)] + green()
