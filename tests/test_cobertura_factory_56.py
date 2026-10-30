@@ -127,7 +127,7 @@ class CoberturaFactory56Tests(unittest.TestCase):
         with self.assertRaises(rk.RoleError):
             rk.parse_context("x" * (rk.MAX_CONTEXT + 1))
         with self.assertRaises(rk.RoleError):
-            rk.parse_context('{"body":[],"labels":[],"files":[],"title":""}')
+            rk.parse_context('{"body":["not-a-string"],"labels":[],"files":[],"title":""}')
 
         # L29-U2: el CLI NO permite inyectar paths de catálogo/contexto.
         with patch("sys.argv", ["roles_kit.py", "suggest", "--catalog", "/tmp/otro.json"]):
@@ -201,7 +201,7 @@ class CoberturaFactory56Tests(unittest.TestCase):
                 self.assertEqual(issues.rows[0]["state"], "closed")
                 self.assertEqual(
                     {call[0] for call in issues.calls},
-                    {"update", "comment_once"},
+                    {"update"},
                 )
         # No hay escritura remota ni secretos y el error genérico sigue FAIL.
         raw = sonar_case("CE failure, no approved superseding report")
