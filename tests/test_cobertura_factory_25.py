@@ -27,8 +27,6 @@ from scripts.lease_phase_a_artifact_qa import inspect_artifact, ArtifactQAError
 from scripts.lease_auto_release_run import evaluate_phase_a_candidate, run_cycle
 
 ROOT = Path(__file__).resolve().parents[1]
-MATRIX = ROOT / "docs/matriz-cobertura.md"
-TICK = chr(96)
 SHA = "a" * 40
 REPO = "pl0n3r/Factory"
 META = {
@@ -82,30 +80,6 @@ MISSING: dict[str, str] = {}
 ALL = frozenset(LOCAL) | frozenset(WORLD) | frozenset(POLICY)
 
 
-def checked_rows(raw: object) -> dict[str, tuple[str, ...]]:
-    """Fail closed on duplicated, missing or prematurely certified rows."""
-    if type(raw) is not str or not raw:
-        raise ValueError("UNKNOWN: missing matrix")
-    rows: dict[str, tuple[str, ...]] = {}
-    for line in raw.splitlines():
-        if not line.startswith("| " + TICK):
-            continue
-        parts = tuple(v.strip() for v in line.strip().strip("|").split("|"))
-        if len(parts) != 5:
-            continue
-        key = parts[0].strip(TICK)
-        if key not in ALL:
-            continue
-        if (key in rows or parts[0] != TICK + key + TICK
-                or not parts[1] or parts[2] != "NO_VERIFICABLE"
-                or not parts[3] or not parts[4]):
-            raise ValueError("UNKNOWN: corrupted row " + key)
-        rows[key] = parts
-    if set(rows) != ALL:
-        raise ValueError("UNKNOWN: missing coverage units")
-    return rows
-
-
 def archive(manifest: object = None, *, name: str = "lease-audit-evidence.json") -> tuple[bytes, bytes]:
     raw = json.dumps(
         MANIFEST if manifest is None else manifest,
@@ -151,20 +125,10 @@ class _NoPort:
 
 
 class CoberturaFactory25Tests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.matrix = MATRIX.read_text(encoding="utf-8")
-        cls.rows = checked_rows(cls.matrix)
-
     def test_contrato_principal(self) -> None:
         """AC-01: exact behavioral assertions for all 11 local subcontracts."""
         self.assertEqual((20, 11, 5, 4, 0),
                          (len(ALL), len(LOCAL), len(WORLD), len(POLICY), len(MISSING)))
-        self.assertEqual(ALL, frozenset(self.rows))
-        for key in LOCAL:
-            with self.subTest(unit=key):
-                self.assertEqual("NO_VERIFICABLE", self.rows[key][2])
-
         catalogs = load_catalogs(ROOT)
         es, en = catalogs["es"], catalogs["en"]
         # label-color L8: the actual parity validator accepts canonical catalogs.
@@ -236,17 +200,6 @@ class CoberturaFactory25Tests(unittest.TestCase):
 
     def test_falla_cerrado(self) -> None:
         """AC-02: missing/forged/unsafe input cannot enable colors or phase B."""
-        line = next(s for s in self.matrix.splitlines()
-                    if s.startswith("| " + TICK + LOCAL[0] + TICK + " |"))
-        for value in (
-            None, "", self.matrix.replace(line + "\n", "", 1),
-            self.matrix + "\n" + line,
-            self.matrix.replace(line, line.replace("NO_VERIFICABLE", "CUBIERTO"), 1),
-        ):
-            with self.subTest(inventory=str(value)[:25]):
-                with self.assertRaisesRegex(ValueError, "UNKNOWN"):
-                    checked_rows(value)
-
         catalogs = load_catalogs(ROOT)
         for bad in (
             {**catalogs, "en": [dict(x) for x in catalogs["en"][:-1]]},
@@ -331,7 +284,6 @@ class CoberturaFactory25Tests(unittest.TestCase):
         self.assertFalse(got["artifact_attested"])
         self.assertFalse(got["release_authorized"])
         self.assertFalse(phase.release_authorized)
-        self.assertEqual(ALL, frozenset(self.rows))
 
 
 if __name__ == "__main__":

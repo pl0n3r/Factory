@@ -5,6 +5,7 @@ on:
       pr_number: {required: true, type: number}
       required_review_bot: {required: false, type: string, default: ""}
       factory_ref: {required: false, type: string, default: "v1"}
+      gate_wait_seconds: {required: false, type: number, default: 420}
 permissions:
   contents: read
   pull-requests: read
@@ -12,7 +13,7 @@ jobs:
   politica:
     name: Validar decisiones y límite de revisión
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - name: Validar evento, PR, HEAD y policy base antes de checkout
         env:
@@ -118,6 +119,7 @@ jobs:
           REQUIRED_REVIEW_BOT: ${{ inputs.required_review_bot }}
           MAX_EVIDENCE_BYTES: "2000000"
           MAX_PUBLIC_CHECKS: "500"
+          GATE_WAIT_SECONDS: ${{ inputs.gate_wait_seconds }}
         run: |
           set -euo pipefail
           reviews_file="$(mktemp)"
@@ -232,9 +234,16 @@ jobs:
           # POLICY_GATE_READINESS_END
 
           # POLICY_GATE_WAIT_BEGIN
-          # Límite fijo: seis fotografías estables, cinco pausas de ocho segundos.
-          # El timeout del job y los topes de páginas/bytes permanecen vigentes.
-          for gate_attempt in 1 2 3 4 5 6; do
+          # Presupuesto temporal para gates lentos; la verificación permanece exact-HEAD.
+          # El input se acepta solo como segundos decimales canónicos en [300,540].
+          # No altera el evaluador, la estabilidad de snapshots ni permisos.
+          if [[ ! "${GATE_WAIT_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] ||
+             (( GATE_WAIT_SECONDS < 300 || GATE_WAIT_SECONDS > 540 )); then
+            echo "::error::gate_wait_seconds inválido (se requieren 300..540 segundos)"
+            exit 1
+          fi
+          gate_wait_started=$SECONDS
+          while true; do
             # POLICY_CHECK_SNAPSHOT_BEGIN
             # Dos lecturas completas consecutivas e idénticas acreditan estabilidad.
             # GitHub no ofrece snapshots transaccionales de /check-runs.
@@ -349,12 +358,20 @@ jobs:
             }
             # POLICY_CHECK_SNAPSHOT_END
             if gate_readiness; then
+              # La lectura del snapshot puede consumir el último segundo del
+              # presupuesto; un verde tardío NO debe autorizarse después del plazo.
+              gate_wait_elapsed=$(( SECONDS - gate_wait_started ))
+              if (( gate_wait_elapsed >= GATE_WAIT_SECONDS )); then
+                echo "::error::Gates requeridos sin evidencia terminal verde tras espera acotada"
+                exit 1
+              fi
               break
             else
               gate_exit=$?
               (( gate_exit == 75 )) || exit 1
             fi
-            if (( gate_attempt == 6 )); then
+            gate_wait_elapsed=$(( SECONDS - gate_wait_started ))
+            if (( gate_wait_elapsed >= GATE_WAIT_SECONDS )); then
               echo "::error::Gates requeridos sin evidencia terminal verde tras espera acotada"
               exit 1
             fi
@@ -362,7 +379,9 @@ jobs:
               echo "::error::Identidad HEAD/BASE cambió mientras se esperaban checks"
               exit 1
             }
-            sleep 8
+            # Se limita la última pausa para no sobrepasar el presupuesto dado.
+            gate_sleep=$(( GATE_WAIT_SECONDS - gate_wait_elapsed < 8 ? GATE_WAIT_SECONDS - gate_wait_elapsed : 8 ))
+            sleep "$gate_sleep"
           done
           # POLICY_GATE_WAIT_END
 
@@ -394,8 +413,32 @@ jobs:
           # Solo reruns: anclar mensajes CodeRabbit sin SHA a la timeline REST
           # autenticada del PR. Página 6 es centinela de desbordamiento.
           timeline_args=()
+          # Un rerun por espera agotada no es por sí mismo un reintento
+          # OWNER de CodeRabbit. La timeline solo hace falta ante un
+          # rate-limit verificable de la identidad del bot requerido.
+          reviewer_rate_limited=false
+          # BASE puede exigir reviewer aunque el caller no envíe el input.
+          # El detector de necesidad de timeline usa la misma prioridad
+          # BASE -> caller que valida politica_kit, sin conceder el fallback.
+          effective_review_bot="$REQUIRED_REVIEW_BOT"
+          if [[ -n "${BASE_POLICY_FILE:-}" ]]; then
+            base_review_bot="$(jq -r '.required_review_bot // empty' "$BASE_POLICY_FILE")"
+            if [[ -n "$base_review_bot" ]]; then
+              effective_review_bot="$base_review_bot"
+            fi
+          fi
+          if [[ -n "$effective_review_bot" ]] &&
+             jq -s -e --arg bot "$effective_review_bot" '
+               any(.[]; (.user.login // "") == $bot
+                 and .user.type == "Bot"
+                 and (.body | type == "string")
+                 and (.body | test("Review rate limited|Review limit reached"; "i")))
+             ' "$comments_file" >/dev/null; then
+            reviewer_rate_limited=true
+          fi
           if (( GITHUB_RUN_ATTEMPT > 1 )); then
-            : > "$timeline_file"
+            if [[ "$reviewer_rate_limited" == true ]]; then
+              : > "$timeline_file"
             timeline_complete=false
             for page in 1 2 3 4 5 6; do
               if ! gh api -H "Accept: application/vnd.github+json" \
@@ -442,6 +485,7 @@ jobs:
               exit 1
             }
             timeline_args=(--timeline-file "$timeline_file")
+            fi
           fi
 
           args=(--required-review-bot "$REQUIRED_REVIEW_BOT" --head-sha "$PR_HEAD_SHA" --head-committed-at "$HEAD_COMMITTED_AT")
