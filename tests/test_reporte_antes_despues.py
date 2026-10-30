@@ -83,6 +83,22 @@ class ReporteAntesDespuesTests(unittest.TestCase):
         with self.assertRaises(report.ReportError):
             report.evaluate(value)
 
+    def test_fechas_de_borde_y_completitud_de_exportacion(self):
+        value = fixture()
+        value["issues"][0]["closed_at"] = "2026-10-08T00:00:00Z"
+        result = report.evaluate(value)
+        self.assertEqual(result["antes"]["issues_cerrados"], 0)
+        self.assertEqual(result["despues"]["issues_cerrados"], 3)
+        value = fixture()
+        value["issues"][3]["state"] = "closed"
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+        value = fixture()
+        value["pull_requests"][0]["merged_at"] = None
+        value["pull_requests"][0]["merged"] = True
+        with self.assertRaises(report.ReportError):
+            report.evaluate(value)
+
     def test_cli_sin_red_y_salida_solo_metricas(self):
         value = fixture()
         value["issues"][0]["secret_note"] = "NEVER_EMIT_PII"
