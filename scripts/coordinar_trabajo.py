@@ -5566,6 +5566,116 @@ def validate_pr_claims(api: GitHub, pr_number: int) -> None:
     print(f"PR #{pr_number}: diff exact-HEAD dentro de claims V3 de #{issue_number}.")
 
 
+def recover_orphaned_issue_lock(
+    api: GitHub, issue_number: int, actor: str, association: str,
+    expected_sha: str, *, now: datetime | None = None,
+) -> bool:
+    """Owner-only terminal lock repair: never release a live or foreign V3."""
+    if (api.repo.casefold() != "pl0n3r/factory"
+            or actor != "pl0n3r" or association != "OWNER"):
+        raise CoordinationError("Solo el propietario de Factory repara locks huérfanos.")
+    if (type(issue_number) is not int or issue_number <= 0
+            or re.fullmatch(r"[a-f0-9]{40}", expected_sha) is None):
+        raise CoordinationError("Identidad SHA del lock inválida.")
+    # A GitHub Actions runner under the canonical repository-wide concurrency
+    # group is required: another coordinator job cannot still own this lock.
+    if (os.getenv("GITHUB_REPOSITORY") != "pl0n3r/Factory"
+            or os.getenv("GITHUB_EVENT_NAME") != "issue_comment"
+            or os.getenv("GITHUB_WORKFLOW_REF", "") != (
+                "pl0n3r/Factory/.github/workflows/coordinacion-trabajo.yml@refs/heads/main"
+            )
+            or re.fullmatch(r"[1-9][0-9]*",
+                            os.getenv("GITHUB_RUN_ID", "")) is None):
+        raise CoordinationError("Reparación no ejecutada bajo coordinación serializada.")
+    require_global_running(api)
+    lock_name = recovery_lock_branch(issue_number)
+    if api.branch_sha(lock_name) != expected_sha:
+        raise CoordinationError("Lock ausente o cambiado: no hay propiedad del token.")
+    issue = api.issue(issue_number)
+    if (issue.get("state") != "open" or "pull_request" in issue
+            or STATUS_BLOCKED not in label_names(issue)
+            or active_reservation(api, issue_number) is not None):
+        raise CoordinationError("Issue con autoridad activa o estado incompatible.")
+    commit = api.request("GET", f"/repos/{api.repo}/git/commits/{expected_sha}")
+    if not isinstance(commit, dict) or commit.get("sha") != expected_sha:
+        raise CoordinationError("Commit de lock no autenticado.")
+    author = commit.get("author")
+    committer = commit.get("committer")
+    parents = commit.get("parents")
+    message = commit.get("message")
+    tree = commit.get("tree")
+    verification = commit.get("verification")
+    if (not isinstance(author, dict)
+            or author.get("name") != "github-actions[bot]"
+            or author.get("email") !=
+               "41898282+github-actions[bot]@users.noreply.github.com"
+            or not isinstance(committer, dict)
+            or committer.get("name") != "GitHub"
+            or committer.get("email") != "noreply@github.com"
+            or not isinstance(verification, dict)
+            or verification.get("verified") is not True
+            or verification.get("reason") != "valid"
+            or not isinstance(tree, dict)
+            or re.fullmatch(r"[a-f0-9]{40}", str(tree.get("sha", ""))) is None
+            or not isinstance(parents, list) or len(parents) != 1
+            or not isinstance(parents[0], dict)
+            or re.fullmatch(r"[a-f0-9]{40}",
+                            str(parents[0].get("sha", ""))) is None
+            or not isinstance(message, str)
+            or re.fullmatch(
+                rf"lock coordinacion Issue #{issue_number} "
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+                r"[89ab][0-9a-f]{3}-[0-9a-f]{12}", message
+            ) is None):
+        raise CoordinationError("Procedencia del lock no válida.")
+    clock = datetime.now(timezone.utc) if now is None else now
+    if clock.tzinfo is None:
+        raise CoordinationError("Reloj UTC sin zona horaria.")
+    for field in (author, committer):
+        stamp = field.get("date")
+        if not isinstance(stamp, str):
+            raise CoordinationError("Fecha de lock ausente.")
+        try:
+            created = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise CoordinationError("Fecha de lock inválida.") from exc
+        if (created.tzinfo is None
+                or clock - created < timedelta(minutes=60)):
+            raise CoordinationError("Lock reciente, futuro o no verificable.")
+    parent = parents[0]["sha"]
+    parent_commit = api.request("GET", f"/repos/{api.repo}/git/commits/{parent}")
+    parent_tree = parent_commit.get("tree") if isinstance(parent_commit, dict) else None
+    if (not isinstance(parent_tree, dict)
+            or parent_tree.get("sha") != tree["sha"]):
+        raise CoordinationError("Lock con árbol distinto al parent.")
+    work_sha = api.branch_sha(branch_for_issue(issue_number))
+    if work_sha is not None:
+        if work_sha != parent:
+            raise CoordinationError("HEAD de trabajo cambió desde el lock.")
+    else:
+        # A lock created on main may outlive later fast-forward merges.
+        ancestry = api.request(
+            "GET", f"/repos/{api.repo}/compare/{parent}...main"
+        )
+        if (not isinstance(ancestry, dict)
+                or ancestry.get("behind_by") != 0
+                or ancestry.get("status") not in ("ahead", "identical")):
+            raise CoordinationError("Parent del lock ya no pertenece a main.")
+    require_global_running(api)
+    if (api.branch_sha(lock_name) != expected_sha
+            or active_reservation(api, issue_number) is not None
+            or api.issue(issue_number) != issue
+            or api.branch_sha(branch_for_issue(issue_number)) != work_sha):
+        raise CoordinationError("Estado cambió antes de liberar el lock.")
+    # Existing GraphQL updateRefs(beforeOid=expected_sha, afterOid=zero).
+    # It must reject races rather than silently releasing another token.
+    api.release_issue_lock(issue_number, expected_sha)
+    if api.branch_sha(lock_name) is not None:
+        raise CoordinationError("CAS no confirmó la eliminación del lock.")
+    print(f"Lock huérfano de Issue #{issue_number}: CAS confirmado.")
+    return True
+
+
 def parse_comment_command(body: str) -> tuple[str, str | None]:
     """Interpreta únicamente los comandos públicos del perfil activo."""
     value = body.strip()
@@ -5573,6 +5683,11 @@ def parse_comment_command(body: str) -> tuple[str, str | None]:
         return "tomar", None
     if value == PROFILE.force_release:
         return "liberar-forzado", None
+    if PROFILE.name == "es" and value.startswith("/recuperar-lock-huerfano "):
+        sha = value[len("/recuperar-lock-huerfano "):]
+        if re.fullmatch(r"[a-f0-9]{40}", sha) is None:
+            raise CoordinationError("Recuperación de lock requiere SHA completo.")
+        return "recuperar-lock-huerfano", sha
     if PROFILE.name == "es" and value == "/adoptar-contrato-huerfana":
         return "adoptar-contrato-huerfana", None
     pairs = [(PROFILE.release, "liberar"), (PROFILE.transfer, "transferir")]
@@ -5654,6 +5769,11 @@ def process_comment(
         assert reservation_id is not None
         renew_pinned_acceptance(
             api, issue_number, actor, association, reservation_id
+        )
+    elif command == "recuperar-lock-huerfano":
+        assert reservation_id is not None
+        recover_orphaned_issue_lock(
+            api, issue_number, actor, association, reservation_id,
         )
     elif command == "adoptar-contrato-huerfana":
         adopt_orphaned_contract(
