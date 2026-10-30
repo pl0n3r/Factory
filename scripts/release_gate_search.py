@@ -8,7 +8,11 @@ No API calls or writes to the repository are performed by this module.
 from __future__ import annotations
 
 import json
+import os
+import re
+import stat
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -87,15 +91,58 @@ def verified_inventory(first: Any, second: Any, published: Any) -> list[dict[str
     return result
 
 
+
+# Do not derive filesystem paths from untrusted argv.  Instead enumerate only
+# paths assembled from the runner temp root and its owned private test sandboxes.
+# A CLI argument can MATCH a candidate; it never supplies an opened path.
+_MAX_EVIDENCE_BYTES = 2_000_000
+
+
+def _trusted_paths(paths: list[str]) -> tuple[Path, Path, Path]:
+    root = Path(tempfile.gettempdir())
+    candidates = [root]
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if (not re.fullmatch(r"tmp[A-Za-z0-9_-]{8}", entry.name)
+                    or not entry.is_dir(follow_symlinks=False)):
+                continue
+            info = entry.stat(follow_symlinks=False)
+            if info.st_uid == os.getuid() and not stat.S_IMODE(info.st_mode) & 0o077:
+                candidates.append(Path(entry.path))
+    for base in candidates:
+        for number in (1, 2):
+            selected = tuple(base / f"release-search-{kind}-{number}.json"
+                             for kind in ("p1", "p2", "verified"))
+            if tuple(paths) == tuple(map(str, selected)):
+                return selected
+    raise SearchEvidenceError("invalid evidence file path")
+
+
+def _read_trusted_evidence(path: Path) -> Any:
+    """Reject symlinks, nonregular files and oversized evidence before parsing."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_size > _MAX_EVIDENCE_BYTES):
+            raise SearchEvidenceError("untrusted evidence file")
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            raw = stream.read(_MAX_EVIDENCE_BYTES + 1)
+        if len(raw) > _MAX_EVIDENCE_BYTES:
+            raise SearchEvidenceError("oversized evidence file")
+        return json.loads(raw, object_pairs_hook=_unique_object)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _main(paths: list[str]) -> int:
     if len(paths) != 3:
         raise SearchEvidenceError("expected page-one, page-two and verified-inventory files")
-    if any(not path or len(path) > 300 for path in paths):
-        raise SearchEvidenceError("invalid evidence file path")
+    trusted = _trusted_paths(paths)
     try:
-        p1, p2, inventory = (json.loads(Path(path).read_text(encoding="utf-8"),
-                                      object_pairs_hook=_unique_object)
-                             for path in paths)
+        p1, p2, inventory = (_read_trusted_evidence(path) for path in trusted)
     except (OSError, ValueError, UnicodeError) as exc:
         raise SearchEvidenceError("unreadable search evidence") from exc
     verified_inventory(p1, p2, inventory)
