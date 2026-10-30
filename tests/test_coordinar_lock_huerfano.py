@@ -52,6 +52,7 @@ class FakeApi:
         }
         self.comments = []
         self.releases = []
+        self.parent_tree = "c" * 40
 
     def branch_sha(self, branch):
         return self.refs.get(branch)
@@ -69,8 +70,9 @@ class FakeApi:
             raise AssertionError("No direct mutation allowed")
         if path.endswith("/git/commits/" + LOCK):
             return deepcopy(self.record)
-        if path.endswith("/git/commits/" + PARENT):
-            return {"sha": PARENT, "tree": {"sha": "c" * 40}}
+        if "/git/commits/" in path:
+            return {"sha": path.rsplit("/", 1)[-1],
+                    "tree": {"sha": self.parent_tree}}
         if "/compare/" in path:
             matched = (path.endswith("/compare/" + PARENT + "...main")
                        and self.refs["main"] == PARENT)
@@ -117,6 +119,8 @@ class RecoveryLockTests(unittest.TestCase):
             ("razón firma", lambda a: a.record["verification"].update(
                 reason="unsigned")),
             ("árbol alterado", lambda a: a.record["tree"].update(sha="d" * 40)),
+            ("árbol de parent distinto", lambda a: setattr(
+                a, "parent_tree", "d" * 40)),
             ("árbol ausente", lambda a: a.record.update(tree=None)),
             ("fecha", lambda a: a.record["author"].update(
                 date="2026-10-30T15:30:00Z")),
