@@ -119,15 +119,15 @@ class CoberturaFactory47Tests(unittest.TestCase):
             {**baseline, "idempotency_key": "../unsafe"},
             {**baseline, "extra": "unexpected"},
         )
+        valid_manifest = mod.manifest()
         for bad in invalid:
             with self.subTest(fields=sorted(bad)):
                 with self.assertRaises(RecoveryAdapterError):
-                    build_adapter_descriptor(mod.manifest(), bad)
+                    build_adapter_descriptor(valid_manifest, bad)
+        disabled_manifest = mod.manifest("NOT_APPLICABLE")
+        forbidden_request = mod.request(provider="google_drive")
         with self.assertRaises(RecoveryAdapterError):
-            build_adapter_descriptor(
-                mod.manifest("NOT_APPLICABLE"),
-                mod.request(provider="google_drive"),
-            )
+            build_adapter_descriptor(disabled_manifest, forbidden_request)
         exercise("test_invalid_sensitive_or_unsafe_adapter_input_fails_closed_without_echo")
 
     def test_sin_datos_reales(self):
