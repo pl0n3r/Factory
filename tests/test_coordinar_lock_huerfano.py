@@ -63,8 +63,11 @@ class FakeApi:
             raise AssertionError("No direct mutation allowed")
         if path.endswith("/git/commits/" + LOCK):
             return deepcopy(self.record)
-        if "/compare/" + PARENT + "...main" in path:
-            return {"behind_by": 0, "status": "identical"}
+        if "/compare/" in path:
+            matched = (path.endswith("/compare/" + PARENT + "...main")
+                       and self.refs["main"] == PARENT)
+            return {"behind_by": 0 if matched else 1,
+                    "status": "identical" if matched else "diverged"}
         raise AssertionError(f"unexpected REST path: {path}")
 
     def release_issue_lock(self, number, token):
@@ -132,6 +135,14 @@ class RecoveryLockTests(unittest.TestCase):
         self.assertEqual([(ISSUE, LOCK)], self.api.releases)
         self.assertEqual(PARENT, self.api.refs["main"])
         self.assertNotIn("trabajo/issue-1946", self.api.refs)
+        contender = FakeApi()
+        with patch.object(contender, "release_issue_lock",
+                          side_effect=coordinator.CoordinationError("CAS denied")):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.check(contender)
+        self.assertEqual(
+            LOCK, contender.refs["coordinacion/lock-issue-1946"],
+        )
         with self.assertRaises(coordinator.CoordinationError):
             self.check()
 
