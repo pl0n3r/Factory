@@ -32,8 +32,85 @@ def safe_watch(**changes):
 
 class CoberturaFactory60Tests(unittest.TestCase):
     def test_contrato_principal(self):
-        # L5: 4D compone los módulos 4B/4C reales, no una lógica duplicada.
-        guard, watch = run_pipeline(watch_ev=watchdog_evidence(
+        # L5: composición real de 4B/4C, sin política duplicada.
+        guard, watch = run_pipeline(watch_ev=safe_watch())
+        self.assertEqual((guard.action, guard.authority), ("ALLOW", "unchanged"))
+        self.assertEqual((watch.action, watch.authority), ("ALLOW", "unchanged"))
+        self.assertEqual(watch.incidents, ())
+        self.assertFalse(watch.interrupt_owner)
+        self.assertFalse(guard_blocks_global_dispatch(guard))
+
+        # L31: no se puede pedir una pausa sin autoridad de fencing.
+        blocked, protected = run_pipeline(
+            fence=fencing("keep", False),
+            guard_cfg=guard_config(global_pause=True),
+            watch_ev=safe_watch(),
+        )
+        self.assertEqual((blocked.action, blocked.pause_allowed),
+                         ("BLOCKED", False))
+        self.assertIn("adaptive_pause_not_allowed", blocked.reasons)
+        self.assertEqual((protected.action, protected.authority),
+                         ("BLOCKED", "unchanged"))
+
+        # L34: con fencing válido, PAUSE conserva autoridad sin crear trabajo.
+        paused, pause_watch = run_pipeline(
+            fence=fencing("replan", True),
+            guard_cfg=guard_config(global_pause=True),
+            watch_ev=safe_watch(),
+        )
+        self.assertEqual((paused.action, paused.pause_allowed, paused.authority),
+                         ("PAUSE", True, "unchanged"))
+        self.assertEqual((pause_watch.action, pause_watch.authority),
+                         ("PAUSE", "unchanged"))
+        self.assertTrue(guard_blocks_global_dispatch(paused))
+
+        # L40-43 + L46: Presence UNKNOWN, STATE stale, ready sin despacho
+        # y reserva sin progreso generan códigos distintos, sin duplicados.
+        unknown_presence = presence()
+        unknown_presence["sessions"][0]["freshness"] = "unknown"
+        evidence = watchdog_evidence(
+            presence=unknown_presence,
+            work_ready=True,
+            ready_since="2026-10-02T01:30:00Z",
+            next_dispatch_planned=False,
+            reservation={
+                "active": True,
+                "work_identity": "pl0n3r/Factory#746",
+                "updated_at": "2026-10-02T01:20:00Z",
+                "freshness": "stale",
+            },
+            state=state(updated_at="2026-10-02T01:20:00Z"),
+        )
+        healthy, first = run_pipeline(watch_ev=evidence)
+        self.assertEqual(healthy.action, "ALLOW")
+        self.assertEqual((first.action, first.authority),
+                         ("BLOCKED", "unchanged"))
+        self.assertEqual(first.daily_summary.state_freshness, "stale")
+        self.assertTrue({
+            "presence_insufficient", "state_stale",
+            "ready_without_dispatch", "reservation_without_progress",
+        } <= {incident.code for incident in first.incidents})
+        self.assertTrue(first.new_alert_fingerprints)
+        repeated = copy.deepcopy(evidence)
+        repeated["already_alerted_fingerprints"] = list(
+            first.new_alert_fingerprints
+        )
+        _, second = run_pipeline(watch_ev=repeated)
+        self.assertEqual(second.new_alert_fingerprints, ())
+        self.assertTrue(all(item.repeated for item in second.incidents))
+
+        # L52: smoke S1 solo informa a 4C; el rollback es next_action
+        # ya presente en la evidencia sintética, sin ejecutar nada.
+        action = "rollback reversible already authorized at exact SHA"
+        authorized, observed = run_pipeline(
+            fence=fencing("replan", True),
+            guard_cfg=guard_config(global_pause=True),
+            guard_ev=guard_evidence(
+                production_change=True,
+                backup_required=True,
+                backup_verified=True,
+            ),
+            watch_ev=watchdog_evidence(
                 reservation=None,
                 state=state(
                     reservation_id=None,
@@ -46,7 +123,8 @@ class CoberturaFactory60Tests(unittest.TestCase):
                 next_actions=[action],
             ),
         )
-        self.assertEqual(authorized.action, "PAUSE")
+        self.assertEqual((authorized.action, authorized.authority),
+                         ("PAUSE", "unchanged"))
         self.assertEqual((observed.action, observed.authority),
                          ("PAUSE", "unchanged"))
         self.assertTrue(observed.interrupt_owner)
