@@ -163,7 +163,8 @@ class CoberturaFactory51Tests(unittest.TestCase):
         with patch.object(socket, "socket", side_effect=AssertionError("red prohibida")):
             self.assertIsNone(resiliencia.validate_manifest(manifest_v2(), now=NOW))
             self.assertIsNone(resiliencia.validate_legacy_manifest(manifest_v1(), now=NOW))
-            with patch.object(resiliencia.sys, "argv", ["resiliencia.py", "--manifest-stdin"]), \
+            with patch.object(resiliencia, "_utc_now", return_value=NOW), \
+                 patch.object(resiliencia.sys, "argv", ["resiliencia.py", "--manifest-stdin"]), \
                  patch.object(resiliencia.sys, "stdin", io.StringIO(json.dumps(manifest_v2()))), \
                  patch.object(resiliencia.sys, "stdout", new_callable=io.StringIO) as captured:
                 self.assertEqual(resiliencia.main(), 0)
