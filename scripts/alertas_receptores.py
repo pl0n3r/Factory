@@ -144,7 +144,6 @@ def resolve(config: Any, repo: str, gravedad: str, instante: str) -> list[dict[s
 def main(argv: list[str] | None = None) -> int:
     """Validate or print a synthetic routing plan, never dispatch alerts."""
     parser = argparse.ArgumentParser(description="Resolver receptores offline de Factory")
-    parser.add_argument("--config", type=Path, default=CONFIG)
     parser.add_argument("--repo", choices=sorted(REPOS))
     parser.add_argument("--gravedad", choices=sorted(GRAVEDADES))
     parser.add_argument("--instante", help="UTC YYYY-MM-DDTHH:MM:SSZ")
@@ -154,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         parser.error("repo, gravedad e instante deben indicarse juntos")
     try:
-        config = load_config(args.config)
+        config = load_config()
         selected = resolve(config, args.repo, args.gravedad, args.instante) if args.repo else []
     except (ConfigError, TypeError):
         print("ERROR: configuración de alertas inválida", file=sys.stderr)

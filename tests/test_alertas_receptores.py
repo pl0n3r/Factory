@@ -86,10 +86,19 @@ class AlertasReceptoresTests(unittest.TestCase):
             with self.assertRaises(MODULE.ConfigError):
                 MODULE.load_config(path)
             path.write_text(json.dumps(self.base), encoding="utf-8")
-            result = subprocess.run([sys.executable, str(SCRIPT), "--config", str(path), "--repo", "pl0n3r/Factory", "--gravedad", "critical", "--instante", "2026-10-30T12:00:00Z"], capture_output=True, text=True, check=False)
+            result = subprocess.run([sys.executable, str(SCRIPT), "--repo", "pl0n3r/Factory", "--gravedad", "critical", "--instante", "2026-10-30T12:00:00Z"], capture_output=True, text=True, check=False)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual(["owner"], [r["id"] for r in json.loads(result.stdout)["receptores"]])
             self.assertNotIn("SYNTHETIC_NEVER_ECHO", result.stdout)
+            rejected = subprocess.run(
+                [sys.executable, str(SCRIPT), "--config", str(path),
+                 "--repo", "pl0n3r/Factory", "--gravedad", "critical",
+                 "--instante", "2026-10-30T12:00:00Z"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(2, rejected.returncode)
+            self.assertIn("unrecognized arguments", rejected.stderr)
+            self.assertEqual("", rejected.stdout)
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn("import requests", source)
         self.assertNotIn("socket", source)
