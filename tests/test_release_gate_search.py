@@ -1,6 +1,7 @@
 """Exact executable acceptance contract for Factory critical Incident #1076."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import subprocess
 import sys
@@ -8,9 +9,30 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.release_gate_search import SearchEvidenceError, verified_inventory
+from scripts.release_gate_search import SearchEvidenceError, _main, verified_inventory
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@contextmanager
+def _cli_snapshot_files():
+    """Create the same fixed paths used by the workflow, never a caller path."""
+    paths = tuple(
+        Path("/tmp/release-search-" + kind + "-2.json")
+        for kind in ("p1", "p2", "verified")
+    )
+    created = []
+    try:
+        for path in paths:
+            # Exclusive creation must not overwrite a pre-existing file/symlink.
+            with path.open("x", encoding="utf-8"):
+                pass
+            created.append(path)
+        yield paths
+    finally:
+        for path in created:
+            path.unlink(missing_ok=True)
+
 
 
 def _items(total: int = 116) -> list[dict[str, object]]:
@@ -78,8 +100,7 @@ class ReleaseGateSearchTests(unittest.TestCase):
         self.assertIn("cmp -s /tmp/release-search-verified-1.json", workflow)
         self.assertLess(workflow.index("python3 -m scripts.release_gate_search"),
                         workflow.index("cmp -s /tmp/release-search-verified-1.json"))
-        with tempfile.TemporaryDirectory() as tmp:
-            p1, p2, pv = (Path(tmp) / name for name in ("first.json", "second.json", "verified.json"))
+        with _cli_snapshot_files() as (p1, p2, pv):
             for path, data in ((p1, self.first), (p2, self.second), (pv, self.projection)):
                 path.write_text(json.dumps(data), encoding="utf-8")
             args = [sys.executable, "-m", "scripts.release_gate_search", str(p1), str(p2), str(pv)]
@@ -91,10 +112,48 @@ class ReleaseGateSearchTests(unittest.TestCase):
             self.assertIn("Search Issues evidence rejected", bad.stderr)
 
 
+
+    def test_cli_only_accepts_trusted_snapshot_paths(self) -> None:
+        with _cli_snapshot_files() as (p1, p2, pv):
+            p1.write_text(json.dumps(self.first), encoding="utf-8")
+            p2.write_text(json.dumps(self.second), encoding="utf-8")
+            pv.write_text(json.dumps(self.projection), encoding="utf-8")
+            canonical = [str(p1), str(p2), str(pv)]
+            self.assertEqual(_main(canonical), 0)
+            for invalid in (
+                ["/etc/passwd", canonical[1], canonical[2]],
+                [canonical[0], canonical[1].replace("-2.json", "-1.json"),
+                 canonical[2]],
+                [canonical[1], canonical[0], canonical[2]],
+                [canonical[0] + "/../outside", canonical[1], canonical[2]],
+                [canonical[0], canonical[1], canonical[2] + ".json"],
+            ):
+                with self.subTest(paths=invalid):
+                    with self.assertRaisesRegex(
+                        SearchEvidenceError, "invalid evidence file path"
+                    ):
+                        _main(invalid)
+
+    def test_cli_rejects_symlink_and_malformed_paths(self) -> None:
+        with _cli_snapshot_files() as (p1, p2, pv):
+            p1.write_text(json.dumps(self.first), encoding="utf-8")
+            p2.write_text(json.dumps(self.second), encoding="utf-8")
+            pv.write_text(json.dumps(self.projection), encoding="utf-8")
+            with tempfile.TemporaryDirectory() as tmp:
+                outside = Path(tmp) / "private-synthetic.json"
+                outside.write_text('{"private": "synthetic-only"}',
+                                   encoding="utf-8")
+                p1.unlink()
+                p1.symlink_to(outside)
+                with self.assertRaisesRegex(
+                    SearchEvidenceError, "unreadable search evidence"
+                ):
+                    _main([str(p1), str(p2), str(pv)])
+                self.assertIn("synthetic-only",
+                              outside.read_text(encoding="utf-8"))
+
     def test_duplicate_json_keys_fail_closed_at_cli_boundary(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            p1, p2, pv = (Path(tmp) / n for n in
-                          ("first.json", "second.json", "verified.json"))
+        with _cli_snapshot_files() as (p1, p2, pv):
             p2.write_text(json.dumps(self.second), encoding="utf-8")
             pv.write_text(json.dumps(self.projection), encoding="utf-8")
             original = json.dumps(self.first)
