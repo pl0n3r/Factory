@@ -135,7 +135,7 @@ def _read_trusted_evidence(path: Path) -> Any:
 # conformance suites invoke the very same workflow script in a fresh private
 # tempfile.TemporaryDirectory (mode 0700), rewriting only that directory.
 # Support those snapshots without permitting arbitrary CLI paths.
-_TEST_SNAPSHOT_DIRECTORY = re.compile(r"/tmp/tmp[A-Za-z0-9_-]{8}\\Z")
+_TEST_SNAPSHOT_DIRECTORY = re.compile(r"/tmp/tmp[A-Za-z0-9_-]{8}\Z")
 
 
 def _trusted_paths(paths: list[str]) -> tuple[Path, Path, Path]:
