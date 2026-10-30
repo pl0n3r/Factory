@@ -110,7 +110,10 @@ class CoberturaFactory47Tests(unittest.TestCase):
         """AC-02: forma cerrada, providers, referencias y checksum seguros."""
         mod = support()
         baseline = mod.request()
+        missing_checksum = dict(baseline)
+        missing_checksum.pop("checksum_sha256")
         invalid = (
+            missing_checksum,
             {**baseline, "provider": "icloud"},
             {**baseline, "operation": "delete"},
             {**baseline, "object_ref": "../out"},
