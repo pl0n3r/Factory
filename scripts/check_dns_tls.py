@@ -98,11 +98,12 @@ def dns_lookup(host: str) -> list[str]:
 
 def tls_observe(host: str, address: str, now: datetime) -> dict:
     """Validar cadena y hostname con CA del sistema; fijar la IP DNS elegida."""
-    context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.verify_mode = ssl.CERT_REQUIRED
-    context.check_hostname = True
     try:
+        # Incluso una CA local no disponible debe degradar a UNKNOWN.
+        context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = True
         with socket.create_connection((address, 443), timeout=SOCKET_TIMEOUT) as raw:
             with context.wrap_socket(raw, server_hostname=host) as verified:
                 certificate = verified.getpeercert()
@@ -156,15 +157,26 @@ def check_product(product: str, domain: str | None, now: datetime,
         return report
     addresses = sorted(set(addresses))
     report["dns"] = {"status": "RESOLVED", "addresses": addresses}
-    observations = [tls_probe(domain, address, now) for address in addresses]
-    statuses = {item.get("status", "UNKNOWN") for item in observations}
-    if len(statuses) == 1 and all(item.get("valid") is True for item in observations):
-        closest = min(observations, key=lambda t: t["days_remaining"])
-        report["tls"] = dict(closest)
-        report["status"] = closest["status"]
-    elif len(statuses) == 1 and statuses.pop() in {"EXPIRED", "WRONG_DOMAIN", "INVALID_CERTIFICATE"}:
-        report["tls"]["status"] = observations[0]["status"]
-        report["status"] = observations[0]["status"]
+    try:
+        observations = [tls_probe(domain, address, now) for address in addresses]
+        if any(not isinstance(item, dict) for item in observations):
+            return report
+        statuses = {item.get("status", "UNKNOWN") for item in observations}
+        if len(statuses) == 1 and statuses <= {"VALID", "EXPIRING_SOON"}:
+            if all(item.get("valid") is True and isinstance(item.get("days_remaining"), (int, float))
+                   and item.get("days_remaining") > 0
+                   and isinstance(item.get("expires_at_utc"), str)
+                   for item in observations):
+                closest = min(observations, key=lambda item: item["days_remaining"])
+                report["tls"] = dict(closest)
+                report["status"] = closest["status"]
+        elif len(statuses) == 1 and statuses.pop() in {"EXPIRED", "WRONG_DOMAIN", "INVALID_CERTIFICATE"}:
+            if all(item.get("valid") is False for item in observations):
+                report["tls"]["status"] = observations[0]["status"]
+                report["status"] = observations[0]["status"]
+    except (OSError, ValueError, TypeError, KeyError, ssl.SSLError):
+        # Una sonda fallida nunca invalida la generación del reporte del producto.
+        return report
     # Resultados contradictorios o ilegibles -> UNKNOWN en vez de éxito parcial.
     return report
 
