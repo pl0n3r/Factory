@@ -82,6 +82,7 @@ def init_config(path: Path) -> None:
 
 def dns_lookup(host: str) -> list[str]:
     """Resolver A/AAAA y rechazar resultados mixtos o no públicos."""
+    host = validate_domain(host)
     info = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
     addresses: set[str] = set()
     for entry in info:
@@ -99,6 +100,11 @@ def dns_lookup(host: str) -> list[str]:
 def tls_observe(host: str, address: str, now: datetime) -> dict:
     """Validar cadena y hostname con CA del sistema; fijar la IP DNS elegida."""
     try:
+        # Defensa en profundidad: el helper no puede conectar a redes internas,
+        # aunque un llamador se salte la validación previa de check_product.
+        host = validate_domain(host)
+        if not ipaddress.ip_address(address).is_global:
+            raise ValueError("Destino TLS no público")
         # Incluso una CA local no disponible debe degradar a UNKNOWN.
         context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
