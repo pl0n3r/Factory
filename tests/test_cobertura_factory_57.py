@@ -12,13 +12,13 @@ from copy import deepcopy
 from io import StringIO
 import json
 from pathlib import Path
-import runpy
 import socket
 import subprocess
 import unittest
 from unittest.mock import patch
 import urllib.request
 
+from quality.sonar import normalize_sonar_snapshot
 from scripts.unattended_cycle_handoff import project_unattended_cycle_handoff
 from scripts import unattended_handoff_conformance_cli as conformance
 
@@ -95,9 +95,75 @@ def _cycle(action: str, *, freshness: str = "fresh") -> dict[str, object]:
     }
 
 
-def _sonar_helpers() -> dict[str, object]:
-    # Existing synthetic fixtures only: the signal is normalized by quality.sonar.
-    return runpy.run_path(str(ROOT / "tests" / "test_sonar_superseded_ce.py"))
+NOW = "2026-10-06T00:10:00Z"
+OLD_SHA = "f582680fd50436405329fc8cfd697167004fac32"
+NEW_SHA = "c5e09d6f4e9982fd9b6d52d7043fd6c226453401"
+SUPERSEDED = (
+    f"Report for commit '{OLD_SHA}' can’t be processed: "
+    "a newer report has already been processed, and processing older reports is not supported. "
+    f"The last processed report was for commit '{NEW_SHA}'."
+)
+
+
+def contract(project="condor"):
+    return {
+        "version": 1,
+        "project": project,
+        "surfaces": [
+            {
+                "id": "admin",
+                "criticality": "critical",
+                "required_gates": ["unit"],
+            }
+        ],
+        "invariants": ["authorization"],
+        "compatibility": {
+            "runtimes": ["python-3"],
+            "browsers": [],
+            "devices": [],
+        },
+        "accessibility": {"target": "NOT_APPLICABLE"},
+        "migration": {"strategy": "NOT_APPLICABLE"},
+        "smoke": {"required": False, "source_ref": None},
+        "evidence_freshness_seconds": 3600,
+        "dimensions": {
+            "performance": {"required": False, "source_ref": None},
+            "recovery": {"required": False, "source_ref": None},
+        },
+        "sonar": {
+            "expected_visibility": "public",
+            "analysis_method": "ci",
+            "max_analysis_age_seconds": 86400,
+            "max_organization_line_usage_percent": 80,
+            "max_open_vulnerabilities": 0,
+            "max_open_bugs": 0,
+            "max_open_hotspots": 0,
+            "max_debt_age_days": 30,
+        },
+    }
+
+
+def snapshot(project="condor"):
+    return {
+        "project": project,
+        "snapshot_at": "2026-10-06T00:06:12Z",
+        "quality_gate": {"status": "OK", "conditions": []},
+        "analysis": {
+            "analyzed_at": "2026-10-06T00:05:00Z",
+            "method": "ci",
+            "coverage_available": True,
+        },
+        "ce_task": {"status": "SUCCESS", "error_message": None},
+        "organization": {"line_usage_percent": 50},
+        "visibility": "public",
+        "debt": [],
+        "evidence_refs": ["sonar:condor:snapshot:20261006T000612Z"],
+    }
+
+
+def ce_signal(raw):
+    normalized = normalize_sonar_snapshot(contract(raw["project"]), raw, observed_at=NOW)
+    return next(item for item in normalized["signals"] if item["signal"] == "ce_task")
 
 
 class CoberturaFactory57Tests(unittest.TestCase):
@@ -105,17 +171,13 @@ class CoberturaFactory57Tests(unittest.TestCase):
         self.assertEqual(len(IDS), 20)
         self.assertEqual((len(A), len(B), len(C), len(D)), (8, 8, 3, 1))
 
-        print("FACTORY57: load sonar helpers", flush=True)
-        helper = _sonar_helpers()
-        raw = helper["snapshot"]()
-        raw["ce_task"] = {"status": "FAILED", "error_message": helper["SUPERSEDED"]}
-        print("FACTORY57: normalize sonar", flush=True)
-        signal = helper["ce_signal"](raw)  # quality.sonar real
-        print("FACTORY57: sonar result", signal["status"], signal["reason"], flush=True)
+                raw = snapshot()
+        raw["ce_task"] = {"status": "FAILED", "error_message": SUPERSEDED}
+        signal = ce_signal(raw)  # quality.sonar real
         self.assertEqual(signal["status"], "PASS")
         self.assertEqual(signal["reason"], "ce_task_superseded_by_newer_report")
         self.assertEqual(signal["freshness"]["state"], "CURRENT")
-        for sha in (helper["OLD_SHA"], helper["NEW_SHA"]):
+        for sha in (OLD_SHA, NEW_SHA):
             self.assertEqual(len(sha), 40)
             self.assertIn(sha, signal["details"]["error_message"])
 
@@ -125,9 +187,7 @@ class CoberturaFactory57Tests(unittest.TestCase):
             "blocked": ("BLOCKED", "fresh"),
             "unknown": ("BLOCKED", "unknown"),
         }
-        print("FACTORY57: fixtures", flush=True)
         for name, (action, freshness) in expected.items():
-            print("FACTORY57: fixture", name, flush=True)
             with self.subTest(fixture=name):
                 document = _fixture(name)
                 self.assertEqual(
@@ -142,7 +202,6 @@ class CoberturaFactory57Tests(unittest.TestCase):
 
         # Execute the actual cycle handoff projector, not a test-only
         # "consumer" reimplementation or text search against documentation.
-        print("FACTORY57: projecting", flush=True)
         for action, freshness in (
             ("ALLOW", "fresh"),
             ("PAUSE", "fresh"),
@@ -151,7 +210,6 @@ class CoberturaFactory57Tests(unittest.TestCase):
             with self.subTest(projection=action):
                 cycle = _cycle(action, freshness=freshness)
                 projected = project_unattended_cycle_handoff(cycle)
-                print("FACTORY57: projection", action, projected["action"], projected["freshness"], flush=True)
                 self.assertEqual(projected["action"], action)
                 self.assertEqual(projected["next_transition"], action)
                 self.assertEqual(projected["freshness"], freshness)
@@ -160,22 +218,20 @@ class CoberturaFactory57Tests(unittest.TestCase):
                 self.assertEqual(projected["reasons"], cycle["reasons"])
                 self.assertEqual(projected["provenance"], cycle["provenance"])
                 verdict = conformance.evaluate_document(json.loads(json.dumps(projected)))
-                print("FACTORY57: schema", action, verdict, flush=True)
                 self.assertTrue(verdict["conformant"])
                 if freshness == "unknown":
                     self.assertEqual(projected["action"], "BLOCKED")
                     self.assertNotEqual(projected["action"], "ALLOW")
 
     def test_falla_cerrado(self) -> None:
-        helper = _sonar_helpers()
-        raw = helper["snapshot"]()
+                raw = snapshot()
         raw["ce_task"] = {
             "status": "FAILED",
-            "error_message": helper["SUPERSEDED"].replace(
-                helper["OLD_SHA"], helper["OLD_SHA"][:-1]
+            "error_message": SUPERSEDED.replace(
+                OLD_SHA, OLD_SHA[:-1]
             ),
         }
-        signal = helper["ce_signal"](raw)
+        signal = ce_signal(raw)
         self.assertEqual((signal["status"], signal["reason"]),
                          ("FAIL", "ce_task_failed"))
 
