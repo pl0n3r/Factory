@@ -56,6 +56,8 @@ def validate_migration_description(value: object) -> dict[str, object]:
     _text(rehearsal.get("copy_id"), "local_rehearsal.copy_id")
     before = _count(rehearsal.get("rows_before"), "local_rehearsal.rows_before")
     after = _count(rehearsal.get("rows_after"), "local_rehearsal.rows_after")
+    if before != after:
+        _text(rehearsal.get("row_count_justification"), "local_rehearsal.row_count_justification")
     if rehearsal.get("passed") is not True:
         raise ValueError("local_rehearsal.passed debe ser true")
 
@@ -90,6 +92,7 @@ def example() -> dict[str, object]:
         "local_rehearsal": {
             "environment": "isolated_local_copy", "copy_id": "fixture-copy-001",
             "rows_before": 12, "rows_after": 14, "passed": True,
+            "row_count_justification": "dos registros añadidos en fixture",
         },
         "rollback_plan": {
             "backup_receipt_id": "fixture-backup-001",
@@ -134,6 +137,17 @@ class ReglaMigracionesTests(unittest.TestCase):
                 data["local_rehearsal"][field] = invalid
                 with self.assertRaises(ValueError):
                     validate_migration_description(data)
+
+    def test_conteo_distinto_exige_justificacion_y_cuando_igual_no(self):
+        data = example()
+        del data["local_rehearsal"]["row_count_justification"]
+        with self.assertRaisesRegex(ValueError, "row_count_justification"):
+            validate_migration_description(data)
+        data["local_rehearsal"]["row_count_justification"] = "   "
+        with self.assertRaisesRegex(ValueError, "row_count_justification"):
+            validate_migration_description(data)
+        data["local_rehearsal"]["rows_after"] = data["local_rehearsal"]["rows_before"]
+        self.assertEqual("CONTRATO_OFFLINE_COMPLETO", validate_migration_description(data)["result"])
 
     def test_rechaza_plan_ausente_o_incompatible(self):
         for field, invalid in (("backup_receipt_id", "otro"), ("trigger", ""),
