@@ -3861,6 +3861,108 @@ class CoordinacionTests(unittest.TestCase):
         )
         validate_pull(api, 15, True)
 
+    def test_orphan_adoption_ignores_non_authoritative_pr_metadata(self) -> None:
+        """Un cambio REST derivado no debe bloquear el contrato real del PR."""
+        api = FakeGitHub()
+        api.branches["trabajo/issue-12"] = "abc123"
+        api.pulls[15] = {
+            "number": 15,
+            "state": "open",
+            "body": "Closes #12",
+            "head": {
+                "ref": "trabajo/issue-12",
+                "sha": "abc123",
+                "repo": {"full_name": api.repo},
+            },
+            "base": {"ref": "main"},
+        }
+        original_open_pulls = api.open_pulls
+        reads = 0
+
+        def read_with_ephemeral_metadata() -> list[dict]:
+            nonlocal reads
+            reads += 1
+            return [
+                {
+                    **row,
+                    "mergeable_state": "unknown" if reads == 1 else "clean",
+                    "updated_at": "2026-10-29T00:00:00Z" if reads == 1
+                    else "2026-10-30T00:00:00Z",
+                    "labels": [] if reads == 1 else [{"name": "triaged"}],
+                }
+                for row in original_open_pulls()
+            ]
+
+        with patch.object(api, "open_pulls", side_effect=read_with_ephemeral_metadata):
+            session = adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+
+        self.assertIsNotNone(session)
+        self.assertGreaterEqual(reads, 2)
+        self.assertEqual(
+            active_reservation(api, 12)["reservation_id"], session
+        )
+        self.assertEqual(
+            reservation_from_pr_body(api.pulls[15]["body"]), session
+        )
+
+    def test_orphan_adoption_blocks_authoritative_pr_mutation(self) -> None:
+        """El CAS sigue vetando cambios reales de número, fuente, HEAD y body."""
+        for field in ("number", "state", "body", "head_sha", "head_repo", "base"):
+            with self.subTest(field=field):
+                api = FakeGitHub()
+                api.branches["trabajo/issue-12"] = "abc123"
+                api.pulls[15] = {
+                    "number": 15,
+                    "state": "open",
+                    "body": "Closes #12",
+                    "head": {
+                        "ref": "trabajo/issue-12",
+                        "sha": "abc123",
+                        "repo": {"full_name": api.repo},
+                    },
+                    "base": {"ref": "main"},
+                }
+                original_open_pulls = api.open_pulls
+                reads = 0
+
+                def read_with_contract_change() -> list[dict]:
+                    nonlocal reads
+                    reads += 1
+                    rows = [
+                        {
+                            **row,
+                            "head": {**row["head"], "repo": {**row["head"]["repo"]}},
+                            "base": {**row["base"]},
+                        }
+                        for row in original_open_pulls()
+                    ]
+                    if reads >= 2:
+                        target = rows[0]
+                        if field == "number":
+                            target["number"] = 16
+                        elif field == "state":
+                            target["state"] = "closed"
+                        elif field == "body":
+                            target["body"] = "Closes #99"
+                        elif field == "head_sha":
+                            target["head"]["sha"] = "changed-head"
+                        elif field == "head_repo":
+                            target["head"]["repo"]["full_name"] = "other/Factory"
+                        elif field == "base":
+                            target["base"]["ref"] = "development"
+                    return rows
+
+                with patch.object(
+                    api, "open_pulls", side_effect=read_with_contract_change
+                ):
+                    with self.assertRaises(CoordinationError):
+                        adopt_orphaned_contract(api, 12, "pl0n3r", "OWNER")
+
+                self.assertGreaterEqual(reads, 2)
+                self.assertIsNone(active_reservation(api, 12))
+                self.assertEqual(api.branches["trabajo/issue-12"], "abc123")
+                self.assertEqual(api.pulls[15]["body"], "Closes #12")
+
     def test_legacy_reservation_is_rejected_for_protected_pr(self) -> None:
         """Un PR protegido no acepta reservas v1 sin fingerprint."""
         api = FakeGitHub()
