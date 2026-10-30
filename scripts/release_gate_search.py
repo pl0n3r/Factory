@@ -12,6 +12,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -91,33 +92,39 @@ def verified_inventory(first: Any, second: Any, published: Any) -> list[dict[str
 
 
 
-# CLI evidence is produced by the protected release workflow. Never turn an
-# arbitrary command-line path into a filesystem read: the three arguments must
-# match one complete, fixed snapshot from the same pass.
-_TRUSTED_SNAPSHOTS = {
-    ("/tmp/release-search-p1-1.json",
-     "/tmp/release-search-p2-1.json",
-     "/tmp/release-search-verified-1.json"): (
-        Path("/tmp/release-search-p1-1.json"),
-        Path("/tmp/release-search-p2-1.json"),
-        Path("/tmp/release-search-verified-1.json")),
-    ("/tmp/release-search-p1-2.json",
-     "/tmp/release-search-p2-2.json",
-     "/tmp/release-search-verified-2.json"): (
-        Path("/tmp/release-search-p1-2.json"),
-        Path("/tmp/release-search-p2-2.json"),
-        Path("/tmp/release-search-verified-2.json")),
-}
+# Do not derive filesystem paths from untrusted argv.  Instead enumerate only
+# paths assembled from the runner temp root and its owned private test sandboxes.
+# A CLI argument can MATCH a candidate; it never supplies an opened path.
 _MAX_EVIDENCE_BYTES = 2_000_000
 
 
+def _trusted_paths(paths: list[str]) -> tuple[Path, Path, Path]:
+    root = Path(tempfile.gettempdir())
+    candidates = [root]
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if (not re.fullmatch(r"tmp[A-Za-z0-9_-]{8}", entry.name)
+                    or not entry.is_dir(follow_symlinks=False)):
+                continue
+            info = entry.stat(follow_symlinks=False)
+            if info.st_uid == os.getuid() and not stat.S_IMODE(info.st_mode) & 0o077:
+                candidates.append(Path(entry.path))
+    for base in candidates:
+        for number in (1, 2):
+            selected = tuple(base / f"release-search-{kind}-{number}.json"
+                             for kind in ("p1", "p2", "verified"))
+            if tuple(paths) == tuple(map(str, selected)):
+                return selected
+    raise SearchEvidenceError("invalid evidence file path")
+
+
 def _read_trusted_evidence(path: Path) -> Any:
-    """Only a regular, non-symlink snapshot; bounded even if it grows during IO."""
-    # O_NONBLOCK stops a replaced FIFO from hanging before its type is checked.
+    """Reject symlinks, nonregular files and oversized evidence before parsing."""
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_EVIDENCE_BYTES:
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_size > _MAX_EVIDENCE_BYTES):
             raise SearchEvidenceError("untrusted evidence file")
         with os.fdopen(fd, "r", encoding="utf-8") as stream:
             fd = -1
@@ -128,41 +135,6 @@ def _read_trusted_evidence(path: Path) -> Any:
     finally:
         if fd >= 0:
             os.close(fd)
-
-
-
-# The release workflow uses fixed /tmp files. Existing offline shell
-# conformance suites invoke the very same workflow script in a fresh private
-# tempfile.TemporaryDirectory (mode 0700), rewriting only that directory.
-# Support those snapshots without permitting arbitrary CLI paths.
-_TEST_SNAPSHOT_DIRECTORY = re.compile(r"/tmp/tmp[A-Za-z0-9_-]{8}\Z")
-
-
-def _trusted_paths(paths: list[str]) -> tuple[Path, Path, Path]:
-    selected = _TRUSTED_SNAPSHOTS.get(tuple(paths))
-    if selected is not None:
-        return selected
-    # Test-sandbox compatibility: a single private directory, owned by this
-    # process, with no symlinks/parent traversal or path aliases.
-    directory = os.path.dirname(paths[0])
-    if _TEST_SNAPSHOT_DIRECTORY.fullmatch(directory) is None:
-        raise SearchEvidenceError("invalid evidence file path")
-    try:
-        info = os.lstat(directory)
-    except OSError as exc:
-        raise SearchEvidenceError("invalid evidence file path") from exc
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) & 0o077):
-        raise SearchEvidenceError("invalid evidence file path")
-    for number in (1, 2):
-        canonical = tuple(
-            f"{directory}/release-search-{kind}-{number}.json"
-            for kind in ("p1", "p2", "verified")
-        )
-        if tuple(paths) == canonical:
-            return tuple(Path(directory) / f"release-search-{kind}-{number}.json"
-                         for kind in ("p1", "p2", "verified"))
-    raise SearchEvidenceError("invalid evidence file path")
 
 
 def _main(paths: list[str]) -> int:
