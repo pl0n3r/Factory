@@ -162,5 +162,27 @@ class CheckDnsTlsTests(unittest.TestCase):
         self.assertFalse(observation["valid"])
 
 
+    def test_tls_helper_never_opens_private_address_or_unsafe_hostname(self):
+        for ip in ("127.0.0.1", "10.5.6.7", "169.254.169.254",
+                   "192.168.1.1", "::1", "203.0.113.3"):
+            with self.subTest(ip=ip), patch(
+                "scripts.check_dns_tls.socket.create_connection",
+                side_effect=AssertionError("private socket opened"),
+            ) as connect:
+                result = tls_observe("example.org", ip, NOW)
+                self.assertEqual("UNKNOWN", result["status"])
+                connect.assert_not_called()
+
+        with patch("scripts.check_dns_tls.socket.create_connection") as connect:
+            result = tls_observe("localhost", PUBLIC_IP, NOW)
+            self.assertEqual("UNKNOWN", result["status"])
+            connect.assert_not_called()
+
+        with patch("scripts.check_dns_tls.socket.getaddrinfo") as resolve:
+            with self.assertRaises(ConfigError):
+                dns_lookup("localhost.local")
+            resolve.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
