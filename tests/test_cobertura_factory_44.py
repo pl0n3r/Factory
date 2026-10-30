@@ -4,7 +4,6 @@ Evidencia puramente sintética; ni producción ni estados de matriz.
 """
 from __future__ import annotations
 
-import copy
 import importlib.util
 from pathlib import Path
 import unittest
@@ -172,9 +171,8 @@ class CoberturaFactory44Tests(unittest.TestCase):
 
     def test_sin_datos_reales(self) -> None:
         own = Path(__file__).read_text(encoding="utf-8")
-        self.assertNotIn("-----BEGIN PRIVATE KEY-----", own)
-        self.assertNotIn("requests.get(", own)
-        self.assertNotIn("subprocess.run(", own)
+        self.assertNotRegex(own, r"(?m)^\s*(?:from|import)\s+(?:requests|httpx|socket|subprocess)\b")
+        self.assertNotRegex(own, r"(?m)^-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----")
         self.assertEqual(len(OFFLINE), 10)
         self.assertTrue(all(key.startswith(REG) for key in OFFLINE))
         self.assertTrue((ROOT / "quality/regression.py").is_file())
