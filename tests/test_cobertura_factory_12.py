@@ -167,7 +167,15 @@ class CoberturaFactory12Tests(unittest.TestCase):
                 self.assertTrue(FALLBACK | INVARIANTS <= targets(result))
                 self.assertTrue({(x["kind"], x["target"]) for x in SAFE_FALLBACK}
                                 <= targets(result))
-        self.assertEqual(compile_for()["fingerprint"], compile_for()["fingerprint"])
+        equivalent_dna = discover_project_dna(
+            paths=list(reversed(PATHS)),
+            manifests=MANIFEST,
+            capabilities=["web", "api"],
+        )
+        self.assertEqual(
+            compile_for()["fingerprint"],
+            compile_for(source=equivalent_dna)["fingerprint"],
+        )
 
         # L13: el validador opera sobre registros verdaderos, no el doc.
         observed = validate_record(metric(1), "fixture")
@@ -272,7 +280,15 @@ class CoberturaFactory12Tests(unittest.TestCase):
             summary = aggregate(rows, min_samples=3)
             self.assertEqual(summary["records"], 3)
             self.assertIsNone(summary["task_types"]["backend"]["recommendation"])
-            self.assertEqual(compile_for("security", "high"), first)
+            equivalent_dna = discover_project_dna(
+                paths=list(reversed(PATHS)),
+                manifests=MANIFEST,
+                capabilities=["web", "api"],
+            )
+            self.assertEqual(
+                first["fingerprint"],
+                compile_for("security", "high", source=equivalent_dna)["fingerprint"],
+            )
 
     def test_gate_validar_presente(self):
         # El status 'Validar' success NO se inventa en Python:
