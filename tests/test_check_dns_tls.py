@@ -135,5 +135,32 @@ class CheckDnsTlsTests(unittest.TestCase):
             self.assertFalse(result["valid"])
 
 
+    def test_tls_probe_failures_are_reported_as_unknown(self):
+        def offline_failure(_host, _address, _now):
+            raise OSError("temporary connection failure")
+
+        report = check_product("Condor", "example.org", NOW,
+                               resolver=lambda _host: [PUBLIC_IP], tls_probe=offline_failure)
+        self.assertEqual("RESOLVED", report["dns"]["status"])
+        self.assertEqual("UNKNOWN", report["tls"]["status"])
+        self.assertEqual("UNKNOWN", report["status"])
+
+        for response in (None, "unverified", {"status": "VALID", "valid": True},
+                         {"status": "VALID", "valid": True, "days_remaining": -1,
+                          "expires_at_utc": "2027-01-01T00:00:00Z"}):
+            with self.subTest(response=response):
+                observed = check_product("Condor", "example.org", NOW,
+                    resolver=lambda _host: [PUBLIC_IP],
+                    tls_probe=lambda _host, _addr, _now: response)
+                self.assertEqual("UNKNOWN", observed["status"])
+
+    def test_no_certificate_authority_available_is_unknown(self):
+        with patch("scripts.check_dns_tls.ssl.create_default_context",
+                   side_effect=OSError("CA unavailable")):
+            observation = tls_observe("example.org", PUBLIC_IP, NOW)
+        self.assertEqual("UNKNOWN", observation["status"])
+        self.assertFalse(observation["valid"])
+
+
 if __name__ == "__main__":
     unittest.main()
