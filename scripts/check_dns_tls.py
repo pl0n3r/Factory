@@ -15,6 +15,7 @@ import argparse
 from datetime import datetime, timezone
 import ipaddress
 import json
+import os
 from pathlib import Path
 import re
 import socket
@@ -198,9 +199,18 @@ def run(config: Path, output_dir: Path, now: datetime | None = None) -> list[dic
         domains = dict.fromkeys(PRODUCTS)
     reports = [check_product(product, domains[product], timestamp) for product in PRODUCTS]
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Nunca sobrescribir otros archivos mediante enlaces simbólicos locales.
+    if output_dir.is_symlink():
+        raise OSError("Directorio de reportes enlazado: escritura rechazada")
     for result in reports:
         destination = output_dir / (result["product"].lower() + ".json")
-        destination.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if destination.is_symlink():
+            raise OSError(f"Reporte enlazado: escritura rechazada ({destination})")
+        # O_NOFOLLOW evita la carrera final de symlinks en Linux/macOS.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(destination, flags, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     return reports
 
 

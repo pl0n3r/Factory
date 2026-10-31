@@ -211,5 +211,28 @@ class CheckDnsTlsTests(unittest.TestCase):
             self.assertIn("ERROR de configuración", error_output.getvalue())
             self.assertIn(str(missing), error_output.getvalue())
 
+    def test_report_writes_cannot_follow_existing_symlinks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            output = base / "reports"
+            output.mkdir()
+            protected = base / "protected.txt"
+            protected.write_text("do not overwrite", encoding="utf-8")
+            try:
+                (output / "condor.json").symlink_to(protected)
+            except (NotImplementedError, OSError):
+                self.skipTest("Este sistema no permite crear enlaces simbólicos")
+            missing_config = base / "missing.json"
+            with patch("sys.stderr", io.StringIO()), self.assertRaises(OSError):
+                run(missing_config, output, NOW)
+            self.assertEqual("do not overwrite", protected.read_text(encoding="utf-8"))
+
+            linked_output = base / "linked_reports"
+            linked_output.symlink_to(output, target_is_directory=True)
+            with patch("sys.stderr", io.StringIO()), self.assertRaises(OSError):
+                run(missing_config, linked_output, NOW)
+            self.assertEqual("do not overwrite", protected.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
