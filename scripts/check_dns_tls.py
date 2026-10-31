@@ -58,11 +58,40 @@ def validate_domain(value: object) -> str:
     raise ConfigError("No se permiten IP literales: requiere nombre DNS")
 
 
+def _read_safe_config(path: Path) -> dict:
+    """Leer solo un archivo regular sin symlinks y con límite efectivo de bytes."""
+    if (not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
+            or not hasattr(os, "O_NONBLOCK") or os.open not in os.supports_dir_fd):
+        raise OSError("Lectura segura de configuración no soportada")
+    absolute = Path(os.path.abspath(path))
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_fd = os.open(absolute.anchor, dir_flags)
+    try:
+        for part in absolute.parts[1:-1]:
+            next_fd = os.open(part, dir_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(
+            absolute.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory_fd,
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise OSError("Configuración no es archivo regular")
+            with os.fdopen(file_fd, "rb", closefd=False) as handle:
+                payload = handle.read(MAX_CONFIG_BYTES + 1)
+            if len(payload) > MAX_CONFIG_BYTES:
+                raise ConfigError("Archivo de configuración demasiado grande")
+            return json.loads(payload.decode("utf-8"))
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def load_config(path: Path) -> dict[str, str | None]:
     try:
-        if path.stat().st_size > MAX_CONFIG_BYTES:
-            raise ConfigError("Archivo de configuración demasiado grande")
-        source = json.loads(path.read_text(encoding="utf-8"))
+        source = _read_safe_config(path)
     except (OSError, UnicodeError, ValueError) as exc:
         raise ConfigError("No fue posible leer configuración JSON válida") from exc
     if not isinstance(source, dict) or set(source) != {"domains"} or not isinstance(source["domains"], dict):

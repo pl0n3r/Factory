@@ -62,6 +62,44 @@ class CheckDnsTlsTests(unittest.TestCase):
                 self.assertEqual(product, report["product"])
                 self.assertEqual("VALID", report["status"])
 
+    def test_config_read_rejects_symlinks_and_oversize_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            valid = root / "valid.json"
+            init_config(valid)
+            self.assertEqual(set(PRODUCTS), set(load_config(valid)))
+            linked = root / "linked.json"
+            try:
+                linked.symlink_to(valid)
+            except (NotImplementedError, OSError):
+                self.skipTest("Enlaces simbólicos no disponibles")
+            with self.assertRaises(ConfigError):
+                load_config(linked)
+            outside = root / "outside"
+            outside.mkdir()
+            ancestor = root / "alias"
+            ancestor.symlink_to(outside, target_is_directory=True)
+            nested_config = outside / "domains.json"
+            init_config(nested_config)
+            with self.assertRaises(ConfigError):
+                load_config(ancestor / "domains.json")
+            oversize = root / "oversize.json"
+            oversize.write_bytes(b" " * (32 * 1024 + 1))
+            with self.assertRaises(ConfigError):
+                load_config(oversize)
+
+    def test_config_reader_rejects_nonregular_files_without_blocking(self):
+        import os
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            if hasattr(os, "mkfifo"):
+                pipe = root / "domains.pipe"
+                os.mkfifo(pipe)
+                with self.assertRaises(ConfigError):
+                    load_config(pipe)
+            with self.assertRaises(ConfigError):
+                load_config(root)
+
     def test_missing_config_reports_unknown_without_network(self):
         with tempfile.TemporaryDirectory() as folder, patch(
             "scripts.check_dns_tls.socket.getaddrinfo", side_effect=AssertionError("DNS inesperado")
