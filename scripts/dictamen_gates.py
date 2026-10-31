@@ -65,7 +65,7 @@ def _get_json(path: str) -> dict[str, Any]:
         raise EvidenceError("respuesta GitHub demasiado grande")
     try:
         result = json.loads(data, object_pairs_hook=_unique_fields)
-    except (ValueError, UnicodeError) as exc:
+    except ValueError as exc:
         raise EvidenceError("JSON GitHub no verificable") from exc
     if type(result) is not dict:
         raise EvidenceError("formato GitHub inválido")
