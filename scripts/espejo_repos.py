@@ -265,6 +265,9 @@ def export_all(source: Source, store: ObjectStore,
         archive, issues, prs = source.capture(repo)
         if not isinstance(archive, bytes) or not archive:
             raise MirrorError("Bundle de origen inválido.")
+        if (not isinstance(issues, list) or not isinstance(prs, list)
+                or any(not isinstance(row, dict) for row in issues + prs)):
+            raise MirrorError("Metadatos de captura inválidos.")
         base = prefix + "/" + snapshot + "/" + repo.replace("/", "_")
         files = {"repository.bundle": archive, "issues.json": _json(issues),
                  "pulls.json": _json(prs)}
