@@ -1,5 +1,8 @@
 """Regresiones sintéticas para smoke post-release Factory@v1."""
+import io
+import json
 import unittest
+from unittest.mock import patch
 from scripts.smoke_productos import PRODUCTOS, evaluate
 
 SHA = "a" * 40
@@ -94,6 +97,96 @@ class SmokeProductosTests(unittest.TestCase):
             return value
         self.assertEqual(evaluate(valid_inventory(), fetch=partial, health=lambda *a, **kw: {})["decision"], "NO-GO")
 
+
+    def test_repository_identity_and_canonical_check_fail_closed(self):
+        for mode in ("metadata", "no_checks", "other_app", "unfinished", "bad_id", "bad_sha"):
+            def invalid(path):
+                value = fake_fetch(path)
+                if mode == "metadata" and path.endswith("/Condor"):
+                    value["full_name"] = "wrong/repo"
+                if path.endswith("/check-runs?per_page=100"):
+                    run = value["check_runs"][0]
+                    if mode == "no_checks":
+                        value["check_runs"] = []
+                        value["total_count"] = 0
+                    elif mode == "other_app":
+                        run["app"]["slug"] = "untrusted"
+                    elif mode == "unfinished":
+                        run["status"] = "in_progress"
+                    elif mode == "bad_id":
+                        run["id"] = "1"
+                    elif mode == "bad_sha":
+                        run["head_sha"] = "b" * 40
+                return value
+            with self.subTest(mode=mode):
+                result = evaluate(valid_inventory(), fetch=invalid, health=lambda *a, **k: {})
+                self.assertEqual(result["decision"], "NO-GO")
+
+    def test_missing_sha_and_invalid_response_fail_closed(self):
+        for mode in ("missing_sha", "invalid_checks", "exception", "invalid_check_list"):
+            def invalid(path):
+                if mode == "exception":
+                    raise RuntimeError("unavailable")
+                value = fake_fetch(path)
+                if path.endswith("/git/ref/heads/main") and mode == "missing_sha":
+                    value["object"] = {"sha": "unknown"}
+                if path.endswith("/check-runs?per_page=100") and mode == "invalid_checks":
+                    value["total_count"] = None
+                if path.endswith("/check-runs?per_page=100") and mode == "invalid_check_list":
+                    value["check_runs"] = {}
+                return value
+            with self.subTest(mode=mode):
+                result = evaluate(valid_inventory(), fetch=invalid, health=lambda *a, **k: {})
+                self.assertEqual(result["decision"], "NO-GO")
+
+    def test_prelive_metadata_and_invalid_inventory_are_no_go(self):
+        for inventory in (None, {}, {"products": []}, {"products": "text"},
+                          {"products": valid_inventory()["products"], "extra": True}):
+            with self.subTest(inventory=str(inventory)[:30]):
+                self.assertEqual(evaluate(inventory, fetch=fake_fetch, health=lambda *a, **k: {})["decision"], "NO-GO")
+        inventory = valid_inventory()
+        inventory["products"][0]["origin"] = "https://example.org"
+        self.assertEqual(evaluate(inventory, fetch=fake_fetch, health=lambda *a, **k: {})["decision"], "NO-GO")
+
+    def test_live_invalid_version_and_health_are_no_go(self):
+        for version in ("0.1", "v1.2.3", "01.2.3", None):
+            inventory = valid_inventory()
+            inventory["products"][0].update(phase="live", origin="https://example.org", version=version)
+            self.assertEqual(evaluate(inventory, fetch=fake_fetch, health=lambda *a, **k: {})["decision"], "NO-GO")
+        inventory = valid_inventory()
+        inventory["products"][0].update(phase="live", origin="https://example.org", version="1.2.3")
+        def error(*args, **kwargs):
+            raise OSError("TLS failed")
+        self.assertEqual(evaluate(inventory, fetch=fake_fetch, health=error)["decision"], "NO-GO")
+
+    def test_github_response_is_bounded_and_fail_closed(self):
+        from scripts.smoke_productos import MAX_BYTES, github_get
+        for body, expected in ((b'{"ok":true}', True), (b'[]', None),
+                               (b'{', None), (b'x' * (MAX_BYTES + 1), None)):
+            with self.subTest(length=len(body)):
+                with patch("scripts.smoke_productos.urlopen", return_value=io.BytesIO(body)):
+                    if expected is None:
+                        with self.assertRaises(ValueError):
+                            github_get("/repos/pl0n3r/Condor")
+                    else:
+                        self.assertEqual(github_get("/repos/pl0n3r/Condor"), {"ok": expected})
+        with patch("scripts.smoke_productos.urlopen", side_effect=TimeoutError("timeout")):
+            with self.assertRaises(ValueError):
+                github_get("/repos/pl0n3r/Condor")
+
+    def test_cli_only_accepts_stdin_and_never_open_paths(self):
+        from scripts.smoke_productos import MAX_BYTES, main
+        for argv, content in ((["--inventory", "../etc/passwd"], b"{}"),
+                              ([], b"{"), ([], b"x" * (MAX_BYTES + 1)), ([], b"")):
+            with self.subTest(args=argv, length=len(content)):
+                stdin = io.TextIOWrapper(io.BytesIO(content), encoding="utf-8")
+                with patch("sys.stdin", stdin), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(main(argv), 1)
+                    self.assertEqual(json.loads(output.getvalue())["decision"], "NO-GO")
+        stdin = io.TextIOWrapper(io.BytesIO(b'{"products":[]}'), encoding="utf-8")
+        with patch("sys.stdin", stdin), patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(main([]), 1)
+            self.assertEqual(json.loads(output.getvalue())["reason"], "inventory_incomplete_or_invalid")
 
 if __name__ == "__main__":
     unittest.main()
