@@ -47,6 +47,11 @@ class ReporteAntesDespuesTests(unittest.TestCase):
         self.assertEqual(result["costo"]["costo_operativo_total_cop"], "UNKNOWN")
         self.assertEqual(result["antes"]["inicio_bogota_12h"], "2026-09-30 07:00 PM")
         self.assertEqual(result["zona_horaria"], "America/Bogota")
+        missing = fixture()
+        missing["issues"], missing["pull_requests"] = [], []
+        missing_result = report.evaluate(missing)
+        self.assertEqual(missing_result["antes"]["horas_promedio_por_issue"], "UNKNOWN")
+        self.assertEqual(missing_result["diferencia_despues_menos_antes"]["horas_promedio_por_issue"], "UNKNOWN")
 
     def test_registros_vacios_sin_inventar_tiempos(self):
         value = fixture()
@@ -137,7 +142,8 @@ class ReporteAntesDespuesTests(unittest.TestCase):
         good = subprocess.run(command, cwd=ROOT, input=json.dumps(fixture()),
                               capture_output=True, text=True, timeout=20)
         self.assertEqual(good.returncode, 0, good.stderr)
-        for input_text in ('{bad-json NEVER_PRINT', 'X' * (report.MAX_INPUT_BYTES + 1)):
+        for input_text in ('{bad-json NEVER_PRINT', 'X' * (report.MAX_INPUT_BYTES + 1),
+                           '[' * 2000 + '0' + ']' * 2000, '9' * 5000):
             bad = subprocess.run(command, cwd=ROOT, input=input_text,
                                  capture_output=True, text=True, timeout=20)
             self.assertEqual(bad.returncode, 2)

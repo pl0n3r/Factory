@@ -151,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(raw) > MAX_INPUT_BYTES:
             raise ReportError("input_too_large")
         output = evaluate(json.loads(raw))
-    except (OSError, UnicodeError, json.JSONDecodeError, ReportError):
+    except (OSError, UnicodeError, ValueError, RecursionError):
         print("ERROR: datos inválidos o incompletos", file=sys.stderr)
         return 2
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
