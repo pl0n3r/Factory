@@ -5571,19 +5571,32 @@ def recover_orphaned_issue_lock(
     expected_sha: str, *, now: datetime | None = None,
 ) -> bool:
     """Owner-only terminal lock repair: never release a live or foreign V3."""
-    if (api.repo.casefold() != "pl0n3r/factory"
-            or actor != "pl0n3r" or association != "OWNER"):
-        raise CoordinationError("Solo el propietario de Factory repara locks huérfanos.")
+    # Explicit consumer allowlist. Only an owner-triggered, repository-serialized
+    # issue_comment from the protected default branch may attempt the CAS.
+    # Never trust a workflow in a fork or a different repository.
+    authorized = {
+        "pl0n3r/factory": (
+            "pl0n3r/Factory",
+            "pl0n3r/Factory/.github/workflows/coordinacion-trabajo.yml@refs/heads/main",
+        ),
+        "pl0n3r/grindflow": (
+            "pl0n3r/GrindFlow",
+            "pl0n3r/GrindFlow/.github/workflows/work-coordination.yml@refs/heads/main",
+        ),
+    }
+    target = authorized.get(api.repo.casefold() if isinstance(api.repo, str) else "")
+    if target is None or actor != "pl0n3r" or association != "OWNER":
+        raise CoordinationError("Solo el propietario de un repositorio autorizado repara locks huérfanos.")
     if (type(issue_number) is not int or issue_number <= 0
             or re.fullmatch(r"[a-f0-9]{40}", expected_sha) is None):
         raise CoordinationError("Identidad SHA del lock inválida.")
     # A GitHub Actions runner under the canonical repository-wide concurrency
     # group is required: another coordinator job cannot still own this lock.
-    if (os.getenv("GITHUB_REPOSITORY") != "pl0n3r/Factory"
+    if (os.getenv("GITHUB_REPOSITORY") != target[0]
             or os.getenv("GITHUB_EVENT_NAME") != "issue_comment"
-            or os.getenv("GITHUB_WORKFLOW_REF", "") != (
-                "pl0n3r/Factory/.github/workflows/coordinacion-trabajo.yml@refs/heads/main"
-            )
+            or os.getenv("GITHUB_WORKFLOW_REF", "") != target[1]
+            or (target[0] == "pl0n3r/GrindFlow"
+                and os.getenv("GITHUB_REF") != "refs/heads/main")
             or re.fullmatch(r"[1-9][0-9]*",
                             os.getenv("GITHUB_RUN_ID", "")) is None):
         raise CoordinationError("Reparación no ejecutada bajo coordinación serializada.")
