@@ -115,7 +115,7 @@ def _one_product(
         if _main_sha(prefix, fetch) != sha:
             raise ValueError("main_moved")
         result["status"] = "GO"
-    except (ValueError, KeyError, TypeError, OSError, RuntimeError):
+    except (ValueError, KeyError, TypeError, AttributeError, OSError, RuntimeError):
         result["status"] = "NO-GO"
         result["reason"] = "evidence_unverified"
     return result
