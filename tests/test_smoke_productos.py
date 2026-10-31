@@ -188,5 +188,17 @@ class SmokeProductosTests(unittest.TestCase):
             self.assertEqual(main([]), 1)
             self.assertEqual(json.loads(output.getvalue())["reason"], "inventory_incomplete_or_invalid")
 
+    def test_untyped_api_evidence_fails_closed(self):
+        for suffix in ("/Condor", "/git/ref/heads/main", "/check-runs?per_page=100"):
+            def untyped(path):
+                if path.endswith(suffix):
+                    return None
+                return fake_fetch(path)
+            with self.subTest(suffix=suffix):
+                result = evaluate(valid_inventory(), fetch=untyped, health=lambda *a, **k: {})
+                self.assertEqual(result["decision"], "NO-GO")
+
+
+
 if __name__ == "__main__":
     unittest.main()
