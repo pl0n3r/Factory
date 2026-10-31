@@ -18,8 +18,10 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import socket
 import ssl
+import stat
 import sys
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -189,6 +191,57 @@ def check_product(product: str, domain: str | None, now: datetime,
     return report
 
 
+
+def _open_safe_report_directory(output_dir: Path) -> int:
+    """Crear y abrir cada componente sin recorrer symlinks ni seguir carreras de ruta."""
+    required = (os.open, os.mkdir, os.stat, os.replace, os.unlink)
+    if (not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
+            or any(fn not in os.supports_dir_fd for fn in required)
+            or os.stat not in os.supports_follow_symlinks):
+        raise OSError("El sistema no soporta escritura de reportes sin seguir enlaces")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    absolute = Path(os.path.abspath(output_dir))
+    directory_fd = os.open(absolute.anchor, flags)
+    try:
+        for component in absolute.parts[1:]:
+            try:
+                os.mkdir(component, mode=0o700, dir_fd=directory_fd)
+            except FileExistsError:
+                pass
+            next_fd = os.open(component, flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        return directory_fd
+    except BaseException:
+        os.close(directory_fd)
+        raise
+
+
+def _write_report(directory_fd: int, report: dict) -> None:
+    """Sustituir un JSON atómicamente: ni symlink ni hardlink truncarán otros archivos."""
+    filename = report["product"].lower() + ".json"
+    try:
+        current = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(current.st_mode):
+            raise OSError(f"Reporte enlazado o no regular: escritura rechazada ({filename})")
+    temporary = f".{filename}.{secrets.token_hex(16)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    fd = os.open(temporary, flags, 0o600, dir_fd=directory_fd)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            output.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        # os.replace reemplaza la entrada, nunca sigue su posible vínculo duro.
+        os.replace(temporary, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+
+
 def run(config: Path, output_dir: Path, now: datetime | None = None) -> list[dict]:
     timestamp = now if now is not None else datetime.now(timezone.utc)
     try:
@@ -198,19 +251,12 @@ def run(config: Path, output_dir: Path, now: datetime | None = None) -> list[dic
         print(f"ERROR de configuración ({config}): {exc}", file=sys.stderr)
         domains = dict.fromkeys(PRODUCTS)
     reports = [check_product(product, domains[product], timestamp) for product in PRODUCTS]
-    output_dir.mkdir(parents=True, exist_ok=True)
-    # Nunca sobrescribir otros archivos mediante enlaces simbólicos locales.
-    if output_dir.is_symlink():
-        raise OSError("Directorio de reportes enlazado: escritura rechazada")
-    for result in reports:
-        destination = output_dir / (result["product"].lower() + ".json")
-        if destination.is_symlink():
-            raise OSError(f"Reporte enlazado: escritura rechazada ({destination})")
-        # O_NOFOLLOW evita la carrera final de symlinks en Linux/macOS.
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(destination, flags, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-            output.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    directory_fd = _open_safe_report_directory(output_dir)
+    try:
+        for result in reports:
+            _write_report(directory_fd, result)
+    finally:
+        os.close(directory_fd)
     return reports
 
 

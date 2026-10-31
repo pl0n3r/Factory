@@ -234,5 +234,50 @@ class CheckDnsTlsTests(unittest.TestCase):
             self.assertEqual("do not overwrite", protected.read_text(encoding="utf-8"))
 
 
+    def test_report_directory_ancestors_cannot_be_symlinks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            outside = base / "outside"
+            outside.mkdir()
+            alias = base / "alias"
+            try:
+                alias.symlink_to(outside, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("No se pueden crear enlaces simbólicos")
+            # En la implementación antigua, mkdir seguía alias y creaba outside/new.
+            with patch("sys.stderr", io.StringIO()), self.assertRaises(OSError):
+                run(base / "missing.json", alias / "new", NOW)
+            self.assertFalse((outside / "new").exists())
+            protected = outside / "nested"
+            protected.mkdir()
+            victim = protected / "condor.json"
+            victim.write_text("NO TOCAR", encoding="utf-8")
+            with patch("sys.stderr", io.StringIO()), self.assertRaises(OSError):
+                run(base / "missing.json", alias / "nested", NOW)
+            self.assertEqual("NO TOCAR", victim.read_text(encoding="utf-8"))
+
+    def test_report_writes_replace_hardlinks_atomically(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            destination = base / "reports"
+            destination.mkdir()
+            protected = base / "protected.txt"
+            protected.write_text("NO TOCAR", encoding="utf-8")
+            try:
+                (destination / "condor.json").hardlink_to(protected)
+            except (NotImplementedError, OSError):
+                self.skipTest("No se pueden crear enlaces duros")
+            with patch("sys.stderr", io.StringIO()):
+                run(base / "missing.json", destination, NOW)
+                run(base / "missing.json", destination, NOW)
+            self.assertEqual("NO TOCAR", protected.read_text(encoding="utf-8"))
+            self.assertEqual("UNKNOWN", json.loads(
+                (destination / "condor.json").read_text(encoding="utf-8")
+            )["status"])
+            self.assertEqual(1, len(list(destination.glob("condor.json"))))
+
+
+
+
 if __name__ == "__main__":
     unittest.main()
