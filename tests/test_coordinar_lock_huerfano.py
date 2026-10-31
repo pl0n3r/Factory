@@ -251,5 +251,100 @@ class RecoveryLockTests(unittest.TestCase):
         self.assertEqual([], api.releases)
 
 
+    def consumer(self, api=None, runner=None, token=LOCK,
+                 repo_name="pl0n3r/GrindFlow"):
+        consumer = api if api is not None else FakeApi()
+        consumer.repo = repo_name
+        env = {**RUNNER,
+               "GITHUB_REPOSITORY": "pl0n3r/GrindFlow",
+               "GITHUB_WORKFLOW_REF":
+                   "pl0n3r/GrindFlow/.github/workflows/work-coordination.yml@refs/heads/main",
+               "GITHUB_REF": "refs/heads/main"}
+        if runner:
+            env.update(runner)
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(coordinator, "require_global_running") as guard:
+                result = coordinator.recover_orphaned_issue_lock(
+                    consumer, ISSUE, "pl0n3r", "OWNER", token, now=DATE,
+                )
+                self.assertGreaterEqual(guard.call_count, 2)
+                return result
+
+    def test_consumidor_liberacion_cas_segura(self):
+        consumer = FakeApi()
+        self.assertTrue(self.consumer(consumer))
+        self.assertEqual([(ISSUE, LOCK)], consumer.releases)
+        self.assertEqual(PARENT, consumer.refs["main"])
+        self.assertEqual({"main": PARENT}, consumer.refs)
+        self.assertEqual(LOCK, consumer.record["sha"])
+        self.assertEqual("open", consumer.issue_data["state"])
+
+    def test_consumidor_rechaza_origen_no_autorizado(self):
+        for repo in ("pl0n3r/other", "evil/GrindFlow", "pl0n3r/GrindFlow-fork"):
+            with self.subTest(repo=repo):
+                consumer = FakeApi()
+                consumer.repo = repo
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.consumer(consumer, runner={"GITHUB_REPOSITORY": repo},
+                                  repo_name=repo)
+                self.assertEqual([], consumer.releases)
+        for key, value in (
+            ("GITHUB_REPOSITORY", "pl0n3r/Factory"),
+            ("GITHUB_EVENT_NAME", "pull_request"),
+            ("GITHUB_REF", "refs/heads/topic"),
+            ("GITHUB_RUN_ID", "bad-id"),
+        ):
+            with self.subTest(key=key):
+                consumer = FakeApi()
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.consumer(consumer, runner={key: value})
+                self.assertEqual([], consumer.releases)
+        consumer = FakeApi()
+        consumer.record["verification"]["verified"] = False
+        with self.assertRaises(coordinator.CoordinationError):
+            self.consumer(consumer)
+        self.assertEqual([], consumer.releases)
+        consumer = FakeApi()
+        consumer.record["tree"]["sha"] = "d" * 40
+        with self.assertRaises(coordinator.CoordinationError):
+            self.consumer(consumer)
+        self.assertEqual([], consumer.releases)
+        consumer = FakeApi()
+        consumer.issue_data["labels"].clear()
+        with self.assertRaises(coordinator.CoordinationError):
+            self.consumer(consumer)
+        self.assertEqual([], consumer.releases)
+        consumer = FakeApi()
+        with self.assertRaises(coordinator.CoordinationError):
+            self.consumer(consumer, token="f" * 40)
+        self.assertEqual([], consumer.releases)
+
+    def test_consumidor_requiere_workflow_serializado(self):
+        consumer = FakeApi()
+        with self.assertRaises(coordinator.CoordinationError):
+            self.consumer(consumer, runner={
+                "GITHUB_WORKFLOW_REF":
+                    "pl0n3r/GrindFlow/.github/workflows/parallel.yml@refs/heads/main",
+            })
+        self.assertEqual([], consumer.releases)
+        consumer = FakeApi()
+        with self.assertRaises(coordinator.CoordinationError):
+            self.consumer(consumer, runner={
+                "GITHUB_WORKFLOW_REF":
+                    "pl0n3r/GrindFlow/.github/workflows/work-coordination.yml@refs/heads/unsafe",
+            })
+        self.assertEqual([], consumer.releases)
+        consumer = FakeApi()
+        consumer.refs["trabajo/issue-1946"] = "d" * 40
+        with self.assertRaises(coordinator.CoordinationError):
+            self.consumer(consumer)
+        self.assertEqual([], consumer.releases)
+        consumer = FakeApi()
+        with patch.object(consumer, "release_issue_lock",
+                          side_effect=coordinator.CoordinationError("CAS race")):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.consumer(consumer)
+        self.assertEqual([], consumer.releases)
+
 if __name__ == "__main__":
     unittest.main()
