@@ -19,8 +19,8 @@ class VersionReleaseTests(unittest.TestCase):
         self.assertRegex(self.data["version"], SEMVER)
 
     def test_criterio_principal(self):
-        # 1.0.44 ya está publicada como v1.0.44: la candidata debe ser mayor para poder abrir la ventana de release.
-        self.assertGreater(_tuple(self.data["version"]), (1, 0, 44))
+        # v1.0.45 es la última versión publicada: la candidata debe ser mayor.
+        self.assertGreater(_tuple(self.data["version"]), (1, 0, 45))
 
     def test_solo_declara_version(self):
         self.assertEqual(set(self.data), {"version"})
