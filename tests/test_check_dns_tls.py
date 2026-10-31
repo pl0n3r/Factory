@@ -1,5 +1,6 @@
 """Regresiones DNS/TLS sintéticas: sin conexiones externas ni modificación de red."""
 from datetime import datetime, timedelta, timezone
+import io
 import json
 from pathlib import Path
 import socket
@@ -183,6 +184,32 @@ class CheckDnsTlsTests(unittest.TestCase):
                 dns_lookup("localhost.local")
             resolve.assert_not_called()
 
+
+    def test_tiny_positive_lifetime_rounded_to_zero_remains_expiring(self):
+        # La observación TLS verificada es válida aunque redondee a 0.0 días.
+        near_expiration = {
+            "status": "EXPIRING_SOON", "valid": True,
+            "expires_at_utc": "2026-10-30T18:01:00+00:00", "days_remaining": 0.0,
+        }
+        report = check_product(
+            "Condor", "example.org", NOW,
+            resolver=lambda _host: [PUBLIC_IP],
+            tls_probe=lambda _host, _addr, _now: near_expiration,
+        )
+        self.assertEqual("EXPIRING_SOON", report["status"])
+
+    def test_invalid_config_explains_unknown_without_contacting_dns(self):
+        with tempfile.TemporaryDirectory() as folder:
+            missing = Path(folder) / "missing.json"
+            error_output = io.StringIO()
+            with patch("sys.stderr", error_output), patch(
+                "scripts.check_dns_tls.socket.getaddrinfo",
+                side_effect=AssertionError("Unexpected network access"),
+            ):
+                reports = run(missing, Path(folder) / "reports", NOW)
+            self.assertTrue(all(report["status"] == "UNKNOWN" for report in reports))
+            self.assertIn("ERROR de configuración", error_output.getvalue())
+            self.assertIn(str(missing), error_output.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 import socket
 import ssl
+import sys
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -170,7 +171,7 @@ def check_product(product: str, domain: str | None, now: datetime,
         statuses = {item.get("status", "UNKNOWN") for item in observations}
         if len(statuses) == 1 and statuses <= {"VALID", "EXPIRING_SOON"}:
             if all(item.get("valid") is True and isinstance(item.get("days_remaining"), (int, float))
-                   and item.get("days_remaining") > 0
+                   and item.get("days_remaining") >= 0
                    and isinstance(item.get("expires_at_utc"), str)
                    for item in observations):
                 closest = min(observations, key=lambda item: item["days_remaining"])
@@ -191,9 +192,10 @@ def run(config: Path, output_dir: Path, now: datetime | None = None) -> list[dic
     timestamp = now if now is not None else datetime.now(timezone.utc)
     try:
         domains = load_config(config)
-    except ConfigError:
-        # Un archivo que no se puede leer no autoriza inventar dominios.
-        domains = {product: None for product in PRODUCTS}
+    except ConfigError as exc:
+        # El informe permanece UNKNOWN y se comunica por qué no pudo verificarse.
+        print(f"ERROR de configuración ({config}): {exc}", file=sys.stderr)
+        domains = dict.fromkeys(PRODUCTS)
     reports = [check_product(product, domains[product], timestamp) for product in PRODUCTS]
     output_dir.mkdir(parents=True, exist_ok=True)
     for result in reports:
