@@ -58,21 +58,33 @@ def validate_domain(value: object) -> str:
     raise ConfigError("No se permiten IP literales: requiere nombre DNS")
 
 
-def _read_safe_config(path: Path) -> dict:
-    """Leer solo un archivo regular sin symlinks y con límite efectivo de bytes."""
+def _open_safe_config_parent(path: Path) -> tuple[int, str]:
+    """Retornar un dirfd al padre real, sin resolver ningún symlink de la ruta."""
     if (not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
-            or not hasattr(os, "O_NONBLOCK") or os.open not in os.supports_dir_fd):
-        raise OSError("Lectura segura de configuración no soportada")
+            or os.open not in os.supports_dir_fd):
+        raise OSError("Sistema sin apertura segura de directorios")
     absolute = Path(os.path.abspath(path))
-    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    directory_fd = os.open(absolute.anchor, dir_flags)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_fd = os.open(absolute.anchor, flags)
     try:
         for part in absolute.parts[1:-1]:
-            next_fd = os.open(part, dir_flags, dir_fd=directory_fd)
+            next_fd = os.open(part, flags, dir_fd=directory_fd)
             os.close(directory_fd)
             directory_fd = next_fd
+        return directory_fd, absolute.name
+    except BaseException:
+        os.close(directory_fd)
+        raise
+
+
+def _read_safe_config(path: Path) -> dict:
+    """Leer solo un archivo regular sin symlinks y con límite efectivo de bytes."""
+    if not hasattr(os, "O_NONBLOCK"):
+        raise OSError("Sistema sin lectura no bloqueante")
+    directory_fd, filename = _open_safe_config_parent(path)
+    try:
         file_fd = os.open(
-            absolute.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
             dir_fd=directory_fd,
         )
         try:
@@ -106,11 +118,17 @@ def load_config(path: Path) -> dict[str, str | None]:
 
 
 def init_config(path: Path) -> None:
-    # Modo explícito: nunca sobrescribe una configuración ya preparada.
-    data = {"domains": {product: None for product in PRODUCTS}}
-    with path.open("x", encoding="utf-8") as out:
-        json.dump(data, out, indent=2, ensure_ascii=False)
-        out.write("\n")
+    # Crear archivo privado de forma exclusiva, sin symlinks en ningún nivel.
+    directory_fd, filename = _open_safe_config_parent(path)
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        descriptor = os.open(filename, flags, 0o600, dir_fd=directory_fd)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as out:
+            data = {"domains": {product: None for product in PRODUCTS}}
+            json.dump(data, out, indent=2, ensure_ascii=False)
+            out.write("\n")
+    finally:
+        os.close(directory_fd)
 
 
 def dns_lookup(host: str) -> list[str]:

@@ -62,6 +62,31 @@ class CheckDnsTlsTests(unittest.TestCase):
                 self.assertEqual(product, report["product"])
                 self.assertEqual("VALID", report["status"])
 
+    def test_init_config_cannot_escape_through_directory_symlink(self):
+        import os
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            outside = root / "outside"
+            outside.mkdir()
+            alias = root / "alias"
+            try:
+                alias.symlink_to(outside, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("Sin soporte para enlaces simbólicos")
+            with self.assertRaises(OSError):
+                init_config(alias / "leak.json")
+            self.assertFalse((outside / "leak.json").exists())
+            template = root / "config.json"
+            init_config(template)
+            self.assertEqual(0o600, template.stat().st_mode & 0o777)
+            self.assertIsNone(json.loads(template.read_text())["domains"]["Condor"])
+            with self.assertRaises(FileExistsError):
+                init_config(template)
+            linked = root / "linked.json"
+            linked.symlink_to(template)
+            with self.assertRaises(FileExistsError):
+                init_config(linked)
+
     def test_config_read_rejects_symlinks_and_oversize_files(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
