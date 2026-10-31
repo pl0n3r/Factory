@@ -108,5 +108,95 @@ class DictamenGatesTests(unittest.TestCase):
         report = evaluate(SHA, green())
         self.assertRegex(report["checked_at_colombia"], r"\d{2}:\d{2}:\d{2} (?:AM|PM) (?:-05|COT)")
 
+
+    def test_api_read_only_endpoint_and_authenticated_request(self):
+        from scripts.dictamen_gates import _get_json, API
+        class Response:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, limit):
+                self_limit = limit
+                self.__class__.last_read_limit = self_limit
+                return b'{"total_count": 0, "check_runs": []}'
+        path = f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs?per_page=100&page=1"
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "private-test-token"}):
+            with patch("scripts.dictamen_gates.urlopen", return_value=Response()) as mocked:
+                self.assertEqual(_get_json(path)["total_count"], 0)
+                request = mocked.call_args.args[0]
+                self.assertEqual(request.full_url, API + path)
+                self.assertEqual(request.get_method(), "GET")
+                self.assertEqual(request.get_header("Authorization"), "Bearer private-test-token")
+                self.assertEqual(mocked.call_args.kwargs["timeout"], 15)
+                self.assertEqual(Response.last_read_limit, 2_000_001)
+
+    def test_api_rejects_untrusted_paths_and_response_shapes(self):
+        from scripts.dictamen_gates import _get_json
+        good = f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs?per_page=100&page=1"
+        for path in (
+            good.replace("page=1", "page=0"),
+            good.replace("page=1", "page=11"),
+            good.replace("per_page=100", "per_page=200"),
+            good.replace(SHA, "../issues/767"),
+            good.replace("/check-runs", "/statuses"),
+            good.replace("pl0n3r/Factory", "another/repo"),
+        ):
+            with self.subTest(path=path):
+                with self.assertRaises(EvidenceError):
+                    _get_json(path)
+
+        class Response:
+            def __init__(self, payload, status=200):
+                self.payload, self.status = payload, status
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, _limit):
+                return self.payload
+
+        for payload, status in (
+            (b'{"total_count":0}', 500),
+            (b'not-json', 200),
+            (b'[]', 200),
+            (b'{"a":1,"a":2}', 200),
+            (b'x' * 2_000_001, 200),
+        ):
+            with self.subTest(status=status, length=len(payload)):
+                with patch("scripts.dictamen_gates.urlopen", return_value=Response(payload, status)):
+                    with self.assertRaises(EvidenceError):
+                        _get_json(good)
+        with patch("scripts.dictamen_gates.urlopen", side_effect=OSError("token-secret")):
+            with self.assertRaises(EvidenceError) as caught:
+                _get_json(good)
+            self.assertNotIn("token-secret", str(caught.exception))
+
+    def test_rejects_collection_total_drift_and_bad_identifiers(self):
+        rows = [run("unrelated " + str(i), id=i + 1) for i in range(100)]
+        for bad in ({"total_count": 1, "check_runs": [{"id": 0}]},
+                    {"total_count": 1, "check_runs": [{"id": True}]},
+                    {"total_count": 1001, "check_runs": []},
+                    {"total_count": True, "check_runs": []}):
+            with self.subTest(bad=bad), self.assertRaises(EvidenceError):
+                collect(SHA, lambda _path: bad)
+        def drifting(path):
+            if path.endswith("page=1"):
+                return {"total_count": 101, "check_runs": rows}
+            return {"total_count": 102, "check_runs": [run("last", id=101)]}
+        with self.assertRaises(EvidenceError):
+            collect(SHA, drifting)
+
+    def test_cli_success_never_authorizes_release(self):
+        with patch("scripts.dictamen_gates.verdict", return_value=evaluate(SHA, green())):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                rc = main(["--sha", SHA])
+            self.assertEqual(rc, 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report["status"], "GO")
+            self.assertFalse(report["authorizes_release"])
+
 if __name__ == "__main__":
     unittest.main()
