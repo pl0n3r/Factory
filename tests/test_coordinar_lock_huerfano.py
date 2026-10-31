@@ -251,9 +251,10 @@ class RecoveryLockTests(unittest.TestCase):
         self.assertEqual([], api.releases)
 
 
-    def consumer(self, api=None, runner=None, token=LOCK):
+    def consumer(self, api=None, runner=None, token=LOCK,
+                 repo_name="pl0n3r/GrindFlow"):
         consumer = api if api is not None else FakeApi()
-        consumer.repo = "pl0n3r/GrindFlow"
+        consumer.repo = repo_name
         env = {**RUNNER,
                "GITHUB_REPOSITORY": "pl0n3r/GrindFlow",
                "GITHUB_WORKFLOW_REF":
@@ -284,7 +285,8 @@ class RecoveryLockTests(unittest.TestCase):
                 consumer = FakeApi()
                 consumer.repo = repo
                 with self.assertRaises(coordinator.CoordinationError):
-                    self.consumer(consumer, runner={"GITHUB_REPOSITORY": repo})
+                    self.consumer(consumer, runner={"GITHUB_REPOSITORY": repo},
+                                  repo_name=repo)
                 self.assertEqual([], consumer.releases)
         for key, value in (
             ("GITHUB_REPOSITORY", "pl0n3r/Factory"),
