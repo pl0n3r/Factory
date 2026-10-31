@@ -13,7 +13,6 @@ import os
 import re
 import sys
 from typing import Any, Callable
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -60,7 +59,7 @@ def _get_json(path: str) -> dict[str, Any]:
             if response.status != 200:
                 raise EvidenceError("API GitHub no disponible")
             data = response.read(2_000_001)
-    except (OSError, HTTPError, URLError, TimeoutError) as exc:
+    except OSError as exc:
         raise EvidenceError("no se pudo consultar API GitHub") from exc
     if len(data) > 2_000_000:
         raise EvidenceError("respuesta GitHub demasiado grande")
@@ -82,6 +81,32 @@ def _unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return fields
 
 
+def _page_rows(payload: Any, expected_total: int | None, collected: int) -> tuple[int, list[Any]]:
+    """Check the complete, stable, bounded GitHub checks page before using it."""
+    if type(payload) is not dict or type(payload.get("total_count")) is not int:
+        raise EvidenceError("paginación GitHub inválida")
+    total = payload["total_count"]
+    rows = payload.get("check_runs")
+    if total < 0 or total > MAX_PAGES * PAGE_SIZE or type(rows) is not list:
+        raise EvidenceError("resultados GitHub no verificables")
+    if expected_total is not None and total != expected_total:
+        raise EvidenceError("páginas incompletas o inconsistentes")
+    if len(rows) != min(PAGE_SIZE, total - collected):
+        raise EvidenceError("páginas incompletas o inconsistentes")
+    return total, rows
+
+
+def _append_page(rows: list[Any], ids: set[int], all_runs: list[dict[str, Any]]) -> None:
+    """Reject invalid or duplicate run IDs across all pages."""
+    for row in rows:
+        if type(row) is not dict or type(row.get("id")) is not int or row["id"] <= 0:
+            raise EvidenceError("check-run inválido")
+        if row["id"] in ids:
+            raise EvidenceError("check-run duplicado")
+        ids.add(row["id"])
+        all_runs.append(row)
+
+
 def collect(sha: str, get_json: Callable[[str], Any] = _get_json) -> list[dict[str, Any]]:
     if type(sha) is not str or SHA.fullmatch(sha) is None:
         raise EvidenceError("SHA candidato inválido")
@@ -90,26 +115,28 @@ def collect(sha: str, get_json: Callable[[str], Any] = _get_json) -> list[dict[s
     ids: set[int] = set()
     for page in range(1, MAX_PAGES + 1):
         payload = get_json(f"/repos/{REPO}/commits/{sha}/check-runs?per_page={PAGE_SIZE}&page={page}")
-        if type(payload) is not dict or type(payload.get("total_count")) is not int:
-            raise EvidenceError("paginación GitHub inválida")
-        total = payload["total_count"]
-        rows = payload.get("check_runs")
-        if total < 0 or total > MAX_PAGES * PAGE_SIZE or type(rows) is not list:
-            raise EvidenceError("resultados GitHub no verificables")
-        if expected_total is None:
-            expected_total = total
-        if total != expected_total or len(rows) != min(PAGE_SIZE, total - len(all_runs)):
-            raise EvidenceError("páginas incompletas o inconsistentes")
-        for row in rows:
-            if type(row) is not dict or type(row.get("id")) is not int or row["id"] <= 0:
-                raise EvidenceError("check-run inválido")
-            if row["id"] in ids:
-                raise EvidenceError("check-run duplicado")
-            ids.add(row["id"])
-            all_runs.append(row)
+        total, rows = _page_rows(payload, expected_total, len(all_runs))
+        expected_total = total
+        _append_page(rows, ids, all_runs)
         if len(all_runs) == total:
             return all_runs
     raise EvidenceError("inventario de checks incompleto")
+
+def _run_problem(row: Any, sha: str, ids: set[int]) -> str | None:
+    """Return a fail-closed reason for malformed, cross-SHA or forged checks."""
+    if type(row) is not dict or type(row.get("id")) is not int or row["id"] <= 0:
+        return "check_malformado"
+    if row["id"] in ids:
+        return "check_duplicado"
+    ids.add(row["id"])
+    name = row.get("name")
+    if type(name) is not str or type(row.get("head_sha")) is not str or row["head_sha"] != sha:
+        return "check_sin_SHA_exacto"
+    if name in CHECKS:
+        app = row.get("app")
+        if type(app) is not dict or (app.get("slug"), app.get("id")) != ISSUERS[name]:
+            return "check_emisor_no_confiable"
+    return None
 
 
 def evaluate(sha: str, runs: Any, checked_at: str | None = None) -> dict[str, Any]:
@@ -126,23 +153,11 @@ def evaluate(sha: str, runs: Any, checked_at: str | None = None) -> dict[str, An
     latest: dict[str, dict[str, Any]] = {}
     ids: set[int] = set()
     for row in runs:
-        if type(row) is not dict or type(row.get("id")) is not int or row["id"] <= 0:
-            result["reason"] = "check_malformado"
+        problem = _run_problem(row, sha, ids)
+        if problem:
+            result["reason"] = problem
             return result
-        if row["id"] in ids:
-            result["reason"] = "check_duplicado"
-            return result
-        ids.add(row["id"])
-        name = row.get("name")
-        if type(name) is not str or type(row.get("head_sha")) is not str or row["head_sha"] != sha:
-            result["reason"] = "check_sin_SHA_exacto"
-            return result
-        if name in CHECKS:
-            app = row.get("app")
-            if (type(app) is not dict
-                    or (app.get("slug"), app.get("id")) != ISSUERS[name]):
-                result["reason"] = "check_emisor_no_confiable"
-                return result
+        name = row["name"]
         if name in CHECKS and (name not in latest or row["id"] > latest[name]["id"]):
             latest[name] = row
     for name in CHECKS:
@@ -158,7 +173,6 @@ def evaluate(sha: str, runs: Any, checked_at: str | None = None) -> dict[str, An
     else:
         result["reason"] = "check_pendiente_cancelado_omitido_fallido_o_ausente"
     return result
-
 
 def verdict(sha: str, get_json: Callable[[str], Any] = _get_json) -> dict[str, Any]:
     try:
