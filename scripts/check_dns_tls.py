@@ -194,7 +194,8 @@ def check_product(product: str, domain: str | None, now: datetime,
 
 def _open_safe_report_directory(output_dir: Path) -> int:
     """Crear y abrir cada componente sin recorrer symlinks ni seguir carreras de ruta."""
-    required = (os.open, os.mkdir, os.stat, os.replace, os.unlink)
+    # os.replace has src_dir_fd/dst_dir_fd, but is absent from supports_dir_fd.
+    required = (os.open, os.mkdir, os.stat, os.unlink)
     if (not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY")
             or any(fn not in os.supports_dir_fd for fn in required)
             or os.stat not in os.supports_follow_symlinks):
