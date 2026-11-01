@@ -139,6 +139,20 @@ def _run_problem(row: Any, sha: str, ids: set[int]) -> str | None:
     return None
 
 
+def _latest_required_checks(sha: str, runs: list[Any]) -> tuple[dict[str, dict[str, Any]], str | None]:
+    """Extract latest trusted checks while preserving fail-closed evidence rules."""
+    latest: dict[str, dict[str, Any]] = {}
+    ids: set[int] = set()
+    for row in runs:
+        problem = _run_problem(row, sha, ids)
+        if problem:
+            return {}, problem
+        name = row["name"]
+        if name in CHECKS and (name not in latest or row["id"] > latest[name]["id"]):
+            latest[name] = row
+    return latest, None
+
+
 def evaluate(sha: str, runs: Any, checked_at: str | None = None) -> dict[str, Any]:
     """Select latest run per required check; any ambiguity must become NO-GO."""
     stamp = checked_at if checked_at is not None else _now()
@@ -150,16 +164,10 @@ def evaluate(sha: str, runs: Any, checked_at: str | None = None) -> dict[str, An
     if type(sha) is not str or SHA.fullmatch(sha) is None or type(runs) is not list:
         result["reason"] = "evidencia_inválida"
         return result
-    latest: dict[str, dict[str, Any]] = {}
-    ids: set[int] = set()
-    for row in runs:
-        problem = _run_problem(row, sha, ids)
-        if problem:
-            result["reason"] = problem
-            return result
-        name = row["name"]
-        if name in CHECKS and (name not in latest or row["id"] > latest[name]["id"]):
-            latest[name] = row
+    latest, problem = _latest_required_checks(sha, runs)
+    if problem:
+        result["reason"] = problem
+        return result
     for name in CHECKS:
         entry = latest.get(name)
         details[name] = {
