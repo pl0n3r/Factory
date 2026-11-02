@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from scripts import roles_kit as roles
 from tests import test_sonar_superseded_ce as sonar_examples
+from tests import test_matriz_cobertura as coverage_gate
 
 ROOT = Path(__file__).resolve().parents[1]
 VERIFIED = "VERIFIED_SYNTHETIC"
@@ -302,6 +303,33 @@ class BrechasFactory70Tests(unittest.TestCase):
         self.assertNotIn("password", str(self.fixtures).lower())
         self.assertEqual(roles.MAX_CONTEXT, 500_000)
 
+    def test_promocion_falsa_sigue_bloqueada(self):
+        """Un CUBIERTO sin mapa o con PR simulado nunca se acredita."""
+        row = SONAR_PATH + "L9-U1"
+        pr = (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d",
+              "quality/sonar.py",
+              "tests/test_cobertura_factory_57.py")
+        evidence = (f"https://github.com/pl0n3r/Factory/pull/{pr[0]} "
+                    f"{pr[1]} {pr[2]} {pr[3]}")
+        with patch.dict(coverage_gate.VERIFIED, {row: pr}):
+            coverage_gate.check_statuses([
+                dict(id=row, state="CUBIERTO", evidence=evidence, issue="—")
+            ], set())
+            for fake in (
+                evidence.replace("/pull/1913", "/pull/19130"),
+                evidence.replace("test_cobertura_factory_57.py", "test_inexistente_57.py"),
+            ):
+                with self.assertRaisesRegex(ValueError, "CUBIERTO sin código"):
+                    coverage_gate.check_statuses([
+                        dict(id=row, state="CUBIERTO", evidence=fake, issue="—")
+                    ], set())
+        unknown = ROLE_IDS[0]
+        self.assertNotIn(unknown, coverage_gate.VERIFIED)
+        with self.assertRaisesRegex(ValueError, "sin verificación externa"):
+            coverage_gate.check_statuses([
+                dict(id=unknown, state="CUBIERTO", evidence=evidence, issue="—")
+            ], set())
+
     def test_estados_unknown_explicitos(self):
         matrix = (ROOT / "docs/matriz-cobertura.md").read_text(encoding="utf-8")
         found = {}
@@ -315,17 +343,33 @@ class BrechasFactory70Tests(unittest.TestCase):
             if key in IDS:
                 self.assertNotIn(key, found, "ID duplicado")
                 self.assertEqual(len(cells), 5)
-                self.assertEqual(cells[2], "NO_VERIFICABLE")
+                if cells[2] == "CUBIERTO":
+                    # #1961: allow only a later exact VERIFIED promotion, not
+                    # a synthetic fixture or a historical unproven assertion.
+                    self.assertIn(key, coverage_gate.VERIFIED)
+                    coverage_gate.check_statuses([
+                        dict(id=key, state="CUBIERTO",
+                             evidence=cells[3], issue=cells[4])
+                    ], set())
+                else:
+                    self.assertEqual(cells[2], "NO_VERIFICABLE")
                 self.assertEqual(cells[4], "—")
                 found[key] = cells
         self.assertEqual(set(found), set(IDS))
         for row in IDS:
             with self.subTest(row=row):
-                self.assertTrue(
-                    "No se confirmó" in found[row][3]
-                    or "acreditación individual pendiente" in found[row][3],
-                    "No afirmar cumplimiento previo sin PR fusionado",
-                )
+                if found[row][2] == "CUBIERTO":
+                    pr, merge_sha, code, test = coverage_gate.VERIFIED[row]
+                    self.assertEqual(coverage_gate.pr_numbers(found[row][3]), [pr])
+                    self.assertIn(merge_sha, found[row][3])
+                    self.assertIn(code, found[row][3])
+                    self.assertIn(test, found[row][3])
+                else:
+                    self.assertTrue(
+                        "No se confirmó" in found[row][3]
+                        or "acreditación individual pendiente" in found[row][3],
+                        "No afirmar cumplimiento previo sin PR fusionado",
+                    )
         partial = dict(self.fixtures)
         partial.pop("sonar")
         self.assertTrue(all(evidence(row, partial) == UNKNOWN for row in SONAR_IDS))
