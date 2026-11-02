@@ -205,9 +205,10 @@ class DictamenGatesTests(unittest.TestCase):
         from scripts.dictamen_gates import _NoRedirect, API
         request = Request(API + f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs",
                           headers={"Authorization": "Bearer synthetic-private-token"})
+        redirect_handler = _NoRedirect()
         with self.assertRaises(EvidenceError):
-            _NoRedirect().redirect_request(request, None, 302, "Found", {},
-                                           "https://untrusted.example/collect")
+            redirect_handler.redirect_request(request, None, 302, "Found", {},
+                                              "https://untrusted.example/collect")
 
     def test_timestamps_not_run_ids_select_newest_and_ambiguous_fails_closed(self):
         rows = green()

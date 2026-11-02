@@ -28,6 +28,7 @@ API = "https://api.github.com"
 PAGE_SIZE = 100
 MAX_PAGES = 10
 COLOMBIA = ZoneInfo("America/Bogota")
+GITHUB_RUN_TIMESTAMP = "%Y-%m-%dT%H:%M:%SZ"
 
 
 class EvidenceError(ValueError):
@@ -144,7 +145,7 @@ def _run_problem(row: Any, sha: str, ids: set[int]) -> str | None:
         if type(app) is not dict or (app.get("slug"), app.get("id")) != ISSUERS[name]:
             return "check_emisor_no_confiable"
         try:
-            datetime.strptime(row.get("started_at"), "%Y-%m-%dT%H:%M:%SZ")
+            datetime.strptime(row.get("started_at"), GITHUB_RUN_TIMESTAMP)
         except (TypeError, ValueError):
             return "check_fecha_invalida"
     return None
@@ -164,8 +165,8 @@ def _latest_required_checks(sha: str, runs: list[Any]) -> tuple[dict[str, dict[s
             if previous is None:
                 latest[name] = row
                 continue
-            current_start = datetime.strptime(row["started_at"], "%Y-%m-%dT%H:%M:%SZ")
-            previous_start = datetime.strptime(previous["started_at"], "%Y-%m-%dT%H:%M:%SZ")
+            current_start = datetime.strptime(row["started_at"], GITHUB_RUN_TIMESTAMP)
+            previous_start = datetime.strptime(previous["started_at"], GITHUB_RUN_TIMESTAMP)
             if current_start == previous_start:
                 return {}, "check_orden_ambiguo"
             if current_start > previous_start:
