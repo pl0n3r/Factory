@@ -7,6 +7,19 @@
 La extracción usa **unidades identificables de comportamiento, contrato o límite**, no encabezados: listas operativas y cláusulas con predicados normativos. Los IDs `ruta:LNN-UM` señalan línea y unidad separada por punto o punto y coma bajo el SHA inmutable. La tabla de fuentes enumera 103 archivos Markdown vigentes de `docs/` más `AGENTES.md`, sin inventar filas «documento presente». Los títulos, índices y snippets en bloques de código no son requisitos. Este extractor no reemplaza una revisión humana completa de cláusulas complejas o de contexto.
 
 
+
+## Promoción puntual VERIFIED — #1961 (2-nov-2026)
+
+Se comprobaron individualmente ocho cláusulas A de handoff v1 y Sonar CE:
+código real de Factory, método ejecutable exacto de la suite
+`tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`, y [PR #1913 MERGED](https://github.com/pl0n3r/Factory/pull/1913)
+con squash `17d2075b30db1f6edc181b895f51f8742e253f9d`. Solo estos ocho predicados locales se promocionan;
+no se certifican consumidores remotos, operación productiva, decisiones humanas ni las
+otras cláusulas B/C/D. Los cortes históricos que dicen promociones cero corresponden
+a sus fechas anteriores, no al inventario actual.
+
+**Inventario actual:** 78 CUBIERTO · 1226 NO_VERIFICABLE · 1 NO_APLICA (1305).
+
 ## Reconciliación de cobertura real — etapa 1 de 4 (#1854)
 
 **Corte documental parcial, 30-oct-2026:** los 16 Issues #1792–#1807 están cerrados como completed y sus 16 PRs de pruebas se encuentran fusionados; eso demuestra incorporación de suites, **no** autoriza promover todas sus cláusulas automáticamente. Esta entrega concilia las 20 filas de #1792, conservando 20 `NO_VERIFICABLE` por alcance parcial o evidencia externa/política no acreditada. Las filas restantes permanecen para cortes siguientes. Los contadores globales y el censo histórico no se reescriben sin cambio de estado verificable.
@@ -1404,7 +1417,7 @@ Se agruparon 227 cláusulas del corte histórico de `AGENTES.md`, puertas humana
 | `docs/roles-profesionales.md:L30-U2` | ningún texto remoto se ejecuta como código o shell. | NO_VERIFICABLE | No se confirmó test + PR fusionado pertinentes en `9c12107b`; [contraste #1574](contraste-factory_resto_6.md) · E4 #1857: hoja #1847, PR #1910, `tests/test_cobertura_factory_56.py`; sin `VERIFIED`. | — |
 | `docs/sonar-superseded-ce.md:L3-U1` | Hay una excepción cerrada para un caso que Sonar declara explícitamente como obsoleto: un reporte de un commit viejo no puede procesarse porque ya se proce | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_sonar_superseded_ce.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1847, PR #1910, `tests/test_cobertura_factory_56.py`; sin `VERIFIED`. | — |
 | `docs/sonar-superseded-ce.md:L7-U1` | La excepción solo aplica si el mensaje completo coincide con la forma canónica observada por Sonar: | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_sonar_superseded_ce.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1847, PR #1910, `tests/test_cobertura_factory_56.py`; sin `VERIFIED`. | — |
-| `docs/sonar-superseded-ce.md:L9-U1` | identifica el commit del reporte rechazado con un SHA hexadecimal de 40 caracteres; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_sonar_superseded_ce.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
+| `docs/sonar-superseded-ce.md:L9-U1` | identifica el commit del reporte rechazado con un SHA hexadecimal de 40 caracteres; | CUBIERTO | `quality/sonar.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
 | `docs/sonar-superseded-ce.md:L10-U1` | afirma que un reporte más nuevo ya fue procesado; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_sonar_superseded_ce.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1847, PR #1910, `tests/test_cobertura_factory_56.py`; sin `VERIFIED`. | — |
 | `docs/sonar-superseded-ce.md:L11-U1` | afirma que procesar reportes antiguos no está soportado; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_sonar_superseded_ce.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1847, PR #1910, `tests/test_cobertura_factory_56.py`; sin `VERIFIED`. | — |
 | `docs/sonar-superseded-ce.md:L12-U1` | identifica el último commit procesado con otro SHA hexadecimal de 40 caracteres; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_sonar_superseded_ce.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1847, PR #1910, `tests/test_cobertura_factory_56.py`; sin `VERIFIED`. | — |
@@ -1427,13 +1440,13 @@ Se agruparon 227 cláusulas del corte histórico de `AGENTES.md`, puertas humana
 | `docs/unattended-daily-summary.md:B04` | La entrega automática a las 08:00 Bogotá depende de un cron y job vigentes. | NO_VERIFICABLE | Evidencia insuficiente: F1G retiró daily-summary y cron 0 13: el motor offline no equivale a entrega programada. · [contraste](contraste-matriz-unattended.md) · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
 | `docs/unattended-handoff-consumer-pack.md:L5-U1` | Este pack permite que ControlBot y FactoryRunner **interpreten** el handoff v1 ya | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1849, PR #1940, `tests/test_cobertura_factory_58.py`; sin `VERIFIED`. | — |
 | `docs/unattended-handoff-consumer-pack.md:L9-U1` | `config/unattended-handoff-v1.schema.json`; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1849, PR #1940, `tests/test_cobertura_factory_58.py`; sin `VERIFIED`. | — |
-| `docs/unattended-handoff-consumer-pack.md:L10-U1` | `tests/fixtures/unattended_handoff_v1/allow.json`; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
-| `docs/unattended-handoff-consumer-pack.md:L11-U1` | `tests/fixtures/unattended_handoff_v1/pause.json`; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
-| `docs/unattended-handoff-consumer-pack.md:L12-U1` | `tests/fixtures/unattended_handoff_v1/blocked.json`; | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
-| `docs/unattended-handoff-consumer-pack.md:L13-U1` | `tests/fixtures/unattended_handoff_v1/unknown.json`. | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
-| `docs/unattended-handoff-consumer-pack.md:L19-U1` | Solo proyecta el estado que ya viene | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
-| `docs/unattended-handoff-consumer-pack.md:L29-U1` | `UNKNOWN` **no** amplía el enum de `action` y nunca se convierte en `ALLOW`. | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
-| `docs/unattended-handoff-consumer-pack.md:L30-U1` | no se deriva una transición nueva. | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
+| `docs/unattended-handoff-consumer-pack.md:L10-U1` | `tests/fixtures/unattended_handoff_v1/allow.json`; | CUBIERTO | `scripts/unattended_cycle_handoff.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
+| `docs/unattended-handoff-consumer-pack.md:L11-U1` | `tests/fixtures/unattended_handoff_v1/pause.json`; | CUBIERTO | `scripts/unattended_cycle_handoff.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
+| `docs/unattended-handoff-consumer-pack.md:L12-U1` | `tests/fixtures/unattended_handoff_v1/blocked.json`; | CUBIERTO | `scripts/unattended_cycle_handoff.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
+| `docs/unattended-handoff-consumer-pack.md:L13-U1` | `tests/fixtures/unattended_handoff_v1/unknown.json`. | CUBIERTO | `scripts/unattended_cycle_handoff.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
+| `docs/unattended-handoff-consumer-pack.md:L19-U1` | Solo proyecta el estado que ya viene | CUBIERTO | `scripts/unattended_cycle_handoff.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
+| `docs/unattended-handoff-consumer-pack.md:L29-U1` | `UNKNOWN` **no** amplía el enum de `action` y nunca se convierte en `ALLOW`. | CUBIERTO | `scripts/unattended_cycle_handoff.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
+| `docs/unattended-handoff-consumer-pack.md:L30-U1` | no se deriva una transición nueva. | CUBIERTO | `scripts/unattended_cycle_handoff.py`; `tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal`; [#1913](https://github.com/pl0n3r/Factory/pull/1913) · `17d2075b30db1f6edc181b895f51f8742e253f9d` · evidencia A local; no consumidores/live. | — |
 | `docs/unattended-handoff-consumer-pack.md:L33-U1` | No deben usar esos | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1848, PR #1913, `tests/test_cobertura_factory_57.py`; sin `VERIFIED`. | — |
 | `docs/unattended-handoff-consumer-pack.md:L43-U1` | Ambos consumidores deben validar primero el documento contra el schema v1. | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1849, PR #1940, `tests/test_cobertura_factory_58.py`; sin `VERIFIED`. | — |
 | `docs/unattended-handoff-consumer-pack.md:L49-U1` | El handoff conserva siempre: | NO_VERIFICABLE | Contraste [#1575](contraste-factory_resto_7.md): `tests/test_unattended_handoff_consumer_pack.py` candidata; acreditación individual pendiente en VERIFIED. · E4 #1857: hoja #1849, PR #1940, `tests/test_cobertura_factory_58.py`; sin `VERIFIED`. | — |
@@ -1684,15 +1697,15 @@ Antes de afirmar `SIN_COBERTURA`, verificar ausencia en árbol exact-main y PRs 
 
 | Estado | Filas |
 | --- | ---: |
-| CUBIERTO | 70 |
+| CUBIERTO | 78 |
 | EN_CURSO | 0 |
 | SIN_COBERTURA | 0 |
 | DESCARTADO | 0 |
 | NO_APLICA | 1 |
-| NO_VERIFICABLE | 1234 |
+| NO_VERIFICABLE | 1226 |
 | TOTAL | 1305 |
 
-**Porcentaje CUBIERTO:** 5.36% (70/1305).
+**Porcentaje CUBIERTO:** 5.98% (78/1305).
 
 **Hojas nuevas creadas:** 0. **Fuentes Markdown:** 103+AGENTES.md. **Criterios de los seis épicos:** 39.
 

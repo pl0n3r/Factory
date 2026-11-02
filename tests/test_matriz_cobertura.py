@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import ast
 from pathlib import Path
 import re
 import unittest
@@ -128,6 +129,23 @@ VERIFIED = {
     "docs/performance-remediation.md:L23-U1": (1531, "669b1ef512ba5f080831bf01d703d01fb2bd34e6", "performance/remediation.py", "tests/test_performance_remediation.py"),
     "docs/portfolio-signals.md:L40-U1": (339, "7e9062203f3faae85a6dfc6fc9cb446d4faaf71e", "portfolio/signals.py", "tests/test_portfolio_signals.py"),
     "docs/portfolio-signals.md:L33-U1": (339, "7e9062203f3faae85a6dfc6fc9cb446d4faaf71e", "portfolio/signals.py", "tests/test_portfolio_signals.py"),
+    "docs/sonar-superseded-ce.md:L9-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "quality/sonar.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+    "docs/unattended-handoff-consumer-pack.md:L10-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "scripts/unattended_cycle_handoff.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+    "docs/unattended-handoff-consumer-pack.md:L11-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "scripts/unattended_cycle_handoff.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+    "docs/unattended-handoff-consumer-pack.md:L12-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "scripts/unattended_cycle_handoff.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+    "docs/unattended-handoff-consumer-pack.md:L13-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "scripts/unattended_cycle_handoff.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+    "docs/unattended-handoff-consumer-pack.md:L19-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "scripts/unattended_cycle_handoff.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+    "docs/unattended-handoff-consumer-pack.md:L29-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "scripts/unattended_cycle_handoff.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+    "docs/unattended-handoff-consumer-pack.md:L30-U1": (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d", "scripts/unattended_cycle_handoff.py",
+        "tests/test_cobertura_factory_57.py::CoberturaFactory57Tests::test_contrato_principal"),
+
 }
 
 
@@ -203,6 +221,37 @@ def new_leaf_registry(doc: str) -> set[int]:
     return result
 
 
+
+def exact_test_exists(reference: str) -> bool:
+    """Check real unittest class/method for newly promoted coverage rows."""
+    parts = reference.split("::")
+    if len(parts) not in (1, 3):
+        return False
+    rel = parts[0]
+    if not re.fullmatch(r"tests/[A-Za-z0-9_/-]+[.]py", rel):
+        return False
+    if ".." in Path(rel).parts or Path(rel).is_absolute():
+        return False
+    source = ROOT / rel
+    if not source.is_file():
+        return False
+    if len(parts) == 1:
+        return True  # Keep existing legacy VERIFIED suite paths compatible.
+    _, klass, method = parts
+    if not (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", klass) and
+            re.fullmatch(r"test_[A-Za-z0-9_]+", method)):
+        return False
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeError):
+        return False
+    return any(
+        isinstance(node, ast.ClassDef) and node.name == klass and
+        any(isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and child.name == method for child in node.body)
+        for node in tree.body
+    )
+
 def check_statuses(rows: list[dict[str, str]], registry: set[int]) -> None:
     for item in rows:
         state, issue, evidence, key = (
@@ -223,7 +272,7 @@ def check_statuses(rows: list[dict[str, str]], registry: set[int]) -> None:
             pr, merge_sha, code, test = info
             if (pr_numbers(evidence) != [pr] or merge_sha not in evidence or
                     code not in evidence or test not in evidence or
-                    not (ROOT / code).is_file() or not (ROOT / test).is_file()):
+                    not (ROOT / code).is_file() or not exact_test_exists(test)):
                 raise ValueError("CUBIERTO sin código, test o PR fusionado pertinente")
 
 
@@ -261,6 +310,47 @@ class MatrizCoberturaTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.doc = MATRIX.read_text(encoding="utf-8")
         cls.rows = parse_rows(cls.doc)
+
+    def test_criterio_principal(self) -> None:
+        """#1961: eight A rows have exact code/test/merged PR identity."""
+        promoted = {
+            "docs/sonar-superseded-ce.md:L9-U1",
+            "docs/unattended-handoff-consumer-pack.md:L10-U1",
+            "docs/unattended-handoff-consumer-pack.md:L11-U1",
+            "docs/unattended-handoff-consumer-pack.md:L12-U1",
+            "docs/unattended-handoff-consumer-pack.md:L13-U1",
+            "docs/unattended-handoff-consumer-pack.md:L19-U1",
+            "docs/unattended-handoff-consumer-pack.md:L29-U1",
+            "docs/unattended-handoff-consumer-pack.md:L30-U1",
+        }
+        by_id = {row["id"]: row for row in self.rows}
+        self.assertEqual(len(promoted), 8)
+        self.assertEqual(len(VERIFIED), 78)
+        self.assertEqual(
+            {row["id"] for row in self.rows if row["state"] == "CUBIERTO"},
+            set(VERIFIED),
+        )
+        check_statuses(self.rows, new_leaf_registry(self.doc))
+        for key in promoted:
+            with self.subTest(key=key):
+                item = by_id[key]
+                pr, merge, code, test = VERIFIED[key]
+                self.assertEqual((pr, merge),
+                                 (1913, "17d2075b30db1f6edc181b895f51f8742e253f9d"))
+                self.assertEqual(item["state"], "CUBIERTO")
+                self.assertTrue((ROOT / code).is_file())
+                self.assertTrue(exact_test_exists(test))
+                self.assertEqual(pr_numbers(item["evidence"]), [1913])
+                self.assertFalse(exact_test_exists(test.replace(
+                    "test_contrato_principal", "test_inexistente_1961")))
+                fake = dict(item, evidence=item["evidence"].replace(
+                    "/pull/1913", "/pull/19130"))
+                with self.assertRaisesRegex(ValueError, "CUBIERTO sin código"):
+                    check_statuses([fake], set())
+        untouched = next(row for row in self.rows
+                         if row["state"] == "NO_VERIFICABLE")
+        with self.assertRaisesRegex(ValueError, "sin verificación externa"):
+            check_statuses([dict(untouched, state="CUBIERTO")], set())
 
     def test_cubre_todas_las_fuentes(self) -> None:
         expected, census = {}, {}
