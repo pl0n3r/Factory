@@ -227,6 +227,22 @@ class DictamenGatesTests(unittest.TestCase):
         missing_date.pop("started_at")
         self.assertEqual(evaluate(SHA, rows + [missing_date])["status"], "NO-GO")
 
+    def test_historical_ties_ignore_order_but_latest_ties_fail_closed(self):
+        rows = green()
+        earlier1 = run("Validar", id=80, conclusion="failure")
+        earlier2 = run("Validar", id=81, conclusion="cancelled")
+        earlier1["started_at"] = "2026-10-29T00:00:00Z"
+        earlier2["started_at"] = earlier1["started_at"]
+        for history in ((earlier1, earlier2), (earlier2, earlier1)):
+            for inventory in (rows + list(history), list(history) + rows,
+                              [history[0], rows[0], history[1]] + rows[1:]):
+                self.assertEqual(evaluate(SHA, inventory)["status"], "GO")
+
+        newest = run("Validar", id=82)
+        newest["started_at"] = rows[0]["started_at"]
+        for inventory in (rows + [newest], [newest] + rows):
+            self.assertEqual(evaluate(SHA, inventory)["reason"], "check_orden_ambiguo")
+
     def test_cli_success_never_authorizes_release(self):
         with patch("scripts.dictamen_gates.verdict", return_value=evaluate(SHA, green())):
             output = io.StringIO()

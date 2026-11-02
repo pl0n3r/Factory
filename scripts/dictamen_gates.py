@@ -154,6 +154,7 @@ def _run_problem(row: Any, sha: str, ids: set[int]) -> str | None:
 def _latest_required_checks(sha: str, runs: list[Any]) -> tuple[dict[str, dict[str, Any]], str | None]:
     """Extract latest trusted checks while preserving fail-closed evidence rules."""
     latest: dict[str, dict[str, Any]] = {}
+    ambiguous: set[str] = set()
     ids: set[int] = set()
     for row in runs:
         problem = _run_problem(row, sha, ids)
@@ -162,15 +163,16 @@ def _latest_required_checks(sha: str, runs: list[Any]) -> tuple[dict[str, dict[s
         name = row["name"]
         if name in CHECKS:
             previous = latest.get(name)
-            if previous is None:
-                latest[name] = row
-                continue
             current_start = datetime.strptime(row["started_at"], GITHUB_RUN_TIMESTAMP)
-            previous_start = datetime.strptime(previous["started_at"], GITHUB_RUN_TIMESTAMP)
-            if current_start == previous_start:
-                return {}, "check_orden_ambiguo"
-            if current_start > previous_start:
+            previous_start = (datetime.strptime(previous["started_at"], GITHUB_RUN_TIMESTAMP)
+                              if previous is not None else None)
+            if previous_start is None or current_start > previous_start:
                 latest[name] = row
+                ambiguous.discard(name)
+            elif current_start == previous_start:
+                ambiguous.add(name)
+    if ambiguous:
+        return {}, "check_orden_ambiguo"
     return latest, None
 
 
