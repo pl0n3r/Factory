@@ -6,6 +6,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
+
+from tests.test_matriz_cobertura import VERIFIED, check_statuses
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -175,9 +178,21 @@ def _report(rows, fixtures, schema, document):
             "no un capability token" not in document or
             "`UNKNOWN` **no** amplía el enum de `action`" not in document):
         return outcome
-    if not all(row[2] == "NO_VERIFICABLE" and row[1] and row[3]
-               for row in rows.values()):
+    if not all(row[2] in {"NO_VERIFICABLE", "CUBIERTO"}
+               and row[1] and row[3] for row in rows.values()):
         return outcome
+    # The old matrix snapshot was all NO_VERIFICABLE; future CUBIERTO
+    # entries require the exact VERIFIED proof, never a status-only switch.
+    for key, row in rows.items():
+        if row[2] != "CUBIERTO":
+            continue
+        if key not in VERIFIED:
+            return outcome
+        try:
+            check_statuses([dict(id=key, state="CUBIERTO",
+                                 evidence=row[3], issue=row[4])], set())
+        except ValueError:
+            return outcome
     for key in IDS:
         if key in EXTERNAL_UNKNOWN:
             continue
@@ -217,6 +232,45 @@ class BrechasFactory72Tests(TestCase):
         rows = _rows(MATRIX.read_text(encoding="utf-8"))
         doc = DOC_PATH.read_text(encoding="utf-8")
         return schema, fixtures, rows, doc
+
+    def test_promocion_verified_con_pr_exacta(self):
+        """Synthetic acceptance check: guard real rejects fabricated evidence."""
+        schema, fixtures, rows, doc = self._sources()
+        key = "docs/unattended-handoff-consumer-pack.md:L29-U1"
+        entry = (
+            1913, "17d2075b30db1f6edc181b895f51f8742e253f9d",
+            "scripts/unattended_cycle_handoff.py",
+            "tests/test_cobertura_factory_57.py",
+        )
+        proof = (entry[2] + "; " + entry[3] + "; "
+                 "https://github.com/pl0n3r/Factory/pull/1913 "
+                 + entry[1])
+        promoted = copy.deepcopy(rows)
+        promoted[key] = tuple(
+            (original if idx != 2 and idx != 3 else
+             ("CUBIERTO" if idx == 2 else proof))
+            for idx, original in enumerate(promoted[key])
+        )
+        with patch.dict(VERIFIED, {key: entry}):
+            self.assertEqual(_report(promoted, fixtures, schema, doc)[key], LOCAL)
+            forged = copy.deepcopy(promoted)
+            forged[key] = tuple(
+                value.replace("/pull/1913", "/pull/19130") if idx == 3
+                else value for idx, value in enumerate(forged[key])
+            )
+            self.assertEqual(set(_report(forged, fixtures, schema, doc).values()),
+                             {UNKNOWN})
+
+    def test_no_promover_sin_verified(self):
+        schema, fixtures, rows, doc = self._sources()
+        outside = next(key for key in EXTERNAL_UNKNOWN if key not in VERIFIED)
+        fake = copy.deepcopy(rows)
+        fake[outside] = tuple(
+            "CUBIERTO" if idx == 2 else value
+            for idx, value in enumerate(fake[outside])
+        )
+        self.assertEqual(set(_report(fake, fixtures, schema, doc).values()),
+                         {UNKNOWN})
 
     def test_contrato_principal(self):
         schema, fixtures, rows, doc = self._sources()
