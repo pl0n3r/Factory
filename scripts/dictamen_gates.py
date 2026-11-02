@@ -13,7 +13,7 @@ import os
 import re
 import sys
 from typing import Any, Callable
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
 REPO = "pl0n3r/Factory"
@@ -34,6 +34,13 @@ class EvidenceError(ValueError):
     """The provided API evidence cannot support a GO decision."""
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    """Deny redirects before urllib can forward a GitHub authorization header."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise EvidenceError("redirección GitHub prohibida")
+
+
 def _now() -> str:
     return datetime.now(COLOMBIA).strftime("%Y-%m-%d %I:%M:%S %p %Z")
 
@@ -41,7 +48,7 @@ def _now() -> str:
 def _get_json(path: str) -> dict[str, Any]:
     """GET a constrained Factory check-run endpoint; never perform mutations."""
     if not re.fullmatch(
-        r"/repos/pl0n3r/Factory/commits/[a-f0-9]{40}/check-runs\?per_page=100&page=(?:[1-9]|10)",
+        r"/repos/pl0n3r/Factory/commits/[a-f0-9]{40}/check-runs\?per_page=100&filter=all&page=(?:[1-9]|10)",
         path,
     ):
         raise EvidenceError("ruta GitHub no autorizada")
@@ -55,7 +62,7 @@ def _get_json(path: str) -> dict[str, Any]:
     if token:
         headers["Authorization"] = "Bearer " + token
     try:
-        with urlopen(Request(API + path, headers=headers, method="GET"), timeout=15) as response:
+        with build_opener(_NoRedirect()).open(Request(API + path, headers=headers, method="GET"), timeout=15) as response:
             if response.status != 200:
                 raise EvidenceError("API GitHub no disponible")
             data = response.read(2_000_001)
@@ -65,7 +72,7 @@ def _get_json(path: str) -> dict[str, Any]:
         raise EvidenceError("respuesta GitHub demasiado grande")
     try:
         result = json.loads(data, object_pairs_hook=_unique_fields)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise EvidenceError("JSON GitHub no verificable") from exc
     if type(result) is not dict:
         raise EvidenceError("formato GitHub inválido")
@@ -114,7 +121,7 @@ def collect(sha: str, get_json: Callable[[str], Any] = _get_json) -> list[dict[s
     expected_total: int | None = None
     ids: set[int] = set()
     for page in range(1, MAX_PAGES + 1):
-        payload = get_json(f"/repos/{REPO}/commits/{sha}/check-runs?per_page={PAGE_SIZE}&page={page}")
+        payload = get_json(f"/repos/{REPO}/commits/{sha}/check-runs?per_page={PAGE_SIZE}&filter=all&page={page}")
         total, rows = _page_rows(payload, expected_total, len(all_runs))
         expected_total = total
         _append_page(rows, ids, all_runs)
@@ -136,6 +143,10 @@ def _run_problem(row: Any, sha: str, ids: set[int]) -> str | None:
         app = row.get("app")
         if type(app) is not dict or (app.get("slug"), app.get("id")) != ISSUERS[name]:
             return "check_emisor_no_confiable"
+        try:
+            datetime.strptime(row.get("started_at"), "%Y-%m-%dT%H:%M:%SZ")
+        except (TypeError, ValueError):
+            return "check_fecha_invalida"
     return None
 
 
@@ -148,8 +159,17 @@ def _latest_required_checks(sha: str, runs: list[Any]) -> tuple[dict[str, dict[s
         if problem:
             return {}, problem
         name = row["name"]
-        if name in CHECKS and (name not in latest or row["id"] > latest[name]["id"]):
-            latest[name] = row
+        if name in CHECKS:
+            previous = latest.get(name)
+            if previous is None:
+                latest[name] = row
+                continue
+            current_start = datetime.strptime(row["started_at"], "%Y-%m-%dT%H:%M:%SZ")
+            previous_start = datetime.strptime(previous["started_at"], "%Y-%m-%dT%H:%M:%SZ")
+            if current_start == previous_start:
+                return {}, "check_orden_ambiguo"
+            if current_start > previous_start:
+                latest[name] = row
     return latest, None
 
 

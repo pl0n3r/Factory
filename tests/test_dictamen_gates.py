@@ -5,6 +5,7 @@ import io
 import json
 import re
 import unittest
+from datetime import datetime, timedelta
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
@@ -16,8 +17,9 @@ OTHER = "b" * 40
 
 def run(name: str, *, id: int, status: str = "completed", conclusion: str = "success", sha: str = SHA):
     slug, app_id = ISSUERS.get(name, ("github-actions", 15368))
+    started = (datetime(2026, 10, 30) + timedelta(seconds=id)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"id": id, "name": name, "status": status, "conclusion": conclusion, "head_sha": sha,
-            "app": {"slug": slug, "id": app_id}}
+            "started_at": started, "app": {"slug": slug, "id": app_id}}
 
 
 def green():
@@ -121,20 +123,23 @@ class DictamenGatesTests(unittest.TestCase):
                 self_limit = limit
                 self.__class__.last_read_limit = self_limit
                 return b'{"total_count": 0, "check_runs": []}'
-        path = f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs?per_page=100&page=1"
+        path = f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs?per_page=100&filter=all&page=1"
         with patch.dict("os.environ", {"GITHUB_TOKEN": "private-test-token"}):
-            with patch("scripts.dictamen_gates.urlopen", return_value=Response()) as mocked:
+            with patch("scripts.dictamen_gates.build_opener") as factory:
+                factory.return_value.open.return_value = Response()
                 self.assertEqual(_get_json(path)["total_count"], 0)
-                request = mocked.call_args.args[0]
+                request = factory.return_value.open.call_args.args[0]
                 self.assertEqual(request.full_url, API + path)
                 self.assertEqual(request.get_method(), "GET")
                 self.assertEqual(request.get_header("Authorization"), "Bearer private-test-token")
-                self.assertEqual(mocked.call_args.kwargs["timeout"], 15)
+                self.assertEqual(factory.return_value.open.call_args.kwargs["timeout"], 15)
+                from scripts.dictamen_gates import _NoRedirect
+                self.assertIsInstance(factory.call_args.args[0], _NoRedirect)
                 self.assertEqual(Response.last_read_limit, 2_000_001)
 
     def test_api_rejects_untrusted_paths_and_response_shapes(self):
         from scripts.dictamen_gates import _get_json
-        good = f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs?per_page=100&page=1"
+        good = f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs?per_page=100&filter=all&page=1"
         for path in (
             good.replace("page=1", "page=0"),
             good.replace("page=1", "page=11"),
@@ -165,13 +170,20 @@ class DictamenGatesTests(unittest.TestCase):
             (b'x' * 2_000_001, 200),
         ):
             with self.subTest(status=status, length=len(payload)):
-                with patch("scripts.dictamen_gates.urlopen", return_value=Response(payload, status)):
+                with patch("scripts.dictamen_gates.build_opener") as factory:
+                    factory.return_value.open.return_value = Response(payload, status)
                     with self.assertRaises(EvidenceError):
                         _get_json(good)
-        with patch("scripts.dictamen_gates.urlopen", side_effect=OSError("token-secret")):
+        with patch("scripts.dictamen_gates.build_opener") as factory:
+            factory.return_value.open.side_effect = OSError("token-secret")
             with self.assertRaises(EvidenceError) as caught:
                 _get_json(good)
             self.assertNotIn("token-secret", str(caught.exception))
+        with patch("scripts.dictamen_gates.build_opener") as factory:
+            factory.return_value.open.return_value = Response(b'{"nested":[]}')
+            with patch("scripts.dictamen_gates.json.loads", side_effect=RecursionError("too deep")):
+                with self.assertRaises(EvidenceError):
+                    _get_json(good)
 
     def test_rejects_collection_total_drift_and_bad_identifiers(self):
         rows = [run("unrelated " + str(i), id=i + 1) for i in range(100)]
@@ -187,6 +199,32 @@ class DictamenGatesTests(unittest.TestCase):
             return {"total_count": 102, "check_runs": [run("last", id=101)]}
         with self.assertRaises(EvidenceError):
             collect(SHA, drifting)
+
+    def test_redirect_rejected_before_authorization_can_be_forwarded(self):
+        from urllib.request import Request
+        from scripts.dictamen_gates import _NoRedirect, API
+        request = Request(API + f"/repos/pl0n3r/Factory/commits/{SHA}/check-runs",
+                          headers={"Authorization": "Bearer synthetic-private-token"})
+        with self.assertRaises(EvidenceError):
+            _NoRedirect().redirect_request(request, None, 302, "Found", {},
+                                           "https://untrusted.example/collect")
+
+    def test_timestamps_not_run_ids_select_newest_and_ambiguous_fails_closed(self):
+        rows = green()
+        older_high_id = run("Validar", id=999, conclusion="failure")
+        older_high_id["started_at"] = "2026-10-29T23:59:59Z"
+        self.assertEqual(evaluate(SHA, rows + [older_high_id])["status"], "GO")
+        newer_failure = run("Validar", id=0 + 5, conclusion="failure")
+        newer_failure["started_at"] = "2026-11-01T00:00:00Z"
+        self.assertEqual(evaluate(SHA, rows + [newer_failure])["status"], "NO-GO")
+        newer_pending = run("CodeQL", id=6, status="in_progress", conclusion=None)
+        self.assertEqual(evaluate(SHA, rows + [newer_pending])["status"], "NO-GO")
+        same_start = run("Validar", id=7)
+        same_start["started_at"] = rows[0]["started_at"]
+        self.assertEqual(evaluate(SHA, rows + [same_start])["status"], "NO-GO")
+        missing_date = run("Validar", id=8)
+        missing_date.pop("started_at")
+        self.assertEqual(evaluate(SHA, rows + [missing_date])["status"], "NO-GO")
 
     def test_cli_success_never_authorizes_release(self):
         with patch("scripts.dictamen_gates.verdict", return_value=evaluate(SHA, green())):
