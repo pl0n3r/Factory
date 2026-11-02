@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import unittest
 
+from tests.test_matriz_cobertura import VERIFIED, check_statuses
+
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs/contraste-factory_resto_7.md"
 MATRIX = ROOT / "docs/matriz-cobertura.md"
@@ -91,6 +93,14 @@ class ContrasteTests(unittest.TestCase):
             validate_gap(["", "", "SIN_COBERTURA", "—", "—", "—", "sin hoja"])
         self.assertIn("No se inventaron Issues", DOC.read_text(encoding="utf-8"))
 
+    def test_promocion_sin_verified_falla_cerrado(self) -> None:
+        contrast = rows(DOC, 7)
+        key = next(name for name in contrast if name not in VERIFIED)
+        fake = dict(id=key, state="CUBIERTO",
+                    evidence="Prueba no acreditada", issue="—")
+        with self.assertRaisesRegex(ValueError, "sin verificación externa"):
+            check_statuses([fake], set())
+
     def test_matriz_actualizada(self) -> None:
         matrix_text = MATRIX.read_text(encoding="utf-8")
         self.assertIn("## Contraste Factory, bloque 7 (#1575)", matrix_text)
@@ -100,9 +110,20 @@ class ContrasteTests(unittest.TestCase):
         self.assertEqual(set(in_matrix), set(in_doc))
         for key, row in in_doc.items():
             with self.subTest(key=key):
-                self.assertEqual(row[2], in_matrix[key][2])
-                self.assertIn("[#1575](contraste-factory_resto_7.md)", in_matrix[key][3])
-                self.assertEqual(in_matrix[key][2], "NO_VERIFICABLE")
+                current = in_matrix[key]
+                self.assertIn("[#1575](contraste-factory_resto_7.md)",
+                              current[3])
+                if current[2] == "CUBIERTO":
+                    # Historical contrast must remain immutable, but a newer
+                    # authorized VERIFIED map may promote an exact requirement.
+                    self.assertEqual(row[2], "NO_VERIFICABLE")
+                    self.assertIn(key, VERIFIED)
+                    check_statuses([dict(id=key, state="CUBIERTO",
+                                         evidence=current[3], issue=current[4])],
+                                   set())
+                else:
+                    self.assertEqual(row[2], current[2])
+                    self.assertEqual(current[2], "NO_VERIFICABLE")
 
 
 def validate_covered(row: list[str]) -> None:
