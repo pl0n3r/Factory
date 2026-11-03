@@ -853,6 +853,53 @@ def _sha_less_timeline_retry(
             if event.get("author_association") == "OWNER":
                 owner_requests.append((index, event))
 
+    # La orden FINAL se puede haber consumido sobre un SHA anterior.
+    # No es evidencia exact-HEAD: ofrecer diagnóstico operativo explícito,
+    # sin autorizar un nuevo @coderabbitai, review ni fallback implícito.
+    if not all_requests and not owner_requests:
+        stale_owner = [
+            (index, event) for index, event in witnessed
+            if index <= last_commit_index
+            and event["user"]["type"] == "User"
+            and event.get("author_association") == "OWNER"
+            and isinstance(event.get("body"), str)
+            and event["body"].strip().lower()
+                == f"@{_normalized_bot_login(required_review_bot)} review"
+        ]
+        stale_rate_limit = [
+            (index, event) for index, event in witnessed
+            if index <= last_commit_index
+            and event["user"]["type"] == "Bot"
+            and event["user"]["login"] == required_review_bot
+            and isinstance(event.get("body"), str)
+            and _is_rate_limit_body(event["body"])
+        ]
+        if len(stale_owner) == 1:
+            owner_index, owner_event = stale_owner[0]
+            owner_time = datetime.fromisoformat(
+                owner_event["created_at"].replace("Z", "+00:00")
+            )
+            # Otro aviso rate-limit posterior no invalida la evidencia
+            # de la respuesta inmediata a la ÚNICA petición OWNER.
+            # Solo sirve para un diagnóstico de veto, nunca para fallback.
+            immediate_replies = [
+                event for index, event in stale_rate_limit
+                if index > owner_index
+                and 0 < (
+                    datetime.fromisoformat(
+                        event["created_at"].replace("Z", "+00:00")
+                    ) - owner_time
+                ).total_seconds() <= MAX_RATE_LIMIT_REPLY_SECONDS
+            ]
+        else:
+            immediate_replies = []
+        if immediate_replies:
+            raise PolicyError(
+                "Solicitud única CodeRabbit consumida en HEAD anterior: "
+                "review y rate-limit obsoletos no autorizan el HEAD actual. "
+                "Falta decisión expresa de gobernanza y evidencia de seguridad "
+                "terminal nueva; prohibido repetir automáticamente el pedido."
+            )
     if len(all_requests) != 1 or len(owner_requests) != 1:
         raise PolicyError("Timeline requiere exactamente un reintento OWNER del HEAD.")
     owner_index, owner_event = owner_requests[0]

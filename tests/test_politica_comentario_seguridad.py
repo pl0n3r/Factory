@@ -188,14 +188,14 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
             phase_call, '        validate_rounds(rounds, policy["review_round_limit"])\n', 1
         ).encode("utf-8")
         git_blob = b"blob " + str(len(pinned_source)).encode("ascii") + b"\0" + pinned_source
-        # Two individually audited, immutable Git blobs are valid during
-        # the CAS force-push transition (#1994). All other Policy source
-        # changes remain blocked; no normalisation or pin is disabled.
+        # Tres versiones auditadas, cada blob inmutable y exacto: legacy,
+        # reconciliación CAS y diagnóstico fail-closed #2003. No hay wildcard.
         audited_policy_blobs = {
             "b55d26779b822d1f619f1f637f790899440f8d40",  # legacy
             "52b9ff8b7084ada9791f58b31a473cb136767fa9",  # CAS
+            "44180425da6ae58ce8ab8a11a4222a50830f5e6d",  # #2003
         }
-        self.assertEqual(len(audited_policy_blobs), 2)
+        self.assertEqual(len(audited_policy_blobs), 3)
         self.assertIn(hashlib.sha1(git_blob).hexdigest(), audited_policy_blobs)
         # Even a one-byte addition cannot be promoted by this allowlist.
         changed = pinned_source + b" "
