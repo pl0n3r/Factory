@@ -753,6 +753,7 @@ def _sha_less_timeline_retry(
     last_commit_index = -1
     seen_event_ids: set[int] = set()
     witnessed: list[tuple[int, dict[str, Any]]] = []
+    head_mutation: tuple[int, dict[str, Any]] | None = None
     for index, event in enumerate(timeline):
         event_type = event.get("event")
         if not isinstance(event_type, str) or not event_type:
@@ -763,11 +764,32 @@ def _sha_less_timeline_retry(
                 raise PolicyError("Commit de timeline sin SHA verificable.")
             last_commit = commit_sha
             last_commit_index = index
+        elif event_type == "head_ref_force_pushed":
+            # Solo una reescritura REST atribuida al OWNER que apunte al
+            # HEAD exacto ya observado en la timeline. Sin inferir del campo sha.
+            actor = event.get("actor")
+            mutation_sha = event.get("commit_id")
+            mutation_id = event.get("id")
+            mutation_at = _parse_iso_timestamp(
+                event.get("created_at"), noun="Timestamp de force-push"
+            )
+            if not (
+                head_mutation is None
+                and last_commit == head_sha
+                and last_commit_index >= 0
+                and mutation_sha == head_sha
+                and isinstance(actor, dict)
+                and isinstance(actor.get("login"), str)
+                and bool(actor["login"])
+                and type(mutation_id) is int
+                and mutation_id > 0
+                and mutation_at >= head_committed_at
+            ):
+                raise PolicyError("Timeline con mutación de HEAD no correlacionable.")
+            head_mutation = (index, event)
         elif event_type in {
-            "head_ref_force_pushed", "head_ref_deleted", "head_ref_restored",
-            "synchronize", "force_pushed",
+            "head_ref_deleted", "head_ref_restored", "synchronize", "force_pushed",
         }:
-            # No podemos reconstruir una referencia reescrita sin evidencia adicional.
             raise PolicyError("Timeline con mutación de HEAD no correlacionable.")
         elif event_type == "commented":
             event_id = event.get("id")
@@ -835,6 +857,20 @@ def _sha_less_timeline_retry(
         raise PolicyError("Timeline requiere exactamente un reintento OWNER del HEAD.")
     owner_index, owner_event = owner_requests[0]
     owner_at = owner_event["created_at"]
+    if head_mutation is not None:
+        mutation_index, mutation = head_mutation
+        # El evento de ref debe preceder al primer rate-limit del HEAD
+        # y al reintento de su dueño. Cualquier mutación intermedia falla.
+        initial_rate_limit_index = min(
+            (idx for idx, _ in previous_rate_limits), default=-1
+        )
+        if not (
+            last_commit_index < mutation_index < initial_rate_limit_index
+            and mutation_index < owner_index
+            and mutation["created_at"] < owner_at
+            and mutation["actor"]["login"] == owner_event["user"]["login"]
+        ):
+            raise PolicyError("Timeline con mutación de HEAD no correlacionable.")
     # La existencia de un fallo Policy exact-HEAD no demuestra por si sola
     # causalidad: tiene que ser estrictamente anterior al trigger OWNER.
     # Un check creado después del retry no puede justificar retroactivamente
