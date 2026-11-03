@@ -689,6 +689,24 @@ class T(unittest.TestCase):
         ):
             verify(comments, timeline)
 
+        # PR #838 registró un aviso rate-limit posterior SIN una segunda
+        # petición humana: el diagnóstico del primer reply sigue siendo
+        # específico, pero en ningún caso se convierte en fallback exitoso.
+        later = json.loads(rate_limit_comment(
+            comment_id=204, created_at="2026-10-04T05:02:40Z",
+            updated_at="2026-10-04T05:02:40Z",
+        ))
+        later_event = {
+            "event": "commented", "id": 204, "body": later["body"],
+            "created_at": later["created_at"], "author_association": "NONE",
+            "user": later["user"], "actor": {"login": "coderabbitai[bot]"},
+        }
+        with self.assertRaisesRegex(
+            PolicyError, "Solicitud única CodeRabbit consumida en HEAD anterior"
+        ):
+            verify(comments + [json.dumps(later)],
+                   timeline[:-1] + [later_event] + timeline[-1:])
+
         # Un bot falso, uno ausente o dos triggers siguen fallando cerrado,
         # jamás se transforman en un aviso habilitante para un reviewer omitido.
         without_bot = [x for x in timeline if x.get("id") != 202]

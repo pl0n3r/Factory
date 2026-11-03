@@ -1,8 +1,10 @@
 # CodeRabbit: una solicitud FINAL y cambios posteriores al HEAD
 
 ## Incidente y evidencia
-Factory #2003 / GrindFlow #739, PR #838: HEAD final
-`1c2d65baa155587a0c4045051cdbdbf374c30753`.
+Factory #2003 / GrindFlow #739, PR #838: HEAD de referencia inicial
+`1c2d65baa155587a0c4045051cdbdbf374c30753`. La timeline autenticada
+posteriormente registró otro HEAD `e4c9a70df9919b6f6661df75a6f4bbc72daf7e59`;
+la validez de los gates siempre se reevalúa contra el HEAD vigente.
 La petición final del propietario fue comentario #6593527672, seguida de un
 `Review rate limited` emitido por CodeRabbit **para un SHA anterior**.
 El HEAD actual muestra `CodeRabbit: skipped`. No existe una revisión

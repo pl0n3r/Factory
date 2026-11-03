@@ -874,11 +874,26 @@ def _sha_less_timeline_retry(
             and isinstance(event.get("body"), str)
             and _is_rate_limit_body(event["body"])
         ]
-        if (
-            len(stale_owner) == 1
-            and len([pair for pair in stale_rate_limit
-                     if pair[0] > stale_owner[0][0]]) == 1
-        ):
+        if len(stale_owner) == 1:
+            owner_index, owner_event = stale_owner[0]
+            owner_time = datetime.fromisoformat(
+                owner_event["created_at"].replace("Z", "+00:00")
+            )
+            # Otro aviso rate-limit posterior no invalida la evidencia
+            # de la respuesta inmediata a la ÚNICA petición OWNER.
+            # Solo sirve para un diagnóstico de veto, nunca para fallback.
+            immediate_replies = [
+                event for index, event in stale_rate_limit
+                if index > owner_index
+                and 0 < (
+                    datetime.fromisoformat(
+                        event["created_at"].replace("Z", "+00:00")
+                    ) - owner_time
+                ).total_seconds() <= MAX_RATE_LIMIT_REPLY_SECONDS
+            ]
+        else:
+            immediate_replies = []
+        if immediate_replies:
             raise PolicyError(
                 "Solicitud única CodeRabbit consumida en HEAD anterior: "
                 "review y rate-limit obsoletos no autorizan el HEAD actual. "

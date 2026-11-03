@@ -193,7 +193,7 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
         audited_policy_blobs = {
             "b55d26779b822d1f619f1f637f790899440f8d40",  # legacy
             "52b9ff8b7084ada9791f58b31a473cb136767fa9",  # CAS
-            "ec610e3c20949c5125bff5d428d6a3c5f2d7f7d7",  # #2003
+            "44180425da6ae58ce8ab8a11a4222a50830f5e6d",  # #2003
         }
         self.assertEqual(len(audited_policy_blobs), 3)
         self.assertIn(hashlib.sha1(git_blob).hexdigest(), audited_policy_blobs)
