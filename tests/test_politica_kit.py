@@ -573,6 +573,37 @@ class T(unittest.TestCase):
         with self.assertRaises(PolicyError):
             sha_less_validate(comments, timeline, run_attempt=1)
 
+    def test_sha_less_rate_limit_correlates_only_exact_owner_force_push(self):
+        # Payload de GitHub REST issues/{pr}/timeline: commit_id es el
+        # destino del ref; sha suelto no constituye evidencia de destino.
+        comments, events = sha_less_fixture()
+        mutation = {
+            "event": "head_ref_force_pushed",
+            "id": 34974962879,
+            "commit_id": HEAD,
+            "created_at": "2026-10-04T04:59:30Z",
+            "actor": {"login": "pl0n3r", "type": "User"},
+        }
+        valid = events[:2] + [mutation] + events[2:]
+        self.assertEqual(
+            sha_less_validate(comments, valid),
+            (202, "2026-10-04T05:02:08Z"),
+        )
+        candidates = {
+            "destino ajeno": {**mutation, "commit_id": "c" * 40},
+            "actor ajeno": {**mutation, "actor": {"login": "intruder"}},
+            "sin commit id": {k: v for k, v in mutation.items() if k != "commit_id"},
+            "id inválido": {**mutation, "id": "34974962879"},
+            "evento tardío": {**mutation, "created_at": "2026-10-04T05:02:01Z"},
+            "marca anterior al HEAD": {**mutation, "created_at": "2026-10-04T04:58:00Z"},
+        }
+        for name, forged in candidates.items():
+            with self.subTest(name=name), self.assertRaises(PolicyError):
+                sha_less_validate(comments, events[:2] + [forged] + events[2:])
+        # Reescrituras múltiples siguen siendo ambiguas, incluso mismo SHA.
+        with self.assertRaises(PolicyError):
+            sha_less_validate(comments, events[:2] + [mutation, mutation] + events[2:])
+
     def test_sha_less_rate_limit_rejects_stale_head_force_push_missing_timeline_and_non_owner(self):
         comments, events = sha_less_fixture()
         cases = {}
