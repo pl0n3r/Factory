@@ -188,9 +188,20 @@ class PoliticaComentarioSeguridadTests(unittest.TestCase):
             phase_call, '        validate_rounds(rounds, policy["review_round_limit"])\n', 1
         ).encode("utf-8")
         git_blob = b"blob " + str(len(pinned_source)).encode("ascii") + b"\0" + pinned_source
-        self.assertEqual(
-            hashlib.sha1(git_blob).hexdigest(),
-            "b55d26779b822d1f619f1f637f790899440f8d40",
+        # Two individually audited, immutable Git blobs are valid during
+        # the CAS force-push transition (#1994). All other Policy source
+        # changes remain blocked; no normalisation or pin is disabled.
+        audited_policy_blobs = {
+            "b55d26779b822d1f619f1f637f790899440f8d40",  # legacy
+            "52b9ff8b7084ada9791f58b31a473cb136767fa9",  # CAS
+        }
+        self.assertEqual(len(audited_policy_blobs), 2)
+        self.assertIn(hashlib.sha1(git_blob).hexdigest(), audited_policy_blobs)
+        # Even a one-byte addition cannot be promoted by this allowlist.
+        changed = pinned_source + b" "
+        changed_blob = b"blob " + str(len(changed)).encode("ascii") + b"\0" + changed
+        self.assertNotIn(
+            hashlib.sha1(changed_blob).hexdigest(), audited_policy_blobs
         )
         self.assertIn("--threads-file \"$THREADS_FILE\"", WORKFLOW)
         self.assertIn("check-runs?per_page=100", WORKFLOW)
