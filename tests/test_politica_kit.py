@@ -701,17 +701,21 @@ class T(unittest.TestCase):
             "created_at": later["created_at"], "author_association": "NONE",
             "user": later["user"], "actor": {"login": "coderabbitai[bot]"},
         }
+        later_comments = comments + [json.dumps(later)]
+        later_timeline = timeline[:-1] + [later_event] + timeline[-1:]
         with self.assertRaisesRegex(
             PolicyError, "Solicitud única CodeRabbit consumida en HEAD anterior"
         ):
-            verify(comments + [json.dumps(later)],
-                   timeline[:-1] + [later_event] + timeline[-1:])
+            verify(later_comments, later_timeline)
 
         # Un bot falso, uno ausente o dos triggers siguen fallando cerrado,
         # jamás se transforman en un aviso habilitante para un reviewer omitido.
         without_bot = [x for x in timeline if x.get("id") != 202]
+        without_bot_comments = [
+            x for x in comments if json.loads(x)["id"] != 202
+        ]
         with self.assertRaises(PolicyError):
-            verify([x for x in comments if json.loads(x)["id"] != 202], without_bot)
+            verify(without_bot_comments, without_bot)
 
         owner = json.loads(comments[0])
         duplicate = dict(owner, id=209, created_at="2026-10-04T05:02:03Z")
@@ -721,16 +725,17 @@ class T(unittest.TestCase):
             "author_association": "OWNER", "user": duplicate["user"],
             "actor": {"login": "pl0n3r"},
         }
+        duplicated_comments = comments + [json.dumps(duplicate)]
+        duplicated_timeline = timeline[:-1] + [duplicate_event] + timeline[-1:]
         with self.assertRaises(PolicyError):
-            verify(comments + [json.dumps(duplicate)],
-                   timeline[:-1] + [duplicate_event] + timeline[-1:])
+            verify(duplicated_comments, duplicated_timeline)
 
         # Incluso con checks de CI verde, sin informe bot del SHA exacto
         # no hay review aprobada. El HEAD anterior nunca se reutiliza.
+        old_head_review = [review(commit_id="b" * 40)]
         with self.assertRaises(PolicyError):
             validate_required_bot_review(
-                [review(commit_id="b" * 40)],
-                "coderabbitai[bot]", HEAD,
+                old_head_review, "coderabbitai[bot]", HEAD
             )
         with self.assertRaises(PolicyError):
             validate_required_bot_review([], "coderabbitai[bot]", HEAD)
