@@ -659,6 +659,67 @@ class T(unittest.TestCase):
             sha_less_validate([comments[0], json.dumps(late), comments[2]],
                               events[:-1] + [late_event])
 
+    def test_single_request_governance_recovery_never_converts_stale_to_review(self):
+        """#2003: aviso útil, pero una review final anterior JAMÁS concede el HEAD."""
+        comments, timeline = sha_less_fixture()
+        # La única petición OWNER y respuesta oficial preceden al commit final.
+        final_commit = timeline.pop(1)
+        timeline.append(final_commit)
+
+        def verify(candidate_comments, candidate_timeline):
+            return validate_rate_limit_fallback(
+                required_review_bot="coderabbitai[bot]",
+                head_sha=HEAD,
+                head_committed_at="2026-10-04T05:03:00Z",
+                phase="construccion",
+                review_lines=[],
+                comment_lines=candidate_comments,
+                check_lines=green_gate_checks() + [
+                    check(check_id=98, name=policy.POLICY_CHECK_NAME,
+                          conclusion="failure",
+                          completed_at="2026-10-04T05:04:00Z"),
+                ],
+                thread_lines=[],
+                timeline_lines=[json.dumps(x) for x in candidate_timeline],
+                run_attempt=2,
+            )
+
+        with self.assertRaisesRegex(
+            PolicyError, "Solicitud única CodeRabbit consumida en HEAD anterior"
+        ):
+            verify(comments, timeline)
+
+        # Un bot falso, uno ausente o dos triggers siguen fallando cerrado,
+        # jamás se transforman en un aviso habilitante para un reviewer omitido.
+        without_bot = [x for x in timeline if x.get("id") != 202]
+        with self.assertRaises(PolicyError):
+            verify([x for x in comments if json.loads(x)["id"] != 202], without_bot)
+
+        owner = json.loads(comments[0])
+        duplicate = dict(owner, id=209, created_at="2026-10-04T05:02:03Z")
+        duplicate_event = {
+            "event": "commented", "id": 209,
+            "body": duplicate["body"], "created_at": duplicate["created_at"],
+            "author_association": "OWNER", "user": duplicate["user"],
+            "actor": {"login": "pl0n3r"},
+        }
+        with self.assertRaises(PolicyError):
+            verify(comments + [json.dumps(duplicate)],
+                   timeline[:-1] + [duplicate_event] + timeline[-1:])
+
+        # Incluso con checks de CI verde, sin informe bot del SHA exacto
+        # no hay review aprobada. El HEAD anterior nunca se reutiliza.
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review(
+                [review(commit_id="b" * 40)],
+                "coderabbitai[bot]", HEAD,
+            )
+        with self.assertRaises(PolicyError):
+            validate_required_bot_review([], "coderabbitai[bot]", HEAD)
+        validate_required_bot_review(
+            [review(commit_id=HEAD)], "coderabbitai[bot]", HEAD
+        )
+
     def test_marker_exact_head_con_rate_limit_en_el_cuerpo_no_cuenta_como_cobertura(self):
         marker = ('<!-- final_review_risk_coverage:{"sourceCommitId":"' + "b" * 40
                   + '","coveredCommitId":"' + HEAD + '","kind":"reviewed"} -->')
