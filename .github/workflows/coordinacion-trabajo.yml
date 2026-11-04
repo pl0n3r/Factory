@@ -68,6 +68,7 @@ jobs:
         github.event.comment.body == '/liberar-forzado' ||
         github.event.comment.body == '/adoptar-contrato-huerfana' ||
         startsWith(github.event.comment.body, '/recuperar-lock-huerfano ') ||
+        startsWith(github.event.comment.body, '/recuperar-lock-v3-activa ') ||
         startsWith(github.event.comment.body, '/liberar ') ||
         startsWith(github.event.comment.body, '/transferir ') ||
         startsWith(github.event.comment.body, '/migrar-contrato ') ||
