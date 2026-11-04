@@ -346,5 +346,282 @@ class RecoveryLockTests(unittest.TestCase):
                 self.consumer(consumer)
         self.assertEqual([], consumer.releases)
 
+
+# Nueva primitiva offline: no debe asociarse a parse_comment_command.
+class LiveOwnerV3RecoveryTests(unittest.TestCase):
+    SESSION = "cbb53f02-a68b-4d1d-b118-4dfc4efea06d"
+
+    class LiveApi(FakeApi):
+        def __init__(self):
+            super().__init__()
+            self.refs["trabajo/issue-1946"] = PARENT
+            self.issue_data["labels"] = [{"name": coordinator.STATUS_REVIEW}]
+            task = {
+                "version": 1, "epic": 1296,
+                "task_key": "FACTORY_TEST_OWNER_LOCK", "order": 1,
+                "owner": "pl0n3r",
+                "roles": ["ingenieria-software", "seguridad", "qa"],
+                "depends_on": [], "paths": ["scripts/coordinar_trabajo.py"],
+            }
+            accept = {"version": 1, "criteria": [{
+                "id": "AC-01", "kind": "test",
+                "target": "tests/test_coordinar_lock_huerfano.py::RecoveryLockTests::test_comando_owner_y_snapshot",
+            }]}
+            self.issue_data["body"] = (
+                "### Contexto\nprueba offline\n"
+                "### Alcance\nrecuperación CAS\n"
+                "### Fuera de alcance\nsin consumidor\n"
+                "### Criterios de aceptación\n"
+                "- [ ] [AC-01] lock preservado\n"
+                "### Contrato ejecutable\n"
+                "<!-- factory-acceptance " +
+                __import__("json").dumps(accept) + " -->\n"
+                "### Rutas reclamadas\n- " + chr(96) +
+                "scripts/coordinar_trabajo.py" + chr(96) + "\n"
+                "<!-- factory-plan-task " +
+                __import__("json").dumps(task) + " -->\n"
+            )
+            self.reservation = {
+                "version": 3, "owner": "pl0n3r",
+                "reservation_id": LiveOwnerV3RecoveryTests.SESSION,
+                "branch": "trabajo/issue-1946", "active": True,
+                "reason": "tomar",
+                "acceptance_sha256": coordinator.contract_fingerprint(
+                    self.issue_data["body"]),
+                "task_marker_sha256": coordinator.task_marker_fingerprint(
+                    coordinator.parse_task_marker(self.issue_data["body"])),
+                "task_paths": ["scripts/coordinar_trabajo.py"],
+                "task_depends_on": [],
+            }
+            self.comments = [{
+                "user": {"login": "github-actions[bot]"},
+                "body": coordinator.reservation_marker(
+                    "pl0n3r", LiveOwnerV3RecoveryTests.SESSION,
+                    "trabajo/issue-1946", True, "tomar",
+                    self.reservation["acceptance_sha256"],
+                    task_snapshot={
+                        "task_marker_sha256":
+                            self.reservation["task_marker_sha256"],
+                        "task_paths": self.reservation["task_paths"],
+                        "task_depends_on": [],
+                    }),
+            }]
+            self.pull_record = {
+                "number": 1947, "state": "open", "draft": False,
+                "head": {"ref": "trabajo/issue-1946", "sha": PARENT,
+                         "repo": {"full_name": "pl0n3r/Factory",
+                                  "name": "Factory",
+                                  "owner": {"login": "pl0n3r"}}},
+                "base": {"ref": "main", "sha": PARENT},
+                "body": "Closes #1946\n<!-- condor-reserva-id: " +
+                        LiveOwnerV3RecoveryTests.SESSION + " -->",
+            }
+            self.proof = {
+                "complete": True, "head_sha": PARENT, "base_sha": PARENT,
+                "files": ["scripts/coordinar_trabajo.py"],
+            }
+
+        def open_pulls(self):
+            return [deepcopy(self.pull_record)]
+
+        def pull_files_exact_head(self, number):
+            if number != 1947:
+                raise AssertionError("PR ajeno")
+            return deepcopy(self.proof)
+
+        def set_trusted_lease(self):
+            self.comments = [{
+                "user": {"login": "github-actions[bot]"},
+                "body": "<!-- condor-reserva " +
+                        __import__("json").dumps(self.reservation) + " -->",
+            }]
+
+    def call(self, api, *, actor="pl0n3r", association="OWNER",
+             session=None, token=LOCK, env=None):
+        runner = {**RUNNER, "GITHUB_REF": "refs/heads/main"}
+        runner.update(env or {})
+        with patch.dict(os.environ, runner, clear=True):
+            with patch.object(coordinator, "require_global_running") as guard:
+                result = coordinator.recover_live_owner_v3_orphaned_issue_lock(
+                    api, ISSUE, actor, association, token,
+                    session or self.SESSION, now=DATE,
+                )
+                self.assertGreaterEqual(guard.call_count, 2)
+                return result
+
+    def test_live_v3_cas_preserva_lease_pr_y_rama(self):
+        api = self.LiveApi()
+        before = deepcopy((api.issue_data, api.comments, api.pull_record))
+        evidence = self.call(api)
+        self.assertEqual("cas_only", evidence["result"])
+        self.assertEqual(1947, evidence["pr"])
+        self.assertEqual([(ISSUE, LOCK)], api.releases)
+        self.assertEqual(PARENT, api.refs["trabajo/issue-1946"])
+        self.assertEqual(before, (api.issue_data, api.comments, api.pull_record))
+        self.assertEqual(self.SESSION,
+                         coordinator.active_reservation(api, ISSUE)["reservation_id"])
+        self.assertNotIn("coordinacion/lock-issue-1946", api.refs)
+        with self.assertRaises(coordinator.CoordinationError):
+            self.call(api)
+
+    def test_live_v3_rechaza_replay_roles_y_falsificaciones(self):
+        for actor, association in (("attacker", "OWNER"),
+                                   ("pl0n3r", "COLLABORATOR")):
+            api = self.LiveApi()
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api, actor=actor, association=association)
+            self.assertEqual([], api.releases)
+        for change in (
+            {"GITHUB_REPOSITORY": "evil/Factory"},
+            {"GITHUB_EVENT_NAME": "pull_request"},
+            {"GITHUB_WORKFLOW_REF": "evil/workflow.yml@refs/heads/main"},
+            {"GITHUB_REF": "refs/heads/other"},
+            {"GITHUB_RUN_ID": "bad"},
+        ):
+            api = self.LiveApi()
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api, env=change)
+            self.assertEqual([], api.releases)
+        api = self.LiveApi()
+        with self.assertRaises(coordinator.CoordinationError):
+            self.call(api, session="85773c47-d586-4860-a921-7053d23f9f4b")
+        self.assertEqual([], api.releases)
+
+    def test_live_v3_rechaza_derivas_de_sesion_claims_pr_nonce(self):
+        cases = [
+            ("owner", lambda a: a.reservation.update(owner="other"), True),
+            ("sesion", lambda a: a.reservation.update(
+                reservation_id="85773c47-d586-4860-a921-7053d23f9f4b"), True),
+            ("lease inactiva", lambda a: a.reservation.update(active=False), True),
+            ("lease antigua", lambda a: a.reservation.update(version=2), True),
+            ("claims", lambda a: a.reservation.update(
+                task_paths=["other/path.py"]), True),
+            ("fingerprint acceptance", lambda a: a.reservation.update(
+                acceptance_sha256="1"*64), True),
+            ("fingerprint plan", lambda a: a.reservation.update(
+                task_marker_sha256="2"*64), True),
+            ("body alterado", lambda a: a.issue_data.update(
+                body=a.issue_data["body"].replace(
+                    "test_comando_owner_y_snapshot", "test_ataque")), False),
+            ("estado", lambda a: a.issue_data["labels"].clear(), False),
+            ("rama", lambda a: a.refs.update({
+                "trabajo/issue-1946": "d"*40}), False),
+            ("PR HEAD", lambda a: a.pull_record["head"].update(
+                sha="d"*40), False),
+            ("PR fork", lambda a: a.pull_record["head"]["repo"].update(
+                full_name="evil/Factory"), False),
+            ("PR ajeno", lambda a: a.pull_record.update(
+                body="Closes #999"), False),
+            ("PR closed", lambda a: a.pull_record.update(state="closed"), False),
+            ("diff vacío", lambda a: a.proof.update(files=[]), False),
+            ("diff fuera", lambda a: a.proof.update(
+                files=["other/path.py"]), False),
+            ("diff HEAD", lambda a: a.proof.update(head_sha="d"*40), False),
+            ("nonce", lambda a: a.record.update(message="forged"), False),
+            ("firma", lambda a: a.record["verification"].update(
+                verified=False), False),
+            ("árbol", lambda a: a.record["tree"].update(sha="d"*40), False),
+            ("lock reciente", lambda a: a.record["author"].update(
+                date="2026-10-30T15:45:00Z"), False),
+        ]
+        for name, mutate, trusted in cases:
+            with self.subTest(name=name):
+                api = self.LiveApi()
+                mutate(api)
+                if trusted:
+                    api.set_trusted_lease()
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.call(api)
+                self.assertEqual([], api.releases)
+
+    def test_live_v3_carreras_cas_killswitch_y_comando_legacy(self):
+        api = self.LiveApi()
+        with patch.object(api, "release_issue_lock",
+                          side_effect=coordinator.CoordinationError("CAS race")):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+
+        api = self.LiveApi()
+        original = api.open_pulls
+        times = [0]
+        def concurrent_pull():
+            times[0] += 1
+            if times[0] >= 2:
+                api.pull_record["head"]["sha"] = "d"*40
+            return original()
+        with patch.object(api, "open_pulls", side_effect=concurrent_pull):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+
+        api = self.LiveApi()
+        runner = {**RUNNER, "GITHUB_REF": "refs/heads/main"}
+        with patch.dict(os.environ, runner, clear=True):
+            with patch.object(coordinator, "require_global_running",
+                              side_effect=[
+                                  None, coordinator.CoordinationError("PAUSED")]):
+                with self.assertRaises(coordinator.CoordinationError):
+                    coordinator.recover_live_owner_v3_orphaned_issue_lock(
+                        api, ISSUE, "pl0n3r", "OWNER",
+                        LOCK, self.SESSION, now=DATE)
+        self.assertEqual([], api.releases)
+        with self.assertRaises(coordinator.CoordinationError):
+            coordinator.parse_comment_command(
+                "/recuperar-lock-v3-activa " + self.SESSION)
+
+
+    def test_live_v3_pr_inexistente_duplicado_y_marker_no_bot(self):
+        api = self.LiveApi()
+        with patch.object(api, "open_pulls", return_value=[]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+        api = self.LiveApi()
+        with patch.object(api, "open_pulls",
+                          return_value=[api.pull_record, api.pull_record]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+        api = self.LiveApi()
+        api.comments[0]["user"]["login"] = "untrusted-user"
+        with self.assertRaises(coordinator.CoordinationError):
+            self.call(api)
+        self.assertEqual([], api.releases)
+
+    def test_live_v3_carrera_de_issue_o_ref_y_legacy_sigue_cerrado(self):
+        api = self.LiveApi()
+        before = deepcopy(api.issue_data)
+        changed = deepcopy(before)
+        changed["state"] = "closed"
+        with patch.object(api, "issue", side_effect=[before, changed]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+
+        api = self.LiveApi()
+        original = api.branch_sha
+        count = [0]
+        def moved_lock(name):
+            if name == "coordinacion/lock-issue-1946":
+                count[0] += 1
+                if count[0] >= 2:
+                    return "c"*40
+            return original(name)
+        with patch.object(api, "branch_sha", side_effect=moved_lock):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+
+        api = self.LiveApi()
+        api.issue_data["labels"] = [{"name": coordinator.STATUS_BLOCKED}]
+        with patch.dict(os.environ, RUNNER, clear=True):
+            with patch.object(coordinator, "require_global_running"):
+                with self.assertRaises(coordinator.CoordinationError):
+                    coordinator.recover_orphaned_issue_lock(
+                        api, ISSUE, "pl0n3r", "OWNER", LOCK, now=DATE)
+        self.assertEqual([], api.releases)
+
+
 if __name__ == "__main__":
     unittest.main()
