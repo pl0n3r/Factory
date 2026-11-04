@@ -570,5 +570,58 @@ class LiveOwnerV3RecoveryTests(unittest.TestCase):
             coordinator.parse_comment_command(
                 "/recuperar-lock-v3-activa " + self.SESSION)
 
+
+    def test_live_v3_pr_inexistente_duplicado_y_marker_no_bot(self):
+        api = self.LiveApi()
+        with patch.object(api, "open_pulls", return_value=[]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+        api = self.LiveApi()
+        with patch.object(api, "open_pulls",
+                          return_value=[api.pull_record, api.pull_record]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+        api = self.LiveApi()
+        api.comments[0]["user"]["login"] = "untrusted-user"
+        with self.assertRaises(coordinator.CoordinationError):
+            self.call(api)
+        self.assertEqual([], api.releases)
+
+    def test_live_v3_carrera_de_issue_o_ref_y_legacy_sigue_cerrado(self):
+        api = self.LiveApi()
+        before = deepcopy(api.issue_data)
+        changed = deepcopy(before)
+        changed["state"] = "closed"
+        with patch.object(api, "issue", side_effect=[before, changed]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+
+        api = self.LiveApi()
+        original = api.branch_sha
+        count = [0]
+        def moved_lock(name):
+            if name == "coordinacion/lock-issue-1946":
+                count[0] += 1
+                if count[0] >= 2:
+                    return "c"*40
+            return original(name)
+        with patch.object(api, "branch_sha", side_effect=moved_lock):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+
+        api = self.LiveApi()
+        api.issue_data["labels"] = [{"name": coordinator.STATUS_BLOCKED}]
+        with patch.dict(os.environ, RUNNER, clear=True):
+            with patch.object(coordinator, "require_global_running"):
+                with self.assertRaises(coordinator.CoordinationError):
+                    coordinator.recover_orphaned_issue_lock(
+                        api, ISSUE, "pl0n3r", "OWNER", LOCK, now=DATE)
+        self.assertEqual([], api.releases)
+
+
 if __name__ == "__main__":
     unittest.main()
