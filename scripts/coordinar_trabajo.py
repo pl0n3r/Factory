@@ -5689,6 +5689,181 @@ def recover_orphaned_issue_lock(
     return True
 
 
+
+def recover_live_owner_v3_orphaned_issue_lock(
+    api: GitHub, issue_number: int, actor: str, association: str,
+    expected_sha: str, session: str, *, now: datetime | None = None,
+) -> dict[str, Any]:
+    """Offline-only same-owner recovery; deliberately not wired to commands.
+
+    Existing /recuperar-lock-huerfano still rejects any active V3 lease.
+    This operation only releases a stale, signed lock with GitHub CAS and
+    preserves the authenticated active reservation, branch and open PR.
+    """
+    workflows = {
+        "pl0n3r/factory": (
+            "pl0n3r/Factory",
+            "pl0n3r/Factory/.github/workflows/coordinacion-trabajo.yml@refs/heads/main",
+        ),
+        "pl0n3r/grindflow": (
+            "pl0n3r/GrindFlow",
+            "pl0n3r/GrindFlow/.github/workflows/work-coordination.yml@refs/heads/main",
+        ),
+    }
+    workflow = workflows.get(api.repo.casefold() if isinstance(api.repo, str) else "")
+    if (workflow is None or actor != "pl0n3r" or association != "OWNER"
+            or type(issue_number) is not int or issue_number < 1
+            or not isinstance(expected_sha, str)
+            or re.fullmatch(r"[a-f0-9]{40}", expected_sha) is None
+            or not isinstance(session, str) or SESSION_RE.fullmatch(session) is None):
+        raise CoordinationError("Recuperación V3: OWNER o identidad inválidos.")
+    if (os.getenv("GITHUB_REPOSITORY") != workflow[0]
+            or os.getenv("GITHUB_WORKFLOW_REF") != workflow[1]
+            or os.getenv("GITHUB_EVENT_NAME") != "issue_comment"
+            or os.getenv("GITHUB_REF") != "refs/heads/main"
+            or re.fullmatch(r"[1-9][0-9]*", os.getenv("GITHUB_RUN_ID", "")) is None):
+        raise CoordinationError("Recuperación V3 fuera de workflow serializado.")
+
+    require_global_running(api)
+    lock = recovery_lock_branch(issue_number)
+    branch = branch_for_issue(issue_number)
+    if api.branch_sha(lock) != expected_sha:
+        raise CoordinationError("Nonce/lock desapareció o fue sustituido.")
+    issue = api.issue(issue_number)
+    reserved = active_reservation(api, issue_number)
+    if (not isinstance(issue, dict) or issue.get("state") != "open"
+            or "pull_request" in issue or STATUS_REVIEW not in label_names(issue)
+            or not valid_reservation_payload(reserved)
+            or reserved.get("version") != 3 or reserved.get("active") is not True
+            or reserved.get("owner") != actor
+            or reserved.get("reservation_id") != session
+            or reserved.get("branch") != branch):
+        raise CoordinationError("Reserva V3 activa y titular exactos no acreditados.")
+    body = issue.get("body")
+    if not isinstance(body, str):
+        raise CoordinationError("Contrato de Issue sin cuerpo válido.")
+    try:
+        parse_contract(body)
+        task = parse_task_marker(body)
+        task_sha = task_marker_fingerprint(task)
+        acceptance_sha = contract_fingerprint(body)
+    except (AcceptanceError, PlanError, ValueError, TypeError) as exc:
+        raise CoordinationError("Contrato de lease V3 no verificable.") from exc
+    if (not isinstance(task, dict) or task.get("owner") != actor
+            or task_sha != reserved.get("task_marker_sha256")
+            or acceptance_sha != reserved.get("acceptance_sha256")
+            or task.get("paths") != reserved.get("task_paths")
+            or task.get("depends_on") != reserved.get("task_depends_on")):
+        raise CoordinationError("Claims o aceptación modificados respecto a V3.")
+
+    head_sha = api.branch_sha(branch)
+    if not isinstance(head_sha, str) or SHA_RE.fullmatch(head_sha) is None:
+        raise CoordinationError("HEAD de trabajo no autenticable.")
+    pulls = open_pull_records_for_branch(api, branch)
+    if len(pulls) != 1:
+        raise CoordinationError("No hay un único PR local abierto de la reserva.")
+    snapshot = orphan_adoption_pull_snapshot(pulls)
+    pr = pulls[0]
+    head, base = pr.get("head"), pr.get("base")
+    if (not isinstance(head, dict) or not isinstance(base, dict)
+            or head.get("sha") != head_sha or base.get("ref") != "main"
+            or reservation_from_pr_body(str(pr.get("body") or "")) != session
+            or issue_number not in closing_issues(str(pr.get("body") or ""))):
+        raise CoordinationError("PR/HEAD no pertenecen a la sesión autorizada.")
+    pr_number = pr["number"]
+    proof = api.pull_files_exact_head(pr_number)
+    if (not isinstance(proof, dict) or proof.get("complete") is not True
+            or proof.get("head_sha") != head_sha
+            or proof.get("base_sha") != base.get("sha")
+            or not isinstance(proof.get("files"), list) or not proof["files"]
+            or any(not isinstance(path, str)
+                   or not any(claims_overlap(path, claim)
+                              for claim in reserved["task_paths"])
+                   for path in proof["files"])):
+        raise CoordinationError("Archivos del PR fuera de claims V3 exact-HEAD.")
+
+    commit = api.request("GET", f"/repos/{api.repo}/git/commits/{expected_sha}")
+    if not isinstance(commit, dict) or commit.get("sha") != expected_sha:
+        raise CoordinationError("Lock no autenticado.")
+    author, committer = commit.get("author"), commit.get("committer")
+    verification, tree, parents = (
+        commit.get("verification"), commit.get("tree"), commit.get("parents")
+    )
+    if (not isinstance(author, dict)
+            or author.get("name") != "github-actions[bot]"
+            or author.get("email") != "41898282+github-actions[bot]@users.noreply.github.com"
+            or not isinstance(committer, dict)
+            or committer.get("name") != "GitHub"
+            or committer.get("email") != "noreply@github.com"
+            or not isinstance(verification, dict)
+            or verification.get("verified") is not True
+            or verification.get("reason") != "valid"
+            or not isinstance(tree, dict)
+            or re.fullmatch(r"[a-f0-9]{40}", str(tree.get("sha", ""))) is None
+            or not isinstance(parents, list) or len(parents) != 1
+            or not isinstance(parents[0], dict)
+            or re.fullmatch(r"[a-f0-9]{40}", str(parents[0].get("sha", ""))) is None
+            or not isinstance(commit.get("message"), str)
+            or re.fullmatch(
+                rf"lock coordinacion Issue #{issue_number} "
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+                r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                commit["message"],
+            ) is None):
+        raise CoordinationError("Firma, nonce o árbol de lock inválidos.")
+    clock = datetime.now(timezone.utc) if now is None else now
+    if clock.tzinfo is None:
+        raise CoordinationError("Reloj sin zona horaria.")
+    for who in (author, committer):
+        value = who.get("date")
+        if not isinstance(value, str):
+            raise CoordinationError("Fecha de lock ausente.")
+        try:
+            date = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise CoordinationError("Fecha de lock inválida.") from exc
+        if date.tzinfo is None or clock - date < timedelta(minutes=60):
+            raise CoordinationError("Lock no es huérfano con antigüedad verificada.")
+    parent = parents[0]["sha"]
+    parent_commit = api.request("GET", f"/repos/{api.repo}/git/commits/{parent}")
+    parent_tree = parent_commit.get("tree") if isinstance(parent_commit, dict) else None
+    if not isinstance(parent_tree, dict) or parent_tree.get("sha") != tree["sha"]:
+        raise CoordinationError("Commit del lock modifica árbol Git.")
+    if parent != head_sha:
+        relation = api.request(
+            "GET", f"/repos/{api.repo}/compare/{parent}...{head_sha}"
+        )
+        if (not isinstance(relation, dict) or relation.get("behind_by") != 0
+                or relation.get("status") not in ("ahead", "identical")):
+            raise CoordinationError("HEAD de PR no descendiente del lock.")
+
+    require_global_running(api)
+    if (api.branch_sha(lock) != expected_sha
+            or api.branch_sha(branch) != head_sha
+            or api.issue(issue_number) != issue
+            or active_reservation(api, issue_number) != reserved
+            or orphan_adoption_pull_snapshot(
+                open_pull_records_for_branch(api, branch)
+            ) != snapshot):
+        raise CoordinationError("Carrera en lock/issue/lease/HEAD/PR antes de CAS.")
+    # GitHub.release_issue_lock performs updateRefs(beforeOid=expected_sha).
+    api.release_issue_lock(issue_number, expected_sha)
+    if (api.branch_sha(lock) is not None
+            or api.branch_sha(branch) != head_sha
+            or active_reservation(api, issue_number) != reserved
+            or orphan_adoption_pull_snapshot(
+                open_pull_records_for_branch(api, branch)
+            ) != snapshot):
+        raise CoordinationError("CAS no conservó íntegra la lease y el PR.")
+    evidence = {
+        "version": 1, "issue": issue_number, "pr": pr_number,
+        "lock_sha": expected_sha, "reservation_id": session,
+        "branch": branch, "head_sha": head_sha, "result": "cas_only",
+    }
+    print("CAS live V3 lock, same OWNER: " + json.dumps(evidence, sort_keys=True))
+    return evidence
+
+
 def parse_comment_command(body: str) -> tuple[str, str | None]:
     """Interpreta únicamente los comandos públicos del perfil activo."""
     value = body.strip()
