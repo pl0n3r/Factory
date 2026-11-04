@@ -623,5 +623,82 @@ class LiveOwnerV3RecoveryTests(unittest.TestCase):
         self.assertEqual([], api.releases)
 
 
+    def test_live_v3_comando_estricto_y_conserva_legacy(self):
+        valid = f"/recuperar-lock-v3-activa {LOCK} {self.SESSION}"
+        self.assertEqual(
+            ("recuperar-lock-v3-activa", f"{LOCK} {self.SESSION}"),
+            coordinator.parse_comment_command(valid),
+        )
+        invalid = (
+            "/recuperar-lock-v3-activa",
+            f"/recuperar-lock-v3-activa {LOCK}",
+            f"/recuperar-lock-v3-activa {LOCK[:-1]} {self.SESSION}",
+            f"/recuperar-lock-v3-activa {LOCK.upper()} {self.SESSION}",
+            f"/recuperar-lock-v3-activa {LOCK} {self.SESSION.upper()}",
+            valid + " ",
+            valid + "\n",
+            " " + valid,
+            valid.replace(" ", "  ", 1),
+            valid + " EXTRA",
+        )
+        for body in invalid:
+            with self.subTest(body=repr(body)):
+                with self.assertRaises(coordinator.CoordinationError):
+                    coordinator.parse_comment_command(body)
+        self.assertEqual(
+            ("recuperar-lock-huerfano", LOCK),
+            coordinator.parse_comment_command(
+                "/recuperar-lock-huerfano " + LOCK),
+        )
+
+    def test_live_v3_dispatch_real_solo_cas_y_no_toma_lease(self):
+        api = self.LiveApi()
+        before = deepcopy((api.issue_data, api.comments, api.pull_record))
+        runner = {**RUNNER, "GITHUB_REF": "refs/heads/main"}
+        command = f"/recuperar-lock-v3-activa {LOCK} {self.SESSION}"
+        with patch.dict(os.environ, runner, clear=True):
+            with patch.object(coordinator, "require_global_running") as gate:
+                coordinator.process_comment(api, ISSUE, "pl0n3r", "OWNER", command)
+                self.assertGreaterEqual(gate.call_count, 2)
+        self.assertEqual([(ISSUE, LOCK)], api.releases)
+        self.assertNotIn("coordinacion/lock-issue-1946", api.refs)
+        self.assertEqual(PARENT, api.refs["trabajo/issue-1946"])
+        self.assertEqual(before, (api.issue_data, api.comments, api.pull_record))
+        self.assertTrue(coordinator.active_reservation(api, ISSUE)["active"])
+
+    def test_live_v3_dispatch_no_rebaja_owner_ni_serializacion(self):
+        command = f"/recuperar-lock-v3-activa {LOCK} {self.SESSION}"
+        runner = {**RUNNER, "GITHUB_REF": "refs/heads/main"}
+        for actor, association, env in (
+            ("intruso", "OWNER", runner),
+            ("pl0n3r", "COLLABORATOR", runner),
+            ("pl0n3r", "OWNER", {**runner, "GITHUB_EVENT_NAME": "pull_request"}),
+            ("pl0n3r", "OWNER", {**runner, "GITHUB_REF": "refs/heads/feature"}),
+        ):
+            api = self.LiveApi()
+            with self.subTest(actor=actor, association=association, env=env):
+                with patch.dict(os.environ, env, clear=True):
+                    with patch.object(coordinator, "require_global_running"):
+                        with self.assertRaises(coordinator.CoordinationError):
+                            coordinator.process_comment(
+                                api, ISSUE, actor, association, command)
+                self.assertEqual([], api.releases)
+                self.assertEqual(LOCK, api.refs["coordinacion/lock-issue-1946"])
+
+    def test_live_v3_workflow_serializado_y_filtro_conservador(self):
+        from pathlib import Path
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github" / "workflows" / "coordinacion-trabajo.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "startsWith(github.event.comment.body, '/recuperar-lock-v3-activa ')",
+            workflow,
+        )
+        self.assertIn("github.event_name == 'issue_comment'", workflow)
+        self.assertIn("github.event.issue.pull_request == null", workflow)
+        self.assertIn("group: factory-coordination-${{ github.repository_id }}", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
