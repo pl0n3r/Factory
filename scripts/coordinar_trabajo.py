@@ -5876,6 +5876,15 @@ def parse_comment_command(body: str) -> tuple[str, str | None]:
         if re.fullmatch(r"[a-f0-9]{40}", sha) is None:
             raise CoordinationError("Recuperación de lock requiere SHA completo.")
         return "recuperar-lock-huerfano", sha
+    if PROFILE.name == "es" and body.startswith("/recuperar-lock-v3-activa "):
+        # Parseo estricto de body crudo: sin trim, saltos, alias ni inyección.
+        items = body.split(" ")
+        if (len(items) != 3
+                or items[0] != "/recuperar-lock-v3-activa"
+                or re.fullmatch(r"[a-f0-9]{40}", items[1]) is None
+                or SESSION_RE.fullmatch(items[2]) is None):
+            raise CoordinationError("Recuperación V3 activa requiere SHA y UUID exactos.")
+        return "recuperar-lock-v3-activa", items[1] + " " + items[2]
     if PROFILE.name == "es" and value == "/adoptar-contrato-huerfana":
         return "adoptar-contrato-huerfana", None
     pairs = [(PROFILE.release, "liberar"), (PROFILE.transfer, "transferir")]
@@ -5962,6 +5971,12 @@ def process_comment(
         assert reservation_id is not None
         recover_orphaned_issue_lock(
             api, issue_number, actor, association, reservation_id,
+        )
+    elif command == "recuperar-lock-v3-activa":
+        assert reservation_id is not None
+        expected_sha, session = reservation_id.split(" ", 1)
+        recover_live_owner_v3_orphaned_issue_lock(
+            api, issue_number, actor, association, expected_sha, session,
         )
     elif command == "adoptar-contrato-huerfana":
         adopt_orphaned_contract(
