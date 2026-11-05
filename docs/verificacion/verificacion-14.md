@@ -1,7 +1,7 @@
 # Factory #2030 — verificación lote 14/18
 
 Corte: `main@7fbb24a0c59578db9070bda44d0a801eac60696a`, 5-nov-2026. Épico #304.
-Reserva V3: `0ad9b964-f42a-4996-bf1d-92450e51db29`. PR de entrega: pendiente de apertura.
+Reserva V3: `0ad9b964-f42a-4996-bf1d-92450e51db29`. PR de entrega: [#2056](https://github.com/pl0n3r/Factory/pull/2056); su estado de fusión se consulta en GitHub.
 
 70/70 filas contrastadas, 0 SIN_COBERTURA originales y **0 promociones** de matriz.
 Cada fila conserva NO_VERIFICABLE hasta la consolidación #2035; la evidencia local
