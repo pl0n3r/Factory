@@ -131,7 +131,7 @@ class VerificacionFactory04Tests(unittest.TestCase):
         )
         for n, variant in enumerate(variants):
             with self.subTest(variant=n), self.assertRaises(ValueError):
-                report_rows(variant)
+                validate_sources(report_override=variant)
         doc = "docs/evolution-engine.md"
         old = (ROOT / doc).read_text(encoding="utf-8")
         source_line = old.splitlines()[40]
