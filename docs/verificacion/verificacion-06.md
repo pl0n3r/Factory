@@ -1,6 +1,6 @@
 # Factory #2022 — verificación de cobertura 06/18
 
-**Corte:** 5-nov-2026 · 70 filas NO_VERIFICABLE del Issue #2022. **PR de evidencia:** pendiente de asociar al abrir el draft.
+**Corte:** 5-nov-2026 · 70 filas NO_VERIFICABLE del Issue #2022. **PR de evidencia:** [Factory #2037](https://github.com/pl0n3r/Factory/pull/2037), cierra #2022 por squash con CI exact-HEAD.
 
 NO_VERIFICABLE no significa código ausente: la auditoría carecía de test exacto enlazado. Este lote sólo añade el mapa y una prueba agregada que **ejecuta las regresiones concretas de cada fila** mediante unittest real; no sustituye ni simula los contratos. La hoja #1696 consolida después los estados globales, **sin escribir en docs/matriz-cobertura.md**.
 
