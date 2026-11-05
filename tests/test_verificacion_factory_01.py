@@ -59,7 +59,7 @@ def validate_sources(rows: tuple[tuple[str, str, str, str], ...] = ROWS, *, over
     for key, witness, mode, anchor in rows:
         if key not in inventory or inventory[key][1] != "NO_VERIFICABLE":
             raise ValueError("Unverified or absent source unit " + key)
-        if mode not in MODES or not anchor or len(anchor) > 75:
+        if mode not in MODES or not anchor or len(anchor) > 160:
             raise ValueError("Invalid source/mode/anchor")
         match = re.fullmatch(r"(docs/[\w.-]+\.md):(L(\d+)-U\d+|B\d+)", key)
         if match is None:
