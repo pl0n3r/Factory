@@ -24,7 +24,7 @@ MODES = {
 
 
 def normalized(source: str) -> str:
-    return re.sub(r"[\\W_]+", " ", source.casefold()).strip()
+    return re.sub(r"[\W_]+", " ", source.casefold()).strip()
 
 
 def report_rows(report: str) -> list[tuple[str, str, str, str, str]]:
@@ -50,7 +50,7 @@ def validate_sources(rows: tuple[tuple[str, str, str, str], ...] = ROWS, *, over
     inventory = {}
     for line in MATRIX.read_text(encoding="utf-8").splitlines():
         matched = re.match(
-            r"^\\| `([^`]+)` \\| (.*?) \\| (NO_VERIFICABLE|SIN_COBERTURA|CUBIERTO|NO_APLICA) \\|",
+            r"^\| `([^`]+)` \| (.*?) \| (NO_VERIFICABLE|SIN_COBERTURA|CUBIERTO|NO_APLICA) \|",
             line,
         )
         if matched:
@@ -61,7 +61,7 @@ def validate_sources(rows: tuple[tuple[str, str, str, str], ...] = ROWS, *, over
             raise ValueError("Unverified or absent source unit " + key)
         if mode not in MODES or not anchor or len(anchor) > 75:
             raise ValueError("Invalid source/mode/anchor")
-        match = re.fullmatch(r"(docs/[\\w.-]+\\.md):(L(\\d+)-U\\d+|B\\d+)", key)
+        match = re.fullmatch(r"(docs/[\w.-]+\.md):(L(\d+)-U\d+|B\d+)", key)
         if match is None:
             raise ValueError("Invalid unit reference " + key)
         path, _, number = match.groups()
