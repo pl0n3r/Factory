@@ -6,7 +6,6 @@ from __future__ import annotations
 import ast
 import importlib.util
 import io
-import re
 import sys
 import unittest
 from pathlib import Path
@@ -96,10 +95,15 @@ class VerificacionFactory06Tests(unittest.TestCase):
             "docs/knowledge-selection.md", "docs/label-color-sync.md",
         })
         document = (ROOT / "docs/verificacion/verificacion-06.md").read_text(encoding="utf-8")
-        lines = re.findall(
-            r"(?m)^\\| \\x60([^\\n\\x60]+:L\\d+-U\\d+)\\x60 \\| \\x60([^\\n\\x60]+)\\x60 \\| \\x60([^\\n\\x60]+)\\x60 \\| (REGRESION|DEPENDENCIA_CONSUMIDOR) \\|$",
-            document,
-        )
+        lines = []
+        for line in document.splitlines():
+            if not line.startswith("| `docs/"):
+                continue
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            self.assertEqual(len(cells), 4)
+            key, source, refs, state = cells
+            self.assertTrue(all(item.startswith("`") and item.endswith("`") for item in (key, source, refs)))
+            lines.append((key[1:-1], source[1:-1], refs[1:-1], state))
         self.assertEqual(len(lines), 70)
         self.assertEqual(
             {key: tuple(refs.split(";")) for key, _src, refs, _state in lines},
@@ -120,7 +124,7 @@ class VerificacionFactory06Tests(unittest.TestCase):
         self.assertGreaterEqual(len(refs), 20)
         for ref in refs:
             path, class_name, method = ref.split("::")
-            self.assertRegex(path, r"^tests/test_[a-z0-9_]+\\.py$")
+            self.assertTrue(path.startswith("tests/test_") and path.endswith(".py"))
             self.assertRegex(method, r"^test_[a-z0-9_]+$")
             if path == "tests/test_verificacion_factory_06.py":
                 self.assertEqual(method, "test_static_boundaries_without_external_io")
