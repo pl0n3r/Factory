@@ -1,6 +1,6 @@
 # Factory #2031 · verificación de cobertura, lote 15/18
 
-**Corte:** 5 de noviembre de 2026. **70/70 identificadores del Issue #2031** con fuente y regresión exactas; la vinculación al PR se registrará aquí antes del merge. La auditoría inicial marcaba `NO_VERIFICABLE`, **no** `SIN_COBERTURA`. Esta hoja no reescribe `docs/matriz-cobertura.md`: su consolidación queda en Factory #1696. No se altera runtime, producción, permisos ni la rama publicada `Factory@v1`.
+**Corte:** 5 de noviembre de 2026. **70/70 identificadores del Issue #2031** con fuente y regresión exactas; PR de evidencia: [Factory #2039](https://github.com/pl0n3r/Factory/pull/2039), cierre de #2031 por squash sujeto al CI exact-HEAD. La auditoría inicial marcaba `NO_VERIFICABLE`, **no** `SIN_COBERTURA`. Esta hoja no reescribe `docs/matriz-cobertura.md`: su consolidación queda en Factory #1696. No se altera runtime, producción, permisos ni la rama publicada `Factory@v1`.
 
 **Semántica de la última columna:** `REGRESION` significa aserción de contrato local ejecutable; `HISTORICO` significa documento/Issue o release pasado, no telemetría actual; `NO_ACTIVO` señala el cron diario retirado; `CONSUMIDOR_PENDIENTE` es un contrato de conformidad Factory sin prueba del runtime real de ControlBot/FactoryRunner.
 
