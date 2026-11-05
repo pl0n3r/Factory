@@ -1,0 +1,188 @@
+"""Factory #2023: mapa exacto y regresiones del lote 07/18.
+
+El mapa no confunde fixtures históricos, validación de QA externa ni ciclos
+de consumidores con evidencia de producción o permiso de Fase B.
+"""
+from __future__ import annotations
+
+import importlib.util
+import io
+import re
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ROWS = (
+    ("docs/label-color-sync.md:L38-U1", "Ante catálogo inválido, repo fuera de allowlist, snapshot ambiguo, falta de token en apply, respuest", "scripts/sync_label_colors.py", "tests/test_sync_label_colors.py::SyncLabelColorsTests::test_catalog_and_snapshot_validation_fail_closed", "REGRESION"),
+    ("docs/lease-phase-a-artifact-qa.md:L3-U1", "Este helper solo inspecciona localmente un ZIP lease-audit-evidence de GitHub Actions y un JSON de m", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_valid_zip_exact_identity_is_candidate_only", "REGRESION"),
+    ("docs/lease-phase-a-artifact-qa.md:L3-U2", "Se exige schedule, completed/success y coincidencia exacta de identidad", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_unknown_mismatch_sensitive_and_schema_fail_closed", "REGRESION"),
+    ("docs/lease-phase-a-artifact-qa.md:L3-U3", "no se realizan consultas de red, cambios de permisos, almacenamiento de datos, ni llamadas de escrit", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_documented_manual_attestation_and_no_network_or_release", "REGRESION"),
+    ("docs/lease-phase-a-artifact-qa.md:L3-U4", "La operación solo calcula SHA-256 de los bytes originales lease-audit-evidence.json, valida el esque", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_unsafe_zip_and_duplicate_json_fail_closed", "REGRESION"),
+    ("docs/lease-phase-a-artifact-qa.md:L9-U1", "QA verifica independientemente la respuesta REST, artefacto ID, integridad, SHA/run, repositorio y e", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_documented_manual_attestation_and_no_network_or_release", "QA_EXTERNA"),
+    ("docs/lease-phase-a-artifact-qa.md:L11-U1", "El evaluador existente evaluate_phase_a_candidate es independiente y debe recibir recibos autenticad", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_unknown_mismatch_sensitive_and_schema_fail_closed", "QA_EXTERNA"),
+    ("docs/lease-phase-a-artifact-qa.md:L13-U1", "Se exigen **24 horas**, **100 ciclos** terminales válidos por repositorio, cero falsos positivos y t", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_documented_manual_attestation_and_no_network_or_release", "QA_EXTERNA"),
+    ("docs/lease-phase-a-artifact-qa.md:L15-U1", "**No autoriza Fase B**, cambiar el flag en los workflows, liberar reservas, crear comentarios, fusio", "scripts/lease_phase_a_artifact_qa.py", "tests/test_lease_phase_a_artifact_qa.py::LeasePhaseAArtifactQATests::test_valid_zip_exact_identity_is_candidate_only", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L9-U1", "run `36507015627`: failure porque el contrato de aceptación no tenía todavía la estructura canónica;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_manifest_uses_real_coordination_and_execution_evidence", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L10-U1", "run `36507097760`: workflow success, pero sin reserva efectiva porque faltaba `estado: disponible`;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_manifest_uses_real_coordination_and_execution_evidence", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L11-U1", "run `36507219161`: failure porque el trabajo no planificado no podía coexistir con #330;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_manifest_uses_real_coordination_and_execution_evidence", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L12-U1", "tras agrupar las tres precondiciones como readiness bundle, run `36507269422`: success y reserva V3", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_manifest_uses_real_coordination_and_execution_evidence", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L14-U1", "La hipótesis autosugerida es simple: **validar acceptance contract + available state + factory-plan-", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_unsolicited_preflight_candidate_is_derived_from_observed_friction", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L22-U1", "invariantes protegidos: security, privacy, traceability, reversibility y authority;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_candidate_passes_constitution_lab_fitness_without_authority_expansion", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L23-U1", "segundos de coordinación;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_organizational_complexity_improves_without_protected_regression", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L24-U1", "cantidad de intentos necesarios para obtener una reserva.", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_organizational_complexity_improves_without_protected_regression", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L26-U1", "Shadow no permite mutación ni escrituras externas y conserva rollback `restore_baseline`.", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_candidate_passes_constitution_lab_fitness_without_authority_expansion", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L28-U1", "No se modifica automáticamente `coordinar_trabajo.py` ni se declara todavía una regla universal.", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L42-U1", "before: 7 s + 20 s + 8 s = **35 s** de coordinación improductiva;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_organizational_complexity_improves_without_protected_regression", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L43-U1", "after: **27 s** para la reserva exitosa;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_organizational_complexity_improves_without_protected_regression", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L44-U1", "ejecución útil común: **29 s** de CI;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_organizational_complexity_improves_without_protected_regression", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L45-U1", "protected metrics: iguales antes/después.", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_organizational_complexity_improves_without_protected_regression", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L55-U1", "La candidata puede generalizarse más adelante solo si acumula evidencia suficiente", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_posterior_execution_reaches_pr_and_exact_main_green", "HISTORICO"),
+    ("docs/living-software-operational-e2e.md:L59-U1", "sin crear un Engine, scheduler, store o ranking;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L60-U1", "sin nueva authority;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L61-U1", "sin tocar dinero, legal, datos personales, borrado irreversible ni permisos externos;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L62-U1", "sin tocar #330;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L63-U1", "sin reescribir el coordinador;", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L64-U1", "sin afirmar causalidad fuera del escenario #247.", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "REGRESION"),
+    ("docs/living-software-operational-e2e.md:L66-U1", "Con #161 ya demostrando Feedback Mesh y #142/#242–#247 integrados, esta evidencia completa la demost", "feedback/data/living-software-operational-e2e.json", "tests/test_living_software_operational_e2e.py::LivingSoftwareOperationalE2ETests::test_docs_close_epic_without_parallel_engine", "HISTORICO"),
+    ("docs/memoria-institucional.md:L5-U1", "El bootstrap no debe reconstruir incidentes ni decisiones leyendo conversaciones largas. `lecciones/", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_summary_is_project_scoped_and_bounded", "REGRESION"),
+    ("docs/memoria-institucional.md:L5-U2", "La telemetría de #5 permite medir si ese contexto reduce tokens reales de entrada.", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_token_comparison_requires_real_before_after_samples", "MUESTRA_PENDIENTE"),
+    ("docs/memoria-institucional.md:L9-U1", "Al cerrar un incidente o un PR con retrabajo material, agregar una lección con fuente verificable.", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_construction_lessons_dataset_valid_and_attributed", "REGRESION"),
+    ("docs/memoria-institucional.md:L10-U1", "Registrar solo causa confirmada y prevención ejecutable", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_construction_lessons_dataset_valid_and_attributed", "REGRESION"),
+    ("docs/memoria-institucional.md:L10-U2", "nunca secretos, PII ni conjeturas.", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_unknown_fields_and_multiline_text_are_rejected", "REGRESION"),
+    ("docs/memoria-institucional.md:L11-U1", "Antes de trabajar en un proyecto, generar/leer su contexto acotado junto con las decisiones vigentes", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_summary_is_project_scoped_and_bounded", "REGRESION"),
+    ("docs/memoria-institucional.md:L11-U2", "Si una lección reciente no cabe en el límite, el generador sigue buscando una anterior más corta en", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_summary_skips_oversized_recent_lesson_and_uses_older_one", "REGRESION"),
+    ("docs/memoria-institucional.md:L12-U1", "Medir tareas de bootstrap con `task_type=agent-bootstrap`, `task_id=owner/repo#N` y comparar tokens", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_token_comparison_requires_real_before_after_samples", "MUESTRA_PENDIENTE"),
+    ("docs/memoria-institucional.md:L12-U2", "nunca mezclar repositorios.", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_token_comparison_is_project_scoped", "REGRESION"),
+    ("docs/memoria-institucional.md:L16-U1", "El slice implementa `lecciones/`, validación, contexto por proyecto y medición de tokens.", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_construction_lessons_appear_in_factory_summary", "REGRESION"),
+    ("docs/memoria-institucional.md:L18-U1", "La reducción de tokens o incidentes **no se presume**: mientras no existan muestras reales before/af", "lecciones/memoria.py", "lecciones/test_memoria.py::MemoryTests::test_missing_metrics_file_is_insufficient_data", "MUESTRA_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L7-U1", "`FACTORY_LEASE_AUTO_RELEASE_ENABLED`, no libera reservas, no cierra PRs ni", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L10-U1", "`candidate_terminal` son **evidencia candidata**, nunca permiso para Fase B.", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L13-U1", "`.github/workflows/liberar-reservas.yml` continúa observando **solo Factory**.", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_repository_identity_is_bound_to_local_caller", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L24-U1", "son diferentes para evitar que el caller bloquee al reusable que invoca;", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_repository_identity_is_bound_to_local_caller", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L27-U1", "falla cerrado.", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_get_only_local_token_denies_mutations_and_unknown_sources", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L31-U1", "Validar `Validar`, suite de seguridad, CodeQL/Sonar y revisión FINAL en el", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "DISTRIBUCION_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L33-U1", "Publicar una versión Factory semántica y promover el **canal protegido `@v1`**", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_scheduled_caller_template_is_read_only_and_off", "DISTRIBUCION_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L34-U1", "solo bajo la puerta de release vigente del owner", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_scheduled_caller_template_is_read_only_and_off", "DISTRIBUCION_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L36-U1", "En **cada** uno de Condor, GrindFlow, brvtal, ControlBot, AutoFactory y", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_repository_identity_is_bound_to_local_caller", "DISTRIBUCION_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L39-U1", "archivo instalado debe conservar `permissions` read-only y apuntar a", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_repository_identity_is_bound_to_local_caller", "DISTRIBUCION_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L41-U1", "nunca push directo ni token", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_get_only_local_token_denies_mutations_and_unknown_sources", "DISTRIBUCION_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L43-U1", "Verificar un run `schedule` auténtico de ese repositorio y recuperar su", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "CICLOS_PENDIENTES"),
+    ("docs/observador-reservas-consumidor.md:L49-U1", "Acumular únicamente **al menos 100 ciclos terminales válidos durante", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "CICLOS_PENDIENTES"),
+    ("docs/observador-reservas-consumidor.md:L50-U1", "al menos 24 horas reales por repositorio**, con cero falsos positivos y", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "CICLOS_PENDIENTES"),
+    ("docs/observador-reservas-consumidor.md:L53-U1", "`evaluate_phase_a_candidate` solo calcula candidatos", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "CICLOS_PENDIENTES"),
+    ("docs/observador-reservas-consumidor.md:L61-U1", "`preview_integrated_activity` mantiene `UNKNOWN` cuando no puede demostrar", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_get_only_local_token_denies_mutations_and_unknown_sources", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L63-U1", "de Issues no amplía autoridad ni sustituye la validación del marker V3 en el", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_repository_identity_is_bound_to_local_caller", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L68-U1", "protocolo de bloqueo/CAS compartido real con Coordinación.", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "FASE_B_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L71-U1", "Un artefacto candidato no se puede transformar por sí solo en", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "FASE_B_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L77-U1", "Revertir el caller local por PR deja de generar recibos sin tocar ninguna V3.", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_scheduled_caller_template_is_read_only_and_off", "REGRESION"),
+    ("docs/observador-reservas-consumidor.md:L78-U1", "Revertir el reusable de Factory requiere una release protegida posterior.", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_scheduled_caller_template_is_read_only_and_off", "DISTRIBUCION_PENDIENTE"),
+    ("docs/observador-reservas-consumidor.md:L80-U1", "titulares y solo contienen números de Issue y códigos de diagnóstico.", ".github/workflows/observador-reservas-consumidor.yml", "tests/test_lease_consumer_observer.py::LeaseConsumerObserverTests::test_phase_a_artifacts_never_enable_mutation", "REGRESION"),
+    ("docs/organizational-complexity.md:L9-U1", "reglas/guardrails consultados;", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py::OrganizationalComplexityTests::test_workitem_complexity_is_reproducible", "REGRESION"),
+    ("docs/organizational-complexity.md:L10-U1", "roles activos y revisores;", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py::OrganizationalComplexityTests::test_workitem_complexity_is_reproducible", "REGRESION"),
+    ("docs/organizational-complexity.md:L11-U1", "checks/gates;", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py::OrganizationalComplexityTests::test_workitem_complexity_is_reproducible", "REGRESION"),
+    ("docs/organizational-complexity.md:L13-U1", "engines/compilers consultados;", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py::OrganizationalComplexityTests::test_workitem_complexity_is_reproducible", "REGRESION"),
+    ("docs/organizational-complexity.md:L14-U1", "tokens de contexto;", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py::OrganizationalComplexityTests::test_report_separates_execution_and_overhead", "REGRESION"),
+    ("docs/organizational-complexity.md:L15-U1", "minutos de coordinación;", "metricas/organizational_complexity.py", "tests/test_organizational_complexity.py::OrganizationalComplexityTests::test_report_separates_execution_and_overhead", "REGRESION"),
+)
+
+
+def validar_filas(rows):
+    if len(rows) != 70 or len({row[0] for row in rows}) != 70:
+        raise ValueError("filas incompletas o duplicadas")
+    if any(len(row) != 5 or not row[0].startswith("docs/")
+           or row[3].count("::") != 2 for row in rows):
+        raise ValueError("fuente o aserción faltante")
+
+
+class VerificacionFactory07Tests(unittest.TestCase):
+    """Contratos verificables y límites de evidencia sin producción."""
+
+    def test_inventario_70_fuentes_y_reporte_exacto(self):
+        validar_filas(ROWS)
+        self.assertEqual({row[0].split(":")[0] for row in ROWS}, {
+            "docs/label-color-sync.md", "docs/lease-phase-a-artifact-qa.md",
+            "docs/living-software-operational-e2e.md",
+            "docs/memoria-institucional.md", "docs/observador-reservas-consumidor.md",
+            "docs/organizational-complexity.md",
+        })
+        report = (ROOT / "docs/verificacion/verificacion-07.md").read_text(encoding="utf-8")
+        table = []
+        for line in report.splitlines():
+            if line.startswith("| `docs/"):
+                cells = [cell.strip() for cell in line.strip("|").split("|")]
+                self.assertEqual(len(cells), 5)
+                table.append((cells[0].strip("`"), cells[1], cells[2].strip("`"),
+                              cells[3].strip("`"), cells[4]))
+        self.assertEqual(table, list(ROWS))
+        valid = {"REGRESION", "HISTORICO", "QA_EXTERNA", "MUESTRA_PENDIENTE",
+                 "DISTRIBUCION_PENDIENTE", "CICLOS_PENDIENTES", "FASE_B_PENDIENTE"}
+        for identifier, fragment, source, ref, status in ROWS:
+            with self.subTest(row=identifier):
+                self.assertTrue((ROOT / identifier.split(":")[0]).is_file())
+                self.assertTrue((ROOT / source).is_file())
+                testpath, cls, method = ref.split("::")
+                self.assertTrue((ROOT / testpath).is_file())
+                self.assertTrue(cls.endswith("Tests") and method.startswith("test_"))
+                self.assertIn(status, valid)
+                self.assertTrue(fragment)
+        self.assertIn("no prueba producción", report)
+        self.assertIn("No se edita `docs/matriz-cobertura.md`", report)
+
+    def test_70_predicados_siguen_anclados_al_documento(self):
+        """Si el texto auditado desaparece de su línea, se detecta la reversión."""
+        for identifier, fragment, *_ in ROWS:
+            doc, position = identifier.split(":")
+            lineno = int(re.search(r"L(\d+)", position).group(1))
+            lines = (ROOT / doc).read_text(encoding="utf-8").splitlines()
+            self.assertLessEqual(lineno, len(lines))
+            nearby = re.sub(r"\s+", " ", " ".join(lines[lineno - 1:lineno + 4])).casefold()
+            anchor = re.sub(r"\s+", " ", fragment).casefold()[:28]
+            with self.subTest(identifier=identifier):
+                self.assertIn(anchor, nearby)
+
+    def test_regresiones_originales_son_ejecutables(self):
+        """Ejecuta los métodos reales referenciados, sin sustituir sus resultados."""
+        refs = sorted({row[3] for row in ROWS})
+        self.assertGreaterEqual(len(refs), 20)
+        modules = {}
+        for ref in refs:
+            path, cls, method = ref.split("::")
+            if path not in modules:
+                name = "_factory07_" + Path(path).stem
+                spec = importlib.util.spec_from_file_location(name, ROOT / path)
+                self.assertIsNotNone(spec)
+                self.assertIsNotNone(spec.loader)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[name] = module
+                spec.loader.exec_module(module)
+                modules[path] = module
+            suite = unittest.TestLoader().loadTestsFromName(cls + "." + method, modules[path])
+            output = io.StringIO()
+            result = unittest.TextTestRunner(stream=output).run(suite)
+            with self.subTest(test=ref):
+                self.assertEqual(result.testsRun, 1, output.getvalue())
+                self.assertTrue(result.wasSuccessful(), output.getvalue())
+
+    def test_faltante_duplicado_y_zip_fraudulento_fallan_cerrado(self):
+        for mutacion in (ROWS[:-1], ROWS + (ROWS[0],)):
+            with self.assertRaises(ValueError):
+                validar_filas(mutacion)
+        from scripts.lease_phase_a_artifact_qa import ArtifactQAError, inspect_artifact
+        metadata = {"id": 415, "repository": "pl0n3r/Factory", "head_sha": "a" * 40,
+                    "event": "schedule", "status": "completed", "conclusion": "success"}
+        with self.assertRaises(ArtifactQAError):
+            inspect_artifact(b"no-es-un-zip", metadata)
+
+    def test_los_limites_operativos_no_se_promueven(self):
+        states = {row[4] for row in ROWS}
+        self.assertTrue({"HISTORICO", "QA_EXTERNA", "MUESTRA_PENDIENTE",
+                         "DISTRIBUCION_PENDIENTE", "CICLOS_PENDIENTES",
+                         "FASE_B_PENDIENTE"}.issubset(states))
+        report = (ROOT / "docs/verificacion/verificacion-07.md").read_text(encoding="utf-8")
+        self.assertNotIn("| CUBIERTO |", report)
+        self.assertNotIn("| VALIDATED_IN_PRODUCTION |", report)
+
+
+if __name__ == "__main__":
+    unittest.main()
