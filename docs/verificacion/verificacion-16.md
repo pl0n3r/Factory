@@ -91,7 +91,7 @@ No se promueve ninguna fila a `CUBIERTO` por el solo hecho de aportar un testigo
 
 La suite `python3 -m unittest discover -s tests -p test_verificacion_factory_16.py -v` comprueba las 70 identidades, resuelve cada testigo a una clase/método existente, **ejecuta** sus regresiones sintéticas únicas y verifica el fail-closed del kill switch con payloads inventados. También mantiene expuestos los límites que no tienen evidencia operativa.
 
-La evidencia de CI y la referencia al PR de entrega deben verificarse en GitHub sobre el SHA final del PR que cierre #2032; **no se afirma PR fusionado ni CI verde antes de observarlos**. Reversión: revertir el squash de esta hoja; no se modificaron scripts, producción, matriz, gates ni contratos de consumo.
+**PR de entrega: [#2038](https://github.com/pl0n3r/Factory/pull/2038)**, que cierra #2032. El estado `MERGED` y el CI exact-HEAD se verifican en GitHub; **no se afirma PR fusionado ni CI verde antes de observarlos**. Reversión: revertir el squash de esta hoja; no se modificaron scripts, producción, matriz, gates ni contratos de consumo.
 
 ## Resumen
 
