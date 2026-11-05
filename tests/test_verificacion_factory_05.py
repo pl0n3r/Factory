@@ -24,78 +24,18 @@ REPORT = ROOT / "docs" / "verificacion" / "verificacion-05.md"
 INVENTORY = ROOT / "docs" / "inventario-tecnico-datos-productos.md"
 
 # IDs copiados del contrato canónico #2021; no leer Issues/PRs externos en CI.
-EXPECTED_IDS = (
-    "docs/fitness-engine.md:L30-U1",
-    "docs/fitness-engine.md:L37-U1",
-    "docs/fitness-engine.md:L38-U1",
-    "docs/fitness-engine.md:L39-U1",
-    "docs/fitness-engine.md:L40-U1",
-    "docs/fitness-engine.md:L50-U1",
-    "docs/fitness-engine.md:L51-U1",
-    "docs/fitness-engine.md:L52-U1",
-    "docs/fitness-engine.md:L53-U1",
-    "docs/fitness-engine.md:L54-U1",
-    "docs/fitness-engine.md:L56-U1",
-    "docs/fitness-engine.md:L62-U1",
-    "docs/fitness-engine.md:L69-U1",
-    "docs/fitness-engine.md:L75-U1",
-    "docs/growth-pruning.md:L10-U1",
-    "docs/growth-pruning.md:L20-U1",
-    "docs/growth-pruning.md:L21-U1",
-    "docs/growth-pruning.md:L22-U1",
-    "docs/growth-pruning.md:L23-U1",
-    "docs/growth-pruning.md:L24-U1",
-    "docs/growth-pruning.md:L30-U1",
-    "docs/growth-pruning.md:L33-U1",
-    "docs/growth-pruning.md:L34-U1",
-    "docs/growth-pruning.md:L35-U1",
-    "docs/growth-pruning.md:L37-U1",
-    "docs/growth-pruning.md:L43-U1",
-    "docs/growth-pruning.md:L44-U1",
-    "docs/growth-pruning.md:L46-U1",
-    "docs/growth-pruning.md:L48-U1",
-    "docs/growth-pruning.md:L52-U1",
-    "docs/growth-pruning.md:L60-U1",
-    "docs/growth-pruning.md:L64-U1",
-    "docs/growth-pruning.md:L65-U1",
-    "docs/growth-pruning.md:L66-U1",
-    "docs/growth-pruning.md:L67-U1",
-    "docs/inventario-tecnico-datos-productos.md:B01",
-    "docs/inventario-tecnico-datos-productos.md:B02",
-    "docs/inventario-tecnico-datos-productos.md:B03",
-    "docs/issue-contract-preflight.md:L3-U1",
-    "docs/issue-contract-preflight.md:L19-U1",
-    "docs/issue-contract-preflight.md:L20-U1",
-    "docs/issue-contract-preflight.md:L21-U1",
-    "docs/issue-contract-preflight.md:L22-U1",
-    "docs/issue-contract-preflight.md:L24-U1",
-    "docs/issue-contract-preflight.md:L28-U1",
-    "docs/issue-contract-preflight.md:L28-U2",
-    "docs/knowledge-lifecycle.md:L9-U1",
-    "docs/knowledge-lifecycle.md:L10-U1",
-    "docs/knowledge-lifecycle.md:L11-U1",
-    "docs/knowledge-lifecycle.md:L11-U2",
-    "docs/knowledge-lifecycle.md:L12-U1",
-    "docs/knowledge-lifecycle.md:L13-U1",
-    "docs/knowledge-lifecycle.md:L13-U2",
-    "docs/knowledge-lifecycle.md:L19-U1",
-    "docs/knowledge-lifecycle.md:L20-U1",
-    "docs/knowledge-lifecycle.md:L21-U1",
-    "docs/knowledge-lifecycle.md:L22-U1",
-    "docs/knowledge-lifecycle.md:L23-U1",
-    "docs/knowledge-lifecycle.md:L24-U1",
-    "docs/knowledge-lifecycle.md:L26-U1",
-    "docs/knowledge-lifecycle.md:L30-U1",
-    "docs/knowledge-lifecycle.md:L30-U2",
-    "docs/knowledge-lifecycle.md:L30-U3",
-    "docs/knowledge-lifecycle.md:L30-U4",
-    "docs/knowledge-lifecycle.md:L30-U5",
-    "docs/knowledge-lifecycle.md:L30-U6",
-    "docs/knowledge-lifecycle.md:L30-U7",
-    "docs/knowledge-lifecycle.md:L36-U1",
-    "docs/knowledge-lifecycle.md:L37-U1",
-    "docs/knowledge-lifecycle.md:L38-U1",
-)
+EXPECTED_IDS = frozenset("""
+docs/fitness-engine.md:L30-U1 docs/fitness-engine.md:L37-U1 docs/fitness-engine.md:L38-U1 docs/fitness-engine.md:L39-U1 docs/fitness-engine.md:L40-U1 docs/fitness-engine.md:L50-U1 docs/fitness-engine.md:L51-U1
+docs/fitness-engine.md:L52-U1 docs/fitness-engine.md:L53-U1 docs/fitness-engine.md:L54-U1 docs/fitness-engine.md:L56-U1 docs/fitness-engine.md:L62-U1 docs/fitness-engine.md:L69-U1 docs/fitness-engine.md:L75-U1
+docs/growth-pruning.md:L10-U1 docs/growth-pruning.md:L20-U1 docs/growth-pruning.md:L21-U1 docs/growth-pruning.md:L22-U1 docs/growth-pruning.md:L23-U1 docs/growth-pruning.md:L24-U1 docs/growth-pruning.md:L30-U1
+docs/growth-pruning.md:L33-U1 docs/growth-pruning.md:L34-U1 docs/growth-pruning.md:L35-U1 docs/growth-pruning.md:L37-U1 docs/growth-pruning.md:L43-U1 docs/growth-pruning.md:L44-U1 docs/growth-pruning.md:L46-U1
+docs/growth-pruning.md:L48-U1 docs/growth-pruning.md:L52-U1 docs/growth-pruning.md:L60-U1 docs/growth-pruning.md:L64-U1 docs/growth-pruning.md:L65-U1 docs/growth-pruning.md:L66-U1 docs/growth-pruning.md:L67-U1
+docs/inventario-tecnico-datos-productos.md:B01 docs/inventario-tecnico-datos-productos.md:B02 docs/inventario-tecnico-datos-productos.md:B03 docs/issue-contract-preflight.md:L3-U1 docs/issue-contract-preflight.md:L19-U1 docs/issue-contract-preflight.md:L20-U1 docs/issue-contract-preflight.md:L21-U1
+docs/issue-contract-preflight.md:L22-U1 docs/issue-contract-preflight.md:L24-U1 docs/issue-contract-preflight.md:L28-U1 docs/issue-contract-preflight.md:L28-U2 docs/knowledge-lifecycle.md:L9-U1 docs/knowledge-lifecycle.md:L10-U1 docs/knowledge-lifecycle.md:L11-U1
+docs/knowledge-lifecycle.md:L11-U2 docs/knowledge-lifecycle.md:L12-U1 docs/knowledge-lifecycle.md:L13-U1 docs/knowledge-lifecycle.md:L13-U2 docs/knowledge-lifecycle.md:L19-U1 docs/knowledge-lifecycle.md:L20-U1 docs/knowledge-lifecycle.md:L21-U1
+docs/knowledge-lifecycle.md:L22-U1 docs/knowledge-lifecycle.md:L23-U1 docs/knowledge-lifecycle.md:L24-U1 docs/knowledge-lifecycle.md:L26-U1 docs/knowledge-lifecycle.md:L30-U1 docs/knowledge-lifecycle.md:L30-U2 docs/knowledge-lifecycle.md:L30-U3
+docs/knowledge-lifecycle.md:L30-U4 docs/knowledge-lifecycle.md:L30-U5 docs/knowledge-lifecycle.md:L30-U6 docs/knowledge-lifecycle.md:L30-U7 docs/knowledge-lifecycle.md:L36-U1 docs/knowledge-lifecycle.md:L37-U1 docs/knowledge-lifecycle.md:L38-U1
+""".split())
 
 
 def metric(value, direction="higher"):
