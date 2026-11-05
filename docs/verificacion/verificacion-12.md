@@ -4,6 +4,8 @@
 
 ## Resultado verificable y límites
 
+**PR de esta hoja: [#2048](https://github.com/pl0n3r/Factory/pull/2048)** — todos los testigos de la tabla se verifican en este PR; no supone promoción a cobertura productiva.
+
 70/70 unidades trazadas: Quality Regression (10), Sonar Watch offline (23), evidencia Sonar (21), reconciliación histórica (8) y Recovery adapters (8). **0 promociones** a CUBIERTO; las 70 siguen NO_VERIFICABLE, sin SIN_COBERTURA en este lote.
 
 Los testigos citados ejecutan contratos locales reales con fixtures sintéticos: rechazos fail-closed, ausencia de autoridad automática, normalización y estados. No acreditan observación Sonar externa, ejecución real en CI de consumidores, refresco de alertas antiguas, validación productiva, backup externo ni la vigencia actual de la fotografía histórica del 24-oct-2026. La consolidación #2035 debe conservar esta distinción.
