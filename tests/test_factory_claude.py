@@ -22,7 +22,9 @@ import reservation_guard  # noqa: E402
 
 SKILLS = ["factory-issue-to-merge", "factory-ci-unblock", "factory-agent-coordination",
           "factory-test-matrix", "factory-deploy-rollback", "factory-security-audit",
-          "factory-cross-repo-contracts", "factory-documentation"]
+          "factory-cross-repo-contracts", "factory-documentation",
+          "factory-issue-author", "factory-state-reconciler", "factory-multirepo-publisher",
+          "factory-epic-splitter"]
 GREEN = [{"name": "Validar", "bucket": "pass"}, {"name": "lint", "bucket": "pass"}]
 
 
@@ -42,7 +44,7 @@ class PluginStructureTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(ROOT, entry["source"])))
         self.assertEqual(entry["version"], plugin["version"])
 
-    def test_eight_skills_valid(self):
+    def test_skills_valid(self):
         found = sorted(os.listdir(os.path.join(PLUGIN, "skills")))
         self.assertEqual(found, sorted(SKILLS))
         for name in SKILLS:
