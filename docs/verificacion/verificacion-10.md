@@ -8,6 +8,8 @@ Se auditan **70/70** unidades originales `NO_VERIFICABLE` de cinco documentos (1
 
 **Clasificación por fila:** `REGLA_Y_EVIDENCIA_EXTERNA` prueba localmente el payload/reconciliación de etiquetas, **no** el ruleset vivo de GitHub ni la aplicación por el dueño; `PREVIEW_LOCAL_NO_DEPLOY` prueba contratos del pipeline simulado, **no** un deploy/rollback/backup operativo; `NORMA_Y_GUARDA_LOCAL` vincula reglas de autoridad, claims y estado a regresiones internas, **no** a un run o un consentimiento externo; `DESCUBRIMIENTO_LOCAL` prueba señales explícitas de Project DNA, **no** la estructura real de cada consumer; `PROVISIONAMIENTO_LOCAL` prueba restricciones en mocks, **no** creación de repositorios.
 
+**Límite verificable:** la evidencia externa de rulesets vivos, despliegue, decisiones humanas y estado de producción no está acreditada por este inventario.
+
 **Fail-closed:** una regresión local, un workflow verde y una frase documental **no equivalen a** `VALIDATED_IN_PRODUCTION`, a revisión humana, a evidencia de admin de rulesets ni a cobertura integral. Se preservan las guardas D-043/D-059/D-063/D-068/D-069/D-070, freeze Factory #921 y el kill switch #767. Este PR modifica únicamente el informe y la suite; `docs/matriz-cobertura.md` queda intacta para su hoja de consolidación. Sin datos reales, secretos, red, permisos administrativos, coste, releases, go-live ni despliegue.
 
 ## Trazabilidad unitaria
