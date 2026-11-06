@@ -1,7 +1,7 @@
 # Factory #2020 — verificación lote 04/18 (70 filas)
 
 **Fuente:** `docs/matriz-cobertura.md` · Épica #304 · 5-nov-2026.
-**Reserva V3:** `dbe6adba-e277-4933-ba96-3939cb95ffa8`.
+**Reserva V3:** consultar siempre el [último recibo auténtico de Coordinación en Factory #2020](https://github.com/pl0n3r/Factory/issues/2020); los UUID históricos de esta hoja no acreditan autoridad vigente.
 **Alcance:** solo `docs/verificacion/verificacion-04.md` y `tests/test_verificacion_factory_04.py`.
 
 ## Resultado verificable y límites
