@@ -1,6 +1,6 @@
 # Verificación Factory · lote 13 de 18
 
-**Issue #2029 · parent #304 · reserva V3 vigente `9b25aa05-1985-4060-8eb3-8b0fd575d0f3` (recibo autenticado [#6684555641](https://github.com/pl0n3r/Factory/issues/2029#issuecomment-6684555641); reservas previas históricas) · 70 filas.**
+**Issue #2029 · parent #304 · reserva V3: autoridad dinámica del último recibo auténtico de Coordinación en [Issue #2029](https://github.com/pl0n3r/Factory/issues/2029) (el UUID de cualquier recibo anterior es histórico y no confiere derechos de escritura) · 70 filas.**
 
 Contraste de 70 filas originales `NO_VERIFICABLE`, 0 `SIN_COBERTURA`.
 Cada testigo indicado es un método unittest real ejecutado por `tests/test_verificacion_factory_13.py`.
