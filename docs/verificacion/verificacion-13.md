@@ -1,6 +1,6 @@
 # Verificación Factory · lote 13 de 18
 
-**Issue #2029 · parent #304 · reserva V3 `f2d81161-2984-4556-861f-d2ea6c61f81b` · 70 filas.**
+**Issue #2029 · parent #304 · reserva V3 vigente `91546a32-1bf7-4747-a1d3-ce428b925771` (recuperada; la referencia `f2d81161-2984-4556-861f-d2ea6c61f81b` es histórica) · 70 filas.**
 
 Contraste de 70 filas originales `NO_VERIFICABLE`, 0 `SIN_COBERTURA`.
 Cada testigo indicado es un método unittest real ejecutado por `tests/test_verificacion_factory_13.py`.
