@@ -5713,6 +5713,10 @@ def recover_live_owner_v3_orphaned_issue_lock(
             "pl0n3r/ControlBot",
             "pl0n3r/ControlBot/.github/workflows/coordinacion.yml@refs/heads/main",
         ),
+        "pl0n3r/autofactory": (
+            "pl0n3r/AutoFactory",
+            "pl0n3r/AutoFactory/.github/workflows/coordinacion.yml@refs/heads/main",
+        ),
     }
     workflow = workflows.get(api.repo.casefold() if isinstance(api.repo, str) else "")
     if (workflow is None or actor != "pl0n3r" or association != "OWNER"
