@@ -16,7 +16,7 @@ from puertas_humanas import (
     gate_target_identity_from_body,
     validate_gate,
 )
-from sincronizar_puerta import _trusted_gate_candidate, read_issue_inventory
+from sincronizar_puerta import _trusted_gate_candidate, gh_api
 
 AUTHORIZED = {"OWNER"}
 COMMAND_RE = re.compile(r"^/decidir ([A-D])$")
@@ -35,28 +35,6 @@ class DecisionError(ValueError):
     """Entrada o estado no confiable; no se debe mutar nada."""
 
 
-def gh_api(method: str, path: str, payload: dict | None = None):
-    if method == "GET" and path.endswith("/issues?state=all&per_page=100"):
-        return read_issue_inventory(path)
-    command = ["gh", "api"]
-    if method == "GET" and "per_page=" in path:
-        command += ["--paginate", "--slurp"]
-    if method != "GET":
-        command += ["--method", method]
-    command.append(path)
-    if payload is not None:
-        command += ["--input", "-"]
-    result = subprocess.run(
-        command,
-        input=json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    value = json.loads(result.stdout) if result.stdout.strip() else None
-    if method == "GET" and "per_page=" in path:
-        return [item for page in value for item in page]
-    return value
 
 
 def _comment_command(event: dict[str, Any]) -> str | None:
