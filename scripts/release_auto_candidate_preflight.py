@@ -175,7 +175,8 @@ def _version(contents: object) -> str:
             or len(contents["content"]) > 8000):
         raise PreflightError("version_source_unknown")
     try:
-        decoded = base64.b64decode(contents["content"], validate=True)
+        encoded = contents["content"].replace("\r\n", "\n").replace("\n", "")
+        decoded = base64.b64decode(encoded, validate=True)
         if len(decoded) > 4096:
             raise ValueError("version too large")
         obj = json.loads(decoded)
