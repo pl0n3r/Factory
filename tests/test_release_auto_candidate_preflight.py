@@ -93,7 +93,7 @@ class ReleaseAutoCandidatePreflightTests(unittest.TestCase):
         root = "/repos/pl0n3r/Factory"
         fixture = example()
         def b64(v):
-            return {"type": "file", "encoding": "base64", "content": base64.b64encode(json.dumps({"version": v}).encode()).decode()}
+            return {"type": "file", "encoding": "base64", "content": base64.b64encode(json.dumps({"version": v}).encode()).decode() + "\n"}
         def get(path):
             # Every requested path is caller-constructed, deterministic and GET-only.
             visited.append(path)
