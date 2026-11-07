@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from urllib.parse import quote
 
 from puertas_humanas import (
@@ -40,9 +41,68 @@ class GateConflictError(ValueError):
     """Estado ambiguo: la reconciliación no debe ejecutar mutaciones sensibles."""
 
 
+class GitHubInventoryError(RuntimeError):
+    """Una lectura incompleta nunca constituye autoridad para una puerta."""
+
+
+def read_issue_inventory(path: str) -> list[dict]:
+    """Lee todas las páginas con ritmo acotado; nunca acepta inventario parcial."""
+    if not path.endswith("/issues?state=all&per_page=100"):
+        raise GitHubInventoryError("Ruta de inventario no canónica.")
+    found: list[dict] = []
+    numbers: set[int] = set()
+    saw_short_page = False
+    for page in range(1, 101):
+        if page > 1:
+            time.sleep(0.15)
+        try:
+            process = subprocess.run(
+                ["gh", "api", f"{path}&page={page}"],
+                capture_output=True, text=True, check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            # El stderr puede contener credenciales o cabeceras: nunca mostrarlo.
+            match = re.search(r"\bHTTP (403|429|500|502|503|504)\b", exc.stderr or "")
+            reason = f"HTTP {match.group(1)}" if match else "HTTP desconocido"
+            raise GitHubInventoryError(
+                f"Inventario GitHub incompleto ({reason}); decisión denegada."
+            ) from None
+        try:
+            rows = json.loads(process.stdout)
+        except (ValueError, TypeError):
+            raise GitHubInventoryError(
+                "Inventario GitHub incompleto (JSON inválido); decisión denegada."
+            ) from None
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise GitHubInventoryError(
+                "Inventario GitHub incompleto (página inválida); decisión denegada."
+            )
+        if saw_short_page:
+            if rows:
+                raise GitHubInventoryError(
+                    "Inventario GitHub incompleto (paginación con hueco); decisión denegada."
+                )
+            return found
+        for row in rows:
+            number = row.get("number") if isinstance(row, dict) else None
+            if type(number) is not int or number <= 0 or number in numbers:
+                raise GitHubInventoryError(
+                    "Inventario GitHub incompleto (identidad inválida); decisión denegada."
+                )
+            numbers.add(number)
+            found.append(row)
+        if len(rows) < 100:
+            saw_short_page = True
+    raise GitHubInventoryError(
+        "Inventario GitHub incompleto (límite de páginas); decisión denegada."
+    )
+
+
 def gh_api(method: str, path: str, payload: dict | None = None):
+    if method == "GET" and path.endswith("/issues?state=all&per_page=100"):
+        return read_issue_inventory(path)
     command = ["gh", "api"]
-    if method == "GET" and ("per_page=" in path):
+    if method == "GET" and "per_page=" in path:
         command += ["--paginate", "--slurp"]
     if method != "GET":
         command += ["--method", method]
@@ -58,10 +118,8 @@ def gh_api(method: str, path: str, payload: dict | None = None):
     )
     value = json.loads(result.stdout) if result.stdout.strip() else None
     if method == "GET" and "per_page=" in path:
-        # --slurp devuelve una lista de páginas (cada página es una lista).
         return [item for page in value for item in page]
     return value
-
 
 def issue_labels(api, base: str) -> set[str]:
     return {label["name"] for label in api("GET", base)["labels"]}

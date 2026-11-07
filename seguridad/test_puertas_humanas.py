@@ -1,4 +1,5 @@
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from urllib.parse import unquote
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 
 from sincronizar_puerta import (
     BOT, BLOCKED, AVAILABLE, MARKER, OWNED,
-    GateConflictError, gh_api, reconcile_gate, sync_invalid, sync_valid,
+    GateConflictError, GitHubInventoryError, gh_api, reconcile_gate, sync_invalid, sync_valid,
 )
 
 from puertas_humanas import (
@@ -653,23 +654,54 @@ class GateTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in comments], [1, 2])
 
     def test_gate_scan_pagination_slurps_every_issue_page(self):
+        calls = []
+        first = [{"number": n} for n in range(1000, 900, -1)]
         def fake_run(command, **kwargs):
-            self.assertIn("--paginate", command)
-            self.assertIn("--slurp", command)
-            self.assertIn(
-                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
-                command,
-            )
-            return SimpleNamespace(
-                stdout='[[{"number":575}],[{"number":581}]]'
-            )
+            self.assertNotIn("--paginate", command)
+            calls.append(command[-1])
+            page = int(command[-1].split("&page=")[-1])
+            return SimpleNamespace(stdout=json.dumps({
+                1: first, 2: [{"number": 900}], 3: [],
+            }[page]))
+        with patch("sincronizar_puerta.subprocess.run", side_effect=fake_run), \
+                patch("sincronizar_puerta.time.sleep"):
+            result = gh_api("GET", "repos/pl0n3r/Factory/issues?state=all&per_page=100")
+        self.assertEqual(len(result), 101)
+        self.assertEqual([x.split("&page=")[-1] for x in calls], ["1", "2", "3"])
 
-        with patch("sincronizar_puerta.subprocess.run", side_effect=fake_run):
-            issues = gh_api(
-                "GET",
-                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
-            )
-        self.assertEqual([item["number"] for item in issues], [575, 581])
+    def test_gate_scan_cli_failure_does_not_authorize(self):
+        error = subprocess.CalledProcessError(
+            1, ["gh", "api"],
+            stderr="gh: API rate limit exceeded for installation (HTTP 403); secret=do-not-log",
+        )
+        with patch("sincronizar_puerta.subprocess.run", side_effect=error):
+            with self.assertRaises(GitHubInventoryError) as caught:
+                gh_api("GET", "repos/pl0n3r/Factory/issues?state=all&per_page=100")
+        self.assertIn("HTTP 403", str(caught.exception))
+        self.assertNotIn("do-not-log", str(caught.exception))
+
+    def test_gate_scan_incomplete_page_fails_closed(self):
+        def fake_run(command, **kwargs):
+            page = int(command[-1].split("&page=")[-1])
+            return SimpleNamespace(stdout=json.dumps({
+                1: [{"number": 974}], 2: [{"number": 946}],
+            }[page]))
+        with patch("sincronizar_puerta.subprocess.run", side_effect=fake_run), \
+                patch("sincronizar_puerta.time.sleep"):
+            with self.assertRaisesRegex(GitHubInventoryError, "paginación con hueco"):
+                gh_api("GET", "repos/pl0n3r/Factory/issues?state=all&per_page=100")
+
+    def test_gate_scan_duplicate_number_fails_closed(self):
+        first = [{"number": n} for n in range(1000, 900, -1)]
+        def fake_run(command, **kwargs):
+            page = int(command[-1].split("&page=")[-1])
+            return SimpleNamespace(stdout=json.dumps({
+                1: first, 2: [{"number": 974}],
+            }[page]))
+        with patch("sincronizar_puerta.subprocess.run", side_effect=fake_run), \
+                patch("sincronizar_puerta.time.sleep"):
+            with self.assertRaisesRegex(GitHubInventoryError, "identidad inválida"):
+                gh_api("GET", "repos/pl0n3r/Factory/issues?state=all&per_page=100")
 
     def test_unknown_category_is_invalid_gate(self):
         self.assertEqual(
