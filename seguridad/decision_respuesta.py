@@ -16,7 +16,7 @@ from puertas_humanas import (
     gate_target_identity_from_body,
     validate_gate,
 )
-from sincronizar_puerta import _trusted_gate_candidate
+from sincronizar_puerta import _trusted_gate_candidate, read_issue_inventory
 
 AUTHORIZED = {"OWNER"}
 COMMAND_RE = re.compile(r"^/decidir ([A-D])$")
@@ -36,6 +36,8 @@ class DecisionError(ValueError):
 
 
 def gh_api(method: str, path: str, payload: dict | None = None):
+    if method == "GET" and path.endswith("/issues?state=all&per_page=100"):
+        return read_issue_inventory(path)
     command = ["gh", "api"]
     if method == "GET" and "per_page=" in path:
         command += ["--paginate", "--slurp"]
