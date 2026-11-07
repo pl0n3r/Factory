@@ -546,23 +546,19 @@ class DecisionRespuestaTests(unittest.TestCase):
 
 class DecisionPaginationTests(unittest.TestCase):
     def test_decision_scan_pagination_slurps_every_issue_page(self):
+        calls = []
         def fake_run(command, **kwargs):
-            self.assertIn("--paginate", command)
-            self.assertIn("--slurp", command)
-            self.assertIn(
-                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
-                command,
-            )
-            return SimpleNamespace(
-                stdout='[[{"number":519}],[{"number":520}]]'
-            )
-
-        with patch("decision_respuesta.subprocess.run", side_effect=fake_run):
-            issues = gh_api(
-                "GET",
-                "repos/pl0n3r/Factory/issues?state=all&per_page=100",
-            )
+            self.assertNotIn("--paginate", command)
+            calls.append(command[-1])
+            page = int(command[-1].split("&page=")[-1])
+            return SimpleNamespace(stdout=json.dumps({
+                1: [{"number": 519}, {"number": 520}], 2: [],
+            }[page]))
+        with patch("sincronizar_puerta.subprocess.run", side_effect=fake_run), \
+                patch("sincronizar_puerta.time.sleep"):
+            issues = gh_api("GET", "repos/pl0n3r/Factory/issues?state=all&per_page=100")
         self.assertEqual([item["number"] for item in issues], [519, 520])
+        self.assertEqual([x.split("&page=")[-1] for x in calls], ["1", "2"])
 
 
 class DecisionTests(unittest.TestCase):
