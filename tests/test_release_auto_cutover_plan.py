@@ -14,6 +14,7 @@ PREVIOUS = "b" * 40
 
 
 def fixture() -> dict:
+    """Construct synthetic coherent future provenance, not an actual receipt."""
     return {
         "candidate_sha": SHA,
         "main_sha": SHA,
@@ -22,12 +23,14 @@ def fixture() -> dict:
         "release_machinery_changed": False,
         "policy_gate": "2075-product-direction-A",
         "candidate_report": {
+            "candidate_sha": SHA,
             "state": "REVIEW_ONLY",
             "reason": "candidate_evidence_ready_for_future_policy_review",
             "authorizes_release": False,
             "mutations": 0, "tag_writes": 0, "release_writes": 0,
         },
         "consumer_report": {
+            "candidate_sha": SHA,
             "state": "REVIEW_ONLY", "reason": "verified_independent_receipts",
             "observed_consumers": 6, "synthetic": False,
             "evidence_authenticated": True, "authorizes_release": False,
@@ -39,6 +42,7 @@ def fixture() -> dict:
 
 class ReleaseAutoCutoverPlanTests(unittest.TestCase):
     def assertHold(self, changes: dict) -> None:
+        """Verify every rejected case is inert and has no usable steps."""
         sample = fixture()
         sample.update(changes)
         output = plan_cutover(sample)
@@ -54,6 +58,10 @@ class ReleaseAutoCutoverPlanTests(unittest.TestCase):
             {"candidate_sha": "no-sha"}, {"main_sha": PREVIOUS},
             {"published_sha": SHA}, {"extra": True},
             {"candidate_report": None}, {"consumer_report": None},
+            {"candidate_report": {**fixture()["candidate_report"], "candidate_sha": PREVIOUS}},
+            {"consumer_report": {**fixture()["consumer_report"], "candidate_sha": PREVIOUS}},
+            {"candidate_report": {k:v for k,v in fixture()["candidate_report"].items() if k != "candidate_sha"}},
+            {"consumer_report": {k:v for k,v in fixture()["consumer_report"].items() if k != "candidate_sha"}},
             {"receipt": None},
             {"consumer_report": {**fixture()["consumer_report"], "synthetic": True}},
             {"consumer_report": {**fixture()["consumer_report"], "evidence_authenticated": False}},
