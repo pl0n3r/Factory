@@ -1,10 +1,10 @@
-Última actualización automática: 2026-11-07T22:58:20Z | SHA de origen: cea1909eca0f016ae19812f4d36da917db3931f4
+Última actualización automática: 2026-11-08T14:46:21Z | SHA de origen: d7fd33a687207bf9479b9dd71b7674c9a1255b33
 
 # Carpeta para revisión jurídica — Factory
 
 Estado: documented_not_legally_approved. Esta documentación NO está aprobada jurídicamente.
 
-Versión del repositorio: 1.0.52. SHA del checkout origen: cea1909eca0f016ae19812f4d36da917db3931f4. Fecha UTC: 2026-11-07T22:58:20Z.
+Versión del repositorio: 1.0.53. SHA del checkout origen: d7fd33a687207bf9479b9dd71b7674c9a1255b33. Fecha UTC: 2026-11-08T14:46:21Z.
 
 Entregue todos los archivos de esta carpeta al abogado, o el archivo paquete-completo.md como documento único. Las plantillas .tpl conservan variables sin rellenar y NO deben publicarse como documentos jurídicos definitivos.
 
