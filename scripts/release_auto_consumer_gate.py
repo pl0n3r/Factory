@@ -71,11 +71,12 @@ def _get(path: str) -> object:
 def _verified_ci(payload: object, expected_sha: str) -> bool:
     if type(payload) is not dict or set(payload) != {"total_count", "check_runs"}:
         return False
-    rows = payload["check_runs"]
-    if (type(payload["total_count"]) is not int
-            or not 0 <= payload["total_count"] <= 100
+    rows = payload.get("check_runs")
+    total = payload.get("total_count")
+    if (type(total) is not int
+            or not 0 <= total <= 100
             or type(rows) is not list or len(rows) > 100
-            or payload["total_count"] != len(rows)):
+            or total != len(rows)):
         return False
     matching = [r for r in rows if type(r) is dict and r.get("name") in CI_NAMES]
     if len(matching) != 1:
@@ -99,20 +100,23 @@ def collect_consumer_ci(get: Callable[[str], object] = _get) -> dict[str, Any]:
         for repository in CONSUMERS:
             root = "/repos/" + repository
             branch = get(root + "/branches/main")
-            if (type(branch) is not dict or branch.get("name") != "main"
-                    or branch.get("protected") is not True
-                    or type(branch.get("commit")) is not dict
-                    or not _sha(branch["commit"].get("sha"))):
+            if type(branch) is not dict:
                 return _report("consumer_main_identity_or_protection_unknown",
                                observed=observed)
-            sha = branch["commit"]["sha"]
+            commit = branch.get("commit")
+            if (branch.get("name") != "main"
+                    or branch.get("protected") is not True
+                    or type(commit) is not dict
+                    or not _sha(commit.get("sha") if type(commit) is dict else None)):
+                return _report("consumer_main_identity_or_protection_unknown",
+                               observed=observed)
+            sha = commit.get("sha")
             checks = get(root + "/commits/" + sha
                          + "/check-runs?filter=latest&per_page=100")
             if not _verified_ci(checks, sha):
                 return _report("consumer_ci_unknown_or_not_green", observed=observed)
             observed += 1
-    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError,
-            UnicodeError):
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
         return _report("consumer_rest_source_unavailable", observed=observed)
     # The six consumer CIs are NOT a compatibility test for the Factory candidate.
     # No candidate-bound receipts or independently authenticated watchdog exist here.
@@ -124,14 +128,15 @@ def _proof(value: object, candidate: str, repository: str | None = None) -> bool
     allowed = PROOF_FIELDS if repository is not None else WATCHDOG_FIELDS
     if type(value) is not dict or set(value) != allowed:
         return False
-    if repository is not None and value["repository"] != repository:
+    if repository is not None and value.get("repository") != repository:
         return False
+    run_id = value.get("run_id")
     return (
-        value["candidate_sha"] == candidate
-        and type(value["run_id"]) is int and value["run_id"] > 0
-        and value["status"] == "completed"
-        and value["conclusion"] == "success"
-        and value["source"] == "independent"
+        value.get("candidate_sha") == candidate
+        and type(run_id) is int and run_id > 0
+        and value.get("status") == "completed"
+        and value.get("conclusion") == "success"
+        and value.get("source") == "independent"
     )
 
 
@@ -142,10 +147,10 @@ def evaluate_fixture(snapshot: object, *, synthetic: bool = False) -> dict[str, 
     if type(snapshot) is not dict or set(snapshot) != {
             "candidate_sha", "consumers", "watchdog"}:
         return _report("snapshot_missing_or_ambiguous", synthetic=True)
-    candidate = snapshot["candidate_sha"]
+    candidate = snapshot.get("candidate_sha")
     if not _sha(candidate):
         return _report("candidate_sha_invalid", synthetic=True)
-    consumers = snapshot["consumers"]
+    consumers = snapshot.get("consumers")
     if type(consumers) is not list or len(consumers) != len(CONSUMERS):
         return _report("consumer_inventory_missing_or_unbounded", synthetic=True)
     seen: set[str] = set()
@@ -158,9 +163,7 @@ def evaluate_fixture(snapshot: object, *, synthetic: bool = False) -> dict[str, 
         if not _proof(item, candidate, repository):
             return _report("consumer_proof_invalid_or_stale", synthetic=True)
         seen.add(repository)
-    if seen != set(CONSUMERS):
-        return _report("consumer_inventory_incomplete", synthetic=True)
-    if not _proof(snapshot["watchdog"], candidate):
+    if not _proof(snapshot.get("watchdog"), candidate):
         return _report("watchdog_proof_invalid_or_stale", synthetic=True)
     return _report("synthetic_schema_only_no_release_authority",
                    review_only=True, observed=6, synthetic=True)
