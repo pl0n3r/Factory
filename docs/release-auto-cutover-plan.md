@@ -1,5 +1,7 @@
 # Plan de transición exact-SHA, no ejecutable (#1080 / #2095)
 
+Los dos dictámenes deben declarar explícitamente el mismo `candidate_sha` del plan. Falta o diferencia en cualquiera de ellos implica `HOLD`. Los emisores actuales aún no incluyen esa identidad en sus dictámenes, por lo que su conexión directa falla cerrado hasta disponer de recibos vinculados al candidato.
+
 Este contrato puro correlaciona el candidato de `release_auto_candidate_preflight.py`, la evidencia de consumidores de `release_auto_consumer_gate.py` y el SHA publicado anteriormente. Es **un esquema de orden de controles**, no un ejecutor de release ni una aprobación de seguridad.
 
 - Estado predeterminado `HOLD`: identidad, checks, origen, fase, consumidor, watchdog o recibos incompletos/sintéticos/ambiguos; sin pasos transferibles.
