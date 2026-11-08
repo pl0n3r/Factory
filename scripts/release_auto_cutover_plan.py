@@ -17,11 +17,11 @@ FIELDS = frozenset({
     "consumer_report", "receipt",
 })
 CANDIDATE_FIELDS = frozenset({
-    "state", "reason", "authorizes_release", "mutations", "tag_writes",
+    "state", "reason", "candidate_sha", "authorizes_release", "mutations", "tag_writes",
     "release_writes",
 })
 CONSUMER_FIELDS = frozenset({
-    "state", "reason", "observed_consumers", "synthetic",
+    "state", "reason", "candidate_sha", "observed_consumers", "synthetic",
     "evidence_authenticated", "authorizes_release", "mutations",
     "tag_writes", "release_writes",
 })
@@ -29,10 +29,12 @@ RECEIPT_FIELDS = frozenset({"candidate_sha", "source", "run_id"})
 
 
 def _sha(value: object) -> bool:
+    """Require an exact lowercase 40-character SHA string."""
     return type(value) is str and SHA.fullmatch(value) is not None
 
 
 def _result(reason: str, *, steps: tuple[dict[str, str], ...] = ()) -> dict[str, Any]:
+    """Return an immutable-authority decision with zero write permissions."""
     return {
         "state": "PLAN_ONLY" if steps else "HOLD",
         "reason": reason,
@@ -69,6 +71,7 @@ def plan_cutover(snapshot: object) -> dict[str, Any]:
 
     candidate = snapshot["candidate_report"]
     if (type(candidate) is not dict or set(candidate) != CANDIDATE_FIELDS
+            or candidate.get("candidate_sha") != sha
             or candidate.get("state") != "REVIEW_ONLY"
             or candidate.get("reason") != "candidate_evidence_ready_for_future_policy_review"
             or candidate.get("authorizes_release") is not False
@@ -77,6 +80,7 @@ def plan_cutover(snapshot: object) -> dict[str, Any]:
 
     consumer = snapshot["consumer_report"]
     if (type(consumer) is not dict or set(consumer) != CONSUMER_FIELDS
+            or consumer.get("candidate_sha") != sha
             or consumer.get("state") != "REVIEW_ONLY"
             or consumer.get("reason") != "verified_independent_receipts"
             or consumer.get("observed_consumers") != 6
