@@ -10,6 +10,8 @@
 preflight F2 (8), Factory Queue (20), Feedback Mesh (18) y Fitness Engine (1).
 **0 promociones** de `NO_VERIFICABLE` a `CUBIERTO`: la consolidación #2035
 requiere recibos suficientes para autorizar cualquier promoción.
+El testigo de L36 prueba de forma conductual el lote máximo de 32 lecciones,
+rechaza 33 y comprueba que el umbral mínimo nunca baja de 2.
 
 `tests/test_verificacion_factory_04.py` valida identidades exactas, cláusulas
 de matriz, anclas de las líneas originales y testigos conductuales reales.
@@ -42,7 +44,7 @@ testigos ficticios y promoción de cobertura. Solo fixtures sintéticos/offline.
 | `docs/experience-guardrails.md:L25-U1` | `tests/test_experience_guardrails.py::ExperienceGuardrailTests::test_equivalent_lessons_are_consolidated` | EXPERIENCIA_LOCAL | `prevencion normalizada` | NO_VERIFICABLE |
 | `docs/experience-guardrails.md:L27-U1` | `tests/test_experience_guardrails.py::ExperienceGuardrailTests::test_equivalent_lessons_are_consolidated` | EXPERIENCIA_LOCAL | `la normalizacion solo elimina diferencias de mayusculas acentos puntuacion y` | NO_VERIFICABLE |
 | `docs/experience-guardrails.md:L32-U1` | `tests/test_experience_guardrails.py::ExperienceGuardrailTests::test_single_anecdote_does_not_become_policy` | EXPERIENCIA_LOCAL | `por defecto se requieren al menos 2 lecciones y 2 fuentes distintas` | NO_VERIFICABLE |
-| `docs/experience-guardrails.md:L36-U1` | `tests/test_experience_guardrails.py::ExperienceGuardrailTests::test_single_anecdote_does_not_become_policy` | EXPERIENCIA_LOCAL | `el compilador acepta hasta 32 lecciones por llamada y el umbral nunca puede bajar` | NO_VERIFICABLE |
+| `docs/experience-guardrails.md:L36-U1` | `tests/test_verificacion_factory_04.py::VerificacionFactory04Tests::test_limites_guardrail_32` | EXPERIENCIA_LOCAL | `el compilador acepta hasta 32 lecciones por llamada y el umbral nunca puede bajar` | NO_VERIFICABLE |
 | `docs/experience-guardrails.md:L43-U1` | `tests/test_experience_guardrails.py::ExperienceGuardrailTests::test_candidate_keeps_origin_and_expected_prevention` | EXPERIENCIA_LOCAL | `fingerprint determinista del patron` | NO_VERIFICABLE |
 | `docs/experience-guardrails.md:L44-U1` | `tests/test_experience_guardrails.py::ExperienceGuardrailTests::test_candidate_keeps_origin_and_expected_prevention` | EXPERIENCIA_LOCAL | `ids y fuentes de todas las lecciones origen` | NO_VERIFICABLE |
 | `docs/experience-guardrails.md:L45-U1` | `tests/test_experience_guardrails.py::ExperienceGuardrailTests::test_candidate_keeps_origin_and_expected_prevention` | EXPERIENCIA_LOCAL | `prevencion esperada` | NO_VERIFICABLE |

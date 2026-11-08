@@ -118,6 +118,32 @@ class VerificacionFactory04Tests(unittest.TestCase):
                 self.assertEqual(result.testsRun, 1, ref + ": " + output.getvalue())
                 self.assertTrue(result.wasSuccessful(), ref + ": " + output.getvalue())
 
+    def test_limites_guardrail_32(self):
+        """Valida el máximo de 32 lecciones y el umbral mínimo de 2."""
+        from evolution.experience_guardrails import (
+            ExperienceGuardrailError,
+            compile_guardrail_candidates,
+        )
+
+        def leccion_sintetica(n):
+            return {
+                "id": f"limite-{n:03d}",
+                "project": "pl0n3r/factory",
+                "kind": "incident",
+                "occurred_at": "2026-09-20T12:00:00Z",
+                "what": "An offline synthetic regression occurred.",
+                "why": f"Independent synthetic cause {n}",
+                "prevention": "Keep the shared workflow guarded.",
+                "source": f"pl0n3r/factory#{1200+n}",
+            }
+
+        batch = [leccion_sintetica(n) for n in range(33)]
+        self.assertEqual(compile_guardrail_candidates(batch[:32]), [])
+        with self.assertRaises(ExperienceGuardrailError):
+            compile_guardrail_candidates(batch)
+        with self.assertRaises(ExperienceGuardrailError):
+            compile_guardrail_candidates(batch[:2], min_occurrences=1)
+
     def test_mutaciones_negativas(self):
         original = REPORT.read_text(encoding="utf-8")
         row = next(s for s in original.splitlines() if s.startswith("| " + BT + "docs/"))
