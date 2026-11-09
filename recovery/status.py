@@ -389,6 +389,26 @@ def _time(value: Any, label: str) -> datetime:
 
 
 def _safe(value, reason, work_class):
+    # A bounded, iterative structural preflight must not depend on Python's
+    # process-wide recursion limit or JSON encoder implementation details.
+    pending = [(value, 0)]
+    remaining = 10_000
+    while pending:
+        item, depth = pending.pop()
+        remaining -= 1
+        if remaining < 0 or depth > 64:
+            raise _Problem(reason, work_class)
+        if isinstance(item, dict):
+            children = dict.values(item)
+            count = dict.__len__(item)
+        elif isinstance(item, (list, tuple)):
+            children = item
+            count = len(item)
+        else:
+            continue
+        if count > remaining:
+            raise _Problem(reason, work_class)
+        pending.extend((child, depth + 1) for child in children)
     try:
         encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
         encoded_size = len(encoded.encode("utf-8"))
