@@ -1,4 +1,5 @@
 import copy
+import sys
 import unittest
 from pathlib import Path
 
@@ -336,6 +337,36 @@ class RecoveryStatusTests(unittest.TestCase):
         self.assertEqual(blocked["reasons"], ["DRILL_STATUS_INCOHERENT"])
         self.assertFalse(project_recovery_readiness(blocked, critical=True)["ready"])
 
+
+    def test_excessive_nesting_independent_of_recursion_limit(self):
+        original = sys.getrecursionlimit()
+        try:
+            sys.setrecursionlimit(max(original, 10_000))
+            for kind in ("backup", "drill"):
+                with self.subTest(kind=kind):
+                    receipt = []
+                    node = receipt
+                    # 256 levels serialize under the elevated Python limit;
+                    # classification must remain fail-closed and deterministic.
+                    for _ in range(256):
+                        child = []
+                        node.append(child)
+                        node = child
+                    b, d = backup(), drill()
+                    (b if kind == "backup" else d)["evidence_refs"] = receipt
+                    result = derive_recovery_health(
+                        manifest(), b, d, observed_at="2026-09-29T01:34:00Z",
+                        drill_observed_at="2026-09-29T01:32:00Z",
+                    )
+                    self.assertEqual(result["state"], "BLOCKED")
+                    self.assertEqual(result["reasons"], [
+                        "BACKUP_SENSITIVE" if kind == "backup"
+                        else "DRILL_SENSITIVE"
+                    ])
+                    self.assertFalse(project_recovery_readiness(result)["ready"])
+        finally:
+            sys.setrecursionlimit(original)
+        self.assertEqual(sys.getrecursionlimit(), original)
 
     def _check_excessive_nesting(self, kind):
         receipt = []
