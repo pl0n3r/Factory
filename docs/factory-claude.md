@@ -14,6 +14,10 @@ Plugin propio, versionado en este repo (`claude/factory-claude/`) y publicado po
 | `factory-security-audit` | Auth, multiempresa, inyección, XSS/CSRF, secretos, dependencias |
 | `factory-cross-repo-contracts` | Contratos Factory/ControlBot/FactoryRunner/AutoFactory y versionado `@vN` |
 | `factory-documentation` | README, AGENTES/CLAUDE.md, contratos, decisiones, runbooks |
+| `factory-issue-author` | Issues canónicos que pasan el validador (contrato, criterios AC, plan con `epic`, rutas) |
+| `factory-state-reconciler` | Etiquetas `estado:` coherentes con dependencias, PRs, reservas y contrato (`scripts/reconcile_estados.py`, solo lectura) |
+| `factory-multirepo-publisher` | Mismo cambio en varios repos: issue, reserva y PR por repo con sus reglas |
+| `factory-epic-splitter` | Épicas partidas en hojas con archivos propios para que siempre haya cola |
 
 ## Hooks (ejecutables, con tests en `tests/test_factory_claude.py`)
 

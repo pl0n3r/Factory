@@ -18,5 +18,17 @@
   {"prompt": "este cambio rompe la compatibilidad de un workflow reusable de Factory@v1", "skill": "factory-cross-repo-contracts"},
   {"prompt": "actualiza el README y el CLAUDE.md con el nuevo procedimiento", "skill": "factory-documentation"},
   {"prompt": "documenta la decisión técnica y el runbook sin duplicar docs", "skill": "factory-documentation"},
-  {"prompt": "escribe una receta de cocina", "skill": null}
+  {"prompt": "escribe una receta de cocina", "skill": null},
+  {"prompt": "el issue no pasa el validador y /tomar falla con criterios de aceptación inválidos", "skill": "factory-issue-author"},
+  {"prompt": "redacta un issue canónico con contrato ejecutable y rutas reclamadas", "skill": "factory-issue-author"},
+  {"prompt": "arregla el formato del cuerpo del issue para que se pueda reservar", "skill": "factory-issue-author"},
+  {"prompt": "las etiquetas de estado están desfasadas, reconcilia el tablero", "skill": "factory-state-reconciler"},
+  {"prompt": "hay chats ociosos y muchos issues marcados bloqueado con dependencias ya cerradas", "skill": "factory-state-reconciler"},
+  {"prompt": "ordena los estados disponible bloqueado reservado de los issues abiertos", "skill": "factory-state-reconciler"},
+  {"prompt": "publica este mismo cambio en todos los repos de la fábrica con un PR por repo", "skill": "factory-multirepo-publisher"},
+  {"prompt": "lleva el cambio a Condor, GrindFlow, brvtal y los demás repos con su issue y reserva", "skill": "factory-multirepo-publisher"},
+  {"prompt": "crea el issue, comenta el comando de reserva y abre el PR en cada repositorio", "skill": "factory-multirepo-publisher"},
+  {"prompt": "parte esta épica en hojas ejecutables con archivos propios", "skill": "factory-epic-splitter"},
+  {"prompt": "faltan issues asignables para los chats, divide el roadmap en tareas paralelas", "skill": "factory-epic-splitter"},
+  {"prompt": "convierte el roadmap en hojas que no choquen por archivos", "skill": "factory-epic-splitter"}
 ]
