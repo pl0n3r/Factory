@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from tempfile import gettempdir
 import re
 import stat
 import zipfile
@@ -155,16 +156,32 @@ def inspect_artifact(zip_bytes: Any, metadata: Any) -> dict[str, Any]:
     }
 
 
+def _safe_cli_file(path: Path, cap: int) -> Path:
+    """Read only regular, bounded files under cwd or the system temp workspace."""
+    if ".." in path.parts or any(part.is_symlink() for part in (path, *path.parents)):
+        raise ArtifactQAError("invalid_local_file")
+    try:
+        resolved = path.resolve(strict=True)
+        roots = (Path.cwd().resolve(strict=True), Path(gettempdir()).resolve(strict=True))
+        if not any(resolved.is_relative_to(root) for root in roots):
+            raise ArtifactQAError("invalid_local_file")
+        info = resolved.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > cap:
+            raise ArtifactQAError("invalid_local_file")
+        return resolved
+    except (OSError, RuntimeError, ValueError):
+        raise ArtifactQAError("invalid_local_file") from None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--run-metadata", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        for path, cap in ((args.artifact, MAX_ZIP), (args.run_metadata, 4096)):
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > cap:
-                raise ArtifactQAError("invalid_local_file")
-        result = inspect_artifact(args.artifact.read_bytes(), _json(args.run_metadata.read_bytes()))
+        artifact = _safe_cli_file(args.artifact, MAX_ZIP)
+        metadata = _safe_cli_file(args.run_metadata, 4096)
+        result = inspect_artifact(artifact.read_bytes(), _json(metadata.read_bytes()))
     except (ArtifactQAError, OSError):
         print(json.dumps({"status": "INVALID_EVIDENCE", "release_authorized": False}, sort_keys=True))
         return 2
