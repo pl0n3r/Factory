@@ -135,6 +135,32 @@ class EspejoReposTests(unittest.TestCase):
                 restore_one(self.store, row["key"], row["sha256"], destination)
         self.assertFalse((self.root / "escaped").exists())
 
+    def test_restore_workspace_gate_and_unreadable_paths(self) -> None:
+        """Reject absent, relative, symlinked and writable workspace roots."""
+        from scripts.espejo_repos import _safe_restore_destination, _trusted_restore_root
+
+        candidate = self.root / "fresh"
+        self.assertEqual(_trusted_restore_root(), self.root)
+        self.assertEqual(_safe_restore_destination(candidate), candidate)
+        alias = self.root / "workspace-link"
+        alias.symlink_to(self.root, target_is_directory=True)
+        writable = self.root / "world-writable"
+        writable.mkdir(mode=0o700)
+        writable.chmod(0o777)
+        try:
+            for root in ("relative", str(self.root / "missing"), str(alias), str(writable),
+                         str(self.root / ".." / self.root.name)):
+                with self.subTest(root=root):
+                    with patch.dict(os.environ, {"FACTORY_LOCAL_WORKSPACE": root}):
+                        with self.assertRaises(MirrorError):
+                            _trusted_restore_root()
+        finally:
+            writable.chmod(0o700)
+        with patch("pathlib.Path.is_symlink", side_effect=PermissionError("private")):
+            with self.assertRaises(MirrorError) as caught:
+                _safe_restore_destination(candidate)
+        self.assertNotIn("private", str(caught.exception))
+
     def test_integrity_failure_never_creates_restore_destination(self) -> None:
         row = self._export()
         manifest = json.loads(self.store.get(row["key"]))
