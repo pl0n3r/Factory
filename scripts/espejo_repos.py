@@ -288,6 +288,48 @@ def export_all(source: Source, store: ObjectStore,
     return published
 
 
+def _trusted_restore_root() -> Path:
+    """Anchor CLI output to the repository or a private caller-owned workspace."""
+    configured = os.environ.get("FACTORY_LOCAL_WORKSPACE")
+    raw = Path(configured) if configured is not None else Path(__file__).resolve(strict=True).parents[1]
+    try:
+        if (not raw.is_absolute() or ".." in raw.parts
+                or any(part.is_symlink() for part in (raw, *raw.parents))):
+            raise MirrorError("Directorio de restauración no confiable.")
+        root = raw.resolve(strict=True)
+        info = root.stat()
+        if (root == Path(root.anchor) or not stat.S_ISDIR(info.st_mode)
+                or info.st_mode & 0o022):
+            raise MirrorError("Directorio de restauración no confiable.")
+        return root
+    except MirrorError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise MirrorError("Directorio de restauración no confiable.") from None
+
+
+def _safe_restore_destination(destination: Path) -> Path:
+    """Only create a fresh child of the trusted root, never arbitrary /tmp."""
+    path = Path(destination)
+    if not path.name or path.name in (".", "..") or ".." in path.parts:
+        raise MirrorError("Destino de restauración inválido.")
+    try:
+        if any(part.is_symlink() for part in (path, *path.parents)):
+            raise MirrorError("Destino con enlace simbólico no permitido.")
+        parent = path.parent.resolve(strict=True)
+        root = _trusted_restore_root()
+        if not parent.is_dir() or not parent.is_relative_to(root):
+            raise MirrorError("Destino fuera del directorio permitido.")
+        resolved = (parent / path.name).resolve(strict=False)
+        if resolved.parent != parent or resolved.exists() or resolved.is_symlink():
+            raise MirrorError("Destino debe ser nuevo y tener directorio padre.")
+        return resolved
+    except MirrorError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise MirrorError("Destino de restauración inválido.") from None
+
+
 def restore_one(store: ObjectStore, manifest_key: str, expected_sha: str,
                 destination: Path) -> dict:
     """Restaura código y metadatos locales; NO recrea Issues/PRs en GitHub."""
@@ -335,9 +377,7 @@ def restore_one(store: ObjectStore, manifest_key: str, expected_sha: str,
                 raise ValueError("not a list")
         except (ValueError, UnicodeDecodeError):
             raise MirrorError("Metadatos de GitHub inválidos.") from None
-    destination = Path(destination)
-    if destination.exists() or not destination.parent.is_dir():
-        raise MirrorError("Destino debe ser nuevo y tener directorio padre.")
+    destination = _safe_restore_destination(destination)
     with TemporaryDirectory(prefix="mirror-restore-", dir=destination.parent) as tmp:
         temp = Path(tmp)
         bundle = temp / "repository.bundle"
