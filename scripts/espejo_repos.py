@@ -13,7 +13,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from datetime import datetime, timezone
 from typing import Protocol
 from urllib.parse import quote, urlsplit
@@ -288,6 +288,26 @@ def export_all(source: Source, store: ObjectStore,
     return published
 
 
+def _safe_restore_destination(destination: Path) -> Path:
+    """Only create a fresh child of an existing, trusted local workspace."""
+    path = Path(destination)
+    if not path.name or path.name in (".", "..") or ".." in path.parts:
+        raise MirrorError("Destino de restauración inválido.")
+    if any(part.is_symlink() for part in (path, *path.parents)):
+        raise MirrorError("Destino con enlace simbólico no permitido.")
+    try:
+        parent = path.parent.resolve(strict=True)
+        roots = (Path.cwd().resolve(strict=True), Path(gettempdir()).resolve(strict=True))
+        if not parent.is_dir() or not any(parent == root or parent.is_relative_to(root) for root in roots):
+            raise MirrorError("Destino fuera del directorio permitido.")
+        resolved = (parent / path.name).resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        raise MirrorError("Destino de restauración inválido.") from None
+    if resolved.parent != parent or resolved.exists() or resolved.is_symlink():
+        raise MirrorError("Destino debe ser nuevo y tener directorio padre.")
+    return resolved
+
+
 def restore_one(store: ObjectStore, manifest_key: str, expected_sha: str,
                 destination: Path) -> dict:
     """Restaura código y metadatos locales; NO recrea Issues/PRs en GitHub."""
@@ -335,9 +355,7 @@ def restore_one(store: ObjectStore, manifest_key: str, expected_sha: str,
                 raise ValueError("not a list")
         except (ValueError, UnicodeDecodeError):
             raise MirrorError("Metadatos de GitHub inválidos.") from None
-    destination = Path(destination)
-    if destination.exists() or not destination.parent.is_dir():
-        raise MirrorError("Destino debe ser nuevo y tener directorio padre.")
+    destination = _safe_restore_destination(destination)
     with TemporaryDirectory(prefix="mirror-restore-", dir=destination.parent) as tmp:
         temp = Path(tmp)
         bundle = temp / "repository.bundle"
