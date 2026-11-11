@@ -38,6 +38,7 @@ Label EN: `role: architecture`
 - [ ] Dependencias dirigidas y acotadas.
 - [ ] Trade-offs documentados.
 - [ ] Compatibilidad/versionado definidos.
+- [ ] ¿El contrato entre módulos conserva una fuente de verdad, dependencias upstream/downstream y límites de permisos/tenancy/flags sin duplicar endpoints/modelos? Aportar prueba o `No aplica` justificado.
 
 ## Evidencia exigida
 - Diagrama o contrato textual del límite.
