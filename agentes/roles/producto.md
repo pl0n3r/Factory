@@ -38,6 +38,7 @@ Label EN: `role: product`
 - [ ] Éxito medible.
 - [ ] Fuera de alcance claro.
 - [ ] Riesgos de producto identificados.
+- [ ] ¿El flujo completo del usuario sigue funcionando entre módulos y estados/flags? Registrar criterio observable y prueba de integración por entorno, o `No aplica` justificado.
 
 ## Evidencia exigida
 - Criterio de éxito y señal de uso.
