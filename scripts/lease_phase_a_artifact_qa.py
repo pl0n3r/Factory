@@ -158,9 +158,8 @@ def inspect_artifact(zip_bytes: Any, metadata: Any) -> dict[str, Any]:
 
 
 def _trusted_workspace() -> Path:
-    """Select an immutable code anchor or an explicit private workspace root."""
-    configured = os.environ.get("FACTORY_LOCAL_WORKSPACE")
-    raw = Path(configured) if configured is not None else Path(__file__).resolve(strict=True).parents[1]
+    """Anchor local evidence to this repository, never a caller-selected root."""
+    raw = Path(__file__).resolve(strict=True).parents[1]
     try:
         if (not raw.is_absolute() or ".." in raw.parts
                 or any(part.is_symlink() for part in (raw, *raw.parents))):

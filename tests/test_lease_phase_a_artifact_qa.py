@@ -105,9 +105,8 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
         """Enforce workspace containment even for an otherwise valid ZIP."""
         import tempfile
         from unittest.mock import patch
-        with (tempfile.TemporaryDirectory() as tmp,
-              tempfile.TemporaryDirectory() as outside_dir,
-              patch.dict("os.environ", {"FACTORY_LOCAL_WORKSPACE": str(Path(tmp).resolve())})):
+        with (tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as tmp,
+              tempfile.TemporaryDirectory() as outside_dir):
             root = Path(tmp).resolve()
             evidence = root / "evidence.zip"
             evidence.write_bytes(archive(payload()))
