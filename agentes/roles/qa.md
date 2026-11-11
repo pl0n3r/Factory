@@ -38,6 +38,7 @@ Label EN: `role: qa`
 - [ ] Casos borde/negativos.
 - [ ] Regresión estable.
 - [ ] Fixtures deterministas.
+- [ ] Contrato entre módulos verificado desde el montaje/navegación real hasta API y persistencia (o equivalente), con fuente de datos, permisos/tenancy/flags, negativos y estados vacío/error; si falta navegador/entorno, documentar qué no se pudo evaluar y no afirmar E2E productivo.
 
 ## Evidencia exigida
 - Suite relevante en verde.
