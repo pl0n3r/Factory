@@ -101,6 +101,92 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
                 _json(b"[]")
         self.assertEqual(str(caught.exception), "invalid_json")
 
+    def test_cli_paths_reject_traversal_symlink_outside_and_allow_valid(self):
+        """Enforce workspace containment even for an otherwise valid ZIP."""
+        import tempfile
+        from unittest.mock import patch
+        with (tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as tmp,
+              tempfile.TemporaryDirectory() as outside_dir):
+            root = Path(tmp).resolve()
+            evidence = root / "evidence.zip"
+            evidence.write_bytes(archive(payload()))
+            metadata = root / "metadata.json"
+            metadata.write_text(json.dumps(META), encoding="utf-8")
+            args = ["--artifact", str(evidence), "--run-metadata", str(metadata)]
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(0, main(args))
+                self.assertIn("MATCHED_CANDIDATE", output.getvalue())
+            outside = Path(outside_dir).resolve() / "valid-evidence.zip"
+            outside.write_bytes(archive(payload()))
+            alias = root / "alias.zip"
+            alias.symlink_to(evidence)
+            invalid = (str(root / ".." / root.name / "evidence.zip"),
+                       str(alias), str(outside), str(root / "absent.zip"))
+            for candidate in invalid:
+                with self.subTest(candidate=candidate):
+                    with patch("sys.stdout", new_callable=io.StringIO) as output:
+                        self.assertEqual(2, main([
+                            "--artifact", candidate, "--run-metadata", str(metadata),
+                        ]))
+                        self.assertIn("INVALID_EVIDENCE", output.getvalue())
+
+    def test_descriptor_reader_rejects_replacement_and_oversized_input(self):
+        """No-follow opens and bounded reads reject unsafe local evidence."""
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from scripts.lease_phase_a_artifact_qa import _read_cli_file, _trusted_workspace
+
+        workspace = _trusted_workspace()
+        with tempfile.TemporaryDirectory(dir=workspace) as tmp:
+            root = Path(tmp).resolve()
+            evidence = root / "sample.bin"
+            evidence.write_bytes(b"evidence")
+            self.assertEqual(_read_cli_file(evidence, 8), b"evidence")
+            for path in (root / "missing.bin", root, root / ".." / root.name / "sample.bin"):
+                with self.subTest(path=str(path)), self.assertRaises(ArtifactQAError):
+                    _read_cli_file(path, 8)
+            alias = root / "alias.bin"
+            alias.symlink_to(evidence)
+            nested_link = root / "alias-dir"
+            nested_link.symlink_to(root, target_is_directory=True)
+            for path in (alias, nested_link / "sample.bin"):
+                with self.subTest(path=str(path)), self.assertRaises(ArtifactQAError):
+                    _read_cli_file(path, 8)
+            with self.assertRaises(ArtifactQAError):
+                _read_cli_file(evidence, 7)
+            with patch("scripts.lease_phase_a_artifact_qa.os.fstat",
+                       return_value=SimpleNamespace(st_mode=stat.S_IFREG, st_size=0)):
+                with self.assertRaises(ArtifactQAError):
+                    _read_cli_file(evidence, 7)
+            with patch("scripts.lease_phase_a_artifact_qa.os.open",
+                       side_effect=PermissionError("private")):
+                with self.assertRaises(ArtifactQAError) as caught:
+                    _read_cli_file(evidence, 8)
+                self.assertNotIn("private", str(caught.exception))
+
+    def test_cli_rejects_unsafe_metadata_without_leaking_evidence(self):
+        """The second input must satisfy the same no-follow and size rules."""
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as tmp:
+            root = Path(tmp).resolve()
+            evidence = root / "valid.zip"
+            evidence.write_bytes(archive(payload()))
+            metadata = root / "metadata.json"
+            metadata.write_text(json.dumps(META), encoding="utf-8")
+            alias = root / "metadata-alias.json"
+            alias.symlink_to(metadata)
+            oversized = root / "oversized.json"
+            oversized.write_bytes(b"a" * 4097)
+            for bad in (alias, oversized, root / "missing.json", root):
+                with self.subTest(metadata=str(bad)):
+                    with patch("sys.stdout", new_callable=io.StringIO) as output:
+                        self.assertEqual(2, main([
+                            "--artifact", str(evidence), "--run-metadata", str(bad),
+                        ]))
+                        self.assertIn("INVALID_EVIDENCE", output.getvalue())
+
     def test_documented_manual_attestation_and_no_network_or_release(self):
         source = (Path(__file__).resolve().parents[1] / "scripts/lease_phase_a_artifact_qa.py").read_text()
         docs = (Path(__file__).resolve().parents[1] / "docs/lease-phase-a-artifact-qa.md").read_text()

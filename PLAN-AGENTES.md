@@ -235,6 +235,16 @@ ENTENDER → PLANIFICAR → EJECUTAR EN PASOS PEQUEÑOS → VERIFICAR → ENTREG
   - [ ] ¿Rompe algo en producción si el deploy queda a medias?
   - [ ] ¿Hay test que falle si alguien revierte este cambio?
 
+### DoD integral del producto (solo cambios de experiencia, negocio o integración)
+
+1. **Antes de programar:** leer las rutas, API, modelos y componentes existentes; declarar problema real del usuario, recorrido extremo a extremo y límites del sistema. Identificar fuente de verdad de los datos, módulos afectados, dependencias upstream/downstream, permisos, tenancy, feature flags y estados de carga, vacío, error y sin acceso.
+2. **Implementar un slice vertical:** enlazar navegación/UI → API → persistencia → UI (o contrato equivalente del producto), reutilizando rutas, modelos, servicios y componentes comunes. No crear pantallas huérfanas, endpoints duplicados ni snapshots inventados.
+3. **Demostrar el recorrido integrado antes de cerrar:** enlazar test y evidencia reproducible con datos sintéticos, negativos, vacío/error, regresiones y QA UX de móvil, teclado y layout cuando aplique. El test de un componente aislado no prueba el montaje del shell productivo, la navegación ni el servicio consumidor. Si no se dispone de navegador o entorno, declarar explícitamente el tramo **NO EVALUADO**; no atribuirle un E2E ejecutado.
+4. **Separar estados y evidencias:** `IMPLEMENTADO` (código), `CI VALIDADO` (checks terminales en SHA exacto), `PR FUSIONADO` (merge), `DESPLEGADO` (versión y entorno) y `COMPROBADO EN PRODUCCIÓN` (smoke/observador real con SHA, ruta y entorno). Ningún estado implica automáticamente el siguiente; un observador `NO_EVALUADO` no prueba producción.
+5. **Registrar lo pertinente en el PR:** impacto entre módulos, matriz **criterio → test/contrato → entorno/SHA → regresión** y evidencia de UX/negativos según riesgo. Para documentación, soporte, seguridad o tests no funcionales sin recorrido de producto, indicar `No aplica` con motivo comprobable; no crear cinco checks universales ni un subsistema de QA paralelo.
+
+**Ejemplo de integración:** un menú RRHH puede aparecer con un flag habilitado aunque la pantalla siga condicionada a `import.meta.env.DEV`. Comprobar solo el menú deja pasar el fallo: se necesita verificar navegación y montaje en **build productivo**, respuesta API y estado persistido con fixtures sintéticos; comprobar también el caso de flag apagado/sin permiso. Un `build` y sus tests verdes acreditan el **SHA probado**, no que ese recorrido esté desplegado ni comprobado en producción.
+
 ### Entregar
 - PR con la plantilla de la sección 5. Revisa el CI **una sola vez** al terminar.
 
@@ -306,6 +316,16 @@ Closes #N · Reserva: <UUID>
 ## Criterios de aceptación
 - [x] <criterio 1> — evidencia: <comando/test/URL>
 - [x] <criterio 2> — evidencia: …
+
+## Integridad del producto (solo cuando aplique)
+- Recorrido usuario y fuente de datos: <UI → API → persistencia → UI o contrato equivalente>
+- Módulos afectados y contratos upstream/downstream, permisos/tenancy y flags: <impacto y prueba>
+- Matriz criterio → test/contrato → entorno/SHA → regresión:
+  | Criterio | Test o evidencia | Entorno y SHA exacto | Regresión/negativos/UX |
+  | --- | --- | --- | --- |
+  | AC-NN | <test/URL> | <entorno@SHA> | <caso y resultado> |
+- Estados independientes: implementado / CI validado / PR fusionado / desplegado / comprobado en producción, con evidencia solo de lo ocurrido.
+- Si no afecta experiencia, negocio ni integración: `No aplica: <razón verificable>`. No añadir checks universales.
 
 ## Riesgo y reversión
 <qué puede fallar y cómo se revierte>
