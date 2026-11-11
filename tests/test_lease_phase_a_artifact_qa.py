@@ -101,6 +101,31 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
                 _json(b"[]")
         self.assertEqual(str(caught.exception), "invalid_json")
 
+    def test_cli_paths_reject_traversal_symlink_outside_and_allow_valid(self):
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence = root / "evidence.zip"
+            evidence.write_bytes(archive(payload()))
+            metadata = root / "metadata.json"
+            metadata.write_text(json.dumps(META), encoding="utf-8")
+            args = ["--artifact", str(evidence), "--run-metadata", str(metadata)]
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(0, main(args))
+                self.assertIn("MATCHED_CANDIDATE", output.getvalue())
+            alias = root / "alias.zip"
+            alias.symlink_to(evidence)
+            invalid = (str(root / ".." / root.name / "evidence.zip"),
+                       str(alias), "/etc/passwd", str(root / "absent.zip"))
+            for candidate in invalid:
+                with self.subTest(candidate=candidate):
+                    with patch("sys.stdout", new_callable=io.StringIO) as output:
+                        self.assertEqual(2, main([
+                            "--artifact", candidate, "--run-metadata", str(metadata),
+                        ]))
+                        self.assertIn("INVALID_EVIDENCE", output.getvalue())
+
     def test_documented_manual_attestation_and_no_network_or_release(self):
         source = (Path(__file__).resolve().parents[1] / "scripts/lease_phase_a_artifact_qa.py").read_text()
         docs = (Path(__file__).resolve().parents[1] / "docs/lease-phase-a-artifact-qa.md").read_text()
