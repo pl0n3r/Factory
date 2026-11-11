@@ -112,6 +112,25 @@ class EspejoReposTests(unittest.TestCase):
                          json.loads((restored / "pulls.json").read_text())[0]["title"])
         self.assertEqual(manifest_bytes, (restored / "manifest.json").read_bytes())
 
+    def test_restore_rejects_traversal_symlink_outside_and_existing_destinations(self) -> None:
+        row = self._export()
+        parent = self.root / "safe"
+        parent.mkdir()
+        valid = parent / "valid"
+        # A real path under the allowed temporary root remains supported.
+        result = restore_one(self.store, row["key"], row["sha256"], valid)
+        self.assertTrue(result["verified"])
+        outside = Path("/etc") / "unexpected-restore"
+        link = self.root / "alias"
+        link.symlink_to(parent, target_is_directory=True)
+        existing = parent / "occupied"
+        existing.mkdir()
+        for destination in (parent / ".." / "escaped", link / "linked",
+                            outside, existing):
+            with self.subTest(destination=str(destination)), self.assertRaises(MirrorError):
+                restore_one(self.store, row["key"], row["sha256"], destination)
+        self.assertFalse((self.root / "escaped").exists())
+
     def test_integrity_failure_never_creates_restore_destination(self) -> None:
         row = self._export()
         manifest = json.loads(self.store.get(row["key"]))
