@@ -102,10 +102,13 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
         self.assertEqual(str(caught.exception), "invalid_json")
 
     def test_cli_paths_reject_traversal_symlink_outside_and_allow_valid(self):
+        """Enforce workspace containment even for an otherwise valid ZIP."""
         import tempfile
         from unittest.mock import patch
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+        with (tempfile.TemporaryDirectory() as tmp,
+              tempfile.TemporaryDirectory() as outside_dir,
+              patch.dict("os.environ", {"FACTORY_LOCAL_WORKSPACE": str(Path(tmp).resolve())})):
+            root = Path(tmp).resolve()
             evidence = root / "evidence.zip"
             evidence.write_bytes(archive(payload()))
             metadata = root / "metadata.json"
@@ -114,10 +117,12 @@ class LeasePhaseAArtifactQATests(unittest.TestCase):
             with patch("sys.stdout", new_callable=io.StringIO) as output:
                 self.assertEqual(0, main(args))
                 self.assertIn("MATCHED_CANDIDATE", output.getvalue())
+            outside = Path(outside_dir).resolve() / "valid-evidence.zip"
+            outside.write_bytes(archive(payload()))
             alias = root / "alias.zip"
             alias.symlink_to(evidence)
             invalid = (str(root / ".." / root.name / "evidence.zip"),
-                       str(alias), "/etc/passwd", str(root / "absent.zip"))
+                       str(alias), str(outside), str(root / "absent.zip"))
             for candidate in invalid:
                 with self.subTest(candidate=candidate):
                     with patch("sys.stdout", new_callable=io.StringIO) as output:

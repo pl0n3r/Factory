@@ -7,7 +7,8 @@ import hashlib
 import io
 import json
 from pathlib import Path
-from tempfile import gettempdir
+from contextlib import ExitStack
+import os
 import re
 import stat
 import zipfile
@@ -156,20 +157,56 @@ def inspect_artifact(zip_bytes: Any, metadata: Any) -> dict[str, Any]:
     }
 
 
-def _safe_cli_file(path: Path, cap: int) -> Path:
-    """Read only regular, bounded files under cwd or the system temp workspace."""
-    if ".." in path.parts or any(part.is_symlink() for part in (path, *path.parents)):
+def _trusted_workspace() -> Path:
+    """Select an immutable code anchor or an explicit private workspace root."""
+    configured = os.environ.get("FACTORY_LOCAL_WORKSPACE")
+    raw = Path(configured) if configured is not None else Path(__file__).resolve(strict=True).parents[1]
+    try:
+        if (not raw.is_absolute() or ".." in raw.parts
+                or any(part.is_symlink() for part in (raw, *raw.parents))):
+            raise ArtifactQAError("invalid_local_file")
+        root = raw.resolve(strict=True)
+        info = root.stat()
+        if (root == Path(root.anchor) or not stat.S_ISDIR(info.st_mode)
+                or info.st_mode & 0o022):
+            raise ArtifactQAError("invalid_local_file")
+        return root
+    except ArtifactQAError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise ArtifactQAError("invalid_local_file") from None
+
+
+def _read_cli_file(path: Path, cap: int) -> bytes:
+    """Read bounded bytes via no-follow directory/file descriptors (no TOCTOU)."""
+    if ".." in path.parts:
         raise ArtifactQAError("invalid_local_file")
     try:
-        resolved = path.resolve(strict=True)
-        roots = (Path.cwd().resolve(strict=True), Path(gettempdir()).resolve(strict=True))
-        if not any(resolved.is_relative_to(root) for root in roots):
+        root = _trusted_workspace()
+        absolute = path if path.is_absolute() else Path.cwd() / path
+        relative = absolute.relative_to(root)
+        if not relative.parts:
             raise ArtifactQAError("invalid_local_file")
-        info = resolved.stat()
-        if not stat.S_ISREG(info.st_mode) or info.st_size > cap:
-            raise ArtifactQAError("invalid_local_file")
-        return resolved
-    except (OSError, RuntimeError, ValueError):
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        with ExitStack() as stack:
+            parent_fd = os.open(root, directory_flags)
+            stack.callback(os.close, parent_fd)
+            for component in relative.parts[:-1]:
+                parent_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+                stack.callback(os.close, parent_fd)
+            file_fd = os.open(relative.parts[-1], file_flags, dir_fd=parent_fd)
+            stack.callback(os.close, file_fd)
+            info = os.fstat(file_fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > cap:
+                raise ArtifactQAError("invalid_local_file")
+            content = os.read(file_fd, cap + 1)
+            if len(content) > cap:
+                raise ArtifactQAError("invalid_local_file")
+            return content
+    except ArtifactQAError:
+        raise
+    except (OSError, RuntimeError, ValueError, AttributeError):
         raise ArtifactQAError("invalid_local_file") from None
 
 
@@ -179,9 +216,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-metadata", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        artifact = _safe_cli_file(args.artifact, MAX_ZIP)
-        metadata = _safe_cli_file(args.run_metadata, 4096)
-        result = inspect_artifact(artifact.read_bytes(), _json(metadata.read_bytes()))
+        artifact = _read_cli_file(args.artifact, MAX_ZIP)
+        metadata = _read_cli_file(args.run_metadata, 4096)
+        result = inspect_artifact(artifact, _json(metadata))
     except (ArtifactQAError, OSError):
         print(json.dumps({"status": "INVALID_EVIDENCE", "release_authorized": False}, sort_keys=True))
         return 2

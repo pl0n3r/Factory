@@ -55,7 +55,10 @@ class EspejoReposTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
+        self.workspace = patch.dict(os.environ, {"FACTORY_LOCAL_WORKSPACE": str(self.root)})
+        self.workspace.start()
+        self.addCleanup(self.workspace.stop)
         self.repo = self.root / "source"
         self.repo.mkdir()
         self._git("init", str(self.repo))
@@ -113,6 +116,7 @@ class EspejoReposTests(unittest.TestCase):
         self.assertEqual(manifest_bytes, (restored / "manifest.json").read_bytes())
 
     def test_restore_rejects_traversal_symlink_outside_and_existing_destinations(self) -> None:
+        """Reject untrusted CLI destinations while retaining an owned workspace."""
         row = self._export()
         parent = self.root / "safe"
         parent.mkdir()
