@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
+import copy
+import hashlib
 import inspect
+import io
+import json
+from pathlib import Path
+import socket
+import subprocess
 import unittest
+import urllib.request
 from dataclasses import replace
 from unittest.mock import patch
 
+from scripts.dispatch_inventory import offline_proposal_from_snapshot
+from scripts.unattended_cycle_cli import main as offline_cycle_cli_main
+from scripts.work_inventory import CANONICAL_REPOSITORIES
 from scripts.dispatcher_v2 import (
     BlockedWork,
     Candidate,
@@ -2847,6 +2858,224 @@ No inventar contrato.
         self.assertEqual(record["selected"], "health")
         self.assertEqual(record["selected_class"], "health")
 
+
+
+
+class OfflineDispatcherWorkflowTests(unittest.TestCase):
+    """B1-F1: evidencia del selector V2, contrato de siete repos y fences."""
+
+    def fixture(self):
+        root = Path(__file__).resolve().parents[1]
+        policy_sha = hashlib.sha256((root / "PLAN-AGENTES.md").read_bytes()).hexdigest()
+        projects = []
+        for repo in CANONICAL_REPOSITORIES:
+            name = repo.split("/", 1)[1]
+            target = name == "Factory"
+            projects.append({
+                "repository_ref": repo,
+                "leaves": [{
+                    "key": "Factory#2146" if target else f"{name}#1",
+                    "title": "Fixture offline",
+                    "state": "available" if target else "completed",
+                    "priority": "critical" if target else "medium",
+                    "source_refs": ["fixture:offline"],
+                }],
+                "narrative": [],
+            })
+        return {
+            "version": 1,
+            "policy_sha": policy_sha,
+            "kill_switch": {"version": 1, "state": "RUNNING", "owner": "pl0n3r"},
+            "projects": projects,
+            "candidates": [{
+                "key": "Factory#2146",
+                "repository_ref": "pl0n3r/Factory",
+                "priority": "critical",
+                "dependencies_open": [],
+                "incompatible_reservation": False,
+                "pending_human_gate": False,
+                "claims": ["scripts/dispatcher_v2.py"],
+                "active_claims": [],
+                "requires_extra_authority": False,
+                "idempotency_key": "Factory#2146:offline:v1",
+                "policy_verified": True,
+                "evidence_verified": True,
+            }],
+            "seen_idempotency_keys": [],
+        }
+
+    @staticmethod
+    def cli(snapshot):
+        stdin, stdout = io.StringIO(json.dumps(snapshot)), io.StringIO()
+        status = offline_cycle_cli_main(
+            ["--dispatch-offline"], stdin=stdin, stdout=stdout,
+        )
+        return status, json.loads(stdout.getvalue())
+
+    def test_b1_f1_seven_repo_single_candidate_produces_one_offline_proposal(self):
+        snapshot = self.fixture()
+        with patch("scripts.dispatch_inventory.dispatch_record", wraps=dispatch_record) as rank:
+            code, result = self.cli(snapshot)
+        self.assertEqual(code, 0)
+        self.assertEqual(rank.call_count, 1, "un selector canónico")
+        self.assertEqual(result["decision"], "PROPOSED")
+        self.assertEqual(result["selected"], "Factory#2146")
+        self.assertEqual(result["policy_sha"], snapshot["policy_sha"])
+        self.assertEqual(result["sent_count"], 0)
+        self.assertEqual(result["execution"], "OFFLINE_ONLY")
+        self.assertEqual(result["authority"], "snapshot_only_not_verified_for_live")
+        order = result["order_proposal"]
+        self.assertEqual(order["kind"], "OFFLINE_PROPOSAL")
+        self.assertEqual(order["work_id"], "Factory#2146")
+        self.assertEqual(order["policy_sha"], snapshot["policy_sha"])
+        self.assertFalse(order["executed"])
+        self.assertTrue(order["order_id"].startswith("offline-"))
+        self.assertEqual(len(order["idempotency_key"]), 64)
+        self.assertEqual(self.cli(snapshot), (0, result), "sin reloj ni azar")
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github/workflows/orquestador.yml").read_text()
+        self.assertIn("python3 scripts/unattended_cycle_cli.py --dispatch-offline", workflow)
+        self.assertIn("inputs.offline_dispatch == true", workflow)
+        self.assertIn("github.event.comment.body == '/planificar'", workflow)
+
+    def test_b1_f1_invalid_inventory_and_policy_fail_closed(self):
+        variants = []
+        missing_repo = self.fixture()
+        missing_repo["projects"].pop()
+        variants.append(missing_repo)
+        invalid_policy = self.fixture()
+        invalid_policy["policy_sha"] = "0" * 64
+        variants.append(invalid_policy)
+        missing_candidate = self.fixture()
+        missing_candidate["candidates"] = []
+        variants.append(missing_candidate)
+        for variant in variants:
+            with self.subTest(variant=variant):
+                status, result = self.cli(variant)
+                self.assertEqual(status, 2)
+                self.assertEqual(result, {"error": "invalid_snapshot"})
+        duplicated = json.dumps(self.fixture()).replace(
+            '"version": 1,', '"version": 1, "version": 1,', 1,
+        )
+        stdout = io.StringIO()
+        status = offline_cycle_cli_main(
+            ["--dispatch-offline"],
+            stdin=io.StringIO(duplicated), stdout=stdout,
+        )
+        self.assertEqual(status, 2)
+        self.assertEqual(json.loads(stdout.getvalue()), {"error": "invalid_snapshot"})
+
+    def test_b1_f1_hard_gates_suppress_order(self):
+        variants = {}
+        for name in (
+            "dependencies_open", "incompatible_reservation",
+            "pending_human_gate", "active_claims", "requires_extra_authority",
+            "policy_verified", "evidence_verified",
+        ):
+            variant = self.fixture()
+            row = variant["candidates"][0]
+            row[name] = (
+                ["Factory#2128"] if name == "dependencies_open"
+                else ["scripts/dispatcher_v2.py"] if name == "active_claims"
+                else False if name in ("policy_verified", "evidence_verified")
+                else True
+            )
+            variants[name] = variant
+        paused = self.fixture()
+        paused["kill_switch"]["state"] = "PAUSED"
+        variants["kill_switch"] = paused
+        for name, variant in variants.items():
+            with self.subTest(fence=name):
+                status, result = self.cli(variant)
+                self.assertEqual(status, 0)
+                self.assertEqual(result["decision"], "BLOCKED")
+                self.assertIsNone(result["order_proposal"])
+                self.assertEqual(result["sent_count"], 0)
+
+    def test_b1_f1_replay_and_pure_execution(self):
+        snapshot = self.fixture()
+        status, first = self.cli(snapshot)
+        self.assertEqual(status, 0)
+        replay = copy.deepcopy(snapshot)
+        replay["seen_idempotency_keys"] = [
+            first["order_proposal"]["idempotency_key"]
+        ]
+        self.assertEqual(self.cli(replay)[1]["decision"], "REPLAY")
+        self.assertIsNone(self.cli(replay)[1]["order_proposal"])
+        self.assertEqual(self.cli(replay)[1]["sent_count"], 0)
+        self.assertEqual(
+            offline_proposal_from_snapshot(snapshot, policy_sha=snapshot["policy_sha"]),
+            first,
+        )
+        with (
+            patch.object(socket, "create_connection", side_effect=AssertionError("network")),
+            patch.object(urllib.request, "urlopen", side_effect=AssertionError("network")),
+            patch.object(subprocess, "run", side_effect=AssertionError("exec")),
+            patch.object(Path, "write_text", side_effect=AssertionError("write")),
+        ):
+            status, result = self.cli(snapshot)
+        self.assertEqual(status, 0)
+        self.assertEqual(result["sent_count"], 0)
+
+
+
+    def test_b1_f1_rejects_malformed_schema_fences(self):
+        variants = []
+
+        def add(name, change):
+            value = self.fixture()
+            change(value)
+            variants.append((name, value))
+
+        add("invalid_version", lambda s: s.update(version=2))
+        add("unknown_switch", lambda s: s["kill_switch"].update(state="STOPPED"))
+        add("invalid_switch_owner", lambda s: s["kill_switch"].update(owner="other"))
+        add("misordered_inventory", lambda s: s["projects"].reverse())
+        add("invalid_idempotency", lambda s: s["candidates"][0].update(
+            idempotency_key="secret=not-allowed",
+        ))
+        add("wrong_priority", lambda s: s["candidates"][0].update(priority="bad"))
+        add("nonboolean_policy", lambda s: s["candidates"][0].update(
+            policy_verified="yes",
+        ))
+        add("duplicate_dependencies", lambda s: s["candidates"][0].update(
+            dependencies_open=["Factory#1", "Factory#1"],
+        ))
+        add("traversal_claim", lambda s: s["candidates"][0].update(
+            claims=["../unsafe"],
+        ))
+        add("duplicate_claims", lambda s: s["candidates"][0].update(
+            claims=["scripts/dispatcher_v2.py", "scripts/dispatcher_v2.py"],
+        ))
+        add("missing_claims", lambda s: s["candidates"][0].update(claims=[]))
+        add("malformed_seen_key", lambda s: s.update(seen_idempotency_keys=["bad"]))
+        add("duplicate_candidates", lambda s: s["candidates"].append(
+            copy.deepcopy(s["candidates"][0]),
+        ))
+        add("unexpected_candidate_field", lambda s: s["candidates"][0].update(
+            extra="should never be accepted",
+        ))
+        add("invalid_active_claim", lambda s: s["candidates"][0].update(
+            active_claims=["../external"],
+        ))
+
+        for name, variant in variants:
+            with self.subTest(case=name):
+                status, receipt = self.cli(variant)
+                self.assertEqual(status, 2)
+                self.assertEqual(receipt, {"error": "invalid_snapshot"})
+                self.assertNotIn("secret", json.dumps(receipt))
+
+    def test_b1_f1_empty_inventory_produces_no_order(self):
+        snapshot = self.fixture()
+        snapshot["projects"][0]["leaves"][0]["state"] = "completed"
+        snapshot["candidates"] = []
+        status, receipt = self.cli(snapshot)
+        self.assertEqual(status, 0)
+        self.assertEqual(receipt["decision"], "BLOCKED")
+        self.assertEqual(receipt["reason"], "no_safe_candidate")
+        self.assertIsNone(receipt["order_proposal"])
+        self.assertEqual(receipt["sent_count"], 0)
 
 if __name__ == "__main__":
     unittest.main()
