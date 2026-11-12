@@ -3018,5 +3018,64 @@ class OfflineDispatcherWorkflowTests(unittest.TestCase):
         self.assertEqual(result["sent_count"], 0)
 
 
+
+    def test_b1_f1_rejects_malformed_schema_fences(self):
+        variants = []
+
+        def add(name, change):
+            value = self.fixture()
+            change(value)
+            variants.append((name, value))
+
+        add("invalid_version", lambda s: s.update(version=2))
+        add("unknown_switch", lambda s: s["kill_switch"].update(state="STOPPED"))
+        add("invalid_switch_owner", lambda s: s["kill_switch"].update(owner="other"))
+        add("misordered_inventory", lambda s: s["projects"].reverse())
+        add("invalid_idempotency", lambda s: s["candidates"][0].update(
+            idempotency_key="secret=not-allowed",
+        ))
+        add("wrong_priority", lambda s: s["candidates"][0].update(priority="bad"))
+        add("nonboolean_policy", lambda s: s["candidates"][0].update(
+            policy_verified="yes",
+        ))
+        add("duplicate_dependencies", lambda s: s["candidates"][0].update(
+            dependencies_open=["Factory#1", "Factory#1"],
+        ))
+        add("traversal_claim", lambda s: s["candidates"][0].update(
+            claims=["../unsafe"],
+        ))
+        add("duplicate_claims", lambda s: s["candidates"][0].update(
+            claims=["scripts/dispatcher_v2.py", "scripts/dispatcher_v2.py"],
+        ))
+        add("missing_claims", lambda s: s["candidates"][0].update(claims=[]))
+        add("malformed_seen_key", lambda s: s.update(seen_idempotency_keys=["bad"]))
+        add("duplicate_candidates", lambda s: s["candidates"].append(
+            copy.deepcopy(s["candidates"][0]),
+        ))
+        add("unexpected_candidate_field", lambda s: s["candidates"][0].update(
+            extra="should never be accepted",
+        ))
+        add("invalid_active_claim", lambda s: s["candidates"][0].update(
+            active_claims=["../external"],
+        ))
+
+        for name, variant in variants:
+            with self.subTest(case=name):
+                status, receipt = self.cli(variant)
+                self.assertEqual(status, 2)
+                self.assertEqual(receipt, {"error": "invalid_snapshot"})
+                self.assertNotIn("secret", json.dumps(receipt))
+
+    def test_b1_f1_empty_inventory_produces_no_order(self):
+        snapshot = self.fixture()
+        snapshot["projects"][0]["leaves"][0]["state"] = "completed"
+        snapshot["candidates"] = []
+        status, receipt = self.cli(snapshot)
+        self.assertEqual(status, 0)
+        self.assertEqual(receipt["decision"], "BLOCKED")
+        self.assertEqual(receipt["reason"], "no_safe_candidate")
+        self.assertIsNone(receipt["order_proposal"])
+        self.assertEqual(receipt["sent_count"], 0)
+
 if __name__ == "__main__":
     unittest.main()
