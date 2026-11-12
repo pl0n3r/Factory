@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.dispatch_inventory import OfflineDispatchError, offline_proposal_from_snapshot
+from scripts.work_inventory import WorkInventoryError
 from scripts.unattended_cycle import compose_unattended_cycle
 from scripts.unattended_guards import GuardDecision
 from scripts.unattended_watchdog import DailySummary, WatchdogDecision, WatchdogIncident
@@ -232,6 +235,10 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="JSON local dentro del checkout; si se omite, se lee stdin.",
     )
+    parser.add_argument(
+        "--dispatch-offline", action="store_true",
+        help="Propone una orden con V2 y siete repos, sin ejecutar ni enviar.",
+    )
     return parser
 
 
@@ -247,10 +254,15 @@ def main(
     try:
         raw = _read_snapshot_text(args.snapshot, input_stream)
         snapshot = json.loads(raw, object_pairs_hook=_unique_object)
-        result = cycle_from_snapshot(snapshot)
+        if args.dispatch_offline:
+            policy_sha = hashlib.sha256((ROOT / "PLAN-AGENTES.md").read_bytes()).hexdigest()
+            result = offline_proposal_from_snapshot(snapshot, policy_sha=policy_sha)
+        else:
+            result = cycle_from_snapshot(snapshot)
         if _contains_sensitive_output(result):
             raise SnapshotError("unsafe_output")
-    except (SnapshotError, json.JSONDecodeError, UnicodeError, OSError):
+    except (SnapshotError, OfflineDispatchError, WorkInventoryError,
+            json.JSONDecodeError, UnicodeError, OSError):
         _emit({"error": "invalid_snapshot"}, output_stream)
         return 2
     _emit(result, output_stream)
