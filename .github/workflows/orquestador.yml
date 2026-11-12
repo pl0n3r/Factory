@@ -7,8 +7,17 @@ on:
     inputs:
       epic:
         description: Número de Issue épico
-        required: true
+        required: false
         type: number
+      offline_dispatch:
+        description: 'Solo propuesta offline V2; nunca publica ni ejecuta'
+        required: false
+        default: false
+        type: boolean
+      offline_snapshot_json:
+        description: 'JSON sintético de siete repos con policy_sha del checkout'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,7 +32,7 @@ jobs:
       contents: read
       issues: write
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.offline_dispatch != true) ||
       (
         github.event.issue.pull_request == null &&
         github.event.comment.body == '/planificar' &&
@@ -54,3 +63,25 @@ jobs:
           [[ -n "$epic" ]] || epic="$EPIC_MANUAL"
           [[ "$epic" =~ ^[1-9][0-9]*$ ]] || { echo "::error::epic inválido"; exit 1; }
           python3 scripts/orquestar_fabrica.py sync --repo "$REPOSITORIO" --epic "$epic"
+
+
+  proponer-offline:
+    name: Selector V2 offline (sin envío)
+    if: github.event_name == 'workflow_dispatch' && inputs.offline_dispatch == true
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Descargar política exacta del evento
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Proponer una orden offline (no publicar ni ejecutar)
+        env:
+          OFFLINE_SNAPSHOT_JSON: ${{ inputs.offline_snapshot_json }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$OFFLINE_SNAPSHOT_JSON" | python3 scripts/unattended_cycle_cli.py --dispatch-offline
