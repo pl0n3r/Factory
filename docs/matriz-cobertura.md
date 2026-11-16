@@ -2,6 +2,37 @@
 
 > Corte 27-oct-2026 · SHA auditado: `main@8088e66c2366f2483d5229fc6fda8718f1ab46a0` · [#1550](https://github.com/pl0n3r/Factory/issues/1550) · V3 `999577a6-9986-4495-8049-bb120d0583e1`.
 
+## Consolidación integral de lotes 01–18 (#2035)
+
+**Base auditable:** [Factory `main@622ed2969bdc57a3842adf219a4865b3d1f59d91`](https://github.com/pl0n3r/Factory/commit/622ed2969bdc57a3842adf219a4865b3d1f59d91), anterior al PR de consolidación. La matriz conserva un universo de **1.305 filas**. Se contrastaron los identificadores exactos de la primera columna de **cada uno de los 18 informes de verificación** contra las filas `NO_VERIFICABLE` de la matriz, no solo sus recuentos.
+
+**Resultado de integridad:** **1.226 identificadores únicos en los informes = 1.226 filas `NO_VERIFICABLE`**, con **0 faltantes, 0 duplicados y 0 identificadores ajenos**. Los otros estados existentes son **78 `CUBIERTO` + 1 `NO_APLICA`**, total **78 + 1.226 + 1 = 1.305**. No se reclasifica ninguna fila, no se modifica `VERIFIED` de `tests/test_matriz_cobertura.py` ni se cambia ningún ID o brecha individual.
+
+| Lote | Hoja / informe presente en main | Filas cotejadas | Dictamen conservador |
+| ---: | --- | ---: | --- |
+| 01 | [#2017](https://github.com/pl0n3r/Factory/issues/2017) · [verificación-01.md](verificacion/verificacion-01.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 02 | [#2018](https://github.com/pl0n3r/Factory/issues/2018) · [verificación-02.md](verificacion/verificacion-02.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 03 | [#2019](https://github.com/pl0n3r/Factory/issues/2019) · [verificación-03.md](verificacion/verificacion-03.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 04 | [#2020](https://github.com/pl0n3r/Factory/issues/2020) · [verificación-04.md](verificacion/verificacion-04.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 05 | [#2021](https://github.com/pl0n3r/Factory/issues/2021) · [verificación-05.md](verificacion/verificacion-05.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 06 | [#2022](https://github.com/pl0n3r/Factory/issues/2022) · [verificación-06.md](verificacion/verificacion-06.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 07 | [#2023](https://github.com/pl0n3r/Factory/issues/2023) · [verificación-07.md](verificacion/verificacion-07.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 08 | [#2024](https://github.com/pl0n3r/Factory/issues/2024) · [verificación-08.md](verificacion/verificacion-08.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 09 | [#2025](https://github.com/pl0n3r/Factory/issues/2025) · [verificación-09.md](verificacion/verificacion-09.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 10 | [#2026](https://github.com/pl0n3r/Factory/issues/2026) · [verificación-10.md](verificacion/verificacion-10.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 11 | [#2027](https://github.com/pl0n3r/Factory/issues/2027) · [verificación-11.md](verificacion/verificacion-11.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 12 | [#2028](https://github.com/pl0n3r/Factory/issues/2028) · [verificación-12.md](verificacion/verificacion-12.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 13 | [#2029](https://github.com/pl0n3r/Factory/issues/2029) · [verificación-13.md](verificacion/verificacion-13.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 14 | [#2030](https://github.com/pl0n3r/Factory/issues/2030) · [verificación-14.md](verificacion/verificacion-14.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 15 | [#2031](https://github.com/pl0n3r/Factory/issues/2031) · [verificación-15.md](verificacion/verificacion-15.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 16 | [#2032](https://github.com/pl0n3r/Factory/issues/2032) · [verificación-16.md](verificacion/verificacion-16.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 17 | [#2033](https://github.com/pl0n3r/Factory/issues/2033) · [verificación-17.md](verificacion/verificacion-17.md) | 70 | NO_VERIFICABLE, sin promoción automática |
+| 18 | [#2034](https://github.com/pl0n3r/Factory/issues/2034) · [verificación-18.md](verificacion/verificacion-18.md) | 36 | NO_VERIFICABLE, sin promoción automática |
+
+**Regla de promoción:** un testigo local o una suite sintética no demuestra por sí misma el requisito íntegro. Una eventual promoción futura exige código causal, prueba que ejerza el **predicado completo** y PR fusionado, más evidencia de autoridad/operación externa cuando el requisito lo exija. Los informes conservan límites `LOCAL`, `PARCIAL`, `HISTORICO` y `CONTRADICE`; `UNKNOWN` o una contradicción nunca se equiparan a cobertura. Este inventario no acredita HEALTH, despliegue, permisos reales, QA de navegador, restauración ni `VALIDATED_IN_PRODUCTION`.
+
+**Validación y reversión:** se compararon conjuntos de IDs, cardinalidad y unicidad por lote con la matriz. `tests/test_matriz_cobertura.py` protege la integridad de estados, `VERIFIED` y totales; `Tests de scripts` y `Validar` se deben comprobar sobre el HEAD exacto del PR, no sobre el `main` base. El único cambio es esta consolidación documental, reversible mediante squash revert.
+
 ## Método y semántica
 
 La extracción usa **unidades identificables de comportamiento, contrato o límite**, no encabezados: listas operativas y cláusulas con predicados normativos. Los IDs `ruta:LNN-UM` señalan línea y unidad separada por punto o punto y coma bajo el SHA inmutable. La tabla de fuentes enumera 103 archivos Markdown vigentes de `docs/` más `AGENTES.md`, sin inventar filas «documento presente». Los títulos, índices y snippets en bloques de código no son requisitos. Este extractor no reemplaza una revisión humana completa de cláusulas complejas o de contexto.
