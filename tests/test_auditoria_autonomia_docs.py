@@ -46,7 +46,7 @@ class AutonomiaDocsReviewTests(unittest.TestCase):
             )
         self.assertIn("no declarados hijos directos de #2", self.informe)
         self.assertIn("no una enumeración completa del roadmap", self.informe)
-        self.assertIn("**Regla antduplicación:**", self.informe)
+        self.assertIn("**Regla antiduplicación:**", self.informe)
         self.assertIn("ni CI verde acreditan despliegue", self.informe)
 
 
