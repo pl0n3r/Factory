@@ -55,7 +55,7 @@
 - **Entregas comprobadas:** [#260](https://github.com/pl0n3r/GrindFlow/issues/260), [#270](https://github.com/pl0n3r/GrindFlow/issues/270), [#271](https://github.com/pl0n3r/GrindFlow/issues/271): `closed` / `estado: completado` en sus registros; son **ejemplos**, no una enumeración completa del roadmap ni evidencia de producto live.
 - **Pendientes comprobados:** [#1020](https://github.com/pl0n3r/GrindFlow/issues/1020), [#1021](https://github.com/pl0n3r/GrindFlow/issues/1021), [#1022](https://github.com/pl0n3r/GrindFlow/issues/1022): `open` / `estado: planificado`, derivados directamente de [#938](https://github.com/pl0n3r/GrindFlow/issues/938) y relacionados temáticamente con el roadmap, **no declarados hijos directos de #2**; requieren validador/claims y #1022 depende de #1020/#1021.
 
-**Regla antduplicación:** cotejar cada propuesta con los índices GitHub y con el contrato/parent declarado en la fuente; ninguna hoja nueva se justifica solo porque #2 esté bloqueado. Ni cierre de Issues, ni PR fusionado, ni CI verde acreditan despliegue o validación productiva.
+**Regla antiduplicación:** cotejar cada propuesta con los índices GitHub y con el contrato/parent declarado en la fuente; ninguna hoja nueva se justifica solo porque #2 esté bloqueado. Ni cierre de Issues, ni PR fusionado, ni CI verde acreditan despliegue o validación productiva.
 
 ## Materialización nueva: tres slices sin activación externa
 
