@@ -81,12 +81,19 @@ jobs:
             "pl0n3r/AutoFactory"
           )
 
+          [[ -n "${GH_TOKEN:-}" ]] || {
+            echo "::error::Falta GH_TOKEN: se prohíbe consultar Actions de consumidores anónimamente."
+            exit 1
+          }
+
           for repo in "${consumers[@]}"; do
             actions_url="https://api.github.com/repos/$repo/actions/runs"
             curl_exit=0
             http_code="$(
               curl --silent --show-error --get \
+                --connect-timeout 5 --max-time 15 \
                 -H 'Accept: application/vnd.github+json' \
+                -H "Authorization: Bearer $GH_TOKEN" \
                 --data-urlencode "created=>=$release_started_at" \
                 --data-urlencode 'status=startup_failure' \
                 --data-urlencode 'per_page=100' \

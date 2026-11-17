@@ -404,6 +404,32 @@ class ReusableReleaseWatchdogTests(unittest.TestCase):
         self.assertNotIn("encoded_repo=", workflow)
         self.assertNotIn("%2F", workflow)
 
+    def test_consumer_actions_reads_use_bearer_token_and_fail_closed(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        consumer = workflow.split(
+            'for repo in "${consumers[@]}"; do', 1
+        )[1].split('total_count="$(jq -r', 1)[0]
+
+        # El token pertenece al job; el consumidor nunca se consulta anónimo.
+        self.assertIn('GH_TOKEN: ${{ github.token }}', workflow)
+        self.assertIn('[[ -n "${GH_TOKEN:-}" ]] || {', workflow)
+        self.assertIn('se prohíbe consultar Actions de consumidores anónimamente.', workflow)
+        self.assertEqual(consumer.count('curl --silent --show-error --get'), 1)
+        self.assertEqual(consumer.count('-H "Authorization: Bearer $GH_TOKEN"'), 1)
+        self.assertLess(
+            consumer.index('-H "Authorization: Bearer $GH_TOKEN"'),
+            consumer.index('"$actions_url"'),
+        )
+
+        # Cualquier HTTP no-200 permanece bloqueante y no se acepta 403.
+        self.assertIn('--write-out \'%{http_code}\'', consumer)
+        self.assertIn('[[ "$http_code" == "200" ]] || {', consumer)
+        self.assertIn('exit 1', consumer)
+        self.assertIn('HTTP $http_code', consumer)
+        self.assertNotIn('--insecure', consumer)
+        self.assertNotIn('curl --location-trusted', consumer)
+
+
     def test_workflow_failure_message_names_repo_and_url_on_http_error(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
