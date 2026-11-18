@@ -1,5 +1,5 @@
 """Pruebas sintéticas y reversibles de auditoría fail-closed."""
-import copy
+from unittest.mock import patch
 import io
 import json
 import tempfile
@@ -54,7 +54,7 @@ class IntegralCheckpointTests(unittest.TestCase):
                 self.assertIn(reason, issues(source)[0]["reasons"])
                 self.assertNotIn("PII", json.dumps(build(source)))
         source = fixture()
-        source["repositories"][0]["leaves"].append(copy.deepcopy(source["repositories"][0]["leaves"][0]))
+        source["repositories"][0]["leaves"].append(leaf())
         self.assertEqual([x["status"] for x in issues(source)], ["unknown", "unknown"])
         source = fixture()
         source["repositories"][0]["observed_at"] = "2026-11-10T01:00:00Z"
@@ -88,15 +88,16 @@ class IntegralCheckpointTests(unittest.TestCase):
         self.assertTrue(all(r["status"] == "unknown" for r in build(source)["repositories"]))
     def test_cli_is_read_only_and_redacts_bad_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "fiction.json"
+            path = Path(tmp) / "audit-integral-fixture.json"
             path.write_text(json.dumps(fixture()), encoding="utf-8")
-            with redirect_stdout(io.StringIO()) as output:
-                self.assertEqual(main([str(path)]), 0)
+            with redirect_stdout(io.StringIO()) as output, patch("scripts.audit_integral_checkpoint.Path.cwd", return_value=Path(tmp)):
+                self.assertEqual(main([path.name]), 0)
             self.assertEqual(json.loads(output.getvalue())["repositories"][0]["status"], "auditable")
-            self.assertEqual([x.name for x in Path(tmp).iterdir()], ["fiction.json"])
+            self.assertEqual([x.name for x in Path(tmp).iterdir()], ["audit-integral-fixture.json"])
             path.write_text('{"token":"secret","user":"test@example.net"}', encoding="utf-8")
-            with redirect_stdout(io.StringIO()) as output:
-                self.assertEqual(main([str(path)]), 2)
+            with redirect_stdout(io.StringIO()) as output, patch("scripts.audit_integral_checkpoint.Path.cwd", return_value=Path(tmp)):
+                self.assertEqual(main([path.name]), 2)
+                self.assertEqual(main(["../etc/passwd"]), 2)
             self.assertNotIn("secret", output.getvalue())
             self.assertNotIn("example.net", output.getvalue())
 if __name__ == "__main__":

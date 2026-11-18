@@ -73,7 +73,7 @@ def overlaps(left, right):
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 def empty(repo, reason):
     return {"repo": repo, "sha": None, "status": "unknown", "reasons": [reason], "issues": [], "incidents": [], "refs": []}
-def leaf(raw, repo, repo_sha, as_of):
+def leaf(raw, repo_sha, as_of):
     fields(raw, {"issue", "state", "required_ac", "acceptance", "depends_on",
                  "claims", "pr", "qa", "production", "ref"})
     issue = number(raw["issue"])
@@ -181,7 +181,7 @@ def build(snapshot):
             for raw_leaf in source["leaves"]:
                 key = raw_leaf.get("issue") if isinstance(raw_leaf, dict) else None
                 try:
-                    item, deps, claims, state = leaf(raw_leaf, repo, repo_sha, as_of)
+                    item, deps, claims, state = leaf(raw_leaf, repo_sha, as_of)
                     item_key = f"{repo}#{item['issue']}"
                     if item_key in tasks:
                         tasks[item_key][0]["status"] = "unknown"
@@ -258,15 +258,15 @@ def build(snapshot):
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
     try:
-        if len(args) != 1:
+        if args != ["audit-integral-fixture.json"]:
             raise ValueError("invalid_fixture")
-        path = Path(args[0])
+        path = Path.cwd() / "audit-integral-fixture.json"
         if path.suffix != ".json" or path.is_symlink() or not path.is_file() or path.stat().st_size > 1_000_000:
             raise ValueError("invalid_fixture")
         snapshot = json.loads(path.read_text(encoding="utf-8"))
         output = build(snapshot)
         rc = 0
-    except (ValueError, OSError, UnicodeError, TypeError, json.JSONDecodeError):
+    except (ValueError, OSError, TypeError, RecursionError):
         output = {"version": 1, "status": "unknown", "reasons": ["invalid_fixture"], "repositories": [
             empty(repo, "invalid_fixture") for repo in CANONICAL_REPOSITORIES]}
         rc = 2
