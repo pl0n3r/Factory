@@ -133,30 +133,68 @@ jobs:
           esac
 
           gh api --paginate "repos/$REPOSITORY/issues?state=all&per_page=100" --jq '.[] | @json' > /tmp/all.ndjson
-          existing="$(jq -sr --arg marker "$marker" '
+
+          # La recuperación solo cierra el incidente abierto; nunca muta uno histórico.
+          open_issue="$(jq -sr --arg marker "$marker" '
             map(select(
               (.user.login // "") == "github-actions[bot]"
               and ((.body // "") | split("\n") | index($marker))
+              and .state == "open"
             ))
-            | sort_by((.state != "open"), .number)
-            | first // null
-            | if . == null then "" else [.number, .state] | @tsv end
+            | sort_by(.number) | first | .number // ""
           ' /tmp/all.ndjson)"
-          issue=""
-          issue_state=""
-          if [[ -n "$existing" ]]; then
-            IFS=$'\t' read -r issue issue_state <<<"$existing"
-          fi
-
           if [[ "$RESULT_CODE" == "0" ]]; then
-            if [[ -n "$issue" && "$issue_state" == "open" ]]; then
-              gh issue close "$issue" --repo "$REPOSITORY" --comment "$recovered_message" >/dev/null
+            if [[ -n "$open_issue" ]]; then
+              gh issue close "$open_issue" --repo "$REPOSITORY" --comment "$recovered_message" >/dev/null
             fi
             exit 0
           fi
 
+          issue="$open_issue"
+          issue_state=""
+          obsolete_issue=""
+          if [[ -n "$issue" ]]; then
+            issue_state="open"
+          else
+            # Solo es reutilizable un issue cerrado por el propio observador.
+            # state_reason=not_planned prevalece incluso si lo cerró el bot.
+            jq -sr --arg marker "$marker" '
+              map(select(
+                (.user.login // "") == "github-actions[bot]"
+                and ((.body // "") | split("\n") | index($marker))
+                and .state == "closed"
+              ))
+              | sort_by(.number) | .[]
+              | [.number, (.state_reason // "unknown")] | @tsv
+            ' /tmp/all.ndjson > /tmp/observer-closed.tsv
+            while IFS=$'\t' read -r candidate reason; do
+              [[ -n "$candidate" ]] || continue
+              if [[ "$reason" == "not_planned" ]]; then
+                [[ -n "$obsolete_issue" ]] || obsolete_issue="$candidate"
+                continue
+              fi
+              # El último evento "closed" es autoritativo; el creador del issue
+              # no acredita quién lo cerró. Un historial ausente no da permiso.
+              last_closer="$(gh api --paginate "repos/$REPOSITORY/issues/$candidate/timeline?per_page=100" --jq '.[] | @json' |
+                jq -sr '[.[] | select(.event == "closed")] | last | .actor.login // ""')"
+              if [[ "$last_closer" == "github-actions[bot]" ]]; then
+                issue="$candidate"
+                issue_state="closed"
+                break
+              fi
+              [[ -n "$obsolete_issue" ]] || obsolete_issue="$candidate"
+            done < /tmp/observer-closed.tsv
+          fi
+
           detail="$(python3 -c 'import json,sys; print(json.load(open("/tmp/factory-observation.json")).get("error",sys.argv[1]))' "$default_detail")"
           printf -v body '%s\n%s\n\n%s %s' "$marker" "$failure_message" "$detail_prefix" "$detail"
+          if [[ -z "$issue" && -n "$obsolete_issue" ]]; then
+            case "$LABEL_LANGUAGE" in
+              es) obsolete_note="Histórico cerrado respetado: #$obsolete_issue." ;;
+              en) obsolete_note="Previously closed incident respected: #$obsolete_issue." ;;
+            esac
+            printf -v body '%s\n\n%s' "$body" "$obsolete_note"
+          fi
           jq -n \
             --arg title "$title" \
             --arg body "$body" \
@@ -166,8 +204,10 @@ jobs:
             '{title:$title,body:$body,labels:[$incident,$priority,$state]}' > /tmp/incident-create.json
 
           if [[ -n "$issue" ]]; then
-            jq '. + {state:"open"}' /tmp/incident-create.json > /tmp/incident-update.json
-            gh api --method PATCH "repos/$REPOSITORY/issues/$issue" --input /tmp/incident-update.json >/dev/null
+            if [[ "$issue_state" == "closed" ]]; then
+              jq '. + {state:"open"}' /tmp/incident-create.json > /tmp/incident-update.json
+              gh api --method PATCH "repos/$REPOSITORY/issues/$issue" --input /tmp/incident-update.json >/dev/null
+            fi
             gh issue comment "$issue" --repo "$REPOSITORY" --body "$body" >/dev/null
           else
             gh api --method POST "repos/$REPOSITORY/issues" --input /tmp/incident-create.json >/dev/null
