@@ -146,7 +146,9 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertIn('--method PATCH "repos/$REPOSITORY/issues/$issue"', WF)
         self.assertIn('--method POST "repos/$REPOSITORY/issues"', WF)
         self.assertIn("github-actions[bot]", WF)
-        self.assertIn('sort_by((.state != "open"), .number)', WF)
+        self.assertIn('and .state == "open"', WF)
+        self.assertIn('and .state == "closed"', WF)
+        self.assertIn('sort_by(.number)', WF)
 
     def _simulate_incident(self, issues, timelines=None, recovered=False, language="es"):
         """Ejecuta el paso Bash real con API de issues y timelines simuladas."""
