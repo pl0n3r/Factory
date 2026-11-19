@@ -1371,23 +1371,23 @@ def shared_version_paths(raw: str | None = None) -> frozenset[str]:
     return frozenset(result)
 
 
+def _version_patch_line_kind(line: str) -> str | None:
+    """'+'/'-' si cambia una línea de versión, '' si es contexto, None si no se permite."""
+    if not line or line.startswith(("@@", "\\ ", " ")):
+        return ""
+    if line[:1] in {"+", "-"} and SHARED_VERSION_LINE_RE.fullmatch(line[1:]):
+        return line[0]
+    return None
+
+
 def is_version_only_patch(patch: Any) -> bool:
     """True solo si el patch cambia exclusivamente líneas de versión/fecha."""
     if not isinstance(patch, str) or not patch:
         return False
-    added = removed = 0
-    for line in patch.splitlines():
-        if line.startswith("@@") or line.startswith("\\ "):
-            continue
-        if line[:1] in {"+", "-"}:
-            if SHARED_VERSION_LINE_RE.fullmatch(line[1:]) is None:
-                return False
-            if line[0] == "+":
-                added += 1
-            else:
-                removed += 1
-        elif line[:1] != " " and line != "":
-            return False
+    kinds = [_version_patch_line_kind(line) for line in patch.splitlines()]
+    if None in kinds:
+        return False
+    added, removed = kinds.count("+"), kinds.count("-")
     return 1 <= added == removed and added + removed <= SHARED_VERSION_MAX_CHANGED_LINES
 
 
