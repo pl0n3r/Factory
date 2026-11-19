@@ -767,6 +767,8 @@ class GitHub:
         expected_base = base["sha"].lower()
         filenames: list[str] = []
         aliases: list[str] = []
+        shared_keys = {_collision_key(path) for path in shared_version_paths()}
+        version_only: list[str] = []
 
         def valid_file(value: Any) -> bool:
             # La API devuelve nombres literales, no patrones de claims.
@@ -796,6 +798,12 @@ class GitHub:
                 if not valid_file(name):
                     raise CoordinationError(f"PR #{number}: archivo no canónico.")
                 filenames.append(name)
+                if (
+                    _collision_key(name) in shared_keys
+                    and entry.get("status") == "modified"
+                    and is_version_only_patch(entry.get("patch"))
+                ):
+                    version_only.append(name)
                 if entry.get("status") == "renamed":
                     prev = entry.get("previous_filename")
                     if not valid_file(prev):
@@ -841,12 +849,16 @@ class GitHub:
             raise CoordinationError(
                 f"PR #{number}: HEAD/BASE cambió durante lectura de diff."
             )
-        return {
+        proof: dict[str, Any] = {
             "head_sha": expected_head,
             "base_sha": expected_base,
             "files": sorted(set(filenames) | set(aliases)),
             "complete": True,
         }
+        if version_only:
+            # Solo con consumidor opt-in (#2163); sin lista, la prueba no cambia.
+            proof["version_only_shared"] = sorted(version_only)
+        return proof
 
     def pull_files(self, number: int) -> set[str]:
         """Devuelve los archivos modificados por un Pull Request."""
@@ -1306,6 +1318,95 @@ def latest_reservation_timestamp(
         if timestamp is not None:
             latest = timestamp
     return latest
+
+
+# Archivos de versión compartidos (#2163). Un consumidor puede declarar hasta
+# cuatro rutas exactas (p. ej. config/version.php, package.json) cuyo único
+# cambio permitido sin claim es la línea de versión/fecha de release. Cualquier
+# otra línea, un patch ausente/truncado o un rename vuelve a la regla exclusiva.
+SHARED_VERSION_ENV = "FACTORY_SHARED_VERSION_PATHS"
+SHARED_VERSION_MAX_PATHS = 4
+SHARED_VERSION_MAX_CHANGED_LINES = 4
+_SHARED_VERSION_TOKEN = r"[0-9A-Za-z][0-9A-Za-z.+-]{0,39}"
+SHARED_VERSION_LINE_RE = re.compile(
+    r"\s*(?:"
+    rf"const\s+[A-Z][A-Z0-9_]*_(?:VERSION|RELEASE_DATE)\s*=\s*(['\"]){_SHARED_VERSION_TOKEN}\1\s*;"
+    rf"|\"version\"\s*:\s*\"{_SHARED_VERSION_TOKEN}\"\s*,?"
+    r")\s*"
+)
+
+
+def shared_version_paths(raw: str | None = None) -> frozenset[str]:
+    """Lee la lista cerrada de archivos de versión compartidos; vacío = regla actual."""
+    value = (os.getenv(SHARED_VERSION_ENV, "") if raw is None else raw).strip()
+    if not value:
+        return frozenset()
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise CoordinationError("shared_version_paths debe ser una lista JSON.") from exc
+    if not isinstance(data, list) or len(data) > SHARED_VERSION_MAX_PATHS:
+        raise CoordinationError(
+            f"shared_version_paths admite como máximo {SHARED_VERSION_MAX_PATHS} rutas."
+        )
+    result: set[str] = set()
+    keys: set[str] = set()
+    for path in data:
+        if (
+            not isinstance(path, str)
+            or not path
+            or path.startswith(("/", "./"))
+            or path.endswith("/")
+            or any(ch in path for ch in "*?[]\\\n\r\t\x00 ")
+            or any(part in ("", ".", "..") for part in path.split("/"))
+        ):
+            raise CoordinationError(
+                "shared_version_paths solo admite rutas exactas de archivo."
+            )
+        key = _collision_key(path)
+        if key in keys:
+            raise CoordinationError("shared_version_paths contiene rutas duplicadas.")
+        keys.add(key)
+        result.add(path)
+    return frozenset(result)
+
+
+def _version_patch_line_kind(line: str) -> str | None:
+    """'+'/'-' si cambia una línea de versión, '' si es contexto, None si no se permite."""
+    if not line or line.startswith(("@@", "\\ ", " ")):
+        return ""
+    if line[:1] in {"+", "-"} and SHARED_VERSION_LINE_RE.fullmatch(line[1:]):
+        return line[0]
+    return None
+
+
+def is_version_only_patch(patch: Any) -> bool:
+    """True solo si el patch cambia exclusivamente líneas de versión/fecha."""
+    if not isinstance(patch, str) or not patch:
+        return False
+    kinds = [_version_patch_line_kind(line) for line in patch.splitlines()]
+    if None in kinds:
+        return False
+    added, removed = kinds.count("+"), kinds.count("-")
+    return 1 <= added == removed and added + removed <= SHARED_VERSION_MAX_CHANGED_LINES
+
+
+def shared_version_exempt_files(proof: dict[str, Any]) -> set[str]:
+    """Archivos del diff que la lista compartida exime de claims y colisiones."""
+    declared = shared_version_paths()
+    if not declared:
+        return set()
+    declared_keys = {_collision_key(path) for path in declared}
+    candidates = proof.get("version_only_shared")
+    files = proof.get("files")
+    if not isinstance(candidates, list) or not isinstance(files, list):
+        return set()
+    return {
+        path for path in candidates
+        if isinstance(path, str)
+        and path in files
+        and _collision_key(path) in declared_keys
+    }
 
 
 def file_overlaps(
@@ -5445,8 +5546,26 @@ def collision_validation_errors(
                         "Composición V3: claim delegado cambió."
                     )
                 delegated.add(source_pr)
+    # #2163: un archivo de versión compartido declarado, cambiado solo en su
+    # línea de versión en AMBOS PRs, no es colisión. Si uno de los dos cambia
+    # otra línea (o su patch no es verificable), la colisión se reporta.
+    current_exempt = {
+        _collision_key(path)
+        for path in shared_version_exempt_files(proofs.get(pr_number, {}))
+    }
     errors: list[str] = []
-    for other_pr, files in file_overlaps(current_files, others).items():
+    for other_pr, overlap in file_overlaps(current_files, others).items():
+        other_exempt = {
+            _collision_key(path)
+            for path in shared_version_exempt_files(proofs.get(other_pr, {}))
+        }
+        files = [
+            path for path in overlap
+            if not (_collision_key(path) in current_exempt
+                    and _collision_key(path) in other_exempt)
+        ]
+        if not files:
+            continue
         if other_pr in delegated:
             continue
         rendered = ", ".join(files)
@@ -5543,9 +5662,11 @@ def validate_pr_claims(api: GitHub, pr_number: int) -> None:
 
     if any(not isinstance(path, str) for path in proof["files"]):
         raise CoordinationError("Diff contiene un nombre de archivo inválido.")
+    exempt = shared_version_exempt_files(proof)
     violations = sorted(
         path for path in proof["files"]
-        if not any(claims_overlap(path, claim) for claim in lease["task_paths"])
+        if path not in exempt
+        and not any(claims_overlap(path, claim) for claim in lease["task_paths"])
     )
     after = api.pull(pr_number)
     latest = active_reservation(api, issue_number)
@@ -6064,6 +6185,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         configure_profile(os.getenv("FACTORY_COORDINATION_PROFILE", "es"))
+        shared_version_paths()  # Input inválido falla cerrado antes de cualquier API.
         api = GitHub(args.repo)
         if args.command == "comentario":
             process_comment(

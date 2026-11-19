@@ -48,6 +48,11 @@ on:
         required: false
         default: 'v1'
         type: string
+      shared_version_paths:
+        description: 'Lista JSON de hasta 4 archivos de versión compartidos (#2163); vacío conserva la regla exclusiva'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -65,10 +70,15 @@ jobs:
       - env:
           OPERATION: ${{ inputs.operation }}
           PROFILE: ${{ inputs.profile }}
+          SHARED_VERSION_PATHS: ${{ inputs.shared_version_paths }}
         run: |
           set -euo pipefail
           case "$OPERATION" in comment|label|pr|issue|validate|sweep) ;; *) echo "::error::operation inválida"; exit 1 ;; esac
           case "$PROFILE" in es|en) ;; *) echo "::error::profile inválido"; exit 1 ;; esac
+          if [[ -n "$SHARED_VERSION_PATHS" ]]; then
+            jq -e 'type == "array" and length <= 4 and all(.[]; type == "string")' <<<"$SHARED_VERSION_PATHS" >/dev/null \
+              || { echo "::error::shared_version_paths inválido"; exit 1; }
+          fi
 
   comentario:
     name: Procesar comando
@@ -204,6 +214,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
           FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
+          FACTORY_SHARED_VERSION_PATHS: ${{ inputs.shared_version_paths }}
           PR: ${{ inputs.pr_number }}
           REQUIRE_RESERVATION: ${{ inputs.require_reservation }}
         run: |
