@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
+import json
+import os
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -16,6 +21,51 @@ def _indented_block(text: str, header: str, indent: int) -> str:
             break
         out.append(line)
     return "\n".join(out)
+
+
+# Cliente gh simulado: ejecuta el Bash del workflow real sin red ni GitHub.
+MOCK_GH = r'''#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+fixture = json.loads(Path(os.environ["MOCK_API_DATA"]).read_text(encoding="utf-8"))
+log_path = Path(os.environ["MOCK_CALLS"])
+
+def log(item):
+    with log_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(item) + "\n")
+
+if args[0] == "api":
+    endpoint = next((arg for arg in args if arg.startswith("repos/")), "")
+    if "--method" in args:
+        method = args[args.index("--method") + 1]
+        payload = json.loads(Path(args[args.index("--input") + 1]).read_text())
+        log({"method": method, "endpoint": endpoint, "payload": payload})
+    elif endpoint.endswith("issues?state=all&per_page=100"):
+        for issue in fixture["issues"]:
+            print(json.dumps(issue))
+    elif endpoint.endswith("/timeline?per_page=100"):
+        number = endpoint.split("/")[-2]
+        log({"method": "TIMELINE", "number": number})
+        events = fixture["timelines"].get(number, [])
+        for event in events:
+            print(json.dumps(event))
+    else:
+        sys.exit("Unrecognized API endpoint: " + endpoint)
+elif args[:2] in (["issue", "close"], ["issue", "comment"]):
+    action = args[1]
+    content_arg = "--comment" if action == "close" else "--body"
+    log({
+        "method": action.upper(),
+        "number": args[2],
+        "body": args[args.index(content_arg) + 1],
+    })
+else:
+    sys.exit("Unrecognized gh call: " + repr(args))
+'''
 
 
 class ObserverWorkflowContractTests(unittest.TestCase):
@@ -85,7 +135,8 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertIn("incident-create.json", WF)
         self.assertIn("incident-update.json", WF)
         self.assertIn('state:"open"', WF)
-        self.assertIn('"$issue_state" == "open"', WF)
+        self.assertIn('[[ -n "$open_issue" ]]', WF)
+        self.assertIn('gh issue close "$open_issue"', WF)
         self.assertIn("[AUTO] fallo de observación", WF)
         self.assertIn("[AUTO] observation failure", WF)
         self.assertIn("Observación automática falló sin mutar producción.", WF)
@@ -95,7 +146,141 @@ class ObserverWorkflowContractTests(unittest.TestCase):
         self.assertIn('--method PATCH "repos/$REPOSITORY/issues/$issue"', WF)
         self.assertIn('--method POST "repos/$REPOSITORY/issues"', WF)
         self.assertIn("github-actions[bot]", WF)
-        self.assertIn('sort_by((.state != "open"), .number)', WF)
+        self.assertIn('and .state == "open"', WF)
+        self.assertIn('and .state == "closed"', WF)
+        self.assertIn('sort_by(.number)', WF)
+
+    def _simulate_incident(self, issues, timelines=None, recovered=False, language="es"):
+        """Ejecuta el paso Bash real con API de issues y timelines simuladas."""
+        with tempfile.TemporaryDirectory(prefix="factory-observer-") as directory:
+            root = Path(directory)
+            labels = root / ".factory" / "labels"
+            labels.mkdir(parents=True)
+            catalog = [
+                {"key": "type_incident", "name": "tipo: incidente"},
+                {"key": "priority_critical", "name": "prioridad: crítica"},
+                {"key": "state_available", "name": "estado: disponible"},
+            ]
+            (labels / f"{language}.json").write_text(
+                json.dumps(catalog), encoding="utf-8"
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            gh = bin_dir / "gh"
+            gh.write_text(MOCK_GH, encoding="utf-8")
+            gh.chmod(0o755)
+            fixture = root / "api.json"
+            fixture.write_text(
+                json.dumps({"issues": issues, "timelines": timelines or {}}),
+                encoding="utf-8",
+            )
+            calls_path = root / "calls.ndjson"
+            calls_path.write_text("", encoding="utf-8")
+            (root / "factory-observation.json").write_text(
+                '{"error": "synthetic smoke failure"}', encoding="utf-8"
+            )
+            step = _indented_block(WF, "- name: Gestionar incidente automático", 6)
+            script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+            # Solo se redirigen rutas temporales; toda la lógica sigue siendo real.
+            script = script.replace("/tmp/", f"{root}/")
+            env = dict(
+                os.environ,
+                GH_TOKEN="synthetic",
+                REPOSITORY="pl0n3r/synthetic",
+                RESULT_CODE="0" if recovered else "1",
+                LABEL_LANGUAGE=language,
+                PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                MOCK_API_DATA=str(fixture),
+                MOCK_CALLS=str(calls_path),
+            )
+            result = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", script],
+                cwd=root, env=env, capture_output=True, text=True, check=False,
+            )
+            calls = [
+                json.loads(line)
+                for line in calls_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                result.returncode, 0 if recovered else 1,
+                f"stdout={result.stdout}\nstderr={result.stderr}",
+            )
+            return calls
+
+    @staticmethod
+    def _auto_issue(number, state="closed", reason="completed"):
+        return {
+            "number": number,
+            "state": state,
+            "state_reason": reason,
+            "user": {"login": "github-actions[bot]"},
+            "body": "<!-- factory-auto-observer -->\nOriginal observer failure",
+        }
+
+    @staticmethod
+    def _close(actor):
+        return {"event": "closed", "actor": {"login": actor}}
+
+    def test_incident_not_reopened_when_closed_by_non_bot(self):
+        calls = self._simulate_incident(
+            [self._auto_issue(739)],
+            {"739": [
+                self._close("github-actions[bot]"),
+                {"event": "reopened", "actor": {"login": "github-actions[bot]"}},
+                self._close("pl0n3r"),
+            ]},
+        )
+        self.assertEqual([c["method"] for c in calls], ["TIMELINE", "POST"])
+        self.assertIn("#739", calls[-1]["payload"]["body"])
+        self.assertNotIn("739", [c.get("number") for c in calls if c["method"] != "TIMELINE"])
+
+    def test_incident_not_reopened_when_closed_not_planned(self):
+        calls = self._simulate_incident(
+            [self._auto_issue(25, reason="not_planned")],
+            {"25": [self._close("github-actions[bot]")]},
+        )
+        self.assertEqual([c["method"] for c in calls], ["POST"])
+        self.assertIn("#25", calls[0]["payload"]["body"])
+
+    def test_incident_closed_by_bot_still_reopens(self):
+        calls = self._simulate_incident(
+            [self._auto_issue(41)],
+            {"41": [self._close("pl0n3r"), self._close("github-actions[bot]")]},
+        )
+        self.assertEqual([c["method"] for c in calls], ["TIMELINE", "PATCH", "COMMENT"])
+        self.assertEqual(calls[1]["endpoint"], "repos/pl0n3r/synthetic/issues/41")
+        self.assertEqual(calls[1]["payload"]["state"], "open")
+        self.assertEqual(calls[2]["number"], "41")
+
+    def test_incident_open_only_comments(self):
+        calls = self._simulate_incident([self._auto_issue(42, state="open")])
+        self.assertEqual([c["method"] for c in calls], ["COMMENT"])
+        self.assertEqual(calls[0]["number"], "42")
+
+    def test_incident_recovery_closes_only_open(self):
+        calls = self._simulate_incident(
+            [self._auto_issue(11), self._auto_issue(43, state="open")],
+            recovered=True,
+        )
+        self.assertEqual([c["method"] for c in calls], ["CLOSE"])
+        self.assertEqual(calls[0]["number"], "43")
+        self.assertIn("🟢", calls[0]["body"])
+        self.assertEqual(
+            self._simulate_incident([self._auto_issue(11)], recovered=True), []
+        )
+
+    def test_incident_obsolete_does_not_hide_other_reusable_closed_incident(self):
+        calls = self._simulate_incident(
+            [self._auto_issue(739), self._auto_issue(800)],
+            {
+                "739": [self._close("pl0n3r")],
+                "800": [self._close("github-actions[bot]")],
+            },
+        )
+        self.assertEqual(
+            [c["method"] for c in calls], ["TIMELINE", "TIMELINE", "PATCH", "COMMENT"]
+        )
+        self.assertEqual(calls[-2]["endpoint"], "repos/pl0n3r/synthetic/issues/800")
 
     def test_push_is_allowed_only_with_main_branch_guard(self):
         event_match = re.search(r'case "\$EVENT_NAME" in ([^)]+)\)', WF)
