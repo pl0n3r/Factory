@@ -62,6 +62,15 @@ if DEPENDABOT_LANE_FILE.is_file() and not DEPENDABOT_LANE_FILE.is_symlink():
         "workflow_run", "schedule"
     })
 
+# Factory#2182: caller de cierre de epicas autorizado por otra V3; solo se
+# reconoce cuando exista en el arbol, con triggers exactos.
+EPIC_CLOSURE_WORKFLOW = ".github/workflows/epic-closure.yml"
+EPIC_CLOSURE_FILE = ROOT / EPIC_CLOSURE_WORKFLOW
+if EPIC_CLOSURE_FILE.is_file() and not EPIC_CLOSURE_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[EPIC_CLOSURE_WORKFLOW] = frozenset({
+        "workflow_call", "workflow_dispatch", "schedule"
+    })
+
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)
 REQUIRED_KEEP = {

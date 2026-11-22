@@ -72,6 +72,11 @@ DEPENDABOT_LANE = WF / "dependabot-lane.yml"
 if DEPENDABOT_LANE.is_file() and not DEPENDABOT_LANE.is_symlink():
     EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"dependabot-lane.yml"})
 
+# Factory#2182: coordinacion ajena; solo inventariar al existir el workflow.
+EPIC_CLOSURE = WF / "epic-closure.yml"
+if EPIC_CLOSURE.is_file() and not EPIC_CLOSURE.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"epic-closure.yml"})
+
 HARD_GATES = (
     "factory-ci.yml", "sonar.yml", "codeql-evidence.yml",
     "seguridad.yml", "costos.yml", "unattended-watchdog.yml",
