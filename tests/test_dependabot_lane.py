@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import patch
 
-from scripts.dependabot_lane import create_followup
+from scripts.dependabot_lane import create_followup, _terminal_checks_green
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify
 
@@ -141,6 +141,19 @@ class DependabotLaneTests(unittest.TestCase):
         with self.assertRaises(LaneError):
             classify(pr(), [manifest(), manifest()], commit(),
                      repo="pl0n3r/Factory", head=SHA)
+
+    def test_check_validar_requires_trusted_github_actions_app(self):
+        check = {
+            "id": 1, "name": "Validar", "head_sha": SHA, "status": "completed",
+            "conclusion": "success", "app": {"slug": "github-actions", "id": 15368},
+        }
+        def fake_api(_repo, _path, _token, *, method="GET", payload=None):
+            return {"total_count": 1, "check_runs": [check]}
+        with patch("scripts.dependabot_lane.api", side_effect=fake_api):
+            self.assertTrue(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+            check["app"] = {"slug": "untrusted", "id": 999}
+            with self.assertRaisesRegex(LaneError, "App no autorizada"):
+                _terminal_checks_green("pl0n3r/Factory", SHA, "token")
 
     def test_seven_day_threshold(self):
         now = datetime(2026, 11, 22, tzinfo=timezone.utc)
