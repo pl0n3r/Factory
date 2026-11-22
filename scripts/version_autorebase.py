@@ -33,7 +33,7 @@ class RebaseError(RuntimeError):
 
 
 BRANCH_RE = re.compile(r"(?:trabajo|work)/issue-([1-9][0-9]*)\Z")
-REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 VERSION_LINE = re.compile(
     r"(?m)^(?P<prefix>\s*(?:const\s+[A-Z][A-Z0-9_]*_VERSION\s*=\s*|"
