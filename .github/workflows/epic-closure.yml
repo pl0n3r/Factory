@@ -1,0 +1,70 @@
+name: Hojas de cierre o mapeo de épicas
+
+on:
+  workflow_call:
+    inputs:
+      acceptance_check:
+        type: string
+        required: false
+        default: Tests de scripts
+      max_leaves:
+        type: number
+        required: false
+        default: 10
+  workflow_dispatch:
+    inputs:
+      acceptance_check:
+        description: Check real del consumidor para la aceptación ejecutable
+        type: string
+        required: false
+        default: Tests de scripts
+      max_leaves:
+        description: Máximo de hojas por ejecución (1..25)
+        type: number
+        required: false
+        default: 10
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: epic-closure-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  materializar:
+    permissions:
+      contents: read
+      issues: write
+    name: Generar hojas con preflight y kill switch
+    if: >-
+      github.repository_owner == 'pl0n3r' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_call' ||
+       github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Descargar Factory en modo read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+        with:
+          repository: pl0n3r/Factory
+          ref: ${{ github.repository == 'pl0n3r/Factory' && github.sha || 'v1' }}
+          path: .factory
+          persist-credentials: false
+      - name: Crear solo hojas preflight válidas
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPTANCE_CHECK: ${{ inputs.acceptance_check || 'Tests de scripts' }}
+          MAX_LEAVES: ${{ inputs.max_leaves || 10 }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/epic_closure_leaves.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --acceptance-check "$ACCEPTANCE_CHECK" \
+            --limit "$MAX_LEAVES" \
+            --apply
