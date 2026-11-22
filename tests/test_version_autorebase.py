@@ -2,6 +2,10 @@
 """Synthetic Git-only regression tests for Factory #2178."""
 from __future__ import annotations
 
+import io
+import json
+import sys
+from urllib.error import HTTPError
 from pathlib import Path
 import subprocess
 import tempfile
@@ -246,6 +250,146 @@ class VersionAutorebaseTests(unittest.TestCase):
             mod._safe_script("python3 -c 'print(1)'", self.repo)
         with self.assertRaises(mod.RebaseError):
             mod._safe_script("bash scripts/regenerate_index.py", self.repo)
+
+    def test_api_transport_live_guards_and_idempotent_comment(self):
+        """A fake GitHub API covers malformed identity and safe POST behavior."""
+        marker = ('<!-- factory-unattended-kill-switch '
+                  '{"version":1,"state":"RUNNING","owner":"pl0n3r"} -->')
+        tracked = {"posts": 0, "kill": marker}
+
+        def urlopen_stub(request, timeout):
+            path = request.full_url.split("https://api.github.com", 1)[1]
+            if path.startswith("/repos/pl0n3r/Factory/issues/767"):
+                result = {
+                    "state": "closed", "user": {"login": "pl0n3r"},
+                    "body": tracked["kill"],
+                }
+            elif "/git/ref/heads/" in path:
+                result = {"object": {"sha": "f" * 40}}
+            elif "/pulls?" in path:
+                result = [
+                    {"number": 7, "created_at": "2026-11-22T10:00:00Z"},
+                    {"number": 6, "created_at": "2026-11-22T09:00:00Z"},
+                ]
+            elif "/pulls/7" in path:
+                result = {"number": 7, "head": {"ref": "work/issue-7"}}
+            elif "/issues/7/comments?" in path:
+                result = [{
+                    "body": "<!-- known-result -->",
+                    "user": {"login": "github-actions[bot]"},
+                }]
+            elif "/issues/7/comments" in path and request.get_method() == "POST":
+                tracked["posts"] += 1
+                result = {"id": tracked["posts"]}
+            else:
+                raise AssertionError("Unexpected mock path: " + path)
+            return io.BytesIO(json.dumps(result).encode("utf-8"))
+
+        with self.assertRaises(mod.RebaseError):
+            mod.GitHub("invalid /repo", "token")
+        with self.assertRaises(mod.RebaseError):
+            mod.GitHub("owner/repo", "")
+        api = mod.GitHub("pl0n3r/brvtal", "fake")
+        with self.assertRaises(mod.RebaseError):
+            api.request("GET", "//other")
+        with patch.object(mod, "urlopen", side_effect=urlopen_stub):
+            self.assertTrue(api.running())
+            self.assertEqual(api.get_ref(), "f" * 40)
+            self.assertEqual([pr["number"] for pr in api.pulls()], [6, 7])
+            self.assertEqual(api.pull(7)["number"], 7)
+            self.assertEqual(len(api.comments(7)), 1)
+            api.comment_once(7, "<!-- known-result -->", "Already posted")
+            self.assertEqual(tracked["posts"], 0)
+            api.comment_once(7, "<!-- new-result -->", "Version reconciled")
+            self.assertEqual(tracked["posts"], 1)
+            tracked["kill"] = marker.replace('"RUNNING"', '"PAUSED"')
+            self.assertFalse(api.running())
+            tracked["kill"] = marker + "\n" + marker
+            self.assertFalse(api.running())
+        with patch.object(mod, "urlopen", side_effect=HTTPError(
+                "https://api.github.com", 403, "Forbidden", {}, None)):
+            with self.assertRaises(mod.RebaseError):
+                api.get_ref()
+        self.assertEqual(
+            mod.comment_marker("result", 7, "a" * 40, "b" * 40, ["package.json"]),
+            mod.comment_marker("result", 7, "a" * 40, "b" * 40, ["package.json"]),
+        )
+        candidate = {
+            "state": "open", "draft": False,
+            "mergeable_state": "dirty", "mergeable": False,
+            "head": {
+                "ref": "work/issue-7", "sha": "a" * 40,
+                "repo": {"full_name": "pl0n3r/brvtal"},
+            },
+            "base": {
+                "ref": "main", "repo": {"full_name": "pl0n3r/brvtal"},
+            },
+        }
+        self.assertTrue(mod.candidate(candidate, "pl0n3r/brvtal"))
+        self.assertFalse(mod.candidate({**candidate, "draft": True}, "pl0n3r/brvtal"))
+        self.assertFalse(mod.candidate(
+            {**candidate, "mergeable_state": "clean"}, "pl0n3r/brvtal"))
+
+    def test_trusted_main_bump_command_and_rejection(self):
+        git(self.repo, "checkout", "-B", "main", self.base)
+        scripts = self.repo / "scripts"
+        scripts.mkdir(exist_ok=True)
+        valid = scripts / "bump_versions.py"
+        valid.write_text(
+            "import os\n"
+            "from pathlib import Path\n"
+            "target = os.environ['FACTORY_TARGET_VERSION']\n"
+            "for path in ['config/version.php', 'package.json']:\n"
+            "    file = Path(path)\n"
+            "    text = file.read_text(encoding='utf-8')\n"
+            "    file.write_text(text.replace('0.1.1', target), encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        invalid = scripts / "alter_app.py"
+        invalid.write_text(
+            "from pathlib import Path\n"
+            "Path('app.txt').write_text('unallowed', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-m", "trusted script fixtures")
+        main = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "push", "origin", "HEAD:refs/heads/main")
+        good = mod.trusted_bump(
+            self.repo, main, sorted(SHARED), (0, 1, 5),
+            "python3 scripts/bump_versions.py",
+        )
+        self.assertEqual(set(good), set(SHARED))
+        self.assertTrue(all(mod.is_version_only_patch(p[p.index("@@ "):])
+                            for p in good.values()))
+        with self.assertRaises(mod.RebaseError):
+            mod.trusted_bump(
+                self.repo, main, sorted(SHARED), (0, 1, 5),
+                "", "python3 scripts/alter_app.py",
+            )
+        with self.assertRaises(mod.RebaseError):
+            mod._safe_script("python3 scripts/../escape.py", self.repo)
+
+    def test_cli_dispatch_and_fail_closed_inputs(self):
+        def argv(*items):
+            return ["version_autorebase.py", *items]
+
+        with patch.object(sys, "argv", argv(
+                "--repo", "pl0n3r/brvtal", "--repo-path", str(self.repo))):
+            self.assertEqual(mod.main(), 0)  # No opt-in is a no-op.
+        with patch.object(sys, "argv", argv(
+                "--repo", "../../bad", "--repo-path", str(self.repo),
+                "--shared-version-paths", '["package.json"]')):
+            self.assertEqual(mod.main(), 1)
+        with patch.object(sys, "argv", argv(
+                "--repo", "pl0n3r/brvtal", "--repo-path", str(self.repo),
+                "--shared-version-paths", '["package.json"]')):
+            with patch.dict("os.environ", {"GH_TOKEN": "fake"}):
+                with patch.object(mod, "reconcile", return_value={
+                    "updated": 0, "skipped": 0, "unresolved": 0,
+                }) as runner:
+                    self.assertEqual(mod.main(), 0)
+                    runner.assert_called_once()
 
     def test_workflow_inputs_permissions_and_idempotence(self):
         workflow = (ROOT / ".github/workflows/version-autorebase.yml").read_text()
