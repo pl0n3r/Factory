@@ -315,7 +315,11 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
         "### Contexto\nDependabot no debe fusionar este cambio automáticamente.\n"
         "### Alcance\nClasificar la actualización, obtener pruebas y resolver el PR.\n"
         "### Fuera de alcance\nOmitir branch protection o checks de calidad.\n"
-        "### Criterios de aceptación\n- [ ] AC-01: actualización revisada y checks requeridos verdes.\n"
+        "### Criterios de aceptación\n- [ ] [AC-01] Actualización revisada y checks requeridos verdes.\n"
+        "\n### Contrato ejecutable\n"
+        '<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"check","target":"Validar"}]} -->\n'
+        "\n### Rutas reclamadas\n"
+        "- Revisar y reemplazar por claims de archivo verificables del PR antes de solicitar /tomar.\n"
     )
     issue = api(repo, f"/repos/{repo}/issues", token, method="POST", payload={
         "title": title, "body": body,
@@ -338,6 +342,12 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         raise LaneError("No es Dependabot oficial")
     if not _switch_running(repo, token):
         raise LaneError("Interruptor global distinto de RUNNING")
+    # Las majors y los cambios de workflow deben abrir seguimiento aun si
+    # los checks faltan o están rojos. Nunca dependen de un verde para escalar.
+    if result["policy"] == "manual":
+        reason = "major" if result["major"] else "workflow"
+        issue = create_followup(repo, number, head, token, reason=reason)
+        return {**result, "auto_merge_enabled": False, "followup_required": True, "issue": issue, "reason": reason}
     green = _terminal_checks_green(repo, head, token)
     if result["policy"] == "auto" and green:
         # Se usa la política de auto-merge de GitHub, jamás un merge directo
@@ -358,10 +368,9 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         if actual.get("number") != number:
             raise LaneError("Auto-merge no confirmó la identidad del PR")
         return {**result, "auto_merge_enabled": True, "followup_required": False}
-    if result["policy"] == "manual" or (_age_over_seven_days(pr, now=now) and not green):
-        reason = "major" if result["major"] else "workflow" if result["workflow"] else "stale"
-        issue = create_followup(repo, number, head, token, reason=reason)
-        return {**result, "followup_required": True, "issue": issue, "reason": reason}
+    if _age_over_seven_days(pr, now=now) and not green:
+        issue = create_followup(repo, number, head, token, reason="stale")
+        return {**result, "followup_required": True, "issue": issue, "reason": "stale"}
     return {**result, "auto_merge_enabled": False, "followup_required": False}
 
 
