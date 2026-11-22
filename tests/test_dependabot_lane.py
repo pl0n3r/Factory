@@ -632,7 +632,8 @@ class DependabotLaneCoverageTests(unittest.TestCase):
              "major_target": None},
         ]
         for lane, reason in zip(choices, ("major", "workflow")):
-            with self.subTest(reason=reason), (
+            with (
+                self.subTest(reason=reason),
                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
                                         "GITHUB_REF": "refs/heads/main"}),
                 patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
@@ -672,7 +673,8 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                 if isinstance(check_failure, Exception):
                     raise check_failure
                 return check_failure
-            with self.subTest(check_failure=check_failure), (
+            with (
+                self.subTest(check_failure=check_failure),
                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
                                         "GITHUB_REF": "refs/heads/main"}),
                 patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
@@ -707,7 +709,8 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                    side_effect=AssertionError("unauthorized source")):
             for event, ref in (("pull_request", "refs/heads/main"),
                                ("workflow_run", "refs/heads/other")):
-                with self.subTest(event=event, ref=ref), (
+                with (
+                    self.subTest(event=event, ref=ref),
                     patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_REF": ref}),
                 ):
                     with self.assertRaises(LaneError):
@@ -759,7 +762,8 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                 reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
         for response in ({"merged": False, "sha": "b" * 40},
                          {"merged": True, "sha": "not a SHA"}):
-            with self.subTest(response=response), (
+            with (
+                self.subTest(response=response),
                 patch.dict(os.environ, environment),
                 patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
                 patch("scripts.dependabot_lane._switch_running", return_value=True),
