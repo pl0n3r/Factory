@@ -293,11 +293,26 @@ def _switch_running(repo: str, token: str) -> bool:
     markers = re.findall(r"<!--\s*factory-unattended-kill-switch\s+(\{.*?\})\s*-->", body)
     if len(markers) != 1:
         return False
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Marker con clave duplicada")
+            result[key] = value
+        return result
+
     try:
-        marker = json.loads(markers[0])
+        marker = json.loads(markers[0], object_pairs_hook=unique_fields)
     except ValueError:
         return False
-    return marker == {"version": 1, "state": "RUNNING", "owner": "pl0n3r"}
+    return (
+        isinstance(marker, dict)
+        and set(marker) == {"version", "state", "owner"}
+        and type(marker["version"]) is int
+        and marker["version"] == 1
+        and marker["state"] == "RUNNING"
+        and marker["owner"] == "pl0n3r"
+    )
 
 
 def create_followup(repo: str, number: int, head: str, token: str, *, reason: str, paths: list[str], major_target: str | None = None) -> int:
