@@ -78,6 +78,21 @@ class EpicClosureLeavesTests(unittest.TestCase):
         ]
         self.assertEqual(proposals(rows, "pl0n3r/Factory", "Tests de scripts"), [])
 
+    def test_human_gate_in_body_blocks_unlabelled_epic(self):
+        owner_gate = '<!-- factory-human-gate {"category":"factory-release"} -->'
+        candidate = issue(305, "EPIC: aprobación humana", owner_gate)
+        self.assertEqual(proposals([candidate], "pl0n3r/Factory", "Tests de scripts"), [])
+
+    def test_sensitive_epic_titles_block_without_labels(self):
+        for keyword in ("go-live", "legal", "gasto", "pagos", "privacidad", "live"):
+            with self.subTest(keyword=keyword):
+                candidate = issue(306, "EPIC: " + keyword)
+                self.assertEqual(proposals([candidate], "pl0n3r/Factory", "Tests de scripts"), [])
+
+    def test_regular_epic_still_creates_a_leaf(self):
+        candidate = issue(307, "EPIC: robustez de CI")
+        self.assertEqual(len(proposals([candidate], "pl0n3r/Factory", "Tests de scripts")), 1)
+
     def test_active_children_block_closed_children_do_not(self):
         epic = issue(401, "EPIC: review")
         self.assertEqual(proposals([epic, child(402, 401, "open")],
