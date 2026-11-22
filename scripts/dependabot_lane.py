@@ -255,6 +255,10 @@ def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
         if not isinstance(app, dict) or type(app.get("id")) is not int:
             raise LaneError("Check no autenticado")
         key = check["name"]
+        # El nombre "Validar" puede publicarlo otra App. La autoridad del
+        # gate solo procede de github-actions (ID canónico de politica_kit).
+        if key == "Validar" and (app.get("slug") != "github-actions" or app["id"] != 15368):
+            raise LaneError("Validar emitido por App no autorizada")
         # El job reconciliador mira checks de su propio HEAD mientras corre:
         # su propio check (no requerido) no puede convertirse en deadlock.
         if key == "Reconciliar Dependabot" or key.endswith(" / Reconciliar Dependabot"):
