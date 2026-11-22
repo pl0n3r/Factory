@@ -426,6 +426,13 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
     if result["policy"] == "manual":
         reason = "major" if result["major"] else "workflow"
         issue = create_followup(repo, number, head, token, reason=reason, major_target=result.get("major_target"))
+        if _age_over_seven_days(pr, now=now):
+            try:
+                green_manual = _terminal_checks_green(repo, head, token)
+            except LaneError:
+                green_manual = False
+            if not green_manual:
+                comment_stale(repo, number, issue, token)
         return {**result, "auto_merge_enabled": False, "followup_required": True, "issue": issue, "reason": reason}
     # Una indisponibilidad de los checks impide merge, pero si el PR supera
     # siete días habilita solo un seguimiento auditable.
