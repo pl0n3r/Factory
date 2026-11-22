@@ -111,6 +111,7 @@ class UiDesignGateTests(unittest.TestCase):
         for paths in (
             ["scripts/example.py", "tests/example.py"],
             ["scripts/worker.js", "backend/index.ts"],
+            ["frontend/src/api/client.js", "frontend/src/api/transport.ts"],
             ["docs/operations.md"],
         ):
             with self.subTest(paths=paths):

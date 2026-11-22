@@ -31,6 +31,8 @@ _UI_PATH_PARTS = frozenset({
     "frontend", "ui", "components", "pages", "screens", "views",
     "templates", "assets", "public", "static", "client", "web",
 })
+_UI_SCRIPT_VISUAL_PARTS = _UI_PATH_PARTS - {"frontend", "client", "web"}
+_UI_SCRIPT_ENTRIES = frozenset({"app.js", "main.js", "admin.js", "index.js", "page.js", "layout.js"})
 _UI_CAPTURE = re.compile(r"capturas?|screenshots?", re.IGNORECASE)
 _UI_BEFORE_AFTER = re.compile(
     r"(?:antes\s*(?:/|y|-)\s*despu[eé]s|before\s*(?:/|and|-)\s*after)",
@@ -51,8 +53,9 @@ def _ui_claimed_paths(paths: list[str]) -> list[str]:
         elif lower.endswith(_UI_SUFFIXES):
             result.append(path)
         elif lower.endswith(_UI_SCRIPT_SUFFIXES) and (
-            any(p in _UI_PATH_PARTS for p in parts[:-1])
-            or len(parts) == 1 and parts[0] in {"app.js", "main.js", "admin.js", "index.js"}
+            any(p in _UI_SCRIPT_VISUAL_PARTS for p in parts[:-1])
+            or parts[-1] in _UI_SCRIPT_ENTRIES
+            and (len(parts) == 1 or any(p in {"src", "frontend", "client", "web"} for p in parts[:-1]))
         ):
             result.append(path)
     return result
