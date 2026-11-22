@@ -272,6 +272,55 @@ def _switch_running(repo: str, token: str) -> bool:
     return marker == {"version": 1, "state": "RUNNING", "owner": "pl0n3r"}
 
 
+def create_followup(repo: str, number: int, head: str, token: str, *, reason: str) -> int:
+    """Issue idempotente; no conceder autorización de implementación desde metadata de PR."""
+    if reason not in ("major", "workflow", "stale"):
+        raise LaneError("Motivo inválido de escalamiento")
+    marker = (
+        '<!-- factory-dependabot-followup '
+        + json.dumps({"version": 1, "repo": repo, "pr": number}, sort_keys=True, separators=(",", ":"))
+        + ' -->'
+    )
+    q = quote(f'repo:{repo} is:issue "factory-dependabot-followup" in:body', safe="")
+    response = api(repo, "/search/issues?q=" + q + "&per_page=100", token)
+    if not isinstance(response, dict) or response.get("incomplete_results") is not False:
+        raise LaneError("Search Issues no verificable")
+    count, items = response.get("total_count"), response.get("items")
+    if type(count) is not int or count > 100 or not isinstance(items, list) or len(items) != count:
+        raise LaneError("Search Issues truncado")
+    for item in items:
+        if isinstance(item, dict) and marker in (item.get("body") or ""):
+            issue_number = item.get("number")
+            if type(issue_number) is not int:
+                raise LaneError("Issue de seguimiento inválido")
+            return issue_number
+    title = (
+        f"Actualizar dependencias a versión mayor (Dependabot PR #{number})"
+        if reason == "major" else
+        f"Revisar workflow de dependencias (Dependabot PR #{number})"
+        if reason == "workflow" else
+        f"Desbloquear Dependabot sin CI verde tras 7 días (PR #{number})"
+    )
+    body = (
+        f"{marker}\n\nOrigen: https://github.com/{repo}/pull/{number}\n"
+        f"HEAD observado: {head}\nMotivo: {reason}.\n\n"
+        "Requiere revisión y contrato ejecutable antes de la reserva/implementación. "
+        "No hereda ninguna exención de CI, seguridad, datos ni release.\n\n"
+        "### Contexto\nDependabot no debe fusionar este cambio automáticamente.\n"
+        "### Alcance\nClasificar la actualización, obtener pruebas y resolver el PR.\n"
+        "### Fuera de alcance\nOmitir branch protection o checks de calidad.\n"
+        "### Criterios de aceptación\n- [ ] AC-01: actualización revisada y checks requeridos verdes.\n"
+    )
+    issue = api(repo, f"/repos/{repo}/issues", token, method="POST", payload={
+        "title": title, "body": body,
+        "labels": ["tipo: mejora", "prioridad: media", "estado: bloqueado"],
+    })
+    number_created = issue.get("number") if isinstance(issue, dict) else None
+    if type(number_created) is not int:
+        raise LaneError("Issue de seguimiento no confirmado")
+    return number_created
+
+
 def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -> dict:
     """Privilegiado: solo desde workflow_run sobre main, jamás checkout de PR."""
     if os.environ.get("GITHUB_EVENT_NAME") != "workflow_run":
@@ -285,12 +334,29 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         raise LaneError("Interruptor global distinto de RUNNING")
     green = _terminal_checks_green(repo, head, token)
     if result["policy"] == "auto" and green:
-        # Auto-merge se ejecuta por GitHub respetando las reglas de rama.
-        # No usar --admin, token de PR ni forzar integración.
-        raise LaneError("Auto-merge requiere aprobación de caller privilegiado y protección de rama; no escribir sin autorización del workflow consumidor")
+        # Se usa la política de auto-merge de GitHub, jamás un merge directo
+        # o --admin. La protección de rama mantiene su propia autoridad.
+        latest, last_result = read_exact(repo, number, head, token)
+        if last_result != result or not _terminal_checks_green(repo, head, token):
+            raise LaneError("Evidencia de PR/checks cambió antes de auto-merge")
+        node_id = latest.get("node_id")
+        if not isinstance(node_id, str) or not node_id.startswith("PR_"):
+            raise LaneError("PR GraphQL ID inválido")
+        response = api(repo, "/graphql", token, method="POST", payload={
+            "query": "mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){pullRequest{number autoMergeRequest{enabledAt}}}}",
+            "variables": {"id": node_id},
+        })
+        if not isinstance(response, dict) or response.get("errors") or not isinstance(response.get("data"), dict):
+            raise LaneError("GitHub rechazó la habilitación de auto-merge")
+        actual = (((response["data"].get("enablePullRequestAutoMerge") or {}).get("pullRequest")) or {})
+        if actual.get("number") != number:
+            raise LaneError("Auto-merge no confirmó la identidad del PR")
+        return {**result, "auto_merge_enabled": True, "followup_required": False}
     if result["policy"] == "manual" or (_age_over_seven_days(pr, now=now) and not green):
-        return {**result, "followup_required": True, "reason": "manual" if result["policy"] == "manual" else "stale"}
-    return {**result, "followup_required": False}
+        reason = "major" if result["major"] else "workflow" if result["workflow"] else "stale"
+        issue = create_followup(repo, number, head, token, reason=reason)
+        return {**result, "followup_required": True, "issue": issue, "reason": reason}
+    return {**result, "auto_merge_enabled": False, "followup_required": False}
 
 
 def main(argv: list[str] | None = None) -> int:
