@@ -240,6 +240,10 @@ def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
         if not isinstance(app, dict) or type(app.get("id")) is not int:
             raise LaneError("Check no autenticado")
         key = check["name"]
+        # El job reconciliador mira checks de su propio HEAD mientras corre:
+        # su propio check (no requerido) no puede convertirse en deadlock.
+        if key == "Reconciliar Dependabot" or key.endswith(" / Reconciliar Dependabot"):
+            continue
         if key not in latest or check["id"] > latest[key]["id"]:
             latest[key] = check
     if "Validar" not in latest or latest["Validar"].get("conclusion") != "success":
@@ -261,6 +265,8 @@ def _switch_running(repo: str, token: str) -> bool:
         return False
     body = switch.get("body")
     if not isinstance(body, str):
+        return False
+    if len(re.findall(r"<!--\s*factory-unattended-kill-switch\b", body, re.I)) != 1:
         return False
     markers = re.findall(r"<!--\s*factory-unattended-kill-switch\s+(\{.*?\})\s*-->", body)
     if len(markers) != 1:
