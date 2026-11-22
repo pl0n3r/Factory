@@ -25,7 +25,7 @@ MAX_INPUT_CHARS = 200_000
 
 # Clasificador conservador: .js/.ts solo cuando su ruta identifica una pantalla
 # o un frontend; scripts internos de automatización no son UI.
-_UI_SUFFIXES = (".css", ".scss", ".sass", ".less", ".html", ".htm", ".twig", ".tsx", ".jsx", ".vue", ".svelte")
+_UI_SUFFIXES = (".css", ".scss", ".sass", ".less", ".html", ".htm", ".twig", ".blade.php", ".tsx", ".jsx", ".vue", ".svelte")
 _UI_SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs", ".ts")
 _UI_PATH_PARTS = frozenset({
     "frontend", "ui", "components", "pages", "screens", "views",

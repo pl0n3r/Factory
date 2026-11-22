@@ -4,12 +4,30 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import unittest
 from pathlib import Path
 
 from scripts import issue_contract_preflight as preflight
-from tests.test_issue_contract_preflight import VALID_BODY
+VALID_BODY = """### Contexto
+Contexto de prueba.
+
+### Alcance
+Validación offline.
+
+### Fuera de alcance
+Sin red.
+
+### Criterios de aceptación
+- [ ] [AC-01] criterio de prueba.
+
+### Contrato ejecutable
+<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"test","target":"tests/test_ui_design_gate.py::UiDesignGateTests::test_non_ui_issue_keeps_contract_and_cli_behavior"}]} -->
+
+### Rutas reclamadas
+- scripts/example.py
+
+<!-- factory-plan-task {"version":1,"epic":699,"task_key":"UI_DESIGN_TEST","order":1,"owner":"pl0n3r","roles":["qa"],"depends_on":[],"paths":["scripts/example.py","tests/example.py"]} -->
+"""
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +66,7 @@ class UiDesignGateTests(unittest.TestCase):
             "symfony/templates/signup.html.twig",
             "resources/views/signup.blade.php",
         )
-        for path in paths[:-1]:
+        for path in paths:
             with self.subTest(path=path):
                 with self.assertRaises(preflight.IssueContractPreflightError) as error:
                     preflight.evaluate_issue_body(issue_with_claims([path]))
