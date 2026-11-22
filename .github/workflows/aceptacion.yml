@@ -77,6 +77,8 @@ jobs:
         if: steps.dependabot-lane.outputs.approved != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          # El checkout raíz borra .factory; aislar el candidato preserva el kit.
+          path: .candidate
           persist-credentials: false
 
       - name: Construir contexto de aceptación
@@ -156,6 +158,11 @@ jobs:
             sleep "$wait_seconds"
           done
 
+          # Ejecutar tests del PR desde su checkout, sin darles credenciales.
+          # Exigir que el PR no pueda reemplazar el alias del kit confiable.
+          [[ ! -e .candidate/.factory && ! -L .candidate/.factory ]] || { echo "::error::Candidato contiene ruta .factory"; exit 1; }
+          ln -s ../.factory .candidate/.factory
+          cd .candidate
           python3 .factory/scripts/aceptacion_kit.py < /tmp/acceptance.json | tee /tmp/acceptance-result.json
           {
             printf '### Criterios de aceptación\n\n```json\n'

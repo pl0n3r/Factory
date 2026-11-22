@@ -55,6 +55,38 @@ class AcceptanceWorkflowContractTests(unittest.TestCase):
         self.assertLess(reusable.index(checks_only), loop_end)
         self.assertGreater(reusable.index(final), loop_end)
 
+    def test_candidate_checkout_preserves_factory_kit(self):
+        """Un checkout de PR no puede destruir .factory antes de validar aceptación."""
+        reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
+        candidate_start = "      - name: Descargar candidato\n"
+        self.assertEqual(reusable.count(candidate_start), 1)
+        candidate = reusable.split(candidate_start, 1)[1].split("\n      - name: ", 1)[0]
+
+        self.assertIn("path: .factory", reusable)
+        self.assertIn("path: .candidate", candidate)
+        self.assertIn("persist-credentials: false", candidate)
+        self.assertNotIn("path: .factory", candidate)
+        self.assertLess(
+            reusable.index("      - name: Descargar kit publicado"),
+            reusable.index(candidate_start),
+        )
+        self.assertIn('sys.path.insert(0, ".factory")', reusable)
+        self.assertIn("from scripts.coordinar_trabajo import latest_reservation", reusable)
+        # El runner de tests usa Path.cwd(): sin cd .candidate, test targets
+        # se buscarían erróneamente en la raíz vacía del workspace.
+        self.assertEqual(reusable.count("          cd .candidate\n"), 1)
+        self.assertIn("ln -s ../.factory .candidate/.factory", reusable)
+        self.assertIn("! -e .candidate/.factory && ! -L .candidate/.factory", reusable)
+        self.assertIn(
+            "cd .candidate\n"
+            "          python3 .factory/scripts/aceptacion_kit.py",
+            reusable,
+        )
+        self.assertLess(
+            reusable.index("python3 .factory/scripts/aceptacion_kit.py --checks-only"),
+            reusable.index("cd .candidate"),
+        )
+
     def test_documentation_explains_bounded_wait_without_reruns(self):
         doc = (ROOT / "docs/aceptacion-ejecutable.md").read_text(encoding="utf-8")
 
