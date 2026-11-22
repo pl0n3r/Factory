@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import unittest
+from unittest.mock import patch
+
+from scripts.dependabot_lane import create_followup
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify
 
@@ -73,6 +76,34 @@ class DependabotLaneTests(unittest.TestCase):
                         repo="pl0n3r/Factory", head=SHA)
         self.assertEqual(lane["policy"], "manual")
         self.assertTrue(lane["major"])
+
+    def test_major_generates_canonical_issue_once(self):
+        repo = "pl0n3r/Factory"
+        created = []
+
+        def fake_api(_repo, path, _token, *, method="GET", payload=None):
+            self.assertEqual(_repo, repo)
+            if method == "GET":
+                return {"incomplete_results": False, "total_count": 0, "items": []}
+            created.append(payload)
+            return {"number": 2180}
+
+        with patch("scripts.dependabot_lane.api", side_effect=fake_api):
+            number = create_followup(repo, 2107, SHA, "token", reason="major")
+        self.assertEqual(number, 2180)
+        self.assertEqual(len(created), 1)
+        self.assertIn("versión mayor", created[0]["title"])
+        self.assertIn("factory-dependabot-followup", created[0]["body"])
+        self.assertIn("factory-acceptance", created[0]["body"])
+        self.assertIn("estado: bloqueado", created[0]["labels"])
+
+        marker = '<!-- factory-dependabot-followup {"pr":2107,"repo":"pl0n3r/Factory","version":1} -->'
+        def existing(*_args, **_kwargs):
+            self.assertEqual(_kwargs.get("method", "GET"), "GET")
+            return {"incomplete_results": False, "total_count": 1,
+                    "items": [{"number": 2180, "body": marker}]}
+        with patch("scripts.dependabot_lane.api", side_effect=existing):
+            self.assertEqual(create_followup(repo, 2107, SHA, "token", reason="major"), 2180)
 
     def test_workflow_pins_require_manual_review(self):
         lane = classify(pr(), [workflow()], commit(),
