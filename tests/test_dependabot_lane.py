@@ -251,7 +251,7 @@ class DependabotLaneTests(unittest.TestCase):
         self.assertEqual(workflow.count("ref: ${{ job.workflow_sha }}"), 6)
         self.assertEqual(workflow.count("repository: ${{ job.workflow_repository }}"), 6)
         for name in ("dependabot", "dependabot-sweep"):
-            block = workflow.split(f"  {name}:\n", 1)[1].split("\n  ", 1)[0]
+            block = workflow.split(f"  {name}:\n", 1)[1].split("\n  sweep:\n", 1)[0]
             self.assertIn("repository: pl0n3r/factory", block)
             self.assertIn("ref: v1", block)
             self.assertNotIn("github.event.pull_request.head.sha", block.split("steps:", 1)[0])
