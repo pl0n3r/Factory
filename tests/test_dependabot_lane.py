@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.dependabot_lane import create_followup, _terminal_checks_green, reconcile, comment_stale, sweep
+from scripts.dependabot_lane import create_followup, _terminal_checks_green, _switch_running, reconcile, comment_stale, sweep
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify
 
@@ -185,6 +185,21 @@ class DependabotLaneTests(unittest.TestCase):
             result = reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
         self.assertFalse(result["auto_merge_enabled"])
         self.assertFalse(result["followup_required"])
+
+    def test_kill_switch_rejects_duplicate_keys_and_bool_version(self):
+        base = {
+            "number": 767, "state": "closed",
+            "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
+            "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
+            "user": {"login": "pl0n3r"},
+            "body": '<!-- factory-unattended-kill-switch {"version":1,"state":"RUNNING","owner":"pl0n3r"} -->',
+        }
+        with patch("scripts.dependabot_lane.api", return_value=base):
+            self.assertTrue(_switch_running("pl0n3r/Factory", "token"))
+            base["body"] = '<!-- factory-unattended-kill-switch {"version":true,"state":"RUNNING","owner":"pl0n3r"} -->'
+            self.assertFalse(_switch_running("pl0n3r/Factory", "token"))
+            base["body"] = '<!-- factory-unattended-kill-switch {"version":1,"state":"PAUSED","state":"RUNNING","owner":"pl0n3r"} -->'
+            self.assertFalse(_switch_running("pl0n3r/Factory", "token"))
 
     def test_stale_comment_is_idempotent(self):
         posted = []
