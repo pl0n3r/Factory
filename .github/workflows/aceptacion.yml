@@ -25,6 +25,7 @@ jobs:
       contents: read
       issues: read
       checks: read
+      pull-requests: read
     steps:
       - name: Rechazar eventos privilegiados
         env:
@@ -33,7 +34,31 @@ jobs:
           set -euo pipefail
           [[ "$EVENT_NAME" == "pull_request" ]] || { echo "::error::Aceptación solo acepta pull_request; recibido: $EVENT_NAME"; exit 1; }
 
+      # El kit se descarga antes de derivar issue; nunca se ejecuta código
+      # del PR Dependabot y la clasificación ocurre en un runner read-only.
+      - name: Descargar kit publicado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/factory
+          ref: ${{ github.repository == 'pl0n3r/Factory' && github.event.pull_request.head.sha || 'v1' }}
+          path: .factory
+          persist-credentials: false
+
+      - name: Verificar carril oficial Dependabot
+        id: dependabot-lane
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/dependabot_lane.py classify --repo "$REPOSITORY" --pr "$PR" --head "$HEAD"
+          echo 'approved=true' >> "$GITHUB_OUTPUT"
+
       - name: Validar contexto PR
+        if: steps.dependabot-lane.outputs.approved != 'true'
         env:
           EVENT_PR: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.head_ref }}
@@ -50,19 +75,13 @@ jobs:
           echo "ISSUE_NUMBER=$issue" >> "$GITHUB_ENV"
 
       - name: Descargar candidato
+        if: steps.dependabot-lane.outputs.approved != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          persist-credentials: false
-
-      - name: Descargar kit publicado
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: pl0n3r/factory
-          ref: v1
-          path: .factory
           persist-credentials: false
 
       - name: Construir contexto de aceptación
+        if: steps.dependabot-lane.outputs.approved != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -94,6 +113,7 @@ jobs:
           PY
 
       - name: Esperar checks requeridos y verificar criterios
+        if: steps.dependabot-lane.outputs.approved != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
