@@ -95,13 +95,15 @@ class DependabotLaneTests(unittest.TestCase):
             return {"number": 2180}
 
         with patch("scripts.dependabot_lane.api", side_effect=fake_api):
-            number = create_followup(repo, 2107, SHA, "token", reason="major")
+            number = create_followup(repo, 2107, SHA, "token", reason="major", paths=["package-lock.json"])
         self.assertEqual(number, 2180)
         self.assertEqual(len(created), 1)
         self.assertIn("Actualizar dependencias", created[0]["title"])
         self.assertIn("factory-dependabot-followup", created[0]["body"])
         self.assertIn("factory-acceptance", created[0]["body"])
-        self.assertIn("estado: bloqueado", created[0]["labels"])
+        self.assertIn("estado: disponible", created[0]["labels"])
+        self.assertIn("factory-plan-task", created[0]["body"])
+        self.assertIn("package-lock.json", created[0]["body"])
 
         marker = '<!-- factory-dependabot-followup {"pr":2107,"repo":"pl0n3r/Factory","version":1} -->'
         def existing(*_args, **_kwargs):
@@ -109,7 +111,7 @@ class DependabotLaneTests(unittest.TestCase):
             return {"incomplete_results": False, "total_count": 1,
                     "items": [{"number": 2180, "body": marker}]}
         with patch("scripts.dependabot_lane.api", side_effect=existing):
-            self.assertEqual(create_followup(repo, 2107, SHA, "token", reason="major"), 2180)
+            self.assertEqual(create_followup(repo, 2107, SHA, "token", reason="major", paths=["package-lock.json"]), 2180)
 
     def test_workflow_pins_require_manual_review(self):
         lane = classify(pr(), [workflow()], commit(),
