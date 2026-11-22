@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.dependabot_lane import create_followup, _terminal_checks_green
+from scripts.dependabot_lane import create_followup, _terminal_checks_green, reconcile
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify
 
@@ -142,6 +143,17 @@ class DependabotLaneTests(unittest.TestCase):
         with self.assertRaises(LaneError):
             classify(pr(), [manifest(), manifest()], commit(),
                      repo="pl0n3r/Factory", head=SHA)
+
+    def test_workflow_run_ignores_human_pr_without_mutations(self):
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                     "GITHUB_REF": "refs/heads/main"}), (
+                patch("scripts.dependabot_lane.read_exact",
+                      return_value=(pr(user={"login": "pl0n3r"}), {"dependabot": False}))), (
+                patch("scripts.dependabot_lane.api", side_effect=AssertionError("no mutar"))):
+            result = reconcile("pl0n3r/Factory", 99, SHA, "token",
+                               now=datetime(2026, 11, 22, tzinfo=timezone.utc))
+        self.assertEqual(result, {"dependabot": False, "skipped": True,
+                                  "auto_merge_enabled": False})
 
     def test_factory_workflow_run_is_trusted_and_never_checks_out_pr(self):
         workflow = Path(".github/workflows/coordinacion.yml").read_text(encoding="utf-8")
