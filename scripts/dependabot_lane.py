@@ -16,7 +16,7 @@ BOT_ID = 49699333
 BOT_APP_ID = 29110
 HEX_SHA = re.compile(r"^[0-9a-f]{40}$")
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-UPDATE_TYPE = re.compile(r"(?m)^- update-type: version-update:semver-(patch|minor|major)\s*$")
+UPDATE_TYPE = re.compile(r"(?m)^[ \\t]+update-type:[ \\t]*version-update:semver-(patch|minor|major)[ \\t]*$")
 WORKFLOW_PATH = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
 REQUIREMENTS = re.compile(r"^requirements(?:[-_.][A-Za-z0-9_-]+)?\.txt$")
 WORKFLOW_USE = re.compile(r"^[+-]\s*uses:\s*[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+@[0-9a-f]{40}\s*$")
@@ -117,9 +117,19 @@ def classify(pr: object, files: object, commit: object, *, repo: str, head: str)
     message = metadata.get("message")
     if not isinstance(message, str):
         raise LaneError("Commit sin clasificación")
+    # Los metadatos reales de Dependabot son bloques YAML-like:
+    # "- dependency-name: x", "  dependency-version: y", "  update-type: ...".
+    # No confiar solo en la presencia aislada de un semver-minor.
     versions = UPDATE_TYPE.findall(message)
-    if not versions or len(versions) > 30:
-        raise LaneError("Update-type semver no comprobable")
+    names = re.findall(r"(?m)^- dependency-name:[ \t]*([^\r\n]+)\s*$", message)
+    dep_versions = re.findall(r"(?m)^[ \t]+dependency-version:[ \t]*([^\r\n]+)\s*$", message)
+    if not versions or len(versions) > 30 or len(versions) != len(names) or len(names) != len(dep_versions):
+        raise LaneError("Metadatos de dependencias incompletos o ambiguos")
+    if len(set(names)) != len(names) or any(
+        not name.strip() or len(name) > 200 or not version.strip() or len(version) > 100
+        for name, version in zip(names, dep_versions)
+    ):
+        raise LaneError("Nombres o versiones de dependencias inválidos")
     seen: set[str] = set()
     kinds: set[str] = set()
     for row in files:
@@ -130,11 +140,16 @@ def classify(pr: object, files: object, commit: object, *, repo: str, head: str)
             raise LaneError("Archivo duplicado o inválido")
         seen.add(name.casefold())
         kinds.add(_path_kind(name, row.get("patch")))
+    major_index = versions.index("major") if "major" in versions else -1
+    major_target = (
+        f"{names[major_index]} a la versión mayor {dep_versions[major_index]}"
+        if major_index >= 0 else None
+    )
     policy = "manual" if "major" in versions or "workflow" in kinds else "auto"
     return {
         "dependabot": True, "head": head, "pr": pr.get("number"),
         "policy": policy, "major": "major" in versions, "workflow": "workflow" in kinds,
-        "files": len(files), "updates": len(versions),
+        "files": len(files), "updates": len(versions), "major_target": major_target,
     }
 
 
@@ -278,7 +293,7 @@ def _switch_running(repo: str, token: str) -> bool:
     return marker == {"version": 1, "state": "RUNNING", "owner": "pl0n3r"}
 
 
-def create_followup(repo: str, number: int, head: str, token: str, *, reason: str) -> int:
+def create_followup(repo: str, number: int, head: str, token: str, *, reason: str, major_target: str | None = None) -> int:
     """Issue idempotente; no conceder autorización de implementación desde metadata de PR."""
     if reason not in ("major", "workflow", "stale"):
         raise LaneError("Motivo inválido de escalamiento")
@@ -301,7 +316,7 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
                 raise LaneError("Issue de seguimiento inválido")
             return issue_number
     title = (
-        f"Actualizar dependencias a versión mayor (Dependabot PR #{number})"
+        f"Actualizar {major_target or 'dependencias'} (Dependabot PR #{number})"
         if reason == "major" else
         f"Revisar workflow de dependencias (Dependabot PR #{number})"
         if reason == "workflow" else
@@ -346,7 +361,7 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
     # los checks faltan o están rojos. Nunca dependen de un verde para escalar.
     if result["policy"] == "manual":
         reason = "major" if result["major"] else "workflow"
-        issue = create_followup(repo, number, head, token, reason=reason)
+        issue = create_followup(repo, number, head, token, reason=reason, major_target=result.get("major_target"))
         return {**result, "auto_merge_enabled": False, "followup_required": True, "issue": issue, "reason": reason}
     green = _terminal_checks_green(repo, head, token)
     if result["policy"] == "auto" and green:
