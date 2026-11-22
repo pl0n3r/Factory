@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts.dependabot_lane import create_followup, _terminal_checks_green
@@ -141,6 +142,18 @@ class DependabotLaneTests(unittest.TestCase):
         with self.assertRaises(LaneError):
             classify(pr(), [manifest(), manifest()], commit(),
                      repo="pl0n3r/Factory", head=SHA)
+
+    def test_factory_workflow_run_is_trusted_and_never_checks_out_pr(self):
+        workflow = Path(".github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_run:\n    workflows: ['CI factory']", workflow)
+        block = workflow.split("  reconciliar-dependabot-factory:", 1)[1].split("  comentario:", 1)[0]
+        self.assertIn("workflow_run", block)
+        self.assertIn("head_repository.full_name == github.repository", block)
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", block)
+        self.assertIn("reconcile --repo", block)
+        self.assertNotIn("github.event.pull_request.head.sha", block)
+        self.assertNotIn("github.event.workflow_run.head_branch", block)
+        self.assertNotIn("pull_request_target", block)
 
     def test_check_validar_requires_trusted_github_actions_app(self):
         check = {
