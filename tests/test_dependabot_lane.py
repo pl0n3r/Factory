@@ -242,17 +242,22 @@ class DependabotLaneTests(unittest.TestCase):
         self.assertEqual(result, {"dependabot": False, "skipped": True,
                                   "auto_merge_enabled": False})
 
-    def test_factory_workflow_run_is_trusted_and_never_checks_out_pr(self):
+    def test_reusable_keeps_workflow_call_only_and_trusted_v1_for_consumers(self):
         workflow = Path(".github/workflows/coordinacion.yml").read_text(encoding="utf-8")
-        self.assertIn("workflow_run:\n    workflows: ['CI factory']", workflow)
-        block = workflow.split("  reconciliar-dependabot-factory:", 1)[1].split("  comentario:", 1)[0]
-        self.assertIn("workflow_run", block)
-        self.assertIn("head_repository.full_name == github.repository", block)
-        self.assertIn("ref: ${{ github.event.repository.default_branch }}", block)
-        self.assertIn("reconcile --repo", block)
-        self.assertNotIn("github.event.pull_request.head.sha", block)
-        self.assertNotIn("github.event.workflow_run.head_branch", block)
-        self.assertNotIn("pull_request_target", block)
+        header = workflow.split("\npermissions:", 1)[0]
+        self.assertIn("on:\n  workflow_call:", header)
+        self.assertNotIn("  schedule:", header)
+        self.assertNotIn("  workflow_run:", header)
+        self.assertEqual(workflow.count("ref: ${{ job.workflow_sha }}"), 6)
+        self.assertEqual(workflow.count("repository: ${{ job.workflow_repository }}"), 6)
+        for name in ("dependabot", "dependabot-sweep"):
+            block = workflow.split(f"  {name}:\n", 1)[1].split("\n  ", 1)[0]
+            self.assertIn("repository: pl0n3r/factory", block)
+            self.assertIn("ref: v1", block)
+            self.assertNotIn("github.event.pull_request.head.sha", block.split("steps:", 1)[0])
+        self.assertIn("reconcile --repo", workflow)
+        self.assertIn("sweep --repo", workflow)
+        self.assertNotIn("pull_request_target:", header)
 
     def test_check_validar_requires_trusted_github_actions_app(self):
         check = {
