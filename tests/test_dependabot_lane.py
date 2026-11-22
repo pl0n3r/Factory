@@ -146,6 +146,46 @@ class DependabotLaneTests(unittest.TestCase):
             classify(pr(), [manifest(), manifest()], commit(),
                      repo="pl0n3r/Factory", head=SHA)
 
+    def test_green_minor_squashes_exact_head_without_bypass(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        request = pr()
+        request["created_at"] = "2026-11-21T00:00:00Z"
+        lane = {"dependabot": True, "policy": "auto", "head": SHA, "file_paths": ["package-lock.json"]}
+        writes = []
+        def api_stub(repo, path, token, *, method="GET", payload=None):
+            writes.append((method, path, payload))
+            self.assertEqual(repo, "pl0n3r/Factory")
+            return {"merged": True, "sha": "b" * 40}
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                     "GITHUB_REF": "refs/heads/main"}), (
+             patch("scripts.dependabot_lane.read_exact",
+                   return_value=(request, lane)) as reader), (
+             patch("scripts.dependabot_lane._switch_running", return_value=True)), (
+             patch("scripts.dependabot_lane._terminal_checks_green",
+                   return_value=True)), (
+             patch("scripts.dependabot_lane.api", side_effect=api_stub)):
+            result = reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+        self.assertTrue(result["merged"])
+        self.assertEqual(reader.call_count, 2)
+        self.assertEqual(writes, [("PUT", "/repos/pl0n3r/Factory/pulls/99/merge",
+                                  {"sha": SHA, "merge_method": "squash"})])
+
+    def test_red_minor_never_calls_merge(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        request = pr()
+        request["created_at"] = "2026-11-21T00:00:00Z"
+        lane = {"dependabot": True, "policy": "auto", "head": SHA}
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                     "GITHUB_REF": "refs/heads/main"}), (
+             patch("scripts.dependabot_lane.read_exact",
+                   return_value=(request, lane))), (
+             patch("scripts.dependabot_lane._switch_running", return_value=True)), (
+             patch("scripts.dependabot_lane._terminal_checks_green", return_value=False)), (
+             patch("scripts.dependabot_lane.api", side_effect=AssertionError("prohibido merge"))):
+            result = reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+        self.assertFalse(result["auto_merge_enabled"])
+        self.assertFalse(result["followup_required"])
+
     def test_stale_comment_is_idempotent(self):
         posted = []
         def fake_api(_repo, path, _token, *, method="GET", payload=None):
