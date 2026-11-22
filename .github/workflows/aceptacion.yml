@@ -158,7 +158,10 @@ jobs:
             sleep "$wait_seconds"
           done
 
-          python3 .factory/scripts/aceptacion_kit.py < /tmp/acceptance.json | tee /tmp/acceptance-result.json
+          # Ejecutar tests del PR desde su checkout, sin darles credenciales.
+          # La herramienta confiable permanece en el checkout Factory aislado.
+          cd .candidate
+          python3 ../.factory/scripts/aceptacion_kit.py < /tmp/acceptance.json | tee /tmp/acceptance-result.json
           {
             printf '### Criterios de aceptación\n\n```json\n'
             cat /tmp/acceptance-result.json
