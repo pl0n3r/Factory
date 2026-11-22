@@ -32,7 +32,10 @@ def commit(kind="minor"):
         "commit": {
             "verification": {"verified": True},
             "message": "chore(deps): update\n\nupdated-dependencies:\n"
-                       "- update-type: version-update:semver-" + kind,
+                       "- dependency-name: example/package\n"
+                       "  dependency-version: 2.0.0\n"
+                       "  dependency-type: direct:production\n"
+                       "  update-type: version-update:semver-" + kind,
         },
     }
 
@@ -76,6 +79,7 @@ class DependabotLaneTests(unittest.TestCase):
                         repo="pl0n3r/Factory", head=SHA)
         self.assertEqual(lane["policy"], "manual")
         self.assertTrue(lane["major"])
+        self.assertIn('example/package a la versión mayor 2.0.0', lane['major_target'])
 
     def test_major_generates_canonical_issue_once(self):
         repo = "pl0n3r/Factory"
@@ -92,7 +96,7 @@ class DependabotLaneTests(unittest.TestCase):
             number = create_followup(repo, 2107, SHA, "token", reason="major")
         self.assertEqual(number, 2180)
         self.assertEqual(len(created), 1)
-        self.assertIn("versión mayor", created[0]["title"])
+        self.assertIn("Actualizar dependencias", created[0]["title"])
         self.assertIn("factory-dependabot-followup", created[0]["body"])
         self.assertIn("factory-acceptance", created[0]["body"])
         self.assertIn("estado: bloqueado", created[0]["labels"])
