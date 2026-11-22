@@ -44,6 +44,15 @@ RELEASE_OBSERVER_FILE = ROOT / RELEASE_OBSERVER_WORKFLOW
 if RELEASE_OBSERVER_FILE.is_file() and not RELEASE_OBSERVER_FILE.is_symlink():
     POST_BASELINE_WORKFLOWS[RELEASE_OBSERVER_WORKFLOW] = frozenset({"workflow_dispatch"})
 
+# Factory#2178: reusable version-only autorebase opt-in, posterior al ledger
+# histórico F1A/F1B; no alterar la tabla histórica ni sus bajas verificadas.
+VERSION_AUTOREBASE_WORKFLOW = ".github/workflows/version-autorebase.yml"
+VERSION_AUTOREBASE_FILE = ROOT / VERSION_AUTOREBASE_WORKFLOW
+if VERSION_AUTOREBASE_FILE.is_file() and not VERSION_AUTOREBASE_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[VERSION_AUTOREBASE_WORKFLOW] = frozenset({
+        "workflow_call", "workflow_dispatch"
+    })
+
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)
 REQUIRED_KEEP = {
