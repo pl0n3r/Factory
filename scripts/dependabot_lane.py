@@ -261,7 +261,8 @@ def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
             raise LaneError("Validar emitido por App no autorizada")
         # El job reconciliador mira checks de su propio HEAD mientras corre:
         # su propio check (no requerido) no puede convertirse en deadlock.
-        if key == "Reconciliar Dependabot" or key.endswith(" / Reconciliar Dependabot"):
+        if (key in ("Reconciliar Dependabot", "Reconciliar Dependabot Factory") or
+                key.endswith((" / Reconciliar Dependabot", " / Reconciliar Dependabot Factory"))):
             continue
         if key not in latest or check["id"] > latest[key]["id"]:
             latest[key] = check
@@ -358,7 +359,9 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         raise LaneError("Mutación fuera de main")
     pr, result = read_exact(repo, number, head, token)
     if not result.get("dependabot"):
-        raise LaneError("No es Dependabot oficial")
+        # El workflow_run de Factory también recibe CI de PRs humanos:
+        # conservar su flujo intacto sin crear checks rojos artificiales.
+        return {"dependabot": False, "skipped": True, "auto_merge_enabled": False}
     if not _switch_running(repo, token):
         raise LaneError("Interruptor global distinto de RUNNING")
     # Las majors y los cambios de workflow deben abrir seguimiento aun si
