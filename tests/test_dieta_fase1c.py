@@ -62,6 +62,11 @@ if CONSUMER_OBSERVER.is_file() and not CONSUMER_OBSERVER.is_symlink():
 RELEASE_OBSERVER = WF / "release-auto-observador.yml"
 if RELEASE_OBSERVER.is_file() and not RELEASE_OBSERVER.is_symlink():
     EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"release-auto-observador.yml"})
+# Factory#2178: reusable de versión opt-in posterior al ledger F1C.
+VERSION_AUTOREBASE = WF / "version-autorebase.yml"
+if VERSION_AUTOREBASE.is_file() and not VERSION_AUTOREBASE.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"version-autorebase.yml"})
+
 HARD_GATES = (
     "factory-ci.yml", "sonar.yml", "codeql-evidence.yml",
     "seguridad.yml", "costos.yml", "unattended-watchdog.yml",

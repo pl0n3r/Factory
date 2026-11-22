@@ -1,0 +1,89 @@
+name: Rebase automático de versiones compartidas
+
+on:
+  workflow_call:
+    inputs:
+      shared_version_paths:
+        description: 'Lista JSON de rutas exactas, igual que coordinacion.yml (#2163)'
+        required: false
+        type: string
+        default: ''
+      bump_command:
+        description: 'Comando opcional del consumidor; se ejecuta SOLO desde main confiable'
+        required: false
+        type: string
+        default: ''
+      post_bump_command:
+        description: 'Script opcional de regeneración de derivados; solo Python bajo scripts/ en main'
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      shared_version_paths:
+        description: 'Lista JSON de archivos de versión compartidos'
+        required: false
+        type: string
+        default: ''
+      bump_command:
+        description: 'Comando opcional de bump sobre checkout confiable de main'
+        required: false
+        type: string
+        default: ''
+      post_bump_command:
+        description: 'Script opcional que regenera archivos derivados desde main'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# Una única cola por consumidor, sin cancelar el trabajo de otro PR.
+concurrency:
+  group: version-autorebase-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  version-autorebase:
+    name: Resolver conflictos de versión verificados
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout del reconciliador confiable de Factory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pl0n3r/Factory
+          ref: ${{ job.workflow_sha }}
+          path: .factory
+          persist-credentials: false
+
+      - name: Checkout de main del consumidor
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          path: consumer
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Reconciliar PRs coordinados y versionados
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          SHARED_VERSION_PATHS: ${{ inputs.shared_version_paths }}
+          BUMP_COMMAND: ${{ inputs.bump_command }}
+          POST_BUMP_COMMAND: ${{ inputs.post_bump_command }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/version_autorebase.py \
+            --repo "$TARGET_REPOSITORY" \
+            --repo-path consumer \
+            --shared-version-paths "$SHARED_VERSION_PATHS" \
+            --bump-command "$BUMP_COMMAND" \
+            --post-bump-command "$POST_BUMP_COMMAND" \
+            --run-url "$RUN_URL"
