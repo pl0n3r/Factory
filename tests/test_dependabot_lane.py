@@ -4,12 +4,15 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import unittest
 import os
+import io
+import json
+from urllib.error import URLError
 from pathlib import Path
 from unittest.mock import patch
 
 from scripts.dependabot_lane import create_followup, _terminal_checks_green, _switch_running, reconcile, comment_stale, sweep
 
-from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify
+from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify, api, read_exact, classify_from_api, main
 
 
 SHA = "a" * 40
@@ -289,6 +292,331 @@ class DependabotLaneTests(unittest.TestCase):
         self.assertTrue(_age_over_seven_days(pr_payload, now=now))
         pr_payload["created_at"] = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.assertFalse(_age_over_seven_days(pr_payload, now=now))
+
+
+
+class DependabotLaneCoverageTests(unittest.TestCase):
+    """Cobertura de fallos de transporte, carrera, seguridad y rutas privilegiadas."""
+
+    @staticmethod
+    def source_pr():
+        source = pr()
+        source["changed_files"] = 1
+        source["base"]["sha"] = "b" * 40
+        source["created_at"] = "2026-11-21T00:00:00Z"
+        return source
+
+    def test_api_transport_requests_and_rejects_untrusted_inputs(self):
+        captured = []
+
+        def open_url(request, timeout):
+            captured.append((request.full_url, request.get_method(), request.data,
+                             request.headers.get("Authorization"), timeout))
+            return io.BytesIO(b'{"number":2171,"ok":true}')
+
+        with patch("scripts.dependabot_lane.urlopen", side_effect=open_url):
+            got = api("pl0n3r/Factory", "/repos/pl0n3r/Factory/issues/2171", "token")
+            self.assertEqual(got["number"], 2171)
+            created = api("pl0n3r/Factory", "/repos/pl0n3r/Factory/issues",
+                          "token", method="POST", payload={"title": "safe"})
+            self.assertTrue(created["ok"])
+        self.assertEqual(captured[0][1], "GET")
+        self.assertEqual(captured[1][1], "POST")
+        self.assertEqual(json.loads(captured[1][2]), {"title": "safe"})
+        self.assertEqual(captured[0][3], "Bearer token")
+        self.assertEqual(captured[0][4], 20)
+        self.assertTrue(captured[0][0].startswith("https://api.github.com/"))
+        for repo_name, method in (("../escape", "GET"), ("pl0n3r/Factory", "DELETE")):
+            with self.subTest(repo=repo_name, method=method), self.assertRaises(LaneError):
+                api(repo_name, "/repos/pl0n3r/Factory/issues", "token", method=method)
+        with patch("scripts.dependabot_lane.urlopen", side_effect=URLError("offline")):
+            with self.assertRaisesRegex(LaneError, "URLError"):
+                api("pl0n3r/Factory", "/repos/pl0n3r/Factory/issues", "token")
+        with patch("scripts.dependabot_lane.urlopen", return_value=io.BytesIO(b"not json")):
+            with self.assertRaisesRegex(LaneError, "JSONDecodeError"):
+                api("pl0n3r/Factory", "/repos/pl0n3r/Factory/issues", "token")
+
+    def test_exact_head_classification_from_paginated_github_data(self):
+        source = self.source_pr()
+        requests = []
+
+        def get(_repo, path, _token, *, method="GET", payload=None):
+            requests.append(path)
+            if path.endswith("/pulls/99"):
+                return source
+            if "/files?" in path:
+                return [manifest()]
+            if "/commits/" in path:
+                return commit()
+            raise AssertionError(path)
+
+        with patch("scripts.dependabot_lane.api", side_effect=get):
+            snapshot, result = read_exact("pl0n3r/Factory", 99, SHA, "token")
+            self.assertEqual(snapshot["head"]["sha"], SHA)
+            self.assertEqual(result["policy"], "auto")
+            self.assertEqual(classify_from_api("pl0n3r/Factory", 99, SHA, "token")["files"], 1)
+        self.assertEqual(sum("/pulls/99" in a and "/files?" not in a for a in requests), 4)
+        self.assertEqual(sum("/commits/" in a for a in requests), 2)
+        self.assertEqual(sum("/files?" in a for a in requests), 2)
+
+    def test_exact_head_pagination_and_human_shortcircuit(self):
+        source = self.source_pr()
+        source["changed_files"] = 101
+        requests = []
+        rows = [manifest(f"modules/mod{i}/package-lock.json") for i in range(101)]
+
+        def get(_repo, path, _token, *, method="GET", payload=None):
+            requests.append(path)
+            if path.endswith("/pulls/99"):
+                return source
+            if "/files?" in path:
+                return rows[:100] if "page=1" in path else rows[100:]
+            if "/commits/" in path:
+                return commit()
+            raise AssertionError(path)
+
+        with patch("scripts.dependabot_lane.api", side_effect=get):
+            _, result = read_exact("pl0n3r/Factory", 99, SHA, "token")
+        self.assertEqual(result["files"], 101)
+        self.assertEqual(sum("/files?" in path for path in requests), 2)
+        source["user"] = {"login": "pl0n3r", "id": 1, "type": "User"}
+        requests.clear()
+        with patch("scripts.dependabot_lane.api", side_effect=get):
+            _, result = read_exact("pl0n3r/Factory", 99, SHA, "token")
+        self.assertEqual(result, {"dependabot": False})
+        self.assertEqual(requests, ["/repos/pl0n3r/Factory/pulls/99"])
+
+    def test_exact_head_invalid_metadata_and_races(self):
+        with patch("scripts.dependabot_lane.api", side_effect=AssertionError("no request")):
+            for number, sha in ((0, SHA), (99, "bad"), (True, SHA)):
+                with self.subTest(number=number, sha=sha), self.assertRaises(LaneError):
+                    read_exact("pl0n3r/Factory", number, sha, "token")
+        source = self.source_pr()
+
+        def get(_repo, path, _token, *, method="GET", payload=None):
+            if path.endswith("/pulls/99"):
+                return source
+            if "/files?" in path:
+                return [manifest()]
+            return commit()
+
+        with patch("scripts.dependabot_lane.api", side_effect=get):
+            for bad in (0, 3001, None, "1"):
+                with self.subTest(changed_files=bad), self.assertRaises(LaneError):
+                    source["changed_files"] = bad
+                    read_exact("pl0n3r/Factory", 99, SHA, "token")
+            source["changed_files"] = 2
+            with self.assertRaisesRegex(LaneError, "truncado"):
+                read_exact("pl0n3r/Factory", 99, SHA, "token")
+            source["changed_files"] = 1
+        updates = 0
+
+        def race(_repo, path, _token, *, method="GET", payload=None):
+            nonlocal updates
+            if path.endswith("/pulls/99"):
+                updates += 1
+                if updates > 1:
+                    return {**source, "head": {"sha": "c" * 40, "repo": {"full_name": "pl0n3r/Factory"}}}
+                return source
+            return [manifest()] if "/files?" in path else commit()
+
+        with patch("scripts.dependabot_lane.api", side_effect=race):
+            with self.assertRaisesRegex(LaneError, "Carrera"):
+                read_exact("pl0n3r/Factory", 99, SHA, "token")
+        with patch("scripts.dependabot_lane.api", return_value=[]):
+            with self.assertRaisesRegex(LaneError, "PR ilegible"):
+                read_exact("pl0n3r/Factory", 99, SHA, "token")
+
+    def test_check_run_versions_and_failclosed_sources(self):
+        def check(name, ident, status="completed", conclusion="success", issuer=None):
+            return {"id": ident, "name": name, "head_sha": SHA,
+                    "status": status, "conclusion": conclusion,
+                    "app": issuer or {"slug": "github-actions", "id": 15368}}
+
+        rows = [check("Validar", 1), check("Tests de scripts", 2)]
+        def response(_repo, _path, _token, *, method="GET", payload=None):
+            return {"total_count": len(rows), "check_runs": rows}
+        with patch("scripts.dependabot_lane.api", side_effect=response):
+            self.assertTrue(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+            rows.append(check("Validar", 3, conclusion="failure"))
+            self.assertFalse(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+            rows.append(check("Validar", 4))
+            self.assertTrue(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+            rows.append(check("Waiting gate", 5, "in_progress", None))
+            self.assertFalse(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+            rows.pop()
+            rows[:] = [check("Other", 2)]
+            self.assertFalse(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+            rows.append(check("Validar", 3, issuer={"slug": "fake", "id": 999}))
+            with self.assertRaisesRegex(LaneError, "App no autorizada"):
+                _terminal_checks_green("pl0n3r/Factory", SHA, "token")
+            rows[-1]["app"] = {"slug": "github-actions", "id": 15368}
+            rows.append(check("Reconciliar Dependabot", 4, status="in_progress", conclusion=None))
+            self.assertTrue(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+            rows[0]["head_sha"] = "c" * 40
+            with self.assertRaisesRegex(LaneError, "HEAD incorrecto"):
+                _terminal_checks_green("pl0n3r/Factory", SHA, "token")
+
+    def test_check_runs_pagination_and_invalid_responses(self):
+        def row(i):
+            return {"id": i, "name": "Validar" if i == 0 else f"Aux {i}",
+                    "head_sha": SHA, "status": "completed", "conclusion": "success",
+                    "app": {"id": 15368, "slug": "github-actions"}}
+        records = [row(i) for i in range(101)]
+        visited = []
+        def paged(_repo, path, _token, *, method="GET", payload=None):
+            visited.append(path)
+            return {"total_count": 101,
+                    "check_runs": records[:100] if "page=1" in path else records[100:]}
+        with patch("scripts.dependabot_lane.api", side_effect=paged):
+            self.assertTrue(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
+        self.assertEqual(len(visited), 2)
+        for bad in (
+            {"total_count": "1", "check_runs": [row(0)]},
+            {"total_count": 1, "check_runs": None},
+            {"total_count": 2, "check_runs": [row(0)]},
+            {"total_count": 0, "check_runs": []},
+            {"total_count": 1, "check_runs": [{**row(0), "id": "1"}]},
+            {"total_count": 1, "check_runs": [{**row(0), "app": None}]},
+        ):
+            with self.subTest(bad=bad), patch("scripts.dependabot_lane.api", return_value=bad):
+                with self.assertRaises(LaneError):
+                    _terminal_checks_green("pl0n3r/Factory", SHA, "token")
+
+    def test_switch_rejects_invalid_sources_and_duplicate_markers(self):
+        valid = {
+            "number": 767, "state": "closed",
+            "url": "https://api.github.com/repos/pl0n3r/Factory/issues/767",
+            "repository_url": "https://api.github.com/repos/pl0n3r/Factory",
+            "user": {"login": "pl0n3r"},
+            "body": '<!-- factory-unattended-kill-switch {"version":1,"state":"RUNNING","owner":"pl0n3r"} -->',
+        }
+        variants = [
+            {**valid, "number": 768}, {**valid, "state": "open"},
+            {**valid, "user": {"login": "intruder"}},
+            {**valid, "body": None},
+            {**valid, "body": ""},
+            {**valid, "body": valid["body"] + "\n" + valid["body"]},
+            {**valid, "body": '<!-- factory-unattended-kill-switch {"version":1,} -->'},
+        ]
+        with patch("scripts.dependabot_lane.api", return_value=valid):
+            self.assertTrue(_switch_running("pl0n3r/Factory", "token"))
+        for variant in variants:
+            with self.subTest(variant=variant), patch("scripts.dependabot_lane.api", return_value=variant):
+                self.assertFalse(_switch_running("pl0n3r/Factory", "token"))
+
+    def test_followup_variants_and_invalid_metadata(self):
+        created = []
+        def server(_repo, path, _token, *, method="GET", payload=None):
+            if method == "POST":
+                created.append(payload)
+                return {"number": 2500}
+            return {"incomplete_results": False, "total_count": 0, "items": []}
+
+        with patch("scripts.dependabot_lane.api", side_effect=server):
+            self.assertEqual(create_followup("pl0n3r/Factory", 2107, SHA, "token",
+                                             reason="workflow", paths=[".github/workflows/ci.yml"]), 2500)
+            self.assertEqual(create_followup("pl0n3r/Factory", 2107, SHA, "token",
+                                             reason="stale", paths=["package-lock.json"]), 2500)
+            self.assertEqual(create_followup("pl0n3r/Factory", 2107, SHA, "token",
+                                             reason="major", paths=["package-lock.json"],
+                                             major_target="foo a la versión mayor 9"), 2500)
+        self.assertIn("Revisar workflow", created[0]["title"])
+        self.assertIn("Desbloquear", created[1]["title"])
+        self.assertIn("foo a la versión mayor 9", created[2]["title"])
+        self.assertIn("factory-plan-task", created[0]["body"])
+        with patch("scripts.dependabot_lane.api", side_effect=AssertionError("no request")):
+            for reason, paths in (("other", ["package-lock.json"]), ("stale", []),
+                                  ("stale", ["src/app.py"]), ("major", ["package.json"] * 2)):
+                with self.subTest(reason=reason, paths=paths), self.assertRaises(LaneError):
+                    create_followup("pl0n3r/Factory", 10, SHA, "token", reason=reason, paths=paths)
+
+    def test_followup_incomplete_search_and_bad_create(self):
+        responses = [
+            {"incomplete_results": True, "total_count": 0, "items": []},
+            {"incomplete_results": False, "total_count": 101, "items": []},
+            {"incomplete_results": False, "total_count": 1, "items": []},
+        ]
+        for response in responses:
+            with self.subTest(response=response), patch("scripts.dependabot_lane.api", return_value=response):
+                with self.assertRaisesRegex(LaneError, "Search Issues"):
+                    create_followup("pl0n3r/Factory", 2107, SHA, "token",
+                                    reason="workflow", paths=["package-lock.json"])
+        def bad(_repo, path, _token, *, method="GET", payload=None):
+            if method == "POST":
+                return {"number": "2500"}
+            return {"incomplete_results": False, "total_count": 0, "items": []}
+        with patch("scripts.dependabot_lane.api", side_effect=bad):
+            with self.assertRaisesRegex(LaneError, "no confirmado"):
+                create_followup("pl0n3r/Factory", 2107, SHA, "token",
+                                reason="workflow", paths=["package-lock.json"])
+
+    def test_stale_comments_page_two_and_missing_pages(self):
+        calls = []
+        marker = "<!-- factory-dependabot-stale:pr-2107 -->"
+        def server(_repo, path, _token, *, method="GET", payload=None):
+            calls.append(path)
+            if "page=1" in path:
+                return [{"body": "another comment"}] * 100
+            return [{"body": marker}]
+        with patch("scripts.dependabot_lane.api", side_effect=server):
+            self.assertFalse(comment_stale("pl0n3r/Factory", 2107, 2174, "token"))
+        self.assertEqual(len(calls), 2)
+        with patch("scripts.dependabot_lane.api", return_value={"not": "a list"}):
+            with self.assertRaisesRegex(LaneError, "incompletos"):
+                comment_stale("pl0n3r/Factory", 2107, 2174, "token")
+        with patch("scripts.dependabot_lane.api", return_value=[{"body": "other"}] * 100):
+            with self.assertRaisesRegex(LaneError, "Demasiados comentarios"):
+                comment_stale("pl0n3r/Factory", 2107, 2174, "token")
+
+    def test_sweep_rejects_untrusted_authority_and_inventory(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request",
+                                     "GITHUB_REF": "refs/heads/main"}):
+            with self.assertRaisesRegex(LaneError, "schedule"):
+                sweep("pl0n3r/Factory", "token", now=now)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
+                                     "GITHUB_REF": "refs/heads/foreign"}):
+            with self.assertRaisesRegex(LaneError, "main"):
+                sweep("pl0n3r/Factory", "token", now=now)
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane._switch_running", return_value=False),
+        ):
+            with self.assertRaisesRegex(LaneError, "RUNNING"):
+                sweep("pl0n3r/Factory", "token", now=now)
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+        ):
+            for rows in (None, [{"user": None}], [{"user": BOT, "number": "2", "head": {"sha": SHA}}],
+                         [{"user": BOT, "number": 2, "head": {"sha": "short"}}]):
+                with self.subTest(rows=rows), patch("scripts.dependabot_lane.api", return_value=rows):
+                    with self.assertRaises(LaneError):
+                        sweep("pl0n3r/Factory", "token", now=now)
+            with patch("scripts.dependabot_lane.api", return_value=[]):
+                self.assertEqual(sweep("pl0n3r/Factory", "token", now=now), [])
+
+    def test_sweep_paginated_authorized_bot_only(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        pages = []
+        def get(_repo, path, _token, *, method="GET", payload=None):
+            pages.append(path)
+            if "page=1" in path:
+                return [{"user": {"login": "other"}, "number": i} for i in range(99)] + [
+                    {"user": BOT, "number": 7, "head": {"sha": SHA}},
+                ]
+            return [{"user": BOT, "number": 8, "head": {"sha": SHA}}]
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+            patch("scripts.dependabot_lane.api", side_effect=get),
+            patch("scripts.dependabot_lane.reconcile", side_effect=lambda repo, number, head, token, now: {"pr": number}) as run,
+        ):
+            got = sweep("pl0n3r/Factory", "token", now=now)
+        self.assertEqual(got, [{"pr": 7}, {"pr": 8}])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(len(pages), 2)
 
 
 if __name__ == "__main__":
