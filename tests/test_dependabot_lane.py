@@ -619,5 +619,224 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         self.assertEqual(len(pages), 2)
 
 
+
+    def test_reconcile_manual_major_and_workflow_followups(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        source = self.source_pr()
+        choices = [
+            {"dependabot": True, "policy": "manual", "major": True,
+             "workflow": False, "file_paths": ["package-lock.json"],
+             "major_target": "demo a la versión mayor 4"},
+            {"dependabot": True, "policy": "manual", "major": False,
+             "workflow": True, "file_paths": [".github/workflows/ci.yml"],
+             "major_target": None},
+        ]
+        for lane, reason in zip(choices, ("major", "workflow")):
+            with self.subTest(reason=reason), (
+                patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                        "GITHUB_REF": "refs/heads/main"}),
+                patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
+                patch("scripts.dependabot_lane._switch_running", return_value=True),
+                patch("scripts.dependabot_lane.create_followup", return_value=2200) as followup,
+                patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
+            ):
+                result = reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+            self.assertTrue(result["followup_required"])
+            self.assertEqual(result["reason"], reason)
+            self.assertEqual(result["issue"], 2200)
+            self.assertEqual(followup.call_args.kwargs["paths"], lane["file_paths"])
+            self.assertEqual(followup.call_args.kwargs["reason"], reason)
+
+        source["created_at"] = "2026-11-10T00:00:00Z"
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
+                                    "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane.read_exact", return_value=(source, choices[1])),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+            patch("scripts.dependabot_lane.create_followup", return_value=2201),
+            patch("scripts.dependabot_lane._terminal_checks_green", return_value=False),
+            patch("scripts.dependabot_lane.comment_stale", return_value=True) as notify,
+        ):
+            result = reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+        self.assertEqual(result["issue"], 2201)
+        notify.assert_called_once_with("pl0n3r/Factory", 99, 2201, "token")
+
+    def test_reconcile_stale_minor_and_unknown_checks(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        source = self.source_pr()
+        lane = {"dependabot": True, "policy": "auto",
+                "file_paths": ["package-lock.json"]}
+        source["created_at"] = "2026-11-10T00:00:00Z"
+        for check_failure in (False, LaneError("unavailable")):
+            def fail_checks(*args):
+                if isinstance(check_failure, Exception):
+                    raise check_failure
+                return check_failure
+            with self.subTest(check_failure=check_failure), (
+                patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
+                                        "GITHUB_REF": "refs/heads/main"}),
+                patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
+                patch("scripts.dependabot_lane._switch_running", return_value=True),
+                patch("scripts.dependabot_lane._terminal_checks_green", side_effect=fail_checks),
+                patch("scripts.dependabot_lane.create_followup", return_value=2200) as issue,
+                patch("scripts.dependabot_lane.comment_stale", return_value=True) as comment,
+                patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
+            ):
+                result = reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+            self.assertTrue(result["followup_required"])
+            self.assertEqual(result["reason"], "stale")
+            self.assertEqual(issue.call_args.kwargs["reason"], "stale")
+            comment.assert_called_once_with("pl0n3r/Factory", 99, 2200, "token")
+        source["created_at"] = "2026-11-21T00:00:00Z"
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                    "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+            patch("scripts.dependabot_lane._terminal_checks_green",
+                  side_effect=LaneError("bad checks")),
+        ):
+            with self.assertRaisesRegex(LaneError, "desconocida"):
+                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+
+    def test_reconcile_denies_missing_authority_and_changed_heads(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        source = self.source_pr()
+        lane = {"dependabot": True, "policy": "auto", "file_paths": ["package-lock.json"]}
+        with patch("scripts.dependabot_lane.read_exact",
+                   side_effect=AssertionError("unauthorized source")):
+            for event, ref in (("pull_request", "refs/heads/main"),
+                               ("workflow_run", "refs/heads/other")):
+                with self.subTest(event=event, ref=ref), (
+                    patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_REF": ref}),
+                ):
+                    with self.assertRaises(LaneError):
+                        reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                    "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
+            patch("scripts.dependabot_lane._switch_running", return_value=False),
+            patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
+        ):
+            with self.assertRaisesRegex(LaneError, "RUNNING"):
+                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+        changed = {**lane, "file_paths": ["composer.lock"]}
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                    "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane.read_exact",
+                  side_effect=[(source, lane), (source, changed)]),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+            patch("scripts.dependabot_lane._terminal_checks_green", return_value=True),
+            patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
+        ):
+            with self.assertRaisesRegex(LaneError, "cambió"):
+                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+
+    def test_reconcile_denies_check_race_and_unverified_merge_response(self):
+        now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+        source = self.source_pr()
+        lane = {"dependabot": True, "policy": "auto", "file_paths": ["package-lock.json"]}
+        environment = {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": "refs/heads/main"}
+        with (
+            patch.dict(os.environ, environment),
+            patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+            patch("scripts.dependabot_lane._terminal_checks_green", side_effect=[True, False]),
+            patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
+        ):
+            with self.assertRaisesRegex(LaneError, "cambió"):
+                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+        with (
+            patch.dict(os.environ, environment),
+            patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
+            patch("scripts.dependabot_lane._switch_running", side_effect=[True, False]),
+            patch("scripts.dependabot_lane._terminal_checks_green", return_value=True),
+            patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
+        ):
+            with self.assertRaisesRegex(LaneError, "Interruptor global cambió"):
+                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+        for response in ({"merged": False, "sha": "b" * 40},
+                         {"merged": True, "sha": "not a SHA"}):
+            with self.subTest(response=response), (
+                patch.dict(os.environ, environment),
+                patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
+                patch("scripts.dependabot_lane._switch_running", return_value=True),
+                patch("scripts.dependabot_lane._terminal_checks_green", return_value=True),
+                patch("scripts.dependabot_lane.api", return_value=response),
+            ):
+                with self.assertRaises(LaneError):
+                    reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+
+    def test_cli_classify_reconcile_sweep_and_failures(self):
+        args = ["--repo", "pl0n3r/Factory", "--pr", "99", "--head", SHA]
+        with (
+            patch.dict(os.environ, {"GH_TOKEN": "token"}),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO),
+            patch("scripts.dependabot_lane.classify_from_api",
+                  return_value={"dependabot": True}) as classifier,
+        ):
+            self.assertEqual(main(["classify", *args]), 0)
+            self.assertEqual(classifier.call_count, 1)
+            classifier.return_value = {"dependabot": False}
+            self.assertEqual(main(["classify", *args]), 20)
+            classifier.side_effect = LaneError("malformed")
+            self.assertEqual(main(["classify", *args]), 1)
+        with (
+            patch.dict(os.environ, {"GH_TOKEN": "token"}),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("scripts.dependabot_lane.reconcile", return_value={"merged": False}) as executor,
+            patch("scripts.dependabot_lane.sweep", return_value=[{"followup_required": True}]) as sweepcall,
+        ):
+            self.assertEqual(main(["reconcile", *args]), 0)
+            self.assertEqual(executor.call_count, 1)
+            self.assertEqual(main(["sweep", "--repo", "pl0n3r/Factory"]), 0)
+            self.assertEqual(sweepcall.call_count, 1)
+            self.assertEqual(main(["classify", "--repo", "pl0n3r/Factory"]), 1)
+        with (
+            patch.dict(os.environ, {"GH_TOKEN": ""}),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.assertEqual(main(["classify", *args]), 1)
+
+    def test_classify_rejects_ambiguous_dependency_metadata_and_paths(self):
+        good = self.source_pr()
+        base_commit = commit()
+        invalid_changes = [
+            {"status": "renamed", "filename": "package-lock.json"},
+            {"status": "modified", "filename": "../package-lock.json"},
+            {"status": "modified", "filename": "./package-lock.json"},
+            {"status": "modified", "filename": "src/app.py"},
+            {"status": "modified", "filename": ".github/workflows/ci.yml",
+             "patch": "@@ -1 +1 @@\n- run: safe\n+ run: unsafe"},
+            {"status": "modified", "filename": ".github/workflows/ci.yml",
+             "patch": None},
+        ]
+        for changed in invalid_changes:
+            with self.subTest(change=changed), self.assertRaises(LaneError):
+                classify(good, [changed], base_commit, repo="pl0n3r/Factory", head=SHA)
+        for change in (
+            {"author": {"login": "other", "id": 1}, "commit": base_commit["commit"]},
+            {"author": base_commit["author"], "commit": {"verification": {"verified": False}, "message": base_commit["commit"]["message"]}},
+            {"author": base_commit["author"], "commit": {"verification": {"verified": True}, "message": "no metadata"}},
+        ):
+            with self.subTest(change=change), self.assertRaises(LaneError):
+                classify(good, [manifest()], change, repo="pl0n3r/Factory", head=SHA)
+        for mutant in (
+            {**good, "head": {"sha": "b" * 40, "repo": {"full_name": "pl0n3r/Factory"}}},
+            {**good, "base": {"ref": "dev", "repo": {"full_name": "pl0n3r/Factory"}}},
+            {**good, "state": "closed"},
+            {**good, "head": {"sha": SHA, "repo": {"full_name": "other/project"}}},
+        ):
+            with self.subTest(mutant=mutant), self.assertRaises(LaneError):
+                classify(mutant, [manifest()], base_commit, repo="pl0n3r/Factory", head=SHA)
+        with self.assertRaises(LaneError):
+            classify(good, [], base_commit, repo="pl0n3r/Factory", head=SHA)
+        with self.assertRaises(LaneError):
+            classify(good, [manifest()], base_commit, repo="not-allowed", head=SHA)
+
+
 if __name__ == "__main__":
     unittest.main()
