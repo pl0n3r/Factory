@@ -1,13 +1,15 @@
 name: Coordinación reusable
 
 on:
+  schedule:
+    - cron: '27 4 * * *'
   workflow_run:
     workflows: ['CI factory']
     types: [completed]
   workflow_call:
     inputs:
       operation:
-        description: 'comment, label, pr, issue, validate, dependabot o sweep'
+        description: 'comment, label, pr, issue, validate, dependabot, dependabot-sweep o sweep'
         required: true
         type: string
       issue_number:
@@ -82,7 +84,7 @@ jobs:
           SHARED_VERSION_PATHS: ${{ inputs.shared_version_paths }}
         run: |
           set -euo pipefail
-          case "$OPERATION" in comment|label|pr|issue|validate|dependabot|sweep) ;; *) echo "::error::operation inválida"; exit 1 ;; esac
+          case "$OPERATION" in comment|label|pr|issue|validate|dependabot|dependabot-sweep|sweep) ;; *) echo "::error::operation inválida"; exit 1 ;; esac
           case "$PROFILE" in es|en) ;; *) echo "::error::profile inválido"; exit 1 ;; esac
           if [[ -n "$SHARED_VERSION_PATHS" ]]; then
             jq -e 'type == "array" and length <= 4 and all(.[]; type == "string")' <<<"$SHARED_VERSION_PATHS" >/dev/null \
@@ -125,6 +127,31 @@ jobs:
           [[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "::error::PR inválido"; exit 1; }
           [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD inválido"; exit 1; }
           python3 .factory/scripts/dependabot_lane.py reconcile --repo "$REPOSITORIO" --pr "$PR" --head "$HEAD"
+
+  barrer-dependabot-factory:
+    name: Barrer Dependabot Factory
+    if: github.event_name == 'schedule' && github.repository == 'pl0n3r/Factory'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Descargar kit desde main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .factory
+          persist-credentials: false
+      - name: Barrer PRs Dependabot sin fusionar ni revisar código de PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/dependabot_lane.py sweep --repo "$REPOSITORIO"
 
   comentario:
     name: Procesar comando
@@ -317,6 +344,32 @@ jobs:
           [[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Número de PR no válido"; exit 1; }
           [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD no válido"; exit 1; }
           python3 .factory/scripts/dependabot_lane.py reconcile --repo "$REPOSITORIO" --pr "$PR" --head "$HEAD"
+
+  dependabot-sweep:
+    name: Barrer Dependabot consumidor
+    if: inputs.operation == 'dependabot-sweep' && github.event_name == 'schedule'
+    needs: validar-input
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .factory
+          persist-credentials: false
+      - name: Barrer consumidor sin checkout de PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/dependabot_lane.py sweep --repo "$REPOSITORIO"
 
   sweep:
     name: Barrer coordinación y bloqueos
