@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any, TextIO
 
@@ -20,6 +21,84 @@ else:
 
 
 MAX_INPUT_CHARS = 200_000
+
+
+# Clasificador conservador: .js/.ts solo cuando su ruta identifica una pantalla
+# o un frontend; scripts internos de automatización no son UI.
+_UI_SUFFIXES = (".css", ".scss", ".sass", ".less", ".html", ".htm", ".twig", ".tsx", ".jsx", ".vue", ".svelte")
+_UI_SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs", ".ts")
+_UI_PATH_PARTS = frozenset({
+    "frontend", "ui", "components", "pages", "screens", "views",
+    "templates", "assets", "public", "static", "client", "web",
+})
+_UI_CAPTURE = re.compile(r"capturas?|screenshots?", re.IGNORECASE)
+_UI_BEFORE_AFTER = re.compile(
+    r"(?:antes\s*(?:/|y|-)\s*despu[eé]s|before\s*(?:/|and|-)\s*after)",
+    re.IGNORECASE,
+)
+_DESIGN_HEADING = re.compile(r"(?m)^#{2,4}\s+Diseño\s*$")
+_NEXT_HEADING = re.compile(r"(?m)^#{1,4}\s+")
+
+
+def _ui_claimed_paths(paths: list[str]) -> list[str]:
+    """Detecta únicamente superficies visuales; respeta tareas backend."""
+    result: list[str] = []
+    for path in paths:
+        lower = path.casefold()
+        parts = lower.rstrip("/").split("/")
+        if lower.endswith("/") and any(p in _UI_PATH_PARTS for p in parts):
+            result.append(path)
+        elif lower.endswith(_UI_SUFFIXES):
+            result.append(path)
+        elif lower.endswith(_UI_SCRIPT_SUFFIXES) and (
+            any(p in _UI_PATH_PARTS for p in parts[:-1])
+            or len(parts) == 1 and parts[0] in {"app.js", "main.js", "admin.js", "index.js"}
+        ):
+            result.append(path)
+    return result
+
+
+def _require_ui_design(body: str, paths: list[str]) -> None:
+    """La aceptación humana debe fijar capturas reales en dos breakpoints."""
+    claimed = _ui_claimed_paths(paths)
+    if not claimed:
+        return
+
+    headings = list(_DESIGN_HEADING.finditer(body))
+    if len(headings) != 1:
+        raise IssueContractPreflightError(
+            "ui_design_invalid",
+            "Rutas de UI requieren una única sección ### Diseño con las dos skills de Factory.",
+        )
+    start = headings[0].end()
+    next_heading = _NEXT_HEADING.search(body, start)
+    design = body[start:next_heading.start() if next_heading else len(body)]
+    skills = (
+        ".claude/skills/impeccable/SKILL.md",
+        ".claude/skills/make-interfaces-feel-better/SKILL.md",
+    )
+    if any(skill not in design for skill in skills):
+        raise IssueContractPreflightError(
+            "ui_design_invalid",
+            "La sección Diseño debe citar .claude/skills/impeccable/SKILL.md "
+            "y .claude/skills/make-interfaces-feel-better/SKILL.md.",
+        )
+
+    criteria_heading = body.find("### Criterios de aceptación")
+    criteria_end = body.find("\n### ", criteria_heading + 1)
+    criteria = body[criteria_heading:criteria_end if criteria_end >= 0 else len(body)]
+    descriptions = re.findall(r"(?m)^- \[[ xX]\] \[AC-\d{2}\] (.+)$", criteria)
+    if not any(
+        _UI_CAPTURE.search(description)
+        and re.search(r"(?<!\d)390(?:\s*px)?(?!\d)", description)
+        and re.search(r"(?<!\d)1440(?:\s*px)?(?!\d)", description)
+        and _UI_BEFORE_AFTER.search(description)
+        for description in descriptions
+    ):
+        raise IssueContractPreflightError(
+            "ui_design_invalid",
+            "Un criterio [AC-NN] debe exigir capturas antes/después a 390 px y 1440 px.",
+        )
 
 
 class IssueContractPreflightError(ValueError):
@@ -67,6 +146,8 @@ def evaluate_issue_body(body: object) -> dict[str, Any]:
             "task_invalid",
             "No fue posible fijar factory-plan-task.",
         )
+
+    _require_ui_design(body, list(task["paths"]))
 
     return {
         "version": 1,
