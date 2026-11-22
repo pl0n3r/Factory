@@ -391,6 +391,90 @@ class VersionAutorebaseTests(unittest.TestCase):
                     self.assertEqual(mod.main(), 0)
                     runner.assert_called_once()
 
+    def test_ref_and_inventory_fail_closed_on_invalid_responses(self):
+        api = mod.GitHub("pl0n3r/brvtal", "fake")
+        with patch.object(api, "request", return_value={"object": {"sha": "bad"}}):
+            with self.assertRaises(mod.RebaseError):
+                api.get_ref()
+        with patch.object(api, "request", return_value={"unexpected": True}):
+            with self.assertRaises(mod.RebaseError):
+                api.pulls()
+            with self.assertRaises(mod.RebaseError):
+                api.comments(8)
+            # A broken detail response must never be treated as an open PR.
+            self.assertEqual(api.pull(8), {"unexpected": True})
+        with patch.object(api, "request", return_value=[
+            {"number": 1, "created_at": "2026-11-22T10:00:00Z"},
+            {"number": 1, "created_at": "2026-11-22T10:00:00Z"},
+        ]):
+            with self.assertRaises(mod.RebaseError):
+                api.pulls()
+        with patch.object(api, "request", return_value=None):
+            with self.assertRaises(mod.RebaseError):
+                api.pull(8)
+        with patch.object(api, "request", return_value=[]):
+            self.assertEqual(api.comments(8), [])
+            self.assertEqual(api.pulls(), [])
+
+    def test_patch_write_confined_to_version_and_rejects_invalid(self):
+        original = (self.repo / "config/version.php").read_text()
+        patch_text = mod.make_version_patch(
+            "config/version.php", original, (0, 1, 9))
+        self.assertIn("@@ ", patch_text)
+        mod.git_patch(self.repo, patch_text)
+        self.assertEqual(
+            mod.version((self.repo / "config/version.php").read_text()),
+            (0, 1, 9))
+        with self.assertRaises(mod.RebaseError):
+            mod.git_patch(self.repo, "this is not a git patch")
+        with self.assertRaises(mod.RebaseError):
+            mod.git_patch(self.repo, patch_text)  # Not idempotent if base differs.
+        with self.assertRaises(mod.RebaseError):
+            mod.make_version_patch(
+                "config/version.php", original, (0, 1, 1))
+        with self.assertRaises(mod.RebaseError):
+            mod.version("no version here")
+        with self.assertRaises(mod.RebaseError):
+            mod.version(
+                "const APP_VERSION = '0.1.1';\n"
+                "const OTHER_VERSION = '0.1.2';\n")
+        with self.assertRaises(mod.RebaseError):
+            mod.readable_file(self.repo, "bad", "package.json")
+        self.assertIsNone(mod.issue_for_branch("work/issue-0"))
+        self.assertIsNone(mod.issue_for_branch("work/issue-01"))
+        self.assertIsNone(mod.issue_for_branch("work/issue-1/other"))
+
+    def test_empty_opt_in_and_stale_head_are_safe_no_ops(self):
+        api = FakeGitHub(self.remote, {})
+        self.assertEqual(
+            mod.reconcile(api, self.repo, frozenset(), "synthetic-run"),
+            {"updated": 0, "skipped": 0, "unresolved": 0},
+        )
+        self.make_pr("work/issue-41")
+        self.move_main()
+        api = FakeGitHub(self.remote, {41: "work/issue-41"})
+        with patch.object(api, "running", return_value=False):
+            with self.assertRaises(mod.RebaseError):
+                mod.reconcile(api, self.repo, SHARED, "synthetic-run")
+        before = api.get_ref("work/issue-41")
+        with self.assertRaises(mod.RebaseError):
+            mod.prepare_rebase(
+                self.repo, api.get_ref(), "0" * 40,
+                "work/issue-41", SHARED, None, "")
+        self.assertEqual(api.get_ref("work/issue-41"), before)
+
+    def test_bump_script_guard_rejects_noncanonical_paths(self):
+        for command in (
+            "", "sh scripts/hook.py", "python3 -c print(1)",
+            "python3 scripts/../../bad.py",
+            "python3 scripts/file.py extra",
+            "python3 scripts/a.b.py",
+        ):
+            with self.assertRaises(mod.RebaseError):
+                mod._safe_script(command, self.repo)
+        with self.assertRaises(mod.RebaseError):
+            mod.GitHub("../invalid", "secret")
+
     def test_workflow_inputs_permissions_and_idempotence(self):
         workflow = (ROOT / ".github/workflows/version-autorebase.yml").read_text()
         script = (ROOT / "scripts/version_autorebase.py").read_text()
