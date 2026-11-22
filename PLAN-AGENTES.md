@@ -298,6 +298,16 @@ Antes de empezar, decide **qué rol(es)** exige la tarea y declara cada uno en e
 | Producto | ¿Resuelve el problema real del usuario o solo el síntoma? |
 | Marketing / SEO / contenido | ¿Mensaje claro? ¿Metadatos, rendimiento y analítica sin PII? |
 
+### Interfaz — puerta obligatoria de diseño visual
+
+Para **cualquier cambio de UI visible** (pantallas HTML/CSS/JS/TSX/Twig, componentes, formularios y vistas equivalentes), **antes de editar**:
+1. Leer en Factory `.claude/skills/impeccable/SKILL.md` (elegir el modo según la superficie: Persuade/Operate/Read/Experience) y su `.claude/skills/impeccable/reference/craft-floor.md`; leer también `.claude/skills/make-interfaces-feel-better/SKILL.md`.
+2. Reutilizar el sistema visual, componentes y convenciones del repositorio consumidor, sin añadir otro framework de estilos. Revisar legibilidad, espaciado, alineación, estados, accesibilidad y comportamiento responsive siguiendo los checklists de ambas skills.
+3. Incorporar al Issue una sección `### Diseño` que cite las dos skills vendorizadas y un criterio `[AC-NN]` explícito que exija **capturas antes/después a 390 px y 1440 px**. El preflight falla cerrado si hay rutas reclamadas de UI sin esta evidencia contractual.
+4. Adjuntar **al PR** las capturas reales de **antes y después en 390 y 1440 px**, y la autorrevisión de los checklists de ambas skills (incluida `craft-floor.md`), indicando los estados y las variantes revisadas; no sustituir capturas por descripciones ni afirmar inspección no realizada.
+
+**Puerta dura de interfaz:** si faltan el criterio de capturas, las cuatro vistas antes/después o la autorrevisión, el PR de UI **no solicita CodeRabbit FINAL ni se fusiona** aunque el CI sea verde. Esto no impone capturas ficticias a cambios sin UI.
+
 Cambios de riesgo (esquema, seguridad, deploy, UX pública) → haz una **segunda pasada con otro rol** antes de entregar.
 
 **En todos los repos (factory, Condor, GrindFlow, BRVTAL, FactoryRunner, ControlBot, AutoFactory):** antes de implementar, carga el **perfil completo** de cada rol desde [`pl0n3r/factory/agentes/roles/`](https://github.com/pl0n3r/factory/tree/main/agentes/roles) (`<rol>.md`) y completa su checklist en el PR; la tabla de arriba es solo el resumen. Etiqueta el Issue y el PR con cada rol asumido: `rol: <rol>` (en BRVTAL, `role: <role>` en inglés); si aún no sabes cuál, `rol: pendiente` / `role: pending`.
