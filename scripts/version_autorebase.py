@@ -8,6 +8,7 @@ modifies main. Consumers must opt in after Factory@v1 is released.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 from pathlib import Path
@@ -228,15 +229,46 @@ def candidate(pr: dict[str, Any], repo: str) -> bool:
     )
 
 
+def git_patch(worktree: Path, patch: str) -> None:
+    """Apply only a verified version-line patch; no whole-file data writes."""
+    if not isinstance(patch, str) or not patch.startswith("diff --git "):
+        raise RebaseError("Missing canonical version patch.")
+    proc = subprocess.run(
+        ["git", "apply", "--unidiff-zero", "--no-add", "-"],
+        input=patch, cwd=worktree, text=True, capture_output=True,
+        timeout=30, check=False,
+    )
+    if proc.returncode:
+        raise RebaseError("Strict version patch could not apply to main file.")
+
+
+def make_version_patch(path: str, before: str,
+                       target: tuple[int, int, int]) -> str:
+    """Only the version line, not arbitrary contents from a caller, is written."""
+    after = replace_version(before, target)
+    diff = "".join(difflib.unified_diff(
+        before.splitlines(keepends=True),
+        after.splitlines(keepends=True),
+        fromfile="a/" + path, tofile="b/" + path, n=0,
+    ))
+    if not diff:
+        raise RebaseError("No version change to apply.")
+    patch = "diff --git a/" + path + " b/" + path + "\n" + diff
+    hunks = patch[patch.index("@@ "):]
+    if not is_version_only_patch(hunks):
+        raise RebaseError("Generated patch changes non-version lines.")
+    return patch
+
+
 def trusted_bump(
     worktree: Path, main: str, paths: list[str],
     target: tuple[int, int, int], command: str,
 ) -> dict[str, str]:
+    """Return narrow patches; never return or write entire sensitive files."""
     if not command:
-        return {
-            path: replace_version(readable_file(worktree, main, path), target)
-            for path in paths
-        }
+        return {path: make_version_patch(
+            path, readable_file(worktree, main, path), target
+        ) for path in paths}
     argv = shlex.split(command)
     if not argv or any("\x00" in part for part in argv):
         raise RebaseError("Invalid trusted bump command.")
@@ -244,41 +276,45 @@ def trusted_bump(
         trusted = Path(directory)
         git(worktree, "worktree", "add", "--detach", str(trusted), main)
         try:
+            # The callable runs in a worktree created from verified MAIN only.
+            # No PR-sourced code or workflow token may reach the command.
             env = {k: v for k, v in os.environ.items()
                    if k not in {"GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN",
                                 "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}}
             env["FACTORY_TARGET_VERSION"] = ".".join(map(str, target))
-            command_result = subprocess.run(
+            result = subprocess.run(
                 argv, cwd=trusted, env=env, text=True, capture_output=True,
                 timeout=90, check=False,
             )
-            if command_result.returncode:
+            if result.returncode:
                 raise RebaseError("Trusted bump command failed.")
-            changed = git(trusted, "diff", "--name-only", "HEAD").stdout.splitlines()
-            if not changed or not set(changed).issubset(paths):
-                raise RebaseError("Bump command changed unexpected files.")
-            for path in changed:
-                if not version_only_git_diff(trusted, main, "HEAD", path):
-                    # The diff of the worktree is checked below, using the same
-                    # strict version-line contract on uncommitted edits.
-                    patch = git(trusted, "diff", "--no-ext-diff", "--unified=0",
-                                "--", path).stdout
-                    hunk = "\n".join(
-                        line for line in patch.splitlines()
-                        if line.startswith(("@@", "+", "-", " ", "\\ "))
-                        and not line.startswith(("+++", "---"))
-                    )
-                    if not is_version_only_patch(hunk):
-                        raise RebaseError("Bump command changed non-version lines.")
-            result = {}
+            status = git(trusted, "status", "--porcelain", "--untracked-files=all").stdout
+            rows = status.splitlines()
+            if not rows or any(
+                len(row) < 4
+                or row[:2] not in {" M", "M ", "MM"}
+                or row[3:] not in paths
+                for row in rows
+            ):
+                raise RebaseError("Trusted bump touched unexpected or untracked files.")
+            patches: dict[str, str] = {}
             for path in paths:
-                source = (trusted / path).read_text(encoding="utf-8")
-                if version(source) != target:
-                    raise RebaseError("Bump command failed to write exact target version.")
-                result[path] = source
-            return result
+                text = (trusted / path).read_text(encoding="utf-8")
+                if version(text) != target:
+                    raise RebaseError("Trusted bump did not produce the exact target.")
+                patch = git(
+                    trusted, "diff", "--no-ext-diff", "--unified=0",
+                    "HEAD", "--", path
+                ).stdout
+                if "@@ " not in patch or not is_version_only_patch(
+                    patch[patch.index("@@ "):]
+                ):
+                    raise RebaseError("Trusted bump changed non-version data.")
+                patches[path] = patch
+            return patches
         finally:
-            git(worktree, "worktree", "remove", "--force", str(trusted), check=False)
+            git(worktree, "worktree", "remove", "--force",
+                str(trusted), check=False)
 
 
 def prepare_rebase(
@@ -326,10 +362,10 @@ def prepare_rebase(
             (allocated[0], allocated[1], allocated[2] + 1) if allocated else (0, 0, 0),
         )
         # Never run the caller's command from the untrusted PR worktree.
-        replacement = trusted_bump(worktree, main, conflicts, target, bump_command)
-        for path, content in replacement.items():
+        patches = trusted_bump(worktree, main, conflicts, target, bump_command)
+        for path, patch in patches.items():
             git(worktree, "checkout", "--theirs", "--", path)
-            (worktree / path).write_text(content, encoding="utf-8")
+            git_patch(worktree, patch)
             git(worktree, "add", "--", path)
         if git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.strip():
             raise RebaseError("Unresolved index entries after strict resolution.")
