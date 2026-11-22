@@ -370,7 +370,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             if path.endswith("/pulls/99"):
                 return source
             if "/files?" in path:
-                return rows[:100] if "page=1" in path else rows[100:]
+                return rows[:100] if path.endswith("&page=1") else rows[100:]
             if "/commits/" in path:
                 return commit()
             raise AssertionError(path)
@@ -467,7 +467,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         def paged(_repo, path, _token, *, method="GET", payload=None):
             visited.append(path)
             return {"total_count": 101,
-                    "check_runs": records[:100] if "page=1" in path else records[100:]}
+                    "check_runs": records[:100] if path.endswith("&page=1") else records[100:]}
         with patch("scripts.dependabot_lane.api", side_effect=paged):
             self.assertTrue(_terminal_checks_green("pl0n3r/Factory", SHA, "token"))
         self.assertEqual(len(visited), 2)
@@ -556,7 +556,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         marker = "<!-- factory-dependabot-stale:pr-2107 -->"
         def server(_repo, path, _token, *, method="GET", payload=None):
             calls.append(path)
-            if "page=1" in path:
+            if path.endswith("&page=1"):
                 return [{"body": "another comment"}] * 100
             return [{"body": marker}]
         with patch("scripts.dependabot_lane.api", side_effect=server):
@@ -602,7 +602,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         pages = []
         def get(_repo, path, _token, *, method="GET", payload=None):
             pages.append(path)
-            if "page=1" in path:
+            if path.endswith("&page=1"):
                 return [{"user": {"login": "other"}, "number": i} for i in range(99)] + [
                     {"user": BOT, "number": 7, "head": {"sha": SHA}},
                 ]
