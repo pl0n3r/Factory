@@ -175,8 +175,6 @@ Reversión: squash-revert solo del PR F1D, sin tocar F1A/F1B/F1C ni modificar pu
 
 La tabla de **38 workflows** de `main@b0713650194e9a0c464d625bc6136eecad776377` es una fotografía histórica y permanece sin cambios, al igual que los ledgers F1A, F1B, F1C, F1D, F1E y F1F. Los inventarios ejecutables admiten expresamente una ruta nueva posterior a esas bajas, sin aceptar otras rutas ni sustituir comprobaciones existentes:
 
-| Nueva ruta posterior al ledger | Disparadores verificados | Condición de seguridad |
-| --- | --- | --- |
-| `.github/workflows/dependabot-lane.yml` | `workflow_run` y `schedule` | Caller protegido, solo tras `CI factory` y con HEAD exacto; barrido diario, no ejecuta código del PR con token privilegiado |
+La nueva ruta posterior al ledger es **`.github/workflows/dependabot-lane.yml`**, con disparadores verificados `workflow_run` y `schedule`. El caller protegido actúa solo tras `CI factory` con HEAD exacto y realiza un barrido diario sin ejecutar código del PR con token privilegiado. Se documenta fuera de la tabla original de siete columnas porque esa tabla está reservada a la fotografía histórica.
 
 El conjunto actual esperado pasa de **37 a 38 workflows** al aparecer este caller. `tests/test_factory_diet_inventory.py` y `tests/test_dieta_fase1c.py` lo registran de manera explícita, preservando los negativos contra sustitución de workflows, la poda histórica y todos los gates de CI, privacidad, gasto, release y seguridad. La automatización no equivale a autorización para fusionar PRs major, pins de workflows o cambios en consumidores `live` sin las puertas correspondientes.
