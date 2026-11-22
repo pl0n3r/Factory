@@ -200,6 +200,8 @@ class VersionAutorebaseTests(unittest.TestCase):
         self.assertIn("persist-credentials: true", workflow)
         self.assertIn("ref: ${{ job.workflow_sha }}", workflow)
         self.assertIn('git(worktree, "push", "origin"', script)
+        self.assertNotIn('"--no-add"', script)
+        self.assertIn('Applied patch did not leave exact target version.', script)
         for invalid in ("not-json", '["../bad","package.json"]',
                         '["package.json","package.json"]', '["a","b","c","d","e"]'):
             with self.assertRaises(CoordinationError):

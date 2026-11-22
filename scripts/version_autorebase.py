@@ -234,7 +234,7 @@ def git_patch(worktree: Path, patch: str) -> None:
     if not isinstance(patch, str) or not patch.startswith("diff --git "):
         raise RebaseError("Missing canonical version patch.")
     proc = subprocess.run(
-        ["git", "apply", "--unidiff-zero", "--no-add", "-"],
+        ["git", "apply", "--unidiff-zero", "-"],
         input=patch, cwd=worktree, text=True, capture_output=True,
         timeout=30, check=False,
     )
@@ -366,6 +366,8 @@ def prepare_rebase(
         for path, patch in patches.items():
             git(worktree, "checkout", "--theirs", "--", path)
             git_patch(worktree, patch)
+            if version((worktree / path).read_text(encoding="utf-8")) != target:
+                raise RebaseError("Applied patch did not leave exact target version.")
             git(worktree, "add", "--", path)
         if git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.strip():
             raise RebaseError("Unresolved index entries after strict resolution.")
