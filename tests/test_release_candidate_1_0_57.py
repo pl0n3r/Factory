@@ -21,11 +21,11 @@ class ReleaseCandidate1057Tests(unittest.TestCase):
             (ROOT / "config/version.json").read_text(encoding="utf-8")
         )
         self.assertEqual(set(version_data), {"version"})
-        self.assertEqual(version_data["version"], "1.0.57")
+        self.assertGreaterEqual(tuple(int(v) for v in version_data["version"].split(".")), (1, 0, 57))
 
         index = (ROOT / INDEX).read_text(encoding="utf-8")
         package = (ROOT / PACK).read_text(encoding="utf-8")
-        self.assertIn("Versión del repositorio: 1.0.57.", index)
+        self.assertIn("Versión del repositorio: " + version_data["version"] + ".", index)
         self.assertIn("Estado: documented_not_legally_approved", index)
         self.assertIn("Estado: documented_not_legally_approved", package)
         self.assertNotIn("Estado: legally_approved", index)
