@@ -157,7 +157,7 @@ def classify(pr: object, files: object, commit: object, *, repo: str, head: str)
 def api(repo: str, path: str, token: str, *, method: str = "GET", payload: object = None) -> object:
     if not REPO_NAME.fullmatch(repo):
         raise LaneError("Repositorio inválido")
-    if method not in ("GET", "POST"):
+    if method not in ("GET", "POST", "PUT"):
         raise LaneError("Verbo no permitido")
     data = json.dumps(payload).encode() if payload is not None else None
     req = Request("https://api.github.com" + path, data=data, method=method, headers={
@@ -469,19 +469,21 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         latest, last_result = read_exact(repo, number, head, token)
         if last_result != result or not _terminal_checks_green(repo, head, token):
             raise LaneError("Evidencia de PR/checks cambió antes de auto-merge")
-        node_id = latest.get("node_id")
-        if not isinstance(node_id, str) or not node_id.startswith("PR_"):
-            raise LaneError("PR GraphQL ID inválido")
-        response = api(repo, "/graphql", token, method="POST", payload={
-            "query": "mutation($id:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){pullRequest{number autoMergeRequest{enabledAt}}}}",
-            "variables": {"id": node_id},
-        })
-        if not isinstance(response, dict) or response.get("errors") or not isinstance(response.get("data"), dict):
-            raise LaneError("GitHub rechazó la habilitación de auto-merge")
-        actual = (((response["data"].get("enablePullRequestAutoMerge") or {}).get("pullRequest")) or {})
-        if actual.get("number") != number:
-            raise LaneError("Auto-merge no confirmó la identidad del PR")
-        return {**result, "auto_merge_enabled": True, "followup_required": False}
+        if not _switch_running(repo, token):
+            raise LaneError("Interruptor global cambió antes del squash")
+        # El workflow_run se dispara tras finalizar los checks: habilitar
+        # GitHub auto-merge en un PR ya mergeable puede fallar (no hay
+        # requisitos pendientes). Ejecutar el squash normal con expected SHA,
+        # sin usar --admin ni APIs que omitan branch protection.
+        response = api(repo, f"/repos/{repo}/pulls/{number}/merge", token,
+                       method="PUT", payload={"sha": head, "merge_method": "squash"})
+        if not isinstance(response, dict) or response.get("merged") is not True:
+            raise LaneError("GitHub no confirmó el squash protegido")
+        merged_sha = response.get("sha")
+        if not isinstance(merged_sha, str) or not HEX_SHA.fullmatch(merged_sha):
+            raise LaneError("Squash sin SHA verificable")
+        return {**result, "merged": True, "merge_sha": merged_sha,
+                "auto_merge_enabled": False, "followup_required": False}
     if _age_over_seven_days(pr, now=now) and not green:
         issue = create_followup(repo, number, head, token, reason="stale", paths=result["file_paths"])
         comment_stale(repo, number, issue, token)
