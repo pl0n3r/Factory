@@ -214,7 +214,7 @@ def proposals(issues: list[dict[str, Any]], repo: str, check: str) -> list[Propo
 
 class Github:
     def __init__(self, token: str, repo: str):
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or ".." in repo:
             raise EpicError("Repositorio inválido")
         self.repo, self.token = repo, token
 
