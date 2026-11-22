@@ -25,7 +25,6 @@ jobs:
       contents: read
       issues: read
       checks: read
-      pull-requests: read
     steps:
       - name: Rechazar eventos privilegiados
         env:
@@ -36,6 +35,23 @@ jobs:
 
       # El kit se descarga antes de derivar issue; nunca se ejecuta código
       # del PR Dependabot y la clasificación ocurre en un runner read-only.
+      - name: Validar contexto PR
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
+        env:
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+          ISSUE_INPUT: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          [[ -n "$EVENT_PR" ]] || { echo "::error::Se requiere pull_request"; exit 1; }
+          issue="$ISSUE_INPUT"
+          if [[ "$issue" == "0" ]]; then
+            [[ "$HEAD_REF" =~ ^trabajo/issue-([1-9][0-9]*)$ ]] || { echo "::error::No se pudo derivar Issue"; exit 1; }
+            issue="${BASH_REMATCH[1]}"
+          fi
+          [[ "$issue" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Issue inválido"; exit 1; }
+          echo "ISSUE_NUMBER=$issue" >> "$GITHUB_ENV"
+
       - name: Descargar kit publicado
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -56,23 +72,6 @@ jobs:
           set -euo pipefail
           python3 .factory/scripts/dependabot_lane.py classify --repo "$REPOSITORY" --pr "$PR" --head "$HEAD"
           echo 'approved=true' >> "$GITHUB_OUTPUT"
-
-      - name: Validar contexto PR
-        if: steps.dependabot-lane.outputs.approved != 'true'
-        env:
-          EVENT_PR: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.head_ref }}
-          ISSUE_INPUT: ${{ inputs.issue_number }}
-        run: |
-          set -euo pipefail
-          [[ -n "$EVENT_PR" ]] || { echo "::error::Se requiere pull_request"; exit 1; }
-          issue="$ISSUE_INPUT"
-          if [[ "$issue" == "0" ]]; then
-            [[ "$HEAD_REF" =~ ^trabajo/issue-([1-9][0-9]*)$ ]] || { echo "::error::No se pudo derivar Issue"; exit 1; }
-            issue="${BASH_REMATCH[1]}"
-          fi
-          [[ "$issue" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Issue inválido"; exit 1; }
-          echo "ISSUE_NUMBER=$issue" >> "$GITHUB_ENV"
 
       - name: Descargar candidato
         if: steps.dependabot-lane.outputs.approved != 'true'
