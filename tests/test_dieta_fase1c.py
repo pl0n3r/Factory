@@ -67,6 +67,11 @@ VERSION_AUTOREBASE = WF / "version-autorebase.yml"
 if VERSION_AUTOREBASE.is_file() and not VERSION_AUTOREBASE.is_symlink():
     EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"version-autorebase.yml"})
 
+# Factory#2184: caller post-CI agregado después del ledger F1C, sin bajas.
+DEPENDABOT_LANE = WF / "dependabot-lane.yml"
+if DEPENDABOT_LANE.is_file() and not DEPENDABOT_LANE.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"dependabot-lane.yml"})
+
 HARD_GATES = (
     "factory-ci.yml", "sonar.yml", "codeql-evidence.yml",
     "seguridad.yml", "costos.yml", "unattended-watchdog.yml",

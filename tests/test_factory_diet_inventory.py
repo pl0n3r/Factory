@@ -53,6 +53,15 @@ if VERSION_AUTOREBASE_FILE.is_file() and not VERSION_AUTOREBASE_FILE.is_symlink(
         "workflow_call", "workflow_dispatch"
     })
 
+# Factory#2184: nuevo caller privilegiado de Dependabot posterior al ledger
+# histórico. Su presencia es explícita, sin aceptar swaps arbitrarios.
+DEPENDABOT_LANE_WORKFLOW = ".github/workflows/dependabot-lane.yml"
+DEPENDABOT_LANE_FILE = ROOT / DEPENDABOT_LANE_WORKFLOW
+if DEPENDABOT_LANE_FILE.is_file() and not DEPENDABOT_LANE_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[DEPENDABOT_LANE_WORKFLOW] = frozenset({
+        "workflow_run", "schedule"
+    })
+
 PATH_REF = re.compile(r"(?:scripts|tests|metricas|producto)/[A-Za-z0-9_./-]+\.py")
 WORKFLOW_ROW = re.compile(r"^\| `(\.github/workflows/[^\`]+\.ya?ml)` \|", re.MULTILINE)
 REQUIRED_KEEP = {
