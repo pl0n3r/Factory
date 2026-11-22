@@ -351,10 +351,67 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
     return number_created
 
 
+def comment_stale(repo: str, number: int, issue: int, token: str) -> bool:
+    """Anotar una vez el bloqueo real, sin generar mensajes diarios duplicados."""
+    marker = f"<!-- factory-dependabot-stale:pr-{number} -->"
+    prefix = f"/repos/{repo}/issues/{number}"
+    for page in range(1, 11):
+        rows = api(repo, f"{prefix}/comments?per_page=100&page={page}", token)
+        if not isinstance(rows, list):
+            raise LaneError("Comentarios de PR incompletos")
+        if any(isinstance(item, dict) and marker in (item.get("body") or "") for item in rows):
+            return False
+        if len(rows) < 100:
+            break
+    else:
+        raise LaneError("Demasiados comentarios para deduplicar")
+    body = (
+        f"{marker}\n"
+        f"Dependabot lleva más de 7 días sin todos los checks terminales en verde. "
+        f"Seguimiento canónico: https://github.com/{repo}/issues/{issue}. "
+        "Se requiere resolver el CI y revisar los cambios; no se aplicó auto-merge."
+    )
+    api(repo, prefix + "/comments", token, method="POST", payload={"body": body})
+    return True
+
+
+def sweep(repo: str, token: str, *, now: datetime) -> list[dict]:
+    """Barrido acotado y explícito; no crea leases ni ejecuta código de PRs."""
+    if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+        raise LaneError("Barrido no autorizado fuera de schedule")
+    if os.environ.get("GITHUB_REF") != "refs/heads/main":
+        raise LaneError("Barrido fuera de main")
+    if not _switch_running(repo, token):
+        raise LaneError("Interruptor global distinto de RUNNING")
+    result: list[dict] = []
+    for page in range(1, 11):
+        rows = api(repo, f"/repos/{repo}/pulls?state=open&per_page=100&page={page}", token)
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise LaneError("Inventario de PRs no verificable")
+        for item in rows:
+            if not isinstance(item, dict):
+                raise LaneError("PR de inventario ilegible")
+            user = item.get("user")
+            if not isinstance(user, dict):
+                raise LaneError("Identidad de PR incompleta")
+            if user.get("login") != "dependabot[bot]":
+                continue
+            number = item.get("number")
+            head = (item.get("head") or {}).get("sha")
+            if type(number) is not int or not isinstance(head, str) or not HEX_SHA.fullmatch(head):
+                raise LaneError("PR Dependabot de inventario sin HEAD")
+            result.append(reconcile(repo, number, head, token, now=now))
+        if len(rows) < 100:
+            break
+    else:
+        raise LaneError("Inventario de PRs excede límite verificable")
+    return result
+
+
 def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -> dict:
     """Privilegiado: solo desde workflow_run sobre main, jamás checkout de PR."""
-    if os.environ.get("GITHUB_EVENT_NAME") != "workflow_run":
-        raise LaneError("Mutación requiere workflow_run confiable")
+    if os.environ.get("GITHUB_EVENT_NAME") not in ("workflow_run", "schedule"):
+        raise LaneError("Mutación requiere workflow_run/schedule confiable")
     if os.environ.get("GITHUB_REF") != "refs/heads/main":
         raise LaneError("Mutación fuera de main")
     pr, result = read_exact(repo, number, head, token)
@@ -370,7 +427,16 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         reason = "major" if result["major"] else "workflow"
         issue = create_followup(repo, number, head, token, reason=reason, major_target=result.get("major_target"))
         return {**result, "auto_merge_enabled": False, "followup_required": True, "issue": issue, "reason": reason}
-    green = _terminal_checks_green(repo, head, token)
+    # Una indisponibilidad de los checks impide merge, pero si el PR supera
+    # siete días habilita solo un seguimiento auditable.
+    check_error = None
+    try:
+        green = _terminal_checks_green(repo, head, token)
+    except LaneError as exc:
+        check_error = str(exc)
+        green = False
+    if check_error and not _age_over_seven_days(pr, now=now):
+        raise LaneError("Evidencia de checks desconocida; no autorizar merge")
     if result["policy"] == "auto" and green:
         # Se usa la política de auto-merge de GitHub, jamás un merge directo
         # o --admin. La protección de rama mantiene su propia autoridad.
@@ -392,22 +458,30 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         return {**result, "auto_merge_enabled": True, "followup_required": False}
     if _age_over_seven_days(pr, now=now) and not green:
         issue = create_followup(repo, number, head, token, reason="stale")
-        return {**result, "followup_required": True, "issue": issue, "reason": "stale"}
+        comment_stale(repo, number, issue, token)
+        return {**result, "auto_merge_enabled": False, "followup_required": True,
+                "issue": issue, "reason": "stale"}
     return {**result, "auto_merge_enabled": False, "followup_required": False}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("classify", "reconcile"))
+    parser.add_argument("command", choices=("classify", "reconcile", "sweep"))
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--pr", required=True, type=int)
-    parser.add_argument("--head", required=True)
+    parser.add_argument("--pr", type=int)
+    parser.add_argument("--head")
     args = parser.parse_args(argv)
     token = os.environ.get("GH_TOKEN", "")
     if not token:
         print("ERROR: token de solo lectura no disponible", file=sys.stderr)
         return 1
     try:
+        if args.command == "sweep":
+            result = sweep(args.repo, token, now=datetime.now(timezone.utc))
+            print(json.dumps({"swept": len(result), "results": result}, sort_keys=True))
+            return 0
+        if args.pr is None or args.head is None:
+            raise LaneError("PR y HEAD obligatorios")
         if args.command == "classify":
             result = classify_from_api(args.repo, args.pr, args.head, token)
             print(json.dumps(result, sort_keys=True))
