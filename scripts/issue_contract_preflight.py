@@ -32,7 +32,12 @@ _UI_PATH_PARTS = frozenset({
     "templates", "assets", "public", "static", "client", "web",
 })
 _UI_SCRIPT_VISUAL_PARTS = _UI_PATH_PARTS - {"frontend", "client", "web"}
-_UI_SCRIPT_ENTRIES = frozenset({"app.js", "main.js", "admin.js", "index.js", "page.js", "layout.js"})
+_UI_SCRIPT_ENTRIES = frozenset(
+    f"{name}.{extension}"
+    for name in ("app", "main", "admin", "index", "page", "layout")
+    for extension in ("js", "mjs", "cjs", "ts")
+)
+_UI_SCRIPT_ENTRY_CONTEXT = frozenset({"frontend", "client", "web"})
 _UI_CAPTURE = re.compile(r"capturas?|screenshots?", re.IGNORECASE)
 _UI_BEFORE_AFTER = re.compile(
     r"(?:antes\s*(?:/|y|-)\s*despu[eé]s|before\s*(?:/|and|-)\s*after)",
@@ -48,14 +53,19 @@ def _ui_claimed_paths(paths: list[str]) -> list[str]:
     for path in paths:
         lower = path.casefold()
         parts = lower.rstrip("/").split("/")
-        if lower.endswith("/") and any(p in _UI_PATH_PARTS for p in parts):
+        if (lower.endswith("/") or len(parts) == 1) and any(
+            p in _UI_PATH_PARTS for p in parts
+        ):
             result.append(path)
         elif lower.endswith(_UI_SUFFIXES):
             result.append(path)
         elif lower.endswith(_UI_SCRIPT_SUFFIXES) and (
             any(p in _UI_SCRIPT_VISUAL_PARTS for p in parts[:-1])
-            or parts[-1] in _UI_SCRIPT_ENTRIES
-            and (len(parts) == 1 or any(p in {"src", "frontend", "client", "web"} for p in parts[:-1]))
+            or (
+                parts[-1] in _UI_SCRIPT_ENTRIES
+                and any(p in _UI_SCRIPT_ENTRY_CONTEXT for p in parts[:-1])
+                and "backend" not in parts[:-1]
+            )
         ):
             result.append(path)
     return result

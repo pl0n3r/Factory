@@ -62,6 +62,9 @@ class UiDesignGateTests(unittest.TestCase):
             "frontend/src/styles/layout.css",
             "frontend/src/pages/Settings.tsx",
             "frontend/src/pages/Settings.js",
+            "frontend/src/main.ts",
+            "frontend/src/main.js",
+            "frontend/src/index.mjs",
             "templates/public/landing.html",
             "symfony/templates/signup.html.twig",
             "resources/views/signup.blade.php",
@@ -80,9 +83,11 @@ class UiDesignGateTests(unittest.TestCase):
                 self.assertEqual(result["paths"], [path])
 
     def test_ui_directory_claim_requires_evidence(self) -> None:
-        with self.assertRaises(preflight.IssueContractPreflightError) as error:
-            preflight.evaluate_issue_body(issue_with_claims(["frontend/"]))
-        self.assertEqual(error.exception.code, "ui_design_invalid")
+        for path in ("frontend", "frontend/", "templates", "views"):
+            with self.subTest(path=path):
+                with self.assertRaises(preflight.IssueContractPreflightError) as error:
+                    preflight.evaluate_issue_body(issue_with_claims([path]))
+                self.assertEqual(error.exception.code, "ui_design_invalid")
 
     def test_missing_skill_and_missing_capture_criterion_fail_closed(self) -> None:
         path = "frontend/src/pages/Settings.tsx"
@@ -112,6 +117,7 @@ class UiDesignGateTests(unittest.TestCase):
             ["scripts/example.py", "tests/example.py"],
             ["scripts/worker.js", "backend/index.ts"],
             ["frontend/src/api/client.js", "frontend/src/api/transport.ts"],
+            ["backend/src/index.js", "backend/src/index.ts", "scripts/main.js"],
             ["docs/operations.md"],
         ):
             with self.subTest(paths=paths):
