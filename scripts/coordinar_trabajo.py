@@ -1332,6 +1332,7 @@ SHARED_VERSION_LINE_RE = re.compile(
     r"\s*(?:"
     rf"const\s+[A-Z][A-Z0-9_]*_(?:VERSION|RELEASE_DATE)\s*=\s*(['\"]){_SHARED_VERSION_TOKEN}\1\s*;"
     rf"|\"version\"\s*:\s*\"{_SHARED_VERSION_TOKEN}\"\s*,?"
+    rf"|-\s+Proyecto\s+\x60pl0n3r/[A-Za-z0-9_.-]+\x60,\s+versión\s+declarada\s+\x60[0-9]+\.[0-9]+\.[0-9]+\x60\."
     r")\s*"
 )
 

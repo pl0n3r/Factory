@@ -40,6 +40,14 @@ VERSION_LINE = re.compile(
     r'"version"\s*:\s*))(?P<quote>["\x27])(?P<version>[0-9]+\.[0-9]+\.[0-9]+)'
     r"(?P=quote)(?P<suffix>\s*[,;]?\s*)$"
 )
+# Only this anchored format, on paths declared via shared_version_paths,
+# qualifies for a derived legal-index version (not arbitrary Markdown).
+MARKDOWN_VERSION_LINE = re.compile(
+    r"(?m)^(?P<prefix>-\s+Proyecto\s+`pl0n3r/[A-Za-z0-9_.-]+`,"
+    r"\s+versión\s+declarada\s+`)"
+    r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+)"
+    r"(?P<suffix>`\.)$"
+)
 KILL_RE = re.compile(r"<!-- factory-unattended-kill-switch (\{[^\r\n{}]*\}) -->")
 BOT = "github-actions[bot]"
 MAX_PAGES = 10
@@ -57,16 +65,20 @@ def git(worktree: Path, *args: str, check: bool = True) -> subprocess.CompletedP
 
 
 def version(text: str) -> tuple[int, int, int]:
-    values = [tuple(int(x) for x in match.group("version").split("."))
-              for match in VERSION_LINE.finditer(text)]
-    if len(values) != 1:
+    matches = [*VERSION_LINE.finditer(text), *MARKDOWN_VERSION_LINE.finditer(text)]
+    if len(matches) != 1:
         raise RebaseError("Version file must contain exactly one canonical version line.")
-    return values[0]
+    return tuple(int(x) for x in matches[0].group("version").split("."))
 
 
 def replace_version(text: str, target: tuple[int, int, int]) -> str:
     version(text)  # A missing or ambiguous line is not silently created.
     formatted = ".".join(map(str, target))
+    if MARKDOWN_VERSION_LINE.search(text):
+        return MARKDOWN_VERSION_LINE.sub(
+            lambda m: m.group("prefix") + formatted + m.group("suffix"),
+            text, count=1,
+        )
     return VERSION_LINE.sub(
         lambda m: m.group("prefix") + m.group("quote") + formatted
         + m.group("quote") + m.group("suffix"),
@@ -260,56 +272,80 @@ def make_version_patch(path: str, before: str,
     return patch
 
 
+def _safe_script(command: str, trusted: Path) -> list[str]:
+    """Only one already-reviewed script from trusted main; no shell or arguments."""
+    argv = shlex.split(command)
+    if (len(argv) != 2 or argv[0] != "python3"
+        or re.fullmatch(r"scripts/[a-zA-Z0-9_-]+\.py", argv[1]) is None):
+        raise RebaseError("Only python3 scripts/<trusted_name>.py is allowed.")
+    executable = trusted / argv[1]
+    if not executable.is_file() or executable.is_symlink():
+        raise RebaseError("Script is missing or symlinked in trusted main.")
+    return argv
+
+
 def trusted_bump(
     worktree: Path, main: str, paths: list[str],
     target: tuple[int, int, int], command: str,
+    post_command: str = "",
 ) -> dict[str, str]:
-    """Return narrow patches; never return or write entire sensitive files."""
-    if not command:
+    """Return strictly verified version patches, never whole sensitive files."""
+    if not command and not post_command:
         return {path: make_version_patch(
             path, readable_file(worktree, main, path), target
-        ) for path in paths}
-    argv = shlex.split(command)
-    if not argv or any("\x00" in part for part in argv):
-        raise RebaseError("Invalid trusted bump command.")
+        ) for path in paths if version(readable_file(worktree, main, path)) != target}
     with tempfile.TemporaryDirectory(prefix="factory-bump-main-") as directory:
         trusted = Path(directory)
         git(worktree, "worktree", "add", "--detach", str(trusted), main)
         try:
-            # The callable runs in a worktree created from verified MAIN only.
-            # No PR-sourced code or workflow token may reach the command.
-            env = {k: v for k, v in os.environ.items()
-                   if k not in {"GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN",
-                                "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}}
+            # Only the commit on main is checked out; no PR script is executed.
+            env = {key: value for key, value in os.environ.items()
+                   if key not in {"GH_TOKEN", "GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN",
+                                  "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}}
             env["FACTORY_TARGET_VERSION"] = ".".join(map(str, target))
-            result = subprocess.run(
-                argv, cwd=trusted, env=env, text=True, capture_output=True,
-                timeout=90, check=False,
-            )
-            if result.returncode:
-                raise RebaseError("Trusted bump command failed.")
-            status = git(trusted, "status", "--porcelain", "--untracked-files=all").stdout
+            if command:
+                argv = _safe_script(command, trusted)
+                result = subprocess.run(
+                    argv, cwd=trusted, env=env, text=True, capture_output=True,
+                    timeout=90, check=False,
+                )
+                if result.returncode:
+                    raise RebaseError("Trusted bump command failed.")
+            else:
+                for path in paths:
+                    initial = readable_file(worktree, main, path)
+                    if version(initial) != target:
+                        git_patch(trusted, make_version_patch(path, initial, target))
+            if post_command:
+                argv = _safe_script(post_command, trusted)
+                result = subprocess.run(
+                    argv, cwd=trusted, env=env, text=True, capture_output=True,
+                    timeout=90, check=False,
+                )
+                if result.returncode:
+                    raise RebaseError("Trusted post-bump regeneration failed.")
+            status = git(trusted, "status", "--porcelain",
+                         "--untracked-files=all").stdout
             rows = status.splitlines()
-            if not rows or any(
-                len(row) < 4
-                or row[:2] not in {" M", "M ", "MM"}
+            if any(
+                len(row) < 4 or row[:2] not in {" M", "M ", "MM"}
                 or row[3:] not in paths
                 for row in rows
             ):
-                raise RebaseError("Trusted bump touched unexpected or untracked files.")
-            patches: dict[str, str] = {}
+                raise RebaseError("Version hook touched unexpected/untracked files.")
+            patches = {}
             for path in paths:
-                text = (trusted / path).read_text(encoding="utf-8")
-                if version(text) != target:
-                    raise RebaseError("Trusted bump did not produce the exact target.")
-                patch = git(
-                    trusted, "diff", "--no-ext-diff", "--unified=0",
-                    "HEAD", "--", path
-                ).stdout
+                current = (trusted / path).read_text(encoding="utf-8")
+                if version(current) != target:
+                    raise RebaseError("Version hook did not produce exact target.")
+                patch = git(trusted, "diff", "--no-ext-diff", "--unified=0",
+                            "HEAD", "--", path).stdout
+                if not patch:
+                    continue
                 if "@@ " not in patch or not is_version_only_patch(
                     patch[patch.index("@@ "):]
                 ):
-                    raise RebaseError("Trusted bump changed non-version data.")
+                    raise RebaseError("Version hook modified non-version data.")
                 patches[path] = patch
             return patches
         finally:
@@ -321,6 +357,7 @@ def prepare_rebase(
     worktree: Path, main: str, head: str, branch: str,
     allowed: frozenset[str], allocated: tuple[int, int, int] | None,
     bump_command: str,
+    post_bump_command: str = "",
 ) -> tuple[list[str], tuple[int, int, int] | None]:
     # Must fetch both refs from the same authenticated repo. A final push uses
     # Git fast-forward protection against any concurrent actor.
@@ -362,13 +399,41 @@ def prepare_rebase(
             (allocated[0], allocated[1], allocated[2] + 1) if allocated else (0, 0, 0),
         )
         # Never run the caller's command from the untrusted PR worktree.
-        patches = trusted_bump(worktree, main, conflicts, target, bump_command)
-        for path, patch in patches.items():
-            git(worktree, "checkout", "--theirs", "--", path)
-            git_patch(worktree, patch)
+        # Include declared, trustworthy derived version paths even when they
+        # did not conflict, so post-bump legal indexes stay synchronized.
+        paths = sorted(allowed)
+        for path in paths:
+            for commit in (main, head):
+                if git(worktree, "cat-file", "-e", commit + ":" + path,
+                       check=False).returncode != 0:
+                    raise RebaseError("Declared shared version path is missing.")
+            if (path not in conflicts
+                and any(
+                    git(worktree, "diff", "--quiet", base, tip, "--", path,
+                        check=False).returncode == 1
+                    and not version_only_git_diff(worktree, base, tip, path)
+                    for tip in (main, head)
+                )):
+                raise RebaseError("Non-version edits on declared shared path.")
+        patches = trusted_bump(worktree, main, paths, target,
+                               bump_command, post_bump_command)
+        for path in patches:
+            if path in conflicts:
+                git(worktree, "checkout", "--theirs", "--", path)
+            current = (worktree / path).read_text(encoding="utf-8")
+            if version(current) != target:
+                git_patch(worktree, make_version_patch(path, current, target))
             if version((worktree / path).read_text(encoding="utf-8")) != target:
                 raise RebaseError("Applied patch did not leave exact target version.")
             git(worktree, "add", "--", path)
+        # A conflict whose main version equals target still needs resolution.
+        for path in conflicts:
+            if path not in patches:
+                git(worktree, "checkout", "--theirs", "--", path)
+                current = (worktree / path).read_text(encoding="utf-8")
+                if version(current) != target:
+                    git_patch(worktree, make_version_patch(path, current, target))
+                git(worktree, "add", "--", path)
         if git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.strip():
             raise RebaseError("Unresolved index entries after strict resolution.")
         git(worktree, "config", "user.name", BOT)
@@ -386,6 +451,7 @@ def prepare_rebase(
 def reconcile(
     api: GitHub, worktree: Path, allowed: frozenset[str],
     run_url: str, bump_command: str = "",
+    post_bump_command: str = "",
 ) -> dict[str, int]:
     if not allowed:
         return {"updated": 0, "skipped": 0, "unresolved": 0}
@@ -409,7 +475,8 @@ def reconcile(
             raise RebaseError("Main or Factory#767 changed; stop before push.")
         try:
             conflicts, target = prepare_rebase(
-                worktree, main, head, branch, allowed, allocated, bump_command
+                worktree, main, head, branch, allowed, allocated,
+                bump_command, post_bump_command
             )
         except RebaseError:
             # Unexpected source or unverified diff is never auto-corrected.
@@ -451,6 +518,7 @@ def main() -> int:
     parser.add_argument("--repo-path", type=Path, required=True)
     parser.add_argument("--shared-version-paths", default="")
     parser.add_argument("--bump-command", default="")
+    parser.add_argument("--post-bump-command", default="")
     parser.add_argument("--run-url", default="")
     args = parser.parse_args()
     try:
@@ -465,7 +533,8 @@ def main() -> int:
             return 0
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
         api = GitHub(args.repo, token)
-        result = reconcile(api, worktree, allowed, args.run_url, args.bump_command)
+        result = reconcile(api, worktree, allowed, args.run_url,
+                           args.bump_command, args.post_bump_command)
         print("VERSION AUTOREBASE: " + json.dumps(result, sort_keys=True))
         return 0
     except (RebaseError, CoordinationError, OSError, subprocess.TimeoutExpired,

@@ -184,6 +184,69 @@ class VersionAutorebaseTests(unittest.TestCase):
                 self.assertEqual(mod.reconcile(api, self.repo, SHARED,
                                                 "synthetic-run")["updated"], 0)
 
+    def test_markdown_derived_version_line_and_hook(self):
+        from scripts.coordinar_trabajo import is_version_only_patch
+
+        old_line = "- Proyecto `pl0n3r/brvtal`, versión declarada `0.1.1`."
+        new_line = "- Proyecto `pl0n3r/brvtal`, versión declarada `0.1.3`."
+        patch_text = "@@ -1 +1 @@\n-" + old_line + "\n+" + new_line + "\n"
+        self.assertTrue(is_version_only_patch(patch_text))
+        self.assertFalse(is_version_only_patch(
+            patch_text + "+texto sin vínculo con versión\n"))
+        self.assertFalse(is_version_only_patch(
+            "@@ -1 +1 @@\n- Proyecto `otro`, versión declarada `0.1.1`.\n"
+            "+ Proyecto `otro`, versión declarada `0.1.3`.\n"))
+        self.assertEqual(mod.version(old_line), (0, 1, 1))
+        self.assertEqual(mod.replace_version(old_line, (0, 1, 300)),
+                         old_line.replace("0.1.1", "0.1.300"))
+
+        # Only trusted main may define the post-bump script.  It deliberately
+        # rewrites just the derived version line, never legal source documents.
+        git(self.repo, "checkout", "-B", "main", self.base)
+        index = self.repo / "revision-juridica" / "00-LEEME.md"
+        index.parent.mkdir(exist_ok=True)
+        index.write_text(old_line + "\n", encoding="utf-8")
+        scripts = self.repo / "scripts"
+        scripts.mkdir(exist_ok=True)
+        hook = scripts / "regenerate_index.py"
+        hook.write_text(
+            "import os, re\n"
+            "from pathlib import Path\n"
+            "path = Path('revision-juridica/00-LEEME.md')\n"
+            "body = path.read_text(encoding='utf-8')\n"
+            "v = os.environ['FACTORY_TARGET_VERSION']\n"
+            "body = re.sub(r'versión declarada `[0-9]+\\.[0-9]+\\.[0-9]+`', "
+            "lambda _: 'versión declarada `' + v + '`', body)\n"
+            "path.write_text(body, encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-m", "trust minimal index regeneration")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "push", "origin", "HEAD:refs/heads/main")
+        self.make_pr("trabajo/issue-41")
+        self.move_main()
+        api = FakeGitHub(self.remote, {41: "trabajo/issue-41"})
+        allowed = SHARED | frozenset({"revision-juridica/00-LEEME.md"})
+        outcome = mod.reconcile(
+            api, self.repo, allowed, "synthetic-run",
+            post_bump_command="python3 scripts/regenerate_index.py",
+        )
+        self.assertEqual(outcome["updated"], 1)
+        self.assertEqual(
+            self.show("trabajo/issue-41", "revision-juridica/00-LEEME.md").strip(),
+            new_line,
+        )
+        self.assertEqual(
+            mod.version(self.show("trabajo/issue-41", "package.json")),
+            (0, 1, 3),
+        )
+        self.assertEqual(len(api.comments(41)), 1)
+        with self.assertRaises(mod.RebaseError):
+            mod._safe_script("python3 -c 'print(1)'", self.repo)
+        with self.assertRaises(mod.RebaseError):
+            mod._safe_script("bash scripts/regenerate_index.py", self.repo)
+
     def test_workflow_inputs_permissions_and_idempotence(self):
         workflow = (ROOT / ".github/workflows/version-autorebase.yml").read_text()
         script = (ROOT / "scripts/version_autorebase.py").read_text()
@@ -191,6 +254,7 @@ class VersionAutorebaseTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("shared_version_paths:", workflow)
         self.assertIn("bump_command:", workflow)
+        self.assertIn("post_bump_command:", workflow)
         self.assertIn("group: version-autorebase-${{ github.repository }}", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertRegex(workflow, r"permissions:\n  contents: read")
