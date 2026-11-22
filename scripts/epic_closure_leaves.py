@@ -63,6 +63,16 @@ def _labels(issue: dict[str, Any]) -> set[str]:
 
 def _excluded(issue: dict[str, Any]) -> bool:
     title = str(issue.get("title") or "").casefold()
+    body = issue.get("body") or ""
+    if not isinstance(body, str):
+        raise EpicError("Body ilegible")
+    # Una puerta humana, incluso sin etiqueta, nunca produce tareas automáticas.
+    if re.search(r"<!--\s*factory-human-gate\b", body, re.I):
+        return True
+    if EPIC.search(title) and re.search(
+        r"\b(?:go-live|live|legal|gasto|pagos?|privacidad|owner-only)\b", title
+    ):
+        return True
     return any(any(word in label for word in EXCLUDE) for label in _labels(issue)) or title.startswith(
         ("decisión:", "decision:", "decisión del dueño", "owner:")
     )
