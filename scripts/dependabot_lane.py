@@ -150,6 +150,7 @@ def classify(pr: object, files: object, commit: object, *, repo: str, head: str)
         "dependabot": True, "head": head, "pr": pr.get("number"),
         "policy": policy, "major": "major" in versions, "workflow": "workflow" in kinds,
         "files": len(files), "updates": len(versions), "major_target": major_target,
+        "file_paths": sorted(row["filename"] for row in files),
     }
 
 
@@ -299,10 +300,20 @@ def _switch_running(repo: str, token: str) -> bool:
     return marker == {"version": 1, "state": "RUNNING", "owner": "pl0n3r"}
 
 
-def create_followup(repo: str, number: int, head: str, token: str, *, reason: str, major_target: str | None = None) -> int:
+def create_followup(repo: str, number: int, head: str, token: str, *, reason: str, paths: list[str], major_target: str | None = None) -> int:
     """Issue idempotente; no conceder autorización de implementación desde metadata de PR."""
     if reason not in ("major", "workflow", "stale"):
         raise LaneError("Motivo inválido de escalamiento")
+    if not paths or len(paths) > 3000 or len(set(paths)) != len(paths):
+        raise LaneError("Claims de Dependabot ausentes o ambiguos")
+    for path in paths:
+        # Hereda exactamente el mismo allowlist ya validado sobre el HEAD;
+        # sin asumir que una extensión manifest autoriza código.
+        if not isinstance(path, str) or len(path) > 300 or (
+            not WORKFLOW_PATH.fullmatch(path)
+            and not (path.split("/")[-1] in MANIFESTS or REQUIREMENTS.fullmatch(path.split("/")[-1]))
+        ):
+            raise LaneError("Claim de seguimiento fuera de alcance")
     marker = (
         '<!-- factory-dependabot-followup '
         + json.dumps({"version": 1, "repo": repo, "pr": number}, sort_keys=True, separators=(",", ":"))
@@ -340,11 +351,18 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
         "\n### Contrato ejecutable\n"
         '<!-- factory-acceptance {"version":1,"criteria":[{"id":"AC-01","kind":"check","target":"Validar"}]} -->\n'
         "\n### Rutas reclamadas\n"
-        "- Revisar y reemplazar por claims de archivo verificables del PR antes de solicitar /tomar.\n"
+        + "".join(f"- `{path}`\n" for path in paths)
+        + "\n<!-- factory-plan-task "
+        + json.dumps({
+            "version": 1, "epic": 1, "task_key": f"DEPENDABOT_PR_{number}",
+            "order": number, "owner": "pl0n3r", "roles": ["seguridad", "qa"],
+            "depends_on": [], "paths": paths,
+        }, sort_keys=True, separators=(",", ":"))
+        + " -->\n"
     )
     issue = api(repo, f"/repos/{repo}/issues", token, method="POST", payload={
         "title": title, "body": body,
-        "labels": ["tipo: mejora", "prioridad: media", "estado: bloqueado"],
+        "labels": ["tipo: mejora", "prioridad: media", "estado: disponible", "rol: seguridad", "rol: qa"],
     })
     number_created = issue.get("number") if isinstance(issue, dict) else None
     if type(number_created) is not int:
@@ -426,7 +444,7 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
     # los checks faltan o están rojos. Nunca dependen de un verde para escalar.
     if result["policy"] == "manual":
         reason = "major" if result["major"] else "workflow"
-        issue = create_followup(repo, number, head, token, reason=reason, major_target=result.get("major_target"))
+        issue = create_followup(repo, number, head, token, reason=reason, paths=result["file_paths"], major_target=result.get("major_target"))
         if _age_over_seven_days(pr, now=now):
             try:
                 green_manual = _terminal_checks_green(repo, head, token)
@@ -465,7 +483,7 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
             raise LaneError("Auto-merge no confirmó la identidad del PR")
         return {**result, "auto_merge_enabled": True, "followup_required": False}
     if _age_over_seven_days(pr, now=now) and not green:
-        issue = create_followup(repo, number, head, token, reason="stale")
+        issue = create_followup(repo, number, head, token, reason="stale", paths=result["file_paths"])
         comment_stale(repo, number, issue, token)
         return {**result, "auto_merge_enabled": False, "followup_required": True,
                 "issue": issue, "reason": "stale"}
