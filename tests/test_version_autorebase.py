@@ -310,10 +310,16 @@ class VersionAutorebaseTests(unittest.TestCase):
                 "https://api.github.com", 403, "Forbidden", {}, None)):
             with self.assertRaises(mod.RebaseError):
                 api.get_ref()
-        self.assertEqual(
-            mod.comment_marker("result", 7, "a" * 40, "b" * 40, ["package.json"]),
-            mod.comment_marker("result", 7, "a" * 40, "b" * 40, ["package.json"]),
+        first = mod.comment_marker(
+            "result", 7, "a" * 40, "b" * 40,
+            ["package.json", "config/version.php"],
         )
+        reordered = mod.comment_marker(
+            "result", 7, "a" * 40, "b" * 40,
+            ["config/version.php", "package.json"],
+        )
+        self.assertEqual(first, reordered)
+        self.assertIn('"paths":["config/version.php","package.json"]', first)
         candidate = {
             "state": "open", "draft": False,
             "mergeable_state": "dirty", "mergeable": False,
