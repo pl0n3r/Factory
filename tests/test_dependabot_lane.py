@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.dependabot_lane import create_followup, _terminal_checks_green, reconcile
+from scripts.dependabot_lane import create_followup, _terminal_checks_green, reconcile, comment_stale, sweep
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify
 
@@ -143,6 +143,36 @@ class DependabotLaneTests(unittest.TestCase):
         with self.assertRaises(LaneError):
             classify(pr(), [manifest(), manifest()], commit(),
                      repo="pl0n3r/Factory", head=SHA)
+
+    def test_stale_comment_is_idempotent(self):
+        posted = []
+        def fake_api(_repo, path, _token, *, method="GET", payload=None):
+            if method == "POST":
+                posted.append(payload["body"])
+                return {"id": 123}
+            return [{"body": posted[0]}] if posted else []
+        with patch("scripts.dependabot_lane.api", side_effect=fake_api):
+            self.assertTrue(comment_stale("pl0n3r/Factory", 2107, 2174, "token"))
+            self.assertFalse(comment_stale("pl0n3r/Factory", 2107, 2174, "token"))
+        self.assertEqual(len(posted), 1)
+        self.assertIn("más de 7 días", posted[0])
+
+    def test_schedule_sweeps_only_dependabot_with_global_guard(self):
+        rows = [
+            {"number": 101, "user": {"login": "pl0n3r"}, "head": {"sha": SHA}},
+            {"number": 2107, "user": {"login": "dependabot[bot]"},
+             "head": {"sha": SHA}},
+        ]
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
+                                     "GITHUB_REF": "refs/heads/main"}), (
+             patch("scripts.dependabot_lane._switch_running", return_value=True)), (
+             patch("scripts.dependabot_lane.api", return_value=rows)), (
+             patch("scripts.dependabot_lane.reconcile", return_value={"pr": 2107}) as run):
+            got = sweep("pl0n3r/Factory", "token",
+                        now=datetime(2026, 11, 22, tzinfo=timezone.utc))
+        self.assertEqual(got, [{"pr": 2107}])
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[1], 2107)
 
     def test_workflow_run_ignores_human_pr_without_mutations(self):
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
