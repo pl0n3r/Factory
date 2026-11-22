@@ -10,7 +10,7 @@ DOC = (ROOT / "docs/dependabot-lane.md").read_text(encoding="utf-8")
 
 
 def job(yaml, name):
-    match = re.search(r"(?ms)^  " + re.escape(name) + r":\\n(.*?)(?=^  [a-zA-Z][a-zA-Z0-9_-]*:\\n|\\Z)", yaml)
+    match = re.search(r"(?ms)^  " + re.escape(name) + r":\n(.*?)(?=^  [a-zA-Z][a-zA-Z0-9_-]*:\n|\Z)", yaml)
     if not match:
         raise AssertionError(f"Job not found: {name}")
     return match.group(1)
@@ -18,7 +18,7 @@ def job(yaml, name):
 
 class DependabotLaneWorkflowTests(unittest.TestCase):
     def test_reusable_permissions_are_scoped(self):
-        self.assertIn("permissions:\\n  contents: read", REUSABLE)
+        self.assertIn("permissions:\n  contents: read", REUSABLE)
         for name in ("dependabot", "dependabot-sweep"):
             self.assertIn("      contents: write", job(REUSABLE, name))
             self.assertIn("      checks: read", job(REUSABLE, name))
@@ -34,7 +34,7 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         self.assertIn("cron: '29 10 * * *'", CALLER)
         self.assertNotIn("pull_request_target:", CALLER)
         self.assertNotIn("workflow_dispatch:", CALLER)
-        self.assertIn("permissions:\\n  contents: read", CALLER)
+        self.assertIn("permissions:\n  contents: read", CALLER)
         self.assertIn("cancel-in-progress: false", CALLER)
 
     def test_caller_requires_exact_head_and_official_bot(self):
@@ -73,8 +73,8 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         self.assertEqual(CALLER.count("uses: ./.github/workflows/coordinacion.yml"), 2)
 
     def test_reusable_stays_only_workflow_call_and_pinned_kit(self):
-        header = REUSABLE.split("\\npermissions:", 1)[0]
-        self.assertIn("on:\\n  workflow_call:", header)
+        header = REUSABLE.split("\npermissions:", 1)[0]
+        self.assertIn("on:\n  workflow_call:", header)
         self.assertNotIn("  workflow_run:", header)
         self.assertNotIn("  schedule:", header)
         for name in ("dependabot", "dependabot-sweep"):
