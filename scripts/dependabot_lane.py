@@ -261,8 +261,9 @@ def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
             raise LaneError("Validar emitido por App no autorizada")
         # El job reconciliador mira checks de su propio HEAD mientras corre:
         # su propio check (no requerido) no puede convertirse en deadlock.
-        if (key in ("Reconciliar Dependabot", "Reconciliar Dependabot Factory") or
-                key.endswith((" / Reconciliar Dependabot", " / Reconciliar Dependabot Factory"))):
+        own_checks = ("Reconciliar Dependabot", "Reconciliar Dependabot Factory",
+                      "Barrer Dependabot Factory", "Barrer Dependabot consumidor")
+        if key in own_checks or any(key.endswith(" / " + own) for own in own_checks):
             continue
         if key not in latest or check["id"] > latest[key]["id"]:
             latest[key] = check
