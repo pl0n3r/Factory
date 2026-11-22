@@ -28,7 +28,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: epic-closure-${{ github.repository }}
@@ -36,8 +35,12 @@ concurrency:
 
 jobs:
   materializar:
+    permissions:
+      contents: read
+      issues: write
     name: Generar hojas con preflight y kill switch
     if: >-
+      github.repository_owner == 'pl0n3r' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_call' ||
        github.event_name == 'workflow_dispatch' ||
