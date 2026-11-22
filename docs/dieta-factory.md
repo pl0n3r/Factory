@@ -169,12 +169,3 @@ Reversión: squash-revert solo del PR F1D, sin tocar F1A/F1B/F1C ni modificar pu
 **Contrato conservado:** `Presupuesto del PR` observa la base confiable y mantiene `presupuesto-pr-*` con retención de 30 días; `Validar candidato de costos` conserva sus tests. `metricas/costos.py trend` y `metricas/test_costos.py` siguen disponibles offline, sin jobs que los publiquen automáticamente. La referencia al recuento 167 líneas en el inventario superior es histórica, no el largo actual.
 
 **Preflight:** Factory #767 RUNNING, PRs abiertos sin colisiones de los seis claims V3 renovados, reserva V3 exclusiva en #1323. La poda no modifica dinero, presupuestos, límites, releases, Sonar, CodeQL, CodeRabbit, seguridad o go-live. **Reversión:** squash-revert solo del PR F1F recupera trigger/job y docs previos sin revertir F1A/B/C/D/E ni F2A.
-
-
-## Incorporación posterior al inventario: Factory #2184 (2026-11-22)
-
-La tabla de **38 workflows** de `main@b0713650194e9a0c464d625bc6136eecad776377` es una fotografía histórica y permanece sin cambios, al igual que los ledgers F1A, F1B, F1C, F1D, F1E y F1F. Los inventarios ejecutables admiten expresamente una ruta nueva posterior a esas bajas, sin aceptar otras rutas ni sustituir comprobaciones existentes:
-
-La nueva ruta posterior al ledger es **`.github/workflows/dependabot-lane.yml`**, con disparadores verificados `workflow_run` y `schedule`. El caller protegido actúa solo tras `CI factory` con HEAD exacto y realiza un barrido diario sin ejecutar código del PR con token privilegiado. Se documenta fuera de la tabla original de siete columnas porque esa tabla está reservada a la fotografía histórica.
-
-El conjunto actual esperado pasa de **37 a 38 workflows** al aparecer este caller. Factory #2182 prepara independientemente `.github/workflows/epic-closure.yml`, con disparadores `workflow_call`, `workflow_dispatch` y `schedule`. Los inventarios reconocen esa ruta **solo si existe realmente** en el árbol, conservando el control exacto de rutas; su reserva V3 y su implementación permanecen fuera del alcance de #2184. `tests/test_factory_diet_inventory.py` y `tests/test_dieta_fase1c.py` lo registran de manera explícita, preservando los negativos contra sustitución de workflows, la poda histórica y todos los gates de CI, privacidad, gasto, release y seguridad. La automatización no equivale a autorización para fusionar PRs major, pins de workflows o cambios en consumidores `live` sin las puertas correspondientes.
