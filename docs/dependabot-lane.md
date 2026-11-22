@@ -14,7 +14,7 @@ El archivo `.github/workflows/dependabot-lane.yml` llama `./.github/workflows/co
 
 ## YAML exacto para consumidores (copiar como `.github/workflows/dependabot-lane.yml`)
 
-Cada ejemplo utiliza el nombre del workflow CI verificable en el propio repositorio. La protección de rama y el gate `Validar` deben seguir habilitados. Para un repo en fase `live`, no activar la fusión autónoma sin autorización y garantías específicas de esa fase. **No añadir `pull_request_target` ni ejecutar el HEAD del PR con `contents:write`.**
+Cada ejemplo utiliza el nombre del workflow CI verificable en el propio repositorio. La protección de rama y el gate `Validar` deben seguir habilitados. BRVTAL está en fase `live`: en su ejemplo **ambos jobs están desactivados** (`false` / `if: false`); no activarlos sin autorización humana específica y garantías de esa fase. Los otros consumidores se mantienen en `construccion` según los contratos observados. **No añadir `pull_request_target` ni ejecutar el HEAD del PR con `contents:write`.**
 
 ### pl0n3r/BRVTAL
 
@@ -33,7 +33,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   dependabot:
+    # BRVTAL phase=live: D-069 prohibe auto-merge hasta autorizacion independiente.
     if: >-
+      false &&
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
@@ -54,7 +56,8 @@ jobs:
       pr_number: ${{ github.event.workflow_run.pull_requests[0].number }}
       head_sha: ${{ github.event.workflow_run.head_sha }}
   dependabot-sweep:
-    if: github.event_name == 'schedule' && github.ref == 'refs/heads/main'
+    # Prohibido reconciliar PRs automaticamente durante fase live.
+    if: false
     permissions:
       contents: write
       checks: read

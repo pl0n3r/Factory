@@ -99,6 +99,9 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         self.assertEqual(DOC.count("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"), 12)
         self.assertIn("pull-requests: write", DOC)
         self.assertIn("Factory#2107", DOC)
+        brvtal = DOC.split("### pl0n3r/BRVTAL", 1)[1].split("### pl0n3r/GrindFlow", 1)[0]
+        self.assertIn("false &&", brvtal)
+        self.assertIn("if: false", brvtal)
 
     def test_docs_explicitly_prohibit_unsafe_merges(self):
         for phrase in ("major", "pins de workflows", "squash exact-SHA", "Validar",
