@@ -45,7 +45,7 @@ class AcceptanceWorkflowContractTests(unittest.TestCase):
     def test_readiness_does_not_repeat_contract_tests(self):
         reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(encoding="utf-8")
         checks_only = "python3 .factory/scripts/aceptacion_kit.py --checks-only"
-        final = "python3 ../.factory/scripts/aceptacion_kit.py < /tmp/acceptance.json"
+        final = "python3 .factory/scripts/aceptacion_kit.py < /tmp/acceptance.json"
         self.assertEqual(reusable.count(checks_only), 1)
         self.assertEqual(reusable.count(final), 1)
         self.assertLess(reusable.index(checks_only), reusable.index(final))
@@ -75,9 +75,11 @@ class AcceptanceWorkflowContractTests(unittest.TestCase):
         # El runner de tests usa Path.cwd(): sin cd .candidate, test targets
         # se buscarían erróneamente en la raíz vacía del workspace.
         self.assertEqual(reusable.count("          cd .candidate\n"), 1)
+        self.assertIn("ln -s ../.factory .candidate/.factory", reusable)
+        self.assertIn("! -e .candidate/.factory && ! -L .candidate/.factory", reusable)
         self.assertIn(
             "cd .candidate\n"
-            "          python3 ../.factory/scripts/aceptacion_kit.py",
+            "          python3 .factory/scripts/aceptacion_kit.py",
             reusable,
         )
         self.assertLess(
