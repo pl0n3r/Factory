@@ -225,11 +225,14 @@ class DependabotLaneTests(unittest.TestCase):
             {"number": 2107, "user": {"login": "dependabot[bot]"},
              "head": {"sha": SHA}},
         ]
-        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
-                                     "GITHUB_REF": "refs/heads/main"}), (
-             patch("scripts.dependabot_lane._switch_running", return_value=True)), (
-             patch("scripts.dependabot_lane.api", return_value=rows)), (
-             patch("scripts.dependabot_lane.reconcile", return_value={"pr": 2107}) as run):
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
+                                    "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+            patch("scripts.dependabot_lane.api", return_value=rows),
+            patch("scripts.dependabot_lane.reconcile",
+                  return_value={"pr": 2107}) as run,
+        ):
             got = sweep("pl0n3r/Factory", "token",
                         now=datetime(2026, 11, 22, tzinfo=timezone.utc))
         self.assertEqual(got, [{"pr": 2107}])
@@ -237,11 +240,14 @@ class DependabotLaneTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[1], 2107)
 
     def test_workflow_run_ignores_human_pr_without_mutations(self):
-        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
-                                     "GITHUB_REF": "refs/heads/main"}), (
-                patch("scripts.dependabot_lane.read_exact",
-                      return_value=(pr(user={"login": "pl0n3r"}), {"dependabot": False}))), (
-                patch("scripts.dependabot_lane.api", side_effect=AssertionError("no mutar"))):
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
+                                    "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane.read_exact",
+                  return_value=(pr(user={"login": "pl0n3r"}), {"dependabot": False})),
+            patch("scripts.dependabot_lane.api",
+                  side_effect=AssertionError("no mutar")),
+        ):
             result = reconcile("pl0n3r/Factory", 99, SHA, "token",
                                now=datetime(2026, 11, 22, tzinfo=timezone.utc))
         self.assertEqual(result, {"dependabot": False, "skipped": True,
