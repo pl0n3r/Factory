@@ -266,6 +266,10 @@ def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
     if not pages or len(pages) != response["total_count"]:
         raise LaneError("Sin evidencia completa de checks")
     latest: dict[str, dict] = {}
+    # El HEAD puede contener varios intentos con IDs distintos. La
+    # consistencia de un ID se comprueba en todo el inventario, incluso
+    # si otro intento más reciente ya ganó en latest.
+    observed: dict[tuple[str, int], tuple] = {}
     for check in pages:
         if not isinstance(check, dict) or check.get("head_sha") != head:
             raise LaneError("Check sobre HEAD incorrecto")
@@ -285,12 +289,15 @@ def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
                       "Barrer Dependabot Factory", "Barrer Dependabot consumidor")
         if key in own_checks or any(key.endswith(" / " + own) for own in own_checks):
             continue
-        previous = latest.get(key)
-        if (key in required and previous is not None
-            and previous["id"] == check["id"]
-            and (previous.get("status"), previous.get("conclusion"), previous.get("app"))
-                != (check.get("status"), check.get("conclusion"), check.get("app"))):
+        identity = (key, check["id"])
+        observation = (
+            check.get("status"), check.get("conclusion"),
+            app.get("slug"), app["id"],
+        )
+        if identity in observed and observed[identity] != observation:
             raise LaneError("Gate CI homónimo contradictorio")
+        observed[identity] = observation
+        previous = latest.get(key)
         if previous is None or check["id"] > previous["id"]:
             latest[key] = check
     if any(key not in latest or latest[key].get("status") != "completed"
