@@ -352,10 +352,22 @@ jobs:
               previous_complete=true
             done
   
-            [[ "$stable_snapshot" == true ]] || {
-              echo "::error::Check-runs sin dos snapshots completos y estables"
-              exit 1
-            }
+            if [[ "$stable_snapshot" != true ]]; then
+              # Los cambios semánticos entre lecturas pueden ser transitorios.
+              # Nunca usar checks_file parcial ni ampliar el plazo exterior.
+              gate_wait_elapsed=$(( SECONDS - gate_wait_started ))
+              if (( gate_wait_elapsed >= GATE_WAIT_SECONDS )); then
+                echo "::error::Check-runs sin dos snapshots completos y estables dentro del plazo"
+                exit 1
+              fi
+              recheck_pr_identity || {
+                echo "::error::Identidad HEAD/BASE cambió durante deriva de check-runs"
+                exit 1
+              }
+              gate_sleep=$(( GATE_WAIT_SECONDS - gate_wait_elapsed < 8 ? GATE_WAIT_SECONDS - gate_wait_elapsed : 8 ))
+              sleep "$gate_sleep"
+              continue
+            fi
             # POLICY_CHECK_SNAPSHOT_END
             if gate_readiness; then
               # La lectura del snapshot puede consumir el último segundo del
