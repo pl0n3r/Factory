@@ -486,6 +486,74 @@ class DependabotLaneTests(unittest.TestCase):
                 lane._postmerge_exact_main_ci("pl0n3r/Factory", merge_sha, "token")
 
 
+    def test_postmerge_fail_closed_on_untrusted_dispatch_inventory_and_jobs(self):
+        sha = "b" * 40
+        faults = (
+            "invalid-head", "dispatch-body", "invalid-inventory", "invalid-row",
+            "wrong-branch", "wrong-event", "wrong-name", "actual-run-moved",
+            "missing-jobs", "wrong-job-sha", "duplicate-job", "no-new-run",
+            "main-moved-after-dispatch",
+        )
+        for fault in faults:
+            with self.subTest(fault=fault):
+                posts = []
+                seen_main = []
+                run = {"id": 1002, "name": "GrindFlow CI",
+                       "head_sha": sha, "head_branch": "main",
+                       "event": "workflow_dispatch", "status": "completed",
+                       "conclusion": "success"}
+                if fault == "wrong-branch":
+                    run["head_branch"] = "other"
+                if fault == "wrong-event":
+                    run["event"] = "push"
+                if fault == "wrong-name":
+                    run["name"] = "malicious"
+                good_job = {"name": "validate", "head_sha": (
+                    "c" * 40 if fault == "wrong-job-sha" else sha),
+                    "status": "completed", "conclusion": "success"}
+
+                def fake_api(_repo, path, _token, *, method="GET", payload=None):
+                    if path.endswith("/git/ref/heads/main"):
+                        seen_main.append(path)
+                        drift = fault == "main-moved-after-dispatch" and posts
+                        return {"object": {"sha": "c" * 40 if drift else sha}}
+                    if path.endswith("/dispatches"):
+                        posts.append(path)
+                        return {"unexpected": True} if fault == "dispatch-body" else None
+                    if "/runs?event=" in path:
+                        if fault == "invalid-inventory":
+                            return {"total_count": "NaN", "workflow_runs": []}
+                        rows = [run] if posts and fault != "no-new-run" else []
+                        if fault == "invalid-row" and posts:
+                            rows = [3]
+                        return {"total_count": len(rows), "workflow_runs": rows}
+                    if path.endswith("/actions/runs/1002"):
+                        return {**run, "head_sha": (
+                            "d" * 40 if fault == "actual-run-moved" else run["head_sha"])}
+                    if path.endswith("/actions/runs/1002/jobs?per_page=100"):
+                        jobs = [] if fault == "missing-jobs" else [good_job]
+                        if fault == "duplicate-job":
+                            jobs.append(good_job.copy())
+                        return {"total_count": len(jobs), "jobs": jobs}
+                    raise AssertionError(path)
+
+                with (
+                    patch("scripts.dependabot_lane.api", side_effect=fake_api),
+                    patch("scripts.dependabot_lane.time.sleep", return_value=None),
+                ):
+                    with self.assertRaises(LaneError):
+                        lane._postmerge_exact_main_ci(
+                            "pl0n3r/GrindFlow",
+                            "not-sha" if fault == "invalid-head" else sha,
+                            "token")
+                if fault == "invalid-head":
+                    self.assertFalse(posts)
+                    self.assertFalse(seen_main)
+                if fault == "main-moved-after-dispatch":
+                    self.assertEqual(len(posts), 1)
+
+
+
 class DependabotLaneCoverageTests(unittest.TestCase):
     """Cobertura de fallos de transporte, carrera, seguridad y rutas privilegiadas."""
 
