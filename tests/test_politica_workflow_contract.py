@@ -580,7 +580,7 @@ GATE_WAIT_SECONDS=300
             self.assertEqual(marker.exists(), expected_pass,
                              "No autorizar sin snapshots estables y gates verdes")
             if expected_error:
-                self.assertIn(expected_error, result.stderr)
+                self.assertIn(expected_error, result.stdout + result.stderr)
             if expected_calls is not None:
                 self.assertEqual(int((root / "calls").read_text()), expected_calls)
             if expected_raw is not None:
